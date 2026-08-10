@@ -125,7 +125,7 @@ export const legacyBuildLocalDbContainerInputs = (
   // `auth.jwt_secret`, `db.root_key`) isn't re-overridden by a conflicting `SUPABASE_*` env
   // var (review: PRRT_kwDOErm0O86W2LL4, PRRT_kwDOErm0O86W2tRi). Go's `mergeRemoteConfig`
   // installs remote leaves at viper's OVERRIDE tier, above `AutomaticEnv`
-  // (`apps/cli-go/pkg/config/config.go:635-640`).
+  // (`apps/cli-go/pkg/config/config.go:718-730`).
   // `db start`/`db reset` never pass a `projectRef` above, so they never need this either.
   remoteOverrideKeys?: ReadonlySet<string>,
   // `db start`'s handler — the only real caller that already has a

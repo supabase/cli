@@ -25,6 +25,7 @@ import type { ProjectConfig } from "@supabase/config";
 import { Effect, type FileSystem, type Path } from "effect";
 
 import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
+import { legacyMakeRemoteWins } from "../legacy-db-config.toml-read.ts";
 import { legacyResolveDbImage } from "../legacy-db-image.ts";
 import { legacyResolveHealthTimeoutSeconds } from "../legacy-go-duration.ts";
 import {
@@ -46,7 +47,7 @@ export interface LegacyDbBootstrapConfigInput {
   /**
    * Config keys a matched `[remotes.<ref>]` block contributed at viper's OVERRIDE tier
    * (Go's `v.Set`, applied ABOVE `AutomaticEnv` — `apps/cli-go/pkg/config/config.go:
-   * 635-640`) — see `legacy-db-config.toml-read.ts`'s `LegacyRemoteOverride.
+   * 724`) — see `legacy-db-config.toml-read.ts`'s `LegacyRemoteOverride.
    * remoteOverrideKeys` doc comment for the full precedence rationale. Every
    * `legacyEnvOverride*` call below must NOT re-apply a `SUPABASE_*` value for a field
    * the remote block already set. Defaults to empty: `db start`/`db reset` never resolve
@@ -121,8 +122,7 @@ export const legacyResolveDbBootstrapConfig = <E>(
   Effect.gen(function* () {
     const { config, projectEnvValues, workdir } = input;
     const remoteOverrideKeys = input.remoteOverrideKeys ?? new Set<string>();
-    const remoteWins = (dottedFieldPath: string): boolean =>
-      remoteOverrideKeys.has(dottedFieldPath);
+    const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
 
     // Go's `Config.Load` folds `SUPABASE_DB_MAJOR_VERSION` into `c.Db.MajorVersion` before the
     // image-selection switch runs (`pkg/config/config.go:585-586,819-827`) — every later read of

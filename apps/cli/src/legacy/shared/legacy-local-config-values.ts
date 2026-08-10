@@ -18,6 +18,10 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
+import {
+  legacyMakeRemoteWins,
+  type LegacyRemoteOverridableKey,
+} from "./legacy-db-config.toml-read.ts";
 import { legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import {
   legacyApiTlsCertReadErrorMessage,
@@ -633,15 +637,19 @@ export function legacyResolveAuthEmailSmtp(
    * `legacyEnvOverridePort`/`legacyEnvOverride` calls below THROW (directly, or via
    * `legacyDecryptAuthSecret` for `.pass`) on a malformed override even when a matched remote
    * block already set them, which would abort the whole caller (`legacyResolveLocalConfigValues`,
-   * and the shadow it feeds) on an env value Go silently ignores. Defaults to empty for
-   * `start.handler.ts`'s callers, which never resolve a `[remotes.<ref>]` block for this read.
+   * and the shadow it feeds) on an env value Go silently ignores. `host`/`user`/`admin_email`/
+   * `sender_name` are also in the allowlist: their `legacyEnvOverride` reads can't throw, but
+   * leaving them ungated is still a precedence bug, same reasoning as `auth.external.*`'s
+   * `client_id`/`url`/`redirect_uri`. Defaults to empty for `start.handler.ts`'s callers, which
+   * never resolve a `[remotes.<ref>]` block for this read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): (LegacySmtpInput & { readonly senderName: string | undefined }) | undefined {
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const smtpDoc = asRecord(asRecord(authDocument?.["email"])?.["smtp"]);
   if (smtpDoc === undefined) return undefined;
   return {
-    enabled: remoteOverrideKeys.has("auth.email.smtp.enabled")
+    enabled: remoteWins("auth.email.smtp.enabled")
       ? smtpDoc["enabled"] === undefined
         ? true
         : smtpDoc["enabled"] === true
@@ -651,13 +659,16 @@ export function legacyResolveAuthEmailSmtp(
           "auth.email.smtp.enabled",
           projectEnvValues,
         ),
-    host:
-      legacyEnvOverride(
-        "SUPABASE_AUTH_EMAIL_SMTP_HOST",
-        typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
-        projectEnvValues,
-      ) ?? "",
-    port: remoteOverrideKeys.has("auth.email.smtp.port")
+    host: remoteWins("auth.email.smtp.host")
+      ? typeof smtpDoc["host"] === "string"
+        ? smtpDoc["host"]
+        : ""
+      : (legacyEnvOverride(
+          "SUPABASE_AUTH_EMAIL_SMTP_HOST",
+          typeof smtpDoc["host"] === "string" ? smtpDoc["host"] : "",
+          projectEnvValues,
+        ) ?? ""),
+    port: remoteWins("auth.email.smtp.port")
       ? typeof smtpDoc["port"] === "number"
         ? smtpDoc["port"]
         : 0
@@ -667,12 +678,15 @@ export function legacyResolveAuthEmailSmtp(
           "auth.email.smtp.port",
           projectEnvValues,
         ),
-    user:
-      legacyEnvOverride(
-        "SUPABASE_AUTH_EMAIL_SMTP_USER",
-        typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
-        projectEnvValues,
-      ) ?? "",
+    user: remoteWins("auth.email.smtp.user")
+      ? typeof smtpDoc["user"] === "string"
+        ? smtpDoc["user"]
+        : ""
+      : (legacyEnvOverride(
+          "SUPABASE_AUTH_EMAIL_SMTP_USER",
+          typeof smtpDoc["user"] === "string" ? smtpDoc["user"] : "",
+          projectEnvValues,
+        ) ?? ""),
     // Go's `Auth.Email.Smtp.Pass` is a `config.Secret` (`pkg/config/auth.go:260`),
     // decrypted by `DecryptSecretHookFunc` at decode time for both the TOML
     // value and any env override — same treatment as `jwt_secret`/the API
@@ -681,7 +695,7 @@ export function legacyResolveAuthEmailSmtp(
     // `LEGACY_ENV_OVERRIDABLE_KEYS` because an ungated `legacyEnvOverride` call here let a
     // malformed ambient `SUPABASE_AUTH_EMAIL_SMTP_PASS` outrank a matched remote's own valid
     // `pass` and throw during decryption, aborting the whole caller (review: PRRT_kwDOErm0O86XJYol).
-    pass: remoteOverrideKeys.has("auth.email.smtp.pass")
+    pass: remoteWins("auth.email.smtp.pass")
       ? (legacyDecryptAuthSecret(
           typeof smtpDoc["pass"] === "string" ? smtpDoc["pass"] : "",
           projectEnvValues,
@@ -694,17 +708,24 @@ export function legacyResolveAuthEmailSmtp(
           ) ?? "",
           projectEnvValues,
         ) ?? ""),
-    adminEmail:
-      legacyEnvOverride(
-        "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",
-        typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
-        projectEnvValues,
-      ) ?? "",
-    senderName: legacyEnvOverride(
-      "SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME",
-      typeof smtpDoc["sender_name"] === "string" ? smtpDoc["sender_name"] : undefined,
-      projectEnvValues,
-    ),
+    adminEmail: remoteWins("auth.email.smtp.admin_email")
+      ? typeof smtpDoc["admin_email"] === "string"
+        ? smtpDoc["admin_email"]
+        : ""
+      : (legacyEnvOverride(
+          "SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL",
+          typeof smtpDoc["admin_email"] === "string" ? smtpDoc["admin_email"] : "",
+          projectEnvValues,
+        ) ?? ""),
+    senderName: remoteWins("auth.email.smtp.sender_name")
+      ? typeof smtpDoc["sender_name"] === "string"
+        ? smtpDoc["sender_name"]
+        : undefined
+      : legacyEnvOverride(
+          "SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME",
+          typeof smtpDoc["sender_name"] === "string" ? smtpDoc["sender_name"] : undefined,
+          projectEnvValues,
+        ),
   };
 }
 
@@ -751,10 +772,11 @@ export function legacyResolveAuthCaptcha(
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyCaptchaInput | undefined {
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const captchaDoc = asRecord(authDocument?.["captcha"]);
   return captcha
     ? {
-        enabled: remoteOverrideKeys.has("auth.captcha.enabled")
+        enabled: remoteWins("auth.captcha.enabled")
           ? (captcha.enabled ?? false)
           : captchaDoc !== undefined
             ? legacyEnvOverrideBool(
@@ -764,7 +786,7 @@ export function legacyResolveAuthCaptcha(
                 projectEnvValues,
               )
             : (captcha.enabled ?? false),
-        provider: remoteOverrideKeys.has("auth.captcha.provider")
+        provider: remoteWins("auth.captcha.provider")
           ? captcha.provider
           : captchaDoc !== undefined
             ? legacyEnvOverride(
@@ -781,7 +803,7 @@ export function legacyResolveAuthCaptcha(
         // `secret` and throw during decryption, aborting the whole caller
         // (review: PRRT_kwDOErm0O86XJ4HR).
         secret: legacyDecryptAuthSecret(
-          remoteOverrideKeys.has("auth.captcha.secret")
+          remoteWins("auth.captcha.secret")
             ? captcha.secret
             : captchaDoc !== undefined
               ? legacyEnvOverride("SUPABASE_AUTH_CAPTCHA_SECRET", captcha.secret, projectEnvValues)
@@ -932,7 +954,8 @@ export function legacyResolveConfiguredSigningKeys(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ReadonlyArray<LegacyJwk> | undefined {
-  const authEnabled = remoteOverrideKeys.has("auth.enabled")
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
+  const authEnabled = remoteWins("auth.enabled")
     ? config.auth.enabled
     : legacyEnvOverrideBool(
         "SUPABASE_AUTH_ENABLED",
@@ -940,7 +963,7 @@ export function legacyResolveConfiguredSigningKeys(
         "auth.enabled",
         projectEnvValues,
       );
-  const signingKeysPath = remoteOverrideKeys.has("auth.signing_keys_path")
+  const signingKeysPath = remoteWins("auth.signing_keys_path")
     ? config.auth.signing_keys_path
     : legacyEnvOverride(
         "SUPABASE_AUTH_SIGNING_KEYS_PATH",
@@ -1079,6 +1102,7 @@ export function legacyResolveAuthEmail(
   // (review: PRRT_kwDOErm0O86XLAYn, PRRT_kwDOErm0O86XLAYo).
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyResolvedAuthEmail {
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const emailDoc = asRecord(authDocument?.["email"]);
   const templateDoc = asRecord(emailDoc?.["template"]);
   const notificationDoc = asRecord(emailDoc?.["notification"]);
@@ -1087,12 +1111,12 @@ export function legacyResolveAuthEmail(
   for (const [name, tmpl] of Object.entries(email.template)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_TEMPLATE_${name.toUpperCase()}`;
     const rawSubjectPresent = asRecord(templateDoc?.[name])?.["subject"] !== undefined;
-    const envSubject = remoteOverrideKeys.has(`auth.email.template.${name}.subject`)
+    const envSubject = remoteWins(`auth.email.template.${name}.subject`)
       ? undefined
       : legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     template[name] = {
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
-      content_path: remoteOverrideKeys.has(`auth.email.template.${name}.content_path`)
+      content_path: remoteWins(`auth.email.template.${name}.content_path`)
         ? tmpl.content_path
         : (legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
           tmpl.content_path),
@@ -1103,7 +1127,7 @@ export function legacyResolveAuthEmail(
       // unless `content_path` is also set.
       content_present:
         asRecord(templateDoc?.[name])?.["content"] !== undefined ||
-        (remoteOverrideKeys.has(`auth.email.template.${name}.content`)
+        (remoteWins(`auth.email.template.${name}.content`)
           ? false
           : legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined),
     };
@@ -1113,11 +1137,11 @@ export function legacyResolveAuthEmail(
   for (const [name, tmpl] of Object.entries(email.notification)) {
     const envPrefix = `SUPABASE_AUTH_EMAIL_NOTIFICATION_${name.toUpperCase()}`;
     const rawSubjectPresent = asRecord(notificationDoc?.[name])?.["subject"] !== undefined;
-    const envSubject = remoteOverrideKeys.has(`auth.email.notification.${name}.subject`)
+    const envSubject = remoteWins(`auth.email.notification.${name}.subject`)
       ? undefined
       : legacyEnvOverride(`${envPrefix}_SUBJECT`, undefined, projectEnvValues);
     notification[name] = {
-      enabled: remoteOverrideKeys.has(`auth.email.notification.${name}.enabled`)
+      enabled: remoteWins(`auth.email.notification.${name}.enabled`)
         ? tmpl.enabled
         : legacyEnvOverrideBool(
             `${envPrefix}_ENABLED`,
@@ -1126,14 +1150,14 @@ export function legacyResolveAuthEmail(
             projectEnvValues,
           ),
       subject: envSubject ?? (rawSubjectPresent ? tmpl.subject : undefined),
-      content_path: remoteOverrideKeys.has(`auth.email.notification.${name}.content_path`)
+      content_path: remoteWins(`auth.email.notification.${name}.content_path`)
         ? tmpl.content_path
         : (legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
           tmpl.content_path),
       // Same `_CONTENT` env-presence fold as the template loop above.
       content_present:
         asRecord(notificationDoc?.[name])?.["content"] !== undefined ||
-        (remoteOverrideKeys.has(`auth.email.notification.${name}.content`)
+        (remoteWins(`auth.email.notification.${name}.content`)
           ? false
           : legacyEnvOverride(`${envPrefix}_CONTENT`, undefined, projectEnvValues) !== undefined),
     };
@@ -1141,7 +1165,7 @@ export function legacyResolveAuthEmail(
 
   return {
     ...email,
-    enable_signup: remoteOverrideKeys.has("auth.email.enable_signup")
+    enable_signup: remoteWins("auth.email.enable_signup")
       ? email.enable_signup
       : legacyEnvOverrideBool(
           "SUPABASE_AUTH_EMAIL_ENABLE_SIGNUP",
@@ -1149,7 +1173,7 @@ export function legacyResolveAuthEmail(
           "auth.email.enable_signup",
           projectEnvValues,
         ),
-    double_confirm_changes: remoteOverrideKeys.has("auth.email.double_confirm_changes")
+    double_confirm_changes: remoteWins("auth.email.double_confirm_changes")
       ? email.double_confirm_changes
       : legacyEnvOverrideBool(
           "SUPABASE_AUTH_EMAIL_DOUBLE_CONFIRM_CHANGES",
@@ -1157,7 +1181,7 @@ export function legacyResolveAuthEmail(
           "auth.email.double_confirm_changes",
           projectEnvValues,
         ),
-    enable_confirmations: remoteOverrideKeys.has("auth.email.enable_confirmations")
+    enable_confirmations: remoteWins("auth.email.enable_confirmations")
       ? email.enable_confirmations
       : legacyEnvOverrideBool(
           "SUPABASE_AUTH_EMAIL_ENABLE_CONFIRMATIONS",
@@ -1165,7 +1189,7 @@ export function legacyResolveAuthEmail(
           "auth.email.enable_confirmations",
           projectEnvValues,
         ),
-    secure_password_change: remoteOverrideKeys.has("auth.email.secure_password_change")
+    secure_password_change: remoteWins("auth.email.secure_password_change")
       ? email.secure_password_change
       : legacyEnvOverrideBool(
           "SUPABASE_AUTH_EMAIL_SECURE_PASSWORD_CHANGE",
@@ -1173,13 +1197,14 @@ export function legacyResolveAuthEmail(
           "auth.email.secure_password_change",
           projectEnvValues,
         ),
-    max_frequency:
-      legacyEnvOverride(
-        "SUPABASE_AUTH_EMAIL_MAX_FREQUENCY",
-        email.max_frequency,
-        projectEnvValues,
-      ) ?? email.max_frequency,
-    otp_length: remoteOverrideKeys.has("auth.email.otp_length")
+    max_frequency: remoteWins("auth.email.max_frequency")
+      ? email.max_frequency
+      : (legacyEnvOverride(
+          "SUPABASE_AUTH_EMAIL_MAX_FREQUENCY",
+          email.max_frequency,
+          projectEnvValues,
+        ) ?? email.max_frequency),
+    otp_length: remoteWins("auth.email.otp_length")
       ? email.otp_length
       : legacyEnvOverrideUint(
           "SUPABASE_AUTH_EMAIL_OTP_LENGTH",
@@ -1187,7 +1212,7 @@ export function legacyResolveAuthEmail(
           email.otp_length,
           projectEnvValues,
         ),
-    otp_expiry: remoteOverrideKeys.has("auth.email.otp_expiry")
+    otp_expiry: remoteWins("auth.email.otp_expiry")
       ? email.otp_expiry
       : legacyEnvOverrideUint(
           "SUPABASE_AUTH_EMAIL_OTP_EXPIRY",
@@ -1480,7 +1505,7 @@ function legacyEnvOverrideSessionReplicationRole(
  * `remoteOverrideKeys` (default empty, so `db start`/`db reset` — which never resolve a
  * `[remotes.<ref>]` block for this config read — see exactly the same behavior as
  * before): the `db.settings.*` keys a matched remote block set at viper's OVERRIDE tier
- * (`v.Set`, above `AutomaticEnv`, `apps/cli-go/pkg/config/config.go:635-640`) — a remote
+ * (`v.Set`, above `AutomaticEnv`, `apps/cli-go/pkg/config/config.go:724`) — a remote
  * value for, say, `max_connections` must beat a conflicting `SUPABASE_DB_SETTINGS_MAX_
  * CONNECTIONS`, exactly like `legacy-db-config.toml-read.ts`'s own `db.major_version`
  * gate. `db diff --linked`/`db pull` (CLI-1956) pass the set their sibling `legacyReadDbToml`
@@ -1491,7 +1516,7 @@ export function legacyResolveDbSettingsEnvOverrides(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): NonNullable<ProjectConfig["db"]["settings"]> {
-  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   return {
     effective_cache_size: remoteWins("db.settings.effective_cache_size")
       ? settings?.effective_cache_size
@@ -1716,7 +1741,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
  * `remoteOverrideKeys` (default empty, so `db start`/`supabase start` — which never resolve a
  * `[remotes.<ref>]` block for this config read — see exactly the same behavior as before):
  * `auth.external_url` set at viper's OVERRIDE tier by a matched remote block
- * (`apps/cli-go/pkg/config/config.go:635-640`) must win over a conflicting
+ * (`apps/cli-go/pkg/config/config.go:718-730`) must win over a conflicting
  * `SUPABASE_AUTH_EXTERNAL_URL`, matching the `db.root_key`/`auth.jwt_secret`-style gates already
  * applied elsewhere in this file — `db diff --linked`/`db pull` (CLI-1956) pass the set their
  * sibling `legacyReadDbToml` call already computed, via `legacyBuildLocalDbContainerInputs`
@@ -1727,10 +1752,11 @@ export function legacyResolveAuthExternalUrl(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): string | undefined {
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
   const configuredAuthExternalUrl =
     typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined;
-  if (remoteOverrideKeys.has("auth.external_url")) return configuredAuthExternalUrl;
+  if (remoteWins("auth.external_url")) return configuredAuthExternalUrl;
   return legacyEnvOverride(
     "SUPABASE_AUTH_EXTERNAL_URL",
     configuredAuthExternalUrl,
@@ -1815,13 +1841,14 @@ export function legacyResolveAuthHooks(
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyResolvedAuthHooks {
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const hookDocument = asRecord(authDocument?.["hook"]);
   const result = {} as Record<string, LegacyResolvedAuthHook>;
   for (const hookType of LEGACY_HOOK_TYPE_ORDER) {
     const h = hook[hookType];
     const hookSectionPresent = asRecord(hookDocument?.[hookType]) !== undefined;
     const envPrefix = `SUPABASE_AUTH_HOOK_${hookType.toUpperCase()}`;
-    const enabled = remoteOverrideKeys.has(`auth.hook.${hookType}.enabled`)
+    const enabled = remoteWins(`auth.hook.${hookType}.enabled`)
       ? h.enabled
       : hookSectionPresent
         ? legacyEnvOverrideBool(
@@ -1832,13 +1859,13 @@ export function legacyResolveAuthHooks(
           )
         : h.enabled;
     const uri =
-      (remoteOverrideKeys.has(`auth.hook.${hookType}.uri`)
+      (remoteWins(`auth.hook.${hookType}.uri`)
         ? h.uri
         : hookSectionPresent
           ? legacyEnvOverride(`${envPrefix}_URI`, h.uri, projectEnvValues)
           : h.uri) ?? "";
     const secrets =
-      (remoteOverrideKeys.has(`auth.hook.${hookType}.secrets`)
+      (remoteWins(`auth.hook.${hookType}.secrets`)
         ? h.secrets
         : hookSectionPresent
           ? legacyEnvOverride(`${envPrefix}_SECRETS`, h.secrets, projectEnvValues)
@@ -1873,15 +1900,18 @@ export function legacyResolveAuthMfa(
    * (`legacy-db-config.toml-read.ts`) because its ungated `legacyEnvOverrideBool`/
    * `legacyEnvOverrideUint` call THROWS on a malformed override even when a matched remote block
    * already set it, which would abort the whole caller (`legacyResolveLocalConfigValues`, and the
-   * shadow it feeds) on an env value Go silently ignores. `template`/`max_frequency` stay
-   * ungated: plain `legacyEnvOverride` string reads never throw. Defaults to empty for
-   * `start.handler.ts`'s callers, which never resolve a `[remotes.<ref>]` block for this read.
+   * shadow it feeds) on an env value Go silently ignores. `phone.template`/`.max_frequency` are
+   * also in the allowlist: their `legacyEnvOverride` reads can't throw, but leaving them ungated
+   * is still a precedence bug, same reasoning as `auth.external.*`'s `client_id`/`url`/
+   * `redirect_uri`. Defaults to empty for `start.handler.ts`'s callers, which never resolve a
+   * `[remotes.<ref>]` block for this read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ProjectConfig["auth"]["mfa"] {
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   return {
     totp: {
-      enroll_enabled: remoteOverrideKeys.has("auth.mfa.totp.enroll_enabled")
+      enroll_enabled: remoteWins("auth.mfa.totp.enroll_enabled")
         ? mfa.totp.enroll_enabled
         : legacyEnvOverrideBool(
             "SUPABASE_AUTH_MFA_TOTP_ENROLL_ENABLED",
@@ -1889,7 +1919,7 @@ export function legacyResolveAuthMfa(
             "auth.mfa.totp.enroll_enabled",
             projectEnvValues,
           ),
-      verify_enabled: remoteOverrideKeys.has("auth.mfa.totp.verify_enabled")
+      verify_enabled: remoteWins("auth.mfa.totp.verify_enabled")
         ? mfa.totp.verify_enabled
         : legacyEnvOverrideBool(
             "SUPABASE_AUTH_MFA_TOTP_VERIFY_ENABLED",
@@ -1899,7 +1929,7 @@ export function legacyResolveAuthMfa(
           ),
     },
     phone: {
-      enroll_enabled: remoteOverrideKeys.has("auth.mfa.phone.enroll_enabled")
+      enroll_enabled: remoteWins("auth.mfa.phone.enroll_enabled")
         ? mfa.phone.enroll_enabled
         : legacyEnvOverrideBool(
             "SUPABASE_AUTH_MFA_PHONE_ENROLL_ENABLED",
@@ -1907,7 +1937,7 @@ export function legacyResolveAuthMfa(
             "auth.mfa.phone.enroll_enabled",
             projectEnvValues,
           ),
-      verify_enabled: remoteOverrideKeys.has("auth.mfa.phone.verify_enabled")
+      verify_enabled: remoteWins("auth.mfa.phone.verify_enabled")
         ? mfa.phone.verify_enabled
         : legacyEnvOverrideBool(
             "SUPABASE_AUTH_MFA_PHONE_VERIFY_ENABLED",
@@ -1915,7 +1945,7 @@ export function legacyResolveAuthMfa(
             "auth.mfa.phone.verify_enabled",
             projectEnvValues,
           ),
-      otp_length: remoteOverrideKeys.has("auth.mfa.phone.otp_length")
+      otp_length: remoteWins("auth.mfa.phone.otp_length")
         ? mfa.phone.otp_length
         : legacyEnvOverrideUint(
             "SUPABASE_AUTH_MFA_PHONE_OTP_LENGTH",
@@ -1923,21 +1953,23 @@ export function legacyResolveAuthMfa(
             mfa.phone.otp_length,
             projectEnvValues,
           ),
-      template:
-        legacyEnvOverride(
-          "SUPABASE_AUTH_MFA_PHONE_TEMPLATE",
-          mfa.phone.template,
-          projectEnvValues,
-        ) ?? mfa.phone.template,
-      max_frequency:
-        legacyEnvOverride(
-          "SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY",
-          mfa.phone.max_frequency,
-          projectEnvValues,
-        ) ?? mfa.phone.max_frequency,
+      template: remoteWins("auth.mfa.phone.template")
+        ? mfa.phone.template
+        : (legacyEnvOverride(
+            "SUPABASE_AUTH_MFA_PHONE_TEMPLATE",
+            mfa.phone.template,
+            projectEnvValues,
+          ) ?? mfa.phone.template),
+      max_frequency: remoteWins("auth.mfa.phone.max_frequency")
+        ? mfa.phone.max_frequency
+        : (legacyEnvOverride(
+            "SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY",
+            mfa.phone.max_frequency,
+            projectEnvValues,
+          ) ?? mfa.phone.max_frequency),
     },
     web_authn: {
-      enroll_enabled: remoteOverrideKeys.has("auth.mfa.web_authn.enroll_enabled")
+      enroll_enabled: remoteWins("auth.mfa.web_authn.enroll_enabled")
         ? mfa.web_authn.enroll_enabled
         : legacyEnvOverrideBool(
             "SUPABASE_AUTH_MFA_WEB_AUTHN_ENROLL_ENABLED",
@@ -1945,7 +1977,7 @@ export function legacyResolveAuthMfa(
             "auth.mfa.web_authn.enroll_enabled",
             projectEnvValues,
           ),
-      verify_enabled: remoteOverrideKeys.has("auth.mfa.web_authn.verify_enabled")
+      verify_enabled: remoteWins("auth.mfa.web_authn.verify_enabled")
         ? mfa.web_authn.verify_enabled
         : legacyEnvOverrideBool(
             "SUPABASE_AUTH_MFA_WEB_AUTHN_VERIFY_ENABLED",
@@ -1954,7 +1986,7 @@ export function legacyResolveAuthMfa(
             projectEnvValues,
           ),
     },
-    max_enrolled_factors: remoteOverrideKeys.has("auth.mfa.max_enrolled_factors")
+    max_enrolled_factors: remoteWins("auth.mfa.max_enrolled_factors")
       ? mfa.max_enrolled_factors
       : legacyEnvOverrideUint(
           "SUPABASE_AUTH_MFA_MAX_ENROLLED_FACTORS",
@@ -2256,7 +2288,7 @@ export function legacyResolveThirdPartyProviders(
   projectEnvValues: Readonly<Record<string, string>> | undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ReadonlyArray<LegacyThirdPartyInput> {
-  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const resolved: Array<LegacyThirdPartyInput> = [];
   if (
     remoteWins("auth.third_party.firebase.enabled")
@@ -2447,7 +2479,7 @@ export function legacyResolveAuthSms(
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): ProjectConfig["auth"]["sms"] {
   const smsDoc = asRecord(authDocument?.["sms"]);
-  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
 
   function providerPresent(providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number]): boolean {
     // `twilio` is always considered present — see this function's doc comment.
@@ -2469,11 +2501,19 @@ export function legacyResolveAuthSms(
     );
   }
 
+  // `remoteOverrideKey` is passed in explicitly (rather than reconstructed from
+  // `providerName`/`field` internally, the way `resolveEnabled` does for the fixed `.enabled`
+  // suffix) because `field` here ranges over a different, non-uniform set per provider — a
+  // reconstructed template type would have to admit every provider × field combination, most of
+  // which aren't real config keys, defeating the point of typing this against
+  // `LegacyRemoteOverridableKey` at all.
   function resolveField(
     providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
     field: string,
+    remoteOverrideKey: LegacyRemoteOverridableKey,
     configured: string | undefined,
   ): string | undefined {
+    if (remoteWins(remoteOverrideKey)) return configured;
     if (!providerPresent(providerName)) return configured;
     return legacyEnvOverride(
       `SUPABASE_AUTH_SMS_${providerName.toUpperCase()}_${field.toUpperCase()}`,
@@ -2486,11 +2526,15 @@ export function legacyResolveAuthSms(
   function resolveSecretField(
     providerName: (typeof LEGACY_SMS_PROVIDER_ORDER)[number],
     field: string,
+    remoteOverrideKey: LegacyRemoteOverridableKey,
     configured: string | undefined,
   ): string | undefined {
-    return remoteWins(`auth.sms.${providerName}.${field}`)
+    return remoteWins(remoteOverrideKey)
       ? legacyDecryptAuthSecret(configured, projectEnvValues)
-      : legacyDecryptAuthSecret(resolveField(providerName, field, configured), projectEnvValues);
+      : legacyDecryptAuthSecret(
+          resolveField(providerName, field, remoteOverrideKey, configured),
+          projectEnvValues,
+        );
   }
 
   const twilioEnabled = resolveEnabled("twilio", sms.twilio.enabled);
@@ -2524,44 +2568,101 @@ export function legacyResolveAuthSms(
           "auth.sms.enable_confirmations",
           projectEnvValues,
         ),
-    template:
-      legacyEnvOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues) ??
-      sms.template,
-    max_frequency:
-      legacyEnvOverride("SUPABASE_AUTH_SMS_MAX_FREQUENCY", sms.max_frequency, projectEnvValues) ??
-      sms.max_frequency,
+    template: remoteWins("auth.sms.template")
+      ? sms.template
+      : (legacyEnvOverride("SUPABASE_AUTH_SMS_TEMPLATE", sms.template, projectEnvValues) ??
+        sms.template),
+    max_frequency: remoteWins("auth.sms.max_frequency")
+      ? sms.max_frequency
+      : (legacyEnvOverride(
+          "SUPABASE_AUTH_SMS_MAX_FREQUENCY",
+          sms.max_frequency,
+          projectEnvValues,
+        ) ?? sms.max_frequency),
     twilio: {
       enabled: twilioEnabled,
-      account_sid: resolveField("twilio", "account_sid", sms.twilio.account_sid) ?? "",
+      account_sid:
+        resolveField(
+          "twilio",
+          "account_sid",
+          "auth.sms.twilio.account_sid",
+          sms.twilio.account_sid,
+        ) ?? "",
       message_service_sid:
-        resolveField("twilio", "message_service_sid", sms.twilio.message_service_sid) ?? "",
-      auth_token: resolveSecretField("twilio", "auth_token", sms.twilio.auth_token),
+        resolveField(
+          "twilio",
+          "message_service_sid",
+          "auth.sms.twilio.message_service_sid",
+          sms.twilio.message_service_sid,
+        ) ?? "",
+      auth_token: resolveSecretField(
+        "twilio",
+        "auth_token",
+        "auth.sms.twilio.auth_token",
+        sms.twilio.auth_token,
+      ),
     },
     twilio_verify: {
       enabled: twilioVerifyEnabled,
-      account_sid: resolveField("twilio_verify", "account_sid", sms.twilio_verify.account_sid),
+      account_sid: resolveField(
+        "twilio_verify",
+        "account_sid",
+        "auth.sms.twilio_verify.account_sid",
+        sms.twilio_verify.account_sid,
+      ),
       message_service_sid: resolveField(
         "twilio_verify",
         "message_service_sid",
+        "auth.sms.twilio_verify.message_service_sid",
         sms.twilio_verify.message_service_sid,
       ),
-      auth_token: resolveSecretField("twilio_verify", "auth_token", sms.twilio_verify.auth_token),
+      auth_token: resolveSecretField(
+        "twilio_verify",
+        "auth_token",
+        "auth.sms.twilio_verify.auth_token",
+        sms.twilio_verify.auth_token,
+      ),
     },
     messagebird: {
       enabled: messagebirdEnabled,
-      originator: resolveField("messagebird", "originator", sms.messagebird.originator),
-      access_key: resolveSecretField("messagebird", "access_key", sms.messagebird.access_key),
+      originator: resolveField(
+        "messagebird",
+        "originator",
+        "auth.sms.messagebird.originator",
+        sms.messagebird.originator,
+      ),
+      access_key: resolveSecretField(
+        "messagebird",
+        "access_key",
+        "auth.sms.messagebird.access_key",
+        sms.messagebird.access_key,
+      ),
     },
     textlocal: {
       enabled: textlocalEnabled,
-      sender: resolveField("textlocal", "sender", sms.textlocal.sender),
-      api_key: resolveSecretField("textlocal", "api_key", sms.textlocal.api_key),
+      sender: resolveField(
+        "textlocal",
+        "sender",
+        "auth.sms.textlocal.sender",
+        sms.textlocal.sender,
+      ),
+      api_key: resolveSecretField(
+        "textlocal",
+        "api_key",
+        "auth.sms.textlocal.api_key",
+        sms.textlocal.api_key,
+      ),
     },
     vonage: {
       enabled: vonageEnabled,
-      from: resolveField("vonage", "from", sms.vonage.from),
-      api_key: resolveField("vonage", "api_key", sms.vonage.api_key),
-      api_secret: resolveSecretField("vonage", "api_secret", sms.vonage.api_secret),
+      from: resolveField("vonage", "from", "auth.sms.vonage.from", sms.vonage.from),
+      api_key: resolveField("vonage", "api_key", "auth.sms.vonage.api_key", sms.vonage.api_key),
+      api_secret: resolveSecretField(
+        "vonage",
+        "api_secret",
+        "auth.sms.vonage.api_secret",
+        sms.vonage.api_secret,
+      ),
     },
   };
 }
@@ -2751,6 +2852,7 @@ export function legacyResolveAuthExternalProviders(
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): Record<string, LegacyResolvedAuthExternalProvider> {
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const externalDoc = asRecord(authDocument?.["external"]);
 
   const result: Record<string, LegacyResolvedAuthExternalProvider> = {};
@@ -2801,7 +2903,7 @@ export function legacyResolveAuthExternalProviders(
       );
 
     result[name] = {
-      enabled: remoteOverrideKeys.has(`auth.external.${name}.enabled`)
+      enabled: remoteWins(`auth.external.${name}.enabled`)
         ? configuredEnabled
         : legacyEnvOverrideBool(
             `${envPrefix}_ENABLED`,
@@ -2810,24 +2912,24 @@ export function legacyResolveAuthExternalProviders(
             projectEnvValues,
           ),
       clientId:
-        (remoteOverrideKeys.has(`auth.external.${name}.client_id`)
+        (remoteWins(`auth.external.${name}.client_id`)
           ? configuredClientId
           : legacyEnvOverride(`${envPrefix}_CLIENT_ID`, configuredClientId, projectEnvValues)) ??
         "",
-      secret: remoteOverrideKeys.has(`auth.external.${name}.secret`)
+      secret: remoteWins(`auth.external.${name}.secret`)
         ? legacyDecryptAuthSecret(configuredSecret, projectEnvValues)
         : legacyDecryptAuthSecret(
             legacyEnvOverride(`${envPrefix}_SECRET`, configuredSecret, projectEnvValues),
             projectEnvValues,
           ),
       url:
-        (remoteOverrideKeys.has(`auth.external.${name}.url`)
+        (remoteWins(`auth.external.${name}.url`)
           ? configuredUrl
           : legacyEnvOverride(`${envPrefix}_URL`, configuredUrl, projectEnvValues)) ?? "",
-      redirectUri: remoteOverrideKeys.has(`auth.external.${name}.redirect_uri`)
+      redirectUri: remoteWins(`auth.external.${name}.redirect_uri`)
         ? configuredRedirectUri
         : legacyEnvOverride(`${envPrefix}_REDIRECT_URI`, configuredRedirectUri, projectEnvValues),
-      skipNonceCheck: remoteOverrideKeys.has(`auth.external.${name}.skip_nonce_check`)
+      skipNonceCheck: remoteWins(`auth.external.${name}.skip_nonce_check`)
         ? configuredSkipNonceCheck
         : legacyEnvOverrideBool(
             `${envPrefix}_SKIP_NONCE_CHECK`,
@@ -2835,7 +2937,7 @@ export function legacyResolveAuthExternalProviders(
             `auth.external.${name}.skip_nonce_check`,
             projectEnvValues,
           ),
-      emailOptional: remoteOverrideKeys.has(`auth.external.${name}.email_optional`)
+      emailOptional: remoteWins(`auth.external.${name}.email_optional`)
         ? configuredEmailOptional
         : legacyEnvOverrideBool(
             `${envPrefix}_EMAIL_OPTIONAL`,
@@ -2973,7 +3075,7 @@ export function legacyResolveLocalConfigValues(
   document: Readonly<Record<string, unknown>> | undefined = undefined,
   /**
    * Config keys a matched `[remotes.<ref>]` block contributed at viper's OVERRIDE tier (Go's
-   * `v.Set`, applied ABOVE `AutomaticEnv` — `apps/cli-go/pkg/config/config.go:635-640`) — see
+   * `v.Set`, applied ABOVE `AutomaticEnv` — `apps/cli-go/pkg/config/config.go:724`) — see
    * `legacy-db-config.toml-read.ts`'s `LegacyRemoteOverride.remoteOverrideKeys` doc comment for
    * the full precedence rationale. Every `legacyEnvOverride*` call below that resolves a field
    * this function's shadow-consuming caller (`legacyBuildLocalDbContainerInputs`) actually
@@ -3006,12 +3108,16 @@ export function legacyResolveLocalConfigValues(
    * aborts the entire call and denies the shadow every field, including ones already computed as
    * local variables earlier in the function — textual position relative to a caller-needed field
    * is irrelevant. All of those fields are now gated the same way as `api.enabled` above and
-   * tracked in `LEGACY_ENV_OVERRIDABLE_KEYS` (review: PRRT_kwDOErm0O86W6R-G). Only the fields
-   * whose own resolution genuinely CANNOT throw AND whose value has no Go-observable consumer
-   * stay ungated below: `jwtIssuer`, `additionalRedirectUrls`, the auth hooks'
-   * `uri`/`secrets`, the mfa phone factor's `template`/`max_frequency`, the webauthn `rp_id`/
-   * `rp_origins`, the sms `template`/`max_frequency`, and the GCP analytics fields.
-   * `studioApiUrl` is now gated too (below) — a "non-throwing read, throwing downstream
+   * tracked in `LEGACY_ENV_OVERRIDABLE_KEYS` (review: PRRT_kwDOErm0O86W6R-G). An earlier version
+   * of this comment also claimed `jwtIssuer`/`additionalRedirectUrls`/the mfa phone factor's
+   * `template`/`max_frequency`/the webauthn `rp_id`/`rp_origins`/the sms `template`/`max_frequency`/
+   * the GCP analytics fields could stay ungated because their own reads genuinely cannot throw —
+   * that reasoning doesn't hold either: a non-throwing read is still a precedence bug when a
+   * matched remote's own value loses to a stale/differently-scoped ambient env var, same "cannot
+   * throw" vs. "no Go-observable consequence" distinction already drawn for `auth.external.*`'s
+   * `client_id`/`url`/`redirect_uri` above. All of those are now gated too and tracked in
+   * `LEGACY_ENV_OVERRIDABLE_KEYS`. `studioApiUrl` is gated for a related but distinct reason
+   * (below) — a "non-throwing read, throwing downstream
    * consumer" case like the third_party required fields just below: `legacyGoUrlParse` inside
    * `legacyValidateResolvedConfig` throws on a malformed URL even though `legacyEnvOverride`
    * itself never does (review: PRRT_kwDOErm0O86XKYiF's sibling gap). `studio.openai_api_key`/
@@ -3038,7 +3144,7 @@ export function legacyResolveLocalConfigValues(
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyLocalConfigValues {
-  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   // Go's `Config.Validate` checks `ProjectId` FIRST, before every other field
   // (`pkg/config/config.go:990-991`) — see this function's `@throws` doc above
   // for why a workdir basename that sanitizes to `""` fails here even when
@@ -3359,11 +3465,12 @@ export function legacyResolveLocalConfigValues(
   // (`config.go:585-586`), so every flat `auth.*` scalar Go feeds into
   // GoTrue's env must go through the same override resolution `siteUrl`
   // above already gets, not just the fields `Validate` happens to check.
-  const jwtIssuer = legacyEnvOverride(
-    "SUPABASE_AUTH_JWT_ISSUER",
-    config.auth.jwt_issuer,
-    projectEnvValues,
-  );
+  // `jwtIssuer` is a plain, non-throwing `legacyEnvOverride` string read, but leaving it ungated
+  // is still a precedence bug, same reasoning as `auth.external.*`'s `client_id`/`url`/
+  // `redirect_uri` above — `auth.jwt_issuer` is in `LEGACY_ENV_OVERRIDABLE_KEYS`.
+  const jwtIssuer = remoteWins("auth.jwt_issuer")
+    ? config.auth.jwt_issuer
+    : legacyEnvOverride("SUPABASE_AUTH_JWT_ISSUER", config.auth.jwt_issuer, projectEnvValues);
   // Same remote-over-env precedence as `siteUrl` above — `jwtExpiry` reaches the shadow's own
   // Postgres container spec (`legacyBuildLocalDbContainerInputs`'s `authJwtExpiry`).
   const jwtExpiry = remoteWins("auth.jwt_expiry")
@@ -3377,12 +3484,12 @@ export function legacyResolveLocalConfigValues(
   // Go decodes `additional_redirect_urls` (a `[]string`) through the same
   // `StringToSliceHookFunc(",")` mapstructure hook as every other Go
   // string-slice field (`config.go:775-784`) — same comma-split-override
-  // pattern as `auth.webauthn.rp_origins` below.
-  const additionalRedirectUrlsOverride = legacyEnvOverride(
-    "SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS",
-    undefined,
-    projectEnvValues,
-  );
+  // pattern as `auth.webauthn.rp_origins` below. Same "non-throwing read is still a precedence
+  // bug" reasoning as `jwtIssuer` above — `auth.additional_redirect_urls` is also in
+  // `LEGACY_ENV_OVERRIDABLE_KEYS`.
+  const additionalRedirectUrlsOverride = remoteWins("auth.additional_redirect_urls")
+    ? undefined
+    : legacyEnvOverride("SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS", undefined, projectEnvValues);
   const additionalRedirectUrls =
     additionalRedirectUrlsOverride !== undefined
       ? additionalRedirectUrlsOverride.split(",")
@@ -3522,19 +3629,23 @@ export function legacyResolveLocalConfigValues(
             projectEnvValues,
           )
         : false;
-    const rpId =
-      webauthnDoc !== undefined
-        ? legacyEnvOverride(
-            "SUPABASE_AUTH_WEBAUTHN_RP_ID",
-            typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : undefined,
-            projectEnvValues,
-          )
+    // `rp_id`/`rp_origins` are plain, non-throwing `legacyEnvOverride` reads, but leaving them
+    // ungated is still a precedence bug, same reasoning as `auth.external.*`'s `client_id`/`url`/
+    // `redirect_uri` above — `auth.webauthn.rp_id`/`.rp_origins` are in
+    // `LEGACY_ENV_OVERRIDABLE_KEYS`.
+    const configuredRpId =
+      typeof webauthnDoc?.["rp_id"] === "string" ? webauthnDoc["rp_id"] : undefined;
+    const rpId = remoteWins("auth.webauthn.rp_id")
+      ? configuredRpId
+      : webauthnDoc !== undefined
+        ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ID", configuredRpId, projectEnvValues)
         : undefined;
     // Go decodes `rp_origins` (a `[]string`) through the same `StringToSliceHookFunc(",")`
     // mapstructure hook as every other Go string-slice field (`config.go:775-784`), so a
     // `SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS` override is comma-split the same way.
-    const rpOriginsOverride =
-      webauthnDoc !== undefined
+    const rpOriginsOverride = remoteWins("auth.webauthn.rp_origins")
+      ? undefined
+      : webauthnDoc !== undefined
         ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
         : undefined;
     // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")` unconditionally to
@@ -3679,9 +3790,11 @@ export function legacyResolveLocalConfigValues(
   // this whole function (and the shadow it feeds) on a malformed `SUPABASE_ANALYTICS_*` env var
   // even when a matched remote block already set the field at viper's OVERRIDE tier, a value
   // Go's `Validate` never evaluates the env var for in that case. `gcpProjectId`/
-  // `gcpProjectNumber`/`gcpJwtPath` below stay ungated: `legacyEnvOverride` (plain string) never
-  // throws, so there's no abort risk, and their resolved values are unused by the shadow either
-  // way (same "inert" reasoning as this function's other unconsumed fields).
+  // `gcpProjectNumber`/`gcpJwtPath` below can't throw either (`legacyEnvOverride` is a plain
+  // string read), but leaving them ungated is still a precedence bug, same reasoning as
+  // `auth.external.*`'s `client_id`/`url`/`redirect_uri` — all three are in
+  // `LEGACY_ENV_OVERRIDABLE_KEYS` and already gated on the `legacy-db-config.toml-read.ts` side
+  // (`analyticsString`); this resolver's own copy just never got the matching gate.
   const analyticsEnabled = remoteWins("analytics.enabled")
     ? config.analytics.enabled
     : legacyEnvOverrideBool(
@@ -3695,21 +3808,27 @@ export function legacyResolveLocalConfigValues(
     projectEnvValues,
     remoteWins("analytics.backend"),
   );
-  const gcpProjectId = legacyEnvOverride(
-    "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
-    config.analytics.gcp_project_id,
-    projectEnvValues,
-  );
-  const gcpProjectNumber = legacyEnvOverride(
-    "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
-    config.analytics.gcp_project_number,
-    projectEnvValues,
-  );
-  const gcpJwtPath = legacyEnvOverride(
-    "SUPABASE_ANALYTICS_GCP_JWT_PATH",
-    config.analytics.gcp_jwt_path,
-    projectEnvValues,
-  );
+  const gcpProjectId = remoteWins("analytics.gcp_project_id")
+    ? config.analytics.gcp_project_id
+    : legacyEnvOverride(
+        "SUPABASE_ANALYTICS_GCP_PROJECT_ID",
+        config.analytics.gcp_project_id,
+        projectEnvValues,
+      );
+  const gcpProjectNumber = remoteWins("analytics.gcp_project_number")
+    ? config.analytics.gcp_project_number
+    : legacyEnvOverride(
+        "SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER",
+        config.analytics.gcp_project_number,
+        projectEnvValues,
+      );
+  const gcpJwtPath = remoteWins("analytics.gcp_jwt_path")
+    ? config.analytics.gcp_jwt_path
+    : legacyEnvOverride(
+        "SUPABASE_ANALYTICS_GCP_JWT_PATH",
+        config.analytics.gcp_jwt_path,
+        projectEnvValues,
+      );
 
   // Go's `Config.Validate` calls `c.Experimental.validate()` right after the
   // analytics/bigquery block and right before returning. The webhooks check is NOT "the user
@@ -3751,7 +3870,7 @@ export function legacyResolveLocalConfigValues(
   // copy just never got the matching gate: an ungated `legacyEnvOverride` here let ambient
   // `SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS` beat a matched remote's own `format_options`,
   // the opposite of Go's `mergeRemoteConfig`, which installs the remote leaf with `v.Set` ABOVE
-  // `AutomaticEnv` (`config.go:635-640`) — same remote-over-env precedence as `webhooksEnabled`
+  // `AutomaticEnv` (`config.go:724`) — same remote-over-env precedence as `webhooksEnabled`
   // immediately above.
   const pgdeltaFormatOptions = remoteWins("experimental.pgdelta.format_options")
     ? (config.experimental.pgdelta?.format_options ?? "")
@@ -3992,7 +4111,7 @@ export function legacyResolveLocalConfigValues(
  * `remoteOverrideKeys` (default empty, so `start.handler.ts`'s `supabase start` caller sees
  * exactly the same behavior as before): every `auth.signing_keys_path`/`auth.third_party.*`
  * field a matched `[remotes.<ref>]` block set at viper's OVERRIDE tier
- * (`apps/cli-go/pkg/config/config.go:635-640`) must win over a conflicting `SUPABASE_AUTH_*`
+ * (`apps/cli-go/pkg/config/config.go:718-730`) must win over a conflicting `SUPABASE_AUTH_*`
  * value — this function feeds the shadow's PG15+ one-shot auth-migration job's `jwks` input on
  * the `db diff --linked`/`db pull` path (CLI-1956), via `legacyBuildLocalDbContainerInputs`
  * (review: PRRT_kwDOErm0O86W3Ox_).
@@ -4004,7 +4123,7 @@ export async function legacyResolveLocalJwks(
   projectEnvValues: Readonly<Record<string, string>> | undefined = undefined,
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): Promise<string> {
-  const remoteWins = (dottedFieldPath: string): boolean => remoteOverrideKeys.has(dottedFieldPath);
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
   const signingKeysPath = remoteWins("auth.signing_keys_path")
     ? config.auth.signing_keys_path
     : legacyEnvOverride(

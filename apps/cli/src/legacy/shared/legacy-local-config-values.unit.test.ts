@@ -1435,6 +1435,31 @@ describe("legacyResolveLocalConfigValues", () => {
       const resolved = legacyResolveAuthEmail(config.auth.email, authDocument, undefined);
       expect(resolved.template["confirmation"]?.subject).toBe("Overridden subject");
     });
+
+    describe("max_frequency — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+      afterEach(() => {
+        delete process.env["SUPABASE_AUTH_EMAIL_MAX_FREQUENCY"];
+      });
+
+      it("prefers a remote-set auth.email.max_frequency over a conflicting SUPABASE_AUTH_EMAIL_MAX_FREQUENCY", () => {
+        process.env["SUPABASE_AUTH_EMAIL_MAX_FREQUENCY"] = "5s";
+        const config = baseConfig({ auth: { email: { max_frequency: "1m" } } });
+        const resolved = legacyResolveAuthEmail(
+          config.auth.email,
+          undefined,
+          undefined,
+          new Set(["auth.email.max_frequency"]),
+        );
+        expect(resolved.max_frequency).toBe("1m");
+      });
+
+      it("still applies SUPABASE_AUTH_EMAIL_MAX_FREQUENCY when no remote block matched", () => {
+        process.env["SUPABASE_AUTH_EMAIL_MAX_FREQUENCY"] = "5s";
+        const config = baseConfig({ auth: { email: { max_frequency: "1m" } } });
+        const resolved = legacyResolveAuthEmail(config.auth.email, undefined, undefined);
+        expect(resolved.max_frequency).toBe("5s");
+      });
+    });
   });
 
   describe("legacyResolveAuthHooks", () => {
@@ -1572,6 +1597,54 @@ describe("legacyResolveLocalConfigValues", () => {
         'cannot parse "not-a-bool" as a bool',
       );
     });
+
+    it("prefers a remote-set auth.mfa.phone.template over a conflicting SUPABASE_AUTH_MFA_PHONE_TEMPLATE", () => {
+      process.env["SUPABASE_AUTH_MFA_PHONE_TEMPLATE"] = "env template";
+      const mfa = {
+        ...baseConfig().auth.mfa,
+        phone: { ...baseConfig().auth.mfa.phone, template: "remote template" },
+      };
+      const resolved = legacyResolveAuthMfa(mfa, undefined, new Set(["auth.mfa.phone.template"]));
+      expect(resolved.phone.template).toBe("remote template");
+      delete process.env["SUPABASE_AUTH_MFA_PHONE_TEMPLATE"];
+    });
+
+    it("still applies SUPABASE_AUTH_MFA_PHONE_TEMPLATE when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_MFA_PHONE_TEMPLATE"] = "env template";
+      const mfa = {
+        ...baseConfig().auth.mfa,
+        phone: { ...baseConfig().auth.mfa.phone, template: "remote template" },
+      };
+      const resolved = legacyResolveAuthMfa(mfa, undefined);
+      expect(resolved.phone.template).toBe("env template");
+      delete process.env["SUPABASE_AUTH_MFA_PHONE_TEMPLATE"];
+    });
+
+    it("prefers a remote-set auth.mfa.phone.max_frequency over a conflicting SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY", () => {
+      process.env["SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY"] = "5s";
+      const mfa = {
+        ...baseConfig().auth.mfa,
+        phone: { ...baseConfig().auth.mfa.phone, max_frequency: "1m" },
+      };
+      const resolved = legacyResolveAuthMfa(
+        mfa,
+        undefined,
+        new Set(["auth.mfa.phone.max_frequency"]),
+      );
+      expect(resolved.phone.max_frequency).toBe("1m");
+      delete process.env["SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY"];
+    });
+
+    it("still applies SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY"] = "5s";
+      const mfa = {
+        ...baseConfig().auth.mfa,
+        phone: { ...baseConfig().auth.mfa.phone, max_frequency: "1m" },
+      };
+      const resolved = legacyResolveAuthMfa(mfa, undefined);
+      expect(resolved.phone.max_frequency).toBe("5s");
+      delete process.env["SUPABASE_AUTH_MFA_PHONE_MAX_FREQUENCY"];
+    });
   });
 
   describe("legacyResolveAuthEmailSmtp — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
@@ -1617,6 +1690,90 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(() => legacyResolveAuthEmailSmtp(authDocument, undefined)).toThrow(
         "failed to parse config: missing private key",
       );
+    });
+
+    it("prefers a remote-set auth.email.smtp.host over a conflicting SUPABASE_AUTH_EMAIL_SMTP_HOST", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_HOST"] = "smtp.env.example.com";
+      const authDocument = { email: { smtp: { enabled: true, host: "smtp.remote.example.com" } } };
+      const resolved = legacyResolveAuthEmailSmtp(
+        authDocument,
+        undefined,
+        new Set(["auth.email.smtp.host"]),
+      );
+      expect(resolved?.host).toBe("smtp.remote.example.com");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_HOST"];
+    });
+
+    it("still applies SUPABASE_AUTH_EMAIL_SMTP_HOST when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_HOST"] = "smtp.env.example.com";
+      const authDocument = { email: { smtp: { enabled: true, host: "smtp.remote.example.com" } } };
+      const resolved = legacyResolveAuthEmailSmtp(authDocument, undefined);
+      expect(resolved?.host).toBe("smtp.env.example.com");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_HOST"];
+    });
+
+    it("prefers a remote-set auth.email.smtp.user over a conflicting SUPABASE_AUTH_EMAIL_SMTP_USER", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_USER"] = "env-user";
+      const authDocument = { email: { smtp: { enabled: true, user: "remote-user" } } };
+      const resolved = legacyResolveAuthEmailSmtp(
+        authDocument,
+        undefined,
+        new Set(["auth.email.smtp.user"]),
+      );
+      expect(resolved?.user).toBe("remote-user");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_USER"];
+    });
+
+    it("still applies SUPABASE_AUTH_EMAIL_SMTP_USER when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_USER"] = "env-user";
+      const authDocument = { email: { smtp: { enabled: true, user: "remote-user" } } };
+      const resolved = legacyResolveAuthEmailSmtp(authDocument, undefined);
+      expect(resolved?.user).toBe("env-user");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_USER"];
+    });
+
+    it("prefers a remote-set auth.email.smtp.admin_email over a conflicting SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL"] = "env@example.com";
+      const authDocument = {
+        email: { smtp: { enabled: true, admin_email: "remote@example.com" } },
+      };
+      const resolved = legacyResolveAuthEmailSmtp(
+        authDocument,
+        undefined,
+        new Set(["auth.email.smtp.admin_email"]),
+      );
+      expect(resolved?.adminEmail).toBe("remote@example.com");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL"];
+    });
+
+    it("still applies SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL"] = "env@example.com";
+      const authDocument = {
+        email: { smtp: { enabled: true, admin_email: "remote@example.com" } },
+      };
+      const resolved = legacyResolveAuthEmailSmtp(authDocument, undefined);
+      expect(resolved?.adminEmail).toBe("env@example.com");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_ADMIN_EMAIL"];
+    });
+
+    it("prefers a remote-set auth.email.smtp.sender_name over a conflicting SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME"] = "Env Sender";
+      const authDocument = { email: { smtp: { enabled: true, sender_name: "Remote Sender" } } };
+      const resolved = legacyResolveAuthEmailSmtp(
+        authDocument,
+        undefined,
+        new Set(["auth.email.smtp.sender_name"]),
+      );
+      expect(resolved?.senderName).toBe("Remote Sender");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME"];
+    });
+
+    it("still applies SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME"] = "Env Sender";
+      const authDocument = { email: { smtp: { enabled: true, sender_name: "Remote Sender" } } };
+      const resolved = legacyResolveAuthEmailSmtp(authDocument, undefined);
+      expect(resolved?.senderName).toBe("Env Sender");
+      delete process.env["SUPABASE_AUTH_EMAIL_SMTP_SENDER_NAME"];
     });
   });
 
@@ -3209,6 +3366,136 @@ describe("legacyResolveLocalConfigValues", () => {
       );
     });
 
+    // Regression: `resolveField`'s non-secret provider leaves (`account_sid`/`message_service_sid`/
+    // `originator`/`sender`/`from`/`api_key`) had no `remoteWins` branch at all — `vonage.api_key`
+    // sitting right next to the already-gated `vonage.api_secret` was the clearest tell.
+    it("prefers a remote-set auth.sms.twilio.account_sid over a conflicting SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID", () => {
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"] = "env-sid";
+      const configured = {
+        ...baseConfig().auth.sms,
+        twilio: { ...baseConfig().auth.sms.twilio, account_sid: "remote-sid" },
+      };
+      const resolved = legacyResolveAuthSms(
+        undefined,
+        configured,
+        undefined,
+        new Set(["auth.sms.twilio.account_sid"]),
+      );
+      expect(resolved.twilio.account_sid).toBe("remote-sid");
+      delete process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"];
+    });
+
+    it("still applies SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"] = "env-sid";
+      const configured = {
+        ...baseConfig().auth.sms,
+        twilio: { ...baseConfig().auth.sms.twilio, account_sid: "remote-sid" },
+      };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.twilio.account_sid).toBe("env-sid");
+      delete process.env["SUPABASE_AUTH_SMS_TWILIO_ACCOUNT_SID"];
+    });
+
+    it("prefers a remote-set auth.sms.vonage.from over a conflicting SUPABASE_AUTH_SMS_VONAGE_FROM", () => {
+      process.env["SUPABASE_AUTH_SMS_VONAGE_FROM"] = "env-from";
+      const authDocument = { sms: { vonage: { from: "remote-from" } } };
+      const configured = {
+        ...baseConfig().auth.sms,
+        vonage: { ...baseConfig().auth.sms.vonage, from: "remote-from" },
+      };
+      const resolved = legacyResolveAuthSms(
+        authDocument,
+        configured,
+        undefined,
+        new Set(["auth.sms.vonage.from"]),
+      );
+      expect(resolved.vonage.from).toBe("remote-from");
+      delete process.env["SUPABASE_AUTH_SMS_VONAGE_FROM"];
+    });
+
+    it("still applies SUPABASE_AUTH_SMS_VONAGE_FROM when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_SMS_VONAGE_FROM"] = "env-from";
+      const authDocument = { sms: { vonage: { from: "remote-from" } } };
+      const configured = {
+        ...baseConfig().auth.sms,
+        vonage: { ...baseConfig().auth.sms.vonage, from: "remote-from" },
+      };
+      const resolved = legacyResolveAuthSms(authDocument, configured, undefined);
+      expect(resolved.vonage.from).toBe("env-from");
+      delete process.env["SUPABASE_AUTH_SMS_VONAGE_FROM"];
+    });
+
+    it("prefers a remote-set auth.sms.vonage.api_key over a conflicting SUPABASE_AUTH_SMS_VONAGE_API_KEY", () => {
+      process.env["SUPABASE_AUTH_SMS_VONAGE_API_KEY"] = "env-key";
+      const authDocument = { sms: { vonage: { api_key: "remote-key" } } };
+      const configured = {
+        ...baseConfig().auth.sms,
+        vonage: { ...baseConfig().auth.sms.vonage, api_key: "remote-key" },
+      };
+      const resolved = legacyResolveAuthSms(
+        authDocument,
+        configured,
+        undefined,
+        new Set(["auth.sms.vonage.api_key"]),
+      );
+      expect(resolved.vonage.api_key).toBe("remote-key");
+      delete process.env["SUPABASE_AUTH_SMS_VONAGE_API_KEY"];
+    });
+
+    it("still applies SUPABASE_AUTH_SMS_VONAGE_API_KEY when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_SMS_VONAGE_API_KEY"] = "env-key";
+      const authDocument = { sms: { vonage: { api_key: "remote-key" } } };
+      const configured = {
+        ...baseConfig().auth.sms,
+        vonage: { ...baseConfig().auth.sms.vonage, api_key: "remote-key" },
+      };
+      const resolved = legacyResolveAuthSms(authDocument, configured, undefined);
+      expect(resolved.vonage.api_key).toBe("env-key");
+      delete process.env["SUPABASE_AUTH_SMS_VONAGE_API_KEY"];
+    });
+
+    it("prefers a remote-set auth.sms.template over a conflicting SUPABASE_AUTH_SMS_TEMPLATE", () => {
+      process.env["SUPABASE_AUTH_SMS_TEMPLATE"] = "env template";
+      const configured = { ...baseConfig().auth.sms, template: "remote template" };
+      const resolved = legacyResolveAuthSms(
+        undefined,
+        configured,
+        undefined,
+        new Set(["auth.sms.template"]),
+      );
+      expect(resolved.template).toBe("remote template");
+      delete process.env["SUPABASE_AUTH_SMS_TEMPLATE"];
+    });
+
+    it("still applies SUPABASE_AUTH_SMS_TEMPLATE when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_SMS_TEMPLATE"] = "env template";
+      const configured = { ...baseConfig().auth.sms, template: "remote template" };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.template).toBe("env template");
+      delete process.env["SUPABASE_AUTH_SMS_TEMPLATE"];
+    });
+
+    it("prefers a remote-set auth.sms.max_frequency over a conflicting SUPABASE_AUTH_SMS_MAX_FREQUENCY", () => {
+      process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "5s";
+      const configured = { ...baseConfig().auth.sms, max_frequency: "1m" };
+      const resolved = legacyResolveAuthSms(
+        undefined,
+        configured,
+        undefined,
+        new Set(["auth.sms.max_frequency"]),
+      );
+      expect(resolved.max_frequency).toBe("1m");
+      delete process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
+    });
+
+    it("still applies SUPABASE_AUTH_SMS_MAX_FREQUENCY when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "5s";
+      const configured = { ...baseConfig().auth.sms, max_frequency: "1m" };
+      const resolved = legacyResolveAuthSms(undefined, configured, undefined);
+      expect(resolved.max_frequency).toBe("5s");
+      delete process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
+    });
+
     it("still aborts legacyResolveLocalConfigValues on a malformed SUPABASE_AUTH_SMS_ENABLE_SIGNUP reached via validateAuthSmsProviders, unless remoteOverrideKeys suppresses it", () => {
       // End-to-end proof that the gap is reachable from the exact function this PR's shadow
       // provisioning calls (`legacyBuildLocalDbContainerInputs` -> `legacyResolveLocalConfigValues`
@@ -3367,7 +3654,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
 describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
   // Go's `mergeRemoteConfig` installs every matched `[remotes.<ref>]` leaf at viper's OVERRIDE
-  // tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:635-640`) — so once a remote
+  // tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:718-730`) — so once a remote
   // block sets a field, a conflicting `SUPABASE_*` env var must never be consulted for it.
   // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` already gated this
   // (review: PRRT_kwDOErm0O86W2LL4); this covers the remaining leaves this resolver derives
@@ -3819,6 +4106,198 @@ describe("legacyResolveLocalConfigValues — remoteOverrideKeys (linked shadow p
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
       'Invalid config for analytics.enabled: cannot parse "not-a-bool" as a bool',
     );
+  });
+
+  it("prefers a remote-set analytics.gcp_project_id over a conflicting SUPABASE_ANALYTICS_GCP_PROJECT_ID", () => {
+    process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"] = "env-project";
+    const config = baseConfig({ analytics: { gcp_project_id: "remote-project" } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["analytics.gcp_project_id"]),
+    );
+    expect(values.gcpProjectId).toBe("remote-project");
+    delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
+  });
+
+  it("still applies SUPABASE_ANALYTICS_GCP_PROJECT_ID when no remote block matched", () => {
+    process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"] = "env-project";
+    const config = baseConfig({ analytics: { gcp_project_id: "remote-project" } });
+    const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+    expect(values.gcpProjectId).toBe("env-project");
+    delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_ID"];
+  });
+
+  it("prefers a remote-set analytics.gcp_project_number over a conflicting SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER", () => {
+    process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"] = "999";
+    const config = baseConfig({ analytics: { gcp_project_number: "111" } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["analytics.gcp_project_number"]),
+    );
+    expect(values.gcpProjectNumber).toBe("111");
+    delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
+  });
+
+  it("still applies SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER when no remote block matched", () => {
+    process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"] = "999";
+    const config = baseConfig({ analytics: { gcp_project_number: "111" } });
+    const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+    expect(values.gcpProjectNumber).toBe("999");
+    delete process.env["SUPABASE_ANALYTICS_GCP_PROJECT_NUMBER"];
+  });
+
+  it("prefers a remote-set analytics.gcp_jwt_path over a conflicting SUPABASE_ANALYTICS_GCP_JWT_PATH", () => {
+    process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = "env-key.json";
+    const config = baseConfig({ analytics: { gcp_jwt_path: "remote-key.json" } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["analytics.gcp_jwt_path"]),
+    );
+    expect(values.gcpJwtPath).toBe("remote-key.json");
+    delete process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
+  });
+
+  it("still applies SUPABASE_ANALYTICS_GCP_JWT_PATH when no remote block matched", () => {
+    process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"] = "env-key.json";
+    const config = baseConfig({ analytics: { gcp_jwt_path: "remote-key.json" } });
+    const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+    expect(values.gcpJwtPath).toBe("env-key.json");
+    delete process.env["SUPABASE_ANALYTICS_GCP_JWT_PATH"];
+  });
+
+  it("prefers a remote-set auth.jwt_issuer over a conflicting SUPABASE_AUTH_JWT_ISSUER", () => {
+    process.env["SUPABASE_AUTH_JWT_ISSUER"] = "https://env.example.com";
+    const config = baseConfig({ auth: { jwt_issuer: "https://remote.example.com" } });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["auth.jwt_issuer"]),
+    );
+    expect(values.authJwtIssuer).toBe("https://remote.example.com");
+    delete process.env["SUPABASE_AUTH_JWT_ISSUER"];
+  });
+
+  it("still applies SUPABASE_AUTH_JWT_ISSUER when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_JWT_ISSUER"] = "https://env.example.com";
+    const config = baseConfig({ auth: { jwt_issuer: "https://remote.example.com" } });
+    const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+    expect(values.authJwtIssuer).toBe("https://env.example.com");
+    delete process.env["SUPABASE_AUTH_JWT_ISSUER"];
+  });
+
+  it("prefers a remote-set auth.additional_redirect_urls over a conflicting SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS", () => {
+    process.env["SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS"] = "https://env.example.com";
+    const config = baseConfig({
+      auth: { additional_redirect_urls: ["https://remote.example.com"] },
+    });
+    const values = legacyResolveLocalConfigValues(
+      config,
+      "127.0.0.1",
+      WORKDIR,
+      undefined,
+      undefined,
+      new Set(["auth.additional_redirect_urls"]),
+    );
+    expect(values.authAdditionalRedirectUrls).toEqual(["https://remote.example.com"]);
+    delete process.env["SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS"];
+  });
+
+  it("still applies SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS when no remote block matched", () => {
+    process.env["SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS"] = "https://env.example.com";
+    const config = baseConfig({
+      auth: { additional_redirect_urls: ["https://remote.example.com"] },
+    });
+    const values = legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR);
+    expect(values.authAdditionalRedirectUrls).toEqual(["https://env.example.com"]);
+    delete process.env["SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS"];
+  });
+
+  describe("auth.webauthn.rp_id / auth.webauthn.rp_origins — remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
+    // `rpId`/`rpOrigins` aren't part of this function's return value (only
+    // `legacyValidateResolvedConfig`'s passkey step consumes them), so precedence is proven
+    // through that step's emptiness check: the document deliberately leaves the field EMPTY (a
+    // real, present-but-empty state, not "absent") while the env var supplies a non-empty value —
+    // ungated, the non-throwing env value wins and validation passes; gated, the remote's own
+    // (empty) value wins and validation throws exactly like Go's `Validate` would for a
+    // `[remotes.*]`-supplied empty field.
+    afterEach(() => {
+      delete process.env["SUPABASE_AUTH_PASSKEY_ENABLED"];
+      delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"];
+      delete process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"];
+    });
+
+    it("suppresses a non-empty SUPABASE_AUTH_WEBAUTHN_RP_ID when a remote block already set (empty) auth.webauthn.rp_id", () => {
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"] = "localhost";
+      const config = baseConfig();
+      const document = {
+        auth: { passkey: { enabled: true }, webauthn: { rp_id: "", rp_origins: ["http://x"] } },
+      };
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          WORKDIR,
+          undefined,
+          document,
+          new Set(["auth.webauthn.rp_id"]),
+        ),
+      ).toThrow("Missing required field in config: auth.webauthn.rp_id");
+    });
+
+    it("still applies SUPABASE_AUTH_WEBAUTHN_RP_ID when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ID"] = "localhost";
+      const config = baseConfig();
+      const document = {
+        auth: { passkey: { enabled: true }, webauthn: { rp_id: "", rp_origins: ["http://x"] } },
+      };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
+
+    it("suppresses a non-empty SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS when a remote block already set (empty) auth.webauthn.rp_origins", () => {
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"] = "http://localhost:3000";
+      const config = baseConfig();
+      const document = {
+        auth: { passkey: { enabled: true }, webauthn: { rp_id: "localhost", rp_origins: [] } },
+      };
+      expect(() =>
+        legacyResolveLocalConfigValues(
+          config,
+          "127.0.0.1",
+          WORKDIR,
+          undefined,
+          document,
+          new Set(["auth.webauthn.rp_origins"]),
+        ),
+      ).toThrow("Missing required field in config: auth.webauthn.rp_origins");
+    });
+
+    it("still applies SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS when no remote block matched", () => {
+      process.env["SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS"] = "http://localhost:3000";
+      const config = baseConfig();
+      const document = {
+        auth: { passkey: { enabled: true }, webauthn: { rp_id: "localhost", rp_origins: [] } },
+      };
+      expect(() =>
+        legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR, undefined, document),
+      ).not.toThrow();
+    });
   });
 
   it("suppresses a malformed SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED when a remote block already set auth.third_party.firebase.enabled", () => {
@@ -4328,7 +4807,7 @@ describe("legacyResolveLocalJwks", () => {
 
   describe("remoteOverrideKeys (linked shadow provisioning, CLI-1956)", () => {
     // Go's `mergeRemoteConfig` installs every matched `[remotes.<ref>]` leaf at viper's OVERRIDE
-    // tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:635-640`) — regression
+    // tier, above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:718-730`) — regression
     // coverage for review PRRT_kwDOErm0O86W3Ox_, which found `auth.signing_keys_path`/
     // `auth.third_party.*` reapplying a conflicting `SUPABASE_AUTH_*` env value even after a
     // matched remote block set them.

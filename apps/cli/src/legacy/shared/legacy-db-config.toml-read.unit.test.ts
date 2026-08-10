@@ -377,7 +377,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote db.migrations.enabled beats SUPABASE_DB_MIGRATIONS_ENABLED", () => {
     // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
-    // (config.go:635-637), so an explicit remote value wins over the env var.
+    // (config.go:724), so an explicit remote value wins over the env var.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
@@ -487,7 +487,7 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
     () => {
-      // Same override-tier precedence as db.migrations.enabled above (config.go:635-637).
+      // Same override-tier precedence as db.migrations.enabled above (config.go:724).
       const ref = "abcdefghijklmnopqrst";
       const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
       process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-wins.sql";
@@ -519,7 +519,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
     // Go's mergeRemoteConfig applies EVERY matched-block key via v.Set (above AutomaticEnv,
-    // config.go:635-637), not just db/seed — so a remote experimental.pgdelta.enabled wins
+    // config.go:718-730), not just db/seed — so a remote experimental.pgdelta.enabled wins
     // over SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
@@ -574,7 +574,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote auth.enabled beats its SUPABASE_AUTH_ENABLED env var", () => {
     // Same v.Set-above-AutomaticEnv precedence as db.migrations.enabled / pgdelta.enabled
-    // (config.go:635-637), but for auth.enabled specifically (CLI-1878): a matched remote
+    // (config.go:724), but for auth.enabled specifically (CLI-1878): a matched remote
     // block's auth.enabled must win over SUPABASE_AUTH_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_AUTH_ENABLED"];
@@ -631,7 +631,7 @@ describe("legacyReadDbToml", () => {
     "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
     () => {
       // Same v.Set-above-AutomaticEnv precedence as auth.enabled/pgdelta.enabled
-      // (config.go:635-637): a matched remote block's experimental.webhooks.enabled must win
+      // (config.go:724): a matched remote block's experimental.webhooks.enabled must win
       // over SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED. Without the fix, the suppressed env value
       // (false) would win instead, and the merged [experimental.webhooks] section (present via
       // the remote block) would then fail validation ("Webhooks cannot be deactivated").
@@ -913,7 +913,7 @@ describe("legacyReadDbToml", () => {
     });
 
     it.effect("forces db.seed.enabled false when the matched remote block omits it", () => {
-      // Go's mergeRemoteConfig (config.go:638-640) forces db.seed.enabled=false when the
+      // Go's mergeRemoteConfig (config.go:726-728) forces db.seed.enabled=false when the
       // matched remote block itself doesn't set it — even if the base config enables it.
       const dir = withConfig(
         [

@@ -260,7 +260,7 @@ interface LegacyRemoteOverride {
   /**
    * The config keys the matched remote block contributed at viper's OVERRIDE tier. Go's
    * `mergeRemoteConfig` applies every block key via `v.Set(...)` after `AutomaticEnv`
-   * (`config.go:635-640`), and `v.Set` sits ABOVE `AutomaticEnv` (`viper.go:1167-1174` vs
+   * (`config.go:718-730`), and `v.Set` sits ABOVE `AutomaticEnv` (`viper.go:1167-1174` vs
    * `:1226-1237`), so each explicitly-set remote key — plus the forced `db.seed.enabled`
    * default Go injects when the block omits it — must outrank the matching `SUPABASE_*`
    * env override (a plain TOML value elsewhere is still env-overridable). Holds every key in
@@ -315,13 +315,17 @@ function legacyResolveValidatedRemoteProjectId(
  * Every dotted config key this reader resolves with a `SUPABASE_*` AutomaticEnv override.
  * When a matched `[remotes.*]` block supplies any of these, Go's `mergeRemoteConfig` flattens
  * the whole block via `u.AllKeys()` and applies each leaf with `v.Set` (override tier, above
- * `AutomaticEnv` — `config.go:635-637`), so the block value must beat the env override.
+ * `AutomaticEnv` — `config.go:718-730`), so the block value must beat the env override.
  */
-const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
+export const LEGACY_ENV_OVERRIDABLE_KEYS = [
   // The matched `[remotes.<name>]` block's own `project_id` field is what selected it in the
-  // first place (`applyRemoteOverride` above matches on exactly this key), so it is ALWAYS
-  // present whenever a remote matched — same override-tier reasoning as every other key in
-  // this array, just guaranteed-present instead of block-dependent (review: PRRT_kwDOErm0O86XHGDL).
+  // first place (`applyRemoteOverride` above matches on exactly this key) — same override-tier
+  // reasoning as every other key in this array. NOT guaranteed present, though: a block can also
+  // match purely via its `SUPABASE_REMOTES_<NAME>_PROJECT_ID` env override with no literal
+  // `project_id` line in the block's own TOML table, in which case Go's `u.AllKeys()` (and this
+  // reader's own `legacyBlockProvidesKey` check below) correctly finds the key absent from the
+  // block, so `remoteOverrideKeys` omits it and the env override still applies for that
+  // (nonexistent) literal key — matching Go exactly (review: PRRT_kwDOErm0O86XHGDL).
   "project_id",
   "api.schemas",
   "db.port",
@@ -434,6 +438,13 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.third_party.clerk.domain",
   "auth.third_party.workos.enabled",
   "auth.third_party.workos.issuer_url",
+  // `auth.jwt_issuer`/`auth.additional_redirect_urls` are plain, non-throwing
+  // `legacyEnvOverride`/comma-split string reads in `legacyResolveLocalConfigValues` — same
+  // "non-throwing read is still a precedence bug" reasoning as `auth.external.*`'s
+  // `client_id`/`url`/`redirect_uri` above: a matched remote's own value must beat a stale
+  // ambient `SUPABASE_AUTH_JWT_ISSUER`/`SUPABASE_AUTH_ADDITIONAL_REDIRECT_URLS`.
+  "auth.jwt_issuer",
+  "auth.additional_redirect_urls",
   // Same "throws before a value the caller needs is resolved" bug class as `api.enabled`/
   // `auth.enabled`/`analytics.*`/`edge_runtime.deno_version` above, just for a much larger set of
   // fields the doc comment on `legacyResolveLocalConfigValues`'s `remoteOverrideKeys` parameter
@@ -458,6 +469,11 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.minimum_password_length",
   "auth.password_requirements",
   "auth.passkey.enabled",
+  // `auth.webauthn.rp_id`/`.rp_origins` are the same shape of plain, non-throwing string/slice
+  // reads `legacyResolveLocalConfigValues` resolves for its `passkey` validation input — same
+  // "non-throwing read is still a precedence bug" reasoning as `auth.jwt_issuer` above.
+  "auth.webauthn.rp_id",
+  "auth.webauthn.rp_origins",
   "auth.hook.mfa_verification_attempt.enabled",
   "auth.hook.mfa_verification_attempt.uri",
   "auth.hook.mfa_verification_attempt.secrets",
@@ -484,6 +500,11 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.mfa.web_authn.enroll_enabled",
   "auth.mfa.web_authn.verify_enabled",
   "auth.mfa.max_enrolled_factors",
+  // `auth.mfa.phone.template`/`.max_frequency` are plain, non-throwing `legacyEnvOverride` string
+  // reads in `legacyResolveAuthMfa` — same "non-throwing read is still a precedence bug"
+  // reasoning as `auth.jwt_issuer`/`auth.webauthn.rp_id` above.
+  "auth.mfa.phone.template",
+  "auth.mfa.phone.max_frequency",
   "auth.captcha.enabled",
   // `auth.captcha.provider` can't throw on its own (`legacyEnvOverride` is a plain string read),
   // but `legacyValidateResolvedConfig`'s enum check (`legacy-config-validate.ts`, ported from
@@ -514,6 +535,14 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   // synchronous `legacyResolveLocalConfigValues` call — same bug class as `.enabled`/`.port`
   // above, just for this Secret-typed leaf (review: PRRT_kwDOErm0O86XJYol).
   "auth.email.smtp.pass",
+  // `auth.email.smtp.host`/`.user`/`.admin_email`/`.sender_name` are plain, non-throwing
+  // `legacyEnvOverride` string reads in `legacyResolveAuthEmailSmtp` — unlike `.enabled`/`.port`/
+  // `.pass` above, none of these can throw, but leaving them ungated is still a precedence bug,
+  // same reasoning as `auth.email.template.*`'s `subject`/`content` below.
+  "auth.email.smtp.host",
+  "auth.email.smtp.user",
+  "auth.email.smtp.admin_email",
+  "auth.email.smtp.sender_name",
   // Not read by THIS reader's own resolved fields — tracked so `legacyResolveAuthEmail`
   // (`legacy-local-config-values.ts`) also gates its own throw-capable
   // `legacyEnvOverrideBool`/`legacyEnvOverrideUint` calls for these `auth.email.*` scalars,
@@ -525,7 +554,10 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.email.secure_password_change",
   "auth.email.otp_length",
   "auth.email.otp_expiry",
-  "experimental.webhooks.enabled",
+  // `auth.email.max_frequency` is a plain, non-throwing `legacyEnvOverride` string read in
+  // `legacyResolveAuthEmail` — same "non-throwing read is still a precedence bug" reasoning as
+  // `auth.email.smtp.host` above.
+  "auth.email.max_frequency",
   // `auth.sms.*` (`legacyResolveAuthSms`) has the identical "throws before a value the caller
   // needs is resolved" bug class as every other group above: `enable_signup`/`enable_confirmations`
   // and each provider's `enabled` run an UNGATED `legacyEnvOverrideBool`, and each provider's
@@ -548,6 +580,22 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   "auth.sms.textlocal.api_key",
   "auth.sms.vonage.enabled",
   "auth.sms.vonage.api_secret",
+  // The remaining `auth.sms.<provider>.*` fields (`resolveField` in `legacyResolveAuthSms`) are
+  // plain, non-throwing `legacyEnvOverride` string reads — `vonage.api_key` sitting right next to
+  // the already-gated `vonage.api_secret` was the clearest tell that these were missed. Same
+  // "non-throwing read is still a precedence bug" reasoning as `auth.email.smtp.host` above.
+  "auth.sms.twilio.account_sid",
+  "auth.sms.twilio.message_service_sid",
+  "auth.sms.twilio_verify.account_sid",
+  "auth.sms.twilio_verify.message_service_sid",
+  "auth.sms.messagebird.originator",
+  "auth.sms.textlocal.sender",
+  "auth.sms.vonage.from",
+  "auth.sms.vonage.api_key",
+  // `auth.sms.template`/`.max_frequency` are the same shape, sibling to `auth.email.max_frequency`
+  // above.
+  "auth.sms.template",
+  "auth.sms.max_frequency",
   // `auth.publishable_key`/`auth.secret_key` (`pkg/config/auth.go:181-182`) and
   // `studio.openai_api_key` (`pkg/config/config.go:264`) are `config.Secret`-typed exactly like
   // `auth.email.smtp.pass`/`auth.captcha.secret` above, decrypted via the same throw-capable
@@ -565,7 +613,7 @@ const LEGACY_ENV_OVERRIDABLE_KEYS: ReadonlyArray<string> = [
   // "non-throwing read, throwing downstream consumer" class as the third_party required fields
   // above.
   "studio.api_url",
-];
+] as const;
 
 /**
  * `auth.external.<name>` is a genuine map keyed by arbitrary provider name — not just the ~19
@@ -608,6 +656,40 @@ const LEGACY_AUTH_EMAIL_NOTIFICATION_FIELDS = [
   "content",
 ] as const;
 
+/**
+ * Every literal member of {@link LEGACY_ENV_OVERRIDABLE_KEYS}, PLUS the dotted-key patterns for
+ * the three genuinely dynamically-keyed families {@link applyRemoteOverride} tracks separately —
+ * arbitrary user-declared names (provider ids, email template/notification names), not a fixed
+ * list, so they can't be enumerated as literal members (see
+ * {@link LEGACY_AUTH_EXTERNAL_PROVIDER_FIELDS}/{@link LEGACY_AUTH_EMAIL_TEMPLATE_FIELDS}/
+ * {@link LEGACY_AUTH_EMAIL_NOTIFICATION_FIELDS}'s own doc comments). Every
+ * `remoteWins(...)`/`remoteOverrideKeys.has(...)` call site across this module,
+ * `legacy-local-config-values.ts`, and `db-bootstrap/bootstrap-config.ts` is typed against this
+ * union (via {@link legacyMakeRemoteWins}), so a typo'd dotted key is a compile error instead of a
+ * silently-always-false gate.
+ */
+export type LegacyRemoteOverridableKey =
+  | (typeof LEGACY_ENV_OVERRIDABLE_KEYS)[number]
+  | `auth.external.${string}.${(typeof LEGACY_AUTH_EXTERNAL_PROVIDER_FIELDS)[number]}`
+  | `auth.email.template.${string}.${(typeof LEGACY_AUTH_EMAIL_TEMPLATE_FIELDS)[number]}`
+  | `auth.email.notification.${string}.${(typeof LEGACY_AUTH_EMAIL_NOTIFICATION_FIELDS)[number]}`;
+
+/**
+ * Hoists the `const remoteWins = (p: string): boolean => remoteOverrideKeys.has(p)` closure that
+ * used to be copy-pasted once per remote-gated resolver (five times in
+ * `legacy-local-config-values.ts`, once in `db-bootstrap/bootstrap-config.ts`) into a single
+ * helper. The returned function's parameter is typed as {@link LegacyRemoteOverridableKey} —
+ * narrower than `keys` itself, which stays the loosely-typed `ReadonlySet<string>` every resolver
+ * already threads a `remoteOverrideKeys` parameter as — so every call site is checked against the
+ * allowlist without having to also re-type every `remoteOverrideKeys` parameter/field across the
+ * db-bootstrap/shadow-provisioning call graph (CLI-1956).
+ */
+export function legacyMakeRemoteWins(
+  keys: ReadonlySet<string>,
+): (key: LegacyRemoteOverridableKey) => boolean {
+  return (key) => keys.has(key);
+}
+
 /** Whether `block` provides a value at the dotted `key` path (scalar, array, or sub-table). */
 function legacyBlockProvidesKey(block: RawDoc, key: string): boolean {
   let current: unknown = block;
@@ -637,7 +719,7 @@ function applyRemoteOverride(
       const merged = deepMergeDoc(doc, block);
       const blockSeed = asRecord(asRecord(block["db"])?.["seed"]);
       // Go's `mergeRemoteConfig` flattens the WHOLE matched block via `u.AllKeys()` and applies
-      // every leaf with `v.Set` (override tier, above `AutomaticEnv` — `config.go:635-637`).
+      // every leaf with `v.Set` (override tier, above `AutomaticEnv` — `config.go:718-730`).
       // Record every env-overridable key the block supplies — not just migrations/seed — so the
       // resolution below suppresses their `SUPABASE_*` value.
       const remoteOverrideKeys = new Set<string>();
@@ -681,7 +763,7 @@ function applyRemoteOverride(
         }
       }
       // `db.seed.enabled` is ALWAYS override-tier for a matched block: either the block set
-      // it, or Go's `mergeRemoteConfig` forces it `false` when omitted (`config.go:638-640`)
+      // it, or Go's `mergeRemoteConfig` forces it `false` when omitted (`config.go:726-728`)
       // — so env never overrides it on a matched-remote linked run.
       remoteOverrideKeys.add("db.seed.enabled");
       if (blockSeed?.["enabled"] === undefined) {
@@ -1420,6 +1502,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       return yield* Effect.fail(new LegacyDbConfigLoadError({ message: secretError }));
     }
   }
+  // `remoteOverrideKeys` has its final value from here on — see `legacyMakeRemoteWins`'s own doc
+  // comment for why this is typed narrower than the `ReadonlySet<string>` it wraps.
+  const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
 
   // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
   // treat it as configured only when the file exists and is non-empty.
@@ -1459,16 +1544,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `test db --local` joins `supabase_network_<toml-or-basename>` while Go honors the
   // env id. This is independent of the linked-ref resolver, which reads the env var on
   // its own chain; the env value is bound regardless of whether a config file exists.
-  // UNLESS a matched `[remotes.<ref>]` block already set `project_id` at viper's override
-  // tier (`remoteOverrideKeys.has("project_id")`, always true whenever `appliedRemote` is
-  // set — see `LEGACY_ENV_OVERRIDABLE_KEYS`'s own doc comment on that key): that Set-tier
-  // value outranks `AutomaticEnv`, so a stale/differently-scoped `SUPABASE_PROJECT_ID` must
+  // UNLESS a matched `[remotes.<ref>]` block already set `project_id` at viper's override tier
+  // (`remoteWins("project_id")` — NOT guaranteed whenever `appliedRemote` is set: a
+  // block can also match purely via its own `SUPABASE_REMOTES_<NAME>_PROJECT_ID` env override
+  // with no literal `project_id` key, in which case this stays `false` — see
+  // `LEGACY_ENV_OVERRIDABLE_KEYS`'s own doc comment on that key): that Set-tier value, when
+  // present, outranks `AutomaticEnv`, so a stale/differently-scoped `SUPABASE_PROJECT_ID` must
   // not clobber it — otherwise a linked `db diff`/`db pull` mounts the wrong
   // `supabase_edge_runtime_<id>` Deno-cache volume for the matched remote (review:
   // PRRT_kwDOErm0O86XHGDL).
-  const projectIdEnv = remoteOverrideKeys.has("project_id")
-    ? undefined
-    : envOverride("SUPABASE_PROJECT_ID");
+  const projectIdEnv = remoteWins("project_id") ? undefined : envOverride("SUPABASE_PROJECT_ID");
   if (projectIdEnv !== undefined) {
     projectId = nonEmptyString(legacyExpandEnv(projectIdEnv, lookup));
   }
@@ -1487,15 +1572,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // that so `test db --local` never silently targets the default local database
   // while hiding a broken `[db]` config.
   const port = resolvePort(
-    (remoteOverrideKeys.has("db.port") ? undefined : envOverride("SUPABASE_DB_PORT")) ??
-      db?.["port"],
+    (remoteWins("db.port") ? undefined : envOverride("SUPABASE_DB_PORT")) ?? db?.["port"],
     DEFAULT_PORT,
     lookup,
   );
   const shadowPort = resolvePort(
-    (remoteOverrideKeys.has("db.shadow_port")
-      ? undefined
-      : envOverride("SUPABASE_DB_SHADOW_PORT")) ?? db?.["shadow_port"],
+    (remoteWins("db.shadow_port") ? undefined : envOverride("SUPABASE_DB_SHADOW_PORT")) ??
+      db?.["shadow_port"],
     DEFAULT_SHADOW_PORT,
     lookup,
   );
@@ -1529,9 +1612,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // (`apps/cli-go/pkg/config/config.go` viper + mapstructure). `resolveConfigInt`
   // mirrors that; `SUPABASE_DB_MAJOR_VERSION` overrides the TOML via AutomaticEnv.
   const majorVersionRaw =
-    (remoteOverrideKeys.has("db.major_version")
-      ? undefined
-      : envOverride("SUPABASE_DB_MAJOR_VERSION")) ?? db?.["major_version"];
+    (remoteWins("db.major_version") ? undefined : envOverride("SUPABASE_DB_MAJOR_VERSION")) ??
+    db?.["major_version"];
   const majorVersionResolved = resolveConfigInt(majorVersionRaw, lookup);
   if (majorVersionResolved === "invalid") {
     // Present but not a whole integer (`17foo`, or an `env(VAR)` that does not
@@ -1583,7 +1665,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // validation (same generic prefix+replacer binding as the pg-delta env vars below),
   // so a CI env override decides which edge-runtime image pg-delta runs under.
   const denoVersionRaw =
-    (remoteOverrideKeys.has("edge_runtime.deno_version")
+    (remoteWins("edge_runtime.deno_version")
       ? undefined
       : envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION")) ?? edgeRuntimeRaw?.["deno_version"];
   // Go decodes `deno_version` into a `uint` before validation, so a present non-integer
@@ -1640,7 +1722,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const webhooksPresent = webhooksRaw !== undefined;
   const webhooksEnabledRaw = webhooksRaw?.["enabled"];
   const webhooksEnabledEnv = webhooksPresent
-    ? remoteOverrideKeys.has("experimental.webhooks.enabled")
+    ? remoteWins("experimental.webhooks.enabled")
       ? undefined
       : envOverride("SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED")
     : undefined;
@@ -1684,7 +1766,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // CI env override decides the gate / paths. `envOverride` is the shell→project-.env
   // lookup that ignores empty values, matching viper.
   const enabledRaw = pgDeltaRaw?.["enabled"];
-  const enabledEnv = remoteOverrideKeys.has("experimental.pgdelta.enabled")
+  const enabledEnv = remoteWins("experimental.pgdelta.enabled")
     ? undefined
     : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED");
   // Go decodes this bool via `strconv.ParseBool` (mapstructure weakly typed), so `"1"`
@@ -1731,7 +1813,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // before the path is used — whichever source wins. Expand once over the resolved value
   // (`legacyExpandEnv` is a no-op on a non-`env()` string).
   const declarativeSchemaPathValue = legacyExpandEnv(
-    (remoteOverrideKeys.has("experimental.pgdelta.declarative_schema_path")
+    (remoteWins("experimental.pgdelta.declarative_schema_path")
       ? undefined
       : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_DECLARATIVE_SCHEMA_PATH")) ??
       (typeof declarativeSchemaPathRaw === "string" ? declarativeSchemaPathRaw : ""),
@@ -1750,7 +1832,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // Same `LoadEnvHook` path: expand the resolved value (env override or TOML literal) before
   // the JSON validation below runs.
   const formatOptionsExpanded = legacyExpandEnv(
-    (remoteOverrideKeys.has("experimental.pgdelta.format_options")
+    (remoteWins("experimental.pgdelta.format_options")
       ? undefined
       : envOverride("SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS")) ??
       (typeof formatOptionsRaw === "string" ? formatOptionsRaw : ""),
@@ -1803,7 +1885,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     authRaw?.["enabled"],
     true,
     lookup,
-    remoteOverrideKeys.has("auth.enabled") ? undefined : envOverride("SUPABASE_AUTH_ENABLED"),
+    remoteWins("auth.enabled") ? undefined : envOverride("SUPABASE_AUTH_ENABLED"),
   );
 
   // Local helpers mirroring the deleted `legacyValidateAuthConfig`'s closures — its Go-parity
@@ -2102,8 +2184,11 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `bigquery`, so the GCP block is skipped). viper AutomaticEnv binds `SUPABASE_ANALYTICS_*`; a
   // matched remote block makes those keys env-immune, same as every other
   // `LEGACY_ENV_OVERRIDABLE_KEYS` field above.
-  const analyticsString = (key: string, envName: string): string => {
-    const fromEnv = remoteOverrideKeys.has(`analytics.${key}`) ? undefined : envOverride(envName);
+  const analyticsString = (
+    key: "backend" | "gcp_project_id" | "gcp_project_number" | "gcp_jwt_path",
+    envName: string,
+  ): string => {
+    const fromEnv = remoteWins(`analytics.${key}`) ? undefined : envOverride(envName);
     const raw = fromEnv ?? analyticsRaw?.[key];
     return typeof raw === "string" ? legacyExpandEnv(raw, lookup) : "";
   };
@@ -2113,9 +2198,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     analyticsRaw?.["enabled"],
     true,
     lookup,
-    remoteOverrideKeys.has("analytics.enabled")
-      ? undefined
-      : envOverride("SUPABASE_ANALYTICS_ENABLED"),
+    remoteWins("analytics.enabled") ? undefined : envOverride("SUPABASE_ANALYTICS_ENABLED"),
   );
   // Each GCP value is env-expanded (Go's LoadEnvHook), so an unresolved `env(VAR)` stays
   // non-empty and passes the shared validator's `length === 0` check, exactly like Go.
@@ -2251,16 +2334,14 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `[db.migrations] enabled` — Go default true (`config.go:384`); overridable by
   // `SUPABASE_DB_MIGRATIONS_ENABLED` via viper AutomaticEnv (`config.go:494-498`) — EXCEPT
   // when the matched remote block explicitly set it (then the remote override-tier value
-  // wins, `config.go:635-637`).
+  // wins, `config.go:724`).
   const migrationsRaw = asRecord(db?.["migrations"]);
   const migrationsEnabled = yield* resolveBoolOrFail(
     "db.migrations.enabled",
     migrationsRaw?.["enabled"],
     true,
     lookup,
-    remoteOverrideKeys.has("db.migrations.enabled")
-      ? undefined
-      : envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
+    remoteWins("db.migrations.enabled") ? undefined : envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
   );
   // `[db.migrations] schema_paths` — Go default `[]`; overridable by
   // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` via viper AutomaticEnv (`config.go:494-498`) — EXCEPT
@@ -2274,7 +2355,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // filesystem paths, so resolution happens here rather than in the declarative-schema-files
   // consumer (`legacy-migrate-and-seed.ts`), matching where `seedSqlPaths` is resolved.
   const rawSchemaPaths =
-    (remoteOverrideKeys.has("db.migrations.schema_paths")
+    (remoteWins("db.migrations.schema_paths")
       ? undefined
       : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS")) ?? migrationsRaw?.["schema_paths"];
   const schemaPathPatterns = resolveStringSlice(rawSchemaPaths, DEFAULT_SCHEMA_PATHS, lookup);
@@ -2297,7 +2378,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     seedRaw?.["enabled"],
     true,
     lookup,
-    remoteOverrideKeys.has("db.seed.enabled") ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
+    remoteWins("db.seed.enabled") ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
   );
   // Go decodes `db.seed.sql_paths` through the mapstructure hook chain in order:
   // `LoadEnvHook` (expands `env(VAR)`) runs BEFORE `StringToSliceHookFunc(",")`
@@ -2314,7 +2395,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     return expanded.length === 0 ? [] : expanded.split(",");
   };
   const rawSqlPaths = seedRaw?.["sql_paths"];
-  const sqlPathsOverride = remoteOverrideKeys.has("db.seed.sql_paths")
+  const sqlPathsOverride = remoteWins("db.seed.sql_paths")
     ? undefined
     : envOverride("SUPABASE_DB_SEED_SQL_PATHS");
   const sqlPathPatterns =
@@ -2370,14 +2451,14 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `env(...)` parse correctly and `maybe` aborts rather than silently coercing to false.
   const apiAutoExposeNewTables = yield* resolveOptionalBoolOrFail(
     "api.auto_expose_new_tables",
-    remoteOverrideKeys.has("api.auto_expose_new_tables")
+    remoteWins("api.auto_expose_new_tables")
       ? undefined
       : envOverride("SUPABASE_API_AUTO_EXPOSE_NEW_TABLES"),
     apiRaw?.["auto_expose_new_tables"],
     lookup,
   );
   const apiSchemas = resolveStringSlice(
-    (remoteOverrideKeys.has("api.schemas") ? undefined : envOverride("SUPABASE_API_SCHEMAS")) ??
+    (remoteWins("api.schemas") ? undefined : envOverride("SUPABASE_API_SCHEMAS")) ??
       apiRaw?.["schemas"],
     DEFAULT_API_SCHEMAS,
     lookup,
