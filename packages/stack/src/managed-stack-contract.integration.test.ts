@@ -1729,6 +1729,177 @@ describe("managed stack acceptance contract", () => {
     );
   });
 
+  it("binds failure and lifecycle decisions to their declared preconditions", () => {
+    const findScenario = (id: string): ManagedStackContractScenario => {
+      const scenario = managedStackContractFixtures.find((candidate) => candidate.id === id);
+      if (scenario === undefined) {
+        throw new Error(`${id} fixture is required`);
+      }
+      return scenario;
+    };
+
+    const managedStartScenario = findScenario("ports.explicit-free-port-is-used");
+    if (managedStartScenario.when.interface !== "managed-api") {
+      throw new Error("explicit managed port start must use the managed API");
+    }
+    const actionUsingWrongManagedMethod = {
+      ...managedStartScenario,
+      when: { ...managedStartScenario.when, method: "stopStack" },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([actionUsingWrongManagedMethod])).toContain(
+      `${managedStartScenario.id}: managed action must use a declared public method`,
+    );
+
+    const runtimeConflictScenario = findScenario("runtime.explicit-and-config-conflict-fails");
+    const matchingRuntimeRequests = {
+      ...runtimeConflictScenario,
+      given: runtimeConflictScenario.given.map((fact) =>
+        fact.kind === "runtime-request" && fact.source === "config"
+          ? { ...fact, runtime: "docker" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([matchingRuntimeRequests])).toContain(
+      `${runtimeConflictScenario.id}: runtime conflict must bind different explicit and configured runtimes`,
+    );
+
+    const exactPortConflictScenario = findScenario("ports.explicit-port-conflict-fails");
+    const differentConfiguredConflictPort = {
+      ...exactPortConflictScenario,
+      given: exactPortConflictScenario.given.map((fact) =>
+        fact.kind === "config-port" ? { ...fact, value: 54322 } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([differentConfiguredConflictPort])).toContain(
+      `${exactPortConflictScenario.id}: exact port conflict must bind config, occupancy, and projections`,
+    );
+
+    const changedCredentialsScenario = findScenario(
+      "credentials.explicit-change-applies-after-stop",
+    );
+    const unchangedCredentialUpdate = {
+      ...changedCredentialsScenario,
+      given: changedCredentialsScenario.given.map((fact) =>
+        fact.kind === "credential-state"
+          ? { ...fact, valuesId: fact.previousValuesId ?? fact.valuesId }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unchangedCredentialUpdate])).toContain(
+      `${changedCredentialsScenario.id}: credential change requires different old and new values`,
+    );
+
+    const decodedDefaultsScenario = findScenario(
+      "ports.exact-default-value-differs-from-omitted-default",
+    );
+    if (decodedDefaultsScenario.when.interface !== "managed-api") {
+      throw new Error("decoded defaults must use the managed API");
+    }
+    const missingDecodedDefault = {
+      ...decodedDefaultsScenario,
+      when: {
+        ...decodedDefaultsScenario.when,
+        input: {
+          ...decodedDefaultsScenario.when.input,
+          decodedDefaults: { "api.port": 54321 },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([missingDecodedDefault])).toContain(
+      `${decodedDefaultsScenario.id}: decoded default keys must cover resolved port facts`,
+    );
+
+    const existingTargetScenario = findScenario("bootstrap.existing-managed-target-ignores-legacy");
+    const absentExistingTarget = {
+      ...existingTargetScenario,
+      given: existingTargetScenario.given.map((fact) =>
+        fact.kind === "managed-target" ? { ...fact, exists: false } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([absentExistingTarget])).toContain(
+      `${existingTargetScenario.id}: absent managed target stack-main-default contradicts an existing stack`,
+    );
+
+    const duplicateClaimScenario = findScenario("identity.copied-checkout-reports-duplicate-claim");
+    const exactDuplicateClaim = {
+      ...duplicateClaimScenario,
+      given: duplicateClaimScenario.given.map((fact) =>
+        fact.kind === "identity-claim" ? { ...fact, status: "exact" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([exactDuplicateClaim])).toContain(
+      `${duplicateClaimScenario.id}: duplicate checkout error must bind both conflicting live paths`,
+    );
+
+    const inaccessiblePathScenario = findScenario("identity.inaccessible-previous-path-fails");
+    const missingPreviousPath = {
+      ...inaccessiblePathScenario,
+      given: inaccessiblePathScenario.given.map((fact) =>
+        fact.kind === "workspace" ? { ...fact, previousPathAccess: "missing" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([missingPreviousPath])).toContain(
+      `${inaccessiblePathScenario.id}: inaccessible checkout error must bind path access and ambiguous claim`,
+    );
+
+    const stopScenario = findScenario("reclamation.default-stop-preserves-data");
+    const stopAlreadyStoppedStack = {
+      ...stopScenario,
+      given: stopScenario.given.map((fact) =>
+        fact.kind === "stack" ? { ...fact, lifecycle: "stopped" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([stopAlreadyStoppedStack])).toContain(
+      `${stopScenario.id}: stopping stack stack-main-default requires a running lifecycle`,
+    );
+
+    const pruneScenario = findScenario("reclamation.prune-removes-metadata-only");
+    const pruneActiveRecord = {
+      ...pruneScenario,
+      given: pruneScenario.given.map((fact) =>
+        fact.kind === "managed-record" ? { ...fact, status: "active" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([pruneActiveRecord])).toContain(
+      `${pruneScenario.id}: prune may delete only orphaned registry metadata`,
+    );
+    const pruneNonOrphanedStack = {
+      ...pruneScenario,
+      given: pruneScenario.given.map((fact) =>
+        fact.kind === "stack" ? { ...fact, orphaned: false } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([pruneNonOrphanedStack])).toContain(
+      `${pruneScenario.id}: prune may delete only orphaned registry metadata`,
+    );
+
+    const strictRuntimeScenario = findScenario("runtime.explicit-runtime-is-strict");
+    const requestedRuntimeIsAvailable = {
+      ...strictRuntimeScenario,
+      given: strictRuntimeScenario.given.map((fact) =>
+        fact.kind === "runtime-availability" && fact.runtime === "docker"
+          ? { ...fact, available: true }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([requestedRuntimeIsAvailable])).toContain(
+      `${strictRuntimeScenario.id}: explicit runtime error must bind an unavailable requested runtime`,
+    );
+
+    const unsupportedPlatformScenario = findScenario(
+      "native-qualification.unsupported-platform-fails-preflight",
+    );
+    const supportedPlatformReportedUnsupported = {
+      ...unsupportedPlatformScenario,
+      given: unsupportedPlatformScenario.given.map((fact) =>
+        fact.kind === "native-qualification" ? { ...fact, platform: "darwin-arm64" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([supportedPlatformReportedUnsupported])).toContain(
+      `${unsupportedPlatformScenario.id}: unsupported native error must bind an unsupported platform`,
+    );
+  });
+
   it("covers the approved identity journeys through public commands and APIs", () => {
     expect(
       managedStackContractFixtures

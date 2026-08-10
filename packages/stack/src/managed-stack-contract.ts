@@ -433,6 +433,65 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.when.interface === "managed-api") {
+      const managedMethods = new Set([
+        "createManagedStackService",
+        "preflightNative",
+        "resolvePortIntents",
+        "resolveStack",
+        "resolveStackNames",
+        "runPortableContract",
+        "runRepositoryContract",
+        "startConcurrently",
+        "startStack",
+      ]);
+      const { input, method } = scenario.when;
+      const allowedInputKeys: Readonly<Record<string, ReadonlySet<string>>> = {
+        createManagedStackService: new Set(["repository", "stateRoot"]),
+        preflightNative: new Set(["platform"]),
+        resolvePortIntents: new Set(["config", "decodedDefaults", "effectiveConfig"]),
+        resolveStack: new Set(["cwd", "operation", "stackName", "stateRoot"]),
+        resolveStackNames: new Set(["cwd", "stackNames"]),
+        runPortableContract: new Set(["runtimes", "scenarioId"]),
+        runRepositoryContract: new Set(["adapters", "scenarioId"]),
+        startConcurrently: new Set(["contenders", "cwd", "stackName"]),
+        startStack: new Set(["auth", "injectCopyFailure", "portIntents", "runtime", "stackId"]),
+      };
+      const inputMatchesMethod =
+        (method === "createManagedStackService" &&
+          typeof input.repository === "string" &&
+          typeof input.stateRoot === "string") ||
+        (method === "preflightNative" && typeof input.platform === "string") ||
+        (method === "resolvePortIntents" &&
+          (isManagedStackContractRecord(input.config) ||
+            isManagedStackContractRecord(input.effectiveConfig))) ||
+        (method === "resolveStack" &&
+          typeof input.cwd === "string" &&
+          typeof input.stackName === "string") ||
+        (method === "resolveStackNames" &&
+          typeof input.cwd === "string" &&
+          Array.isArray(input.stackNames)) ||
+        (method === "runPortableContract" &&
+          Array.isArray(input.runtimes) &&
+          typeof input.scenarioId === "string") ||
+        (method === "runRepositoryContract" &&
+          Array.isArray(input.adapters) &&
+          typeof input.scenarioId === "string") ||
+        (method === "startConcurrently" &&
+          typeof input.cwd === "string" &&
+          typeof input.stackName === "string" &&
+          typeof input.contenders === "number") ||
+        (method === "startStack" && typeof input.stackId === "string");
+      const inputUsesOnlyDeclaredKeys = Object.keys(input).every((key) =>
+        allowedInputKeys[method]?.has(key),
+      );
+      if (!managedMethods.has(method) || !inputMatchesMethod || !inputUsesOnlyDeclaredKeys) {
+        errors.push(`${scenario.id}: managed action must use a declared public method`);
+      }
+    } else if (scenario.when.interface === "stack-api" && scenario.when.method !== "createStack") {
+      errors.push(`${scenario.id}: direct stack action must use createStack`);
+    }
+
     if (scenario.when.interface === "cli") {
       const [command, subcommand] = scenario.when.argv;
       const valueFlagsByCommand: Readonly<Record<string, ReadonlySet<string>>> = {
@@ -817,6 +876,18 @@ export const validateManagedStackContractFixtures = (
         )
       ) {
         errors.push(`${scenario.id}: resolved port keys must match their config facts`);
+      }
+      if (isManagedStackContractRecord(scenario.when.input.config)) {
+        const decodedDefaults = scenario.when.input.decodedDefaults;
+        if (
+          !isManagedStackContractRecord(decodedDefaults) ||
+          !managedStackContractStringSetEquals(
+            configFacts.map(({ key }) => key),
+            Object.keys(decodedDefaults),
+          )
+        ) {
+          errors.push(`${scenario.id}: decoded default keys must cover resolved port facts`);
+        }
       }
       for (const fact of configFacts) {
         const projection = output.api?.[fact.key];
@@ -1221,6 +1292,82 @@ export const validateManagedStackContractFixtures = (
       errors.push(`${scenario.id}: detached reuse must declare the commit transition`);
     }
 
+    if (scenario.expected.error?.code === "duplicate_checkout_claim") {
+      const copiedWorkspace = scenario.given.find(
+        (fact) => fact.kind === "workspace" && fact.path === actionCwd,
+      );
+      const duplicateClaim = scenario.given.find(
+        (fact) => fact.kind === "identity-claim" && fact.scope === "checkout",
+      );
+      const copyTransition = scenario.given.find(
+        (fact) => fact.kind === "identity-transition" && fact.operation === "checkout-copy",
+      );
+      const projectedPaths = output.json?.paths;
+      if (
+        copiedWorkspace?.kind !== "workspace" ||
+        copiedWorkspace.copiedFrom === undefined ||
+        duplicateClaim?.kind !== "identity-claim" ||
+        duplicateClaim.status !== "duplicate" ||
+        duplicateClaim.path !== copiedWorkspace.copiedFrom ||
+        copyTransition?.kind !== "identity-transition" ||
+        copyTransition.from !== copiedWorkspace.copiedFrom ||
+        copyTransition.to !== copiedWorkspace.path ||
+        output.json?.checkout_id !== duplicateClaim.id ||
+        !Array.isArray(projectedPaths) ||
+        projectedPaths.length !== 2 ||
+        !projectedPaths.includes(copiedWorkspace.path) ||
+        !projectedPaths.includes(copiedWorkspace.copiedFrom)
+      ) {
+        errors.push(
+          `${scenario.id}: duplicate checkout error must bind both conflicting live paths`,
+        );
+      }
+    }
+
+    if (scenario.expected.error?.code === "checkout_path_inaccessible") {
+      const movedWorkspace = scenario.given.find(
+        (fact) => fact.kind === "workspace" && fact.path === actionCwd,
+      );
+      const ambiguousClaim = scenario.given.find(
+        (fact) => fact.kind === "identity-claim" && fact.scope === "checkout",
+      );
+      if (
+        movedWorkspace?.kind !== "workspace" ||
+        movedWorkspace.previousPathAccess !== "inaccessible" ||
+        movedWorkspace.previousPath === undefined ||
+        ambiguousClaim?.kind !== "identity-claim" ||
+        ambiguousClaim.status !== "ambiguous" ||
+        ambiguousClaim.path !== movedWorkspace.previousPath ||
+        output.human?.fields.previousPath !== movedWorkspace.previousPath ||
+        output.human?.fields.currentPath !== movedWorkspace.path ||
+        output.json?.checkout_id !== ambiguousClaim.id
+      ) {
+        errors.push(
+          `${scenario.id}: inaccessible checkout error must bind path access and ambiguous claim`,
+        );
+      }
+    }
+
+    if (output.api?.rebound === true) {
+      const movedWorkspace = scenario.given.find(
+        (fact) => fact.kind === "workspace" && fact.path === actionCwd,
+      );
+      const exactClaim = scenario.given.find(
+        (fact) => fact.kind === "identity-claim" && fact.scope === "checkout",
+      );
+      if (
+        movedWorkspace?.kind !== "workspace" ||
+        movedWorkspace.previousPathAccess !== "missing" ||
+        movedWorkspace.previousPath === undefined ||
+        exactClaim?.kind !== "identity-claim" ||
+        exactClaim.status !== "exact" ||
+        exactClaim.path !== movedWorkspace.previousPath ||
+        output.api?.checkoutId !== exactClaim.id
+      ) {
+        errors.push(`${scenario.id}: automatic checkout rebind requires a missing previous path`);
+      }
+    }
+
     for (const fact of scenario.given) {
       if (fact.kind !== "native-qualification") {
         continue;
@@ -1304,6 +1451,24 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.expected.error?.code === "native_platform_unsupported") {
+      const qualification = scenario.given.find((fact) => fact.kind === "native-qualification");
+      const projectedPlatforms = output.json?.supported_platforms;
+      if (
+        qualification?.kind !== "native-qualification" ||
+        !managedNativeServiceMatrix.unsupportedPlatforms.includes(qualification.platform) ||
+        output.json?.platform !== qualification.platform ||
+        !Array.isArray(projectedPlatforms) ||
+        projectedPlatforms.length !== managedNativeServiceMatrix.targetPlatforms.length ||
+        !managedNativeServiceMatrix.targetPlatforms.every((platform) =>
+          projectedPlatforms.includes(platform),
+        ) ||
+        explicitRuntime !== "native"
+      ) {
+        errors.push(`${scenario.id}: unsupported native error must bind an unsupported platform`);
+      }
+    }
+
     const writesIdentityMarker = scenario.expected.writes.some(
       (write) => write.target === "identity-marker",
     );
@@ -1337,6 +1502,18 @@ export const validateManagedStackContractFixtures = (
             `${scenario.id}: starting existing stack ${effect.stackId} requires an explicit stopped lifecycle`,
           );
         }
+      }
+    }
+
+    for (const target of scenario.given) {
+      if (
+        target.kind === "managed-target" &&
+        !target.exists &&
+        scenario.given.some((fact) => fact.kind === "stack" && fact.stackId === target.stackId)
+      ) {
+        errors.push(
+          `${scenario.id}: absent managed target ${target.stackId} contradicts an existing stack`,
+        );
       }
     }
 
@@ -1404,6 +1581,28 @@ export const validateManagedStackContractFixtures = (
             `${scenario.id}: bootstrap copy requires absent target ${stackId} and compatible stopped legacy state`,
           );
         }
+      }
+    }
+
+    for (const effect of scenario.expected.runtimeEffects) {
+      if (effect.operation !== "start") {
+        continue;
+      }
+      const createsTarget = scenario.expected.writes.some(
+        (write) =>
+          write.target === "managed-state" &&
+          (write.operation === "create" || write.operation === "copy") &&
+          write.id === effect.stackId,
+      );
+      const targetExists = scenario.given.some(
+        (fact) =>
+          (fact.kind === "managed-target" && fact.stackId === effect.stackId && fact.exists) ||
+          (fact.kind === "stack" && fact.stackId === effect.stackId),
+      );
+      if (!createsTarget && !targetExists) {
+        errors.push(
+          `${scenario.id}: starting existing stack ${effect.stackId} requires an existing managed target`,
+        );
       }
     }
 
@@ -1721,6 +1920,33 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.expected.error?.code === "exact_port_occupied") {
+      const configuredPort = scenario.given.find(
+        (fact) => fact.kind === "config-port" && fact.intent === "exact",
+      );
+      const occupiedPort =
+        configuredPort?.kind === "config-port"
+          ? scenario.given.find(
+              (fact) => fact.kind === "occupied-port" && fact.port === configuredPort.value,
+            )
+          : undefined;
+      if (
+        configuredPort?.kind !== "config-port" ||
+        typeof configuredPort.value !== "number" ||
+        occupiedPort?.kind !== "occupied-port" ||
+        output.human?.fields.port !== String(configuredPort.value) ||
+        output.human?.fields.configKey !== configuredPort.key ||
+        output.human?.fields.owner !== occupiedPort.owner ||
+        output.json?.port !== configuredPort.value ||
+        output.json?.config_key !== configuredPort.key ||
+        output.json?.owner !== occupiedPort.owner
+      ) {
+        errors.push(
+          `${scenario.id}: exact port conflict must bind config, occupancy, and projections`,
+        );
+      }
+    }
+
     const managedPortOwners = scenario.given.flatMap((fact) =>
       fact.kind === "occupied-port" && fact.owner === "managed-stack" ? [fact] : [],
     );
@@ -1914,6 +2140,58 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.expected.error?.code === "runtime_selection_conflict") {
+      const explicitRequest = runtimeRequests.find(
+        (fact) => fact.source === "cli" || fact.source === "managed-api",
+      );
+      const configRequest = runtimeRequests.find((fact) => fact.source === "config");
+      if (
+        explicitRequest?.kind !== "runtime-request" ||
+        configRequest?.kind !== "runtime-request" ||
+        explicitRequest.runtime === "auto" ||
+        configRequest.runtime === "auto" ||
+        explicitRequest.runtime === configRequest.runtime ||
+        output.json?.cli_runtime !== explicitRequest.runtime ||
+        output.json?.config_runtime !== configRequest.runtime ||
+        output.json?.code !== scenario.expected.error.code
+      ) {
+        errors.push(
+          `${scenario.id}: runtime conflict must bind different explicit and configured runtimes`,
+        );
+      }
+    }
+
+    if (
+      scenario.expected.error?.code === "docker_unavailable" ||
+      scenario.expected.error?.code === "native_unavailable"
+    ) {
+      const unavailableRuntime = scenario.expected.error.code.startsWith("docker")
+        ? "docker"
+        : "native";
+      const explicitRequest = runtimeRequests.find(
+        (fact) =>
+          (fact.source === "cli" || fact.source === "managed-api") &&
+          fact.runtime === unavailableRuntime,
+      );
+      const availability = scenario.given.find(
+        (fact) => fact.kind === "runtime-availability" && fact.runtime === unavailableRuntime,
+      );
+      if (
+        explicitRequest?.kind !== "runtime-request" ||
+        availability?.kind !== "runtime-availability" ||
+        availability.available ||
+        availability.reason === undefined ||
+        output.json?.requested_runtime !== unavailableRuntime ||
+        output.json?.fallback_attempted !== false ||
+        scenario.expected.details?.fallback_attempted !== false ||
+        scenario.expected.runtimeEffects.some((effect) => effect.operation === "start")
+      ) {
+        errors.push(
+          `${scenario.id}: explicit runtime error must bind an unavailable requested runtime`,
+        );
+      }
+    }
+
     if (scenario.expected.error?.code === "legacy_bootstrap_failed") {
       if (
         scenario.when.interface !== "managed-api" ||
@@ -1955,6 +2233,27 @@ export const validateManagedStackContractFixtures = (
       errors.push(`${scenario.id}: credential persistence must not expose plaintext globally`);
     }
 
+    const changedCredentials = scenario.given.find(
+      (fact) => fact.kind === "credential-state" && fact.previousValuesId !== undefined,
+    );
+    if (
+      changedCredentials?.kind === "credential-state" &&
+      changedCredentials.previousValuesId === changedCredentials.valuesId
+    ) {
+      errors.push(`${scenario.id}: credential change requires different old and new values`);
+    }
+    if (
+      changedCredentials?.kind === "credential-state" &&
+      scenario.expected.outcome === "update" &&
+      (output.json?.previous_credentials_values_id !== changedCredentials.previousValuesId ||
+        output.json?.credentials_values_id !== changedCredentials.valuesId ||
+        !scenario.expected.writes.some(
+          (write) => write.target === "managed-state" && write.operation === "update",
+        ))
+    ) {
+      errors.push(`${scenario.id}: credential update must bind old and new persisted references`);
+    }
+
     if (scenario.expected.details?.retry_after_rollback === true) {
       const retryStackId =
         scenario.when.interface === "managed-api" && scenario.when.method === "startStack"
@@ -1991,6 +2290,18 @@ export const validateManagedStackContractFixtures = (
         );
         if (!mutableDataExists) {
           errors.push(`${scenario.id}: data-preserving prune must declare mutable stack data`);
+        }
+        const orphanedRecord = scenario.given.some(
+          (fact) =>
+            fact.kind === "managed-record" &&
+            fact.stackId === write.id &&
+            fact.status === "orphaned",
+        );
+        const orphanedStack = scenario.given.some(
+          (fact) => fact.kind === "stack" && fact.stackId === write.id && fact.orphaned === true,
+        );
+        if (!orphanedRecord || !orphanedStack) {
+          errors.push(`${scenario.id}: prune may delete only orphaned registry metadata`);
         }
       }
     }
@@ -2033,6 +2344,20 @@ export const validateManagedStackContractFixtures = (
     for (const effect of scenario.expected.runtimeEffects) {
       if (!declaredIds.has(effect.stackId)) {
         errors.push(`${scenario.id}: runtime effect references undeclared ID ${effect.stackId}`);
+      }
+
+      if (
+        effect.operation === "stop" &&
+        !scenario.given.some(
+          (fact) =>
+            fact.kind === "stack" &&
+            fact.stackId === effect.stackId &&
+            fact.lifecycle === "running",
+        )
+      ) {
+        errors.push(
+          `${scenario.id}: stopping stack ${effect.stackId} requires a running lifecycle`,
+        );
       }
 
       const hasWrite = scenario.expected.writes.some((write) => {
