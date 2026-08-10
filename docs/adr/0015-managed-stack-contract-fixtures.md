@@ -1,6 +1,6 @@
 # 0015. Managed Stack Contract Fixtures
 
-**Status**: accepted
+**Status**: proposed
 **Date**: 2026-08-10
 
 ## Problem Statement
@@ -27,8 +27,8 @@ of the M1 managed-stack behavior. Each scenario records:
   guidance.
 
 Opaque symbolic IDs make the same scenario reusable across an in-memory repository, a persistent
-adapter, the managed package, and CLI integration tests. Linear records the decision history and
-links to implementation work; it is not a second source of executable truth.
+adapter, the managed package, and future CLI integration tests. Linear records the decision history
+and links to implementation work; it is not a second source of executable truth.
 
 `@supabase/stack` has two distinct public responsibilities:
 
@@ -69,10 +69,10 @@ Tests should be as close as possible to how a developer uses the product:
   when a boundary cannot be represented faithfully in an in-process integration test, rather than
   mocking away the behavior under test.
 
-CLI-2102 checks in the fixture data and public consumer seams before the managed engine and
+CLI-2102 checks in the fixture data and public direct-stack boundary before the managed engine and
 persistent adapter exist. The implementation issues it unblocks must attach real drivers to these
-fixtures. A fixture-presence test is not evidence that an unimplemented command already satisfies
-the behavior.
+fixtures. CLI integration coverage begins when a real command boundary exists; a fixture-presence
+test is not evidence that an unimplemented command already satisfies the behavior.
 
 The fixture validator therefore checks more than catalog shape: selected, written, and effected
 identities must be declared, runtime effects must agree with permitted state writes, and

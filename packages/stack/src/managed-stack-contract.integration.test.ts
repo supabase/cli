@@ -155,7 +155,7 @@ describe("managed stack acceptance contract", () => {
         ["edge-runtime", "v1.74.3"],
         ["realtime", "v2.124.1"],
         ["storage", "v1.68.9"],
-        ["pg-meta", "v0.96.8"],
+        ["pgmeta", "v0.96.8"],
         ["studio", "2026.08.03-sha-022b374"],
         ["analytics", "v1.50.1"],
         ["pooler", "v2.9.10"],
@@ -281,11 +281,14 @@ describe("managed stack acceptance contract", () => {
 
     try {
       const stack = await createStack({ cacheRoot, projectDir, startupMode: "lazy" });
-      expect(stack).toMatchObject({
-        url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
-        dbUrl: expect.stringMatching(/^postgresql:\/\//),
-      });
-      await stack.dispose();
+      try {
+        expect(stack).toMatchObject({
+          url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
+          dbUrl: expect.stringMatching(/^postgresql:\/\//),
+        });
+      } finally {
+        await stack.dispose();
+      }
 
       expect(readFileSync(gitConfig, "utf8")).toBe("[core]\n\trepositoryformatversion = 0\n");
       expect(readFileSync(identityMarker, "utf8")).toBe('{"sentinel":true}\n');

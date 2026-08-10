@@ -1,3 +1,5 @@
+import type { ServiceName } from "./ServiceName.ts";
+
 export type ManagedStackContractArea =
   | "api-boundary"
   | "bootstrap"
@@ -256,7 +258,7 @@ export interface ManagedStackContractScenario {
 export interface ManagedNativeServiceMatrix {
   readonly targetPlatforms: ReadonlyArray<string>;
   readonly unsupportedPlatforms: ReadonlyArray<string>;
-  readonly services: ReadonlyArray<readonly [service: string, version: string]>;
+  readonly services: ReadonlyArray<readonly [service: ServiceName, version: string]>;
 }
 
 export const managedNativeServiceMatrix: ManagedNativeServiceMatrix = {
@@ -269,7 +271,7 @@ export const managedNativeServiceMatrix: ManagedNativeServiceMatrix = {
     ["edge-runtime", "v1.74.3"],
     ["realtime", "v2.124.1"],
     ["storage", "v1.68.9"],
-    ["pg-meta", "v0.96.8"],
+    ["pgmeta", "v0.96.8"],
     ["studio", "2026.08.03-sha-022b374"],
     ["analytics", "v1.50.1"],
     ["pooler", "v2.9.10"],
@@ -1702,21 +1704,28 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         projectId: "project-clone",
         checkoutId: "checkout-clone",
         contextId: "context-clone-main",
-        stackId: "stack-clone-default",
+        stackId: "stack-clone-main-default",
         stackName: "default",
       },
       writes: [
         { target: "identity-marker", operation: "create", id: "project-clone" },
         { target: "git-config", operation: "create", id: "checkout-clone" },
         { target: "git-config", operation: "create", id: "context-clone-main" },
-        { target: "registry", operation: "publish", id: "stack-clone-default" },
-        { target: "managed-state", operation: "create", id: "stack-clone-default" },
-        { target: "runtime-state", operation: "start", id: "stack-clone-default" },
+        { target: "registry", operation: "publish", id: "stack-clone-main-default" },
+        { target: "managed-state", operation: "create", id: "stack-clone-main-default" },
+        { target: "runtime-state", operation: "start", id: "stack-clone-main-default" },
       ],
-      runtimeEffects: [{ operation: "start", stackId: "stack-clone-default" }],
+      runtimeEffects: [{ operation: "start", stackId: "stack-clone-main-default" }],
       details: { tracked_marker_ignored: true, git_index_mutated: false },
       output: {
-        json: { outcome: "create", project_id: "project-clone", tracked_marker_ignored: true },
+        json: {
+          outcome: "create",
+          project_id: "project-clone",
+          checkout_id: "checkout-clone",
+          context_id: "context-clone-main",
+          stack_id: "stack-clone-main-default",
+          tracked_marker_ignored: true,
+        },
       },
     },
   },
@@ -2696,6 +2705,13 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     title: "Status reports one persisted stack-wide runtime and any drift",
     area: "runtime",
     given: [
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-main-default",
+        contextId: "context-main",
+        lifecycle: "running",
+      },
       { kind: "persisted-runtime", stackId: "stack-main-default", runtime: "docker" },
       { kind: "runtime-request", source: "config", runtime: "native" },
     ],
