@@ -141,6 +141,19 @@ describe("managed stack acceptance contract", () => {
       `${absentLegacyScenario.id}: managed-state create requires registry publication`,
     );
 
+    const publishedWithoutState = {
+      ...absentLegacyScenario,
+      expected: {
+        ...absentLegacyScenario.expected,
+        writes: absentLegacyScenario.expected.writes.filter(
+          ({ target }) => target !== "managed-state",
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([publishedWithoutState])).toContain(
+      `${absentLegacyScenario.id}: registry publication requires managed-state creation or copy`,
+    );
+
     const stoppedStackScenario = managedStackContractFixtures.find(
       ({ id }) => id === "reclamation.default-stop-preserves-data",
     );
@@ -170,6 +183,21 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([incompleteGitIdentity])).toContain(
       `${folderToGitScenario.id}: folder-to-Git identity project-a must be persisted in Git-local metadata`,
+    );
+
+    const incorrectlyScopedGitIdentity = {
+      ...folderToGitScenario,
+      expected: {
+        ...folderToGitScenario.expected,
+        writes: folderToGitScenario.expected.writes.map((write) =>
+          write.target === "git-config" && write.id === "project-a"
+            ? { ...write, scope: "worktree" }
+            : write,
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([incorrectlyScopedGitIdentity])).toContain(
+      `${folderToGitScenario.id}: Git identity project-a must use common config scope`,
     );
 
     const qualificationScenario = managedStackContractFixtures.find(
@@ -209,7 +237,7 @@ describe("managed stack acceptance contract", () => {
       },
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([mutatingStatus])).toContain(
-      `${statusScenario.id}: successful status commands must report`,
+      `${statusScenario.id}: successful status operations must report`,
     );
 
     const stateWritingStatus = {
@@ -220,7 +248,49 @@ describe("managed stack acceptance contract", () => {
       },
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([stateWritingStatus])).toContain(
-      `${statusScenario.id}: status commands must not mutate state`,
+      `${statusScenario.id}: status operations must not mutate state`,
+    );
+
+    const apiStatusScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.same-checkout-branch-and-name-reuses-stack",
+      );
+    if (apiStatusScenario === undefined || apiStatusScenario.expected.output.api === undefined) {
+      throw new Error(
+        "identity.same-checkout-branch-and-name-reuses-stack API fixture is required",
+      );
+    }
+    const apiStatusReturningReuse = {
+      ...apiStatusScenario,
+      expected: {
+        ...apiStatusScenario.expected,
+        outcome: "reuse",
+        output: {
+          ...apiStatusScenario.expected.output,
+          api: { ...apiStatusScenario.expected.output.api, outcome: "reuse" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([apiStatusReturningReuse])).toContain(
+      `${apiStatusScenario.id}: successful status operations must report`,
+    );
+
+    const bareWorktreeScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.bare-repository-linked-worktrees-share-project",
+    );
+    if (bareWorktreeScenario === undefined) {
+      throw new Error(
+        "identity.bare-repository-linked-worktrees-share-project fixture is required",
+      );
+    }
+    const siblingGitStateOnly = {
+      ...bareWorktreeScenario,
+      given: bareWorktreeScenario.given.map((fact) =>
+        fact.kind === "git-state" ? { ...fact, workspacePath: "worktree-a" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([siblingGitStateOnly])).toContain(
+      `${bareWorktreeScenario.id}: resolving worktree worktree-b requires its Git state`,
     );
   });
 

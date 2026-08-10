@@ -44,8 +44,10 @@ projects managed results into human and JSON output. It must not implement a sec
 selection, port, runtime, or lifecycle decision path.
 
 Git workspaces store project, checkout, and context identities in Git-local metadata, using common
-or worktree scope as appropriate. A tracked working-tree identity marker is inert: discovery never
-trusts or rewrites it. Ordinary non-Git folders may use an untracked local identity marker.
+or worktree scope as appropriate. Contract effects record that scope explicitly: project identity
+uses common Git config, while checkout and context identities use worktree-local config. A tracked
+working-tree identity marker is inert: discovery never trusts or rewrites it. Ordinary non-Git
+folders may use an untracked local identity marker.
 
 Read-only status remains a successful `report` when it can identify a running stack but finds
 unapplied port, credential, or runtime configuration. The report includes a structured warning and
@@ -80,11 +82,14 @@ test is not evidence that an unimplemented command already satisfies the behavio
 
 The fixture validator therefore checks more than catalog shape: selected, written, and effected
 identities must be declared; starts of existing stacks must declare a stopped lifecycle; managed
-state creation must publish its registry record; tracked identity markers must remain untouched;
-runtime effects must agree with permitted state writes; and human/API/JSON projections cannot
-contradict the managed result. We deliberately do not introduce a parallel test-only identity
-resolver; it would duplicate product policy before the real managed surface exists and could pass
-while the production implementation drifts.
+state creation and registry publication must imply each other; Git identity writes must use the
+correct common or worktree scope; selected linked worktrees must declare their own Git state;
+tracked identity markers must remain untouched; native qualification facts must partition the
+service matrix; status operations must remain read-only reports; runtime effects must agree with
+permitted state writes; and human/API/JSON projections cannot contradict the managed result. We
+deliberately do not introduce a parallel test-only identity resolver; it would duplicate product
+policy before the real managed surface exists and could pass while the production implementation
+drifts.
 
 ## Implementation Handoff
 
