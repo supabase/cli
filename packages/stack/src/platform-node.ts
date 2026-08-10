@@ -91,7 +91,7 @@ export const unixHttpClientLayer = Layer.succeed(UnixHttpClient, {
           request.end(body);
         });
       },
-      catch: (cause) => new UnixHttpClientError({ socketPath, path, cause }),
+      catch: (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
     }),
 });
 

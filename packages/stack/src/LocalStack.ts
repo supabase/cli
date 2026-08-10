@@ -19,7 +19,12 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
-import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
+import {
+  DockerPullError,
+  StackBuildError,
+  StackNotRunningError,
+  StackReadinessError,
+} from "./errors.ts";
 import {
   clearFunctionsRuntimeConfig,
   configureFunctionsRuntime,
@@ -273,6 +278,10 @@ export const localStackLayer = (
                   new StackBuildError({
                     detail: "Failed to prepare stack assets",
                     cause,
+                    reason:
+                      cause instanceof DockerPullError && cause.daemonDown
+                        ? "docker_not_running"
+                        : "asset_preparation",
                   }),
               ),
             )
@@ -435,6 +444,7 @@ export const localStackLayer = (
               new StackBuildError({
                 detail: "Invalid Edge Functions bundle",
                 cause,
+                reason: "invalid_config",
               }),
           ),
         );

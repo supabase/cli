@@ -536,7 +536,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             columnInsert: false,
           };
           const toDumpOpenError = (cause: { readonly message: string }) =>
-            new LegacyDbPullDumpError({ message: `failed to open dump file: ${cause.message}` });
+            new LegacyDbPullDumpError({
+              message: `failed to open dump file: ${cause.message}`,
+              fileOpen: true,
+            });
           // Stream pg_dump → migration file, (re)truncating per attempt so a pooler
           // retry leaves only the successful attempt's bytes (Go's `resetOutput`).
           const runSchemaDump = (target: LegacyPgConnInput) => {

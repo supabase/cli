@@ -1,6 +1,11 @@
 import { Data, Effect, type FileSystem, Option, type Path, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyIsContainerNotFoundMessage, spawnContainerCli } from "../legacy-container-cli.ts";
 import { legacyReadDbToml } from "../legacy-db-config.toml-read.ts";
 import { legacyResolveLocalProjectId, localDbContainerId } from "../legacy-docker-ids.ts";
@@ -14,9 +19,18 @@ type Spawner = ChildProcessSpawner["Service"];
 /** `docker container inspect` failed for a reason other than "the container doesn't exist". */
 export class LegacyLocalDbRunningError extends Data.TaggedError("LegacyLocalDbRunningError")<{
   readonly message: string;
+  /** Classified at the container-runtime boundary; never inferred from `message` by telemetry. */
+  readonly daemonDown?: boolean;
   /** Set when the failure is a daemon-connection error, mirroring `utils.CmdSuggestion`. */
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.daemonDown === true) {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
+    return actionability.startStack;
+  }
+}
 
 const decodeChunks = (chunks: ReadonlyArray<Uint8Array>): string => {
   const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
@@ -90,7 +104,11 @@ export function legacyIsLocalDbRunning(
         extendEnv: true,
       }).pipe(
         Effect.mapError(
-          () => new LegacyLocalDbRunningError({ message: "failed to inspect service" }),
+          () =>
+            new LegacyLocalDbRunningError({
+              message: "failed to inspect service",
+              daemonDown: true,
+            }),
         ),
       );
       const stderrChunks: Array<Uint8Array> = [];
@@ -122,15 +140,15 @@ export function legacyIsLocalDbRunning(
         // Go's `AssertServiceIsRunning` sets `CmdSuggestion = suggestDockerInstall`
         // on a daemon-connection failure (`misc.go:148-154`), so a down daemon
         // still surfaces the actionable Docker Desktop hint, not just raw stderr.
+        const daemonDown = legacyIsDockerDaemonUnreachable(stderr);
         return yield* Effect.fail(
           new LegacyLocalDbRunningError({
             message:
               stderr.length > 0
                 ? `failed to inspect service: ${stderr}`
                 : "failed to inspect service",
-            ...(legacyIsDockerDaemonUnreachable(stderr)
-              ? { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL }
-              : {}),
+            daemonDown,
+            ...(daemonDown ? { suggestion: LEGACY_SUGGEST_DOCKER_INSTALL } : {}),
           }),
         );
       }

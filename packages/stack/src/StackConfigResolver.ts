@@ -307,7 +307,11 @@ async function resolveFunctionsConfig(config: StackConfig, projectDir: string) {
       config.functions,
     );
   } catch (cause) {
-    throw new StackBuildError({ detail: "Invalid Edge Functions bundle", cause });
+    throw new StackBuildError({
+      detail: "Invalid Edge Functions bundle",
+      cause,
+      reason: "invalid_config",
+    });
   }
 }
 

@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
 
 /**
  * Byte-for-byte render of Go's `context.Canceled` sentinel.
@@ -32,5 +37,9 @@ export class NonInteractiveError extends Data.TaggedError("NonInteractiveError")
 }> {
   override get message() {
     return `${this.detail}\n  Suggestion: ${this.suggestion}`;
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }

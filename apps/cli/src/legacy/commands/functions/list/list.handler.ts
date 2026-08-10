@@ -88,6 +88,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       yield* fetching?.fail() ?? Effect.void;
       return yield* new LegacyFunctionsListNetworkError({
         message: decodedFunctions.message,
+        decode: true,
       });
     }
     yield* fetching?.clear() ?? Effect.void;

@@ -24,6 +24,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
   LegacyDebugFlag,
   LegacyExperimentalFlag,
@@ -1290,6 +1291,11 @@ describe("legacy start integration", () => {
             const serialized = JSON.stringify(exit.cause);
             expect(serialized).toContain("LegacyDockerLifecycleInspectError");
             expect(serialized).toContain("docker: command not found (podman also not found)");
+            expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+              error_kind: "user_actionable",
+              error_category: "docker_not_running",
+              error_fingerprint: "tag:LegacyDockerLifecycleInspectError:docker_not_running",
+            });
           }
         }).pipe(Effect.provide(layer));
       },

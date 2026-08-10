@@ -114,6 +114,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
             status: response.status,
             body: "",
             message: `Unexpected error retrieving projects: ${cause}`,
+            decode: true,
           }),
       ),
     );
@@ -123,6 +124,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
         status: response.status,
         body: "",
         message: "Unexpected error retrieving projects: response was not an array",
+        decode: true,
       });
     }
     yield* fetching?.clear() ?? Effect.void;

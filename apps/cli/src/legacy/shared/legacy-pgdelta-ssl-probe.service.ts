@@ -1,4 +1,9 @@
 import { Context, Data, type Effect } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * A live TLS-capability probe for pg-delta SOURCE/TARGET endpoints, mirroring Go's
@@ -33,7 +38,11 @@ export interface LegacyPgDeltaSslProbeShape {
 export class LegacyPgDeltaSslProbeError extends Data.TaggedError("LegacyPgDeltaSslProbeError")<{
   readonly message: string;
   readonly cause?: unknown;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbConnection;
+  }
+}
 
 export class LegacyPgDeltaSslProbe extends Context.Service<
   LegacyPgDeltaSslProbe,

@@ -7,6 +7,11 @@ import {
 import type { EdgeRuntimeConfig } from "@supabase/stack/effect";
 import { Data, Effect, Redacted } from "effect";
 import { ProjectHome } from "../../../config/project-home.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 type ResolvedSecretValue = string | Redacted.Redacted<string>;
 type EdgeRuntimePolicy = "oneshot" | "per_worker";
@@ -26,6 +31,10 @@ export class FunctionsDevEdgeRuntimeDisabledError extends Data.TaggedError(
 }> {
   override get message() {
     return `${this.detail}\n  Suggestion: ${this.suggestion}`;
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 

@@ -12,6 +12,11 @@ import {
   toPublicJwk,
   type ThirdPartyProvidersLike,
 } from "../../shared/auth/jwks.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
 import { legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import {
@@ -170,6 +175,9 @@ export class LegacyInvalidJwtSecretError extends Error {
     super("Invalid config for auth.jwt_secret. Must be at least 16 characters");
     this.name = "LegacyInvalidJwtSecretError";
   }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
 }
 
 /** Go's minimum `auth.jwt_secret` length (`pkg/config/apikeys.go:46`). */
@@ -191,6 +199,9 @@ export class LegacyInvalidPortEnvOverrideError extends Error {
   constructor(dottedFieldPath: string, value: string) {
     super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port`);
     this.name = "LegacyInvalidPortEnvOverrideError";
+  }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -289,6 +300,9 @@ export class LegacyInvalidBoolEnvOverrideError extends Error {
     super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool`);
     this.name = "LegacyInvalidBoolEnvOverrideError";
   }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
 }
 
 /**
@@ -344,6 +358,9 @@ export class LegacyInvalidAnalyticsBackendEnvOverrideError extends Error {
     );
     this.name = "LegacyInvalidAnalyticsBackendEnvOverrideError";
   }
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
 }
 
 /**
@@ -386,6 +403,10 @@ export class LegacyInvalidRealtimeIpVersionEnvOverrideError extends Error {
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "IPv4", "IPv6"`,
     );
     this.name = "LegacyInvalidRealtimeIpVersionEnvOverrideError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -446,6 +467,10 @@ export class LegacyInvalidPoolModeEnvOverrideError extends Error {
     );
     this.name = "LegacyInvalidPoolModeEnvOverrideError";
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
 }
 
 /**
@@ -479,6 +504,10 @@ export class LegacyInvalidEdgeRuntimePolicyEnvOverrideError extends Error {
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "per_worker", "oneshot"`,
     );
     this.name = "LegacyInvalidEdgeRuntimePolicyEnvOverrideError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 
@@ -1276,6 +1305,10 @@ export class LegacyInvalidSessionReplicationRoleEnvOverrideError extends Error {
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "origin", "replica", "local"`,
     );
     this.name = "LegacyInvalidSessionReplicationRoleEnvOverrideError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
   }
 }
 

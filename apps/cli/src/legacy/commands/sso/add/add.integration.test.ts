@@ -18,6 +18,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import { legacySsoAdd } from "./add.handler.ts";
 
 const RESPONSE_PROVIDER = {
@@ -921,6 +922,11 @@ describe("legacy sso add integration", () => {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("only HTTPS Metadata URLs are supported");
         expect(dump).toContain("Use --skip-url-validation to suppress this error");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+          error_fingerprint: "tag:LegacySsoAddMetadataFileError:invalid_url",
+        });
       }
     }).pipe(Effect.provide(layer));
   });

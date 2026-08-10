@@ -1,3 +1,9 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Byte-faithful reproductions of the Go CLI's `-o yaml` / `-o toml` output for
  * **struct** payloads (CLI-1975).
@@ -1065,6 +1071,10 @@ export class LegacyGoTomlEncodeError extends Error {
   constructor(message = "toml: cannot encode a map with non-string key type") {
     super(message);
     this.name = "LegacyGoTomlEncodeError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
   }
 }
 

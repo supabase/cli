@@ -9,6 +9,7 @@ export {
   ChecksumMismatchError,
   DockerPullError,
   DownloadError,
+  isDockerDaemonDownMessage,
   PortConflictError,
   StackBuildError,
   StackError,

@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Creating the dated `<output-dir>/<YYYY-MM-DD>/` directory failed. Mirrors Go's
@@ -7,7 +12,11 @@ import { Data } from "effect";
  */
 export class LegacyInspectReportMkdirError extends Data.TaggedError(
   "LegacyInspectReportMkdirError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * Writing one of the report CSV files failed. Mirrors Go's `copyToCSV`
@@ -18,4 +27,8 @@ export class LegacyInspectReportMkdirError extends Data.TaggedError(
  */
 export class LegacyInspectReportWriteError extends Data.TaggedError(
   "LegacyInspectReportWriteError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

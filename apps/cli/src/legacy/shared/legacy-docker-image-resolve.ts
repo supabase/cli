@@ -26,6 +26,8 @@ const spawnError = () =>
   // credential-free message that still points at the likely cause.
   new LegacyDockerRunError({
     message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+    reason: "spawn",
+    daemonDown: false,
   });
 
 /**
@@ -121,12 +123,13 @@ export function legacyMakeDockerImageResolver(
       // aggregate. So this must default to failing, and only treat a confirmed not-found as a
       // cache miss — the inverse of the daemon-unreachable-only gate this replaced.
       if (isImageNotFoundMessage(stderr)) return false;
-      const hint = legacyIsDockerDaemonUnreachable(stderr)
-        ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}`
-        : "";
+      const daemonDown = legacyIsDockerDaemonUnreachable(stderr);
+      const hint = daemonDown ? `\n\n${LEGACY_SUGGEST_DOCKER_INSTALL}` : "";
       return yield* Effect.fail(
         new LegacyDockerRunError({
           message: `failed to inspect docker image: ${stderr}${hint}`,
+          reason: "inspect",
+          daemonDown,
         }),
       );
     }).pipe(Effect.scoped);
@@ -303,6 +306,8 @@ export function legacyMakeDockerImageResolver(
       return yield* Effect.fail(
         new LegacyDockerRunError({
           message: `failed to pull docker image from all registries: ${failures.join("; ")}`,
+          reason: "pull",
+          daemonDown: failures.some(legacyIsDockerDaemonUnreachable),
         }),
       );
     });
