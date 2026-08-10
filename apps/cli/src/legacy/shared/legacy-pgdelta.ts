@@ -1,9 +1,11 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
+import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
 import {
   type LegacyEdgeRuntimeFile,
   LegacyEdgeRuntimeScript,
 } from "./legacy-edge-runtime-script.service.ts";
+import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import {
   LEGACY_PG_DELTA_SOURCE_SSL_ENV,
   LEGACY_PG_DELTA_TARGET_SSL_ENV,
@@ -84,6 +86,49 @@ export interface LegacyPgDeltaContext {
    * config the command operates on rather than the base `config.toml`.
    */
   readonly denoVersion: number;
+  /**
+   * The project's parsed `supabase/.env` (`legacyReadDbToml`'s `projectEnv`), so
+   * {@link legacyPgDeltaNpmRegistryOption}'s `PGDELTA_NPM_REGISTRY` read matches Go's
+   * `os.Getenv`, which already observes `.env`-loaded values by this point (see that
+   * function's doc comment).
+   */
+  readonly projectEnv: Readonly<Record<string, string>>;
+}
+
+/**
+ * Resolves {@link LegacyPgDeltaContext.projectId}: Go's `Config.ProjectId` singleton
+ * (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir basename,
+ * `pkg/config/config.go:563-570` + `Validate` :989-996), sanitized the same way
+ * `UpdateDockerIds` derives `EdgeRuntimeId` from it (`internal/utils/config.go:57-76`) —
+ * NOT `LegacyCliConfig.projectId` alone, which is env-only and resolves to `""` for a
+ * project that relies on config.toml's `project_id` or the workdir-basename default,
+ * mounting the WRONG `supabase_edge_runtime_` Deno-cache volume (review:
+ * PRRT_kwDOErm0O86XAlIw). Hoisted here — the single home for every pg-delta context
+ * builder (`db diff`, `db pull`, `db schema declarative generate`/`sync`) — per
+ * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ *
+ * `toml.appliedRemote !== undefined` suppresses the raw `cliProjectId` argument entirely:
+ * `toml.projectId` already reflects the matched `[remotes.<ref>]` block's own `project_id`
+ * at viper's override tier (`legacyReadDbToml`'s `remoteOverrideKeys.has("project_id")`
+ * gate, review: PRRT_kwDOErm0O86XHGDL) — but `legacyResolveLocalProjectId` tries its FIRST
+ * argument before its second, so passing the raw, ungated `cliProjectId` through would let
+ * an unrelated ambient `SUPABASE_PROJECT_ID` win back over the matched remote's own id,
+ * mounting the wrong Deno-cache volume for a linked pg-delta run. Mirrors the same
+ * suppression `legacy-local-project-context.ts`'s own `legacyLoadLocalProjectContext`
+ * already applies (review: PRRT_kwDOErm0O86XI1w8).
+ */
+export function legacyResolvePgDeltaProjectId(
+  cliProjectId: Option.Option<string>,
+  toml: { readonly projectId: Option.Option<string>; readonly appliedRemote: string | undefined },
+  workdir: string,
+): string {
+  return legacySanitizeProjectId(
+    legacyResolveLocalProjectId(
+      toml.appliedRemote !== undefined ? undefined : Option.getOrUndefined(cliProjectId),
+      Option.getOrUndefined(toml.projectId),
+      workdir,
+    ),
+  );
 }
 
 /** Mirrors Go's `isPostgresURL` (`internal/db/diff/pgdelta.go:46`). */
@@ -127,13 +172,26 @@ export function legacyIsPgDeltaDebugEnabled(): boolean {
  * Mirrors Go's `PgDeltaNpmRegistryOption` (`internal/utils/pgdelta_local.go:30`):
  * when `PGDELTA_NPM_REGISTRY` is set, drop a project-local `.npmrc` scoping the
  * `@supabase` registry and forward both `PGDELTA_NPM_REGISTRY` and the universal
- * `NPM_CONFIG_REGISTRY` into the container.
+ * `NPM_CONFIG_REGISTRY` into the container. Exported so `legacy-pgdelta.apply.ts`'s
+ * declarative-apply runner (CLI-1956) can reuse the same option, matching every other
+ * pg-delta edge-runtime invocation in this file.
+ *
+ * `PGDELTA_NPM_REGISTRY` is a bare `os.Getenv` read in Go (`pgdelta_local.go:30`), not a
+ * viper-bound flag — but by the time Go reaches it, `config.Load`'s `loadNestedEnv` has
+ * already run `godotenv.Load` on the project's `supabase/.env`, which calls `os.Setenv` for
+ * every key not already present in the real process env (`godotenv@v1.5.1/godotenv.go:184-
+ * 200`). So a project `.env`-only `PGDELTA_NPM_REGISTRY` is visible to this exact `os.Getenv`
+ * call in Go. `projectEnv` reproduces that merge with the same shell-presence-wins semantics
+ * (review: PRRT_kwDOErm0O86XFmjf).
  */
-function legacyPgDeltaNpmRegistryOption(): {
+export function legacyPgDeltaNpmRegistryOption(projectEnv: Readonly<Record<string, string>>): {
   readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
   readonly extraEnv?: Readonly<Record<string, string>>;
 } {
-  const registry = (process.env[PG_DELTA_NPM_REGISTRY_ENV] ?? "").trim();
+  const registry = legacyViperEnvStringWithProjectFallback(
+    PG_DELTA_NPM_REGISTRY_ENV,
+    projectEnv,
+  ).trim();
   if (registry.length === 0) return {};
   return {
     extraFiles: [{ name: ".npmrc", content: `@supabase:registry=${registry}\n` }],
@@ -207,7 +265,7 @@ export const legacyDiffPgDelta = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const env = yield* buildDiffEnv(fs, path, ctx.cwd, params);
-  const npm = legacyPgDeltaNpmRegistryOption();
+  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaDiffScript, ctx.npmVersion),
@@ -261,7 +319,7 @@ export const legacyDeclarativeExportPgDelta = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const env = yield* buildDiffEnv(fs, path, ctx.cwd, params);
-  const npm = legacyPgDeltaNpmRegistryOption();
+  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaDeclarativeExportScript, ctx.npmVersion),
@@ -310,7 +368,7 @@ export const legacyExportCatalogPgDelta = Effect.fnUntraced(function* (
   const env: Record<string, string> = {};
   yield* appendRefEnv(fs, path, ctx.cwd, env, "TARGET", params.targetRef);
   if (params.role.length > 0) env["ROLE"] = params.role;
-  const npm = legacyPgDeltaNpmRegistryOption();
+  const npm = legacyPgDeltaNpmRegistryOption(ctx.projectEnv);
   const result = yield* edgeRuntime
     .run({
       script: legacyInterpolatePgDeltaScript(legacyPgDeltaCatalogExportScript, ctx.npmVersion),

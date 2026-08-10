@@ -11,7 +11,7 @@ as a new timestamped migration.
 | `<workdir>/supabase/.temp/pgdelta-version`               | plain text | always — pins the `@supabase/pg-delta` npm version                                                                                                 |
 | `<workdir>/supabase/.temp/edge-runtime-version`          | plain text | always — pins the edge-runtime image tag                                                                                                           |
 | `<workdir>/supabase/database/**/*.sql` (declarative dir) | SQL        | always — must exist (else error)                                                                                                                   |
-| `<workdir>/supabase/migrations/*.sql`                    | SQL        | migrations-catalog resolution (native, CLI-1959) — hashed for the cache key and, on a miss, replayed onto the shadow via `db __shadow --mode diff` |
+| `<workdir>/supabase/migrations/*.sql`                    | SQL        | migrations-catalog resolution (native, CLI-1959) — hashed for the cache key and, on a miss, replayed onto a natively-provisioned shadow (CLI-1956) |
 | `<workdir>/supabase/roles.sql`                           | SQL        | native migrations-catalog cache key (setup-inputs token; empty when absent)                                                                        |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                | JSON       | migrations catalog cache (native, CLI-1959); declarative catalog cache (still the Go seam)                                                         |
 
@@ -25,12 +25,12 @@ as a new timestamped migration.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                                                                                                                      | When                                                              |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `supabase-go db __shadow --mode diff` (seam, unchanged) — shadow Postgres + `SetupDatabase` + apply migrations; the catalog itself is exported natively via edge-runtime (CLI-1959 — no longer the hidden `db schema declarative __catalog --mode migrations` subprocess) | migrations-catalog cache miss only                                |
-| `supabase-go db schema declarative __catalog --mode declarative --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply declarative → catalog                                                                                                                  | always                                                            |
-| Edge-runtime container running the pg-delta diff Deno script, and (on a migrations-catalog cache miss) the pg-delta catalog-export Deno script                                                                                                                            | always / cache miss                                               |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` (CLI-2062: in-process, no `supabase-go` child) — only on the failed-apply recovery path       | TTY only, apply failed, and the user confirms "reset and reapply" |
+| What                                                                                                                                                                                                                                                                                                                                               | When                                                              |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Natively-provisioned shadow Postgres container (CLI-1956 — `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`, no longer a `supabase-go db __shadow` subprocess) + native migrate; the catalog itself is exported natively via edge-runtime (CLI-1959 — no longer the hidden `db schema declarative __catalog --mode migrations` subprocess) | migrations-catalog cache miss only                                |
+| `supabase-go db schema declarative __catalog --mode declarative --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply declarative → catalog                                                                                                                                                                                           | always                                                            |
+| Edge-runtime container running the pg-delta diff Deno script, and (on a migrations-catalog cache miss) the pg-delta catalog-export Deno script                                                                                                                                                                                                     | always / cache miss                                               |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` (CLI-2062: in-process, no `supabase-go` child) — only on the failed-apply recovery path                                                                                | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 
@@ -84,12 +84,12 @@ are mutually exclusive.
   cycle rather than firing a second one from a `supabase-go` child).
 - **Architecture:** the migrations-catalog diff source resolves natively (CLI-1959):
   the setup-inputs-folded cache key, the zero-local-migrations → platform-baseline
-  reuse, and the pg-delta catalog export are all native TS; only the shadow-database
-  platform-baseline provisioning + migrations apply still runs via the bundled
-  `supabase-go`, reusing the SAME `db __shadow --mode diff` seam call `db diff`
-  uses (not a `__catalog`-specific shadow). The declarative-catalog diff target
-  still provisions its shadow-database platform baseline (and applies declarative
-  files) via the hidden `db schema declarative __catalog --mode declarative` seam,
-  since neither a baseline-only shadow nor `pgdelta.ApplyDeclarative` has a native
-  TS port yet (tracked by CLI-1956/CLI-1823). The diff itself is native pg-delta
-  either way.
+  reuse, and the pg-delta catalog export are all native TS; the shadow-database
+  platform-baseline provisioning + migrations apply is native too now (CLI-1956 —
+  `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`, the SAME native primitives
+  `db diff` uses for its own shadow, not a `__catalog`-specific one). The
+  declarative-catalog diff target still provisions its shadow-database platform
+  baseline (and applies declarative files) via the hidden `db schema declarative
+__catalog --mode declarative` seam, since neither a baseline-only shadow nor
+  `pgdelta.ApplyDeclarative` has a native TS port yet (tracked by CLI-1823). The diff
+  itself is native pg-delta either way.

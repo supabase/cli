@@ -7,6 +7,7 @@ import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from 
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { vi } from "vitest";
 
 import {
   mockOutput,
@@ -798,6 +799,31 @@ describe("legacy db start", () => {
   });
 
   it.live(
+    "an explicitly empty --network-id falls back to the generated network name, not a literal empty override",
+    () => {
+      // Go's gate is `len(viper.GetString("network-id")) > 0` (docker.go:379-383), not merely
+      // "the flag was passed" — an empty override (e.g. a shell expanding an unset var to "")
+      // must fall through to the generated `supabase_network_<projectId>` name, not produce a
+      // literal `--network ""` on the `docker create` call.
+      const { layer, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        networkId: "",
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "network" && s.args.at(-1) === "supabase_network_test",
+          ),
+        ).toBe(true);
+        const args = createArgs(child.spawned);
+        const networkIndex = args?.indexOf("--network") ?? -1;
+        expect(args?.[networkIndex + 1]).toBe("supabase_network_test");
+      });
+    },
+  );
+
+  it.live(
     "fails with a typed config error on a malformed SUPABASE_DB_HEALTH_TIMEOUT, before any container is created",
     () => {
       const { layer, child } = setup({
@@ -1517,6 +1543,40 @@ describe("legacy db start", () => {
       expect(out.stderrText).toContain("Postgres database is already running.");
     });
   });
+
+  it.live(
+    "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
+    () => {
+      // `legacyLoadLocalProjectContext` wraps `@supabase/config`'s `loadProjectConfig`, which
+      // unconditionally `Console.error`s a deprecation WARN for a legacy `[inbucket]` section
+      // (`packages/config/src/io.ts`'s `normalizeDeprecatedSMTPSections`, pinned to the real
+      // console — not this file's `Output` service, so it must be observed with a raw
+      // `console.error` spy, same idiom as `stop`/`status`'s own identical deprecated-provider
+      // tests). This handler used to load that context TWICE on the not-running path: once
+      // eagerly here (ahead of the already-running short-circuit), and again inside
+      // `legacyBuildLocalDbContainerInputs`'s own, now-removed, internal reload — doubling this
+      // WARN for one invocation, unlike Go's single `flags.LoadConfig` call
+      // (`internal/db/start/start.go:45`). Threading the eagerly-loaded context through as
+      // `legacyBuildLocalDbContainerInputs`'s `preloadedContext` fixes this.
+      const { layer } = setup({
+        configContents: 'project_id = "test"\n[inbucket]\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      const warnings: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const inbucketWarnings = warnings.filter((m) =>
+          m.includes(
+            "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+          ),
+        );
+        expect(inbucketWarnings).toHaveLength(1);
+      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
 
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
     // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before

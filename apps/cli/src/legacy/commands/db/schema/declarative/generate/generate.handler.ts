@@ -18,6 +18,7 @@ import {
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations } from "../../../../../shared/legacy-pgdelta.cache.ts";
+import { legacyResolvePgDeltaProjectId } from "../../../../../shared/legacy-pgdelta.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
@@ -130,12 +131,20 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
 
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
-          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
+          // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
+          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // `""` for a project relying on config.toml's `project_id` or the workdir-basename
+          // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume. `toml`
+          // reflects any `--linked` remote merge above, so its own `appliedRemote`/`projectId`
+          // suppress a conflicting ambient env var the same way `db diff`/`db pull` do.
+          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           // Merged config's deno_version (re-loaded with the linked ref above on
           // `--linked`), so pg-delta runs under the remote-configured Deno image.
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,

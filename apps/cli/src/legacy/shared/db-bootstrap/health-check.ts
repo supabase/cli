@@ -421,8 +421,12 @@ export function legacyWaitForHealthyServices(
           );
           return yield* Effect.fail(
             new LegacyHealthCheckTimeoutError({
+              // Go's `assertContainerHealthy` embeds the id INSIDE the message
+              // (`errors.Errorf("%s container is not running: %s", …)`,
+              // `status.go:150,154`) — a bare space, not an `<id>: ` prefix, so the
+              // joined `errors.Join` text is `<id> container is not ready: <health>`.
               message: probeError.failures
-                .map((failure) => `${failure.containerId}: ${failure.reason}`)
+                .map((failure) => `${failure.containerId} ${failure.reason}`)
                 .join("\n"),
               unhealthy: probeError.failures,
               ...(suggestion === undefined ? {} : { suggestion }),

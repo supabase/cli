@@ -3,7 +3,12 @@ import { Effect, type FileSystem, type Path, Result } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
-import { legacyGlobPattern, legacyResolveUnderWorkdir, legacyWalkSqlFiles } from "./legacy-glob.ts";
+import {
+  legacyCompareUtf8Bytes,
+  legacyGlobPattern,
+  legacyResolveUnderWorkdir,
+  legacyWalkSqlFiles,
+} from "./legacy-glob.ts";
 import {
   LegacyMigrationApplyError,
   legacyApplyMigrationFile,
@@ -93,15 +98,19 @@ const legacyResolveSchemaPathFiles = (
         // Go's `walkMatchedDir`: recursively list the matched directory, keep only regular
         // `.sql` files, sorted (a global sort over the full relative-to-fsys-root path, not
         // per-directory — matches `sort.Strings(files)` running once after the whole walk).
-        // A read/walk failure is Go's `failed to walk matched directory: %w` — recorded as a
-        // problem (not silently treated as an empty directory) so it surfaces exactly like
-        // Go's joined error does whenever nothing else matched anything either.
+        // `legacyWalkSqlFiles` already returns this byte-sorted (see its own doc comment); the
+        // `.sort(legacyCompareUtf8Bytes)` here is a no-op re-assertion of that order, NOT JS's
+        // default comparator, which would silently re-scramble a supplementary-plane filename
+        // back to UTF-16 order. A read/walk failure is Go's `failed to walk matched directory:
+        // %w` — recorded as a problem (not silently treated as an empty directory) so it
+        // surfaces exactly like Go's joined error does whenever nothing else matched anything
+        // either.
         const namesResult = yield* legacyWalkSqlFiles(fs, absMatch, "").pipe(Effect.result);
         if (Result.isFailure(namesResult)) {
           problems.push(`failed to walk matched directory: ${match}`);
           continue;
         }
-        const sqlRelative = [...namesResult.success].sort();
+        const sqlRelative = [...namesResult.success].sort(legacyCompareUtf8Bytes);
         for (const relative of sqlRelative) {
           const relativeToWorkdir = `${match}/${relative}`;
           if (!seen.has(relativeToWorkdir)) {

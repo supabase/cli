@@ -25,6 +25,7 @@ const CTX: LegacyPgDeltaContext = {
   cwd: "/proj",
   npmVersion: undefined,
   denoVersion: 2,
+  projectEnv: {},
 };
 
 function fakeEdgeRuntime(
