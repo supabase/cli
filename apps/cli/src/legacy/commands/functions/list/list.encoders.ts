@@ -1,4 +1,38 @@
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoBool,
+  legacyGoInt,
+  legacyGoPtr,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+  legacyGoTomlListWrapper,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
+
+/** Mirror of Go's `api.FunctionResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
+const LEGACY_GO_FUNCTION_RESPONSE = legacyGoStruct([
+  ["created_at", legacyGoInt],
+  ["entrypoint_path", legacyGoPtr(legacyGoString)],
+  ["ezbr_sha256", legacyGoPtr(legacyGoString)],
+  ["id", legacyGoString],
+  ["import_map", legacyGoPtr(legacyGoBool)],
+  ["import_map_path", legacyGoPtr(legacyGoString)],
+  ["name", legacyGoString],
+  ["slug", legacyGoString],
+  ["status", legacyGoString],
+  ["updated_at", legacyGoInt],
+  ["verify_jwt", legacyGoPtr(legacyGoBool)],
+  ["version", legacyGoInt],
+]);
+
+const LEGACY_GO_FUNCTIONS_LIST = legacyGoSlice(LEGACY_GO_FUNCTION_RESPONSE);
+
+const LEGACY_GO_FUNCTIONS_TOML_WRAPPER = legacyGoTomlListWrapper(
+  "functions",
+  LEGACY_GO_FUNCTION_RESPONSE,
+);
 
 interface LegacyFunctionRecord {
   readonly id: string;
@@ -193,37 +227,10 @@ export function decodeFunctionsResponse(
   }
 }
 
-function escapeGoJsonHtmlChars(text: string): string {
-  return text
-    .replaceAll("<", "\\u003c")
-    .replaceAll(">", "\\u003e")
-    .replaceAll("&", "\\u0026")
-    .replaceAll("\u2028", "\\u2028")
-    .replaceAll("\u2029", "\\u2029");
-}
-
 export function hasJsonContentType(response: {
   readonly headers: Readonly<Record<string, string>>;
 }) {
   return (response.headers["content-type"] ?? "").includes("json");
-}
-
-function toGoYamlFunction(function_: Functions[number]) {
-  const base = baseFunctionFields(function_);
-  return {
-    createdat: base.created_at,
-    entrypointpath: function_.entrypoint_path ?? null,
-    ezbrsha256: function_.ezbr_sha256 ?? null,
-    id: base.id,
-    importmap: function_.import_map ?? null,
-    importmappath: function_.import_map_path ?? null,
-    name: base.name,
-    slug: base.slug,
-    status: base.status,
-    updatedat: base.updated_at,
-    verifyjwt: function_.verify_jwt ?? null,
-    version: base.version,
-  };
 }
 
 function toGoJsonFunction(function_: Functions[number]) {
@@ -240,34 +247,20 @@ function toGoJsonFunction(function_: Functions[number]) {
   };
 }
 
-function toGoTomlFunction(function_: Functions[number]) {
-  const base = baseFunctionFields(function_);
-  return {
-    CreatedAt: base.created_at,
-    ...(function_.entrypoint_path != null ? { EntrypointPath: function_.entrypoint_path } : {}),
-    ...(function_.ezbr_sha256 != null ? { EzbrSha256: function_.ezbr_sha256 } : {}),
-    Id: base.id,
-    ...(function_.import_map != null ? { ImportMap: function_.import_map } : {}),
-    ...(function_.import_map_path != null ? { ImportMapPath: function_.import_map_path } : {}),
-    Name: base.name,
-    Slug: base.slug,
-    Status: base.status,
-    UpdatedAt: base.updated_at,
-    ...(function_.verify_jwt != null ? { VerifyJwt: function_.verify_jwt } : {}),
-    Version: base.version,
-  };
-}
-
 export function encodeFunctionsGoJson(parsed: ParsedFunctions): string {
-  return escapeGoJsonHtmlChars(
-    parsed.isNil ? encodeGoJson(null) : encodeGoJson(parsed.functions.map(toGoJsonFunction)),
-  );
+  return parsed.isNil ? encodeGoJson(null) : encodeGoJson(parsed.functions.map(toGoJsonFunction));
 }
 
 export function encodeFunctionsGoYaml(functions: Functions): string {
-  return encodeYaml(functions.map(toGoYamlFunction));
+  return encodeLegacyGoYaml(functions, LEGACY_GO_FUNCTIONS_LIST);
 }
 
-export function encodeFunctionsGoToml(functions: Functions): string {
-  return encodeToml({ functions: functions.map(toGoTomlFunction) });
+export function encodeFunctionsGoToml(parsed: ParsedFunctions): string {
+  // Go encodes `Functions: *resp.JSON200` — a JSON `null` body decodes to a
+  // nil slice (BurntSushi emits nothing), while `[]` decodes to a non-nil
+  // empty slice (`functions = []`).
+  return encodeLegacyGoToml(
+    { functions: parsed.isNil ? undefined : parsed.functions },
+    LEGACY_GO_FUNCTIONS_TOML_WRAPPER,
+  );
 }

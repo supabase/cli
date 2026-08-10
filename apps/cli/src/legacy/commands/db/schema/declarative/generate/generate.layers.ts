@@ -22,7 +22,11 @@ import { legacyDeclarativeSeamLayer } from "../../../shared/legacy-pgdelta.seam.
  * `runCli`. This layer adds the declarative-specific services: the edge-runtime
  * pg-delta runner and the Go shadow-database seam, plus the db-config resolver
  * for `--linked` / `--db-url`. Per the "provide doesn't share to siblings" rule,
- * `LegacyCliConfig` is provided to every layer that needs it.
+ * `LegacyCliConfig` is provided to every layer that needs it. `legacyDockerRunLayer`
+ * is ALSO exposed directly (not just provided to `edgeRuntime`): the smart-target
+ * local-reset prompt now calls `legacyResetLocalDatabase` in-process (CLI-2062),
+ * whose PG15+ recreate reuses the same one-shot migrate jobs `db start`/`db reset`
+ * back with this same layer (see those commands' own `*.layers.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
@@ -46,6 +50,7 @@ const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
 export const legacyDbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
+  legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
   seam,

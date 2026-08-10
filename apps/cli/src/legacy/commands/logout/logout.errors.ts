@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Raised when the user declines the logout confirmation prompt. Go returns
@@ -12,4 +17,8 @@ import { Data } from "effect";
  */
 export class LegacyLogoutCancelledError extends Data.TaggedError("LegacyLogoutCancelledError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}

@@ -39,6 +39,7 @@ import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
   LegacyDnsResolverFlag,
+  LegacyNetworkIdFlag,
   LegacyOutputFlag,
   LegacyWorkdirFlag,
   LegacyProfileFlag,
@@ -69,6 +70,7 @@ function ambientStubs() {
     Layer.succeed(LegacyWorkdirFlag, Option.none()),
     Layer.succeed(LegacyOutputFlag, Option.none()),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
+    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(CliArgs, { args: [] }),
   );
 

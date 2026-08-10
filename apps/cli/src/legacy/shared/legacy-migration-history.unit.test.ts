@@ -130,6 +130,15 @@ describe("legacyFindPendingMigrations (Go TestPendingMigrations / TestIgnoreVers
     expect(result).toEqual({ kind: "pending", paths: [mig("1"), mig("2")] });
   });
 
+  it("is up to date when an 8-digit and a 14-digit version share a prefix (#6036)", () => {
+    // Local files arrive in name order, where `20260420010000_…` precedes
+    // `20260420_…` ('0' < '_') — the reverse of the version order
+    // `schema_migrations` is read back in.
+    const local = ["20260420010000", "20260420"].map(mig);
+    const result = legacyFindPendingMigrations(local, ["20260420", "20260420010000"]);
+    expect(result).toEqual({ kind: "pending", paths: [] });
+  });
+
   it("flags out-of-order local migrations as missing-remote", () => {
     // local [0,1,2,3], remote [0,2] → unapplied [1] (1 sits before applied 2).
     const local = ["20221201000000", "20221201000001", "20221201000002", "20221201000003"].map(mig);

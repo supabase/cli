@@ -1,10 +1,17 @@
 import { stringify as stringifyToml } from "smol-toml";
 import { stringify as stringifyYaml } from "yaml";
 
+import { encodeGoJsonCompact, encodeGoJsonIndented } from "./legacy-go-json.ts";
+import { goStringCompare } from "./legacy-go-struct-output.encoders.ts";
+
 /**
- * Reproduces Go's `encoding/json` output:
+ * Reproduces Go's `json.Encoder` output (`utils.EncodeOutput` with `-o json`):
  *   - Top-level and nested struct fields serialize in alphabetical key order.
- *   - Trailing newline (matches `encoding/json` MarshalIndent + fmt.Println).
+ *   - Go string escaping, including the default HTML escapes (`<` / `>` / `&`
+ *     become `\u003c` / `\u003e` / `\u0026` — Go never calls
+ *     `SetEscapeHTML(false)` on this path), `\u0008`/`\u000c` for
+ *     backspace/form feed, and escaped U+2028/U+2029.
+ *   - Trailing newline (matches `json.Encoder.Encode`).
  *
  * The optional `nullForEmptyArrays` option mirrors Go's `null` serialization for nil
  * slices: when the schema decodes both `null` and `[]` to `[]` upstream, the caller can
@@ -34,15 +41,38 @@ export function encodeGoJson<T>(
     }
     source = patched;
   }
-  return JSON.stringify(sortKeysDeep(source), null, 2) + "\n";
+  return encodeGoJsonIndented(sortKeysDeep(source));
 }
 
 function sortKeysDeep(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortKeysDeep);
   if (value === null || typeof value !== "object") return value;
-  const sorted: Record<string, unknown> = {};
-  for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-    sorted[key] = sortKeysDeep((value as Record<string, unknown>)[key]);
+  // A plain object silently reorders integer-like string keys ("2", "10") into ascending
+  // NUMERIC order on any subsequent enumeration (`Object.keys`/`Object.entries` in
+  // `legacy-go-json.ts`'s `walk`), regardless of what order they're inserted in here — Go's
+  // `encoding/json` has no such special case: a real Go map's string keys sort purely
+  // lexicographically ("10" before "2"). Building a `Map` instead of a plain object carries
+  // this sort through to `walk` intact, since `Map` iteration order is true insertion order
+  // for every key shape (CLI-1961 Codex review finding: `{"10":"a","2":"b"}` must stay "10"
+  // before "2" all the way through to the final encoded output).
+  const sorted = new Map<string, unknown>();
+  // `.sort()` with no comparator uses JS default string comparison, which orders by
+  // UTF-16 code unit — NOT the same as Go's byte/code-point order once an astral
+  // character (U+10000+, a surrogate PAIR in UTF-16) meets a high-BMP one (U+E000-
+  // U+FFFF, a single code unit numerically ABOVE the astral character's leading
+  // surrogate). `goStringCompare` (hoisted from `legacy-go-struct-output.encoders.ts`,
+  // which already needed it for TOML/struct-map key sorting) reproduces Go's real
+  // `encoding/json` map-key order instead (CLI-1961 Codex review finding: verified
+  // against the real binary that `json.Marshal` of a map keyed by U+E000 and U+10000
+  // emits the U+E000 key first — the reverse of plain JS `.sort()` on those two keys —
+  // which matters here because `gen bearer-jwt`'s `--payload` custom claims flow
+  // through this same `sortKeysDeep` via `encodeGoStructJsonBody` before signing).
+  for (const key of Object.keys(value as Record<string, unknown>).sort(goStringCompare)) {
+    const child = (value as Record<string, unknown>)[key];
+    // JSON.stringify used to drop undefined properties; the Go-faithful walker
+    // renders them as null, so drop them here to keep the old key surface.
+    if (child === undefined) continue;
+    sorted.set(key, sortKeysDeep(child));
   }
   return sorted;
 }
@@ -51,24 +81,39 @@ function sortKeysDeep(value: unknown): unknown {
  * Serialize an outbound API request body the way Go's `json.Marshal` would
  * for a struct: keys sorted alphabetically (the `@supabase/api`-generated
  * structs declare fields alphabetically, and `json.Marshal` serializes in
- * field-declaration order), no indentation, no trailing newline.
+ * field-declaration order), Go string escaping (HTML characters included,
+ * matching `json.Marshal`'s default `escapeHTML: true`), no indentation, no
+ * trailing newline.
  *
  * Use this on the raw-HTTP code path in `sso add` / `sso update` (and future
  * handlers that bypass the typed client). The cli-e2e replay server compares
- * recorded request bodies via `JSON.stringify`-based string equality, so
- * key-order parity is required for parity tests to pass.
+ * recorded request bodies via string equality against bodies the Go CLI
+ * produced, so both key order and escaping must match `json.Marshal`.
  *
  * `encodeGoJson` is the parallel for human-facing `--output json` output
  * (indented + trailing `\n`).
  */
 export function encodeGoStructJsonBody(value: unknown): string {
-  return JSON.stringify(sortKeysDeep(value));
+  return encodeGoJsonCompact(sortKeysDeep(value));
 }
 
+/**
+ * Go-compatible YAML for **map** payloads (`branches get` envs, `sso info`,
+ * `status`, `postgres-config`, …). Struct payloads must NOT use this — Go's
+ * yaml.v3 derives keys from the Go field names, not the JSON tags; use
+ * `encodeLegacyGoYaml` from `legacy-go-struct-output.encoders.ts` with the
+ * payload's Go struct spec instead (CLI-1975).
+ */
 export function encodeYaml(value: unknown): string {
   return stringifyYaml(value);
 }
 
+/**
+ * Go-compatible TOML for **map** payloads. Struct payloads must NOT use this —
+ * BurntSushi emits PascalCase Go field names with 2-space table indentation;
+ * use `encodeLegacyGoToml` from `legacy-go-struct-output.encoders.ts` with the
+ * payload's Go struct spec instead (CLI-1975).
+ */
 export function encodeToml(value: unknown): string {
   // smol-toml refuses top-level non-object values; wrap if needed.
   if (typeof value !== "object" || value === null || Array.isArray(value)) {

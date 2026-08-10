@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createStack, type StackHandle } from "../src/node.ts";
+import { createStack, type ResolvedFunctionsBundle, type StackHandle } from "../src/node.ts";
 import { fetchFunctionWhenReady, setupTestTable } from "./helpers/e2e.ts";
 
 const STACK_E2E_TEST_TIMEOUT_MS = 5_000;
@@ -21,7 +21,7 @@ describe("createStack e2e", () => {
 
     stack = await createStack({
       projectDir,
-      functions: { noVerifyJwt: true },
+      functions: functionsBundle(projectDir, ["hello"]),
       jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
       postgres: { dataDir },
     });
@@ -89,7 +89,7 @@ describe("createStack e2e", () => {
 
   test("reloadFunctions picks up newly added Edge Functions", { timeout: 30_000 }, async () => {
     writeFunction(projectDir, "later", "later");
-    await stack.reloadFunctions({ noVerifyJwt: true });
+    await stack.reloadFunctions({ functions: functionsBundle(projectDir, ["hello", "later"]) });
 
     const res = await fetchFunctionWhenReady(`${stack.url}/functions/v1/later`);
 
@@ -167,4 +167,21 @@ function writeFunction(projectDir: string, slug: string, body: string) {
     join(dir, "index.ts"),
     `Deno.serve(() => new Response(${JSON.stringify(body)}));\n`,
   );
+}
+
+function functionsBundle(
+  projectDir: string,
+  names: ReadonlyArray<string>,
+): ResolvedFunctionsBundle {
+  return {
+    env: {},
+    functions: names.map((name) => ({
+      name,
+      verifyJWT: false,
+      entrypointPath: join(projectDir, "supabase", "functions", name, "index.ts"),
+      importMapPath: null,
+      staticFiles: [],
+      env: {},
+    })),
+  };
 }

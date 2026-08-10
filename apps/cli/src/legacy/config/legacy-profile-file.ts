@@ -1,5 +1,10 @@
 import { Data, Effect, FileSystem, Path } from "effect";
 import { resolveSupabaseHome } from "../../shared/config/supabase-home.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Helpers for the persisted profile-name file under the global Supabase home,
@@ -29,7 +34,11 @@ export function legacySupabaseHome(
  * (`apps/cli-go/cmd/login.go:42-46`). */
 export class LegacyProfileSaveError extends Data.TaggedError("LegacyProfileSaveError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 export function legacyProfileFilePath(
   path: Path.Path,

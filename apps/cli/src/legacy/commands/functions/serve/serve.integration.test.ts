@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -14,6 +14,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { toDockerPath } from "../../../../shared/functions/deploy.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -28,6 +29,8 @@ import {
   ProcessControl,
   type CliProcessSignal,
 } from "../../../../shared/runtime/process-control.service.ts";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
+import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
 import type { LegacyFunctionsServeFlags } from "./serve.handler.ts";
 
 const deployMockState = vi.hoisted(() => ({
@@ -94,8 +97,8 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
         )[0];
         const multilineEnvDir = args
           .flatMap((value, index) => (args[index - 1] === "-v" ? [value] : []))
-          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro"))
-          ?.slice(0, -":/root/.supabase/multiline-env:ro".length);
+          .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
+          ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
         const enrichedOptions =
           envFile === undefined && multilineEnvDir === undefined
             ? options
@@ -135,6 +138,9 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
 });
 
 const tempRoot = useLegacyTempWorkdir("supabase-functions-serve-int-");
+
+// Root bypasses POSIX permission bits, so chmod-based failure tests can't run there.
+const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
 const { legacyFunctionsServe } = await import("./serve.handler.ts");
 
@@ -485,9 +491,12 @@ describe("legacy functions serve integration", () => {
         expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.73.13");
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/index.ts:ro"),
+            value.endsWith(":/root/index.ts:ro,Z"),
           ),
         ).toBe(true);
+        expect(extractFlagValues(dockerRun.args, "--workdir")).toEqual([
+          toDockerPath(tempRoot.current),
+        ]);
         expect(dockerRun.args[dockerRun.args.length - 1]).toBe(
           "edge-runtime start --main-service=/root --port=8081 --policy=per_worker\n",
         );
@@ -514,17 +523,21 @@ describe("legacy functions serve integration", () => {
           },
         });
 
-        // Bare `kong reload`, matching Go's `restartEdgeRuntime`
-        // (`internal/functions/serve/serve.go:129`) — the `--nginx-conf`
-        // template argument belongs to `start`'s Kong bring-up, not reload.
+        // The reload must carry bring-up's `--nginx-conf`; a bare `kong reload`
+        // re-renders nginx.conf from Kong's default template and drops the
+        // `email_templates` server GoTrue fetches (issue #6059).
         expect(deployMockState.runCalls).toContainEqual({
           command: "docker",
-          args: ["exec", "supabase_kong_test-project", "kong", "reload"],
+          args: [
+            "exec",
+            "supabase_kong_test-project",
+            "kong",
+            "reload",
+            "--nginx-conf",
+            "/home/kong/custom_nginx.template",
+          ],
           options: { stdout: "ignore", stderr: "pipe" },
         });
-        expect(deployMockState.runCalls.some((call) => call.args.includes("--nginx-conf"))).toBe(
-          false,
-        );
 
         expect(childSpawner.spawned).toEqual([
           {
@@ -570,8 +583,8 @@ describe("legacy functions serve integration", () => {
             throw new Error("expected docker run call before docker logs spawn");
           }
           multilineEnvDirWhenLogsStarted = extractFlagValues(dockerRun.args, "-v")
-            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro"))
-            ?.slice(0, -":/root/.supabase/multiline-env:ro".length);
+            .find((value) => value.endsWith(":/root/.supabase/multiline-env:ro,Z"))
+            ?.slice(0, -":/root/.supabase/multiline-env:ro,Z".length);
           multilineEnvDirExistedWhenLogsStarted =
             multilineEnvDirWhenLogsStarted !== undefined &&
             existsSync(multilineEnvDirWhenLogsStarted);
@@ -613,11 +626,14 @@ describe("legacy functions serve integration", () => {
         throw new Error("expected docker run call");
       }
 
+      expect(dockerRun.args).toContain(
+        legacyGetRegistryImageUrl(dockerfileServiceImage("edgeruntime")),
+      );
       expect(dockerRun.args.join(" ")).not.toContain(multilineValue);
       expect(dockerRun.args.join(" ")).not.toContain("EOF_ENV_0");
 
       const multilineBind = extractFlagValues(dockerRun.args, "-v").find((value) =>
-        value.endsWith(":/root/.supabase/multiline-env:ro"),
+        value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
       );
       expect(multilineBind).toBeDefined();
       if (multilineBind === undefined) {
@@ -729,7 +745,7 @@ describe("legacy functions serve integration", () => {
         }
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
-            value.endsWith(":/root/.supabase/multiline-env:ro"),
+            value.endsWith(":/root/.supabase/multiline-env:ro,Z"),
           ),
         ).toBe(false);
       });
@@ -1486,7 +1502,7 @@ describe("legacy functions serve integration", () => {
       );
       expect(
         extractFlagValues(dockerRun.args, "-v").some((value) =>
-          value.endsWith(":/root/index.ts:ro"),
+          value.endsWith(":/root/index.ts:ro,Z"),
         ),
       ).toBe(true);
       expect(commandScript).not.toContain("@ts-nocheck");
@@ -2735,4 +2751,72 @@ describe("legacy functions serve integration", () => {
       ).toHaveLength(0);
     });
   });
+
+  it.live("surfaces the real filesystem error when the fallback env file is unreadable", () => {
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      // A directory at the fallback path makes the read fail with a non-ENOENT error (EISDIR).
+      yield* Effect.promise(() =>
+        mkdir(join(tempRoot.current, "supabase", "functions", ".env"), { recursive: true }),
+      );
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("EISDIR");
+        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
+      }
+      expect(
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toHaveLength(0);
+    });
+  });
+
+  it.live.skipIf(isRoot)(
+    "surfaces the real filesystem error when the env staging dir cannot be created",
+    () => {
+      return Effect.gen(function* () {
+        yield* Effect.promise(() =>
+          writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        // A read-only parent makes the per-container staging-dir mkdir fail with EACCES.
+        const stagingRoot = join(tempRoot.current, "supabase", ".temp", "start-secrets");
+        yield* Effect.promise(() => mkdir(stagingRoot, { recursive: true }));
+        yield* Effect.promise(() => chmod(stagingRoot, 0o555));
+
+        const { layer } = setupServe();
+        const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+          Effect.provide(layer),
+          Effect.flip,
+          Effect.ensuring(Effect.promise(() => chmod(stagingRoot, 0o755))),
+        );
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toContain("EACCES");
+          expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
+        }
+        expect(
+          deployMockState.runCalls.filter(
+            (call) => call.command === "docker" && call.args[0] === "run",
+          ),
+        ).toHaveLength(0);
+      });
+    },
+  );
 });

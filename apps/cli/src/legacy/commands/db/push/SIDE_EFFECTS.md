@@ -2,7 +2,8 @@
 
 Native TypeScript port of `apps/cli-go/internal/db/push/push.go`. Applies pending
 local migrations (and optionally seed data and custom roles) to the local or
-linked/remote Postgres database.
+linked/remote Postgres database, updating configured Vault secrets before migrations
+unless `--skip-vault` is set.
 
 ## Files Read
 
@@ -27,13 +28,13 @@ linked/remote Postgres database.
 
 ## Database Mutations
 
-| Statement                                                                                                                                | When                                                                                                   |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `RESET ALL` + `BEGIN` … migration statements … `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` … `COMMIT` | per pending migration (after confirmation)                                                             |
-| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                                              | once before applying migrations (idempotent)                                                           |
-| `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                                                 | per `--include-roles` globals file (after confirmation)                                                |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets and migrations are applied                                      |
-| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …`                      | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash |
+| Statement                                                                                                                                | When                                                                                                                    |
+| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `RESET ALL` + `BEGIN` … migration statements … `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` … `COMMIT` | per pending migration (after confirmation); pipeline-incompatible statements run standalone between batches — see Notes |
+| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                                              | once before applying migrations (idempotent)                                                                            |
+| `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                                                 | per `--include-roles` globals file (after confirmation)                                                                 |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                           |
+| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …`                      | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                  |
 
 ## API Routes
 
@@ -43,13 +44,15 @@ linked/remote Postgres database.
 
 ## Environment Variables
 
-| Variable                           | Purpose                                                                             | Required?                                               |
-| ---------------------------------- | ----------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                         | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                           | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`                     | auto-confirm prompts (Go's `viper YES`)                                             | no (also `--yes`)                                       |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset | no (project `.env` or shell)                            |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export             | no (project `.env` or shell)                            |
+| Variable                           | Purpose                                                                                                          | Required?                                               |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                                                        | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_YES`                     | auto-confirm prompts (Go's `viper YES`)                                                                          | no (also `--yes`)                                       |
+| `DOTENV_PRIVATE_KEY*`              | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                  | no                                                      |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset                              | no (project `.env` or shell)                            |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export                                          | no (project `.env` or shell)                            |
+| `PGDELTA_NPM_REGISTRY`             | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the cache export | no (project `.env` or shell)                            |
 
 ## Exit Codes
 
@@ -100,7 +103,23 @@ stdout is payload-only. A single `result` object is emitted:
 - **`[db.migrations].enabled = false`** / **`[db.seed].enabled = false`** print a
   skip notice naming the project ref (empty for local/db-url).
 - **Vault**: non-empty, non-`env()` `[db.vault]` values are synced after config
-  load, including decrypted `encrypted:` values.
+  load, including decrypted `encrypted:` values. `--skip-vault` leaves them unchanged
+  and does not resolve or decrypt their configured values.
+- **Pipeline-incompatible statements**: `CREATE [UNIQUE] INDEX CONCURRENTLY`,
+  `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, and `CLUSTER` cannot run inside a
+  transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs
+  the statement standalone outside any transaction, then resumes batching; the history
+  insert stays in the final batch so the migration is recorded only after every
+  statement succeeds. Atomicity is therefore lost at each flush boundary: statements
+  committed in an earlier batch are **not** rolled back if a later statement fails,
+  leaving the database partially migrated with **no history row** — a re-run replays
+  the whole file from the top (which may then fail on already-applied statements).
+  Prefer idempotent forms (`CREATE INDEX CONCURRENTLY IF NOT EXISTS …`) and isolating
+  such statements in their own migration file. Intentional fix for supabase/cli#5139:
+  the reference design is the **closed, unmerged** Go PR supabase/cli#5156, adopted
+  directly into TS in PR supabase/cli#5671 (landed on develop as `b48fad60`) and
+  back-ported to the pinned `apps/cli-go` oracle under the CLI-1989 parity ruling
+  (2026-07-30).
 - **Migrations catalog cache**: ported (Go's best-effort `pgcache.TryCacheMigrationsCatalog`).
   After a successful migration apply, when pg-delta is enabled, exports the target's
   pg-delta catalog via the edge-runtime stack and writes it under

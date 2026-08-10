@@ -3,14 +3,19 @@ import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
+import { candidateCleanupTargets } from "./cleanup.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
 import { enabledServicesForConfig, versionsForConfig } from "./StackBuilder.ts";
 import { nativePostgresNeedsDockerAccess } from "./StackBuilder.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import type { StackPreparationInput } from "./StackPreparation.ts";
+import {
+  dependencyTimeoutSecondsForServices,
+  POSTGRES_INIT_COMPLETION_BUDGET_SECONDS,
+} from "./services/health-budgets.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const testJwtSecret = "super-secret-jwt-token-with-at-least-32-characters";
@@ -42,6 +47,9 @@ const baseConfig: ResolvedStackConfig = {
   runtimeRoot: "/tmp/supabase-runtime",
   projectDir: "/tmp/supabase-project",
   mode: "auto",
+  startupMode: "eager",
+  readiness: DEFAULT_STACK_READINESS_POLICY,
+  readinessSource: "default",
   jwtSecret: testJwtSecret,
   ports: basePorts,
   apiPort: 3000,
@@ -191,6 +199,11 @@ describe("StackBuilder", () => {
 
       expect(graph.startOrder.length).toBe(4);
       expect(cleanupTargets.dockerContainerNames).toEqual([]);
+      expect(candidateCleanupTargets(baseConfig).dockerContainerNames).toEqual([
+        `supabase-postgres-${baseConfig.apiPort}`,
+        `supabase-postgrest-${baseConfig.apiPort}`,
+        `supabase-auth-${baseConfig.apiPort}`,
+      ]);
 
       const names = graph.startOrder.map((s) => s.name);
       expect(names).toContain("postgres");
@@ -202,6 +215,17 @@ describe("StackBuilder", () => {
       expect(names.indexOf("postgres")).toBeLessThan(names.indexOf("postgres-init"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("postgrest"));
       expect(names.indexOf("postgres-init")).toBeLessThan(names.indexOf("auth"));
+
+      const postgresDependencyTimeout = dependencyTimeoutSecondsForServices(["postgres"]);
+      expect(
+        graph.startOrder.find((service) => service.name === "postgres-init")
+          ?.dependencyTimeoutSeconds,
+      ).toBe(postgresDependencyTimeout);
+      for (const name of ["postgrest", "auth"]) {
+        expect(
+          graph.startOrder.find((service) => service.name === name)?.dependencyTimeoutSeconds,
+        ).toBe(postgresDependencyTimeout + POSTGRES_INIT_COMPLETION_BUDGET_SECONDS);
+      }
 
       expect(serviceProjection.get("postgres")).toEqual({ visibility: "public" });
       expect(serviceProjection.get("postgres-init")).toEqual({
@@ -344,6 +368,9 @@ describe("StackBuilder", () => {
 
       const authDef = graph.startOrder.find((s) => s.name === "auth");
       expect(authDef?.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
+      expect(authDef?.dependencyTimeoutSeconds).toBe(
+        dependencyTimeoutSecondsForServices(["postgres"]),
+      );
     }).pipe(Effect.provide(layer));
   });
 

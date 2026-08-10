@@ -8,14 +8,14 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
+import { encodeEnv, encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
+import { LEGACY_GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
   LegacyBranchesUpdateNetworkError,
   LegacyBranchesUpdateUnexpectedStatusError,
@@ -74,7 +74,21 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
         Effect.catch(
           legacyGateMapError(
             { projectRef: branchRef, featureKey: "branching_persistent" },
-            mapUpdateError,
+            (cause, upgradeSuggested) =>
+              Effect.gen(function* () {
+                const mapped = yield* Effect.flip(mapUpdateError(cause));
+                if (mapped._tag === "LegacyBranchesUpdateUnexpectedStatusError") {
+                  return yield* Effect.fail(
+                    new LegacyBranchesUpdateUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                    }),
+                  );
+                }
+                return yield* Effect.fail(mapped);
+              }),
           ),
         ),
       );
@@ -91,12 +105,12 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
     }
     if (goFmt === "yaml") {
       yield* output.raw("Updated preview branch:\n", "stderr");
-      yield* output.raw(encodeYaml(updated));
+      yield* output.raw(encodeLegacyGoYaml(updated, LEGACY_GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "toml") {
       yield* output.raw("Updated preview branch:\n", "stderr");
-      yield* output.raw(encodeToml(updated) + "\n");
+      yield* output.raw(encodeLegacyGoToml(updated, LEGACY_GO_BRANCH_RESPONSE));
       return;
     }
     if (goFmt === "env") {

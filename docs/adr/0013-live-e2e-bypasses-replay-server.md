@@ -123,8 +123,9 @@ independent green signals instead of one averaged result.
 
 ## Related Decisions
 
-- [ADR 0012](0012-compiled-bun-runtime-dispatch.md): Compiled Bun Runtime Dispatch
-  (the next CLI e2e harness runs against the compiled binary)
+- [Compiled Bun self-dispatch](../../packages/process-compose/docs/architecture.md#compiled-bun-self-dispatch):
+  the next CLI e2e harness runs against the compiled binary and therefore exercises its process
+  re-entry contract
 - [ADR 0011](0011-cli-release-and-distribution-strategy.md): CLI Release & Distribution Strategy
 
 ## See Also

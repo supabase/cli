@@ -1,9 +1,9 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
@@ -78,4 +78,68 @@ describe("legacyApplySeedFiles seed glob", () => {
       ),
     );
   });
+
+  it.effect(
+    "expands a matched directory to its sorted, regular .sql files (Go's Glob.SQLFiles)",
+    () => {
+      // Go's `GetPendingSeeds` calls `locals.SQLFiles(fsys)` — the SAME `Glob.SQLFiles` method
+      // `db.migrations.schema_paths` resolves through — which expands a directory match to its
+      // recursively-walked, sorted `.sql` files rather than treating the directory itself as a
+      // seed file.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
+      mkdirSync(join(dir, "seeds"));
+      writeFileSync(join(dir, "seeds", "b.sql"), "insert into t values (2);");
+      writeFileSync(join(dir, "seeds", "a.sql"), "insert into t values (1);");
+      writeFileSync(join(dir, "seeds", "README.md"), "not a seed file");
+      const { session, queries } = fakeSession();
+      const out = mockOutput();
+      return run(session, dir, ["seeds"], out).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            const upserts = queries.filter((q) =>
+              q.sql.includes("INSERT INTO supabase_migrations.seed_files"),
+            );
+            expect(upserts.map((q) => q.params?.[0])).toEqual(["seeds/a.sql", "seeds/b.sql"]);
+            expect(out.rawChunks.map((c) => c.text)).toEqual([
+              "Seeding data from seeds/a.sql...\n",
+              "Seeding data from seeds/b.sql...\n",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+});
+
+describe("legacyApplySeedFiles scanner buffer size", () => {
+  it.effect(
+    "rejects an oversized seed statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go SeedFile.ExecBatchWithCache parity)",
+    () => {
+      // Ports the same `parseFile` every migration/globals/schema-file caller goes
+      // through (see `checkScannerBufferSize`'s doc comment), so an oversized
+      // statement must abort here too, not execute silently.
+      const dir = mkdtempSync(join(tmpdir(), "legacy-seed-scanner-"));
+      // Raw text must exceed the 4096-byte floor Go's bufio.Scanner starts at
+      // regardless of the configured limit (see legacy-migration-apply.unit.test.ts's
+      // equivalent case for the exact same 4096-byte floor).
+      writeFileSync(join(dir, "big.sql"), `insert into t values ('${"x".repeat(5000)}');`);
+      const { session, queries } = fakeSession();
+      const out = mockOutput();
+      const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+      process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = "100b";
+      return run(session, dir, ["big.sql"], out).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            expect(queries.some((q) => q.sql.includes("insert into t"))).toBe(false);
+            rmSync(dir, { recursive: true, force: true });
+            if (previous === undefined) delete process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
+            else process.env["SUPABASE_SCANNER_BUFFER_SIZE"] = previous;
+          }),
+        ),
+      );
+    },
+  );
 });

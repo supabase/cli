@@ -36,13 +36,35 @@ The important separation is:
 - `stack.json` pins what a named local stack should use by default
 - `local-versions.json` and `--service-version` override the pinned baseline at runtime
 
+## Artifact Providers and Runtime Support
+
+Every service in the Stack has one entry in `ServiceCatalog.ts`, regardless of who maintains it.
+The entry records its default version, Docker image provider, tag convention, runtime support, and
+any native release source. Runtime code consumes the resulting service resolution and does not
+need to know which registry or release repository supplied it.
+
+Supabase-managed images currently retain their ECR, Docker Hub, and GHCR candidates. External
+services such as imgproxy, Mailpit, and Vector retain their upstream Docker images and are marked
+Docker-only. Other services remain Docker-only until a supported native release is explicitly added
+to the catalog.
+
+Native artifacts are cached by service, provider, version, platform, and architecture. Downloads
+are extracted into a private staging directory and published with an atomic rename. Concurrent
+downloaders race to publish; losers reuse the complete winner. A cache entry is reusable only after
+its completion marker has been written, so interrupted downloads and extractions cannot be mistaken
+for valid installations.
+
+This provider boundary is where the future `supabase/slim-services` GHCR images and native release
+artifacts will be connected. That source change should not require changes to Stack lifecycle or
+service definitions.
+
 ## 1. Source of Truth for CLI Defaults
 
 The old Go CLI used `pkg/config/templates/Dockerfile` as a version manifest so Dependabot could
 bump image tags automatically.
 
-The TypeScript stack exports a typed `DEFAULT_VERSIONS` manifest instead. That constant is the
-built-in default version set for a given CLI release.
+The TypeScript stack derives its typed `DEFAULT_VERSIONS` manifest from `ServiceCatalog.ts`. The
+catalog values are the built-in default version set for a given CLI release.
 
 These defaults are the fallback for:
 

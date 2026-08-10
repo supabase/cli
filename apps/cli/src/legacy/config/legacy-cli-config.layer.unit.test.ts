@@ -4,9 +4,10 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { Effect, Layer, Option, Redacted } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Redacted } from "effect";
 import { afterEach, beforeEach, vi } from "vitest";
 
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
   LegacyProfileFlag,
@@ -14,6 +15,7 @@ import {
 } from "../../shared/legacy/global-flags.ts";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { legacyDebugLoggerLayer } from "../shared/legacy-debug-logger.layer.ts";
+import { LegacyProfileLoadError } from "../shared/legacy-profile-load.ts";
 import { legacyCliConfigLayer } from "./legacy-cli-config.layer.ts";
 import { LegacyCliConfig } from "./legacy-cli-config.service.ts";
 
@@ -24,6 +26,8 @@ function makeLayer(opts: {
   cwd?: string;
   home?: string;
   debug?: boolean;
+  /** Raw argv for explicit `--profile` detection. */
+  argv?: ReadonlyArray<string>;
 }) {
   const profileFlag = opts.profileFlag ?? "supabase";
   const workdirFlag = opts.workdirFlag ?? Option.none<string>();
@@ -32,6 +36,7 @@ function makeLayer(opts: {
     Layer.provide(Layer.succeed(LegacyDebugFlag, opts.debug ?? false)),
     Layer.provide(Layer.succeed(LegacyProfileFlag, profileFlag)),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, workdirFlag)),
+    Layer.provide(Layer.succeed(CliArgs, { args: opts.argv ?? [] })),
     // The layer reads `<homeDir>/.supabase/profile` through the real BunServices
     // filesystem, so homeDir must default to a per-test directory — a shared
     // fixed path would leak stale profile files between runs and machines.
@@ -44,6 +49,26 @@ function makeLayer(opts: {
     Layer.provide(BunServices.layer),
     Layer.provide(processEnvLayer(opts.env ?? {})),
   );
+}
+
+// Profile load failures surface as layer-build failures (Go: PersistentPreRunE).
+function configExit(opts: Parameters<typeof makeLayer>[0]) {
+  return Effect.gen(function* () {
+    return yield* LegacyCliConfig;
+  }).pipe(Effect.provide(makeLayer(opts)), Effect.exit);
+}
+
+function expectProfileLoadFailure(exit: Exit.Exit<unknown, unknown>, ...fragments: string[]) {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    // A typed failure, not a defect — only expected errors render cleanly.
+    const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
+    expect(error).toBeInstanceOf(LegacyProfileLoadError);
+    const message = (error as LegacyProfileLoadError).message;
+    for (const fragment of fragments) {
+      expect(message).toContain(fragment);
+    }
+  }
 }
 
 let tempRoot: string;
@@ -151,17 +176,92 @@ describe("legacyCliConfigLayer", () => {
     );
   });
 
+  // Go fails hard on an unloadable profile — never falls back to the built-in
+  // `supabase` profile and its keyring token (supabase/cli#6091).
   it.effect(
-    "falls back to supabase profile when SUPABASE_PROFILE is neither a known name nor a readable file",
+    "fails when SUPABASE_PROFILE is neither a known name nor a readable file — Go parity",
+    () =>
+      Effect.gen(function* () {
+        const exit = yield* configExit({
+          env: { SUPABASE_PROFILE: "rogue-profile" },
+          cwd: tempRoot,
+        });
+        expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+      }),
+  );
+
+  it.effect("fails when --profile names a non-existent profile instead of falling back", () =>
+    Effect.gen(function* () {
+      const exit = yield* configExit({ profileFlag: "resms", cwd: tempRoot });
+      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+    }),
+  );
+
+  it.effect("matches built-in profile names case-insensitively — Go strings.EqualFold", () =>
+    Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase-staging");
+      expect(config.apiUrl).toBe("https://api.supabase.green");
+    }).pipe(Effect.provide(makeLayer({ profileFlag: "SUPABASE-STAGING", cwd: tempRoot }))),
+  );
+
+  // pflag `Changed`: an explicitly passed flag counts even at its default value.
+  it.effect(
+    "explicit --profile supabase shadows an unloadable SUPABASE_PROFILE — pflag Changed",
     () =>
       Effect.gen(function* () {
         const config = yield* LegacyCliConfig;
         expect(config.profile).toBe("supabase");
         expect(config.apiUrl).toBe("https://api.supabase.com");
       }).pipe(
-        Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: "rogue-profile" }, cwd: tempRoot })),
+        Effect.provide(
+          makeLayer({
+            argv: ["link", "--profile", "supabase"],
+            env: { SUPABASE_PROFILE: "rogue-profile" },
+            cwd: tempRoot,
+          }),
+        ),
       ),
   );
+
+  it.effect("resolves repeated --profile occurrences last-wins — pflag parity", () =>
+    Effect.gen(function* () {
+      // The Effect parser is first-wins ("rogue-profile"); pflag keeps the last.
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase");
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          argv: ["link", "--profile", "rogue-profile", "--profile", "supabase"],
+          profileFlag: "rogue-profile",
+          cwd: tempRoot,
+        }),
+      ),
+    ),
+  );
+
+  it.effect("fails when the last --profile occurrence is unloadable — pflag parity", () =>
+    Effect.gen(function* () {
+      const exit = yield* configExit({
+        argv: ["link", "--profile", "supabase", "--profile", "resms"],
+        profileFlag: "supabase",
+        cwd: tempRoot,
+      });
+      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+    }),
+  );
+
+  it.effect("explicit --profile supabase shadows an unloadable persisted profile file", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "resms\n");
+    return Effect.gen(function* () {
+      const config = yield* LegacyCliConfig;
+      expect(config.profile).toBe("supabase");
+    }).pipe(
+      Effect.provide(makeLayer({ argv: ["login", "--profile=supabase"], home, cwd: tempRoot })),
+    );
+  });
 
   it.effect("loads api_url, name, pooler_host, and dashboard_url from a YAML profile file", () => {
     const profilePath = join(tempRoot, "profile.yaml");
@@ -187,45 +287,69 @@ describe("legacyCliConfigLayer", () => {
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 
-  it.effect("defaults project_host to supabase.co and pooler_host to empty when omitted", () => {
-    const profilePath = join(tempRoot, "no-host.yaml");
-    writeFileSync(profilePath, ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"'].join("\n"));
+  it.effect("keeps pooler_host empty when a YAML profile omits it — Go omitempty", () => {
+    const profilePath = join(tempRoot, "no-pooler.yaml");
+    writeFileSync(
+      profilePath,
+      [
+        "name: cli-e2e",
+        'api_url: "http://127.0.0.1:9999"',
+        'dashboard_url: "http://127.0.0.1:9999"',
+        "project_host: localhost",
+      ].join("\n"),
+    );
     return Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
-      expect(config.projectHost).toBe("supabase.co");
+      expect(config.projectHost).toBe("localhost");
       // Go's Profile.PoolerHost is `omitempty`: an absent pooler_host disables the
       // MITM domain assertion rather than falling back to supabase.com.
       expect(config.poolerHost).toBe("");
-      // An omitted dashboard_url falls back to the built-in supabase dashboard.
-      expect(config.dashboardUrl).toBe("https://supabase.com/dashboard");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
 
-  it.effect(
-    "falls back to supabase profile when SUPABASE_PROFILE points to a non-existent file",
-    () =>
-      Effect.gen(function* () {
-        const config = yield* LegacyCliConfig;
-        expect(config.profile).toBe("supabase");
-        expect(config.apiUrl).toBe("https://api.supabase.com");
-      }).pipe(
-        Effect.provide(
-          makeLayer({
-            env: { SUPABASE_PROFILE: join(tempRoot, "missing.yaml") },
-            cwd: tempRoot,
-          }),
-        ),
-      ),
+  it.effect("fails when a YAML profile omits required keys — Go validator parity", () => {
+    const profilePath = join(tempRoot, "no-host.yaml");
+    writeFileSync(profilePath, ["name: cli-e2e", 'api_url: "http://127.0.0.1:9999"'].join("\n"));
+    return Effect.gen(function* () {
+      const exit = yield* configExit({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot });
+      expectProfileLoadFailure(
+        exit,
+        "invalid profile:",
+        "Field validation for 'DashboardURL' failed on the 'required' tag",
+        "Field validation for 'ProjectHost' failed on the 'required' tag",
+      );
+    });
+  });
+
+  it.effect("fails when SUPABASE_PROFILE points to a non-existent file — Go parity", () =>
+    Effect.gen(function* () {
+      const missingPath = join(tempRoot, "missing.yaml");
+      const exit = yield* configExit({ env: { SUPABASE_PROFILE: missingPath }, cwd: tempRoot });
+      expectProfileLoadFailure(
+        exit,
+        `failed to read profile: open ${missingPath}: no such file or directory`,
+      );
+    }),
   );
 
-  it.effect("falls back to supabase profile when SUPABASE_PROFILE points to malformed YAML", () => {
+  it.effect("fails when SUPABASE_PROFILE points to malformed YAML — Go parity", () => {
     const profilePath = join(tempRoot, "broken.yaml");
     writeFileSync(profilePath, "::: not yaml :::\n[unbalanced");
     return Effect.gen(function* () {
-      const config = yield* LegacyCliConfig;
-      expect(config.profile).toBe("supabase");
-      expect(config.apiUrl).toBe("https://api.supabase.com");
-    }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
+      const exit = yield* configExit({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot });
+      expectProfileLoadFailure(exit, "failed to read profile: While parsing config:");
+    });
+  });
+
+  // Files written by older lenient versions still exist and must fail like Go.
+  it.effect("fails when the persisted profile file names an unloadable profile", () => {
+    const home = join(tempRoot, "home");
+    mkdirSync(join(home, ".supabase"), { recursive: true });
+    writeFileSync(join(home, ".supabase", "profile"), "resms\n");
+    return Effect.gen(function* () {
+      const exit = yield* configExit({ home, cwd: tempRoot });
+      expectProfileLoadFailure(exit, "failed to read profile: Unsupported Config Type");
+    });
   });
 
   it.effect("ignores SUPABASE_API_URL — Go parity", () =>

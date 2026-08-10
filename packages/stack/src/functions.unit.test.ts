@@ -1,16 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { mkdtempSync } from "node:fs";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtempSync, symlinkSync } from "node:fs";
+import { readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect } from "effect";
-import { resolveConfig } from "./createStack.ts";
+import { Effect, Schema } from "effect";
+import { resolveConfig } from "./StackConfigResolver.ts";
 import { defaultJwtSecret, generateJwt } from "./JwtGenerator.ts";
 import {
+  clearFunctionsRuntimeConfig,
   configureFunctionsRuntime,
   functionsRuntimeConfigPath,
+  ResolvedFunctionsBundleSchema,
   resolveFunctionsRuntimeConfig,
+  type ResolvedFunctionsBundle,
 } from "./functions.ts";
 import { verifyRequest } from "./services/edge-runtime-main.ts";
 
@@ -18,42 +21,20 @@ function makeTempProject(): string {
   return mkdtempSync(join(tmpdir(), "supabase-stack-functions-"));
 }
 
-async function writeProject(cwd: string) {
-  await mkdir(join(cwd, "supabase", "functions", "hello-world"), { recursive: true });
-  await mkdir(join(cwd, "supabase", "functions", "disabled-function"), { recursive: true });
-  await writeFile(
-    join(cwd, "supabase", "functions", "hello-world", "index.ts"),
-    "Deno.serve(() => Response.json({ ok: true }));\n",
-  );
-  await writeFile(
-    join(cwd, "supabase", "functions", "disabled-function", "index.ts"),
-    "Deno.serve(() => Response.json({ disabled: true }));\n",
-  );
-  await writeFile(
-    join(cwd, "supabase", ".env"),
-    "CONFIG_ONLY=from-project-env\nSHARED=from-project-env\n",
-  );
-  await writeFile(
-    join(cwd, "supabase", "functions", ".env"),
-    "FILE_ONLY=from-functions-env\nSHARED=from-functions-env\n",
-  );
-  await writeFile(
-    join(cwd, "supabase", "config.json"),
-    JSON.stringify({
-      functions: {
-        "hello-world": {
-          verify_jwt: true,
-          env: {
-            CONFIG_ONLY: "env(CONFIG_ONLY)",
-            SHARED: "env(SHARED)",
-          },
-        },
-        "disabled-function": {
-          enabled: false,
-        },
+function makeBundle(root: string): ResolvedFunctionsBundle {
+  return {
+    env: { SHARED: "shared-value", BUNDLE_ONLY: "bundle-value" },
+    functions: [
+      {
+        name: "hello-world",
+        verifyJWT: true,
+        entrypointPath: join(root, "functions", "hello-world", "index.ts"),
+        importMapPath: null,
+        staticFiles: [join(root, "functions", "hello-world", "assets", "*")],
+        env: { SHARED: "function-value", FUNCTION_ONLY: "function-value" },
       },
-    }),
-  );
+    ],
+  };
 }
 
 function jwtWithInvalidSignature(algorithm?: string): string {
@@ -101,95 +82,152 @@ const authFailureCases = [
 ];
 
 describe("stack Functions runtime config", () => {
-  it.live("auto-detects enabled functions from projectDir", () => {
-    const cwd = makeTempProject();
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProject(cwd));
-      const stackConfig = yield* Effect.promise(() => resolveConfig({ projectDir: cwd }));
-      const config = yield* resolveFunctionsRuntimeConfig(stackConfig, {
-        hostname: "127.0.0.1",
-      });
-
-      expect(config).toBeDefined();
-      expect(Object.keys(config!.functions)).toEqual(["hello-world"]);
-      expect(config!.functions["hello-world"]).toEqual({
-        verifyJWT: true,
-        entrypointPath: join(cwd, "supabase", "functions", "hello-world", "index.ts"),
-        importMapPath: "",
-        staticFiles: [],
-      });
-      expect(config!.env).toMatchObject({
-        FILE_ONLY: "from-functions-env",
-        CONFIG_ONLY: "from-project-env",
-        SHARED: "from-project-env",
-      });
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
+  it("projects an explicit bundle without project discovery", async () => {
+    const root = makeTempProject();
+    const stackConfig = await resolveConfig({ projectDir: root, functions: makeBundle(root) });
+    const config = resolveFunctionsRuntimeConfig(
+      stackConfig,
+      { hostname: "127.0.0.1" },
+      makeBundle(root),
     );
+
+    expect(config?.env).toEqual({ SHARED: "shared-value", BUNDLE_ONLY: "bundle-value" });
+    expect(config?.functions["hello-world"]).toEqual({
+      verifyJWT: true,
+      entrypointPath: join(root, "functions", "hello-world", "index.ts"),
+      importMapPath: null,
+      staticFiles: [join(root, "functions", "hello-world", "assets", "*")],
+      env: { SHARED: "function-value", FUNCTION_ONLY: "function-value" },
+    });
+
+    await rm(root, { recursive: true, force: true });
   });
 
-  it.live("supports explicit env files and disabling JWT verification", () => {
+  it("validates paths, import maps, and unique function names", async () => {
+    const decode = Schema.decodeUnknownSync(ResolvedFunctionsBundleSchema);
+    const root = makeTempProject();
+    const bundle = makeBundle(root);
+
+    expect(decode(bundle).functions[0]?.importMapPath).toBeNull();
+    expect(() =>
+      decode({
+        ...bundle,
+        functions: [{ ...bundle.functions[0], entrypointPath: "./index.ts" }],
+      }),
+    ).toThrow("Expected an absolute path");
+    expect(() =>
+      decode({
+        ...bundle,
+        functions: [bundle.functions[0], bundle.functions[0]],
+      }),
+    ).toThrow("Duplicate function name: hello-world");
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("validates explicit bundles at config resolution", async () => {
+    const root = makeTempProject();
+    const bundle = makeBundle(root);
+
+    await expect(
+      resolveConfig({
+        projectDir: root,
+        functions: {
+          ...bundle,
+          functions: [bundle.functions[0]!, bundle.functions[0]!],
+        },
+      }),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      detail: "Invalid Edge Functions bundle",
+    });
+    await expect(
+      resolveConfig({
+        projectDir: join(root, "project"),
+        functions: bundle,
+      }),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      detail: "Invalid Edge Functions bundle",
+    });
+
+    await rm(root, { recursive: true, force: true });
+  });
+
+  it("rejects bundle paths that escape projectDir through a symlink", async () => {
+    const root = makeTempProject();
+    const outside = makeTempProject();
+    const bundle = makeBundle(root);
+    symlinkSync(
+      outside,
+      join(root, "linked-outside"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
+
+    await expect(
+      resolveConfig({
+        projectDir: root,
+        functions: {
+          ...bundle,
+          functions: [
+            {
+              ...bundle.functions[0]!,
+              entrypointPath: join(root, "linked-outside", "index.ts"),
+            },
+          ],
+        },
+      }),
+    ).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      detail: "Invalid Edge Functions bundle",
+    });
+
+    await Promise.all([
+      rm(root, { recursive: true, force: true }),
+      rm(outside, { recursive: true, force: true }),
+    ]);
+  });
+
+  it("keeps placeholder mode when no functions are supplied", async () => {
+    const stackConfig = await resolveConfig({ functions: false });
+
+    expect(
+      resolveFunctionsRuntimeConfig(stackConfig, { hostname: "127.0.0.1" }, undefined),
+    ).toBeUndefined();
+    expect(
+      resolveFunctionsRuntimeConfig(
+        stackConfig,
+        { hostname: "127.0.0.1" },
+        {
+          env: {},
+          functions: [],
+        },
+      ),
+    ).toBeUndefined();
+  });
+
+  it.live("atomically writes restrictive ephemeral config and removes it", () => {
     const cwd = makeTempProject();
 
     return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProject(cwd));
-      yield* Effect.promise(() => writeFile(join(cwd, "custom.env"), "FILE_ONLY=custom\n"));
+      const bundle = makeBundle(cwd);
       const stackConfig = yield* Effect.promise(() =>
-        resolveConfig({
-          projectDir: cwd,
-          functions: {
-            envFile: "custom.env",
-            noVerifyJwt: true,
-          },
-        }),
+        resolveConfig({ projectDir: cwd, runtimeRoot: cwd, functions: bundle }),
       );
-      const config = yield* resolveFunctionsRuntimeConfig(stackConfig, {
-        hostname: "127.0.0.1",
-      });
-
-      expect(config!.env.FILE_ONLY).toBe("custom");
-      expect(config!.functions["hello-world"]?.verifyJWT).toBe(false);
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
-    );
-  });
-
-  it.live("keeps placeholder mode when Functions are disabled", () => {
-    const cwd = makeTempProject();
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProject(cwd));
-      const stackConfig = yield* Effect.promise(() =>
-        resolveConfig({ projectDir: cwd, functions: false }),
-      );
-      const config = yield* resolveFunctionsRuntimeConfig(stackConfig, {
-        hostname: "127.0.0.1",
-      });
-
-      expect(config).toBeUndefined();
-    }).pipe(
-      Effect.provide(BunServices.layer),
-      Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),
-    );
-  });
-
-  it.live("writes generated runtime config into the stack runtime directory", () => {
-    const cwd = makeTempProject();
-
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => writeProject(cwd));
-      const stackConfig = yield* Effect.promise(() => resolveConfig({ projectDir: cwd }));
-      yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" });
-      const written = JSON.parse(
-        yield* Effect.promise(() =>
-          readFile(functionsRuntimeConfigPath(stackConfig.runtimeRoot), "utf8"),
-        ),
-      ) as { functions: Record<string, unknown> };
+      yield* configureFunctionsRuntime(stackConfig, { hostname: "127.0.0.1" }, bundle);
+      const filePath = functionsRuntimeConfigPath(stackConfig.runtimeRoot);
+      const written = JSON.parse(yield* Effect.promise(() => readFile(filePath, "utf8"))) as {
+        functions: Record<string, unknown>;
+      };
 
       expect(Object.keys(written.functions)).toEqual(["hello-world"]);
+      expect((yield* Effect.promise(() => stat(filePath))).mode & 0o777).toBe(0o600);
+      expect(yield* Effect.promise(() => readdir(join(cwd, "edge-runtime")))).toEqual([
+        "functions-runtime-config.json",
+      ]);
+
+      yield* clearFunctionsRuntimeConfig(stackConfig.runtimeRoot);
+      expect(yield* Effect.promise(() => readdir(join(cwd, "edge-runtime")))).toEqual([]);
     }).pipe(
       Effect.provide(BunServices.layer),
       Effect.ensuring(Effect.promise(() => rm(cwd, { recursive: true, force: true }))),

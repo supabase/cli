@@ -112,7 +112,11 @@ function mockDockerRun(opts: {
       allOpts.push(runOpts);
       if (opts.runFails === true) {
         return Effect.fail(
-          new LegacyDockerRunError({ message: "failed to run docker: not found" }),
+          new LegacyDockerRunError({
+            message: "failed to run docker: not found",
+            reason: "spawn",
+            daemonDown: false,
+          }),
         );
       }
       const next = queue.shift();
@@ -130,7 +134,11 @@ function mockDockerRun(opts: {
         allOpts.push(runOpts);
         if (opts.runFails === true) {
           return yield* Effect.fail(
-            new LegacyDockerRunError({ message: "failed to run docker: not found" }),
+            new LegacyDockerRunError({
+              message: "failed to run docker: not found",
+              reason: "spawn",
+              daemonDown: false,
+            }),
           );
         }
         const next = queue.shift();
@@ -393,6 +401,19 @@ describe("legacy db dump integration", () => {
       // No container ran and the file was never created/truncated on dry-run.
       expect(docker.lastOpts).toBeUndefined();
       expect(existsSync(filePath)).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
+    // Go keys every --file branch off len(path) > 0, not flag presence
+    // (internal/db/dump/dump.go:20-32); an explicit empty --file means stdout, with
+    // no "Dumped schema to …" line and no file ever touched.
+    const { layer, out, docker } = setup({ isLocal: true });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
+      expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
+      expect(out.stderrText).not.toContain("Dumped schema to");
+      expect(docker.lastOpts).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 

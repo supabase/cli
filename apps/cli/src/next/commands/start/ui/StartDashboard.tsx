@@ -9,8 +9,7 @@ export function StartDashboard({ model }: { model: StartDashboardModel }) {
   const states = useAtomValue(model.displayStatesAtom);
   const info = useAtomValue(model.stackInfoAtom);
   const phase = useAtomValue(model.phaseAtom);
-  const showConnectionInfo =
-    useAtomValue(model.allHealthyAtom) && info !== null && phase !== "failed";
+  const showConnectionInfo = useAtomValue(model.showConnectionInfoAtom);
   const statusLine = useAtomValue(model.statusLineAtom);
 
   return (

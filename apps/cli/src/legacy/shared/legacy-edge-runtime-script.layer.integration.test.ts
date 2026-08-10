@@ -1,3 +1,7 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Exit, Layer, Option } from "effect";
@@ -37,25 +41,30 @@ function fakeDocker(result: { exitCode: number; stdout?: string; stderr?: string
 
 // `workdir` points at a directory without `supabase/.temp/edge-runtime-version`,
 // so the image resolver falls back to the default tag (the read is orElseSucceed).
-const cliConfig = Layer.succeed(LegacyCliConfig, {
-  profile: "supabase",
-  apiUrl: "https://api.supabase.com",
-  projectHost: "supabase.co",
-  poolerHost: "supabase.co",
-  dashboardUrl: "https://supabase.com/dashboard",
-  accessToken: Option.none(),
-  projectId: Option.none(),
-  workdir: "/nonexistent-workdir",
-  userAgent: "test",
-});
+function makeCliConfig(workdir = "/nonexistent-workdir") {
+  return Layer.succeed(LegacyCliConfig, {
+    profile: "supabase",
+    apiUrl: "https://api.supabase.com",
+    projectHost: "supabase.co",
+    poolerHost: "supabase.co",
+    dashboardUrl: "https://supabase.com/dashboard",
+    accessToken: Option.none(),
+    projectId: Option.none(),
+    workdir,
+    userAgent: "test",
+  });
+}
 
-function setup(result: { exitCode: number; stdout?: string; stderr?: string }) {
+function setup(
+  result: { exitCode: number; stdout?: string; stderr?: string },
+  opts: { readonly cliConfigWorkdir?: string } = {},
+) {
   const docker = fakeDocker(result);
   const layer = legacyEdgeRuntimeScriptLayer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         docker.layer,
-        cliConfig,
+        makeCliConfig(opts.cliConfigWorkdir),
         Layer.succeed(RuntimeInfo, {
           cwd: "/nonexistent-workdir",
           platform: "darwin",
@@ -131,6 +140,57 @@ describe("legacyEdgeRuntimeScriptLayer sentinel handling", () => {
       ),
     );
   });
+
+  it.effect(
+    "resolves the image pin from `opts.workdir`, overriding the layer's own `cliConfig.workdir`",
+    () => {
+      // Regression coverage (review thread on CLI-1953): `bootstrap` targets a
+      // directory other than the invocation directory, and `LegacyCliConfig` is
+      // built once, before that `process.chdir` runs — so its `workdir` never
+      // reflects bootstrap's real target. `opts.workdir` (threaded from
+      // `LegacyPgDeltaContext.cwd` by every pg-delta/migra caller) must win the
+      // pin-file lookup instead.
+      const configWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-config-"));
+      const callerWorkdir = mkdtempSync(join(tmpdir(), "edge-runtime-caller-"));
+      mkdirSync(join(configWorkdir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(
+        join(configWorkdir, "supabase", ".temp", "edge-runtime-version"),
+        "v-from-config\n",
+      );
+      mkdirSync(join(callerWorkdir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(
+        join(callerWorkdir, "supabase", ".temp", "edge-runtime-version"),
+        "v-from-caller\n",
+      );
+
+      const { layer, docker } = setup(
+        { exitCode: 1, stdout: "", stderr: "main worker has been destroyed\n" },
+        { cliConfigWorkdir: configWorkdir },
+      );
+
+      return Effect.gen(function* () {
+        const edge = yield* LegacyEdgeRuntimeScript;
+        yield* edge.run({
+          script: "console.log('x')",
+          env: {},
+          binds: [],
+          errPrefix: "error diffing schema",
+          denoVersion: 2,
+          workdir: callerWorkdir,
+        });
+        expect(docker.lastOpts?.image).toContain("edge-runtime:v-from-caller");
+        expect(docker.lastOpts?.image).not.toContain("v-from-config");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(configWorkdir, { recursive: true, force: true });
+            rmSync(callerWorkdir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect(
     "disables SELinux label separation so the container can read CLI-written workspace files",

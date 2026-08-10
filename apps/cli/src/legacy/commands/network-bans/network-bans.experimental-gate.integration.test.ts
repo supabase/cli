@@ -25,8 +25,8 @@ import { legacyNetworkBansCommand } from "./network-bans.command.ts";
 const tempRoot = useLegacyTempWorkdir("supabase-network-bans-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyNetworkBansCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {

@@ -229,7 +229,8 @@ describe("legacy domains create integration", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* legacyDomainsCreate(flags());
-      expect(out.stdoutText).toContain(`custom_hostname: ${CUSTOM_HOSTNAME}`);
+      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      expect(out.stdoutText).toContain(`customhostname: ${CUSTOM_HOSTNAME}`);
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });

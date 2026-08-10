@@ -35,15 +35,17 @@ export const legacyTestNew = Effect.fn("legacy.test.new")(function* (flags: Lega
       );
     }
 
+    // Go's `utils.WriteFile` pins the dir to 0755 and the test file to 0644
+    // (`internal/test/new/new.go:28`, `internal/utils/misc.go:281,284`).
     yield* fs
-      .makeDirectory(path.dirname(target), { recursive: true })
+      .makeDirectory(path.dirname(target), { recursive: true, mode: 0o755 })
       .pipe(
         Effect.mapError(
           (cause) => new LegacyTestNewWriteError({ path: relPath, message: String(cause) }),
         ),
       );
     yield* fs
-      .writeFileString(target, TEMPLATE_CONTENT[template])
+      .writeFileString(target, TEMPLATE_CONTENT[template], { mode: 0o644 })
       .pipe(
         Effect.mapError(
           (cause) => new LegacyTestNewWriteError({ path: relPath, message: String(cause) }),

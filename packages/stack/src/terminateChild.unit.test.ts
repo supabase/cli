@@ -10,6 +10,7 @@ interface ChildLike {
 
 class FakeChild implements ChildLike {
   readonly pid = 1234;
+  exitCode: number | null = null;
   readonly signals: Array<NodeJS.Signals> = [];
   #listeners = new Set<() => void>();
 
@@ -61,5 +62,32 @@ describe("terminateChildProcess", () => {
     await terminateChildProcess(child, { timeoutMs: 10 });
 
     expect(child.signals).toEqual(["SIGTERM", "SIGKILL"]);
+  });
+});
+
+describe("terminateChildProcess on an already-exited child", () => {
+  it("returns immediately instead of waiting out both signal timeouts", async () => {
+    // A dead ChildProcess never fires another `exit` event, so before this
+    // guard the call burned 2x timeoutMs listening for one — which turned a
+    // teardown sweep over dead children into the very afterAll hook timeout
+    // the sweep exists to prevent.
+    const child = new FakeChild();
+    child.exitCode = 0;
+    const started = Date.now();
+    await terminateChildProcess(child, { timeoutMs: 5_000 });
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(child.signals).toEqual([]);
+  });
+
+  it("skips the SIGKILL wait when the child dies between checks", async () => {
+    const child = new FakeChild((signal, self) => {
+      if (signal === "SIGTERM") {
+        self.exitCode = 143;
+      }
+    });
+    const started = Date.now();
+    await terminateChildProcess(child, { timeoutMs: 300 });
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(child.signals).toEqual(["SIGTERM"]);
   });
 });

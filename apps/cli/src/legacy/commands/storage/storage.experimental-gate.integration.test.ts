@@ -32,8 +32,8 @@ import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 const tempRoot = useLegacyTempWorkdir("supabase-storage-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyStorageCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup(args: ReadonlyArray<string>) {

@@ -17,7 +17,8 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyListLocalMigrations } from "../../../shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "../../../../../shared/legacy-pgdelta.cache.ts";
+import { legacyResolvePgDeltaProjectId } from "../../../../../shared/legacy-pgdelta.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
@@ -28,7 +29,10 @@ import {
   type LegacyDeclarativeRunContext,
   legacyGenerateDeclarativeOutput,
 } from "../declarative.orchestrate.ts";
-import { legacyWriteDeclarativeSchemas } from "../../../shared/legacy-pgdelta.write.ts";
+import {
+  legacyDeclarativeSchemaWrittenLine,
+  legacyWriteDeclarativeSchemas,
+} from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
 import {
   type LegacyLocalConn,
@@ -114,25 +118,33 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         }
       }
 
-      // `path.resolve` (not `path.join`) so an absolute `declarative_schema_path` is
-      // used as-is: Go's config resolver only prefixes the workdir onto a RELATIVE path
-      // (`config.resolve`), leaving an absolute path unchanged. `path.join(workdir, abs)`
-      // would mangle `/repo` + `/abs` into `/repo/abs`.
-      const declarativeDir = path.resolve(
-        cliConfig.workdir,
-        legacyResolveDeclarativeDir(path, toml.pgDelta),
-      );
+      // Go prints `utils.GetDeclarativeDir()` verbatim (`declarative.go:156`,
+      // `db_schema_declarative.go:268`) — the config value, relative unless a user
+      // configures an absolute `declarative_schema_path` — so user-facing renders use
+      // `declarativeDirRel`. File I/O needs the resolved dir: `path.resolve` (not
+      // `path.join`) so an absolute config value is used as-is, matching Go's
+      // `config.resolve`, which only prefixes the workdir onto a RELATIVE path.
+      const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
+      const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const local: LegacyLocalConn = { port: toml.port, password: toml.password };
 
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
-          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
+          // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
+          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // `""` for a project relying on config.toml's `project_id` or the workdir-basename
+          // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume. `toml`
+          // reflects any `--linked` remote merge above, so its own `appliedRemote`/`projectId`
+          // suppress a conflicting ambient env var the same way `db diff`/`db pull` do.
+          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           // Merged config's deno_version (re-loaded with the linked ref above on
           // `--linked`), so pg-delta runs under the remote-configured Deno image.
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
@@ -180,7 +192,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
             output,
             yes,
             `Declarative schema already exists at ${legacyBold(
-              declarativeDir,
+              declarativeDirRel,
             )}. Regenerate from database? This will overwrite existing files.`,
             false,
           );
@@ -272,7 +284,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
           ...(linkedProjectRef !== undefined ? { projectRef: linkedProjectRef } : {}),
         });
       }
-      yield* output.raw(`Declarative schema written to ${legacyBold(declarativeDir)}\n`, "stderr");
+      yield* output.raw(legacyDeclarativeSchemaWrittenLine(declarativeDirRel), "stderr");
     }).pipe(
       // Go's `ensureProjectGroupsCached` PersistentPostRun (`cmd/root.go:176,214-234`)
       // writes the linked-project cache (`GET /v1/projects/{ref}` →

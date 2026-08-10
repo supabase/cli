@@ -234,7 +234,24 @@ const SCHEMA_METADATA_KEYS = new Set(["default", "example", "examples"]);
 // attribute-mapping codegen (each key has `name?`, `names?`, `array?`, and
 // `default?: any` per OpenAPI spec; the `default?: any` field was silently
 // stripped because of this).
-function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): OpenApiSchema {
+function isArbitraryJsonDefault(schema: OpenApiSchema): boolean {
+  if (schema.oneOf?.length !== 4) {
+    return false;
+  }
+  const types = new Set(schema.oneOf.map((member) => member.type));
+  return (
+    types.size === 4 &&
+    types.has("object") &&
+    types.has("number") &&
+    types.has("string") &&
+    types.has("boolean")
+  );
+}
+
+export function sanitizeOpenApiSchema(
+  schema: OpenApiSchema,
+  inPropertiesMap = false,
+): OpenApiSchema {
   const sanitized: OpenApiSchema = {};
 
   for (const [key, rawValue] of Object.entries(schema)) {
@@ -250,6 +267,10 @@ function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): 
     }
 
     if (isRecord(rawValue)) {
+      if (inPropertiesMap && key === "default" && isArbitraryJsonDefault(rawValue)) {
+        sanitized[key] = {};
+        continue;
+      }
       // The immediate children of `properties: {...}` are property-name keys
       // mapping to schemas; recurse with `inPropertiesMap=true` so the
       // metadata-stripping logic skips that level.
@@ -267,6 +288,15 @@ function sanitizeOpenApiSchema(schema: OpenApiSchema, inPropertiesMap = false): 
     sanitized.pattern === undefined
   ) {
     sanitized.pattern = UUID_PATTERN;
+  }
+
+  // The spec's `date-time` patterns reject timestamps the Management API
+  // itself emits: most are Z-anchored, and even the most permissive variant
+  // rejects offset-less values and the lowercase `t`/`z` RFC 3339 §5.6 allows
+  // (supabase/cli#6115). Keeping any of them means owning a guess about every
+  // shape the API may serialize, so keep `format` and drop the pattern.
+  if (sanitized.type === "string" && sanitized.format === "date-time") {
+    delete sanitized.pattern;
   }
 
   return sanitized;
@@ -382,6 +412,19 @@ function resolveSchema(document: OpenApiDocument, schema: OpenApiSchema): OpenAp
   }
 
   return sanitizeOpenApiSchema(schema);
+}
+
+export function normalizeQueryParameterSchema(
+  parameter: OpenApiParameter,
+  schema: OpenApiSchema,
+): OpenApiSchema {
+  const acceptsBoolean =
+    schema.type === "string" &&
+    (typeof parameter.schema?.example === "boolean" ||
+      /\bboolean string\b/iu.test(parameter.description ?? "") ||
+      /\bif (?:true|false)\b/iu.test(parameter.description ?? ""));
+
+  return acceptsBoolean ? { anyOf: [schema, { type: "boolean" }] } : schema;
 }
 
 function getObjectShape(document: OpenApiDocument, schema: OpenApiSchema): ObjectShape | undefined {
@@ -514,7 +557,9 @@ function buildCombinedInputSchema(
     if (parameter.in === "cookie" || parameter.schema === undefined) {
       continue;
     }
-    properties[parameter.name] = resolveSchema(document, parameter.schema);
+    const schema = resolveSchema(document, parameter.schema);
+    properties[parameter.name] =
+      parameter.in === "query" ? normalizeQueryParameterSchema(parameter, schema) : schema;
     if (parameter.required === true) {
       required.add(parameter.name);
     }
@@ -627,7 +672,7 @@ function renderSchemaSource(
     return "";
   }
 
-  const multiDocument = SchemaRepresentation.fromJsonSchemaMultiDocument(
+  const importedSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(
     {
       dialect: "draft-2020-12",
       definitions,
@@ -644,7 +689,9 @@ function renderSchemaSource(
     },
   );
 
-  const codeDocument = SchemaRepresentation.toCodeDocument(multiDocument);
+  const codeDocument = SchemaRepresentation.toCodeDocument(
+    SchemaRepresentation.toRepresentations(Arr.map(importedSchemas, (schema) => schema.ast)),
+  );
   const hasBinaryInputs = operations.some((operation) =>
     containsBinarySchema(operation.inputSchema),
   );
@@ -666,7 +713,7 @@ function renderSchemaSource(
     parts.push("// recursive definitions");
     for (const [name, code] of recursiveEntries) {
       parts.push(
-        `export const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
+        `export type ${name} = ${code.Type}\nexport const ${name} = ${hasBinaryInputs ? replaceBinarySchemaCode(code.runtime) : code.runtime}`,
       );
     }
   }

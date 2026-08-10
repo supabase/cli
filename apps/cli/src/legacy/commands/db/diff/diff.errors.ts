@@ -1,4 +1,9 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Conflicting database-target flags. Reproduces cobra's
@@ -7,7 +12,11 @@ import { Data } from "effect";
  */
 export class LegacyDbDiffTargetFlagsError extends Data.TaggedError("LegacyDbDiffTargetFlagsError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Conflicting diff-engine flags. Reproduces cobra's
@@ -18,7 +27,11 @@ export class LegacyDbDiffEngineConflictError extends Data.TaggedError(
   "LegacyDbDiffEngineConflictError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Only one of `--from` / `--to` was set in explicit diff mode. Byte-matches Go's
@@ -29,7 +42,11 @@ export class LegacyDbDiffExplicitFlagsError extends Data.TaggedError(
   "LegacyDbDiffExplicitFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * An explicit `--from`/`--to` ref was neither `local`/`linked`/`migrations` nor a
@@ -41,7 +58,11 @@ export class LegacyDbDiffUnknownTargetError extends Data.TaggedError(
   "LegacyDbDiffUnknownTargetError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Writing the diff output failed — a `--file` migration, or an explicit-mode
@@ -49,4 +70,8 @@ export class LegacyDbDiffUnknownTargetError extends Data.TaggedError(
  */
 export class LegacyDbDiffWriteError extends Data.TaggedError("LegacyDbDiffWriteError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

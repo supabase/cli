@@ -176,25 +176,68 @@ describe("legacyStartEdgeRuntimeContainer", () => {
       }),
   );
 
-  it.effect(
-    "sets --workdir and --ulimit nofile=65536:65536, matching Go's WorkingDir/Ulimits container.Config",
-    () =>
-      Effect.gen(function* () {
-        const mock = mockDockerSpawner();
-        const out = mockOutput();
+  it.effect("sets --ulimit nofile=65536:65536, matching Go's Ulimits container.Config", () =>
+    Effect.gen(function* () {
+      const mock = mockDockerSpawner();
+      const out = mockOutput();
 
-        yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
-          Effect.provide(out.layer),
-        );
+      yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(out.layer),
+      );
 
-        const runCall = mock.runCall!;
-        const workdirIndex = runCall.args.indexOf("--workdir");
-        expect(workdirIndex).toBeGreaterThanOrEqual(0);
-        expect(runCall.args[workdirIndex + 1]).toBe(tempWorkdir.current);
-        const ulimitIndex = runCall.args.indexOf("--ulimit");
-        expect(runCall.args[ulimitIndex + 1]).toBe("nofile=65536:65536");
-      }),
+      const runCall = mock.runCall!;
+      const ulimitIndex = runCall.args.indexOf("--ulimit");
+      expect(runCall.args[ulimitIndex + 1]).toBe("nofile=65536:65536");
+    }),
+  );
+
+  it.effect("sets --workdir once an enabled function mounts the project root (#6035)", () =>
+    Effect.gen(function* () {
+      const slug = "hello";
+      const entrypoint = join(tempWorkdir.current, "supabase", "functions", slug, "index.ts");
+      mkdirSync(join(tempWorkdir.current, "supabase", "functions", slug), { recursive: true });
+      writeFileSync(entrypoint, "Deno.serve(() => new Response('ok'));");
+
+      const fnConfig = {
+        enabled: true,
+        verify_jwt: true,
+        import_map: "",
+        entrypoint,
+        static_files: [],
+        env: {},
+      };
+      const mock = mockDockerSpawner();
+      const out = mockOutput();
+      const input = baseInput(tempWorkdir.current);
+
+      yield* legacyStartEdgeRuntimeContainer({
+        ...input,
+        configDeclaredFunctions: { [slug]: fnConfig },
+        configFunctions: { [slug]: fnConfig },
+        rawConfigFunctions: { [slug]: fnConfig },
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(out.layer),
+      );
+
+      const args = mock.runCall!.args;
+      expect(args[args.indexOf("--workdir") + 1]).toBe(tempWorkdir.current);
+    }),
+  );
+
+  it.effect("omits --workdir when no bind mounts the project root into the container (#6035)", () =>
+    Effect.gen(function* () {
+      const mock = mockDockerSpawner();
+      const out = mockOutput();
+
+      yield* legacyStartEdgeRuntimeContainer(baseInput(tempWorkdir.current)).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, mock.spawner),
+        Effect.provide(out.layer),
+      );
+
+      expect(mock.runCall!.args).not.toContain("--workdir");
+    }),
   );
 
   it.effect(

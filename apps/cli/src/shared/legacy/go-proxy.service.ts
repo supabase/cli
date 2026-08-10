@@ -17,10 +17,22 @@ interface LegacyGoProxyShape {
    * use it to pass values the user supplied as environment variables back to the
    * proxy as environment variables, rather than cross-mapping them onto CLI
    * flags (CLI-1617).
+   *
+   * `opts.suppressChildTelemetry` disables telemetry in the child. Set it ONLY
+   * from a handler that is itself wrapped in command instrumentation and
+   * delegates the whole command to Go, where the parent already emits
+   * `cli_command_executed` and the child's copy would double-count. Pure proxy
+   * handlers (no TS instrumentation) must leave it unset: for those the Go
+   * child is the only emitter, and disabling it would drop the command from
+   * telemetry entirely.
    */
   readonly exec: (
     args: ReadonlyArray<string>,
-    opts?: { readonly cwd?: string; readonly env?: Record<string, string> },
+    opts?: {
+      readonly cwd?: string;
+      readonly env?: Record<string, string>;
+      readonly suppressChildTelemetry?: boolean;
+    },
   ) => Effect.Effect<void, LegacyGoChildExitError>;
 
   /**
@@ -49,6 +61,7 @@ interface LegacyGoProxyShape {
       readonly cwd?: string;
       readonly env?: Record<string, string>;
       readonly stdin?: "inherit" | "ignore";
+      readonly suppressChildTelemetry?: boolean;
     },
   ) => Effect.Effect<string, LegacyGoChildExitError>;
 }

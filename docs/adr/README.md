@@ -53,9 +53,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0007 | [Real-time Progress in Command Handlers](0007-realtime-progress-in-command-handlers.md)  | proposed |
 | 0008 | [Authentication & Token Management](0008-authentication-and-token-management.md)        | proposed |
 | 0009 | [Configuration Schema & Validation](0009-configuration-schema-and-validation.md)         | proposed |
-| 0010 | [Process Manager Architecture](0010-process-manager-architecture.md)                     | proposed |
 | 0011 | [CLI Release & Distribution Strategy](0011-cli-release-and-distribution-strategy.md)     | proposed |
-| 0012 | [Compiled Bun Runtime Dispatch](0012-compiled-bun-runtime-dispatch.md)                   | proposed |
 | 0013 | [Live E2E Tests Bypass the Replay Server](0013-live-e2e-bypasses-replay-server.md)       | proposed |
 
 ## Template

@@ -88,6 +88,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       yield* fetching?.fail() ?? Effect.void;
       return yield* new LegacyFunctionsListNetworkError({
         message: decodedFunctions.message,
+        decode: true,
       });
     }
     yield* fetching?.clear() ?? Effect.void;
@@ -109,7 +110,7 @@ export const legacyFunctionsList = Effect.fn("legacy.functions.list")(function* 
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeFunctionsGoToml(functions));
+      yield* output.raw(encodeFunctionsGoToml({ functions, isNil }));
       return;
     }
     if (goFmt === "pretty") {

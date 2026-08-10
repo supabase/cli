@@ -8,16 +8,42 @@ import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { apiKeysToEnv } from "../../../shared/legacy-api-keys.format.ts";
 import { legacyGetProjectApiKeys } from "../../../shared/legacy-get-api-keys.ts";
+import { encodeEnv, encodeGoJson, encodeToml } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoYaml,
+  legacyGoAny,
+  legacyGoMap,
+  legacyGoNullable,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+  legacyGoTime,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { renderProjectApiKeysTable } from "../projects.format.ts";
 import type { LegacyProjectsApiKeysFlags } from "./api-keys.command.ts";
 
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
+
+/**
+ * Mirror of Go's `api.ApiKeyResponse` (`apps/cli-go/pkg/api/types.gen.go`).
+ * Only `-o yaml` hits the raw struct — `-o toml`/`-o env` encode the
+ * `SUPABASE_<NAME>_KEY` env map instead (`api_keys.go:34-36`) — and yaml.v3
+ * renders the `nullable.Nullable[T]` fields as `map[bool]T` (CLI-1975).
+ */
+const LEGACY_GO_API_KEYS_LIST = legacyGoSlice(
+  legacyGoStruct([
+    ["api_key", legacyGoNullable(legacyGoString)],
+    ["description", legacyGoNullable(legacyGoString)],
+    ["hash", legacyGoNullable(legacyGoString)],
+    ["id", legacyGoNullable(legacyGoString)],
+    ["inserted_at", legacyGoNullable(legacyGoTime)],
+    ["name", legacyGoString],
+    ["prefix", legacyGoNullable(legacyGoString)],
+    ["secret_jwt_template", legacyGoNullable(legacyGoMap(legacyGoAny))],
+    ["type", legacyGoNullable(legacyGoString)],
+    ["updated_at", legacyGoNullable(legacyGoTime)],
+  ]),
+);
 
 export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(function* (
   flags: LegacyProjectsApiKeysFlags,
@@ -57,7 +83,7 @@ export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(funct
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(keys));
+      yield* output.raw(encodeLegacyGoYaml(keys, LEGACY_GO_API_KEYS_LIST));
       return;
     }
 

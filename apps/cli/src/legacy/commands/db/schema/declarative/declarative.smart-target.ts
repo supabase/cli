@@ -2,11 +2,11 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 
 import {
   LegacyDnsResolverFlag,
-  LegacyNetworkIdFlag,
   legacyResolveYesWithProjectEnv,
 } from "../../../../../shared/legacy/global-flags.ts";
 import { legacyPromptYesNo } from "../../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { Output } from "../../../../../shared/output/output.service.ts";
+import { legacyResetLocalDatabase } from "../../../../shared/db-bootstrap/reset-local-database.ts";
 import { PROJECT_REF_PATTERN } from "../../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../../shared/legacy-db-config.service.ts";
 import { legacyLoadProjectEnv } from "../../../../shared/legacy-db-config.toml-read.ts";
@@ -19,6 +19,7 @@ import { legacyToPostgresURL } from "../../../../shared/legacy-postgres-url.ts";
 import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeInvalidDbUrlError,
+  legacyReadErrorSuggestion,
 } from "./declarative.errors.ts";
 import type { LegacyDeclarativeShadowDbError } from "../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
@@ -102,7 +103,6 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   // project `.env` — must auto-confirm too, not just the flag (CLI-1974).
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-  const networkId = yield* LegacyNetworkIdFlag;
   // Insert "Linked project" between local and custom (Go's choice order) when the
   // workdir is linked with a valid ref. Go gates this on `LoadProjectRef`, which
   // validates the ref (`project_ref.go:75`), so an invalid on-disk ref hides the
@@ -174,25 +174,20 @@ export const legacyResolveSmartTargetUrl = Effect.fnUntraced(function* (
   }
   if (shouldReset) {
     // Go runs reset in-process and returns the error (`cmd/db_schema_declarative.go:262-267`).
-    // `execInherit` (not `LegacyGoProxy.exec`) returns the child's exit code as a
-    // catchable value rather than exiting the host process — the same
-    // typed-failure design CLI-1879 gave `LegacyGoProxy.exec` itself, predating
-    // it here as its own seam. Propagate a failure on a non-zero reset exit.
-    const seam = yield* LegacyDeclarativeSeam;
-    // Forward --network-id: Go's in-process reset.Run honors the root viper
-    // network-id (`apps/cli-go/internal/utils/docker.go:267-271`), so the
-    // seam-spawned reset must carry it to stay on a custom Docker network.
-    const code = yield* seam.execInherit([
-      "db",
-      "reset",
-      "--local",
-      ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
-    ]);
-    if (code !== 0) {
-      return yield* Effect.fail(
-        new LegacyDeclarativeApplyError({ message: `database reset failed (exit ${code})` }),
-      );
-    }
+    // `legacyResetLocalDatabase` now runs the same way — in-process, sharing this
+    // command's own context — rather than shelling out to a second `supabase-go` child
+    // (CLI-2062): it resolves `LegacyNetworkIdFlag` itself, so no argv-forwarding is
+    // needed to stay on a custom Docker network, and a real failure propagates through
+    // the effect's own failure channel instead of a synthesized exit code.
+    yield* legacyResetLocalDatabase().pipe(
+      Effect.mapError(
+        (error) =>
+          new LegacyDeclarativeApplyError({
+            message: `database reset failed: ${error.message}`,
+            suggestion: legacyReadErrorSuggestion(error),
+          }),
+      ),
+    );
   }
   return legacyLocalUrl(local);
 });

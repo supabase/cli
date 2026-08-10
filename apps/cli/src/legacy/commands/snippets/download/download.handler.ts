@@ -7,6 +7,7 @@ import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.ser
 import { Output } from "../../../../shared/output/output.service.ts";
 import { resolveLegacyAccessToken } from "../../../shared/legacy-resolve-token.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
+import { legacyGoQuote } from "../../../shared/legacy-go-quote.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -16,25 +17,116 @@ import {
 } from "../snippets.errors.ts";
 import type { LegacySnippetsDownloadFlags } from "./download.command.ts";
 
-// Load-bearing for error-message parity. The generated `V1GetASnippetInput`
-// schema (contracts.ts:1539-1545) already pattern-checks UUIDs, so if this
-// pre-check is removed, a non-UUID input would surface as a `SchemaError`
-// routed through `mapDownloadError` to `LegacySnippetsDownloadNetworkError`
-// with a `failed to download snippet:` prefix — losing the Go-canonical
-// `invalid snippet ID:` prefix from `apps/cli-go/internal/snippets/download/download.go:17`.
-const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const DASH_BYTE = 0x2d;
 
-// Mirrors Go's `uuid.Parse` (google/uuid v1.6.0) error surface:
-//   - len(s) not in {32, 36, 38, 41} → `invalid UUID length: N`
-//   - len(s) == 36 but dashes/hex chars wrong → `invalid UUID format`
-// We accept only the canonical 36-char form (`8-4-4-4-12`), so the two
-// branches collapse to length-vs-format. The outer wrap mirrors
-// `fmt.Errorf("invalid snippet ID: %w", err)` from download.go:17.
-function uuidErrorMessage(value: string): string {
-  if (value.length !== 36) {
-    return `invalid snippet ID: invalid UUID length: ${value.length}`;
+function canonicalFromHex(hex32: string): string {
+  return `${hex32.slice(0, 8)}-${hex32.slice(8, 12)}-${hex32.slice(12, 16)}-${hex32.slice(16, 20)}-${hex32.slice(20)}`;
+}
+
+/**
+ * Reads `[start, end)` of `s` as lowercase hex, or `undefined` on the first
+ * non-hex byte — the byte-wise equivalent of Go's `xtob` loop.
+ */
+function readHexRange(s: Uint8Array, start: number, end: number): string | undefined {
+  let out = "";
+  for (let i = start; i < end; i++) {
+    const b = s[i] ?? 0;
+    if (b >= 0x30 && b <= 0x39) {
+      out += String.fromCharCode(b);
+    } else {
+      const lower = b | 0x20;
+      if (lower < 0x61 || lower > 0x66) return undefined;
+      out += String.fromCharCode(lower);
+    }
   }
-  return "invalid snippet ID: invalid UUID format";
+  return out;
+}
+
+/**
+ * `strings.EqualFold(s[:9], "urn:uuid:")` equivalent. ASCII-only folding over
+ * the raw bytes is exact here: no non-ASCII rune case-folds to any rune of
+ * `"urn:uuid:"` (Unicode's only ASCII-target simple folds are `ſ`→`s` and
+ * `K`→`k`, neither of which appears), and multibyte runes can never
+ * byte-match an ASCII target.
+ */
+function isUrnUuidPrefix(bytes: Uint8Array): boolean {
+  const expected = "urn:uuid:";
+  for (let i = 0; i < expected.length; i++) {
+    const b = bytes[i] ?? 0;
+    const lower = b >= 0x41 && b <= 0x5a ? b + 0x20 : b;
+    if (lower !== expected.charCodeAt(i)) return false;
+  }
+  return true;
+}
+
+/**
+ * Faithful port of Go's `uuid.Parse` (google/uuid v1.6.0, `uuid.go:68-117`),
+ * which `download.Run` uses to validate the snippet id
+ * (`apps/cli-go/internal/snippets/download/download.go:15-17`). Accepts the
+ * same 4 forms Go does — hyphenated (36), `urn:uuid:`-prefixed (45), braced
+ * `{…}` (38, where only the middle 36 bytes are examined — the trailing byte
+ * is never validated, mirroring `s = s[1:]`), and raw 32-hex — and returns
+ * the CANONICAL lowercase hyphenated form (Go interpolates the parsed
+ * `uuid.UUID`, whose `String()` is always lowercase, into the request URL —
+ * never the raw arg). Error strings reproduce Go's three branches verbatim;
+ * the caller wraps them like `fmt.Errorf("invalid snippet ID: %w", err)`.
+ *
+ * Everything operates on the argument's UTF-8 BYTES: Go's `switch len(s)`
+ * counts bytes where a JS string's `length` counts UTF-16 code units, so a
+ * non-ASCII argument like `é<canonical-uuid>}` (JS length 38, 39 bytes) must
+ * take Go's default branch and report `invalid UUID length: 39` — not slip
+ * into the braced branch and issue a request (verified against go1.26 +
+ * google/uuid v1.6.0).
+ *
+ * This pre-check is load-bearing for error-message parity: the generated
+ * `V1GetASnippetInput` schema already pattern-checks UUIDs, so without it a
+ * non-UUID input would surface as a `SchemaError` with a `failed to download
+ * snippet:` prefix instead of Go's `invalid snippet ID:`.
+ */
+export function legacyParseSnippetUuid(
+  input: string,
+): { readonly canonical: string } | { readonly error: string } {
+  let s = new TextEncoder().encode(input);
+  switch (s.length) {
+    // xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    case 36:
+      break;
+    // urn:uuid:xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+    case 45: {
+      if (!isUrnUuidPrefix(s)) {
+        return { error: `invalid urn prefix: ${legacyGoQuote(s.subarray(0, 9))}` };
+      }
+      s = s.subarray(9);
+      break;
+    }
+    // {xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}
+    case 38:
+      s = s.subarray(1);
+      break;
+    // xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+    case 32: {
+      const hex = readHexRange(s, 0, 32);
+      if (hex === undefined) return { error: "invalid UUID format" };
+      return { canonical: canonicalFromHex(hex) };
+    }
+    default:
+      return { error: `invalid UUID length: ${s.length}` };
+  }
+  // s is now at least 36 bytes and must be xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx.
+  if (s[8] !== DASH_BYTE || s[13] !== DASH_BYTE || s[18] !== DASH_BYTE || s[23] !== DASH_BYTE) {
+    return { error: "invalid UUID format" };
+  }
+  const segments = [
+    readHexRange(s, 0, 8),
+    readHexRange(s, 9, 13),
+    readHexRange(s, 14, 18),
+    readHexRange(s, 19, 23),
+    readHexRange(s, 24, 36),
+  ];
+  if (segments.some((segment) => segment === undefined)) {
+    return { error: "invalid UUID format" };
+  }
+  return { canonical: canonicalFromHex(segments.join("")) };
 }
 
 // Tolerant body parse — see `list.handler.ts` for the rationale. The real
@@ -66,9 +158,10 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
     const ref = yield* resolver.resolve(flags.projectRef);
 
     yield* Effect.gen(function* () {
-      if (!UUID_RE.test(flags.snippetId)) {
+      const parsed = legacyParseSnippetUuid(flags.snippetId);
+      if ("error" in parsed) {
         return yield* new LegacySnippetsInvalidIdError({
-          message: uuidErrorMessage(flags.snippetId),
+          message: `invalid snippet ID: ${parsed.error}`,
         });
       }
 
@@ -79,7 +172,7 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
         ? HttpClientRequest.bearerToken(tokenOpt.value)
         : (req) => req;
       const request = HttpClientRequest.get(
-        `${cliConfig.apiUrl}/v1/snippets/${flags.snippetId}`,
+        `${cliConfig.apiUrl}/v1/snippets/${parsed.canonical}`,
       ).pipe(authHeader, HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent));
 
       const fetching =
@@ -110,6 +203,9 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
           (cause) =>
             new LegacySnippetsDownloadNetworkError({
               message: `failed to download snippet: ${String(cause)}`,
+              // 200-response body decode failure — an API-response problem, not
+              // a transport/network failure.
+              decode: true,
             }),
         ),
       );

@@ -3,6 +3,7 @@ import { BunServices } from "@effect/platform-bun";
 import { Duration, Effect, FileSystem, Layer, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { CliArgs } from "../../shared/cli/cli-args.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import {
   LegacyProjectRefResolver,
@@ -97,15 +98,311 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
     Effect.timeoutOrElse({ duration: TCP_PROBE_TIMEOUT, orElse: () => Effect.succeed(false) }),
   );
 
+// POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role.
+// The Management API client is built lazily via `LegacyPlatformApiFactory.make`
+// (not the eager `LegacyPlatformApi` stack), so the access token is resolved
+// only here — when a temp role is actually minted. `--linked --password` returns
+// before reaching this, so it stays auth-free (Go's `NewDbConfigWithPassword`);
+// `--local` / `--db-url` never build this layer at all.
+const initLoginRole = Effect.fnUntraced(function* (ref: string, conn: LegacyPgConnInput) {
+  const output = yield* Output;
+  const api = yield* (yield* LegacyPlatformApiFactory).make;
+  // Go writes this to stderr unconditionally (not gated on --debug):
+  // `apps/cli-go/internal/utils/flags/db_url.go` initLoginRole.
+  yield* output.raw("Initialising login role...\n", "stderr");
+  const role = yield* api.v1
+    .createLoginRole({ ref, read_only: false })
+    .pipe(Effect.catch(loginRoleErrorMapper));
+  return { ...conn, user: role.role, password: role.password };
+});
+
+const listAndUnban = Effect.fnUntraced(function* (ref: string) {
+  const api = yield* (yield* LegacyPlatformApiFactory).make;
+  const bans = yield* api.v1.listAllNetworkBans({ ref }).pipe(Effect.catch(listBansErrorMapper));
+  const addrs = bans.banned_ipv4_addresses;
+  if (addrs.length === 0) return;
+  yield* api.v1
+    .deleteNetworkBans({ ref, ipv4_addresses: [...addrs], requester_ip: false })
+    .pipe(Effect.catch(unbanErrorMapper));
+});
+
+// Verify-connect with backoff while the pooler refreshes the temp password
+// (Go's `initPoolerLogin` → `backoff.RetryNotify`). On attempt ≥ 3, clear any
+// network ban on the requester (Go's notify callback).
+const waitForTempRole = Effect.fnUntraced(function* (
+  ref: string,
+  conn: LegacyPgConnInput,
+  dnsResolver: "native" | "https",
+) {
+  const dbConn = yield* LegacyDbConnection;
+  const debug = yield* LegacyDebugLogger;
+  const attempt = (n: number): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> =>
+    // The temp-role probe always targets the remote Supavisor pooler, so it
+    // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
+    // honors `--dns-resolver` (Go's `ConnectByConfigStream` installs the DoH
+    // resolver for this remote connect too).
+    Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
+      Effect.catch((cause) => {
+        // Go's `backoff.WithMaxRetries(b, 8)` allows 8 retries after the
+        // initial attempt → 9 total attempts. `n` is 1-based, so give up only
+        // after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
+        if (n > MAX_RETRIES) {
+          return Effect.fail(
+            new Errors.LegacyDbConfigConnectTempRoleError({
+              message: `failed to connect as temp role: ${cause.message}`,
+              suggestion: LEGACY_SUGGEST_ENV_VAR,
+            }),
+          );
+        }
+        // Mirrors Go's notify callback: from the 3rd failure onward, clear any
+        // network ban on the requester. NOTE: Go's exponential backoff applies
+        // ±50% jitter (RandomizationFactor=0.5); we use a deterministic curve
+        // — intentional, jitter only matters under concurrent pooler refreshes.
+        const unban = n >= 3 ? listAndUnban(ref) : Effect.void;
+        const delayMs = Math.min(
+          Duration.toMillis(BACKOFF_INITIAL) * 1.5 ** (n - 1),
+          Duration.toMillis(BACKOFF_MAX),
+        );
+        return Effect.gen(function* () {
+          // Go runs the unban inside `backoff.RetryNotify`'s notify callback,
+          // which cannot abort the retry — `NewErrorCallback` only logs a callback
+          // error and continues (`internal/utils/retry.go:28-29`). So a transient
+          // ban-list/unban failure must NOT propagate out of the retry loop; log it
+          // to --debug like Go, then discard.
+          yield* unban.pipe(
+            Effect.tapError((banError) => debug.debug(banError.message)),
+            Effect.ignore,
+          );
+          yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
+          yield* Effect.sleep(Duration.millis(delayMs));
+          return yield* attempt(n + 1);
+        });
+      }),
+    );
+  return yield* attempt(1);
+});
+
+/**
+ * Parse + validate the configured pooler connection string. Returns `None`
+ * (treated as "no pooler", → IPv6 error) on any validation failure, matching
+ * Go's `GetPoolerConfig`, which logs and returns `nil`.
+ */
+const poolerConfigFrom = Effect.fnUntraced(function* (
+  ref: string,
+  connectionString: string,
+  poolerHost: string,
+) {
+  const debug = yield* LegacyDebugLogger;
+  const result = legacyPoolerConfigFromConnectionString(ref, connectionString, poolerHost);
+  if (result._tag === "ok") return Option.some(result.conn);
+  yield* debug.debug(result.reason);
+  return Option.none();
+});
+
+// Resolve the DB password with viper's precedence: `--password` flag →
+// `SUPABASE_DB_PASSWORD` shell env → project `.env*` value. `legacyLoadProjectEnv`
+// already excludes shell-set keys, so the shell value still wins over the file.
+// `workdir` is an explicit parameter (never `LegacyCliConfig.workdir`) so callers
+// whose real workdir has diverged from that cwd-walked value (e.g. `bootstrap`,
+// after its own `process.chdir`) still resolve against the correct directory.
+const resolveDbPassword = Effect.fnUntraced(function* (
+  passwordFlag: Option.Option<string>,
+  workdir: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
+  return (
+    Option.getOrUndefined(passwordFlag) ??
+    process.env["SUPABASE_DB_PASSWORD"] ??
+    projectEnv["SUPABASE_DB_PASSWORD"] ??
+    ""
+  );
+});
+
+/**
+ * Resolve the IPv4 transaction pooler connection for `ref` (Go's
+ * `GetPoolerConfig` + `initPoolerLogin`). Returns `None` when no pooler URL is
+ * configured or it fails validation (Go's `GetPoolerConfig` returns nil), so the
+ * caller can keep the original error. With a password, uses it directly; without
+ * one, mints a temp login role and verify-connects through the pooler.
+ *
+ * `workdir`/`poolerHost` are explicit parameters (see {@link resolveDbPassword}).
+ */
+const resolvePoolerConn = Effect.fnUntraced(function* (
+  ref: string,
+  workdir: string,
+  poolerHost: string,
+  dnsResolver: "native" | "https",
+  password: string,
+  // Go's `ResolvePoolerConfigForFallback` (container-fallback only) falls back to
+  // the Management API's primary pooler config when no `.temp/pooler-url` is saved;
+  // the resolve-time IPv6 path (`NewDbConfigWithPassword` → `GetPoolerConfig`) uses
+  // the saved URL only and errors otherwise, so this defaults off.
+  fetchFromApi = false,
+  // For an ad-hoc `--project-id` ref the saved `.temp/pooler-url` belongs to the
+  // (possibly different) linked workdir, so ignore it and resolve the pooler for
+  // `ref` from the Management API instead.
+  ignoreSavedUrl = false,
+  resolveVaultSecrets = true,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const debug = yield* LegacyDebugLogger;
+  // Linked-path read: merge the `[remotes.<ref>]` override (Go's pooler
+  // resolution runs after LoadConfig(ref) already merged), so this matches the
+  // ref-aware read on the main linked branch rather than validating base config.
+  // For an ad-hoc `--project-id` ref, skip the saved workdir pooler URL because
+  // it belongs to the linked project, not necessarily the explicit ref.
+  const tomlValues = yield* legacyReadDbToml(fs, path, workdir, ref, {
+    resolveVaultSecrets,
+  });
+  let connectionString = ignoreSavedUrl
+    ? undefined
+    : Option.getOrUndefined(tomlValues.poolerConnectionString);
+  if (connectionString === undefined) {
+    if (!fetchFromApi) return Option.none<LegacyPgConnInput>();
+    // No saved pooler URL → fetch the primary pooler config from the Management
+    // API (Go's `GetPoolerConfigPrimary`, `connect.go:51-65`). Any API failure
+    // means "no fallback" (Go returns ok=false), so swallow it to `None`.
+    const api = yield* (yield* LegacyPlatformApiFactory).make;
+    const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
+    if (Option.isNone(configsOpt)) return Option.none<LegacyPgConnInput>();
+    const primary = configsOpt.value.find((config) => config.database_type === "PRIMARY");
+    if (primary === undefined) return Option.none<LegacyPgConnInput>();
+    connectionString = primary.connection_string;
+  }
+  let pooler = Option.none<LegacyPgConnInput>();
+  if (connectionString !== undefined) {
+    pooler = yield* poolerConfigFrom(ref, connectionString, poolerHost);
+  }
+  if (Option.isNone(pooler) && fetchFromApi) {
+    const api = yield* (yield* LegacyPlatformApiFactory).make;
+    const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
+    if (Option.isSome(configsOpt)) {
+      const primary = configsOpt.value.find((config) => config.database_type === "PRIMARY");
+      if (primary !== undefined) {
+        pooler = yield* poolerConfigFrom(ref, primary.connection_string, poolerHost);
+      }
+    }
+  }
+  if (Option.isNone(pooler)) return Option.none<LegacyPgConnInput>();
+  const poolerConn = pooler.value;
+  if (password.length > 0) {
+    yield* debug.debug("Using database password from env var...");
+    return Option.some({ ...poolerConn, password });
+  }
+  // Mint a temp role; preserve Supavisor's `<user>.<ref>` tenant suffix.
+  const originalUser = poolerConn.user;
+  const withRole = yield* initLoginRole(ref, poolerConn);
+  const finalUser = originalUser.endsWith(`.${ref}`) ? `${withRole.user}.${ref}` : withRole.user;
+  const tempConn = { ...withRole, user: finalUser };
+  yield* waitForTempRole(ref, tempConn, dnsResolver);
+  return Option.some(tempConn);
+});
+
+/**
+ * Resolves the linked project's connection: dial the direct host, and — when
+ * unreachable (the common case, since new Supabase projects have IPv6-only
+ * direct DB hosts) — transparently fall back to the project's IPv4 transaction
+ * pooler (Go's `flags.NewDbConfigWithPassword`, `db_url.go:132-172`).
+ *
+ * `workdir`/`projectHost`/`poolerHost` are explicit parameters rather than read
+ * from `LegacyCliConfig` so this is safely callable from a context whose real
+ * workdir has diverged from `LegacyCliConfig.workdir`'s cwd-walked value — e.g.
+ * `bootstrap`, whose own `process.chdir` happens after that layer is built (see
+ * `bootstrap.handler.ts`'s workdir comments). Exported as `legacyResolveLinkedConn`
+ * so `bootstrap` can call it directly with its own local `workdir`/`projectRef`/
+ * `created.dbPassword`, without going through `LegacyDbConfigResolver`/
+ * `LegacyProjectRefResolver` (both keyed off the ambient, potentially-stale
+ * `LegacyCliConfig.workdir`).
+ */
+export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
+  ref: string,
+  workdir: string,
+  projectHost: string,
+  poolerHost: string,
+  dnsResolver: "native" | "https",
+  passwordFlag: Option.Option<string>,
+  adHocProjectRef = false,
+  resolveVaultSecrets = true,
+) {
+  const debug = yield* LegacyDebugLogger;
+  // Read lazily (per invocation) rather than at layer build, so tests and
+  // env-substitution see the current value. For an ad-hoc `--project-id` ref,
+  // honor only an explicit `--password` flag and ignore the ambient
+  // `SUPABASE_DB_PASSWORD` (which belongs to the current workdir, not this ref),
+  // so we always mint a temporary login role instead of leaking it.
+  const dbPassword = adHocProjectRef
+    ? (Option.getOrUndefined(passwordFlag) ?? "")
+    : yield* resolveDbPassword(passwordFlag, workdir);
+  const host = `db.${ref}.${projectHost}`;
+  const base: LegacyPgConnInput = {
+    host,
+    port: DIRECT_PORT,
+    user: "postgres",
+    password: dbPassword,
+    database: "postgres",
+  };
+
+  const reachable = yield* tcpReachable(host, DIRECT_PORT);
+  if (reachable) {
+    if (base.password.length > 0) {
+      yield* debug.debug("Using database password from env var...");
+      return base;
+    }
+    return yield* initLoginRole(ref, base);
+  }
+
+  // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc
+  // `--project-id` ref the command already holds a Management API token, so fall
+  // back to the API pooler config (and ignore the workdir's saved pooler URL)
+  // rather than failing with the IPv6 "run supabase link" suggestion.
+  const poolerConn = yield* resolvePoolerConn(
+    ref,
+    workdir,
+    poolerHost,
+    dnsResolver,
+    base.password,
+    adHocProjectRef,
+    adHocProjectRef,
+    resolveVaultSecrets,
+  );
+  if (Option.isNone(poolerConn)) {
+    return yield* Effect.fail(
+      new Errors.LegacyDbConfigIpv6Error({
+        message: "IPv6 is not supported on your current network",
+        suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
+      }),
+    );
+  }
+  return poolerConn.value;
+});
+
 export const legacyDbConfigLayer = Layer.effect(
   LegacyDbConfigResolver,
   Effect.gen(function* () {
     const cliConfig = yield* LegacyCliConfig;
-    const dbConn = yield* LegacyDbConnection;
-    const debug = yield* LegacyDebugLogger;
-    const output = yield* Output;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
+    const debug = yield* LegacyDebugLogger;
+    const output = yield* Output;
+    const dbConn = yield* LegacyDbConnection;
+    // `legacyResolveLinkedConn`/`resolvePoolerConn` (etc.) are standalone functions
+    // that yield their own `FileSystem`/`Path`/`LegacyDebugLogger`/`Output`/
+    // `LegacyDbConnection` (so bootstrap can call them directly from its own
+    // ambient context). Calling them from here would otherwise leak those
+    // services into `resolve`/`resolvePoolerFallback`'s R (the interface promises
+    // `never`), so every call site below re-closes the gap by additionally
+    // providing this layer of already-resolved values alongside
+    // `legacyLinkedDbResolverRuntimeLayer`.
+    const localAmbientServices = Layer.mergeAll(
+      Layer.succeed(FileSystem.FileSystem, fs),
+      Layer.succeed(Path.Path, path),
+      Layer.succeed(LegacyDebugLogger, debug),
+      Layer.succeed(Output, output),
+      Layer.succeed(LegacyDbConnection, dbConn),
+    );
 
     // Profile context for the connect-failure suggestion (Go's `SetConnectSuggestion`
     // reads the ambient `CurrentProfile`). Snapshot it once
@@ -137,11 +434,18 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(Analytics, yield* Analytics),
       Layer.succeed(TelemetryRuntime, yield* TelemetryRuntime),
       Layer.succeed(Tty, yield* Tty),
-      Layer.succeed(Output, output),
+      Layer.succeed(Output, yield* Output),
       // The per-command identity stitcher, shared with the linked stack's lazy
       // platform-API factory + linked-project cache (Go's single root-context
       // `sync.Once`). Provided to this layer by each command runtime.
       Layer.succeed(LegacyIdentityStitch, yield* LegacyIdentityStitch),
+      // Optional (absent in handler tests): the lazy rebuild of
+      // `legacyCliConfigLayer` reads it for explicit `--profile` detection, so
+      // the nested resolution matches the outer layer's.
+      Option.match(yield* Effect.serviceOption(CliArgs), {
+        onNone: () => Layer.empty,
+        onSome: (value) => Layer.succeed(CliArgs, value),
+      }),
       BunServices.layer,
     );
     // Compile-time guard: if `legacyLinkedDbResolverRuntimeLayer`'s requirements ever
@@ -156,262 +460,9 @@ export const legacyDbConfigLayer = Layer.effect(
     > = ambientLayer;
     void _ambientCoverageCheck;
 
-    // POST /v1/projects/{ref}/cli/login-role → mint a temporary postgres role.
-    // The Management API client is built lazily via `LegacyPlatformApiFactory.make`
-    // (not the eager `LegacyPlatformApi` stack), so the access token is resolved
-    // only here — when a temp role is actually minted. `--linked --password` returns
-    // before reaching this, so it stays auth-free (Go's `NewDbConfigWithPassword`);
-    // `--local` / `--db-url` never build this layer at all.
-    const initLoginRole = (ref: string, conn: LegacyPgConnInput) =>
-      Effect.gen(function* () {
-        const api = yield* (yield* LegacyPlatformApiFactory).make;
-        // Go writes this to stderr unconditionally (not gated on --debug):
-        // `apps/cli-go/internal/utils/flags/db_url.go` initLoginRole.
-        yield* output.raw("Initialising login role...\n", "stderr");
-        const role = yield* api.v1
-          .createLoginRole({ ref, read_only: false })
-          .pipe(Effect.catch(loginRoleErrorMapper));
-        return { ...conn, user: role.role, password: role.password };
-      });
-
-    const listAndUnban = (ref: string) =>
-      Effect.gen(function* () {
-        const api = yield* (yield* LegacyPlatformApiFactory).make;
-        const bans = yield* api.v1
-          .listAllNetworkBans({ ref })
-          .pipe(Effect.catch(listBansErrorMapper));
-        const addrs = bans.banned_ipv4_addresses;
-        if (addrs.length === 0) return;
-        yield* api.v1
-          .deleteNetworkBans({ ref, ipv4_addresses: [...addrs], requester_ip: false })
-          .pipe(Effect.catch(unbanErrorMapper));
-      });
-
-    // Verify-connect with backoff while the pooler refreshes the temp password
-    // (Go's `initPoolerLogin` → `backoff.RetryNotify`). On attempt ≥ 3, clear any
-    // network ban on the requester (Go's notify callback).
-    const waitForTempRole = (
-      ref: string,
-      conn: LegacyPgConnInput,
-      dnsResolver: "native" | "https",
-    ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> => {
-      const attempt = (
-        n: number,
-      ): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> =>
-        // The temp-role probe always targets the remote Supavisor pooler, so it
-        // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
-        // honors `--dns-resolver` (Go's `ConnectByConfigStream` installs the DoH
-        // resolver for this remote connect too).
-        Effect.scoped(
-          dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid),
-        ).pipe(
-          Effect.catch((cause) => {
-            // Go's `backoff.WithMaxRetries(b, 8)` allows 8 retries after the
-            // initial attempt → 9 total attempts. `n` is 1-based, so give up only
-            // after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
-            if (n > MAX_RETRIES) {
-              return Effect.fail(
-                new Errors.LegacyDbConfigConnectTempRoleError({
-                  message: `failed to connect as temp role: ${cause.message}`,
-                  suggestion: LEGACY_SUGGEST_ENV_VAR,
-                }),
-              );
-            }
-            // Mirrors Go's notify callback: from the 3rd failure onward, clear any
-            // network ban on the requester. NOTE: Go's exponential backoff applies
-            // ±50% jitter (RandomizationFactor=0.5); we use a deterministic curve
-            // — intentional, jitter only matters under concurrent pooler refreshes.
-            const unban = n >= 3 ? listAndUnban(ref) : Effect.void;
-            const delayMs = Math.min(
-              Duration.toMillis(BACKOFF_INITIAL) * 1.5 ** (n - 1),
-              Duration.toMillis(BACKOFF_MAX),
-            );
-            return Effect.gen(function* () {
-              // Go runs the unban inside `backoff.RetryNotify`'s notify callback,
-              // which cannot abort the retry — `NewErrorCallback` only logs a callback
-              // error and continues (`internal/utils/retry.go:28-29`). So a transient
-              // ban-list/unban failure must NOT propagate out of the retry loop; log it
-              // to --debug like Go, then discard.
-              yield* unban.pipe(
-                Effect.tapError((banError) => debug.debug(banError.message)),
-                Effect.ignore,
-              );
-              yield* debug.debug(`Retry (${n}/${MAX_RETRIES}): ${cause.message}`);
-              yield* Effect.sleep(Duration.millis(delayMs));
-              return yield* attempt(n + 1);
-            });
-          }),
-        );
-      return attempt(1);
-    };
-
-    /**
-     * Parse + validate the configured pooler connection string. Returns `None`
-     * (treated as "no pooler", → IPv6 error) on any validation failure, matching
-     * Go's `GetPoolerConfig`, which logs and returns `nil`.
-     */
-    const poolerConfigFrom = (
-      ref: string,
-      connectionString: string,
-    ): Effect.Effect<Option.Option<LegacyPgConnInput>> =>
-      Effect.gen(function* () {
-        const result = legacyPoolerConfigFromConnectionString(
-          ref,
-          connectionString,
-          cliConfig.poolerHost,
-        );
-        if (result._tag === "ok") return Option.some(result.conn);
-        yield* debug.debug(result.reason);
-        return Option.none();
-      });
-
-    // Resolve the DB password with viper's precedence: `--password` flag →
-    // `SUPABASE_DB_PASSWORD` shell env → project `.env*` value. `legacyLoadProjectEnv`
-    // already excludes shell-set keys, so the shell value still wins over the file.
-    const resolveDbPassword = (passwordFlag: Option.Option<string>) =>
-      Effect.gen(function* () {
-        const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
-        return (
-          Option.getOrUndefined(passwordFlag) ??
-          process.env["SUPABASE_DB_PASSWORD"] ??
-          projectEnv["SUPABASE_DB_PASSWORD"] ??
-          ""
-        );
-      });
-
-    // Resolve the IPv4 transaction pooler connection for `ref` (Go's
-    // `GetPoolerConfig` + `initPoolerLogin`). Returns `None` when no pooler URL is
-    // configured or it fails validation (Go's `GetPoolerConfig` returns nil), so the
-    // caller can keep the original error. With a password, uses it directly; without
-    // one, mints a temp login role and verify-connects through the pooler.
-    const resolvePoolerConn = (
-      ref: string,
-      dnsResolver: "native" | "https",
-      password: string,
-      // Go's `ResolvePoolerConfigForFallback` (container-fallback only) falls back to
-      // the Management API's primary pooler config when no `.temp/pooler-url` is saved;
-      // the resolve-time IPv6 path (`NewDbConfigWithPassword` → `GetPoolerConfig`) uses
-      // the saved URL only and errors otherwise, so this defaults off.
-      fetchFromApi = false,
-      // For an ad-hoc `--project-id` ref the saved `.temp/pooler-url` belongs to the
-      // (possibly different) linked workdir, so ignore it and resolve the pooler for
-      // `ref` from the Management API instead.
-      ignoreSavedUrl = false,
-    ): Effect.Effect<
-      Option.Option<LegacyPgConnInput>,
-      LegacyDbConfigError,
-      LegacyPlatformApiFactory
-    > =>
-      Effect.gen(function* () {
-        // Linked-path read: merge the `[remotes.<ref>]` override (Go's pooler
-        // resolution runs after LoadConfig(ref) already merged), so this matches the
-        // ref-aware read on the main linked branch rather than validating base config.
-        // For an ad-hoc `--project-id` ref, skip the saved workdir pooler URL because
-        // it belongs to the linked project, not necessarily the explicit ref.
-        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
-        let connectionString = ignoreSavedUrl
-          ? undefined
-          : Option.getOrUndefined(tomlValues.poolerConnectionString);
-        if (connectionString === undefined) {
-          if (!fetchFromApi) return Option.none();
-          // No saved pooler URL → fetch the primary pooler config from the Management
-          // API (Go's `GetPoolerConfigPrimary`, `connect.go:51-65`). Any API failure
-          // means "no fallback" (Go returns ok=false), so swallow it to `None`.
-          const api = yield* (yield* LegacyPlatformApiFactory).make;
-          const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
-          if (Option.isNone(configsOpt)) return Option.none();
-          const primary = configsOpt.value.find((config) => config.database_type === "PRIMARY");
-          if (primary === undefined) return Option.none();
-          connectionString = primary.connection_string;
-        }
-        let pooler = Option.none<LegacyPgConnInput>();
-        if (connectionString !== undefined) {
-          pooler = yield* poolerConfigFrom(ref, connectionString);
-        }
-        if (Option.isNone(pooler) && fetchFromApi) {
-          const api = yield* (yield* LegacyPlatformApiFactory).make;
-          const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
-          if (Option.isSome(configsOpt)) {
-            const primary = configsOpt.value.find((config) => config.database_type === "PRIMARY");
-            if (primary !== undefined) {
-              pooler = yield* poolerConfigFrom(ref, primary.connection_string);
-            }
-          }
-        }
-        if (Option.isNone(pooler)) return Option.none();
-        const poolerConn = pooler.value;
-        if (password.length > 0) {
-          yield* debug.debug("Using database password from env var...");
-          return Option.some({ ...poolerConn, password });
-        }
-        // Mint a temp role; preserve Supavisor's `<user>.<ref>` tenant suffix.
-        const originalUser = poolerConn.user;
-        const withRole = yield* initLoginRole(ref, poolerConn);
-        const finalUser = originalUser.endsWith(`.${ref}`)
-          ? `${withRole.user}.${ref}`
-          : withRole.user;
-        const tempConn = { ...withRole, user: finalUser };
-        yield* waitForTempRole(ref, tempConn, dnsResolver);
-        return Option.some(tempConn);
-      });
-
-    const resolveLinked = (
-      ref: string,
-      dnsResolver: "native" | "https",
-      passwordFlag: Option.Option<string>,
-      adHocProjectRef = false,
-    ): Effect.Effect<LegacyPgConnInput, LegacyDbConfigError, LegacyPlatformApiFactory> =>
-      Effect.gen(function* () {
-        // Read lazily (per invocation) rather than at layer build, so tests and
-        // env-substitution see the current value. For an ad-hoc `--project-id` ref,
-        // honor only an explicit `--password` flag and ignore the ambient
-        // `SUPABASE_DB_PASSWORD` (which belongs to the current workdir, not this ref),
-        // so we always mint a temporary login role instead of leaking it.
-        const dbPassword = adHocProjectRef
-          ? (Option.getOrUndefined(passwordFlag) ?? "")
-          : yield* resolveDbPassword(passwordFlag);
-        const host = `db.${ref}.${cliConfig.projectHost}`;
-        const base: LegacyPgConnInput = {
-          host,
-          port: DIRECT_PORT,
-          user: "postgres",
-          password: dbPassword,
-          database: "postgres",
-        };
-
-        const reachable = yield* tcpReachable(host, DIRECT_PORT);
-        if (reachable) {
-          if (base.password.length > 0) {
-            yield* debug.debug("Using database password from env var...");
-            return base;
-          }
-          return yield* initLoginRole(ref, base);
-        }
-
-        // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc
-        // `--project-id` ref the command already holds a Management API token, so fall
-        // back to the API pooler config (and ignore the workdir's saved pooler URL)
-        // rather than failing with the IPv6 "run supabase link" suggestion.
-        const poolerConn = yield* resolvePoolerConn(
-          ref,
-          dnsResolver,
-          base.password,
-          adHocProjectRef,
-          adHocProjectRef,
-        );
-        if (Option.isNone(poolerConn)) {
-          return yield* Effect.fail(
-            new Errors.LegacyDbConfigIpv6Error({
-              message: "IPv6 is not supported on your current network",
-              suggestion: `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
-            }),
-          );
-        }
-        return poolerConn.value;
-      });
-
     const resolve = (flags: LegacyDbConfigFlags) =>
       Effect.gen(function* () {
+        const resolveVaultSecrets = flags.resolveVaultSecrets ?? true;
         // Config is read per branch, NOT unconditionally up front: the linked branch
         // resolves the ref first and reads the `[remotes.<ref>]`-merged config (below).
         // A base read here would validate base config (db.major_version, deno_version,
@@ -425,7 +476,9 @@ export const legacyDbConfigLayer = Layer.effect(
 
         // --db-url (direct) takes precedence.
         if (flags.connType === "db-url" && Option.isSome(flags.dbUrl)) {
-          const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+          const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
+            resolveVaultSecrets,
+          });
           // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
           // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
@@ -490,12 +543,18 @@ export const legacyDbConfigLayer = Layer.effect(
             // validate the merged config here, before `resolveLinked`'s TCP probe /
             // pooler / temp-role Management API calls, rather than letting those mask
             // (or run side effects ahead of) the real config error.
-            yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
-            const resolved = yield* resolveLinked(
+            yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref, {
+              resolveVaultSecrets,
+            });
+            const resolved = yield* legacyResolveLinkedConn(
               ref,
+              cliConfig.workdir,
+              cliConfig.projectHost,
+              cliConfig.poolerHost,
               flags.dnsResolver,
               flags.password ?? Option.none(),
               flags.adHocProjectRef ?? false,
+              resolveVaultSecrets,
             );
             // NB: the linked-project telemetry cache (GET /v1/projects/{ref}) is NOT
             // issued here. Go caches it in `PersistentPostRun`
@@ -506,7 +565,12 @@ export const legacyDbConfigLayer = Layer.effect(
             return { conn: resolved, ref };
           }).pipe(
             Effect.provide(
-              legacyLinkedDbResolverRuntimeLayer(["test", "db"]).pipe(Layer.provide(ambientLayer)),
+              Layer.mergeAll(
+                legacyLinkedDbResolverRuntimeLayer(["test", "db"]).pipe(
+                  Layer.provide(ambientLayer),
+                ),
+                localAmbientServices,
+              ),
             ),
           );
           // Surface the resolved ref so the caller can re-read config with a matching
@@ -515,7 +579,9 @@ export const legacyDbConfigLayer = Layer.effect(
         }
 
         // --local (default).
-        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir);
+        const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
+          resolveVaultSecrets,
+        });
         return {
           conn: {
             host: localHost,
@@ -548,13 +614,25 @@ export const legacyDbConfigLayer = Layer.effect(
           const adHocProjectRef = flags.adHocProjectRef ?? false;
           const password = adHocProjectRef
             ? (Option.getOrUndefined(flags.password ?? Option.none()) ?? "")
-            : yield* resolveDbPassword(flags.password ?? Option.none());
+            : yield* resolveDbPassword(flags.password ?? Option.none(), cliConfig.workdir);
           // Container-fallback: fetch the primary pooler config from the Management API
           // when no `.temp/pooler-url` is saved (Go's `ResolvePoolerConfigForFallback`).
-          return yield* resolvePoolerConn(ref, flags.dnsResolver, password, true, adHocProjectRef);
+          return yield* resolvePoolerConn(
+            ref,
+            cliConfig.workdir,
+            cliConfig.poolerHost,
+            flags.dnsResolver,
+            password,
+            true,
+            adHocProjectRef,
+            flags.resolveVaultSecrets ?? true,
+          );
         }).pipe(
           Effect.provide(
-            legacyLinkedDbResolverRuntimeLayer(["db", "dump"]).pipe(Layer.provide(ambientLayer)),
+            Layer.mergeAll(
+              legacyLinkedDbResolverRuntimeLayer(["db", "dump"]).pipe(Layer.provide(ambientLayer)),
+              localAmbientServices,
+            ),
           ),
         );
       });
