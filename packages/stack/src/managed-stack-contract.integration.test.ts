@@ -455,12 +455,46 @@ describe("managed stack acceptance contract", () => {
       `${unavailableRuntimeScenario.id}: persisted runtime failure for stack-main-default requires an explicit stopped lifecycle`,
     );
 
-    const portabilityScenario = managedStackContractFixtures.find(
-      ({ id }) => id === "api-boundary.managed-surface-is-node-and-bun-portable",
-    );
-    if (portabilityScenario === undefined) {
+    const portabilityScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "api-boundary.managed-surface-is-node-and-bun-portable",
+      );
+    if (portabilityScenario === undefined || portabilityScenario.when.interface !== "managed-api") {
       throw new Error("api-boundary.managed-surface-is-node-and-bun-portable fixture is required");
     }
+    const emptyRuntimeMatrix = {
+      ...portabilityScenario,
+      when: {
+        ...portabilityScenario.when,
+        input: { ...portabilityScenario.when.input, runtimes: [] },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([apiStatusScenario, emptyRuntimeMatrix])).toContain(
+      `${portabilityScenario.id}: portable contract must declare its runtimes`,
+    );
+
+    const duplicateRuntimeMatrix = {
+      ...portabilityScenario,
+      when: {
+        ...portabilityScenario.when,
+        input: { ...portabilityScenario.when.input, runtimes: ["node", "node"] },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([apiStatusScenario, duplicateRuntimeMatrix]),
+    ).toContain(`${portabilityScenario.id}: portable contract runtimes must be unique`);
+
+    const runtimeMatrixMissingFact = {
+      ...portabilityScenario,
+      when: {
+        ...portabilityScenario.when,
+        input: { ...portabilityScenario.when.input, runtimes: ["node"] },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([apiStatusScenario, runtimeMatrixMissingFact]),
+    ).toContain(`${portabilityScenario.id}: portable runtimes must match declared runtime facts`);
+
     const divergentPortableResult = {
       ...portabilityScenario,
       expected: {
@@ -525,6 +559,24 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([targetOwnsConflictingPort])).toContain(
       `${siblingPortScenario.id}: managed sibling port owner must differ from the selected target`,
+    );
+
+    const siblingJsonOutput = siblingPortScenario.expected.output.json;
+    if (siblingJsonOutput === undefined) {
+      throw new Error("ports.explicit-port-conflict-with-sibling-fails JSON fixture is required");
+    }
+    const projectedWrongPortOwner = {
+      ...siblingPortScenario,
+      expected: {
+        ...siblingPortScenario.expected,
+        output: {
+          ...siblingPortScenario.expected.output,
+          json: { ...siblingJsonOutput, owner_stack_id: "stack-other" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([projectedWrongPortOwner])).toContain(
+      `${siblingPortScenario.id}: projected managed port owner must match stack-main-default`,
     );
 
     const siblingAllocationScenario: ManagedStackContractScenario | undefined =
@@ -698,12 +750,74 @@ describe("managed stack acceptance contract", () => {
       `${pruneScenario.id}: data-preserving prune must declare mutable stack data`,
     );
 
-    const deleteScenario = managedStackContractFixtures.find(
-      ({ id }) => id === "reclamation.delete-orphan-by-stack-id",
+    const branchDeletionScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "reclamation.branch-delete-does-not-delete-data",
     );
-    if (deleteScenario === undefined) {
+    if (branchDeletionScenario === undefined) {
+      throw new Error("reclamation.branch-delete-does-not-delete-data fixture is required");
+    }
+    const deletionWithUnboundBranch = {
+      ...branchDeletionScenario,
+      given: branchDeletionScenario.given.map((fact) =>
+        fact.kind === "branch" && fact.name === "feat-a"
+          ? { ...fact, contextId: "context-other" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([deletionWithUnboundBranch])).toContain(
+      `${branchDeletionScenario.id}: branch deletion must bind its branch to an affected managed stack`,
+    );
+
+    const deletionWithoutCheckoutGitState = {
+      ...branchDeletionScenario,
+      given: branchDeletionScenario.given.filter(
+        (fact) => fact.kind !== "checkout" && fact.kind !== "git-state",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([deletionWithoutCheckoutGitState])).toContain(
+      `${branchDeletionScenario.id}: branch deletion must declare checkout Git state`,
+    );
+
+    const deletionWithoutPreservationResult = {
+      ...branchDeletionScenario,
+      expected: { ...branchDeletionScenario.expected, details: undefined },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([deletionWithoutPreservationResult])).toContain(
+      `${branchDeletionScenario.id}: branch deletion must preserve and orphan managed stack data`,
+    );
+
+    const deleteScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(({ id }) => id === "reclamation.delete-orphan-by-stack-id");
+    if (deleteScenario === undefined || deleteScenario.when.interface !== "cli") {
       throw new Error("reclamation.delete-orphan-by-stack-id fixture is required");
     }
+    const deleteWithMismatchedActionTarget = {
+      ...deleteScenario,
+      when: {
+        ...deleteScenario.when,
+        argv: deleteScenario.when.argv.map((arg) => (arg === "stack-orphan" ? "stack-other" : arg)),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([deleteWithMismatchedActionTarget])).toContain(
+      `${deleteScenario.id}: explicit action target stack-other disagrees with expected stack stack-orphan`,
+    );
+
+    const failedCopyScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(({ id }) => id === "bootstrap.failed-copy-rolls-back");
+    if (failedCopyScenario === undefined || failedCopyScenario.when.interface !== "managed-api") {
+      throw new Error("bootstrap.failed-copy-rolls-back managed API fixture is required");
+    }
+    const failedCopyWithMismatchedActionTarget = {
+      ...failedCopyScenario,
+      when: {
+        ...failedCopyScenario.when,
+        input: { ...failedCopyScenario.when.input, stackId: "stack-other" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([failedCopyWithMismatchedActionTarget])).toContain(
+      `${failedCopyScenario.id}: explicit action target stack-other disagrees with expected stack stack-main-default`,
+    );
+
     const runtimeMetadataOnlyDelete = {
       ...deleteScenario,
       expected: {

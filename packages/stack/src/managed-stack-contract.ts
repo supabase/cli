@@ -121,7 +121,13 @@ export type ManagedStackContractFact =
   | {
       readonly kind: "occupied-port";
       readonly port: number;
-      readonly owner: "external-process" | "legacy-stack" | "managed-stack";
+      readonly owner: "managed-stack";
+      readonly ownerId: string;
+    }
+  | {
+      readonly kind: "occupied-port";
+      readonly port: number;
+      readonly owner: "external-process" | "legacy-stack";
       readonly ownerId?: string;
     }
   | {
@@ -436,6 +442,50 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    const cliStackIdIndex =
+      scenario.when.interface === "cli" ? scenario.when.argv.indexOf("--stack-id") : -1;
+    const explicitActionStackId =
+      scenario.when.interface === "cli" && cliStackIdIndex >= 0
+        ? scenario.when.argv[cliStackIdIndex + 1]
+        : (scenario.when.interface === "managed-api" || scenario.when.interface === "stack-api") &&
+            typeof scenario.when.input.stackId === "string"
+          ? scenario.when.input.stackId
+          : undefined;
+    if (explicitActionStackId !== undefined) {
+      const expectedStackIds = new Set<string>();
+      if (scenario.expected.selection !== undefined) {
+        expectedStackIds.add(scenario.expected.selection.stackId);
+      }
+      for (const write of scenario.expected.writes) {
+        if (
+          write.target === "managed-state" ||
+          write.target === "registry" ||
+          write.target === "runtime-state"
+        ) {
+          expectedStackIds.add(write.id);
+        }
+      }
+      for (const effect of scenario.expected.runtimeEffects) {
+        expectedStackIds.add(effect.stackId);
+      }
+      for (const projectedStackId of [
+        output.api?.stackId,
+        output.json?.stack_id,
+        output.human?.fields.stackId,
+      ]) {
+        if (typeof projectedStackId === "string") {
+          expectedStackIds.add(projectedStackId);
+        }
+      }
+      for (const expectedStackId of expectedStackIds) {
+        if (expectedStackId !== explicitActionStackId) {
+          errors.push(
+            `${scenario.id}: explicit action target ${explicitActionStackId} disagrees with expected stack ${expectedStackId}`,
+          );
+        }
+      }
+    }
+
     if (
       scenario.when.interface === "cli" &&
       (scenario.when.argv[0] === "start" ||
@@ -458,30 +508,54 @@ export const validateManagedStackContractFixtures = (
       if (referencedScenario === undefined) {
         errors.push(`${scenario.id}: portable contract must reference a declared scenario`);
       } else {
-        let firstRuntimeResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
-        for (const runtime of ["node", "bun"]) {
-          const runtimeResult = output.api?.[runtime];
-          if (
-            !isManagedStackContractRecord(runtimeResult) ||
-            runtimeResult.outcome !== referencedScenario.expected.outcome
-          ) {
-            errors.push(
-              `${scenario.id}: portable ${runtime} outcome must match ${referencedScenario.id}`,
-            );
-            continue;
+        const runtimes = scenario.when.input.runtimes;
+        if (
+          !Array.isArray(runtimes) ||
+          runtimes.length === 0 ||
+          !runtimes.every((runtime) => typeof runtime === "string" && runtime.length > 0)
+        ) {
+          errors.push(`${scenario.id}: portable contract must declare its runtimes`);
+        } else {
+          if (new Set(runtimes).size !== runtimes.length) {
+            errors.push(`${scenario.id}: portable contract runtimes must be unique`);
           }
+          const runtimeFacts = scenario.given.flatMap((fact) =>
+            fact.kind === "managed-api-options" ? [fact.runtime] : [],
+          );
+          const declaredRuntimeSet = new Set(runtimes);
+          const runtimeFactSet = new Set(runtimeFacts);
           if (
-            referencedScenario.expected.selection !== undefined &&
-            runtimeResult.stackId !== referencedScenario.expected.selection.stackId
+            declaredRuntimeSet.size !== runtimeFactSet.size ||
+            [...declaredRuntimeSet].some((runtime) => !runtimeFactSet.has(runtime))
           ) {
-            errors.push(
-              `${scenario.id}: portable ${runtime} stackId must match ${referencedScenario.id}`,
-            );
+            errors.push(`${scenario.id}: portable runtimes must match declared runtime facts`);
           }
-          if (firstRuntimeResult === undefined) {
-            firstRuntimeResult = runtimeResult;
-          } else if (!managedStackContractJsonEquals(firstRuntimeResult, runtimeResult)) {
-            errors.push(`${scenario.id}: portable runtime decisions must be identical`);
+
+          let firstRuntimeResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
+          for (const runtime of runtimes) {
+            const runtimeResult = output.api?.[runtime];
+            if (
+              !isManagedStackContractRecord(runtimeResult) ||
+              runtimeResult.outcome !== referencedScenario.expected.outcome
+            ) {
+              errors.push(
+                `${scenario.id}: portable ${runtime} outcome must match ${referencedScenario.id}`,
+              );
+              continue;
+            }
+            if (
+              referencedScenario.expected.selection !== undefined &&
+              runtimeResult.stackId !== referencedScenario.expected.selection.stackId
+            ) {
+              errors.push(
+                `${scenario.id}: portable ${runtime} stackId must match ${referencedScenario.id}`,
+              );
+            }
+            if (firstRuntimeResult === undefined) {
+              firstRuntimeResult = runtimeResult;
+            } else if (!managedStackContractJsonEquals(firstRuntimeResult, runtimeResult)) {
+              errors.push(`${scenario.id}: portable runtime decisions must be identical`);
+            }
           }
         }
       }
@@ -651,6 +725,55 @@ export const validateManagedStackContractFixtures = (
         : typeof scenario.when.input.cwd === "string"
           ? scenario.when.input.cwd
           : undefined;
+    if (
+      scenario.when.interface === "git" &&
+      scenario.when.argv[0] === "branch" &&
+      (scenario.when.argv[1] === "-D" || scenario.when.argv[1] === "-d")
+    ) {
+      if (
+        scenario.expected.details?.stack_orphaned !== true ||
+        scenario.expected.details.stack_data_preserved !== true
+      ) {
+        errors.push(`${scenario.id}: branch deletion must preserve and orphan managed stack data`);
+      }
+      const deletedBranchName = scenario.when.argv[2];
+      const deletedBranch = scenario.given.find(
+        (fact) => fact.kind === "branch" && fact.name === deletedBranchName,
+      );
+      const affectedStack =
+        deletedBranch?.kind === "branch"
+          ? scenario.given.find(
+              (fact) => fact.kind === "stack" && fact.contextId === deletedBranch.contextId,
+            )
+          : undefined;
+      if (
+        deletedBranchName === undefined ||
+        deletedBranch?.kind !== "branch" ||
+        affectedStack?.kind !== "stack"
+      ) {
+        errors.push(
+          `${scenario.id}: branch deletion must bind its branch to an affected managed stack`,
+        );
+      } else {
+        if (deletedBranch.checkedOut) {
+          errors.push(`${scenario.id}: deleted branch ${deletedBranchName} cannot be checked out`);
+        }
+        if (scenario.expected.details?.orphaned_stack_id !== affectedStack.stackId) {
+          errors.push(
+            `${scenario.id}: orphaned stack must be ${affectedStack.stackId} for branch ${deletedBranchName}`,
+          );
+        }
+      }
+      if (
+        actionCwd === undefined ||
+        !scenario.given.some((fact) => fact.kind === "checkout" && fact.path === actionCwd) ||
+        !scenario.given.some(
+          (fact) => fact.kind === "git-state" && fact.workspacePath === actionCwd,
+        )
+      ) {
+        errors.push(`${scenario.id}: branch deletion must declare checkout Git state`);
+      }
+    }
     if (
       actionCwd !== undefined &&
       scenario.given.some(
@@ -965,23 +1088,29 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (
-      scenario.expected.error?.code === "exact_port_occupied" &&
-      scenario.given.some((fact) => fact.kind === "occupied-port" && fact.owner === "managed-stack")
-    ) {
+    const managedPortOwners = scenario.given.flatMap((fact) =>
+      fact.kind === "occupied-port" && fact.owner === "managed-stack" ? [fact] : [],
+    );
+    if (scenario.expected.error?.code === "exact_port_occupied" && managedPortOwners.length > 0) {
       if (selection === undefined) {
         errors.push(`${scenario.id}: managed sibling port conflict requires a selected target`);
-      } else if (
-        scenario.given.some(
-          (fact) =>
-            fact.kind === "occupied-port" &&
-            fact.owner === "managed-stack" &&
-            fact.ownerId === selection.stackId,
-        )
-      ) {
-        errors.push(
-          `${scenario.id}: managed sibling port owner must differ from the selected target`,
-        );
+      }
+      for (const owner of managedPortOwners) {
+        if (owner.ownerId.trim().length === 0) {
+          errors.push(`${scenario.id}: managed sibling port owner requires a stack ID`);
+        }
+        if (owner.ownerId === selection?.stackId) {
+          errors.push(
+            `${scenario.id}: managed sibling port owner must differ from the selected target`,
+          );
+        }
+        if (
+          (output.json !== undefined && output.json.owner_stack_id !== owner.ownerId) ||
+          (output.api !== undefined && output.api.ownerStackId !== owner.ownerId) ||
+          (output.human !== undefined && output.human.fields.ownerStackId !== owner.ownerId)
+        ) {
+          errors.push(`${scenario.id}: projected managed port owner must match ${owner.ownerId}`);
+        }
       }
     }
 
@@ -4636,6 +4765,18 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     title: "Deleting a Git branch alone never deletes its mutable stack data",
     area: "reclamation",
     given: [
+      { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
+      { kind: "branch", name: "main", contextId: "context-main", checkedOut: true },
+      { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: false },
+      {
+        kind: "git-state",
+        workspacePath: "checkout-a",
+        commonDirectory: "repo/.git",
+        gitDirectory: "repo/.git",
+        head: "branch",
+        branch: "main",
+        commit: "commit-main",
+      },
       {
         kind: "stack",
         name: "default",
@@ -4649,7 +4790,11 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       outcome: "no-op",
       writes: [],
       runtimeEffects: [],
-      details: { stack_data_preserved: true, stack_orphaned: true },
+      details: {
+        stack_data_preserved: true,
+        stack_orphaned: true,
+        orphaned_stack_id: "stack-feat-default",
+      },
       output: { human: { summary: "Deleted branch feat-a", fields: {} } },
     },
   },
