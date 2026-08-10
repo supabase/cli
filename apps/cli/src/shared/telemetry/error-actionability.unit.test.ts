@@ -870,6 +870,18 @@ describe("metric definitions", () => {
     expect(CliErrorActionabilityMetricDefinitions.internalUnknownBugRate.id).toBe(
       "failed_commands_internal_bug_or_unknown",
     );
+    expect(CliErrorActionabilityMetricDefinitions.internalUnknownBugRate.denominator).toBe(
+      "count where exit_code != 0 AND error_kind IS NOT NULL",
+    );
+    expect(CliErrorActionabilityMetricDefinitions.classificationCoverage.id).toBe(
+      "failed_commands_with_classification",
+    );
+    expect(CliErrorActionabilityMetricDefinitions.classificationCoverage.numerator).toBe(
+      "count where exit_code != 0 AND error_kind IS NOT NULL",
+    );
+    expect(CliErrorActionabilityMetricDefinitions.classificationCoverage.denominator).toBe(
+      "count where exit_code != 0",
+    );
     expect(CliErrorActionabilityMetricDefinitions.strictRecovery.partition_by).toEqual([
       "device_id",
       "$session_id",

@@ -225,10 +225,18 @@ export const CliErrorActionabilityMetricDefinitions = {
   internalUnknownBugRate: {
     id: "failed_commands_internal_bug_or_unknown",
     event: "cli_command_executed",
-    denominator: "count where exit_code != 0",
+    denominator: "count where exit_code != 0 AND error_kind IS NOT NULL",
     numerator: "count where exit_code != 0 AND error_kind IN ('internal_bug', 'unknown')",
     description:
-      "Internal/unknown bug failure rate is the share of failed commands classified as internal_bug or unknown.",
+      "Internal/unknown bug failure rate is the share of classified failed commands reported as internal_bug or unknown. Failures without error_kind (pure Go-proxy commands, CLI versions predating the classification) are excluded from both sides; classificationCoverage reports their share.",
+  },
+  classificationCoverage: {
+    id: "failed_commands_with_classification",
+    event: "cli_command_executed",
+    denominator: "count where exit_code != 0",
+    numerator: "count where exit_code != 0 AND error_kind IS NOT NULL",
+    description:
+      "Share of failed commands carrying the error classification. Pure Go-proxy commands report through the Go binary without these fields, and older CLI versions never send them, so the recovery, repeat, and bug-rate metrics cover exactly this fraction of the failure volume.",
   },
 } as const;
 
