@@ -59,7 +59,7 @@ import {
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import type { LegacyStartSetupLocalDatabaseError } from "../../../shared/db-bootstrap/db-setup.ts";
 import {
-  LegacyDeclarativeApplyError,
+  LegacyPgDeltaDeclarativeApplyError,
   legacyApplyDeclarativePgDelta,
 } from "./legacy-pgdelta.apply.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
@@ -188,7 +188,7 @@ export type LegacyPrepareShadowSourceError =
   | LegacyHealthCheckTimeoutError
   | LegacyStartSetupLocalDatabaseError
   | LegacyImagePrepullError
-  | LegacyDeclarativeApplyError;
+  | LegacyPgDeltaDeclarativeApplyError;
 
 /**
  * Port of Go's `PrepareShadowSource` (`apps/cli-go/internal/db/diff/shadow.go:37-91`):

@@ -54,7 +54,7 @@ const failError = (exit: Exit.Exit<unknown, unknown>) =>
 
 describe("legacyApplyDeclarativePgDelta", () => {
   it.effect(
-    "fails with LegacyDeclarativeApplyError interpolating the RELATIVE dir, not the absolute one, when the declarative dir doesn't exist",
+    "fails with LegacyPgDeltaDeclarativeApplyError interpolating the RELATIVE dir, not the absolute one, when the declarative dir doesn't exist",
     () => {
       // Go's `ApplyDeclarative` interpolates `utils.GetDeclarativeDir()` (relative) into
       // this error, never the `filepath.Abs`-resolved dir it separately computes only for
@@ -69,7 +69,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toBe(
           "declarative schema directory not found: supabase/database",
         );
@@ -89,7 +89,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
     },
   );
 
-  it.effect("maps an edge-runtime failure to LegacyDeclarativeApplyError", () => {
+  it.effect("maps an edge-runtime failure to LegacyPgDeltaDeclarativeApplyError", () => {
     const dir = makeDeclarativeDir();
     const edge = fakeEdgeRuntime({ fail: "error running pg-delta script: boom" });
     const out = mockOutput();
@@ -101,7 +101,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         declarativeDirRel: "supabase/database",
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
-      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
       expect((failError(exit) as { message: string }).message).toBe(
         "error running pg-delta script: boom",
       );
@@ -131,7 +131,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         declarativeDirRel: "supabase/database",
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
-      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
       const message = (failError(exit) as { message: string }).message;
       expect(message).toContain("failed to parse pg-delta apply output");
       expect(message).not.toContain("stdout:");
@@ -162,7 +162,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         declarativeDirRel: "supabase/database",
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
-      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
       const message = (failError(exit) as { message: string }).message;
       expect(message).toContain("failed to parse pg-delta apply output");
       expect(message).toContain("stdout: not json{");
@@ -205,7 +205,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
             target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
           },
         ).pipe(Effect.exit);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         const message = (failError(exit) as { message: string }).message;
         expect(message).toContain("failed to parse pg-delta apply output");
         expect(message).toContain("stdout: not json{");
@@ -251,7 +251,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toBe(
           "pg-delta declarative apply failed with status: ",
         );
@@ -276,7 +276,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when stdout is syntactically valid but non-object, non-null JSON",
+    "fails with LegacyPgDeltaDeclarativeApplyError (not an unhandled defect) when stdout is syntactically valid but non-object, non-null JSON",
     () => {
       // Unlike `null` (see the sibling test above), Go's `json.Unmarshal` genuinely rejects an
       // array/string/number/bool payload for a struct destination with an UnmarshalTypeError —
@@ -294,7 +294,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
@@ -314,7 +314,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
     },
   );
 
-  it.effect("fails with LegacyDeclarativeApplyError when stdout is a JSON array", () => {
+  it.effect("fails with LegacyPgDeltaDeclarativeApplyError when stdout is a JSON array", () => {
     const dir = makeDeclarativeDir();
     const edge = fakeEdgeRuntime({ stdout: "[1,2,3]" });
     const out = mockOutput();
@@ -327,7 +327,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+      expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
       expect((failError(exit) as { message: string }).message).toContain(
         "failed to parse pg-delta apply output",
       );
@@ -346,7 +346,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
   });
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as an array arrives as an object",
+    "fails with LegacyPgDeltaDeclarativeApplyError (not an unhandled defect) when a field typed as an array arrives as an object",
     () => {
       // A configured or future pg-delta emitting `{"status":"error","errors":{"length":1}}` must
       // not reach `legacyFormatApplyFailure`'s `for (const issue of errors)`, which would throw an
@@ -366,7 +366,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
@@ -387,7 +387,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not treated as a false success) when an errors array element is a number",
+    "fails with LegacyPgDeltaDeclarativeApplyError (not treated as a false success) when an errors array element is a number",
     () => {
       // A configured or future pg-delta emitting `{"status":"success","errors":[123]}` must not
       // be accepted as a successful apply. Verified against Go's real `ApplyIssue.UnmarshalJSON`
@@ -408,7 +408,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
@@ -429,7 +429,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not treated as a false success) when a diagnostics array element is a bare string",
+    "fails with LegacyPgDeltaDeclarativeApplyError (not treated as a false success) when a diagnostics array element is a bare string",
     () => {
       // Unlike `ApplyIssue`, Go's `ApplyDiagnosis.UnmarshalJSON` (`apply.go:79-116`) has no
       // bare-string acceptance branch, so `{"diagnostics":["boom"]}` fails Go's whole decode too
@@ -448,7 +448,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
@@ -580,7 +580,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect(out.stderrText).toContain("- unknown pg-delta issue");
         expect(out.stderrText).toContain("- unknown pg-delta diagnostic");
         rmSync(dir, { recursive: true, force: true });
@@ -658,7 +658,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toBe(
           "pg-delta declarative apply failed with status: ",
         );
@@ -709,7 +709,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect(out.stderrText).toContain("No per-statement diagnostics were reported by pg-delta.");
         rmSync(dir, { recursive: true, force: true });
       }).pipe(
@@ -728,7 +728,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as a number arrives as a string",
+    "fails with LegacyPgDeltaDeclarativeApplyError (not an unhandled defect) when a field typed as a number arrives as a string",
     () => {
       // Same reasoning as the array-typed-field test above, for `ApplyResult`'s numeric fields
       // (`TotalApplied int`, etc.) — a malformed counter must fail the parse, not be silently
@@ -747,7 +747,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
@@ -768,7 +768,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when a field typed as an int arrives as a fractional number",
+    "fails with LegacyPgDeltaDeclarativeApplyError (not an unhandled defect) when a field typed as an int arrives as a fractional number",
     () => {
       // Go's `TotalApplied int` (and its `int`-typed siblings) reject any JSON number literal
       // with a decimal point via `strconv.ParseInt` on the raw literal text — verified
@@ -789,7 +789,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
@@ -810,7 +810,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
   );
 
   it.effect(
-    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when an int field arrives as a value outside Go's int64 range",
+    "fails with LegacyPgDeltaDeclarativeApplyError (not an unhandled defect) when an int field arrives as a value outside Go's int64 range",
     () => {
       // `Number.isInteger(1e20)` is `true`, but Go's `json.Unmarshal` of that same literal
       // into `int` fails with "value out of range" (`strconv.ParseInt`'s int64 width) — so a
@@ -830,7 +830,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toContain(
           "failed to parse pg-delta apply output",
         );
@@ -870,7 +870,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
-        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect(failError(exit)?.constructor.name).toBe("LegacyPgDeltaDeclarativeApplyError");
         expect((failError(exit) as { message: string }).message).toBe(
           "pg-delta declarative apply failed with status: error",
         );

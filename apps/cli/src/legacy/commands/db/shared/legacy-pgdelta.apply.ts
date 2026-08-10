@@ -20,6 +20,7 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { legacyGoQuote } from "../../../shared/legacy-go-quote.ts";
 import {
   legacyInterpolatePgDeltaScript,
   legacyPgDeltaDeclarativeApplyScript,
@@ -36,6 +37,16 @@ const errMessage = (e: unknown): string =>
     : String(e);
 
 /**
+ * Go's `strings.TrimSpace`/`bytes.TrimSpace` trim exactly the Unicode
+ * `White_Space` set — which, unlike JS `String.prototype.trim`, does NOT
+ * include U+FEFF (BOM/ZWNBSP). A BOM-prefixed pg-delta payload must therefore
+ * fail to parse here exactly like it does in Go, and BOM-adjacent
+ * detail/hint/path fields must render it, not eat it.
+ */
+const legacyTrimGoSpace = (value: string): string =>
+  value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
+
+/**
  * `pgdelta.ApplyDeclarative` failed — Go's own error messages at each step (see call sites
  * below). `reason` narrows the actionability classification below beyond the "user's own
  * SQL/schema" (`dbFinding`) default that a failed-status apply (Go's own `pg-delta declarative
@@ -47,7 +58,9 @@ const errMessage = (e: unknown): string =>
  * values) are genuinely NOT the user's schema/SQL failing, and must not be misclassified as
  * such.
  */
-export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclarativeApplyError")<{
+export class LegacyPgDeltaDeclarativeApplyError extends Data.TaggedError(
+  "LegacyPgDeltaDeclarativeApplyError",
+)<{
   readonly message: string;
   readonly reason?:
     | "missing_schema_dir"
@@ -334,7 +347,7 @@ function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
  * Structural guard for Go's `ApplyResult` JSON shape, applied to an untrusted
  * `JSON.parse` of the pg-delta subprocess's stdout. A syntactically valid but non-object
  * payload — an array, a bare string/number/bool (e.g. a future pg-delta release that
- * changes its output shape) — must fail typed as {@link LegacyDeclarativeApplyError}, not
+ * changes its output shape) — must fail typed as {@link LegacyPgDeltaDeclarativeApplyError}, not
  * crash `parsed.status` with an unhandled `TypeError`. A top-level `null` is NOT one of
  * these: `json.Unmarshal([]byte("null"), &result)` into Go's zero-valued (non-pointer)
  * `ApplyResult` struct is a no-op that returns no error (verified empirically), unlike the
@@ -514,7 +527,7 @@ function legacyFormatStatementLocation(
 ): string {
   const resolved = typeof loc === "string" ? { filePath: loc } : loc;
   if (resolved === null || resolved === undefined) return "";
-  const path = String(resolved.filePath ?? "").trim();
+  const path = legacyTrimGoSpace(String(resolved.filePath ?? ""));
   if (path.length === 0) return "";
   if ((resolved.statementIndex ?? 0) > 0) return `${path}#${resolved.statementIndex}`;
   return path;
@@ -689,7 +702,7 @@ function legacyGoJsonIndentTokens(src: string): string {
  * `JSON.stringify(JSON.parse(...))` would corrupt the payload Go's `json.Indent` preserves.
  */
 export function legacyFormatDebugJson(raw: string): string {
-  const trimmed = raw.trim();
+  const trimmed = legacyTrimGoSpace(raw);
   if (trimmed.length === 0) return "";
   try {
     JSON.parse(trimmed);
@@ -701,7 +714,7 @@ export function legacyFormatDebugJson(raw: string): string {
 
 /** Go's `formatApplyIssueMessage` (`apply.go:223-242`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
 function legacyFormatApplyIssueMessage(issue: LegacyPgDeltaApplyIssue): string {
-  const trimmed = String(issue.message ?? "").trim();
+  const trimmed = legacyTrimGoSpace(String(issue.message ?? ""));
   const message = trimmed.length > 0 ? trimmed : "unknown pg-delta issue";
   const metadata: Array<string> = [];
   const code = String(issue.code ?? "");
@@ -744,9 +757,9 @@ function legacyFormatApplyIssue(rawIssue: LegacyPgDeltaApplyIssue | string | nul
     Buffer.from(`- ${String(issue.statement.id ?? "")}${classSuffix}`, "utf-8"),
     Buffer.from(`  ${legacyFormatApplyIssueMessage(issue)}`, "utf-8"),
   ];
-  const detail = String(issue.detail ?? "").trim();
+  const detail = legacyTrimGoSpace(String(issue.detail ?? ""));
   if (detail.length > 0) lines.push(Buffer.from(`  Detail: ${detail}`, "utf-8"));
-  const hint = String(issue.hint ?? "").trim();
+  const hint = legacyTrimGoSpace(String(issue.hint ?? ""));
   if (hint.length > 0) lines.push(Buffer.from(`  Hint: ${hint}`, "utf-8"));
   const sql = legacyFormatStatementSql(String(issue.statement.sql ?? ""));
   if (sql.byteLength > 0) {
@@ -758,15 +771,15 @@ function legacyFormatApplyIssue(rawIssue: LegacyPgDeltaApplyIssue | string | nul
 /** Go's `formatApplyDiagnosis` (`apply.go:244-261`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
 function legacyFormatApplyDiagnosis(rawDiagnosis: LegacyPgDeltaApplyDiagnosis | null): string {
   const diagnosis = legacyNormalizeApplyDiagnosis(rawDiagnosis);
-  const trimmed = String(diagnosis.message ?? "").trim();
+  const trimmed = legacyTrimGoSpace(String(diagnosis.message ?? ""));
   const message = trimmed.length > 0 ? trimmed : "unknown pg-delta diagnostic";
   let out = "- ";
-  const code = String(diagnosis.code ?? "").trim();
+  const code = legacyTrimGoSpace(String(diagnosis.code ?? ""));
   if (code.length > 0) out += `[${code}] `;
   out += message;
   const loc = legacyFormatStatementLocation(diagnosis.statementId);
   if (loc.length > 0) out += ` (${loc})`;
-  const fix = String(diagnosis.suggestedFix ?? "").trim();
+  const fix = legacyTrimGoSpace(String(diagnosis.suggestedFix ?? ""));
   if (fix.length > 0) out += `\n  Suggested fix: ${fix}`;
   return out;
 }
@@ -801,7 +814,14 @@ export function legacyFormatApplyFailure(
   }
 
   const lines: Array<Buffer> = [
-    Buffer.from(`pg-delta apply returned status "${result.status ?? ""}".`, "utf-8"),
+    // Go renders the status with `%q` (`apply.go:156`) — plain quotes diverge the
+    // moment a malformed payload puts a quote/control char in `status`.
+    Buffer.from(
+      `pg-delta apply returned status ${legacyGoQuote(
+        Buffer.from(String(result.status ?? ""), "utf-8"),
+      )}.`,
+      "utf-8",
+    ),
     Buffer.from(
       `${result.totalApplied ?? 0}/${totalStatements} statements applied in ${
         result.totalRounds ?? 0
@@ -888,7 +908,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     .pipe(Effect.orElseSucceed(() => false));
   if (!exists) {
     return yield* Effect.fail(
-      new LegacyDeclarativeApplyError({
+      new LegacyPgDeltaDeclarativeApplyError({
         message: `declarative schema directory not found: ${params.declarativeDirRel}`,
         reason: "missing_schema_dir",
       }),
@@ -935,7 +955,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
     .pipe(
       Effect.mapError(
         (cause) =>
-          new LegacyDeclarativeApplyError({ message: cause.message, reason: cause.docker }),
+          new LegacyPgDeltaDeclarativeApplyError({ message: cause.message, reason: cause.docker }),
       ),
     );
 
@@ -954,7 +974,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
       return normalized;
     },
     catch: (cause) =>
-      new LegacyDeclarativeApplyError({
+      new LegacyPgDeltaDeclarativeApplyError({
         message: debug
           ? `failed to parse pg-delta apply output: ${errMessage(cause)}\nstdout: ${result.stdout}`
           : `failed to parse pg-delta apply output: ${errMessage(cause)}`,
@@ -979,7 +999,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
       }
     }
     return yield* Effect.fail(
-      new LegacyDeclarativeApplyError({
+      new LegacyPgDeltaDeclarativeApplyError({
         message: `pg-delta declarative apply failed with status: ${parsed.status ?? ""}`,
       }),
     );
