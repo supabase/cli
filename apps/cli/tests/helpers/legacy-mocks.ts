@@ -46,7 +46,14 @@ import type { ProcessControl } from "../../src/shared/runtime/process-control.se
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
-import { mockAnalytics, mockProcessControl, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
+import {
+  mockAnalytics,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+  processEnvLayer,
+} from "./mocks.ts";
 
 // ---------------------------------------------------------------------------
 // Constants — Go-parity test fixtures used across every native-port integration
@@ -680,6 +687,26 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
       return root;
     },
   };
+}
+
+/**
+ * Ambient isolation for tests that construct the REAL `legacyCliConfigLayer` /
+ * `legacyCredentialsLayer` (directly or inside a command runtime layer) against
+ * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and
+ * `<homeDir>/.supabase/access-token`, resolving `SUPABASE_HOME` /
+ * `SUPABASE_PROFILE` from the raw process env — so both the home directory and
+ * the env must be pinned or stale files and ambient variables on the host
+ * machine leak into the test.
+ *
+ * Point `homeDir` at a per-test temp dir (see {@link useLegacyTempWorkdir});
+ * `env` replaces the entire ambient env for the layer's lifetime, so list every
+ * variable the test needs (e.g. `SUPABASE_ACCESS_TOKEN`, `SUPABASE_NO_KEYRING`).
+ */
+export function legacyIsolatedHomeLayer(
+  homeDir: string,
+  env: Readonly<Record<string, string | undefined>> = {},
+): Layer.Layer<RuntimeInfo> {
+  return Layer.mergeAll(mockRuntimeInfo({ homeDir }), processEnvLayer(env));
 }
 
 // ---------------------------------------------------------------------------

@@ -10,12 +10,13 @@ import {
   mockAnalytics,
   mockOutput,
   mockProcessControl,
-  mockRuntimeInfo,
+  mockTelemetryRuntime,
   mockTty,
-  processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
-import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
+import {
+  legacyIsolatedHomeLayer,
+  useLegacyTempWorkdir,
+} from "../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyExperimentalRequiredError } from "../../shared/legacy-experimental-gate.ts";
 import { legacyStorageCommand } from "./storage.command.ts";
 import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
@@ -27,6 +28,8 @@ import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 // surface the experimental-gate error in Go, not the mutex error — this suite
 // proves that ordering is wired into the actual `.command.ts` handler
 // pipeline for all four leaves, not just the shared helper in isolation.
+
+const tempRoot = useLegacyTempWorkdir("supabase-storage-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
   Command.withSubcommands([legacyStorageCommand]),
@@ -42,30 +45,17 @@ function setup(args: ReadonlyArray<string>) {
     Layer.succeed(CliArgs, { args }),
     // `legacyStorageGatewayRuntimeLayer`'s cliConfig/credentials layers read
     // real env/files when built. Neither check under test ever reaches that
-    // lazy factory, but isolate ambient env defensively anyway.
-    processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
-    mockRuntimeInfo(),
+    // lazy factory, but isolate ambient env and homeDir defensively anyway —
+    // same rationale as the sibling experimental-gate tests (ssl-enforcement,
+    // postgres-config, network-bans).
+    legacyIsolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
     mockProcessControl().layer,
     mockTty({ stdinIsTty: false, stdoutIsTty: false }),
     mockAnalytics().layer,
-    Layer.succeed(
-      TelemetryRuntime,
-      TelemetryRuntime.of({
-        configDir: "/tmp/supabase-storage-experimental-gate-test/.supabase",
-        tracesDir: "/tmp/supabase-storage-experimental-gate-test/.supabase/traces",
-        consent: "granted",
-        showDebug: false,
-        deviceId: "test-device-id",
-        sessionId: "test-session-id",
-        identity: makeTelemetryIdentity(undefined),
-        isFirstRun: false,
-        isTty: false,
-        isCi: false,
-        os: "linux",
-        arch: "x64",
-        cliVersion: "0.1.0",
-      }),
-    ),
+    mockTelemetryRuntime({
+      configDir: `${tempRoot.current}/.supabase`,
+      tracesDir: `${tempRoot.current}/.supabase/traces`,
+    }),
   );
   return { layer };
 }
