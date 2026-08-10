@@ -22,6 +22,7 @@ import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSp
 
 import {
   collectText,
+  containerCliExitCode,
   legacyDescribeContainerCliFailure,
   runContainerCliExpectSuccess,
   spawnContainerCli,
@@ -255,6 +256,14 @@ export function legacyEnsureNetwork(
   }
   return Effect.scoped(
     Effect.gen(function* () {
+      const inspectExitCode = yield* containerCliExitCode(
+        spawner,
+        ["network", "inspect", networkId],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+      ).pipe(Effect.orElseSucceed(() => 1));
+      if (inspectExitCode === 0) {
+        return;
+      }
       const args = [
         "network",
         "create",

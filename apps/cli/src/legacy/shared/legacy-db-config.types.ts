@@ -25,6 +25,11 @@ export interface LegacyDbConfigFlags {
   readonly connType: LegacyDbConnType | undefined;
   readonly dnsResolver: "native" | "https";
   /**
+   * Whether config resolution should decrypt and materialize `[db.vault]` values.
+   * Defaults to true; `db push --skip-vault` is the only caller that disables it.
+   */
+  readonly resolveVaultSecrets?: boolean;
+  /**
    * The `--password` / `-p` flag value (Go's `viper.GetString("DB_PASSWORD")`,
    * bound via `viper.BindPFlag` in `apps/cli-go/cmd/db.go`). When `Some`, it
    * takes precedence over the `SUPABASE_DB_PASSWORD` env var on the linked path,

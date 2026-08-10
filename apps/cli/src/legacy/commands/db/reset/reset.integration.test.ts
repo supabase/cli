@@ -368,6 +368,7 @@ function defaultLocalResetRoute(opts: DefaultRouteOpts = {}) {
     if (args[0] === "context" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "container" && args[1] === "rm") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "rm") return { exitCode: 0 };
+    if (args[0] === "network" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "create") {

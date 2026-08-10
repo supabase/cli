@@ -76,6 +76,31 @@ describe("read (lenient) vs check (throws) split", () => {
     );
   });
 
+  it.effect("can skip vault resolution without skipping the rest of config validation", () => {
+    const dir = withConfig(
+      [
+        "[db.vault]",
+        'local_secret = "encrypted:not-valid"',
+        "[remotes.preview]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "[remotes.preview.db.vault]",
+        'remote_secret = "encrypted:not-valid"',
+        "",
+      ].join("\n"),
+    );
+    return withServices(dir, (fs, path) =>
+      legacyCheckDbToml(fs, path, dir, undefined, { resolveVaultSecrets: false }),
+    ).pipe(
+      Effect.tap((values) =>
+        Effect.sync(() => {
+          expect(values.vault).toEqual([]);
+          expect(values.baseline.vaultNames).toEqual(["local_secret"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect(
     "legacyReadDbToml({ validate: false }) tolerates the same secret, returning defaults",
     () => {
