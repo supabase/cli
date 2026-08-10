@@ -433,26 +433,31 @@ describe("managed stack acceptance contract", () => {
       `${retryScenario.id}: bootstrap retry requires a rolled-back prior attempt`,
     );
 
-    const configuredCredentialsScenario: ManagedStackContractScenario | undefined =
-      managedStackContractFixtures.find(
-        ({ id }) => id === "credentials.configured-values-are-authoritative",
-      );
-    if (configuredCredentialsScenario === undefined) {
-      throw new Error("credentials.configured-values-are-authoritative fixture is required");
-    }
-    const globallyPersistedPlaintext = {
-      ...configuredCredentialsScenario,
-      expected: {
-        ...configuredCredentialsScenario.expected,
-        details: {
-          ...configuredCredentialsScenario.expected.details,
-          plaintext_secrets_in_global_state: true,
+    for (const scenarioId of [
+      "credentials.configured-values-are-authoritative",
+      "credentials.explicit-change-applies-after-stop",
+      "credentials.omitted-values-use-stable-defaults",
+      "credentials.compatible-legacy-auth-is-retained",
+    ]) {
+      const credentialPersistenceScenario: ManagedStackContractScenario | undefined =
+        managedStackContractFixtures.find(({ id }) => id === scenarioId);
+      if (credentialPersistenceScenario === undefined) {
+        throw new Error(`${scenarioId} fixture is required`);
+      }
+      const globallyPersistedPlaintext = {
+        ...credentialPersistenceScenario,
+        expected: {
+          ...credentialPersistenceScenario.expected,
+          details: {
+            ...credentialPersistenceScenario.expected.details,
+            plaintext_secrets_in_global_state: true,
+          },
         },
-      },
-    } satisfies ManagedStackContractScenario;
-    expect(validateManagedStackContractFixtures([globallyPersistedPlaintext])).toContain(
-      `${configuredCredentialsScenario.id}: configured credentials must not persist plaintext globally`,
-    );
+      } satisfies ManagedStackContractScenario;
+      expect(validateManagedStackContractFixtures([globallyPersistedPlaintext])).toContain(
+        `${credentialPersistenceScenario.id}: credential persistence must not expose plaintext globally`,
+      );
+    }
 
     const pruneScenario = managedStackContractFixtures.find(
       ({ id }) => id === "reclamation.prune-removes-metadata-only",

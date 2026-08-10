@@ -87,8 +87,9 @@ correct common or worktree scope and cannot recreate an identity already declare
 new Git-derived contexts and selected linked worktrees must declare the relevant Git state; managed
 and sticky port conflicts and persisted-runtime conflicts must identify their actual target;
 persisted-runtime preflight failures must identify a stopped stack; a successful bootstrap retry
-must follow an explicit rolled-back attempt; configured-credential creation must prove that global
-state contains references rather than plaintext; data-preserving prune must begin with mutable data;
+must follow an explicit rolled-back attempt; credential create, update, and copy operations must
+prove that global state contains references rather than plaintext; data-preserving prune must begin
+with mutable data;
 tracked identity markers must remain untouched; native qualification facts must partition the
 service matrix; status operations must remain read-only reports; portable runtime projections must
 match their referenced scenario; destructive runtime effects must map to mutable-state deletion;

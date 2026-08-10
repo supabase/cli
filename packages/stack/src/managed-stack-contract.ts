@@ -734,15 +734,17 @@ export const validateManagedStackContractFixtures = (
     }
 
     if (
-      scenario.given.some(
-        (fact) => fact.kind === "credential-state" && fact.source === "configured",
-      ) &&
+      scenario.given.some((fact) => fact.kind === "credential-state") &&
       scenario.expected.writes.some(
-        (write) => write.target === "managed-state" && write.operation === "create",
+        (write) =>
+          write.target === "managed-state" &&
+          (write.operation === "copy" ||
+            write.operation === "create" ||
+            write.operation === "update"),
       ) &&
       scenario.expected.details?.plaintext_secrets_in_global_state !== false
     ) {
-      errors.push(`${scenario.id}: configured credentials must not persist plaintext globally`);
+      errors.push(`${scenario.id}: credential persistence must not expose plaintext globally`);
     }
 
     if (scenario.expected.details?.retry_after_rollback === true) {
@@ -3689,7 +3691,11 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
-      details: { credential_values_id: "stable-local-defaults-v1", generated_per_start: false },
+      details: {
+        credential_values_id: "stable-local-defaults-v1",
+        generated_per_start: false,
+        plaintext_secrets_in_global_state: false,
+      },
       output: {
         json: {
           stack_id: "stack-main-default",
@@ -3751,6 +3757,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
+      details: { plaintext_secrets_in_global_state: false },
       output: {
         json: {
           outcome: "update",
@@ -3841,7 +3848,11 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         { operation: "copy", stackId: "stack-main-default" },
         { operation: "start", stackId: "stack-main-default" },
       ],
-      details: { credential_values_id: "legacy-auth-v1", legacy_state_mutated: false },
+      details: {
+        credential_values_id: "legacy-auth-v1",
+        legacy_state_mutated: false,
+        plaintext_secrets_in_global_state: false,
+      },
       output: {
         api: {
           stackId: "stack-main-default",
