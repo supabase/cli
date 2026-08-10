@@ -111,6 +111,8 @@ type OperationDefinition = {
   readonly schemaBase: string;
   readonly method: HttpMethod;
   readonly path: string;
+  readonly version: string;
+  readonly methodName: string;
   readonly description: string;
   readonly pathParams: ReadonlyArray<string>;
   readonly queryParams: ReadonlyArray<string>;
@@ -142,7 +144,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function loadSpec(): OpenApiDocument {
+export function loadSpec(): OpenApiDocument {
   const parsed = JSON.parse(readFileSync(sourceSpecPath, "utf8"));
   if (!isRecord(parsed) || !isRecord(parsed.paths)) {
     throw new Error(`Invalid OpenAPI document at ${sourceSpecPath}`);
@@ -588,7 +590,94 @@ function buildCombinedInputSchema(
   };
 }
 
-function extractOperations(document: OpenApiDocument): ReadonlyArray<OperationDefinition> {
+// The version namespace is derived from the path (not the operationId) so
+// that `/v2/...` routes land in `api.v2` regardless of how their operationId
+// happens to be spelled in the upstream spec.
+export function operationVersionFromPath(path: string): string {
+  const version = path.split("/")[1];
+  if (version === undefined || !/^v\d+$/u.test(version)) {
+    throw new Error(`Expected a version-prefixed path, got ${path}`);
+  }
+  return version;
+}
+
+// Strips a leading version prefix (e.g. `v1`/`V2`) from a camelized operation
+// name, lowercasing the character that follows it, so `v2GetProjectConfig`
+// becomes `getProjectConfig`. Operation names without a version prefix are
+// returned unchanged — the path, not the operationId, is the authority on
+// version.
+export function operationMethodName(operationName: string): string {
+  const match = /^([vV]\d+)(.*)$/u.exec(operationName);
+  if (!match) {
+    return operationName;
+  }
+
+  const methodBase = match[2];
+  if (methodBase === undefined || methodBase.length === 0) {
+    return operationName;
+  }
+
+  const first = methodBase.slice(0, 1).toLowerCase();
+  return `${first}${methodBase.slice(1)}`;
+}
+
+// A version prefix on the operationId is optional, but when present it must
+// agree with the path-derived version — otherwise the generated namespace
+// (from the path) and the SDK method name (from the operationId) would imply
+// different API versions for the same operation.
+function assertOperationVersionAgreement(operation: {
+  readonly operationId: string;
+  readonly operationName: string;
+  readonly path: string;
+  readonly version: string;
+}): void {
+  const match = /^[vV]\d+/u.exec(operation.operationName);
+  if (!match) {
+    return;
+  }
+
+  const operationNameVersion = match[0].toLowerCase();
+  if (operationNameVersion !== operation.version) {
+    throw new Error(
+      `Operation "${operation.operationId}" at path "${operation.path}" has operationId version "${operationNameVersion}" that disagrees with the path-derived version "${operation.version}"`,
+    );
+  }
+}
+
+function assertUniqueOperations(operations: ReadonlyArray<OperationDefinition>): void {
+  const byNamespaceMethod = new Map<string, OperationDefinition>();
+  const byOperationName = new Map<string, OperationDefinition>();
+  const bySchemaBase = new Map<string, OperationDefinition>();
+
+  for (const operation of operations) {
+    const namespaceMethod = `${operation.version}.${operation.methodName}`;
+    const existingNamespaceMethod = byNamespaceMethod.get(namespaceMethod);
+    if (existingNamespaceMethod) {
+      throw new Error(
+        `Duplicate namespace method "${namespaceMethod}": "${existingNamespaceMethod.operationId}" (${existingNamespaceMethod.method} ${existingNamespaceMethod.path}) collides with "${operation.operationId}" (${operation.method} ${operation.path})`,
+      );
+    }
+    byNamespaceMethod.set(namespaceMethod, operation);
+
+    const existingOperationName = byOperationName.get(operation.operationName);
+    if (existingOperationName) {
+      throw new Error(
+        `Duplicate operation name "${operation.operationName}": "${existingOperationName.operationId}" (${existingOperationName.method} ${existingOperationName.path}) collides with "${operation.operationId}" (${operation.method} ${operation.path})`,
+      );
+    }
+    byOperationName.set(operation.operationName, operation);
+
+    const existingSchemaBase = bySchemaBase.get(operation.schemaBase);
+    if (existingSchemaBase) {
+      throw new Error(
+        `Duplicate schema base "${operation.schemaBase}": "${existingSchemaBase.operationId}" (${existingSchemaBase.method} ${existingSchemaBase.path}) collides with "${operation.operationId}" (${operation.method} ${operation.path})`,
+      );
+    }
+    bySchemaBase.set(operation.schemaBase, operation);
+  }
+}
+
+export function extractOperations(document: OpenApiDocument): ReadonlyArray<OperationDefinition> {
   const operations: Array<OperationDefinition> = [];
 
   for (const [pathName, pathItem] of Object.entries(document.paths)) {
@@ -602,13 +691,25 @@ function extractOperations(document: OpenApiDocument): ReadonlyArray<OperationDe
       const { response, schema: outputSchema } = getResponseDefinition(document, operation);
       const schemaBase = identifier(operation.operationId);
       const description = operation.description?.trim() || operation.summary?.trim() || schemaBase;
+      const operationName = camelize(operation.operationId);
+      const version = operationVersionFromPath(pathName);
+      const methodName = operationMethodName(operationName);
+
+      assertOperationVersionAgreement({
+        operationId: operation.operationId,
+        operationName,
+        path: pathName,
+        version,
+      });
 
       operations.push({
         operationId: operation.operationId,
-        operationName: camelize(operation.operationId),
+        operationName,
         schemaBase,
         method: httpMethods[method],
         path: pathName,
+        version,
+        methodName,
         description,
         pathParams: (operation.parameters ?? [])
           .filter((parameter) => parameter.in === "path")
@@ -629,7 +730,11 @@ function extractOperations(document: OpenApiDocument): ReadonlyArray<OperationDe
     }
   }
 
-  return operations.sort((left, right) => left.operationId.localeCompare(right.operationId));
+  const sortedOperations = operations.sort((left, right) =>
+    left.operationId.localeCompare(right.operationId),
+  );
+  assertUniqueOperations(sortedOperations);
+  return sortedOperations;
 }
 
 function renderSchemaSource(
@@ -758,7 +863,7 @@ function renderResponse(definition: ResponseDefinition): string {
   return `{ kind: ${JSON.stringify(definition.kind)} }`;
 }
 
-function renderContracts(
+export function renderContracts(
   document: OpenApiDocument,
   operations: ReadonlyArray<OperationDefinition>,
 ): string {
@@ -818,34 +923,12 @@ export type VoidOperationDefinition<Id extends OperationId = OperationId> = Extr
 `;
 }
 
-function splitOperationVersion(operationName: string): {
-  readonly version: string;
-  readonly methodName: string;
-} {
-  const match = /^((?:v|V)\d+)(.+)$/u.exec(operationName);
-  if (!match) {
-    throw new Error(`Expected a version-prefixed operation id, got ${operationName}`);
-  }
-
-  const [, version, methodBase] = match;
-  if (version === undefined || methodBase === undefined || methodBase.length === 0) {
-    throw new Error(`Expected an operation method segment after the version in ${operationName}`);
-  }
-  const first = methodBase.slice(0, 1).toLowerCase();
-
-  return {
-    version,
-    methodName: `${first}${methodBase.slice(1)}`,
-  };
-}
-
-function renderEffectClient(operations: ReadonlyArray<OperationDefinition>): string {
+export function renderEffectClient(operations: ReadonlyArray<OperationDefinition>): string {
   const versionedOperations = new Map<string, Array<OperationDefinition>>();
   for (const operation of operations) {
-    const { version } = splitOperationVersion(operation.operationName);
-    const group = versionedOperations.get(version);
+    const group = versionedOperations.get(operation.version);
     if (group === undefined) {
-      versionedOperations.set(version, [operation]);
+      versionedOperations.set(operation.version, [operation]);
     } else {
       group.push(operation);
     }
@@ -856,7 +939,7 @@ function renderEffectClient(operations: ReadonlyArray<OperationDefinition>): str
     .map(([version, groupedOperations]) => {
       const methods = groupedOperations
         .map((operation) => {
-          const { methodName } = splitOperationVersion(operation.operationName);
+          const { methodName } = operation;
           const isEmptyInput =
             operation.inputSchema.type === "object" &&
             Object.keys(operation.inputSchema.properties ?? {}).length === 0;
@@ -886,7 +969,7 @@ ${methods}
 
   const executorCases = operations
     .map((operation) => {
-      const { version, methodName } = splitOperationVersion(operation.operationName);
+      const { version, methodName } = operation;
       const isEmptyInput =
         operation.inputSchema.type === "object" &&
         Object.keys(operation.inputSchema.properties ?? {}).length === 0;

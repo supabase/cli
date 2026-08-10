@@ -14,6 +14,7 @@
   "scripts": {
     "generate:spec": "bun run scripts/download-openapi.ts",
     "generate": "bun run generate:spec && bun run scripts/generate.ts",
+    "generate:check": "bun run generate && pnpm exec nx run @supabase/api:fmt:fix && git diff --exit-code -- src/generated scripts/openapi-source.json",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
