@@ -2775,6 +2775,212 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([engineScopedStopWithoutRunningLegacy])).toContain(
       `${engineScopedStopScenario.id}: engine-scoped stop requires a simultaneously running legacy stack`,
     );
+
+    const bootstrapCopyScenario = findScenario(
+      "bootstrap.first-start-copies-compatible-legacy-state",
+    );
+    const bootstrapCopyReportsLegacyMutation = {
+      ...bootstrapCopyScenario,
+      expected: {
+        ...bootstrapCopyScenario.expected,
+        details: { ...bootstrapCopyScenario.expected.details, legacy_state_mutated: true },
+        output: {
+          ...bootstrapCopyScenario.expected.output,
+          json: {
+            ...bootstrapCopyScenario.expected.output.json,
+            legacy_state_mutated: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([bootstrapCopyReportsLegacyMutation])).toContain(
+      `${bootstrapCopyScenario.id}: bootstrap copy must not mutate legacy state`,
+    );
+
+    const pruneReportsMutableDataDeletion = {
+      ...pruneScenario,
+      expected: {
+        ...pruneScenario.expected,
+        details: { ...pruneScenario.expected.details, mutable_data_deleted: true },
+        output: {
+          ...pruneScenario.expected.output,
+          human: {
+            ...pruneScenario.expected.output.human!,
+            fields: { dataDeleted: "true" },
+          },
+          json: { ...pruneScenario.expected.output.json, mutable_data_deleted: true },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([pruneReportsMutableDataDeletion])).toContain(
+      `${pruneScenario.id}: prune must preserve mutable stack data`,
+    );
+
+    const directCreateScenario = findScenario("api-boundary.direct-create-stack-is-ephemeral");
+    const directCreateReportsManagedSideEffects = {
+      ...directCreateScenario,
+      expected: {
+        ...directCreateScenario.expected,
+        details: {
+          ...directCreateScenario.expected.details,
+          git_inspected: true,
+          identity_marker_created: true,
+          global_registry_mutated: true,
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([directCreateReportsManagedSideEffects])).toContain(
+      `${directCreateScenario.id}: direct createStack must remain isolated from managed state`,
+    );
+
+    const contextualSelectionScenario = findScenario(
+      "identity.same-checkout-branch-and-name-reuses-stack",
+    );
+    const contextualSelectionWithoutCheckedOutBranch = {
+      ...contextualSelectionScenario,
+      given: contextualSelectionScenario.given.map((fact) =>
+        fact.kind === "branch" ? { ...fact, checkedOut: false } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([contextualSelectionWithoutCheckedOutBranch]),
+    ).toContain(
+      `${contextualSelectionScenario.id}: contextual Git selection requires exactly one checked-out branch`,
+    );
+
+    const failedBootstrapScenario = findScenario("bootstrap.failed-copy-rolls-back");
+    const failedBootstrapReportsPublishedPartialTarget = {
+      ...failedBootstrapScenario,
+      expected: {
+        ...failedBootstrapScenario.expected,
+        details: {
+          ...failedBootstrapScenario.expected.details,
+          active_target_exists: true,
+          registry_record_published: true,
+        },
+        output: {
+          ...failedBootstrapScenario.expected.output,
+          api: {
+            ...failedBootstrapScenario.expected.output.api,
+            activeTargetExists: true,
+            registryRecordPublished: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([failedBootstrapReportsPublishedPartialTarget]),
+    ).toContain(
+      `${failedBootstrapScenario.id}: bootstrap rollback must leave no published partial target`,
+    );
+
+    const stableCredentialsScenario = findScenario(
+      "credentials.omitted-values-use-stable-defaults",
+    );
+    const omittedCredentialsRotatePerStart = {
+      ...stableCredentialsScenario,
+      expected: {
+        ...stableCredentialsScenario.expected,
+        details: { ...stableCredentialsScenario.expected.details, generated_per_start: true },
+        output: {
+          ...stableCredentialsScenario.expected.output,
+          json: { ...stableCredentialsScenario.expected.output.json, credentials_stable: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([omittedCredentialsRotatePerStart])).toContain(
+      `${stableCredentialsScenario.id}: omitted credentials must reuse stable local defaults`,
+    );
+
+    const trackedMarkerScenario = findScenario("identity.fresh-clone-ignores-tracked-marker");
+    const trackedMarkerReportedMutable = {
+      ...trackedMarkerScenario,
+      expected: {
+        ...trackedMarkerScenario.expected,
+        details: {
+          ...trackedMarkerScenario.expected.details,
+          tracked_marker_ignored: false,
+          tracked_marker_mutated: true,
+        },
+        output: {
+          ...trackedMarkerScenario.expected.output,
+          json: {
+            ...trackedMarkerScenario.expected.output.json,
+            tracked_marker_ignored: false,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([trackedMarkerReportedMutable])).toContain(
+      `${trackedMarkerScenario.id}: tracked identity marker must remain ignored and unmodified`,
+    );
+
+    const runtimeStatusScenario = findScenario("runtime.status-reports-one-stack-wide-runtime");
+    const runtimeStatusReportsMixedGraph = {
+      ...runtimeStatusScenario,
+      expected: {
+        ...runtimeStatusScenario.expected,
+        details: { ...runtimeStatusScenario.expected.details, mixed_runtime: true },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([runtimeStatusReportsMixedGraph])).toContain(
+      `${runtimeStatusScenario.id}: runtime drift must bind running stack, persisted runtime, config, and projections`,
+    );
+
+    const folderToGitAmbiguityScenario = findScenario(
+      "identity.folder-to-git-ambiguous-claim-fails",
+    );
+    const exactFolderClaimReportedAmbiguous = {
+      ...folderToGitAmbiguityScenario,
+      given: folderToGitAmbiguityScenario.given.map((fact) =>
+        fact.kind === "identity-claim" ? { ...fact, status: "exact" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([exactFolderClaimReportedAmbiguous])).toContain(
+      `${folderToGitAmbiguityScenario.id}: folder-to-Git ambiguity error requires an ambiguous live project claim`,
+    );
+
+    const strictRuntimeScenario = findScenario("runtime.explicit-runtime-is-strict");
+    const strictRuntimeWithoutAvailableAlternative = {
+      ...strictRuntimeScenario,
+      given: strictRuntimeScenario.given.filter(
+        (fact) => fact.kind !== "runtime-availability" || fact.runtime !== "native",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([strictRuntimeWithoutAvailableAlternative]),
+    ).toContain(
+      `${strictRuntimeScenario.id}: explicit runtime error must bind an unavailable requested runtime`,
+    );
+
+    const repeatedDeletionScenario = findScenario("reclamation.delete-repeat-is-idempotent");
+    const repeatedDeletionHidesIdempotency = {
+      ...repeatedDeletionScenario,
+      expected: {
+        ...repeatedDeletionScenario.expected,
+        details: { ...repeatedDeletionScenario.expected.details, idempotent: false },
+        output: {
+          ...repeatedDeletionScenario.expected.output,
+          json: { ...repeatedDeletionScenario.expected.output.json, already_deleted: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([repeatedDeletionHidesIdempotency])).toContain(
+      `${repeatedDeletionScenario.id}: idempotent deletion requires a tombstoned target`,
+    );
+
+    const standaloneGitScenario = findScenario("identity.branch-create-and-switch-is-no-op");
+    const standaloneGitReportsManagedDeletion = {
+      ...standaloneGitScenario,
+      expected: {
+        ...standaloneGitScenario.expected,
+        outcome: "delete",
+        details: { ...standaloneGitScenario.expected.details, managed_command_ran: true },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([standaloneGitReportsManagedDeletion])).toContain(
+      `${standaloneGitScenario.id}: standalone Git action must remain outside managed lifecycle`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
