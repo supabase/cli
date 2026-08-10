@@ -86,8 +86,9 @@ The fixture validator therefore checks more than catalog shape: selected, writte
 identities must be declared rather than relying on absent claims, a selection must belong to the
 checkout at the action path, and a selected stack's context and name must match its declared stack
 fact; explicit CLI and API stack IDs must match every selected, mutated, effected, and projected
-stack target, and explicit stack names, exact ports, runtime overrides, credential references, and
-isolated state roots must agree with their facts and projections; starts of existing stacks must
+stack target, and requested stack-name sets, exact and automatic ports, runtime overrides,
+credential references, injected repositories, and isolated state roots must agree with their facts
+and projections; starts of existing stacks must
 declare a stopped lifecycle, every managed creation must declare an absent target, every fresh start
 must declare legacy state that is explicitly absent or incompatible, and every bootstrap copy must
 declare an absent target plus fully compatible stopped legacy state; managed state creation and
@@ -97,17 +98,21 @@ bind their output to a selected target; Git identity writes must use the correct
 scope, context writes must name the active branch as owner, and adapters cannot recreate an identity
 already declared by a checkout; new Git-derived contexts, manual ref replacement, branch deletion
 and recreation, detached-commit reuse, and selected linked worktrees must declare the relevant Git
-state or transition; ordinary folders must write their full untracked identity marker on creation
-and resolve it on reuse; branch deletion must bind the deleted ref to its checkout, Git state,
-context, and orphaned stack; managed and sticky port conflicts and persisted-runtime conflicts must
+state or transition; selected contexts must agree with the active Git branch or an explicit
+checkout-scoped claim; ordinary folders must write their full untracked identity marker to the
+action workspace on creation and resolve it on reuse; branch deletion must bind the deleted ref to
+its checkout, Git state, context, and orphaned stack; managed and sticky port conflicts and
+persisted-runtime conflicts must
 identify their actual target; managed port ownership requires an owner stack ID that agrees with
 every projection; sticky reuse must bind the assignment to the selected target; a sibling automatic
 port allocation fixture must use unique service ports through the public managed start action without
 reusing sibling-owned ports; concurrent creation must bind its action target, contender count,
 result cardinality, and single-publication outcome to the declared race; persisted-runtime preflight
 failures must identify a stopped stack; a successful bootstrap retry must follow an explicit failed
-attempt that was rolled back; native preflight results must agree with the complete qualified and
-failed service partitions;
+attempt that was rolled back; failed-copy rollback requires explicit failure injection; automatic
+runtime selection must reuse persisted state or follow Docker-then-qualified-native availability;
+native preflight results must agree with the action platform and complete qualified and failed
+service partitions;
 credential create, update, and copy operations must prove that global state contains references
 rather than plaintext; data-preserving prune must begin with mutable data; tracked identity markers
 must remain untouched; native qualification facts must partition the service matrix, use a declared
@@ -115,11 +120,13 @@ platform, and match the platform passed to preflight; status operations must rem
 reports; repository adapter matrices must be non-empty, unique, and match their declared repository
 facts, and portable runtime matrices must satisfy the same rules against runtime facts, while
 repository adapter and portable runtime projections must reference a declared scenario, match its
-identity, and agree on their complete decision; every invalid stack name and every pair of
+identity, agree on their complete decision, and publish equality flags derived from that comparison;
+every invalid stack name and every pair of
 mutually exclusive stop selectors must be exercised through a public action; structured JSON
 projections must always name their outcome and include the matching structured error or warning
-code; destructive runtime effects must map to mutable-state deletion and runtime-state deletion must
-stop the running target; other runtime effects must agree with permitted state writes; and stable
+code; destructive stop deletion requires `--no-backup`; destructive runtime effects must map to
+mutable-state deletion and runtime-state deletion must stop the running target; other runtime effects
+must agree with permitted state writes; and stable
 identity plus exact human and JSON recovery fields cannot contradict the managed result. We
 deliberately do not introduce a parallel test-only identity resolver; it would duplicate product
 policy before the real managed surface exists and could pass while the production implementation

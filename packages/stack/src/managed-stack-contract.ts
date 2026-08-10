@@ -193,6 +193,7 @@ export type ManagedStackContractFact =
       readonly stateRoot: "default" | "isolated";
       readonly stateRootPath?: string;
       readonly repository: "in-memory" | "injected" | "persistent-adapter";
+      readonly repositoryId?: string;
       readonly runtime: "bun" | "node";
     };
 
@@ -219,6 +220,7 @@ type ManagedStackContractWrite =
       readonly operation: "create" | "update";
       readonly id: string;
       readonly storage: "project-local-untracked";
+      readonly workspacePath: string;
       readonly projectId: string;
       readonly checkoutId: string;
       readonly contextId: string;
@@ -372,6 +374,20 @@ const managedStackContractJsonEquals = (
   return false;
 };
 
+const managedStackContractStringSetEquals = (
+  left: ReadonlyArray<string>,
+  right: ReadonlyArray<string>,
+): boolean => {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  return (
+    leftSet.size === left.length &&
+    rightSet.size === right.length &&
+    leftSet.size === rightSet.size &&
+    [...leftSet].every((value) => rightSet.has(value))
+  );
+};
+
 const isManagedStartAction = (action: ManagedStackContractAction): boolean =>
   (action.interface === "cli" && action.argv[0] === "start") ||
   (action.interface === "managed-api" &&
@@ -414,6 +430,72 @@ export const validateManagedStackContractFixtures = (
     } else {
       if (scenario.when.method.trim().length === 0) {
         errors.push(`${scenario.id}: public API method is required`);
+      }
+    }
+
+    if (scenario.when.interface === "cli") {
+      const [command, subcommand] = scenario.when.argv;
+      const valueFlagsByCommand: Readonly<Record<string, ReadonlySet<string>>> = {
+        start: new Set(["--runtime", "--stack"]),
+        status: new Set(["--output"]),
+        stop: new Set(["--stack", "--stack-id"]),
+      };
+      const switchFlagsByCommand: Readonly<Record<string, ReadonlySet<string>>> = {
+        start: new Set(["--experimental"]),
+        status: new Set(["--experimental"]),
+        stop: new Set(["--all", "--experimental", "--no-backup"]),
+      };
+      let validShape = command === "start" || command === "status" || command === "stop";
+      if (command === "stack") {
+        validShape = subcommand === "prune";
+      }
+      let index = command === "stack" ? 2 : 1;
+      while (validShape && index < scenario.when.argv.length) {
+        const argument = scenario.when.argv[index];
+        if (argument === undefined) {
+          validShape = false;
+          break;
+        }
+        if (command === "stack" && argument === "--experimental") {
+          index += 1;
+          continue;
+        }
+        if (command !== undefined && switchFlagsByCommand[command]?.has(argument)) {
+          index += 1;
+          continue;
+        }
+        if (command !== undefined && valueFlagsByCommand[command]?.has(argument)) {
+          const value = scenario.when.argv[index + 1];
+          validShape = value !== undefined;
+          if (
+            (argument === "--output" && value !== "json") ||
+            (argument === "--runtime" && value !== "docker" && value !== "native")
+          ) {
+            validShape = false;
+          }
+          index += 2;
+          continue;
+        }
+        validShape = false;
+      }
+      if (!scenario.when.argv.includes("--experimental") || !validShape) {
+        errors.push(`${scenario.id}: CLI action must use a declared experimental command shape`);
+      }
+    }
+
+    if (scenario.when.interface === "git") {
+      const [command, option, branchName] = scenario.when.argv;
+      const validShape =
+        typeof branchName === "string" &&
+        ((command === "switch" && option === "-c") ||
+          (command === "branch" && (option === "-D" || option === "-d")));
+      if (!validShape) {
+        errors.push(`${scenario.id}: Git action must use a declared branch command shape`);
+      } else if (
+        command === "switch" &&
+        scenario.expected.output.human?.summary !== `Switched to a new branch '${branchName}'`
+      ) {
+        errors.push(`${scenario.id}: Git switch output must match its requested branch`);
       }
     }
 
@@ -551,6 +633,91 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    const runtimeRequests = scenario.given.filter((fact) => fact.kind === "runtime-request");
+    const effectiveRuntimeRequest =
+      runtimeRequests.find((fact) => fact.source === "cli" || fact.source === "managed-api") ??
+      runtimeRequests.find((fact) => fact.source === "config") ??
+      runtimeRequests.find((fact) => fact.source === "default");
+    if (
+      isManagedStartAction(scenario.when) &&
+      effectiveRuntimeRequest?.kind === "runtime-request" &&
+      effectiveRuntimeRequest.runtime === "auto"
+    ) {
+      const persistedRuntime = scenario.given.find((fact) => fact.kind === "persisted-runtime");
+      const dockerAvailability = scenario.given.find(
+        (fact) => fact.kind === "runtime-availability" && fact.runtime === "docker",
+      );
+      const nativeAvailability = scenario.given.find(
+        (fact) => fact.kind === "runtime-availability" && fact.runtime === "native",
+      );
+      const nativeQualification = scenario.given.find(
+        (fact) => fact.kind === "native-qualification",
+      );
+      const nativeQualified =
+        nativeQualification?.kind === "native-qualification" &&
+        nativeQualification.failedServices.length === 0 &&
+        nativeQualification.qualifiedServices.length === nativeServices.length;
+      const persistedAvailability =
+        persistedRuntime?.kind === "persisted-runtime"
+          ? scenario.given.find(
+              (fact) =>
+                fact.kind === "runtime-availability" && fact.runtime === persistedRuntime.runtime,
+            )
+          : undefined;
+      const resolvedRuntime =
+        persistedRuntime?.kind === "persisted-runtime" &&
+        persistedAvailability?.kind === "runtime-availability" &&
+        !persistedAvailability.available
+          ? undefined
+          : persistedRuntime?.kind === "persisted-runtime"
+            ? persistedRuntime.runtime
+            : dockerAvailability?.kind === "runtime-availability" && dockerAvailability.available
+              ? "docker"
+              : nativeAvailability?.kind === "runtime-availability" &&
+                  nativeAvailability.available &&
+                  nativeQualified
+                ? "native"
+                : undefined;
+      if (
+        persistedRuntime?.kind === "persisted-runtime" &&
+        persistedAvailability?.kind === "runtime-availability" &&
+        !persistedAvailability.available
+      ) {
+        if (
+          scenario.expected.outcome !== "error" ||
+          scenario.expected.error?.code !== "persisted_runtime_unavailable" ||
+          output.json?.runtime !== persistedRuntime.runtime ||
+          scenario.expected.runtimeEffects.some((effect) => effect.operation === "start")
+        ) {
+          errors.push(`${scenario.id}: unavailable persisted runtime must fail without switching`);
+        }
+      } else if (resolvedRuntime === undefined) {
+        if (
+          scenario.expected.outcome !== "error" ||
+          scenario.expected.error?.code !== "no_runtime_available" ||
+          scenario.expected.runtimeEffects.some((effect) => effect.operation === "start")
+        ) {
+          errors.push(`${scenario.id}: automatic runtime must fail when no runtime is usable`);
+        }
+      } else {
+        const projectedRuntimes = [
+          scenario.expected.details?.resolved_runtime,
+          output.api?.runtime,
+          output.json?.runtime,
+          output.human?.fields.runtime,
+        ].filter((runtime) => runtime !== undefined);
+        if (
+          scenario.expected.outcome === "error" ||
+          projectedRuntimes.length === 0 ||
+          projectedRuntimes.some((runtime) => runtime !== resolvedRuntime)
+        ) {
+          errors.push(
+            `${scenario.id}: automatic runtime must resolve from persisted state or declared availability`,
+          );
+        }
+      }
+    }
+
     if (scenario.when.interface === "managed-api" && typeof scenario.when.input.auth === "string") {
       const authReference = scenario.when.input.auth;
       const configuredCredentials = scenario.given.find(
@@ -584,6 +751,91 @@ export const validateManagedStackContractFixtures = (
           errors.push(
             `${scenario.id}: isolated state root input must match its options and observed boundary`,
           );
+        }
+      }
+    }
+
+    if (
+      scenario.when.interface === "managed-api" &&
+      scenario.when.method === "createManagedStackService"
+    ) {
+      const repositoryId = scenario.when.input.repository;
+      const stateRootPath = scenario.when.input.stateRoot;
+      const injectedOptions = scenario.given.find(
+        (fact) => fact.kind === "managed-api-options" && fact.repository === "injected",
+      );
+      if (
+        typeof repositoryId !== "string" ||
+        typeof stateRootPath !== "string" ||
+        injectedOptions?.kind !== "managed-api-options" ||
+        injectedOptions.repositoryId !== repositoryId ||
+        injectedOptions.stateRoot !== "isolated" ||
+        injectedOptions.stateRootPath !== stateRootPath ||
+        !scenario.expected.writes.some(
+          (write) =>
+            write.target === "ephemeral-state" &&
+            write.operation === "create" &&
+            write.id === repositoryId,
+        ) ||
+        output.api?.repository !== repositoryId
+      ) {
+        errors.push(
+          `${scenario.id}: injected repository and state root must match the observed managed service`,
+        );
+      }
+    }
+
+    if (scenario.when.interface === "managed-api" && scenario.when.method === "resolveStackNames") {
+      const requestedNames = scenario.when.input.stackNames;
+      const declaredNames = scenario.given.find((fact) => fact.kind === "stack-names");
+      const detailKeys = Object.keys(scenario.expected.details ?? {});
+      const apiKeys = Object.keys(output.api ?? {});
+      if (
+        !Array.isArray(requestedNames) ||
+        !requestedNames.every((name) => typeof name === "string") ||
+        declaredNames?.kind !== "stack-names" ||
+        !managedStackContractStringSetEquals(requestedNames, declaredNames.names) ||
+        !managedStackContractStringSetEquals(requestedNames, detailKeys) ||
+        !managedStackContractStringSetEquals(requestedNames, apiKeys)
+      ) {
+        errors.push(
+          `${scenario.id}: requested stack names must match their fact and projected results`,
+        );
+      }
+    }
+
+    if (
+      scenario.when.interface === "managed-api" &&
+      scenario.when.method === "resolvePortIntents"
+    ) {
+      const configFacts = scenario.given.filter((fact) => fact.kind === "config-port");
+      const projectedKeys = Object.keys(output.api ?? {});
+      if (
+        !managedStackContractStringSetEquals(
+          configFacts.map(({ key }) => key),
+          projectedKeys,
+        )
+      ) {
+        errors.push(`${scenario.id}: resolved port keys must match their config facts`);
+      }
+      for (const fact of configFacts) {
+        const projection = output.api?.[fact.key];
+        const effectiveConfig = isManagedStackContractRecord(scenario.when.input.effectiveConfig)
+          ? scenario.when.input.effectiveConfig
+          : undefined;
+        const localConfig = isManagedStackContractRecord(scenario.when.input.config)
+          ? scenario.when.input.config
+          : undefined;
+        const actionValue = effectiveConfig?.[fact.key] ?? localConfig?.[fact.key];
+        if (
+          !isManagedStackContractRecord(projection) ||
+          projection.intent !== fact.intent ||
+          projection.source !== fact.source ||
+          (fact.intent === "exact" &&
+            (actionValue !== fact.value || projection.port !== fact.value)) ||
+          (fact.intent === "automatic" && localConfig?.[fact.key] !== undefined)
+        ) {
+          errors.push(`${scenario.id}: resolved port ${fact.key} must match its input and fact`);
         }
       }
     }
@@ -634,12 +886,14 @@ export const validateManagedStackContractFixtures = (
           }
 
           let firstRuntimeResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
+          let runtimeResultsEqual = true;
           for (const runtime of runtimes) {
             const runtimeResult = output.api?.[runtime];
             if (
               !isManagedStackContractRecord(runtimeResult) ||
               runtimeResult.outcome !== referencedScenario.expected.outcome
             ) {
+              runtimeResultsEqual = false;
               errors.push(
                 `${scenario.id}: portable ${runtime} outcome must match ${referencedScenario.id}`,
               );
@@ -656,8 +910,15 @@ export const validateManagedStackContractFixtures = (
             if (firstRuntimeResult === undefined) {
               firstRuntimeResult = runtimeResult;
             } else if (!managedStackContractJsonEquals(firstRuntimeResult, runtimeResult)) {
+              runtimeResultsEqual = false;
               errors.push(`${scenario.id}: portable runtime decisions must be identical`);
             }
+          }
+          if (
+            scenario.expected.details?.results_equal !== runtimeResultsEqual ||
+            output.api?.equal !== runtimeResultsEqual
+          ) {
+            errors.push(`${scenario.id}: portable equality flags must match compared results`);
           }
         }
       }
@@ -697,12 +958,14 @@ export const validateManagedStackContractFixtures = (
           }
 
           let firstAdapterResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
+          let adapterResultsEqual = true;
           for (const adapter of adapters) {
             const adapterResult = output.api?.[adapter];
             if (
               !isManagedStackContractRecord(adapterResult) ||
               adapterResult.outcome !== referencedScenario.expected.outcome
             ) {
+              adapterResultsEqual = false;
               errors.push(
                 `${scenario.id}: repository ${adapter} outcome must match ${referencedScenario.id}`,
               );
@@ -719,8 +982,15 @@ export const validateManagedStackContractFixtures = (
             if (firstAdapterResult === undefined) {
               firstAdapterResult = adapterResult;
             } else if (!managedStackContractJsonEquals(firstAdapterResult, adapterResult)) {
+              adapterResultsEqual = false;
               errors.push(`${scenario.id}: repository adapter decisions must be identical`);
             }
+          }
+          if (
+            scenario.expected.details?.decisions_equal !== adapterResultsEqual ||
+            output.api?.equal !== adapterResultsEqual
+          ) {
+            errors.push(`${scenario.id}: repository equality flags must match compared decisions`);
           }
         }
       }
@@ -830,6 +1100,49 @@ export const validateManagedStackContractFixtures = (
           ? scenario.when.input.cwd
           : undefined;
     if (
+      scenario.when.interface === "managed-api" &&
+      scenario.when.input.cwd !== undefined &&
+      (actionCwd === undefined ||
+        !scenario.given.some(
+          (fact) =>
+            (fact.kind === "checkout" && fact.path === actionCwd) ||
+            (fact.kind === "workspace" &&
+              (fact.path === actionCwd || fact.canonicalPath === actionCwd)) ||
+            (fact.kind === "git-state" && fact.workspacePath === actionCwd),
+        ))
+    ) {
+      errors.push(`${scenario.id}: managed action cwd must match a declared workspace`);
+    }
+    if (scenario.when.interface === "cli") {
+      const declaredActionPaths = scenario.given.flatMap((fact) => {
+        if (fact.kind === "checkout" || fact.kind === "git-state") {
+          return [fact.kind === "checkout" ? fact.path : fact.workspacePath];
+        }
+        if (fact.kind === "workspace") {
+          return fact.canonicalPath === undefined ? [fact.path] : [fact.path, fact.canonicalPath];
+        }
+        return [];
+      });
+      if (declaredActionPaths.length > 0 && !declaredActionPaths.includes(scenario.when.cwd)) {
+        errors.push(`${scenario.id}: CLI action cwd must match a declared workspace`);
+      }
+    }
+    if (
+      scenario.when.interface === "managed-api" &&
+      scenario.when.method === "resolveStack" &&
+      scenario.when.input.operation !== undefined &&
+      scenario.when.input.operation !== "start" &&
+      scenario.when.input.operation !== "status"
+    ) {
+      errors.push(`${scenario.id}: resolveStack operation must be start or status`);
+    }
+    const actionGitState = scenario.given.find(
+      (fact) => fact.kind === "git-state" && fact.workspacePath === actionCwd,
+    );
+    const checkedOutBranch = scenario.given.find(
+      (fact) => fact.kind === "branch" && fact.checkedOut,
+    );
+    if (
       scenario.when.interface === "git" &&
       scenario.when.argv[0] === "branch" &&
       (scenario.when.argv[1] === "-D" || scenario.when.argv[1] === "-d")
@@ -922,8 +1235,9 @@ export const validateManagedStackContractFixtures = (
       if (
         scenario.when.interface === "managed-api" &&
         scenario.when.method === "preflightNative" &&
-        typeof scenario.when.input.platform === "string" &&
-        scenario.when.input.platform !== fact.platform
+        (typeof scenario.when.input.platform !== "string" ||
+          scenario.when.input.platform !== fact.platform ||
+          scenario.expected.output.api?.platform !== fact.platform)
       ) {
         errors.push(
           `${scenario.id}: native qualification platform must match the preflight action`,
@@ -1187,6 +1501,36 @@ export const validateManagedStackContractFixtures = (
         );
       }
 
+      if (checkedOutBranch?.kind === "branch") {
+        const createsSelectedContext = scenario.expected.writes.some(
+          (write) =>
+            write.target === "git-config" &&
+            write.operation === "create" &&
+            write.id === selection.contextId,
+        );
+        const hasCheckoutScopedContextClaim = scenario.given.some(
+          (fact) =>
+            fact.kind === "identity-claim" &&
+            fact.scope === "context" &&
+            fact.id === selection.contextId &&
+            fact.status === "exact" &&
+            (fact.owner === checkedOutBranch.name ||
+              fact.owner === `${selection.checkoutId}/${checkedOutBranch.name}`),
+        );
+        if (
+          (actionGitState?.kind === "git-state" &&
+            actionGitState.head === "branch" &&
+            actionGitState.branch !== checkedOutBranch.name) ||
+          (selection.contextId !== checkedOutBranch.contextId &&
+            !createsSelectedContext &&
+            !hasCheckoutScopedContextClaim)
+        ) {
+          errors.push(
+            `${scenario.id}: selected context must match the active Git branch and checked-out branch fact`,
+          );
+        }
+      }
+
       if (scenario.when.interface === "managed-api" && scenario.when.method === "resolveStack") {
         for (const write of scenario.expected.writes) {
           if (write.target !== "git-config" || write.operation !== "create") {
@@ -1277,6 +1621,7 @@ export const validateManagedStackContractFixtures = (
             !scenario.expected.writes.some(
               (write) =>
                 write.target === "identity-marker" &&
+                write.workspacePath === actionCwd &&
                 write.projectId === selection.projectId &&
                 write.checkoutId === selection.checkoutId &&
                 write.contextId === selection.contextId,
@@ -1482,14 +1827,42 @@ export const validateManagedStackContractFixtures = (
       isManagedStackContractRecord(scenario.when.input.portIntents)
     ) {
       const projectedPorts = scenario.expected.output.api?.ports;
-      for (const [key, intent] of Object.entries(scenario.when.input.portIntents)) {
-        if (!isManagedStackContractRecord(intent) || intent.intent !== "exact") {
-          continue;
-        }
-        const requestedPort = intent.port;
+      const projectedIntents = scenario.expected.output.api?.intents;
+      const requestedEntries = Object.entries(scenario.when.input.portIntents);
+      const configPorts = scenario.given.filter((fact) => fact.kind === "config-port");
+      if (
+        !managedStackContractStringSetEquals(
+          requestedEntries.map(([key]) => key),
+          configPorts.map(({ key }) => key),
+        )
+      ) {
+        errors.push(`${scenario.id}: requested port keys must match their config facts`);
+      }
+      for (const [key, intent] of requestedEntries) {
         const configPort = scenario.given.find(
           (fact) => fact.kind === "config-port" && fact.key === key,
         );
+        const service = key.endsWith(".port") ? key.slice(0, -".port".length) : key;
+        if (intent === "automatic") {
+          if (
+            configPort?.kind !== "config-port" ||
+            configPort.intent !== "automatic" ||
+            !isManagedStackContractRecord(projectedPorts) ||
+            typeof projectedPorts[service] !== "number" ||
+            !isManagedStackContractRecord(projectedIntents) ||
+            projectedIntents[service] !== "automatic"
+          ) {
+            errors.push(
+              `${scenario.id}: automatic port request ${key} must match its fact and projected allocation`,
+            );
+          }
+          continue;
+        }
+        if (!isManagedStackContractRecord(intent) || intent.intent !== "exact") {
+          errors.push(`${scenario.id}: port request ${key} has an invalid intent`);
+          continue;
+        }
+        const requestedPort = intent.port;
         if (
           typeof requestedPort !== "number" ||
           configPort?.kind !== "config-port" ||
@@ -1497,10 +1870,7 @@ export const validateManagedStackContractFixtures = (
           configPort.value !== requestedPort
         ) {
           errors.push(`${scenario.id}: exact port request ${key} must match its config fact`);
-          continue;
-        }
-        const service = key.endsWith(".port") ? key.slice(0, -".port".length) : key;
-        if (
+        } else if (
           !isManagedStackContractRecord(projectedPorts) ||
           projectedPorts[service] !== requestedPort
         ) {
@@ -1514,13 +1884,61 @@ export const validateManagedStackContractFixtures = (
     if (scenario.expected.error?.code === "runtime_conflicts_with_persisted_stack") {
       if (selection === undefined) {
         errors.push(`${scenario.id}: persisted runtime conflict requires a selected target`);
-      } else if (
-        !scenario.given.some(
+      } else {
+        const persistedRuntime = scenario.given.find(
           (fact) => fact.kind === "persisted-runtime" && fact.stackId === selection.stackId,
-        )
-      ) {
-        errors.push(`${scenario.id}: persisted runtime must belong to the selected target`);
+        );
+        const requestedRuntime =
+          explicitRuntime === "docker" || explicitRuntime === "native"
+            ? explicitRuntime
+            : runtimeRequests.find(
+                (fact) =>
+                  (fact.source === "cli" || fact.source === "managed-api") &&
+                  fact.runtime !== "auto",
+              )?.runtime;
+        if (persistedRuntime?.kind !== "persisted-runtime") {
+          errors.push(`${scenario.id}: persisted runtime must belong to the selected target`);
+        } else if (
+          requestedRuntime === undefined ||
+          persistedRuntime.runtime === requestedRuntime ||
+          output.human?.fields.persistedRuntime !== persistedRuntime.runtime ||
+          output.human?.fields.requestedRuntime !== requestedRuntime ||
+          output.json?.persisted_runtime !== persistedRuntime.runtime ||
+          output.json?.requested_runtime !== requestedRuntime ||
+          output.json?.code !== scenario.expected.error.code
+        ) {
+          errors.push(
+            `${scenario.id}: persisted runtime conflict must bind persisted and requested values`,
+          );
+        }
       }
+    }
+
+    if (scenario.expected.error?.code === "legacy_bootstrap_failed") {
+      if (
+        scenario.when.interface !== "managed-api" ||
+        scenario.when.method !== "startStack" ||
+        scenario.when.input.injectCopyFailure !== true ||
+        !scenario.expected.writes.some(
+          (write) => write.target === "managed-state" && write.operation === "delete",
+        ) ||
+        !scenario.expected.runtimeEffects.some((effect) => effect.operation === "delete")
+      ) {
+        errors.push(`${scenario.id}: bootstrap rollback requires enabled copy-failure injection`);
+      }
+    }
+
+    const destructivelyDeletesManagedState =
+      scenario.expected.writes.some(
+        (write) => write.target === "managed-state" && write.operation === "delete",
+      ) || scenario.expected.runtimeEffects.some((effect) => effect.operation === "delete");
+    if (
+      destructivelyDeletesManagedState &&
+      scenario.when.interface === "cli" &&
+      scenario.when.argv[0] === "stop" &&
+      !scenario.when.argv.includes("--no-backup")
+    ) {
+      errors.push(`${scenario.id}: destructive stop requires --no-backup`);
     }
 
     if (
@@ -1577,12 +1995,6 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    const actionGitState = scenario.given.find(
-      (fact) => fact.kind === "git-state" && fact.workspacePath === actionCwd,
-    );
-    const checkedOutBranch = scenario.given.find(
-      (fact) => fact.kind === "branch" && fact.checkedOut,
-    );
     const activeBranchName =
       actionGitState?.kind === "git-state" && actionGitState.head === "branch"
         ? actionGitState.branch
@@ -2354,6 +2766,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           operation: "create",
           id: "marker-project-a",
           storage: "project-local-untracked",
+          workspacePath: "/work/project-a",
           projectId: "project-a",
           checkoutId: "checkout-a",
           contextId: "context-workspace",
@@ -5262,7 +5675,9 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
       {
         kind: "managed-api-options",
         stateRoot: "isolated",
+        stateRootPath: "/tmp/managed-contract",
         repository: "injected",
+        repositoryId: "test-repository",
         runtime: "node",
       },
     ],

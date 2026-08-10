@@ -215,6 +215,7 @@ describe("managed stack acceptance contract", () => {
       operation: "create",
       id: "marker-project-a",
       storage: "project-local-untracked",
+      workspacePath: "checkout-a",
       projectId: "project-a",
       checkoutId: "checkout-a",
       contextId: "context-main",
@@ -1460,6 +1461,274 @@ describe("managed stack acceptance contract", () => {
     );
   });
 
+  it("binds public action inputs and state facts to observable results", () => {
+    const findScenario = (id: string): ManagedStackContractScenario => {
+      const scenario = managedStackContractFixtures.find((candidate) => candidate.id === id);
+      if (scenario === undefined) {
+        throw new Error(`${id} fixture is required`);
+      }
+      return scenario;
+    };
+
+    const stackNamesScenario = findScenario("identity.valid-stack-names-resolve-deterministically");
+    if (stackNamesScenario.when.interface !== "managed-api") {
+      throw new Error("stack-name resolution must use the managed API");
+    }
+    const missingRequestedStackName = {
+      ...stackNamesScenario,
+      when: {
+        ...stackNamesScenario.when,
+        input: { ...stackNamesScenario.when.input, stackNames: ["default"] },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([missingRequestedStackName])).toContain(
+      `${stackNamesScenario.id}: requested stack names must match their fact and projected results`,
+    );
+
+    const automaticPortsScenario = findScenario(
+      "ports.new-target-allocates-and-persists-omitted-ports",
+    );
+    if (automaticPortsScenario.when.interface !== "managed-api") {
+      throw new Error("automatic port allocation must use the managed API");
+    }
+    const missingAutomaticPortRequest = {
+      ...automaticPortsScenario,
+      when: {
+        ...automaticPortsScenario.when,
+        input: {
+          ...automaticPortsScenario.when.input,
+          portIntents: { "api.port": "automatic" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([missingAutomaticPortRequest])).toContain(
+      `${automaticPortsScenario.id}: requested port keys must match their config facts`,
+    );
+    const projectedAutomaticIntentDisagrees = {
+      ...automaticPortsScenario,
+      expected: {
+        ...automaticPortsScenario.expected,
+        output: {
+          ...automaticPortsScenario.expected.output,
+          api: {
+            ...automaticPortsScenario.expected.output.api,
+            intents: { api: "automatic", db: "exact" },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([projectedAutomaticIntentDisagrees])).toContain(
+      `${automaticPortsScenario.id}: automatic port request db.port must match its fact and projected allocation`,
+    );
+
+    const autoRuntimeScenario = findScenario("runtime.auto-prefers-docker");
+    const unavailablePreferredRuntime = {
+      ...autoRuntimeScenario,
+      given: autoRuntimeScenario.given.map((fact) =>
+        fact.kind === "runtime-availability" && fact.runtime === "docker"
+          ? { ...fact, available: false }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unavailablePreferredRuntime])).toContain(
+      `${autoRuntimeScenario.id}: automatic runtime must fail when no runtime is usable`,
+    );
+
+    const injectedRepositoryScenario = findScenario(
+      "api-boundary.managed-api-accepts-injected-repository",
+    );
+    if (injectedRepositoryScenario.when.interface !== "managed-api") {
+      throw new Error("injected repository boundary must use the managed API");
+    }
+    const differentInjectedRepository = {
+      ...injectedRepositoryScenario,
+      when: {
+        ...injectedRepositoryScenario.when,
+        input: { ...injectedRepositoryScenario.when.input, repository: "other-repository" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([differentInjectedRepository])).toContain(
+      `${injectedRepositoryScenario.id}: injected repository and state root must match the observed managed service`,
+    );
+
+    const nativePreflightScenario = findScenario(
+      "native-qualification.all-services-qualify-platform",
+    );
+    if (nativePreflightScenario.when.interface !== "managed-api") {
+      throw new Error("native preflight must use the managed API");
+    }
+    const preflightWithoutPlatform = {
+      ...nativePreflightScenario,
+      when: { ...nativePreflightScenario.when, input: {} },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([preflightWithoutPlatform])).toContain(
+      `${nativePreflightScenario.id}: native qualification platform must match the preflight action`,
+    );
+
+    const persistedRuntimeConflictScenario = findScenario(
+      "runtime.persisted-runtime-conflict-fails",
+    );
+    const matchingPersistedRuntime = {
+      ...persistedRuntimeConflictScenario,
+      given: persistedRuntimeConflictScenario.given.map((fact) =>
+        fact.kind === "persisted-runtime" ? { ...fact, runtime: "native" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([matchingPersistedRuntime])).toContain(
+      `${persistedRuntimeConflictScenario.id}: persisted runtime conflict must bind persisted and requested values`,
+    );
+
+    const destructiveStopScenario = findScenario("reclamation.delete-orphan-by-stack-id");
+    if (destructiveStopScenario.when.interface !== "cli") {
+      throw new Error("destructive orphan deletion must use the CLI");
+    }
+    const destructiveStopWithoutFlag = {
+      ...destructiveStopScenario,
+      when: {
+        ...destructiveStopScenario.when,
+        argv: destructiveStopScenario.when.argv.filter((arg) => arg !== "--no-backup"),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([destructiveStopWithoutFlag])).toContain(
+      `${destructiveStopScenario.id}: destructive stop requires --no-backup`,
+    );
+
+    const failedCopyScenario = findScenario("bootstrap.failed-copy-rolls-back");
+    if (failedCopyScenario.when.interface !== "managed-api") {
+      throw new Error("failed bootstrap copy must use the managed API");
+    }
+    const rollbackWithoutInjectedFailure = {
+      ...failedCopyScenario,
+      when: {
+        ...failedCopyScenario.when,
+        input: { ...failedCopyScenario.when.input, injectCopyFailure: false },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([rollbackWithoutInjectedFailure])).toContain(
+      `${failedCopyScenario.id}: bootstrap rollback requires enabled copy-failure injection`,
+    );
+
+    const branchSelectionScenario = findScenario(
+      "identity.same-commit-different-branches-are-independent",
+    );
+    if (branchSelectionScenario.when.interface !== "managed-api") {
+      throw new Error("branch selection must use the managed API");
+    }
+    const mismatchedActiveGitBranch = {
+      ...branchSelectionScenario,
+      given: branchSelectionScenario.given.map((fact) =>
+        fact.kind === "git-state" ? { ...fact, branch: "main" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([mismatchedActiveGitBranch])).toContain(
+      `${branchSelectionScenario.id}: selected context must match the active Git branch and checked-out branch fact`,
+    );
+
+    const ordinaryFolderScenario = findScenario(
+      "identity.non-git-folder-first-start-persists-identity",
+    );
+    const markerWrittenToDifferentWorkspace = {
+      ...ordinaryFolderScenario,
+      expected: {
+        ...ordinaryFolderScenario.expected,
+        writes: ordinaryFolderScenario.expected.writes.map((write) =>
+          write.target === "identity-marker"
+            ? { ...write, workspacePath: "/work/other-project" }
+            : write,
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([markerWrittenToDifferentWorkspace])).toContain(
+      `${ordinaryFolderScenario.id}: ordinary-folder creation must persist its identity marker`,
+    );
+
+    const repositoryEqualityScenario = findScenario(
+      "api-boundary.repository-contract-is-storage-agnostic",
+    );
+    const falseRepositoryEqualityFlag = {
+      ...repositoryEqualityScenario,
+      expected: {
+        ...repositoryEqualityScenario.expected,
+        output: {
+          ...repositoryEqualityScenario.expected.output,
+          api: { ...repositoryEqualityScenario.expected.output.api, equal: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    const referencedRepositoryScenario = findScenario("identity.return-to-branch-reuses-stack");
+    expect(
+      validateManagedStackContractFixtures([
+        falseRepositoryEqualityFlag,
+        referencedRepositoryScenario,
+      ]),
+    ).toContain(
+      `${repositoryEqualityScenario.id}: repository equality flags must match compared decisions`,
+    );
+
+    const portableEqualityScenario = findScenario(
+      "api-boundary.managed-surface-is-node-and-bun-portable",
+    );
+    const falsePortableEqualityFlag = {
+      ...portableEqualityScenario,
+      expected: {
+        ...portableEqualityScenario.expected,
+        output: {
+          ...portableEqualityScenario.expected.output,
+          api: { ...portableEqualityScenario.expected.output.api, equal: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    const referencedPortableScenario = findScenario(
+      "identity.same-checkout-branch-and-name-reuses-stack",
+    );
+    expect(
+      validateManagedStackContractFixtures([falsePortableEqualityFlag, referencedPortableScenario]),
+    ).toContain(
+      `${portableEqualityScenario.id}: portable equality flags must match compared results`,
+    );
+
+    const actionFromUndeclaredWorkspace = {
+      ...branchSelectionScenario,
+      when: {
+        ...branchSelectionScenario.when,
+        input: { ...branchSelectionScenario.when.input, cwd: "undeclared-workspace" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([actionFromUndeclaredWorkspace])).toContain(
+      `${branchSelectionScenario.id}: managed action cwd must match a declared workspace`,
+    );
+    const actionWithUnknownOperation = {
+      ...branchSelectionScenario,
+      when: {
+        ...branchSelectionScenario.when,
+        input: { ...branchSelectionScenario.when.input, operation: "unknown" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([actionWithUnknownOperation])).toContain(
+      `${branchSelectionScenario.id}: resolveStack operation must be start or status`,
+    );
+
+    const portResolutionScenario = findScenario(
+      "ports.exact-default-value-differs-from-omitted-default",
+    );
+    if (portResolutionScenario.when.interface !== "managed-api") {
+      throw new Error("port-intent resolution must use the managed API");
+    }
+    const changedExplicitConfigPort = {
+      ...portResolutionScenario,
+      when: {
+        ...portResolutionScenario.when,
+        input: {
+          ...portResolutionScenario.when.input,
+          config: { "api.port": 54322 },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([changedExplicitConfigPort])).toContain(
+      `${portResolutionScenario.id}: resolved port api.port must match its input and fact`,
+    );
+  });
+
   it("covers the approved identity journeys through public commands and APIs", () => {
     expect(
       managedStackContractFixtures
@@ -1534,6 +1803,7 @@ describe("managed stack acceptance contract", () => {
             operation: "create",
             id: "marker-project-a",
             storage: "project-local-untracked",
+            workspacePath: "/work/project-a",
             projectId: "project-a",
             checkoutId: "checkout-a",
             contextId: "context-workspace",
