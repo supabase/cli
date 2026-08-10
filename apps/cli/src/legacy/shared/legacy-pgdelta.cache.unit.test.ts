@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -200,6 +200,66 @@ describe("legacyListLocalMigrations", () => {
           }),
         ),
       ) as Effect.Effect<unknown>;
+    },
+  );
+
+  it.effect(
+    "includes a validly-named .sql symlink to a directory, matching Go's IsDir() (no follow)",
+    () => {
+      // Go's `os.ReadDir`/`DirEntry.IsDir()` (`pkg/migration/list.go:34-43`) classifies a
+      // directory entry from its own type without following symlinks, so a `.sql` symlink
+      // whose target is a directory is NOT skipped as a directory — it is only ever dropped
+      // later, if something actually tries to read it as a file. A naive `fs.stat`-based
+      // directory check (which follows symlinks) would misclassify it and silently skip it.
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const targetDir = join(dir, "outside-target");
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
+      symlinkSync(targetDir, join(migrationsDir, "20240102000000_link.sql"));
+      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
+        Effect.tap((paths) =>
+          Effect.sync(() => {
+            expect(paths.map((p) => p.split("/").pop())).toEqual([
+              "20240101120000_create.sql",
+              "20240102000000_link.sql",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "sorts by UTF-8 byte order, matching Go's fs.ReadDir, not JS's default UTF-16 code-unit order",
+    () => {
+      // Go's `fs.ReadDir` (`pkg/migration/list.go:34`) sorts entries byte-wise over each name's
+      // UTF-8 encoding. A BMP private-use character (U+E000, single UTF-16 code unit `0xE000`)
+      // and a supplementary-plane character (U+1F600, a surrogate pair starting `0xD83D`) reverse
+      // order between the two schemes: JS's default `Array.prototype.sort()` ranks the surrogate
+      // pair first (`0xD83D < 0xE000`), while Go's byte order — which preserves codepoint order —
+      // ranks U+1F600 (`> U+FFFF`) after U+E000. A migrations directory with such filenames must
+      // replay in Go's order, not JS's default, or a dependent migration could apply out of order.
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const privateUseFile = "20240101120000_z\uE000.sql";
+      const supplementaryFile = "20240101120000_z\u{1F600}.sql";
+      writeFileSync(join(migrationsDir, privateUseFile), "create table x();");
+      writeFileSync(join(migrationsDir, supplementaryFile), "create table y();");
+      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
+        Effect.tap((paths) =>
+          Effect.sync(() => {
+            expect(paths.map((p) => p.split("/").pop())).toEqual([
+              privateUseFile,
+              supplementaryFile,
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
     },
   );
 
@@ -560,6 +620,7 @@ describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-195
         cwd: dir,
         npmVersion: undefined,
         denoVersion: 1,
+        projectEnv: {},
       };
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

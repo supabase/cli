@@ -858,7 +858,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote db.migrations.enabled beats SUPABASE_DB_MIGRATIONS_ENABLED", () => {
     // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
-    // (config.go:635-637), so an explicit remote value wins over the env var.
+    // (config.go:724), so an explicit remote value wins over the env var.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
@@ -968,7 +968,7 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
     () => {
-      // Same override-tier precedence as db.migrations.enabled above (config.go:635-637).
+      // Same override-tier precedence as db.migrations.enabled above (config.go:724).
       const ref = "abcdefghijklmnopqrst";
       const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
       process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-wins.sql";
@@ -1000,7 +1000,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
     // Go's mergeRemoteConfig applies EVERY matched-block key via v.Set (above AutomaticEnv,
-    // config.go:635-637), not just db/seed — so a remote experimental.pgdelta.enabled wins
+    // config.go:718-730), not just db/seed — so a remote experimental.pgdelta.enabled wins
     // over SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
@@ -1055,7 +1055,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote auth.enabled beats its SUPABASE_AUTH_ENABLED env var", () => {
     // Same v.Set-above-AutomaticEnv precedence as db.migrations.enabled / pgdelta.enabled
-    // (config.go:635-637), but for auth.enabled specifically (CLI-1878): a matched remote
+    // (config.go:724), but for auth.enabled specifically (CLI-1878): a matched remote
     // block's auth.enabled must win over SUPABASE_AUTH_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_AUTH_ENABLED"];
@@ -1112,7 +1112,7 @@ describe("legacyReadDbToml", () => {
     "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
     () => {
       // Same v.Set-above-AutomaticEnv precedence as auth.enabled/pgdelta.enabled
-      // (config.go:635-637): a matched remote block's experimental.webhooks.enabled must win
+      // (config.go:724): a matched remote block's experimental.webhooks.enabled must win
       // over SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED. Without the fix, the suppressed env value
       // (false) would win instead, and the merged [experimental.webhooks] section (present via
       // the remote block) would then fail validation ("Webhooks cannot be deactivated").
@@ -1394,7 +1394,7 @@ describe("legacyReadDbToml", () => {
     });
 
     it.effect("forces db.seed.enabled false when the matched remote block omits it", () => {
-      // Go's mergeRemoteConfig (config.go:638-640) forces db.seed.enabled=false when the
+      // Go's mergeRemoteConfig (config.go:726-728) forces db.seed.enabled=false when the
       // matched remote block itself doesn't set it — even if the base config enables it.
       const dir = withConfig(
         [
@@ -3377,4 +3377,163 @@ describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)
       Effect.ensuring(restore(previous)),
     );
   });
+
+  it.effect(
+    "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
+    () => {
+      // Regression (review: PRRT_kwDOErm0O86XHGDL) — Go's `mergeRemoteConfig` installs the
+      // matched block's OWN `project_id` at viper's override tier, above `AutomaticEnv`
+      // (`apps/cli-go/pkg/config/config.go:718-724`); that block is selected BECAUSE its
+      // `project_id` equals the resolved ref, so it must win even when an unrelated
+      // `SUPABASE_PROJECT_ID` is set to something else entirely.
+      const previous = process.env["SUPABASE_PROJECT_ID"];
+      process.env["SUPABASE_PROJECT_ID"] = "local";
+      const ref = "abcdefghijklmnopqrst";
+      const dir = withConfig(
+        ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.appliedRemote).toBe("prod");
+            expect(v.remoteOverrideKeys.has("project_id")).toBe(true);
+            expect(Option.getOrNull(v.projectId)).toBe(ref);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.ensuring(restore(previous)),
+      );
+    },
+  );
+
+  it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const ref = "abcdefghijklmnopqrst";
+    const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBeUndefined();
+          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
+});
+
+describe("legacyReadDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.template/notification", () => {
+  const ref = "abcdefghijklmnopqrst";
+
+  it.effect("tracks auth.captcha.provider when a matched remote block supplies it", () => {
+    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `provider` is a plain string leaf, not one of
+    // `applyRemoteOverride`'s dynamically-keyed sections, so it must be tracked via
+    // `LEGACY_ENV_OVERRIDABLE_KEYS` like any other fixed-name field.
+    const dir = withConfig(
+      [
+        "[auth.captcha]",
+        'provider = "hcaptcha"',
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.auth.captcha]",
+        'provider = "turnstile"',
+        "",
+      ].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBe("prod");
+          expect(v.remoteOverrideKeys.has("auth.captcha.provider")).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("tracks a matched remote block's auth.email.template.<name> leaves dynamically", () => {
+    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `auth.email.template.<name>.*` is a
+    // genuinely arbitrarily-keyed map, same shape as `auth.external.<name>.*`, so it must be
+    // flattened dynamically instead of relying on a fixed `LEGACY_ENV_OVERRIDABLE_KEYS` entry.
+    const dir = withConfig(
+      [
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.auth.email.template.invite]",
+        'content_path = "remote-invite.html"',
+        "",
+      ].join("\n"),
+    );
+    // Template `content_path` resolves relative to the project root (`workdir`, i.e. `dir`).
+    writeFileSync(join(dir, "remote-invite.html"), "<html></html>");
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBe("prod");
+          expect(v.remoteOverrideKeys.has("auth.email.template.invite.content_path")).toBe(true);
+          expect(v.remoteOverrideKeys.has("auth.email.template.invite.subject")).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "tracks a matched remote block's auth.email.notification.<name> leaves dynamically",
+    () => {
+      // Regression (review: PRRT_kwDOErm0O86XLAYo) — `auth.email.notification.<name>.*`'s
+      // sibling case, including `enabled` (a direct `legacyEnvOverrideBool` throw site).
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.auth.email.notification.password_changed]",
+          "enabled = true",
+          'content_path = "remote-pw-changed.html"',
+          "",
+        ].join("\n"),
+      );
+      // Notification `content_path` resolves relative to the `supabase/` dir.
+      writeFileSync(join(dir, "supabase", "remote-pw-changed.html"), "<html></html>");
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.appliedRemote).toBe("prod");
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.enabled"),
+            ).toBe(true);
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.content_path"),
+            ).toBe(true);
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.subject"),
+            ).toBe(false);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

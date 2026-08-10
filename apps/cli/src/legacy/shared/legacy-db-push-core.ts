@@ -343,6 +343,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             cwd: workdir,
             npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
             denoVersion: toml.denoVersion,
+            projectEnv: toml.projectEnv,
           };
           yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
             enabled: cacheEnabled,

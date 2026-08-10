@@ -233,7 +233,7 @@ describe("legacyWaitForHealthyServices", () => {
         expect(error.unhealthy).toEqual([
           { containerId: "supabase_rest_proj", reason: "container is not running: exited" },
         ]);
-        expect(error.message).toBe("supabase_rest_proj: container is not running: exited");
+        expect(error.message).toBe("supabase_rest_proj container is not running: exited");
       }),
   );
 
@@ -316,7 +316,7 @@ describe("legacyWaitForHealthyServices", () => {
 
         // Reasons unchanged; the advice rides on `suggestion`, which is what
         // suppresses the unhelpful "--debug" hint downstream.
-        expect(error.message).toBe("supabase_inbucket_proj: container is not running: exited");
+        expect(error.message).toBe("supabase_inbucket_proj container is not running: exited");
         expect(error.unhealthy).toEqual([
           { containerId: "supabase_inbucket_proj", reason: "container is not running: exited" },
         ]);
@@ -380,7 +380,7 @@ describe("legacyWaitForHealthyServices", () => {
 
         const error = yield* timeoutError(mock, ["supabase_storage_proj"]);
 
-        expect(error.message).toBe("supabase_storage_proj: container is not running: exited");
+        expect(error.message).toBe("supabase_storage_proj container is not running: exited");
         expect(error.suggestion).toBeUndefined();
       }),
     );

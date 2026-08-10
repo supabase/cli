@@ -650,7 +650,7 @@ const resetConnectionState = <E>(
  * `SET default_transaction_read_only = on`) before the history-table DDL, then create
  * the history table, then run the file's statements + the history insert.
  *
- * `mapError` lets the caller tag the failure (e.g. `LegacyDeclarativeApplyError`).
+ * `mapError` lets the caller tag the failure (e.g. `LegacyPgDeltaDeclarativeApplyError`).
  */
 export const legacyApplyMigrationFile = <E>(
   session: LegacyDbSession,

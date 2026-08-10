@@ -967,3 +967,49 @@ describe("legacyRemoveVolume", () => {
     );
   });
 });
+
+describe("legacyCreateContainer with an empty containerName (the shadow database)", () => {
+  it.live(
+    "omits --name from the create argv and still delivers secretFiles via `docker cp` against the container's own id, exactly like a named container",
+    () => {
+      let cpArgs: ReadonlyArray<string> | undefined;
+      const mock = mockSpawner((args) => {
+        if (args[0] === "create") {
+          expect(args).not.toContain("--name");
+          return { exitCode: 0, stdout: "shadow-container-id\n" };
+        }
+        if (args[0] === "cp") {
+          cpArgs = args;
+        }
+        return { exitCode: 0 };
+      });
+
+      const spec: LegacyStartContainerSpec = {
+        ...baseSpec,
+        containerName: "",
+        binds: [],
+        networkAliases: undefined,
+        autoRemove: true,
+        secretFiles: [
+          { containerPath: "/etc/postgresql-custom/pgsodium_root.key", content: "root-key" },
+        ],
+      };
+
+      return legacyCreateContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+      }).pipe(
+        Effect.map((containerId) => {
+          expect(containerId).toBe("shadow-container-id");
+          // `docker cp` addresses the container by the id `docker create` returned, never by
+          // name — the unnamed shadow container is delivered its secret the same way a named
+          // one is.
+          expect(cpArgs?.[0]).toBe("cp");
+          expect(cpArgs?.[2]).toBe("shadow-container-id:/etc/postgresql-custom/pgsodium_root.key");
+        }),
+      );
+    },
+  );
+});

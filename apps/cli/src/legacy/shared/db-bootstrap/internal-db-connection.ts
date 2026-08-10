@@ -39,9 +39,26 @@ export const LEGACY_START_INTERNAL_DB_NAME = "postgres";
  * `legacyResolveLocalConfigValues`) always embeds the exact same password
  * value `dbConfig.Password` does, since both are sourced from the same
  * `config.Db.Password` field.
+ *
+ * Returns the RAW password, not the URI-encoded userinfo octets: `new URL(...)
+ * .password` preserves percent-encoding (`new URL("postgresql://u:p%40s@h:5/d")
+ * .password === "p%40s"`), but consumers split into plain-env uses that need the
+ * decoded value (Realtime's `DB_PASSWORD`, `realtime-env.ts`) and URI re-embedders
+ * that re-encode themselves ({@link legacyStartInternalDbUrl}). The shadow database
+ * path (`legacy-shadow-source.ts`) builds its `dbUrl` via `legacyToPostgresURL`,
+ * which `encodeURIComponent`s a config-derived password, so decoding here is what
+ * keeps a special-character password working against a container initialized with
+ * the raw value. For `start`'s constant `"postgres"` both forms are identical. The
+ * fallback covers a `dbUrl` whose userinfo was never percent-encoded (a raw `%`
+ * would throw `URIError`) — the undecoded octets are the best available value there.
  */
 export function legacyStartInternalDbPassword(dbUrl: string): string {
-  return new URL(dbUrl).password;
+  const encoded = new URL(dbUrl).password;
+  try {
+    return decodeURIComponent(encoded);
+  } catch {
+    return encoded;
+  }
 }
 
 /**
@@ -50,7 +67,14 @@ export function legacyStartInternalDbPassword(dbUrl: string): string {
  * (PostgREST's `PGRST_DB_URI` as `authenticator`, Storage's `DATABASE_URL` as
  * `supabase_storage_admin`, Storage's vector-bucket default `VECTOR_DATABASE_URL`
  * as `postgres` — see `appendStorageVectorEnv`, `start.go:1487-1501`).
+ *
+ * `dbPassword` is the RAW password ({@link legacyStartInternalDbPassword}); it is
+ * percent-encoded here so the consuming service's URI parser decodes it back to
+ * the same value. Go interpolates the raw string, but its only possible value is
+ * the reserved-character-free `"postgres"` literal, for which the two are
+ * byte-identical — encoding only diverges for the shadow path's config-derived
+ * password, where the raw form would produce an unparseable URI.
  */
 export function legacyStartInternalDbUrl(role: string, dbHost: string, dbPassword: string): string {
-  return `postgresql://${role}:${dbPassword}@${dbHost}:${LEGACY_START_INTERNAL_DB_PORT}/${LEGACY_START_INTERNAL_DB_NAME}`;
+  return `postgresql://${role}:${encodeURIComponent(dbPassword)}@${dbHost}:${LEGACY_START_INTERNAL_DB_PORT}/${LEGACY_START_INTERNAL_DB_NAME}`;
 }

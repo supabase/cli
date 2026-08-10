@@ -7,14 +7,17 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 
 ## Files Read
 
-| Path                                               | Format     | When                                                              |
-| -------------------------------------------------- | ---------- | ----------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                   | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version) |
-| `<workdir>/supabase/migrations/*.sql`              | SQL        | shadow provisioning (applied to the shadow source)                |
-| `<workdir>/supabase/database/**` (declarative dir) | SQL        | local target when declarative schemas exist                       |
-| `~/.supabase/access-token`                         | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`           |
-| `<workdir>/supabase/.temp/project-ref`             | plain text | `--linked` ref resolution                                         |
-| `<workdir>/supabase/.temp/pgdelta/*.json`          | JSON       | explicit `--from/--to migrations` catalog (cache)                 |
+| Path                                                                                                                                 | Format     | When                                                                                                        |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ----------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                                                                     | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version)                                           |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                                            | dotenv     | shadow provisioning (all native targets, and the explicit `--from/--to migrations` cache miss)              |
+| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                                               | PEM        | shadow provisioning, when `api.enabled && api.tls.enabled`                                                  |
+| `<workdir>/supabase/migrations/*.sql`                                                                                                | SQL        | shadow provisioning (applied to the shadow source)                                                          |
+| `<workdir>/supabase/roles.sql`                                                                                                       | SQL        | shadow provisioning, PG14 and PG15 alike (unlike `db reset`'s PG15-only local path); missing file tolerated |
+| `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` (pg-delta declarative dir) / `<workdir>/supabase/schemas/**` | SQL        | local target: 3-source declarative-schema fallback ladder, first non-empty source wins                      |
+| `~/.supabase/access-token`                                                                                                           | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                                     |
+| `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | `--linked` ref resolution                                                                                   |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                                                                                            | JSON       | explicit `--from/--to migrations` catalog (cache)                                                           |
 
 ## Files Written
 
@@ -28,12 +31,18 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 
 ## Docker
 
-- Edge-runtime container (pg-delta / migra diff scripts; also runs the pg-delta
+- Edge-runtime container (pg-delta / migra diff scripts; also the declarative
+  pg-delta apply script for the local-target branch, and runs the pg-delta
   catalog-export script for explicit `--from/--to migrations` on a cache miss —
   CLI-1959, native, no longer the hidden Go `__catalog` seam).
-- Shadow Postgres container (provisioned + torn down via the Go `db __shadow` seam;
-  explicit `--from/--to migrations` reuses this same seam call — `mode: "diff"` —
-  on a cache miss, rather than a second, `__catalog`-specific shadow).
+- Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource`
+  in `legacy/commands/db/shared/legacy-shadow-source.ts`, over the lower-level primitives in
+  `legacy/shared/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit
+  `--from/--to migrations` reuses the SAME native primitives on a cache miss
+  (`legacyResolveMigrationsCatalogRef` -> `exportViaShadowCatalog`, `legacy-pgdelta.cache.ts`),
+  called with `targetLocal: false`/`usePgDelta: false` to skip the declarative-schema-override
+  branch — not a second, `__catalog`-specific shadow, and not a shared `mode: "diff"` parameter
+  (that seam-era concept no longer exists).
 - `supabase/migra` container — the migra OOM bash fallback only.
 
 ## API Routes (linked path, via the db-config resolver)
@@ -47,14 +56,18 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 
 ## Environment Variables
 
-| Variable                         | Purpose                                          | Required? |
-| -------------------------------- | ------------------------------------------------ | --------- |
-| `SUPABASE_ACCESS_TOKEN`          | auth for `--linked`                              | no        |
-| `SUPABASE_DB_PASSWORD`           | remote DB password (linked)                      | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA` | force pg-delta engine                            | no        |
-| `PGDELTA_DEBUG`                  | pg-delta debug capture                           | no        |
-| `PGDELTA_NPM_REGISTRY`           | scoped `@supabase` npm registry for edge-runtime | no        |
-| `SUPABASE_SSL_DEBUG`             | migra SSL debug logging                          | no        |
+| Variable                                                                              | Purpose                                                                                                | Required? |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------- |
+| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                    | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                            | no        |
+| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads | no        |
+| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                       | no        |
+| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`)       | no        |
+| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                    | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                  | no        |
+| `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                 | no        |
+| `PGDELTA_NPM_REGISTRY`                                                                | scoped `@supabase` npm registry for edge-runtime                                                       | no        |
+| `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                | no        |
 
 ## Exit Codes
 
@@ -88,9 +101,9 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
 - The explicit `migrations` target resolves natively (CLI-1959): a bare
   migrations-content hash cache lookup (`<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`,
-  shared with `db push`'s post-apply cache write), and on a miss, the existing
-  `db __shadow --mode diff` seam call (unchanged — still Go, out of scope for
-  CLI-1959) plus a native pg-delta catalog export. No hidden Go
+  shared with `db push`'s post-apply cache write), and on a miss, a natively-provisioned
+  shadow database (CLI-1956 — `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`,
+  no longer the `db __shadow` seam) plus a native pg-delta catalog export. No hidden Go
   `db schema declarative __catalog` subprocess runs for this path any more.
 
 ### `--use-pg-schema` is deprecated (CLI-1960) — keep-in-Go exception
@@ -110,9 +123,9 @@ than a pending port because:
 The decision record is Linear issue CLI-1960 and the pull request that introduced
 this deprecation notice; re-open only if a TS/WASM binding for
 `stripe/pg-schema-diff` ships. It will become the CLI's sole remaining Go delegation
-once `--use-pgadmin`'s delegation, the `db __shadow` seam (the sibling `db
-__db-bootstrap` seam was already removed outright by CLI-1955), and the rest of
-the M9 milestone's in-flight issues are done — it is not there yet.
+once `--use-pgadmin`'s delegation and the rest of the M9 milestone's in-flight issues
+are done — it is not there yet (the sibling `db __db-bootstrap` seam was already
+removed outright by CLI-1955, and the `db __shadow` seam by CLI-1956).
 
 Given that, the flag is now deprecated rather than ported:
 

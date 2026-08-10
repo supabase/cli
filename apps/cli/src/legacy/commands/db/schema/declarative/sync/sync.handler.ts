@@ -28,6 +28,7 @@ import {
   legacyPgDeltaTempPath,
   legacyResolveSetupInputs,
 } from "../../../../../shared/legacy-pgdelta.cache.ts";
+import { legacyResolvePgDeltaProjectId } from "../../../../../shared/legacy-pgdelta.ts";
 import { legacyResolveSmartTargetUrl } from "../declarative.smart-target.ts";
 import {
   type LegacyDebugBundle,
@@ -144,10 +145,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       const tempDir = legacyPgDeltaTempPath(path, cliConfig.workdir);
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
-          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
+          // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
+          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // `""` for a project relying on config.toml's `project_id` or the workdir-basename
+          // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume.
+          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
@@ -278,6 +285,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       );
       const result: LegacyDeclarativeSyncResult = yield* legacyDiffDeclarativeToMigrations(
         run,
+        toml,
         setupInputs,
       ).pipe(
         Effect.tapError((error) =>

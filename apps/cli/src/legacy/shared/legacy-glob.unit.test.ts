@@ -2,7 +2,12 @@ import { BunFileSystem, BunPath } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Layer, Option, Path, PlatformError } from "effect";
 
-import { legacyGlobPattern, legacyResolveUnderWorkdir, legacyWalkSqlFiles } from "./legacy-glob.ts";
+import {
+  legacyCompareUtf8Bytes,
+  legacyGlobPattern,
+  legacyResolveUnderWorkdir,
+  legacyWalkSqlFiles,
+} from "./legacy-glob.ts";
 
 /**
  * A `FileSystem.FileSystem` that answers `readDirectory` from a fixed map (keyed by the exact
@@ -129,23 +134,25 @@ const statFailure = (path: string) =>
 
 /**
  * A `FileSystem.FileSystem` entirely backed by fixed maps: `readDirectory` answers from
- * `entries`, `readLink` always fails (every entry looks like "not a symlink" to
- * `legacyWalkSqlFiles`'s probe), and `stat` answers from `statTypes` — except for
- * `statFailsFor`, which fails, simulating a permission/I/O error reading an entry
- * `readDirectory` just listed (distinct from a benign not-a-symlink `readLink` failure). Every
- * other method is `legacyWalkSqlFiles`-unreachable noise, so it's left as `FileSystem.makeNoop`'s
- * default `NotFound` failure.
+ * `entries`, `readLink` succeeds (with a dummy target) only for paths listed in `symlinks` —
+ * every other entry looks like "not a symlink" to `legacyWalkSqlFiles`'s probe — and `stat`
+ * answers from `statTypes`, except for `statFailsFor`, which fails, simulating a
+ * permission/I/O error reading an entry `readDirectory` just listed (distinct from a benign
+ * not-a-symlink `readLink` failure). Every other method is `legacyWalkSqlFiles`-unreachable
+ * noise, so it's left as `FileSystem.makeNoop`'s default `NotFound` failure.
  */
 function fakeWalkFs(
   entries: Record<string, ReadonlyArray<string>>,
   statTypes: Record<string, FileSystem.File.Type>,
   statFailsFor?: string,
+  symlinks: ReadonlySet<string> = new Set(),
 ) {
   return Layer.succeed(
     FileSystem.FileSystem,
     FileSystem.makeNoop({
       readDirectory: (dir) => Effect.succeed([...(entries[dir] ?? [])]),
-      readLink: (path) => Effect.fail(notASymlink(path)),
+      readLink: (path) =>
+        symlinks.has(path) ? Effect.succeed("/somewhere/else") : Effect.fail(notASymlink(path)),
       stat: (path) =>
         path === statFailsFor
           ? Effect.fail(statFailure(path))
@@ -181,7 +188,7 @@ describe("legacyWalkSqlFiles", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("recurses into subdirectories and sorts is left to the caller", () => {
+  it.effect("recurses into subdirectories, already sorted in Go's byte order", () => {
     const layer = fakeWalkFs(
       { "/schemas": ["nested", "top.sql"], "/schemas/nested": ["inner.sql"] },
       {
@@ -193,7 +200,65 @@ describe("legacyWalkSqlFiles", () => {
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const files = yield* legacyWalkSqlFiles(fs, "/schemas", "");
-      expect([...files].sort()).toEqual(["nested/inner.sql", "top.sql"]);
+      // No caller-side `.sort()` — `legacyWalkSqlFiles` now returns the fully-sorted result
+      // itself, matching both Go walkers' own trailing `sort.Strings(files)`.
+      expect([...files]).toEqual(["nested/inner.sql", "top.sql"]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect(
+    "sorts by UTF-8 byte order, not JS's default UTF-16 code-unit order (review: PRRT_kwDOErm0O86XAlIo)",
+    () => {
+      // A supplementary-plane character (U+1F600, encoded as a UTF-16 surrogate pair
+      // 0xD800-0xDFFF) alongside a BMP private-use character (U+E000): JS's default
+      // `Array.prototype.sort()` ranks the surrogate pair FIRST (0xD800 < 0xE000), while Go's
+      // `sort.Strings` (byte-wise over UTF-8, which preserves Unicode codepoint order) ranks
+      // the supplementary-plane codepoint (0x1F600 > 0xE000) AFTER it — see
+      // `legacyCompareUtf8Bytes`'s own doc comment.
+      const surrogatePair = "a\u{1f600}.sql";
+      const privateUse = "a\u{e000}.sql";
+      const layer = fakeWalkFs(
+        { "/schemas": [surrogatePair, privateUse] },
+        { [`/schemas/${surrogatePair}`]: "File", [`/schemas/${privateUse}`]: "File" },
+      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const files = yield* legacyWalkSqlFiles(fs, "/schemas", "");
+        expect([...files]).toEqual([privateUse, surrogatePair]);
+        expect([...files]).not.toEqual([...files].sort());
+        expect([...files]).toEqual([...files].sort(legacyCompareUtf8Bytes));
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect(
+    "does not descend into a symlinked subdirectory (Go's fs.WalkDir/afero.Walk no-follow)",
+    () => {
+      const layer = fakeWalkFs(
+        { "/schemas": ["linked", "top.sql"], "/schemas/linked": ["secret.sql"] },
+        { "/schemas/linked": "Directory", "/schemas/top.sql": "File" },
+        undefined,
+        new Set(["/schemas/linked"]),
+      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const files = yield* legacyWalkSqlFiles(fs, "/schemas", "");
+        expect([...files]).toEqual(["top.sql"]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.effect("excludes a symlinked .sql file instead of applying its target", () => {
+    const layer = fakeWalkFs(
+      { "/schemas": ["linked.sql", "top.sql"] },
+      { "/schemas/linked.sql": "File", "/schemas/top.sql": "File" },
+      undefined,
+      new Set(["/schemas/linked.sql"]),
+    );
+    return Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const files = yield* legacyWalkSqlFiles(fs, "/schemas", "");
+      expect([...files]).toEqual(["top.sql"]);
     }).pipe(Effect.provide(layer));
   });
 });

@@ -383,6 +383,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           cwd: workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         };
         yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
           enabled: cacheEnabled,
