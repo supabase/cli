@@ -33,8 +33,8 @@ and links to implementation work; it is not a second source of executable truth.
 `@supabase/stack` has two distinct public responsibilities:
 
 1. Direct `createStack(config)` creates one caller-controlled stack. Omitted stack and runtime roots
-   are temporary. It does not inspect Git, create identity markers, or mutate a global managed
-   registry.
+   are disposable temporary directories and are removed on disposal. It does not inspect Git,
+   create identity markers, or mutate a global managed registry.
 2. The explicit managed surface owns system-aware discovery, identity, stack selection, ports,
    runtime persistence, bootstrap, and reclamation. It accepts an isolated state root or injected
    repository so applications and tests can use it without the CLI.
@@ -85,26 +85,29 @@ test is not evidence that an unimplemented command already satisfies the behavio
 The fixture validator therefore checks more than catalog shape: selected, written, and effected
 identities must be declared; starts of existing stacks must declare a stopped lifecycle; managed
 state creation and registry publication must imply each other, as must managed-state deletion and
-registry tombstoning; contextual CLI stack results must bind their output to a selected target; Git
-identity writes must use the correct common or worktree scope, context writes must name the active
-branch as owner, and adapters cannot recreate an identity already declared by a checkout; new
-Git-derived contexts and selected linked worktrees must declare the relevant Git state; ordinary
-folders must write their full untracked identity marker on creation and resolve it on reuse; managed
-and sticky port conflicts and persisted-runtime conflicts must identify their actual target; sticky
-reuse must bind the assignment to the selected target; persisted-runtime preflight failures must
-identify a stopped stack; a successful bootstrap retry must follow an explicit rolled-back attempt;
+registry tombstoning; every state write and runtime effect must identify its target; contextual CLI
+stack results must bind their output to a selected target; Git identity writes must use the correct
+common or worktree scope, context writes must name the active branch as owner, and adapters cannot
+recreate an identity already declared by a checkout; new Git-derived contexts, manual ref
+replacement, detached-commit reuse, and selected linked worktrees must declare the relevant Git
+state or transition; ordinary folders must write their full untracked identity marker on creation
+and resolve it on reuse; managed and sticky port conflicts and persisted-runtime conflicts must
+identify their actual target; sticky reuse must bind the assignment to the selected target;
+runtime-selection creation fixtures must establish both an absent managed target and the legacy
+state decision; persisted-runtime preflight failures must identify a stopped stack; a successful
+bootstrap retry must follow an explicit rolled-back attempt;
 credential create, update, and copy operations must prove that global state contains references
 rather than plaintext; data-preserving prune must begin with mutable data; tracked identity markers
 must remain untouched; native qualification facts must partition the service matrix, use a declared
 platform, and match the platform passed to preflight; status operations must remain read-only
-reports; portable runtime projections must match their referenced scenario; repository adapter
-projections must reference a declared scenario and agree on both identity and their complete
-decision; every invalid stack name must be exercised through a public action; destructive runtime
-effects must map to mutable-state deletion and runtime-state deletion must stop the running target;
-other runtime effects must agree with permitted state writes; and stable identity plus exact human
-and JSON recovery fields cannot contradict the managed result. We deliberately do not introduce a
-parallel test-only identity resolver; it would duplicate product policy before the real managed
-surface exists and could pass while the production implementation drifts.
+reports; repository adapter and portable runtime projections must reference a declared scenario,
+match its identity, and agree on their complete decision; every invalid stack name must be exercised
+through a public action; structured JSON projections must always name their outcome; destructive
+runtime effects must map to mutable-state deletion and runtime-state deletion must stop the running
+target; other runtime effects must agree with permitted state writes; and stable identity plus exact
+human and JSON recovery fields cannot contradict the managed result. We deliberately do not
+introduce a parallel test-only identity resolver; it would duplicate product policy before the real
+managed surface exists and could pass while the production implementation drifts.
 
 ## Implementation Handoff
 

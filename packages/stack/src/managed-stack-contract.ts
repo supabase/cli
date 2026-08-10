@@ -59,6 +59,7 @@ export type ManagedStackContractFact =
         | "checkout-copy"
         | "checkout-move"
         | "clone"
+        | "detached-commit"
         | "folder-to-git"
         | "ref-replacement"
         | "symlink-alias";
@@ -216,23 +217,31 @@ type ManagedStackContractWrite =
       readonly contextId: string;
     }
   | {
-      readonly target: "ephemeral-state" | "managed-state" | "registry" | "runtime-state";
-      readonly operation:
-        | "copy"
-        | "create"
-        | "delete"
-        | "publish"
-        | "start"
-        | "tombstone"
-        | "update";
-      readonly id?: string;
+      readonly target: "ephemeral-state";
+      readonly operation: "create";
+      readonly id: string;
+    }
+  | {
+      readonly target: "managed-state";
+      readonly operation: "copy" | "create" | "delete" | "update";
+      readonly id: string;
+    }
+  | {
+      readonly target: "registry";
+      readonly operation: "delete" | "publish" | "tombstone" | "update";
+      readonly id: string;
+    }
+  | {
+      readonly target: "runtime-state";
+      readonly operation: "delete" | "start" | "update";
+      readonly id: string;
     };
 
 export interface ManagedStackContractEffects {
   readonly writes: ReadonlyArray<ManagedStackContractWrite>;
   readonly runtimeEffects: ReadonlyArray<{
     readonly operation: "copy" | "delete" | "start" | "stop";
-    readonly stackId?: string;
+    readonly stackId: string;
   }>;
   readonly output: ManagedStackContractOutput;
 }
@@ -416,6 +425,16 @@ export const validateManagedStackContractFixtures = (
     if (output.human === undefined && output.json === undefined && output.api === undefined) {
       errors.push(`${scenario.id}: at least one observable output is required`);
     }
+    for (const write of scenario.expected.writes) {
+      if (write.id.trim().length === 0) {
+        errors.push(`${scenario.id}: ${write.target} write requires a target ID`);
+      }
+    }
+    for (const effect of scenario.expected.runtimeEffects) {
+      if (effect.stackId.trim().length === 0) {
+        errors.push(`${scenario.id}: ${effect.operation} runtime effect requires a stack ID`);
+      }
+    }
 
     if (
       scenario.when.interface === "cli" &&
@@ -439,6 +458,7 @@ export const validateManagedStackContractFixtures = (
       if (referencedScenario === undefined) {
         errors.push(`${scenario.id}: portable contract must reference a declared scenario`);
       } else {
+        let firstRuntimeResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
         for (const runtime of ["node", "bun"]) {
           const runtimeResult = output.api?.[runtime];
           if (
@@ -448,6 +468,20 @@ export const validateManagedStackContractFixtures = (
             errors.push(
               `${scenario.id}: portable ${runtime} outcome must match ${referencedScenario.id}`,
             );
+            continue;
+          }
+          if (
+            referencedScenario.expected.selection !== undefined &&
+            runtimeResult.stackId !== referencedScenario.expected.selection.stackId
+          ) {
+            errors.push(
+              `${scenario.id}: portable ${runtime} stackId must match ${referencedScenario.id}`,
+            );
+          }
+          if (firstRuntimeResult === undefined) {
+            firstRuntimeResult = runtimeResult;
+          } else if (!managedStackContractJsonEquals(firstRuntimeResult, runtimeResult)) {
+            errors.push(`${scenario.id}: portable runtime decisions must be identical`);
           }
         }
       }
@@ -611,6 +645,23 @@ export const validateManagedStackContractFixtures = (
       errors.push(`${scenario.id}: resolving worktree ${actionCwd} requires its Git state`);
     }
 
+    const detachedGitState = scenario.given.find(
+      (fact) =>
+        fact.kind === "git-state" && fact.workspacePath === actionCwd && fact.head === "detached",
+    );
+    if (
+      detachedGitState?.kind === "git-state" &&
+      scenario.expected.outcome === "reuse" &&
+      !scenario.given.some(
+        (fact) =>
+          fact.kind === "identity-transition" &&
+          fact.operation === "detached-commit" &&
+          fact.to === detachedGitState.commit,
+      )
+    ) {
+      errors.push(`${scenario.id}: detached reuse must declare the commit transition`);
+    }
+
     for (const fact of scenario.given) {
       if (fact.kind !== "native-qualification") {
         continue;
@@ -682,7 +733,7 @@ export const validateManagedStackContractFixtures = (
 
     if (scenario.expected.outcome !== "create") {
       for (const effect of scenario.expected.runtimeEffects) {
-        if (effect.operation !== "start" || effect.stackId === undefined) {
+        if (effect.operation !== "start") {
           continue;
         }
         const explicitlyStopped = scenario.given.some(
@@ -696,6 +747,34 @@ export const validateManagedStackContractFixtures = (
             `${scenario.id}: starting existing stack ${effect.stackId} requires an explicit stopped lifecycle`,
           );
         }
+      }
+    }
+
+    if (scenario.area === "runtime" && scenario.expected.outcome === "create") {
+      const createdStackIds = scenario.expected.writes.flatMap((write) =>
+        write.target === "managed-state" && write.operation === "create" ? [write.id] : [],
+      );
+      for (const stackId of createdStackIds) {
+        if (
+          !scenario.given.some(
+            (fact) => fact.kind === "managed-target" && fact.stackId === stackId && !fact.exists,
+          )
+        ) {
+          errors.push(`${scenario.id}: runtime creation must declare absent target ${stackId}`);
+        }
+      }
+      if (
+        createdStackIds.length > 0 &&
+        !scenario.given.some(
+          (fact) =>
+            fact.kind === "legacy-state" &&
+            fact.lifecycle === "absent" &&
+            fact.database === "absent" &&
+            fact.storage === "absent" &&
+            fact.credentials === "absent",
+        )
+      ) {
+        errors.push(`${scenario.id}: runtime creation must declare legacy state absent`);
       }
     }
 
@@ -720,10 +799,9 @@ export const validateManagedStackContractFixtures = (
 
     for (const write of scenario.expected.writes) {
       if (
-        write.id !== undefined &&
-        (write.operation === "copy" ||
-          write.operation === "create" ||
-          write.operation === "publish")
+        write.operation === "copy" ||
+        write.operation === "create" ||
+        write.operation === "publish"
       ) {
         declaredIds.add(write.id);
       }
@@ -738,7 +816,6 @@ export const validateManagedStackContractFixtures = (
     }
     for (const write of scenario.expected.writes) {
       if (
-        write.id !== undefined &&
         write.operation !== "copy" &&
         write.operation !== "create" &&
         write.operation !== "publish" &&
@@ -793,7 +870,9 @@ export const validateManagedStackContractFixtures = (
       const derivesContextFromGit = scenario.given.some(
         (fact) =>
           fact.kind === "identity-transition" &&
-          (fact.operation === "clone" || fact.operation === "folder-to-git"),
+          (fact.operation === "clone" ||
+            fact.operation === "folder-to-git" ||
+            fact.operation === "ref-replacement"),
       );
       const contextAlreadyDeclaredByBranch = scenario.given.some(
         (fact) =>
@@ -955,7 +1034,7 @@ export const validateManagedStackContractFixtures = (
       scenario.expected.details?.mutable_data_deleted === false
     ) {
       for (const write of scenario.expected.writes) {
-        if (write.target !== "registry" || write.operation !== "delete" || write.id === undefined) {
+        if (write.target !== "registry" || write.operation !== "delete") {
           continue;
         }
         const mutableDataExists = scenario.given.some(
@@ -1011,7 +1090,7 @@ export const validateManagedStackContractFixtures = (
     }
 
     for (const effect of scenario.expected.runtimeEffects) {
-      if (effect.stackId !== undefined && !declaredIds.has(effect.stackId)) {
+      if (!declaredIds.has(effect.stackId)) {
         errors.push(`${scenario.id}: runtime effect references undeclared ID ${effect.stackId}`);
       }
 
@@ -1129,6 +1208,12 @@ export const validateManagedStackContractFixtures = (
       }
     };
 
+    if (
+      scenario.expected.output.json !== undefined &&
+      scenario.expected.output.json.outcome === undefined
+    ) {
+      errors.push(`${scenario.id}: JSON projection requires an outcome`);
+    }
     for (const projection of [scenario.expected.output.json, scenario.expected.output.api]) {
       checkProjection(projection, "outcome", scenario.expected.outcome);
       if (scenario.expected.error !== undefined) {
@@ -1273,6 +1358,17 @@ const invalidStackNameFixture = (
 const mainCheckoutContextFacts = [
   { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
   { kind: "branch", name: "main", contextId: "context-main", checkedOut: true },
+] satisfies ReadonlyArray<ManagedStackContractFact>;
+
+const absentMainManagedStateFacts = [
+  { kind: "managed-target", stackId: "stack-main-default", exists: false },
+  {
+    kind: "legacy-state",
+    lifecycle: "absent",
+    database: "absent",
+    storage: "absent",
+    credentials: "absent",
+  },
 ] satisfies ReadonlyArray<ManagedStackContractFact>;
 
 const mainDefaultSelection = {
@@ -1578,6 +1674,15 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         to: "commit-b",
       },
       {
+        kind: "git-state",
+        workspacePath: "checkout-a",
+        commonDirectory: "repo/.git",
+        gitDirectory: "repo/.git",
+        head: "branch",
+        branch: "feat-a",
+        commit: "commit-b",
+      },
+      {
         kind: "identity-claim",
         scope: "context",
         id: "context-old",
@@ -1626,6 +1731,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     given: [
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "branch", name: "(detached)", contextId: "context-detached", checkedOut: true },
+      {
+        kind: "identity-transition",
+        operation: "detached-commit",
+        from: "commit-a",
+        to: "commit-b",
+      },
       {
         kind: "git-state",
         workspacePath: "checkout-a",
@@ -3309,6 +3420,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     title: "An explicit managed-API runtime overrides the default automatic selection",
     area: "runtime",
     given: [
+      ...absentMainManagedStateFacts,
       { kind: "runtime-request", source: "managed-api", runtime: "native" },
       { kind: "runtime-request", source: "default", runtime: "auto" },
       { kind: "runtime-availability", runtime: "native", available: true },
@@ -3338,6 +3450,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     area: "runtime",
     given: [
       ...mainCheckoutContextFacts,
+      ...absentMainManagedStateFacts,
       { kind: "runtime-request", source: "config", runtime: "native" },
       { kind: "runtime-request", source: "default", runtime: "auto" },
       { kind: "runtime-availability", runtime: "native", available: true },
@@ -3405,6 +3518,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     title: "Automatic selection prefers usable Docker",
     area: "runtime",
     given: [
+      ...absentMainManagedStateFacts,
       { kind: "runtime-request", source: "default", runtime: "auto" },
       { kind: "runtime-availability", runtime: "docker", available: true },
       { kind: "runtime-availability", runtime: "native", available: true },
@@ -3432,6 +3546,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       "Automatic selection uses native only when Docker is unusable and the full graph qualifies",
     area: "runtime",
     given: [
+      ...absentMainManagedStateFacts,
       { kind: "runtime-request", source: "default", runtime: "auto" },
       {
         kind: "runtime-availability",
@@ -4160,6 +4275,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       },
       output: {
         json: {
+          outcome: "create",
           stack_id: "stack-main-default",
           credentials_source: "local-default",
           credentials_stable: true,

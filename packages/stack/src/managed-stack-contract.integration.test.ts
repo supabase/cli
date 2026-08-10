@@ -1,4 +1,12 @@
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdtempSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -177,6 +185,35 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([publishedWithoutState])).toContain(
       `${absentLegacyScenario.id}: registry publication requires managed-state creation or copy`,
+    );
+
+    const targetlessStateWrites = {
+      ...absentLegacyScenario,
+      expected: {
+        ...absentLegacyScenario.expected,
+        writes: absentLegacyScenario.expected.writes.map((write) =>
+          write.target === "managed-state" || write.target === "registry"
+            ? { ...write, id: "" }
+            : write,
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([targetlessStateWrites])).toContain(
+      `${absentLegacyScenario.id}: managed-state write requires a target ID`,
+    );
+
+    const targetlessRuntimeEffect = {
+      ...absentLegacyScenario,
+      expected: {
+        ...absentLegacyScenario.expected,
+        runtimeEffects: absentLegacyScenario.expected.runtimeEffects.map((effect) => ({
+          ...effect,
+          stackId: "",
+        })),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([targetlessRuntimeEffect])).toContain(
+      `${absentLegacyScenario.id}: start runtime effect requires a stack ID`,
     );
 
     const stoppedStackScenario = managedStackContractFixtures.find(
@@ -397,6 +434,31 @@ describe("managed stack acceptance contract", () => {
       `${portabilityScenario.id}: portable node outcome must match ${apiStatusScenario.id}`,
     );
 
+    const divergentPortableIdentity = {
+      ...portabilityScenario,
+      expected: {
+        ...portabilityScenario.expected,
+        output: {
+          ...portabilityScenario.expected.output,
+          api: {
+            node: { outcome: "report", stackId: "stack-main-default" },
+            bun: { outcome: "report", stackId: "stack-other" },
+            equal: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    const divergentPortableIdentityErrors = validateManagedStackContractFixtures([
+      apiStatusScenario,
+      divergentPortableIdentity,
+    ]);
+    expect(divergentPortableIdentityErrors).toContain(
+      `${portabilityScenario.id}: portable bun stackId must match ${apiStatusScenario.id}`,
+    );
+    expect(divergentPortableIdentityErrors).toContain(
+      `${portabilityScenario.id}: portable runtime decisions must be identical`,
+    );
+
     const siblingPortScenario: ManagedStackContractScenario | undefined =
       managedStackContractFixtures.find(
         ({ id }) => id === "ports.explicit-port-conflict-with-sibling-fails",
@@ -476,6 +538,36 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([cloneWithoutGitState])).toContain(
       `${freshCloneScenario.id}: creating a Git context requires Git state for the workspace`,
+    );
+
+    const refReplacementScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.manual-ref-replacement-orphans-context",
+    );
+    if (refReplacementScenario === undefined) {
+      throw new Error("identity.manual-ref-replacement-orphans-context fixture is required");
+    }
+    const refReplacementWithoutGitState = {
+      ...refReplacementScenario,
+      given: refReplacementScenario.given.filter((fact) => fact.kind !== "git-state"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([refReplacementWithoutGitState])).toContain(
+      `${refReplacementScenario.id}: creating a Git context requires Git state for the workspace`,
+    );
+
+    const detachedCommitScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.detached-commits-reuse-checkout-context",
+    );
+    if (detachedCommitScenario === undefined) {
+      throw new Error("identity.detached-commits-reuse-checkout-context fixture is required");
+    }
+    const detachedReuseWithoutTransition = {
+      ...detachedCommitScenario,
+      given: detachedCommitScenario.given.filter(
+        (fact) => fact.kind !== "identity-transition" || fact.operation !== "detached-commit",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([detachedReuseWithoutTransition])).toContain(
+      `${detachedCommitScenario.id}: detached reuse must declare the commit transition`,
     );
 
     const retryScenario = managedStackContractFixtures.find(
@@ -691,6 +783,27 @@ describe("managed stack acceptance contract", () => {
       `${invalidNameScenario.id}: JSON recovery disagrees with the managed result`,
     );
 
+    const credentialDefaultsScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "credentials.omitted-values-use-stable-defaults",
+      );
+    const credentialDefaultsJson = credentialDefaultsScenario?.expected.output.json;
+    if (credentialDefaultsScenario === undefined || credentialDefaultsJson === undefined) {
+      throw new Error("credentials.omitted-values-use-stable-defaults JSON fixture is required");
+    }
+    const { outcome: omittedOutcome, ...jsonWithoutOutcome } = credentialDefaultsJson;
+    expect(omittedOutcome).toBe("create");
+    const credentialProjectionWithoutOutcome = {
+      ...credentialDefaultsScenario,
+      expected: {
+        ...credentialDefaultsScenario.expected,
+        output: { ...credentialDefaultsScenario.expected.output, json: jsonWithoutOutcome },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([credentialProjectionWithoutOutcome])).toContain(
+      `${credentialDefaultsScenario.id}: JSON projection requires an outcome`,
+    );
+
     const newBranchScenario = managedStackContractFixtures.find(
       ({ id }) => id === "identity.new-branch-first-start-creates-stack",
     );
@@ -743,6 +856,28 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([ordinaryFolderWithoutMarkerFact])).toContain(
       `${laterOrdinaryFolderStart.id}: ordinary-folder reuse must resolve its identity marker`,
+    );
+
+    const runtimeCreationScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "runtime.explicit-api-overrides-auto",
+    );
+    if (runtimeCreationScenario === undefined) {
+      throw new Error("runtime.explicit-api-overrides-auto fixture is required");
+    }
+    const runtimeCreationWithoutAbsentTarget = {
+      ...runtimeCreationScenario,
+      given: runtimeCreationScenario.given.filter((fact) => fact.kind !== "managed-target"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([runtimeCreationWithoutAbsentTarget])).toContain(
+      `${runtimeCreationScenario.id}: runtime creation must declare absent target stack-main-default`,
+    );
+
+    const runtimeCreationWithoutLegacyState = {
+      ...runtimeCreationScenario,
+      given: runtimeCreationScenario.given.filter((fact) => fact.kind !== "legacy-state"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([runtimeCreationWithoutLegacyState])).toContain(
+      `${runtimeCreationScenario.id}: runtime creation must declare legacy state absent`,
     );
   });
 
@@ -1053,6 +1188,9 @@ describe("managed stack acceptance contract", () => {
       expect(readFileSync(identityMarker, "utf8")).toBe('{"sentinel":true}\n');
       expect(readFileSync(registrySentinel, "utf8")).toBe('{"sentinel":true}\n');
       expect(existsSync(join(cacheRoot, "projects"))).toBe(false);
+      expect(readdirSync(cacheRoot).sort()).toEqual(["managed-registry.json"]);
+      expect(readdirSync(projectDir).sort()).toEqual([".git", ".supabase"]);
+      expect(readdirSync(join(projectDir, ".supabase")).sort()).toEqual(["identity.json"]);
     } finally {
       rmSync(testRoot, { recursive: true, force: true });
     }
