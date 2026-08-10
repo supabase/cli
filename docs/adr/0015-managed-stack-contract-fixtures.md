@@ -107,29 +107,40 @@ already declared by a checkout; new Git-derived contexts, manual ref replacement
 and recreation, detached-commit reuse, and selected linked worktrees must declare the relevant Git
 state or transition; selected contexts must agree with the active Git branch or an explicit
 checkout-scoped claim; ordinary folders must write their full untracked identity marker to the
-action workspace on creation and resolve it on reuse; branch deletion must bind the deleted ref to
-its checkout, Git state, context, and orphaned stack; managed and sticky port conflicts and
+action workspace on creation and resolve it on reuse, while Git workspaces cannot trust that local
+marker; copied-branch evidence must agree with whether the original branch still exists, read-only
+unregistered results require an absent checkout claim, and named-stack API entries must agree with
+their deterministic context and stack-ID results; branch deletion must bind the deleted ref to its
+checkout, Git state, context, and orphaned stack; managed and sticky port conflicts and
 persisted-runtime conflicts must
 identify their actual target; managed port ownership requires an owner stack ID that agrees with
 every projection; exact-port conflicts must bind the same configured, occupied, and projected port;
-sticky reuse and collision must bind the assignment key and port to the selected target, while an
-exact-port change must bind the previous assignment and newly configured value; a sibling automatic
-port allocation fixture must use unique service ports through the public managed start action without
-reusing sibling-owned ports; concurrent creation must bind its action target, contender count,
-result cardinality, and single-publication outcome to the declared race; persisted-runtime preflight
+sticky reuse and collision must bind automatic config intent, assignment key, assignment port, and
+the selected target, while an exact-port change must bind the previous assignment and newly
+configured value, including the transition from a removed exact key to sticky automatic state; a
+sibling automatic port allocation fixture must use unique service ports through the public managed
+start action without reusing sibling-owned ports; concurrent creation must bind its action target,
+contender count, result cardinality, and single-publication outcome to the declared race; persisted-runtime preflight
 failures must identify a stopped stack; a successful bootstrap retry must follow an explicit failed
-attempt that was rolled back; failed-copy rollback requires explicit failure injection; automatic
-runtime selection must reuse persisted state or follow Docker-then-qualified-native availability;
+attempt that was rolled back; failed-copy rollback requires explicit failure injection against an
+absent target and a compatible stopped legacy source; automatic runtime selection must reuse
+persisted state owned by the selected stack or follow Docker-then-qualified-native availability,
+and total automatic failure must project both declared unavailability reasons; successful explicit
+or configured runtime requests must match availability and every runtime/source projection, while
+runtime-drift reports must bind a running stack, its persisted runtime, the distinct configured
+runtime, and every service projection;
 native preflight results must agree with the action platform and complete qualified and failed
 service partitions;
 credential create, update, and copy operations must prove that global state contains references
-instead of plaintext, credential changes must bind distinct old and new references, and copied
-legacy credentials must retain their declared reference;
+instead of plaintext, credential changes must bind distinct old and new references, and local,
+persisted, and copied-legacy credentials must retain their declared reference and source;
 data-preserving prune must begin with mutable data and delete metadata only for an orphaned record
 with matching orphaned stack state; tracked identity markers
-must remain untouched; native qualification facts must partition the service matrix, use a declared
-platform, and match the platform passed to preflight; status operations must remain read-only
-reports; repository adapter matrices must be non-empty, unique, and match their declared repository
+must remain untouched; caller-provided state roots must agree with isolated managed options and the
+observed no-default-state boundary, and a CLI-projected managed status must begin from an active
+record, running stack, and matching persisted runtime; native qualification facts must partition the
+service matrix, use a declared platform, and match the platform passed to preflight; status
+operations must remain read-only reports; repository adapter matrices must be non-empty, unique, and match their declared repository
 facts while holding runtime and state-root options constant, and portable runtime matrices must
 satisfy the same rules against runtime facts while holding repository and state-root options
 constant, while
