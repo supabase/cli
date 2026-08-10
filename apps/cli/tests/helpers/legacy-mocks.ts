@@ -642,8 +642,17 @@ export function mockLegacyPlatformApiService(
     },
   });
 
+  // The legacy shell is a Go-parity port and only calls v1 operations, so v2
+  // has no stub support — any v2 call from legacy code is a wiring bug.
+  const v2Proxy = new Proxy({} as ApiClient["v2"], {
+    get(_target, prop: string) {
+      return () => Effect.die(`Unmocked LegacyPlatformApi.v2.${prop}`);
+    },
+  });
+
   const layer = Layer.succeed(LegacyPlatformApi, {
     v1: v1Proxy,
+    v2: v2Proxy,
     // Direct-service consumers don't exercise the raw-execute escape hatch.
     executeRaw: () => Effect.die("Unmocked LegacyPlatformApi.executeRaw"),
   } as ApiClient);
