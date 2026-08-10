@@ -99,13 +99,15 @@ target-existence facts cannot contradict stack facts;
 running-source and credential-drift reports must begin from running sources, idempotent deletion
 must begin from a tombstone, orphan deletion must target orphaned state, and failed-copy cleanup may
 delete only a target proven absent before the attempt; direct-stack root facts must agree with
-caller-supplied root inputs and temporary-state behavior;
+caller-supplied root inputs and temporary-state behavior, and disposing a direct stack whose roots
+were omitted must delete its declared temporary state;
 every state write and runtime effect must identify its target; contextual CLI stack results must
 bind their output to a selected target; Git identity writes must use the correct common or worktree
 scope, context writes must name the active branch as owner, and adapters cannot recreate an identity
 already declared by a checkout; new Git-derived contexts, manual ref replacement, branch deletion
 and recreation, detached-commit reuse, and selected linked worktrees must declare the relevant Git
-state or transition; selected contexts must agree with the active Git branch or an explicit
+state or transition; comparisons between branch contexts at one commit must declare both branch
+refs at that commit; selected contexts must agree with the active Git branch or an explicit
 checkout-scoped claim; ordinary folders must write their full untracked identity marker to the
 action workspace on creation and resolve it on reuse, while Git workspaces cannot trust that local
 marker; copied-branch evidence must agree with whether the original branch still exists, read-only

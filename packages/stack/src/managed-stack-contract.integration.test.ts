@@ -2981,6 +2981,332 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([standaloneGitReportsManagedDeletion])).toContain(
       `${standaloneGitScenario.id}: standalone Git action must remain outside managed lifecycle`,
     );
+
+    const recreatedBranchScenario = findScenario("identity.branch-delete-recreate-creates-context");
+    const recreatedBranchOrphansUnrelatedContext = {
+      ...recreatedBranchScenario,
+      expected: {
+        ...recreatedBranchScenario.expected,
+        details: { ...recreatedBranchScenario.expected.details, orphaned_context_id: "context-x" },
+        output: {
+          ...recreatedBranchScenario.expected.output,
+          json: {
+            ...recreatedBranchScenario.expected.output.json,
+            orphaned_context_id: "context-x",
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([recreatedBranchOrphansUnrelatedContext]),
+    ).toContain(
+      `${recreatedBranchScenario.id}: branch recreation must orphan the displaced context`,
+    );
+
+    const incompatibleLegacyScenario = findScenario("bootstrap.incompatible-legacy-starts-fresh");
+    const incompatibleLegacyReportsMutation = {
+      ...incompatibleLegacyScenario,
+      expected: {
+        ...incompatibleLegacyScenario.expected,
+        details: { ...incompatibleLegacyScenario.expected.details, legacy_state_mutated: true },
+        output: {
+          ...incompatibleLegacyScenario.expected.output,
+          json: {
+            ...incompatibleLegacyScenario.expected.output.json,
+            legacy_state_mutated: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([incompatibleLegacyReportsMutation])).toContain(
+      `${incompatibleLegacyScenario.id}: fresh bootstrap must not copy or mutate legacy state`,
+    );
+
+    const restartPersistedCredentialsScenario = findScenario(
+      "credentials.unchanged-values-survive-restart",
+    );
+    const persistedCredentialsRotate = {
+      ...restartPersistedCredentialsScenario,
+      expected: {
+        ...restartPersistedCredentialsScenario.expected,
+        details: {
+          ...restartPersistedCredentialsScenario.expected.details,
+          credentials_rotated: true,
+        },
+        output: {
+          ...restartPersistedCredentialsScenario.expected.output,
+          json: {
+            ...restartPersistedCredentialsScenario.expected.output.json,
+            credentials_unchanged: false,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([persistedCredentialsRotate])).toContain(
+      `${restartPersistedCredentialsScenario.id}: persisted credentials must survive restart unchanged`,
+    );
+
+    const freshAutomaticRuntimeScenario = findScenario("runtime.auto-prefers-docker");
+    const freshAutomaticRuntimeIsNotPersisted = {
+      ...freshAutomaticRuntimeScenario,
+      expected: {
+        ...freshAutomaticRuntimeScenario.expected,
+        details: { ...freshAutomaticRuntimeScenario.expected.details, persisted: false },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([freshAutomaticRuntimeIsNotPersisted])).toContain(
+      `${freshAutomaticRuntimeScenario.id}: fresh automatic runtime selection must be persisted`,
+    );
+
+    const resolvedNamesScenario = findScenario(
+      "identity.valid-stack-names-resolve-deterministically",
+    );
+    if (resolvedNamesScenario.when.interface !== "managed-api") {
+      throw new Error(
+        "identity.valid-stack-names-resolve-deterministically managed API fixture is required",
+      );
+    }
+    const resolvedNamesIncludeInvalidName = {
+      ...resolvedNamesScenario,
+      given: resolvedNamesScenario.given.map((fact) =>
+        fact.kind === "stack-names" ? { ...fact, names: ["default", "Review_42"] } : fact,
+      ),
+      when: {
+        ...resolvedNamesScenario.when,
+        input: { ...resolvedNamesScenario.when.input, stackNames: ["default", "Review_42"] },
+      },
+      expected: {
+        ...resolvedNamesScenario.expected,
+        details: {
+          default: "stack-feat-default",
+          Review_42: "stack-feat-review-42",
+        },
+        output: {
+          ...resolvedNamesScenario.expected.output,
+          api: {
+            default: { contextId: "context-feat", stackId: "stack-feat-default" },
+            Review_42: { contextId: "context-feat", stackId: "stack-feat-review-42" },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([resolvedNamesIncludeInvalidName])).toContain(
+      `${resolvedNamesScenario.id}: requested stack names must match their fact and projected results`,
+    );
+
+    const runtimeInputScenario = findScenario("runtime.explicit-api-overrides-auto");
+    const authInputScenario = findScenario("credentials.configured-values-are-authoritative");
+    const portInputScenario = findScenario("ports.explicit-free-port-is-used");
+    if (
+      runtimeInputScenario.when.interface !== "managed-api" ||
+      authInputScenario.when.interface !== "managed-api" ||
+      portInputScenario.when.interface !== "managed-api"
+    ) {
+      throw new Error("startStack managed API fixtures are required");
+    }
+    const invalidStartInputs = [
+      {
+        ...runtimeInputScenario,
+        when: {
+          ...runtimeInputScenario.when,
+          input: { ...runtimeInputScenario.when.input, runtime: 42 },
+        },
+      } satisfies ManagedStackContractScenario,
+      {
+        ...authInputScenario,
+        when: {
+          ...authInputScenario.when,
+          input: { ...authInputScenario.when.input, auth: 42 },
+        },
+      } satisfies ManagedStackContractScenario,
+      {
+        ...portInputScenario,
+        when: {
+          ...portInputScenario.when,
+          input: { ...portInputScenario.when.input, portIntents: "invalid" },
+        },
+      } satisfies ManagedStackContractScenario,
+    ];
+    for (const invalidStartInput of invalidStartInputs) {
+      expect(validateManagedStackContractFixtures([invalidStartInput])).toContain(
+        `${invalidStartInput.id}: managed action must use a declared public method`,
+      );
+    }
+
+    const nativeAutomaticScenario = findScenario("runtime.auto-selects-fully-qualified-native");
+    const nativeAutomaticReportsPartialGraph = {
+      ...nativeAutomaticScenario,
+      expected: {
+        ...nativeAutomaticScenario.expected,
+        details: {
+          ...nativeAutomaticScenario.expected.details,
+          qualified_service_count: 1,
+          mixed_runtime: true,
+        },
+        output: {
+          ...nativeAutomaticScenario.expected.output,
+          api: { ...nativeAutomaticScenario.expected.output.api, qualifiedServiceCount: 1 },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([nativeAutomaticReportsPartialGraph])).toContain(
+      `${nativeAutomaticScenario.id}: automatic native selection must bind the full qualified graph`,
+    );
+
+    const symlinkAliasScenario = findScenario("identity.symlink-alias-reuses-checkout");
+    const symlinkAliasReportsUnrelatedPath = {
+      ...symlinkAliasScenario,
+      expected: {
+        ...symlinkAliasScenario.expected,
+        output: {
+          ...symlinkAliasScenario.expected.output,
+          json: { ...symlinkAliasScenario.expected.output.json, canonical_path: "/other/project" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([symlinkAliasReportsUnrelatedPath])).toContain(
+      `${symlinkAliasScenario.id}: symlink alias must report its canonical checkout path`,
+    );
+
+    const firstDeletionScenario = findScenario("reclamation.delete-orphan-by-stack-id");
+    const firstDeletionHidesTombstone = {
+      ...firstDeletionScenario,
+      expected: {
+        ...firstDeletionScenario.expected,
+        details: { ...firstDeletionScenario.expected.details, tombstoned: false },
+        output: {
+          ...firstDeletionScenario.expected.output,
+          human: {
+            ...firstDeletionScenario.expected.output.human!,
+            fields: {
+              ...firstDeletionScenario.expected.output.human!.fields,
+              tombstoned: "false",
+            },
+          },
+          json: { ...firstDeletionScenario.expected.output.json, tombstoned: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([firstDeletionHidesTombstone])).toContain(
+      `${firstDeletionScenario.id}: registry tombstone must be reported by every projection`,
+    );
+
+    const injectedServiceScenario = findScenario(
+      "api-boundary.managed-api-accepts-injected-repository",
+    );
+    const injectedServiceRequiresCli = {
+      ...injectedServiceScenario,
+      expected: {
+        ...injectedServiceScenario.expected,
+        details: { ...injectedServiceScenario.expected.details, cli_required: true },
+        output: {
+          ...injectedServiceScenario.expected.output,
+          api: { ...injectedServiceScenario.expected.output.api, cliRequired: true },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([injectedServiceRequiresCli])).toContain(
+      `${injectedServiceScenario.id}: injected repository and state root must match the observed managed service`,
+    );
+
+    const sameCommitScenario = findScenario(
+      "identity.same-commit-different-branches-are-independent",
+    );
+    const sameCommitScenarioHasDifferentCheckedOutCommit = {
+      ...sameCommitScenario,
+      given: sameCommitScenario.given.map((fact) =>
+        fact.kind === "git-state" ? { ...fact, commit: "unrelated-commit" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([sameCommitScenarioHasDifferentCheckedOutCommit]),
+    ).toContain(
+      `${sameCommitScenario.id}: branch comparison must prove both refs share the checked-out commit`,
+    );
+
+    const ordinaryFolderScenario = findScenario(
+      "identity.non-git-folder-first-start-persists-identity",
+    );
+    const ordinaryFolderTracksMarker = {
+      ...ordinaryFolderScenario,
+      expected: {
+        ...ordinaryFolderScenario.expected,
+        details: { ...ordinaryFolderScenario.expected.details, identity_marker_tracked: true },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ordinaryFolderTracksMarker])).toContain(
+      `${ordinaryFolderScenario.id}: ordinary-folder identity marker must remain untracked`,
+    );
+
+    const runningLegacyNoMutationScenario = findScenario(
+      "bootstrap.running-legacy-source-fails-without-mutation",
+    );
+    const runningLegacyReportsPartialTarget = {
+      ...runningLegacyNoMutationScenario,
+      expected: {
+        ...runningLegacyNoMutationScenario.expected,
+        details: {
+          ...runningLegacyNoMutationScenario.expected.details,
+          managed_target_published: true,
+          partial_state: true,
+        },
+        output: {
+          ...runningLegacyNoMutationScenario.expected.output,
+          json: {
+            ...runningLegacyNoMutationScenario.expected.output.json,
+            managed_target_published: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([runningLegacyReportsPartialTarget])).toContain(
+      `${runningLegacyNoMutationScenario.id}: running legacy error must leave no partial managed target`,
+    );
+
+    const copiedBranchWarningScenario = findScenario(
+      "identity.branch-copy-read-only-does-not-write",
+    );
+    const copiedBranchWarningReportsUnrelatedOwners = {
+      ...copiedBranchWarningScenario,
+      expected: {
+        ...copiedBranchWarningScenario.expected,
+        output: {
+          ...copiedBranchWarningScenario.expected.output,
+          json: {
+            ...copiedBranchWarningScenario.expected.output.json,
+            branch: "unrelated-branch",
+            owner: "unrelated-owner",
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([copiedBranchWarningReportsUnrelatedOwners]),
+    ).toContain(
+      `${copiedBranchWarningScenario.id}: copied branch warning must bind observed branch ownership`,
+    );
+
+    const directDisposalScenario = findScenario(
+      "api-boundary.direct-dispose-removes-temporary-roots",
+    );
+    const directDisposalLeaksTemporaryRoots = {
+      ...directDisposalScenario,
+      expected: {
+        ...directDisposalScenario.expected,
+        writes: [],
+        details: { ...directDisposalScenario.expected.details, temporary_roots_removed: false },
+        output: {
+          ...directDisposalScenario.expected.output,
+          api: {
+            ...directDisposalScenario.expected.output.api,
+            temporaryRootsRemoved: false,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([directDisposalLeaksTemporaryRoots])).toContain(
+      `${directDisposalScenario.id}: direct stack disposal must remove omitted temporary roots`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
@@ -3267,6 +3593,7 @@ describe("managed stack acceptance contract", () => {
       [
         "api-boundary.cli-projects-shared-managed-results",
         "api-boundary.direct-create-stack-is-ephemeral",
+        "api-boundary.direct-dispose-removes-temporary-roots",
         "api-boundary.managed-api-accepts-injected-repository",
         "api-boundary.managed-api-accepts-isolated-state-root",
         "api-boundary.managed-surface-is-node-and-bun-portable",

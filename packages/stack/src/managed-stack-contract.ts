@@ -96,6 +96,11 @@ export type ManagedStackContractFact =
       readonly checkedOut: boolean;
     }
   | {
+      readonly kind: "branch-ref";
+      readonly name: string;
+      readonly commit: string;
+    }
+  | {
       readonly kind: "stack";
       readonly name: string;
       readonly stackId: string;
@@ -189,6 +194,13 @@ export type ManagedStackContractFact =
       readonly roots: "explicit" | "omitted";
     }
   | {
+      readonly kind: "direct-stack-state";
+      readonly handle: string;
+      readonly stateId: string;
+      readonly roots: "temporary";
+      readonly lifecycle: "created";
+    }
+  | {
       readonly kind: "managed-api-options";
       readonly stateRoot: "default" | "isolated";
       readonly stateRootPath?: string;
@@ -227,7 +239,7 @@ type ManagedStackContractWrite =
     }
   | {
       readonly target: "ephemeral-state";
-      readonly operation: "create";
+      readonly operation: "create" | "delete";
       readonly id: string;
     }
   | {
@@ -497,15 +509,27 @@ export const validateManagedStackContractFixtures = (
           typeof input.cwd === "string" &&
           typeof input.stackName === "string" &&
           typeof input.contenders === "number") ||
-        (method === "startStack" && typeof input.stackId === "string");
+        (method === "startStack" &&
+          typeof input.stackId === "string" &&
+          (input.auth === undefined || typeof input.auth === "string") &&
+          (input.injectCopyFailure === undefined || typeof input.injectCopyFailure === "boolean") &&
+          (input.portIntents === undefined || isManagedStackContractRecord(input.portIntents)) &&
+          (input.runtime === undefined ||
+            input.runtime === "auto" ||
+            input.runtime === "docker" ||
+            input.runtime === "native"));
       const inputUsesOnlyDeclaredKeys = Object.keys(input).every((key) =>
         allowedInputKeys[method]?.has(key),
       );
       if (!managedMethods.has(method) || !inputMatchesMethod || !inputUsesOnlyDeclaredKeys) {
         errors.push(`${scenario.id}: managed action must use a declared public method`);
       }
-    } else if (scenario.when.interface === "stack-api" && scenario.when.method !== "createStack") {
-      errors.push(`${scenario.id}: direct stack action must use createStack`);
+    } else if (
+      scenario.when.interface === "stack-api" &&
+      scenario.when.method !== "createStack" &&
+      scenario.when.method !== "dispose"
+    ) {
+      errors.push(`${scenario.id}: direct stack action must use createStack or dispose`);
     }
 
     if (scenario.when.interface === "cli") {
@@ -667,6 +691,33 @@ export const validateManagedStackContractFixtures = (
         scenario.expected.runtimeEffects.length > 0
       ) {
         errors.push(`${scenario.id}: direct createStack must remain isolated from managed state`);
+      }
+    }
+    if (scenario.when.interface === "stack-api" && scenario.when.method === "dispose") {
+      const handle = scenario.when.input.handle;
+      const directState = scenario.given.find(
+        (fact) => fact.kind === "direct-stack-state" && fact.handle === handle,
+      );
+      if (
+        typeof handle !== "string" ||
+        directState?.kind !== "direct-stack-state" ||
+        directState.roots !== "temporary" ||
+        directState.lifecycle !== "created" ||
+        scenario.expected.outcome !== "delete" ||
+        !scenario.expected.writes.some(
+          (write) =>
+            write.target === "ephemeral-state" &&
+            write.operation === "delete" &&
+            write.id === directState.stateId,
+        ) ||
+        scenario.expected.writes.some((write) => write.target !== "ephemeral-state") ||
+        scenario.expected.runtimeEffects.length > 0 ||
+        scenario.expected.details?.temporary_roots_removed !== true ||
+        output.api?.handle !== handle ||
+        output.api.disposed !== true ||
+        output.api.temporaryRootsRemoved !== true
+      ) {
+        errors.push(`${scenario.id}: direct stack disposal must remove omitted temporary roots`);
       }
     }
     for (const write of scenario.expected.writes) {
@@ -901,6 +952,26 @@ export const validateManagedStackContractFixtures = (
                 ? "native"
                 : undefined;
       if (
+        persistedRuntime === undefined &&
+        resolvedRuntime !== undefined &&
+        scenario.expected.outcome !== "error" &&
+        scenario.expected.details?.persisted !== true
+      ) {
+        errors.push(`${scenario.id}: fresh automatic runtime selection must be persisted`);
+      }
+      if (
+        resolvedRuntime === "native" &&
+        nativeQualification?.kind === "native-qualification" &&
+        (scenario.expected.details?.qualified_service_count !==
+          nativeQualification.qualifiedServices.length ||
+          scenario.expected.details.mixed_runtime !== false ||
+          output.api?.qualifiedServiceCount !== nativeQualification.qualifiedServices.length)
+      ) {
+        errors.push(
+          `${scenario.id}: automatic native selection must bind the full qualified graph`,
+        );
+      }
+      if (
         persistedRuntime?.kind === "persisted-runtime" &&
         persistedAvailability?.kind === "runtime-availability" &&
         persistedAvailability.available &&
@@ -1039,7 +1110,9 @@ export const validateManagedStackContractFixtures = (
             write.operation === "create" &&
             write.id === repositoryId,
         ) ||
-        output.api?.repository !== repositoryId
+        output.api?.repository !== repositoryId ||
+        scenario.expected.details?.cli_required !== false ||
+        output.api.cliRequired !== false
       ) {
         errors.push(
           `${scenario.id}: injected repository and state root must match the observed managed service`,
@@ -1058,6 +1131,9 @@ export const validateManagedStackContractFixtures = (
       if (
         !Array.isArray(requestedNames) ||
         !requestedNames.every((name) => typeof name === "string") ||
+        !requestedNames.every(
+          (name) => typeof name === "string" && managedStackNamePattern.test(name),
+        ) ||
         declaredNames?.kind !== "stack-names" ||
         !managedStackContractStringSetEquals(requestedNames, declaredNames.names) ||
         !managedStackContractStringSetEquals(requestedNames, detailKeys) ||
@@ -1394,6 +1470,9 @@ export const validateManagedStackContractFixtures = (
             declaredIds.add(fact.previousValuesId);
           }
           break;
+        case "direct-stack-state":
+          declaredIds.add(fact.stateId);
+          break;
         case "identity-claim":
           if (fact.status !== "absent") {
             declaredIds.add(fact.id);
@@ -1513,6 +1592,27 @@ export const validateManagedStackContractFixtures = (
           `${scenario.id}: copied branch transition must match live original and checked-out branch facts`,
         );
       }
+      if (scenario.expected.warning?.code === "copied_branch_context_conflict") {
+        const originalClaim = scenario.given.find(
+          (fact) =>
+            fact.kind === "identity-claim" &&
+            fact.scope === "context" &&
+            fact.status === "exact" &&
+            fact.owner === branchCopy.from,
+        );
+        if (
+          typeof branchCopy.from !== "string" ||
+          typeof branchCopy.to !== "string" ||
+          originalClaim?.kind !== "identity-claim" ||
+          scenario.expected.warning.message !==
+            `${branchCopy.to} copied ${originalClaim.id} from ${branchCopy.from}` ||
+          output.json?.branch !== branchCopy.to ||
+          output.json.owner !== branchCopy.from ||
+          output.json.context_id !== originalClaim.id
+        ) {
+          errors.push(`${scenario.id}: copied branch warning must bind observed branch ownership`);
+        }
+      }
     }
     if (
       scenario.when.interface === "managed-api" &&
@@ -1532,6 +1632,28 @@ export const validateManagedStackContractFixtures = (
     const branchRename = scenario.given.find(
       (fact) => fact.kind === "identity-transition" && fact.operation === "branch-rename",
     );
+    const branchRecreation = scenario.given.find(
+      (fact) => fact.kind === "identity-transition" && fact.operation === "branch-delete-recreate",
+    );
+    if (branchRecreation?.kind === "identity-transition") {
+      const displacedContext = scenario.given.find(
+        (fact) =>
+          fact.kind === "identity-claim" &&
+          fact.scope === "context" &&
+          fact.status === "absent" &&
+          fact.owner === branchRecreation.from,
+      );
+      if (
+        typeof branchRecreation.from !== "string" ||
+        typeof branchRecreation.to !== "string" ||
+        branchRecreation.from !== branchRecreation.to ||
+        displacedContext?.kind !== "identity-claim" ||
+        scenario.expected.details?.orphaned_context_id !== displacedContext.id ||
+        output.json?.orphaned_context_id !== displacedContext.id
+      ) {
+        errors.push(`${scenario.id}: branch recreation must orphan the displaced context`);
+      }
+    }
     if (branchRename?.kind === "identity-transition") {
       const renamedContextWrite = scenario.expected.writes.find(
         (write) =>
@@ -1566,6 +1688,63 @@ export const validateManagedStackContractFixtures = (
         refReplacement.to !== actionGitState.commit)
     ) {
       errors.push(`${scenario.id}: ref replacement target must match the action workspace commit`);
+    }
+    const branchRefs = scenario.given.filter((fact) => fact.kind === "branch-ref");
+    if (branchRefs.length > 0) {
+      const comparedBranches = scenario.given.filter(
+        (fact) =>
+          fact.kind === "branch" &&
+          !fact.checkedOut &&
+          branchRefs.some((ref) => ref.name === fact.name),
+      );
+      const comparedBranch = comparedBranches.length === 1 ? comparedBranches[0] : undefined;
+      const checkedOutRef =
+        checkedOutBranch?.kind === "branch"
+          ? branchRefs.find((fact) => fact.name === checkedOutBranch.name)
+          : undefined;
+      const comparedRef =
+        comparedBranch?.kind === "branch"
+          ? branchRefs.find((fact) => fact.name === comparedBranch.name)
+          : undefined;
+      if (
+        branchRefs.length !== 2 ||
+        comparedBranches.length !== 1 ||
+        actionGitState?.kind !== "git-state" ||
+        checkedOutBranch?.kind !== "branch" ||
+        comparedBranch?.kind !== "branch" ||
+        checkedOutRef?.kind !== "branch-ref" ||
+        comparedRef?.kind !== "branch-ref" ||
+        checkedOutRef.commit !== actionGitState.commit ||
+        comparedRef.commit !== actionGitState.commit ||
+        output.api?.otherContextId !== comparedBranch.contextId
+      ) {
+        errors.push(
+          `${scenario.id}: branch comparison must prove both refs share the checked-out commit`,
+        );
+      }
+    }
+    const symlinkAlias = scenario.given.find(
+      (fact) => fact.kind === "identity-transition" && fact.operation === "symlink-alias",
+    );
+    if (symlinkAlias?.kind === "identity-transition") {
+      const aliasWorkspace = scenario.given.find(
+        (fact) => fact.kind === "workspace" && fact.path === symlinkAlias.to,
+      );
+      const canonicalClaim = scenario.given.find(
+        (fact) =>
+          fact.kind === "identity-claim" &&
+          fact.scope === "checkout" &&
+          fact.status === "exact" &&
+          fact.path === symlinkAlias.from,
+      );
+      if (
+        aliasWorkspace?.kind !== "workspace" ||
+        aliasWorkspace.canonicalPath !== symlinkAlias.from ||
+        canonicalClaim?.kind !== "identity-claim" ||
+        output.json?.canonical_path !== symlinkAlias.from
+      ) {
+        errors.push(`${scenario.id}: symlink alias must report its canonical checkout path`);
+      }
     }
     if (scenario.expected.error?.code === "ambiguous_context_owner") {
       const projectedContextId = output.json?.context_id;
@@ -1959,6 +2138,9 @@ export const validateManagedStackContractFixtures = (
       ) {
         errors.push(`${scenario.id}: Git workspace identity must use Git-local metadata`);
       }
+      if (scenario.expected.details?.identity_marker_tracked !== false) {
+        errors.push(`${scenario.id}: ordinary-folder identity marker must remain untracked`);
+      }
     }
 
     if (scenario.expected.outcome !== "create") {
@@ -2043,6 +2225,21 @@ export const validateManagedStackContractFixtures = (
         errors.push(
           `${scenario.id}: managed creation must declare legacy state absent or incompatible`,
         );
+      }
+      if (
+        legacyState?.kind === "legacy-state" &&
+        legacyState.lifecycle === "stopped" &&
+        (legacyState.database === "incompatible" ||
+          legacyState.storage === "incompatible" ||
+          legacyState.credentials === "incompatible") &&
+        (scenario.expected.details?.legacy_state_mutated !== false ||
+          output.json?.legacy_state_mutated !== false ||
+          scenario.expected.writes.some(
+            (write) => write.target === "managed-state" && write.operation === "copy",
+          ) ||
+          scenario.expected.runtimeEffects.some((effect) => effect.operation === "copy"))
+      ) {
+        errors.push(`${scenario.id}: fresh bootstrap must not copy or mutate legacy state`);
       }
     }
 
@@ -2991,25 +3188,45 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "legacy_source_running") {
-      const legacySource = scenario.given.find((fact) => fact.kind === "legacy-state");
-      const absentTarget = scenario.given.find(
-        (fact) => fact.kind === "managed-target" && fact.exists === false,
-      );
+    const legacySource = scenario.given.find((fact) => fact.kind === "legacy-state");
+    const absentManagedTarget = scenario.given.find(
+      (fact) => fact.kind === "managed-target" && fact.exists === false,
+    );
+    if (
+      scenario.expected.error?.code === "legacy_source_running" ||
+      (isManagedStartAction(scenario.when) &&
+        legacySource?.kind === "legacy-state" &&
+        legacySource.lifecycle === "running" &&
+        absentManagedTarget?.kind === "managed-target")
+    ) {
       if (
         legacySource?.kind !== "legacy-state" ||
         legacySource.lifecycle !== "running" ||
-        absentTarget?.kind !== "managed-target" ||
+        absentManagedTarget?.kind !== "managed-target" ||
         scenario.given.some(
           (fact) =>
-            fact.kind === "managed-target" && fact.stackId === absentTarget.stackId && fact.exists,
+            fact.kind === "managed-target" &&
+            absentManagedTarget?.kind === "managed-target" &&
+            fact.stackId === absentManagedTarget.stackId &&
+            fact.exists,
         ) ||
+        scenario.expected.outcome !== "error" ||
+        scenario.expected.error?.code !== "legacy_source_running" ||
         scenario.expected.writes.length > 0 ||
         scenario.expected.runtimeEffects.length > 0
       ) {
         errors.push(
           `${scenario.id}: running legacy error requires a running source and absent target`,
         );
+      }
+      if (
+        scenario.expected.details?.legacy_source_stopped !== false ||
+        scenario.expected.details.managed_target_published !== false ||
+        scenario.expected.details.partial_state !== false ||
+        output.json?.legacy_source_stopped !== false ||
+        output.json.managed_target_published !== false
+      ) {
+        errors.push(`${scenario.id}: running legacy error must leave no partial managed target`);
       }
 
       const configuredPort = scenario.given.find(
@@ -3252,6 +3469,17 @@ export const validateManagedStackContractFixtures = (
         output.json?.credentials_stable !== true)
     ) {
       errors.push(`${scenario.id}: omitted credentials must reuse stable local defaults`);
+    }
+    const persistedCredentials = scenario.given.find(
+      (fact) => fact.kind === "credential-state" && fact.source === "persisted",
+    );
+    if (
+      persistedCredentials?.kind === "credential-state" &&
+      (scenario.expected.details?.credential_values_id !== persistedCredentials.valuesId ||
+        scenario.expected.details.credentials_rotated !== false ||
+        output.json?.credentials_unchanged !== true)
+    ) {
+      errors.push(`${scenario.id}: persisted credentials must survive restart unchanged`);
     }
     if (
       changedCredentials?.kind === "credential-state" &&
@@ -3524,6 +3752,15 @@ export const validateManagedStackContractFixtures = (
         )
       ) {
         errors.push(`${scenario.id}: registry tombstone requires managed-state deletion`);
+      }
+      if (
+        write.target === "registry" &&
+        write.operation === "tombstone" &&
+        (scenario.expected.details?.tombstoned !== true ||
+          (output.json !== undefined && output.json.tombstoned !== true) ||
+          (output.human !== undefined && output.human.fields.tombstoned !== "true"))
+      ) {
+        errors.push(`${scenario.id}: registry tombstone must be reported by every projection`);
       }
 
       const requiredRuntimeOperation =
@@ -3991,6 +4228,8 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "branch", name: "main", contextId: "context-main", checkedOut: false },
       { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: true },
+      { kind: "branch-ref", name: "main", commit: "shared-commit" },
+      { kind: "branch-ref", name: "feat-a", commit: "shared-commit" },
       {
         kind: "stack",
         name: "default",
@@ -5790,7 +6029,12 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       },
       writes: [],
       runtimeEffects: [],
-      details: { allocation_attempted: false, legacy_source_stopped: false },
+      details: {
+        allocation_attempted: false,
+        legacy_source_stopped: false,
+        managed_target_published: false,
+        partial_state: false,
+      },
       output: {
         json: {
           outcome: "error",
@@ -5798,6 +6042,8 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
           port: 54321,
           config_key: "api.port",
           allocation_attempted: false,
+          legacy_source_stopped: false,
+          managed_target_published: false,
           recovery: ["Stop the legacy stack, then retry supabase start --experimental"],
         },
       },
@@ -5968,7 +6214,12 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
-      details: { resolved_runtime: "native", qualified_service_count: 13, mixed_runtime: false },
+      details: {
+        resolved_runtime: "native",
+        qualified_service_count: 13,
+        mixed_runtime: false,
+        persisted: true,
+      },
       output: {
         api: { stackId: "stack-main-default", runtime: "native", qualifiedServiceCount: 13 },
       },
@@ -7860,6 +8111,38 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         api: {
           handle: "stack-handle",
           state_root: "temporary",
+        },
+      },
+    },
+  },
+  {
+    id: "api-boundary.direct-dispose-removes-temporary-roots",
+    title: "Disposing a direct stack removes every omitted temporary root",
+    area: "api-boundary",
+    given: [
+      {
+        kind: "direct-stack-state",
+        handle: "stack-handle",
+        stateId: "ephemeral-stack",
+        roots: "temporary",
+        lifecycle: "created",
+      },
+    ],
+    when: {
+      interface: "stack-api",
+      method: "dispose",
+      input: { handle: "stack-handle" },
+    },
+    expected: {
+      outcome: "delete",
+      writes: [{ target: "ephemeral-state", operation: "delete", id: "ephemeral-stack" }],
+      runtimeEffects: [],
+      details: { temporary_roots_removed: true },
+      output: {
+        api: {
+          handle: "stack-handle",
+          disposed: true,
+          temporaryRootsRemoved: true,
         },
       },
     },
