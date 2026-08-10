@@ -25,21 +25,17 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * (`shared/functions/serve.ts`'s `startEdgeRuntimeContainer` — a `docker run
  * -d`, not `docker create`+`docker start`, which bind-mounts its env-file/
  * multiline-env-script/serve-main-template artifacts rather than copying
- * their content in) and for the shadow database's own staged pgsodium root
- * key (`db-bootstrap/shadow-database.ts`'s `legacyCreateShadowDatabase`,
- * CLI-1956) — this function has no way to distinguish which producer staged
- * a given container's directory, nor does it need to: a directory that was
- * never staged in the first place is a harmless no-op (see below).
+ * their content in) — this function has no way to distinguish which
+ * producer staged a given container's directory, nor does it need to: a
+ * directory that was never staged in the first place is a harmless no-op (see
+ * below).
  *
  * Hoisted here (`legacy/shared/`) per `apps/cli/CLAUDE.md`'s "Hoist Before
  * You Duplicate" rule: both `start`'s own rollback (`legacy/shared/db-bootstrap/rollback.ts`) and
  * `stop` (`stop.handler.ts`) need this same cleanup.
  *
  * Each container's own directory is resolved as `<workdir>/supabase/.temp/
- * start-secrets/<dirId>`, where `dirId` is `container.secretDirId` when present
- * (an unnamed container's own `LEGACY_CLI_SECRET_DIR_LABEL` value — see that
- * constant's doc comment for why `container.name` can't be used for one of
- * those) and `container.name` otherwise, and `workdir` is that container's own
+ * start-secrets/<name>`, where `workdir` is that container's own
  * `LEGACY_CLI_WORKDIR_LABEL` value (see that constant's doc comment) — NOT
  * necessarily `fallbackWorkdir` (the caller's own `LegacyCliConfig.workdir`).
  * A caller tearing down containers by an explicit `--project-id`/`--all`
@@ -64,22 +60,18 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * --project-id`/rollback isn't tearing down.
  *
  * Never fails: a directory that was never staged (every service besides Edge
- * Runtime and the shadow database) is a harmless no-op, and a real deletion
- * error is not worth failing `stop`/rollback over.
+ * Runtime) is a harmless no-op, and a real deletion error is not worth
+ * failing `stop`/rollback over.
  *
- * `dirId` is a Docker label value read back off whatever containers matched
- * the caller's label filter (`legacyListContainerIdsAndNames`) — external
- * metadata, not something this function generated itself, so it cannot be
- * trusted as a bare path segment. A container that matches the project-label
- * filter (any container can carry that label; Docker doesn't scope who may
- * set it) but carries a crafted `LEGACY_CLI_SECRET_DIR_LABEL` value containing
- * `..` segments must never be able to walk the subsequent `rm -rf` outside
- * `start-secrets/` and onto arbitrary host paths. Resolve the candidate and
- * require it to be a direct child of the staging root before deleting it —
- * same defence-in-depth shape as `bootstrap.templates.ts`'s identical guard
- * against a GitHub-supplied path escaping its target directory. This also
- * covers the degenerate case where `dirId` ends up empty (would otherwise
- * resolve to the staging root itself and wipe every project's secrets).
+ * `container.name` is a `docker ps` field value read back off whatever containers matched
+ * the caller's label filter (`legacyListContainerIdsAndNames`) — external metadata, not
+ * something this function generated itself, so it cannot be trusted as a bare path segment
+ * without a defence-in-depth check. Resolve the candidate and require it to be a direct
+ * child of the staging root before deleting it — same defence-in-depth shape as
+ * `bootstrap.templates.ts`'s identical guard against a GitHub-supplied path escaping its
+ * target directory. This also covers the degenerate case where `container.name` ends up
+ * empty (would otherwise resolve to the staging root itself and wipe every project's
+ * secrets).
  */
 export function legacyCleanupStartSecrets(
   containers: ReadonlyArray<LegacyContainerIdName>,
@@ -89,9 +81,8 @@ export function legacyCleanupStartSecrets(
     Promise.all(
       containers.map((container) => {
         const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
-        const dirId = container.secretDirId.length > 0 ? container.secretDirId : container.name;
         const stagingRoot = resolve(workdir, "supabase", ".temp", "start-secrets");
-        const target = resolve(stagingRoot, dirId);
+        const target = resolve(stagingRoot, container.name);
         if (target === stagingRoot || !target.startsWith(stagingRoot + sep)) {
           return Promise.resolve();
         }

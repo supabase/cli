@@ -167,49 +167,36 @@ describe("legacyListContainersByLabel", () => {
 });
 
 describe("legacyListContainerIdsAndNames", () => {
-  it.live(
-    "parses id, name, and the com.supabase.cli.workdir/secret-dir labels from a single ps call",
-    () => {
-      const mock = mockSpawner({
-        stdout:
-          "abc123\tsupabase_kong_demo\t/home/user/demo\t\ndef456\tsupabase_db_demo\t/home/user/demo\t\n",
-      });
-      return legacyListContainerIdsAndNames(mock.spawner, {
-        projectIdFilter: "com.supabase.cli.project=demo",
-        all: true,
-      }).pipe(
-        Effect.map((containers) => {
-          expect(containers).toEqual([
-            {
-              id: "abc123",
-              name: "supabase_kong_demo",
-              workdir: "/home/user/demo",
-              secretDirId: "",
-            },
-            {
-              id: "def456",
-              name: "supabase_db_demo",
-              workdir: "/home/user/demo",
-              secretDirId: "",
-            },
-          ]);
-          expect(mock.spawned).toEqual([
-            {
-              command: "docker",
-              args: [
-                "ps",
-                "--filter",
-                "label=com.supabase.cli.project=demo",
-                "--all",
-                "--format",
-                '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}\t{{.Label "com.supabase.cli.secret-dir"}}',
-              ],
-            },
-          ]);
-        }),
-      );
-    },
-  );
+  it.live("parses id, name, and the com.supabase.cli.workdir label from a single ps call", () => {
+    const mock = mockSpawner({
+      stdout:
+        "abc123\tsupabase_kong_demo\t/home/user/demo\ndef456\tsupabase_db_demo\t/home/user/demo\n",
+    });
+    return legacyListContainerIdsAndNames(mock.spawner, {
+      projectIdFilter: "com.supabase.cli.project=demo",
+      all: true,
+    }).pipe(
+      Effect.map((containers) => {
+        expect(containers).toEqual([
+          { id: "abc123", name: "supabase_kong_demo", workdir: "/home/user/demo" },
+          { id: "def456", name: "supabase_db_demo", workdir: "/home/user/demo" },
+        ]);
+        expect(mock.spawned).toEqual([
+          {
+            command: "docker",
+            args: [
+              "ps",
+              "--filter",
+              "label=com.supabase.cli.project=demo",
+              "--all",
+              "--format",
+              '{{.ID}}\t{{.Names}}\t{{.Label "com.supabase.cli.workdir"}}',
+            ],
+          },
+        ]);
+      }),
+    );
+  });
 
   it.live(
     "resolves an empty workdir for a container carrying no com.supabase.cli.workdir label",
@@ -218,44 +205,13 @@ describe("legacyListContainerIdsAndNames", () => {
       // label — a container `start` created before this label existed, or one a Go binary
       // created. `legacyCleanupStartSecrets` treats this empty string as "fall back to the
       // caller's own workdir" (see that function's doc comment).
-      const mock = mockSpawner({ stdout: "abc123\tsupabase_kong_demo\t\t\n" });
+      const mock = mockSpawner({ stdout: "abc123\tsupabase_kong_demo\t\n" });
       return legacyListContainerIdsAndNames(mock.spawner, {
         projectIdFilter: "com.supabase.cli.project=demo",
         all: true,
       }).pipe(
         Effect.map((containers) => {
-          expect(containers).toEqual([
-            { id: "abc123", name: "supabase_kong_demo", workdir: "", secretDirId: "" },
-          ]);
-        }),
-      );
-    },
-  );
-
-  it.live(
-    "parses a non-empty com.supabase.cli.secret-dir label for an unnamed shadow container",
-    () => {
-      // The shadow database is created with no name (Docker auto-generates one) and stages its
-      // secrets under a randomized `shadow-<uuid>` id it stamps onto this label (see
-      // `LEGACY_CLI_SECRET_DIR_LABEL`'s own doc comment) precisely so a later orphan-reaping
-      // `stop` can still find it (review: PRRT_kwDOErm0O86W8ZYt).
-      const mock = mockSpawner({
-        stdout:
-          "abc123\tsad_turing\t/home/user/demo\tshadow-11111111-1111-1111-1111-111111111111\n",
-      });
-      return legacyListContainerIdsAndNames(mock.spawner, {
-        projectIdFilter: "com.supabase.cli.project=demo",
-        all: true,
-      }).pipe(
-        Effect.map((containers) => {
-          expect(containers).toEqual([
-            {
-              id: "abc123",
-              name: "sad_turing",
-              workdir: "/home/user/demo",
-              secretDirId: "shadow-11111111-1111-1111-1111-111111111111",
-            },
-          ]);
+          expect(containers).toEqual([{ id: "abc123", name: "supabase_kong_demo", workdir: "" }]);
         }),
       );
     },

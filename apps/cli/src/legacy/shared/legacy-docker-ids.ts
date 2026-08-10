@@ -127,26 +127,6 @@ export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
 export const LEGACY_CLI_WORKDIR_LABEL = "com.supabase.cli.workdir";
 
 /**
- * TS-port-only Docker label (no Go equivalent, same reasoning as {@link
- * LEGACY_CLI_WORKDIR_LABEL}) recording a randomized fallback identifier for a container
- * created WITHOUT a name (`container-lifecycle.ts`'s `legacyCreateContainer` fallback path
- * — today, only the `db diff`/`db pull` shadow database, see
- * `db-bootstrap/shadow-database.ts`'s `legacyCreateShadowDatabase`). Originally introduced
- * so an orphaned shadow (this process killed before its own finalizer,
- * `legacyRemoveShadowDatabase`, ever runs) could still have its staged host secret
- * directory reclaimed by `legacyCleanupStartSecrets` (`legacy-start-secrets-cleanup.ts`,
- * which prefers this label's value over `container.name` whenever it's present) — Docker's
- * own auto-generated name bears no relation to the randomized directory id, so without this
- * label there'd be no way to recover it (review: PRRT_kwDOErm0O86W8ZYt). Secrets are now
- * delivered via `docker cp` (never staged on host disk at all, for named or unnamed
- * containers alike — see `legacyCreateShadowDatabase`'s own doc comment), so that original
- * reclaim purpose no longer applies; kept as a general-purpose way for orphan cleanup to
- * recognize an unnamed container at all, read back by {@link legacyListContainerIdsAndNames}
- * (`legacy-docker-lifecycle.ts`).
- */
-export const LEGACY_CLI_SECRET_DIR_LABEL = "com.supabase.cli.secret-dir";
-
-/**
  * Go's `utils.GetDockerIds()` (`apps/cli-go/internal/utils/config.go:82-98`) — the
  * 13 service container ids (excludes `db`, `network`, and the `differ` shadow
  * container, which are not part of the "expected running services" set). Order and

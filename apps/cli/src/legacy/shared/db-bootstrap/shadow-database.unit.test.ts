@@ -1,22 +1,24 @@
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Schema, Sink, Stream } from "effect";
+import { Effect, Exit, FileSystem, Fiber, Layer, Option, Path, Schema, Sink, Stream } from "effect";
+import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
+import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
+import { legacyContainerRuntimeNotFoundMessage } from "../legacy-container-cli.ts";
 import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
+import { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
 import type { LegacySetupDatabaseInput } from "./db-setup.ts";
+import { LEGACY_SHADOW_ENTRYPOINT_ARGS } from "./postgres.service.ts";
 import {
-  LEGACY_SHADOW_CONNECT_TIMEOUT_SECONDS,
   LEGACY_SHADOW_CREATE_TEMPLATE_SQL,
-  LEGACY_SHADOW_ENTRYPOINT_ARGS,
+  LegacyShadowDbError,
   legacyBuildShadowSetupDatabaseInput,
   legacyConnectShadowDatabase,
   legacyCreateShadowDatabase,
@@ -30,6 +32,8 @@ import {
 
 const decodeConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const defaultConfig: ProjectConfig = decodeConfig({});
+
+const tempRoot = useLegacyTempWorkdir("legacy-shadow-database-");
 
 function fakeSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
@@ -54,6 +58,31 @@ function mockDbConnection(session: LegacyDbSession) {
   return Layer.succeed(LegacyDbConnection, { connect: () => Effect.succeed(session) });
 }
 
+/**
+ * A `LegacyDbConnection` whose `connect` fails with `LegacyDbConnectError` on
+ * the first `failTimes` calls, then succeeds with `session` on every call
+ * after that (`failTimes: Number.POSITIVE_INFINITY` never succeeds at all) —
+ * for pinning {@link legacyConnectShadowDatabase}'s retry-schedule ATTEMPT
+ * COUNT precisely, not merely "it eventually succeeds"/"it eventually fails".
+ */
+function mockFlakyDbConnection(session: LegacyDbSession, failTimes: number) {
+  let attempts = 0;
+  return {
+    layer: Layer.succeed(LegacyDbConnection, {
+      connect: () =>
+        Effect.suspend(() => {
+          attempts++;
+          return attempts <= failTimes
+            ? Effect.fail(new LegacyDbConnectError({ message: "connection refused" }))
+            : Effect.succeed(session);
+        }),
+    }),
+    get attempts() {
+      return attempts;
+    },
+  };
+}
+
 function mockDockerRun() {
   const runs: Array<LegacyDockerRunOpts> = [];
   return Layer.succeed(LegacyDockerRun, {
@@ -71,7 +100,7 @@ function mockDockerRun() {
   });
 }
 
-/** Fakes `docker image inspect` (always cached), `network create`, `create` (returns a fixed id), `start`, and `rm`. */
+/** Fakes `docker image inspect` (always cached), `network inspect`/`create`, `create` (returns a fixed id), `start`, and `rm`. */
 function mockSpawner() {
   const spawned: Array<ReadonlyArray<string>> = [];
   const encoder = new TextEncoder();
@@ -79,13 +108,18 @@ function mockSpawner() {
     Effect.sync(() => {
       const args = command._tag === "StandardCommand" ? command.args : [];
       spawned.push(args);
+      // `legacyEnsureNetwork` probes with `network inspect` before ever creating one — report
+      // it as missing so a `legacyCreateShadowDatabase` call actually reaches `network create`,
+      // rather than short-circuiting on the pre-check the way an always-exit-0 mock would (the
+      // ONLY caller of this mock that ever spawns `network`/`create` args at all).
+      const exitCode = args[0] === "network" && args[1] === "inspect" ? 1 : 0;
       const stdout = args[0] === "create" ? "shadow-container-id-0123456789abcdef" : "";
       return ChildProcessSpawner.makeHandle({
         pid: ChildProcessSpawner.ProcessId(1),
         stdout: Stream.fromIterable(stdout.length > 0 ? [encoder.encode(`${stdout}\n`)] : []),
         stderr: Stream.empty,
         all: Stream.empty,
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
         isRunning: Effect.succeed(false),
         stdin: Sink.drain,
         kill: () => Effect.void,
@@ -98,32 +132,24 @@ function mockSpawner() {
   return { spawner, spawned };
 }
 
-/** Fakes `docker rm` with a caller-controlled exit code/stderr, for the failure-path tests below. */
-function mockRmSpawner(result: { exitCode: number; stderr?: string }) {
-  const spawned: Array<ReadonlyArray<string>> = [];
-  const encoder = new TextEncoder();
-  const spawner = ChildProcessSpawner.make((command) =>
-    Effect.sync(() => {
-      const args = command._tag === "StandardCommand" ? command.args : [];
-      spawned.push(args);
-      return ChildProcessSpawner.makeHandle({
-        pid: ChildProcessSpawner.ProcessId(1),
-        stdout: Stream.empty,
-        stderr: Stream.fromIterable(
-          result.stderr !== undefined ? [encoder.encode(result.stderr)] : [],
-        ),
-        all: Stream.empty,
-        exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(result.exitCode)),
-        isRunning: Effect.succeed(false),
-        stdin: Sink.drain,
-        kill: () => Effect.void,
-        unref: Effect.succeed(Effect.void),
-        getInputFd: () => Sink.drain,
-        getOutputFd: () => Stream.empty,
-      });
-    }),
+/**
+ * A spawner that fails to even launch a process — for both `docker` and
+ * `podman` — mirroring the "daemon not on PATH" scenario `health-check.unit.test.ts`
+ * scripts for `legacyWaitForHealthyServices`. Every `spawner.spawn` call fails
+ * before ever returning a handle, so `legacySpawnContainerCliWithRuntime`
+ * exhausts both runtimes and surfaces `LegacyContainerRuntimeNotFoundError`.
+ */
+function mockUnspawnableSpawner() {
+  return ChildProcessSpawner.make(() =>
+    Effect.fail(
+      PlatformError.systemError({
+        _tag: "NotFound",
+        module: "ChildProcess",
+        method: "spawn",
+        description: "docker: command not found",
+      }),
+    ),
   );
-  return { spawner, spawned };
 }
 
 function baseCreateInput(
@@ -141,7 +167,7 @@ function baseCreateInput(
     password: "postgres",
     projectId: "proj",
     isBitbucketPipeline: false,
-    workdir: mkdtempSync(join(tmpdir(), "legacy-shadow-database-")),
+    workdir: tempRoot.current,
     extraHosts: [],
     ...overrides,
   };
@@ -149,19 +175,39 @@ function baseCreateInput(
 
 describe("legacyCreateShadowDatabase / legacyRemoveShadowDatabase", () => {
   it.effect(
-    "creates the network then the container with no --name, and returns the created id + a fresh secretDirId",
+    "creates the network then the container with no --name, and returns the created id",
     () => {
       const mock = mockSpawner();
       return legacyCreateShadowDatabase(mock.spawner, baseCreateInput()).pipe(
-        Effect.map(({ containerId, secretDirId }) => {
+        Effect.map(({ containerId }) => {
           expect(containerId).toBe("shadow-container-id-0123456789abcdef");
-          expect(secretDirId).toMatch(/^shadow-/);
-          const networkCreateIdx = mock.spawned.findIndex((a) => a[0] === "network");
+          const networkCreateIdx = mock.spawned.findIndex(
+            (a) => a[0] === "network" && a[1] === "create",
+          );
           const createIdx = mock.spawned.findIndex((a) => a[0] === "create");
+          expect(mock.spawned[networkCreateIdx]).toEqual([
+            "network",
+            "create",
+            "--label",
+            "com.supabase.cli.project=proj",
+            "--label",
+            "com.docker.compose.project=proj",
+            "supabase_network_proj",
+          ]);
           expect(networkCreateIdx).toBeGreaterThanOrEqual(0);
           expect(networkCreateIdx).toBeLessThan(createIdx);
           expect(mock.spawned[createIdx]).not.toContain("--name");
           expect(mock.spawned[createIdx]).toContain("--rm");
+          // Go's `NewContainerConfig("-c", "max_worker_processes=0")` splice
+          // (`CreateShadowDatabase`, `diff.go:140`) is not a bare docker flag — it's rendered
+          // into the entrypoint script's own `docker-entrypoint.sh postgres -D /etc/postgresql
+          // <args>` line (the script is the LAST `docker create` argv element, `cmd`'s second
+          // entry). Assert it lands there, not merely that the literal string appears somewhere
+          // in argv.
+          const script = mock.spawned[createIdx]?.at(-1) ?? "";
+          expect(script).toContain(
+            `docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}`,
+          );
         }),
       );
     },
@@ -169,11 +215,7 @@ describe("legacyCreateShadowDatabase / legacyRemoveShadowDatabase", () => {
 
   it.effect("legacyRemoveShadowDatabase issues docker rm -f -v against the given id", () => {
     const mock = mockSpawner();
-    return legacyRemoveShadowDatabase(mock.spawner, {
-      containerId: "shadow-container-id-0123456789abcdef",
-      secretDirId: "",
-      workdir: "/proj",
-    }).pipe(
+    return legacyRemoveShadowDatabase(mock.spawner, "shadow-container-id-0123456789abcdef").pipe(
       Effect.map(() => {
         expect(mock.spawned).toContainEqual([
           "rm",
@@ -190,115 +232,52 @@ describe("legacyCreateShadowDatabase / legacyRemoveShadowDatabase", () => {
     "legacyRemoveShadowDatabase is a pure no-op (no spawn at all) for an empty container id",
     () => {
       const mock = mockSpawner();
-      return legacyRemoveShadowDatabase(mock.spawner, {
-        containerId: "",
-        secretDirId: "",
-        workdir: "/proj",
-      }).pipe(
+      const out = mockOutput();
+      return legacyRemoveShadowDatabase(mock.spawner, "").pipe(
         Effect.map(() => {
           expect(mock.spawned).toEqual([]);
+          expect(out.stderrText).toBe("");
         }),
-        Effect.provide(mockOutput().layer),
+        Effect.provide(out.layer),
       );
     },
   );
 
   it.effect(
-    "legacyRemoveShadowDatabase rm -rf's the staged secret directory keyed off secretDirId",
+    "reports (but never fails the caller for) a failure to even spawn the removal itself",
     () => {
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
-      const mock = mockSpawner();
-      const secretDir = join(workdir, "supabase", ".temp", "start-secrets", "shadow-abc123");
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* fs.makeDirectory(secretDir, { recursive: true });
-        yield* fs.writeFileString(path.join(secretDir, "secret-0"), "root-key");
-        yield* legacyRemoveShadowDatabase(mock.spawner, {
-          containerId: "shadow-container-id-0123456789abcdef",
-          secretDirId: "shadow-abc123",
-          workdir,
-        });
-        const stillExists = yield* fs.exists(secretDir);
-        expect(stillExists).toBe(false);
-        rmSync(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
-    },
-  );
-
-  it.effect(
-    "retains the staged secret directory when docker rm fails for a reason other than the container being absent (review: PRRT_kwDOErm0O86W7n95)",
-    () => {
-      // The container might still be alive (daemon disconnected mid-remove, a transient CLI
-      // error, ...) — deleting the PG15+ pgsodium root-key bind source out from under a
-      // surviving shadow would break its ability to restart, per `legacyCreateShadowDatabase`'s
-      // own doc comment on why this directory must outlive `docker start` in the first place.
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
-      const mock = mockRmSpawner({
-        exitCode: 1,
-        stderr: "Error: Cannot connect to the Docker daemon\n",
-      });
-      const secretDir = join(workdir, "supabase", ".temp", "start-secrets", "shadow-abc123");
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* fs.makeDirectory(secretDir, { recursive: true });
-        yield* fs.writeFileString(path.join(secretDir, "secret-0"), "root-key");
-        yield* legacyRemoveShadowDatabase(mock.spawner, {
-          containerId: "shadow-container-id-0123456789abcdef",
-          secretDirId: "shadow-abc123",
-          workdir,
-        });
-        const stillExists = yield* fs.exists(secretDir);
-        expect(stillExists).toBe(true);
-        rmSync(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
-    },
-  );
-
-  it.effect(
-    "still reclaims the staged secret directory when docker rm reports the container already absent (review: PRRT_kwDOErm0O86W7n95)",
-    () => {
-      // A "No such container" failure from `docker rm` means the container is CONFIRMED gone
-      // already (e.g. removed by something else, or a race with a prior cleanup) — the shadow
-      // can't restart if it doesn't exist, so it's safe to reclaim the secret directory here,
-      // same as the exit-0 success path above.
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
-      const mock = mockRmSpawner({
-        exitCode: 1,
-        stderr: "Error: No such container: shadow-container-id-0123456789abcdef\n",
-      });
-      const secretDir = join(workdir, "supabase", ".temp", "start-secrets", "shadow-abc123");
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        yield* fs.makeDirectory(secretDir, { recursive: true });
-        yield* fs.writeFileString(path.join(secretDir, "secret-0"), "root-key");
-        yield* legacyRemoveShadowDatabase(mock.spawner, {
-          containerId: "shadow-container-id-0123456789abcdef",
-          secretDirId: "shadow-abc123",
-          workdir,
-        });
-        const stillExists = yield* fs.exists(secretDir);
-        expect(stillExists).toBe(false);
-        rmSync(workdir, { recursive: true, force: true });
-      }).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer)));
+      const out = mockOutput();
+      return legacyRemoveShadowDatabase(
+        mockUnspawnableSpawner(),
+        "shadow-container-id-0123456789abcdef",
+      ).pipe(
+        Effect.exit,
+        Effect.map((exit) => {
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toBe(
+            `Failed to remove container: shadow-container-id-0123456789abcdef ${legacyContainerRuntimeNotFoundMessage}\n`,
+          );
+        }),
+        Effect.provide(out.layer),
+      );
     },
   );
 });
+
+const shadowConnConfig = {
+  host: "127.0.0.1",
+  port: 54320,
+  user: "postgres",
+  password: "postgres",
+  database: "postgres",
+};
 
 describe("legacyConnectShadowDatabase", () => {
   it.effect(
     "dials the shadow's own connect config and returns the session on the first successful attempt",
     () => {
       const { session } = fakeSession();
-      return legacyConnectShadowDatabase({
-        host: "127.0.0.1",
-        port: 54320,
-        user: "postgres",
-        password: "postgres",
-        database: "postgres",
-      }).pipe(
+      return legacyConnectShadowDatabase(shadowConnConfig).pipe(
         Effect.scoped,
         Effect.map((resolvedSession) => {
           expect(resolvedSession).toBe(session);
@@ -308,9 +287,66 @@ describe("legacyConnectShadowDatabase", () => {
     },
   );
 
-  it("the retry timeout constant matches Go's fixed 10-second ConnectShadowDatabase literal", () => {
-    expect(LEGACY_SHADOW_CONNECT_TIMEOUT_SECONDS).toBe(10);
-  });
+  it.effect(
+    "retries a failing connect on a 1-second backoff and returns the session once it stops failing",
+    () => {
+      const { session } = fakeSession();
+      const mock = mockFlakyDbConnection(session, 3);
+      return Effect.gen(function* () {
+        const fiber = yield* legacyConnectShadowDatabase(shadowConnConfig).pipe(
+          Effect.scoped,
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        yield* TestClock.adjust("1 seconds");
+        yield* TestClock.adjust("1 seconds");
+        yield* TestClock.adjust("1 seconds");
+
+        const resolvedSession = yield* Fiber.join(fiber);
+        expect(resolvedSession).toBe(session);
+        // 3 failed attempts, then the 4th that finally succeeds — pins the EXACT
+        // attempt count (a `Schedule.min` regression would also "eventually
+        // succeed" here, since 3 retries is well under either combinator's
+        // ceiling — see the always-failing case below for the test that
+        // actually distinguishes `min` from `max`).
+        expect(mock.attempts).toBe(4);
+      }).pipe(Effect.provide(mock.layer));
+    },
+  );
+
+  it.effect(
+    "gives up after exactly 11 attempts (1 initial + 10 retries) instead of retrying forever — pins Schedule.max over Schedule.min",
+    () => {
+      const { session } = fakeSession();
+      // Never succeeds — pegs the retry schedule to its hard 10-retry ceiling.
+      // `Schedule.max` (the correct combinator: recur while BOTH inputs can
+      // still recur) stops here because `Schedule.recurs(10)` is exhausted. A
+      // regression to `Schedule.min` (recur while EITHER input can still
+      // recur) would keep recurring forever on `Schedule.spaced`'s unbounded
+      // side, so this fiber would never complete — `Fiber.join` below would
+      // hang/time out rather than resolve, catching exactly that swap.
+      const mock = mockFlakyDbConnection(session, Number.POSITIVE_INFINITY);
+      return Effect.gen(function* () {
+        const fiber = yield* legacyConnectShadowDatabase(shadowConnConfig).pipe(
+          Effect.scoped,
+          Effect.forkChild({ startImmediately: true }),
+        );
+
+        for (let i = 0; i < 9; i++) {
+          yield* TestClock.adjust("1 seconds");
+        }
+        // Not yet exhausted — 9 retries is one short of the 10-retry cap.
+        expect(fiber.pollUnsafe()).toBeUndefined();
+
+        // The 10th one-second backoff crosses the boundary.
+        yield* TestClock.adjust("1 seconds");
+        const error = yield* Fiber.join(fiber).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(LegacyShadowDbError);
+        expect(mock.attempts).toBe(11);
+      }).pipe(Effect.provide(mock.layer));
+    },
+  );
 });
 
 function baseSetupDatabaseInput(
@@ -350,9 +386,9 @@ function baseSetupDatabaseInput(
 }
 
 describe("legacySetupShadowConn", () => {
-  it.effect("runs SetupDatabase, then execs CREATE_TEMPLATE when withTemplate is true", () => {
+  it.effect("runs SetupDatabase, then unconditionally execs CREATE_TEMPLATE", () => {
     const { session, calls } = fakeSession();
-    const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+    const workdir = tempRoot.current;
     const mock = mockSpawner();
     return Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -360,31 +396,8 @@ describe("legacySetupShadowConn", () => {
       yield* legacySetupShadowConn(
         mock.spawner,
         baseSetupDatabaseInput(session, fs, path, workdir),
-        true,
       );
       expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
-      rmSync(workdir, { recursive: true, force: true });
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(BunServices.layer, mockOutput().layer, mockDockerRun(), mockRuntimeInfo()),
-      ),
-    );
-  });
-
-  it.effect("skips CREATE_TEMPLATE when withTemplate is false", () => {
-    const { session, calls } = fakeSession();
-    const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
-    const mock = mockSpawner();
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* legacySetupShadowConn(
-        mock.spawner,
-        baseSetupDatabaseInput(session, fs, path, workdir),
-        false,
-      );
-      expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(false);
-      rmSync(workdir, { recursive: true, force: true });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(BunServices.layer, mockOutput().layer, mockDockerRun(), mockRuntimeInfo()),
@@ -476,7 +489,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
     "legacySetupShadowDatabase connects, sets up the platform baseline, and creates the template database",
     () => {
       const { session, calls } = fakeSession();
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+      const workdir = tempRoot.current;
       const mock = mockSpawner();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -498,7 +511,6 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           setup: baseShadowSetup(),
         });
         expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
-        rmSync(workdir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -517,7 +529,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
     "legacyMigrateShadowDatabase applies pending local migrations after the platform baseline",
     () => {
       const { session, calls } = fakeSession();
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+      const workdir = tempRoot.current;
       const mock = mockSpawner();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -545,7 +557,6 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
         });
         expect(calls.some((c) => c.sql === LEGACY_SHADOW_CREATE_TEMPLATE_SQL)).toBe(true);
         expect(calls.some((c) => c.sql.includes("create table t ()"))).toBe(true);
-        rmSync(workdir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -564,7 +575,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
     "does not resolve JWKS on PG14 even when realtime is enabled (Go's initSchema never reaches ResolveJWKS for MajorVersion <= 14)",
     () => {
       const { session } = fakeSession();
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+      const workdir = tempRoot.current;
       const mock = mockSpawner();
       let jwksEvaluated = false;
       return Effect.gen(function* () {
@@ -594,7 +605,6 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           }),
         });
         expect(jwksEvaluated).toBe(false);
-        rmSync(workdir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -611,7 +621,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
 
   it.effect("resolves JWKS on PG15+ when realtime is enabled", () => {
     const { session } = fakeSession();
-    const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+    const workdir = tempRoot.current;
     const mock = mockSpawner();
     let jwksEvaluated = false;
     return Effect.gen(function* () {
@@ -641,7 +651,6 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
         }),
       });
       expect(jwksEvaluated).toBe(true);
-      rmSync(workdir, { recursive: true, force: true });
     }).pipe(
       Effect.provide(
         Layer.mergeAll(
@@ -658,7 +667,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
   it.effect(
     "legacyMigrateShadowDatabase lists local migrations BEFORE connecting, tolerating a missing migrations directory as an empty list rather than a failure",
     () => {
-      const workdir = mkdtempSync(join(tmpdir(), "legacy-shadow-database-"));
+      const workdir = tempRoot.current;
       const mock = mockSpawner();
       // One shared, ordered log — recording both events into separate booleans (the prior
       // version of this test) would still pass if the two steps were swapped, since both
@@ -702,7 +711,6 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           setup: baseShadowSetup(),
         });
         expect(events).toEqual(["list", "connect"]);
-        rmSync(workdir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(
           Layer.mergeAll(
@@ -716,10 +724,4 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
       );
     },
   );
-});
-
-describe("LEGACY_SHADOW_ENTRYPOINT_ARGS", () => {
-  it("matches Go's -c max_worker_processes=0 args exactly", () => {
-    expect(LEGACY_SHADOW_ENTRYPOINT_ARGS).toBe("-c max_worker_processes=0");
-  });
 });

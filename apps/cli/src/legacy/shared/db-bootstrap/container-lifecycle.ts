@@ -36,11 +36,7 @@ import {
   legacyBindMountSpecSource,
   legacyIsBindMountSource,
 } from "../legacy-docker-bind-classify.ts";
-import {
-  LEGACY_CLI_PROJECT_LABEL,
-  LEGACY_CLI_SECRET_DIR_LABEL,
-  LEGACY_CLI_WORKDIR_LABEL,
-} from "../legacy-docker-ids.ts";
+import { LEGACY_CLI_PROJECT_LABEL, LEGACY_CLI_WORKDIR_LABEL } from "../legacy-docker-ids.ts";
 import { legacyIsDockerDaemonUnreachable } from "../legacy-docker-suggest.ts";
 import { isUserDefinedDockerNetwork } from "../../../shared/functions/deploy.ts";
 import {
@@ -185,23 +181,6 @@ export interface LegacyContainerOpts {
    * Go applies it identically to every container this orchestrator creates.
    */
   readonly extraHosts: ReadonlyArray<string>;
-  /**
-   * Fallback identifier for the {@link LEGACY_CLI_SECRET_DIR_LABEL} orphan-recovery label,
-   * used ONLY when `spec.containerName` is empty (Docker auto-generates the real name — see
-   * that field's own doc comment). The shadow database
-   * (`db-bootstrap/shadow-database.ts`'s `legacyCreateShadowDatabase`) is the only real
-   * caller, generating a randomized `shadow-<uuid>` id per call so a later `stop`'s
-   * project-label-filtered sweep can still recognize an orphaned shadow container even
-   * though Docker's own auto-generated name bears no relation to it (review:
-   * PRRT_kwDOErm0O86W8ZYt). Every real service container has a non-empty `containerName`
-   * and never sets this.
-   *
-   * Purely a labeling concern, unrelated to how {@link LegacyStartContainerSpec.secretFiles}
-   * are actually delivered: those always travel via `docker cp` against the container's own
-   * id (see that field's own doc comment, `docker-create-args.ts`), which needs no naming
-   * fallback at all — `docker cp` addresses a container by id, never by name.
-   */
-  readonly secretDirId?: string;
 }
 
 /**
@@ -909,39 +888,21 @@ export function legacyCreateContainer(
       opts.isBitbucketPipeline,
     );
 
-    // `finalSpec.containerName` is empty only for a shadow database (Docker auto-generates
-    // the real name) — stamp `opts.secretDirId`, when supplied, as its own label so a later
-    // orphan sweep can still recognize this container even though Docker's own auto-generated
-    // name bears no relation to it (see `LegacyContainerOpts.secretDirId`'s own doc comment). A
-    // named container never gets this label: its secret directory IS its own name, which
-    // `docker ps` already reports back. Purely a labeling concern — it has no bearing on how
-    // `secretFiles` are delivered below, which always travels via `docker cp` against the
-    // container's own id, regardless of `containerName`/`secretDirId`.
-    const secretDirLabeledSpec: LegacyStartContainerSpec =
-      finalSpec.containerName.length === 0 &&
-      opts.secretDirId !== undefined &&
-      opts.secretDirId.length > 0
-        ? {
-            ...finalSpec,
-            labels: { ...finalSpec.labels, [LEGACY_CLI_SECRET_DIR_LABEL]: opts.secretDirId },
-          }
-        : finalSpec;
-
-    const createArgs = legacyBuildStartContainerCreateArgs(secretDirLabeledSpec);
+    const createArgs = legacyBuildStartContainerCreateArgs(finalSpec);
     // `legacyIsDockerClientEnvKey` keys (e.g. Vector's container-facing `DOCKER_HOST`) are
     // already emitted inline as `-e KEY=value` by `legacyBuildStartContainerCreateArgs` above —
     // see `legacyDockerCreateContainer`'s doc comment for why they must not also reach the
     // spawned `docker create` process's own environment.
     const createProcessEnv = Object.fromEntries(
-      Object.entries(secretDirLabeledSpec.env).filter(([key]) => !legacyIsDockerClientEnvKey(key)),
+      Object.entries(finalSpec.env).filter(([key]) => !legacyIsDockerClientEnvKey(key)),
     );
     const containerId = yield* legacyDockerCreateContainer(spawner, createArgs, createProcessEnv);
     yield* legacyCopyStartSecretFilesIntoContainer(
       spawner,
       containerId,
-      secretDirLabeledSpec.secretFiles ?? [],
+      finalSpec.secretFiles ?? [],
     );
-    yield* legacyDockerStartContainer(spawner, containerId, secretDirLabeledSpec);
+    yield* legacyDockerStartContainer(spawner, containerId, finalSpec);
     return containerId;
   });
 }

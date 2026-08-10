@@ -352,6 +352,12 @@ export function legacyBuildPostgresStartContainerSpec(
   const isRestore = input.fromBackup !== undefined;
 
   const env: Record<string, string> = {
+    // The constant `"postgres"` literal, matching Go, where `Db.Password` is
+    // `toml:"-"` (never decoded from config.toml) and only ever holds the default
+    // (`pkg/config/db.go:88`, `config.go:459`). The sibling shadow builder below
+    // (`legacyBuildShadowPostgresContainerSpec`) instead threads a config-derived
+    // `input.password` — a deliberate TS extension on the shadow path only; if this
+    // container ever honors `[db] password` too, both must change together.
     POSTGRES_PASSWORD: LEGACY_POSTGRES_PASSWORD,
     POSTGRES_HOST: "/var/run/postgresql",
     JWT_SECRET: input.jwtSecret,
@@ -476,11 +482,9 @@ export interface LegacyShadowPostgresContainerSpecInput {
  *  - **Labels ARE still applied** (merged in by `legacyCreateContainer`, same as every
  *    other container) so `supabase stop`'s label-filtered sweep catches an orphaned shadow
  *    too — Go's `DockerStart` sets `CliProjectLabel`/`composeProjectLabel` unconditionally,
- *    regardless of the `container.Config` literal passed in. `legacyCreateContainer`'s
- *    caller must also supply {@link LegacyContainerOpts.secretDirId} for the shadow case
- *    (empty `containerName`) — a randomized fallback identifier so this same sweep can
- *    still recognize the orphan even without a stable name (see that field's own doc
- *    comment).
+ *    regardless of the `container.Config` literal passed in. The project label alone is
+ *    enough for that sweep to recognize an orphaned shadow: it filters and removes by
+ *    container id, so the shadow's lack of a stable name doesn't matter.
  */
 export function legacyBuildShadowPostgresContainerSpec(
   input: LegacyShadowPostgresContainerSpecInput,

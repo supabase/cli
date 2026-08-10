@@ -1000,7 +1000,6 @@ describe("legacyCreateContainer with an empty containerName (the shadow database
         isBitbucketPipeline: false,
         workdir,
         extraHosts: [],
-        secretDirId: "shadow",
       }).pipe(
         Effect.map((containerId) => {
           expect(containerId).toBe("shadow-container-id");
@@ -1009,80 +1008,6 @@ describe("legacyCreateContainer with an empty containerName (the shadow database
           // one is.
           expect(cpArgs?.[0]).toBe("cp");
           expect(cpArgs?.[2]).toBe("shadow-container-id:/etc/postgresql-custom/pgsodium_root.key");
-        }),
-      );
-    },
-  );
-
-  it.live(
-    "does not stamp a com.supabase.cli.secret-dir label on a named container, even when an (irrelevant) secretDirId is supplied",
-    () => {
-      const mock = alwaysSucceed("real-name-container-id\n");
-      const spec: LegacyStartContainerSpec = {
-        ...baseSpec,
-        secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "secret" }],
-      };
-      return legacyCreateContainer(mock.spawner, spec, {
-        projectId: "proj",
-        isBitbucketPipeline: false,
-        workdir,
-        extraHosts: [],
-        secretDirId: "should-be-ignored",
-      }).pipe(
-        Effect.map(() => {
-          // A NAMED container never gets `LEGACY_CLI_SECRET_DIR_LABEL` — its secret
-          // directory IS its own name, which `docker ps` already reports back; stamping
-          // this label unconditionally would be redundant and could be mistaken for the
-          // "this container's secretDirId isn't its name" signal that label exists to give
-          // orphan cleanup on the unnamed-container path (review: PRRT_kwDOErm0O86W8ZYt).
-          const create = mock.spawned.find((args) => args[0] === "create");
-          expect(create?.some((arg) => arg.startsWith("com.supabase.cli.secret-dir="))).toBe(false);
-        }),
-      );
-    },
-  );
-
-  it.live(
-    "stamps an unnamed container with a com.supabase.cli.secret-dir label matching opts.secretDirId",
-    () => {
-      // A later `stop`'s project-label-filtered reaping needs this label to recognize an
-      // orphaned shadow container at all, since Docker's own auto-generated name bears no
-      // relation to the randomized `secretDirId` the shadow's own caller generated (review:
-      // PRRT_kwDOErm0O86W8ZYt, `LEGACY_CLI_SECRET_DIR_LABEL`'s own doc comment).
-      const mock = alwaysSucceed("shadow-container-id\n");
-      const spec: LegacyStartContainerSpec = { ...baseSpec, containerName: "", binds: [] };
-      return legacyCreateContainer(mock.spawner, spec, {
-        projectId: "proj",
-        isBitbucketPipeline: false,
-        workdir,
-        extraHosts: [],
-        secretDirId: "shadow-11111111-1111-1111-1111-111111111111",
-      }).pipe(
-        Effect.map(() => {
-          const create = mock.spawned.find((args) => args[0] === "create");
-          expect(create).toContain(
-            "com.supabase.cli.secret-dir=shadow-11111111-1111-1111-1111-111111111111",
-          );
-        }),
-      );
-    },
-  );
-
-  it.live(
-    "creates and starts an unnamed container with no secret-dir label (and no failure) when containerName is empty and no secretDirId is supplied",
-    () => {
-      const mock = alwaysSucceed("shadow-container-id\n");
-      const spec: LegacyStartContainerSpec = { ...baseSpec, containerName: "", binds: [] };
-      return legacyCreateContainer(mock.spawner, spec, {
-        projectId: "proj",
-        isBitbucketPipeline: false,
-        workdir,
-        extraHosts: [],
-      }).pipe(
-        Effect.map((containerId) => {
-          expect(containerId).toBe("shadow-container-id");
-          const create = mock.spawned.find((args) => args[0] === "create");
-          expect(create?.some((arg) => arg.startsWith("com.supabase.cli.secret-dir="))).toBe(false);
         }),
       );
     },

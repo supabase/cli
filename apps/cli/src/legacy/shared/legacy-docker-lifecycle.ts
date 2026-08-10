@@ -12,7 +12,7 @@ import {
   legacyDescribeContainerCliFailure,
   spawnContainerCli,
 } from "./legacy-container-cli.ts";
-import { LEGACY_CLI_SECRET_DIR_LABEL, LEGACY_CLI_WORKDIR_LABEL } from "./legacy-docker-ids.ts";
+import { LEGACY_CLI_WORKDIR_LABEL } from "./legacy-docker-ids.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -170,43 +170,34 @@ export const legacyListContainersByLabel = (
   });
 
 /**
- * A single `docker ps` result row's id, name, staging workdir, and (unnamed containers
- * only) staged secret-dir id together.
+ * A single `docker ps` result row's id, name, and staging workdir together.
  *
  * `workdir` is `LEGACY_CLI_WORKDIR_LABEL`'s value read straight off the container (see
  * that constant's doc comment) — empty when the container carries no such label, which
  * `legacyCleanupStartSecrets` treats as "fall back to the caller's own workdir" (a
  * container `start` created before this label existed, or created by a Go binary).
- *
- * `secretDirId` is `LEGACY_CLI_SECRET_DIR_LABEL`'s value (see that constant's own doc
- * comment) — empty for every NAMED container (which never carries this label; its secret
- * directory is just its own name) and non-empty only for an unnamed container that staged
- * secrets under a randomized id (today, only the `db diff`/`db pull` shadow database).
- * `legacyCleanupStartSecrets` prefers this over `name` when present, since `name` for such
- * a container is Docker's own auto-generated string, which bears no relation to the
- * directory that was actually staged.
  */
 export interface LegacyContainerIdName {
   readonly id: string;
   readonly name: string;
   readonly workdir: string;
-  readonly secretDirId: string;
 }
 
 /**
  * Combined-format sibling of {@link legacyListContainersByLabel}: fetches a
- * container's id, name, staging workdir, AND secret-dir id from a SINGLE `docker ps
- * --format "{{.ID}}\t{{.Names}}\t{{.Label \"com.supabase.cli.workdir\"}}\t{{.Label
- * \"com.supabase.cli.secret-dir\"}}"` invocation, rather than one call per field. Go's
- * SDK-based `Docker.ContainerList` gets all of this (and every other field) from the one
- * Engine API response it already makes; separately-`--format`ted CLI calls here would
- * silently multiply the real Docker request count relative to Go even though each call's
- * own output is individually correct — exactly the bug the cli-e2e-ci request-log parity
- * harness caught for `stop` (an extra `GET /containers/json` versus Go's single call).
- * Used by {@link legacyDockerRemoveAll}, which needs ids to stop containers, for callers
- * (`stop`, `start`'s rollback) that ALSO need names, workdirs, and secret-dir ids for
- * {@link legacyCleanupStartSecrets} — see that function's doc comment and
- * {@link legacyDockerRemoveAll}'s `onContainersRemoved` parameter.
+ * container's id, name, AND staging workdir from a SINGLE `docker ps --format
+ * "{{.ID}}\t{{.Names}}\t{{.Label \"com.supabase.cli.workdir\"}}"` invocation,
+ * rather than one call per field. Go's SDK-based `Docker.ContainerList` gets
+ * all of this (and every other field) from the one Engine API response it
+ * already makes; two separately-`--format`ted CLI calls here would silently
+ * double the real Docker request count relative to Go even though each call's
+ * own output is individually correct — exactly the bug the cli-e2e-ci
+ * request-log parity harness caught for `stop` (an extra `GET /containers/json`
+ * versus Go's single call). Used by {@link legacyDockerRemoveAll}, which needs
+ * ids to stop containers, for callers (`stop`, `start`'s rollback) that ALSO
+ * need names and workdirs for {@link legacyCleanupStartSecrets} — see that
+ * function's doc comment and {@link legacyDockerRemoveAll}'s
+ * `onContainersRemoved` parameter.
  */
 export const legacyListContainerIdsAndNames = (
   spawner: Spawner,
@@ -218,12 +209,12 @@ export const legacyListContainerIdsAndNames = (
   spawnDockerPsLines(spawner, {
     projectIdFilter: opts.projectIdFilter,
     all: opts.all,
-    formatArg: `{{.ID}}\t{{.Names}}\t{{.Label "${LEGACY_CLI_WORKDIR_LABEL}"}}\t{{.Label "${LEGACY_CLI_SECRET_DIR_LABEL}"}}`,
+    formatArg: `{{.ID}}\t{{.Names}}\t{{.Label "${LEGACY_CLI_WORKDIR_LABEL}"}}`,
   }).pipe(
     Effect.map((lines) =>
       lines.map((line) => {
-        const [id = "", name = "", workdir = "", secretDirId = ""] = line.split("\t");
-        return { id, name, workdir, secretDirId };
+        const [id = "", name = "", workdir = ""] = line.split("\t");
+        return { id, name, workdir };
       }),
     ),
   );
