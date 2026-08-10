@@ -55,3 +55,16 @@ export function legacyViperEnvBoolWithProjectFallback(
 ): boolean {
   return legacyViperBool(process.env[name] ?? projectEnv[name]);
 }
+
+/**
+ * `viper.GetString` for a `SUPABASE_*` key where a project `supabase/.env`
+ * value may also apply — same shell-presence-suppresses-file-value semantics
+ * as {@link legacyViperEnvBoolWithProjectFallback} (see its doc comment),
+ * just without the bool cast.
+ */
+export function legacyViperEnvStringWithProjectFallback(
+  name: string,
+  projectEnv: Readonly<Record<string, string>>,
+): string | undefined {
+  return process.env[name] ?? projectEnv[name];
+}

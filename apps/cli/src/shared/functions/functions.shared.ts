@@ -25,9 +25,10 @@ export const FUNCTIONS_BUNDLER_MUTEX_GROUP = ["use-api", "use-docker", "legacy-b
 /**
  * Go: `Config.EdgeRuntime.Image` reflects `supabase/.temp/edge-runtime-version`
  * when present (`pkg/config/config.go:847-849`) — shared by every `functions`
- * command that resolves a Docker edge-runtime image (`deploy`, `download`) in
- * both shells, so this is the single home for the file-read rather than four
- * copies of the same `readFile` -> `trim` -> fallback pipeline.
+ * command that resolves a Docker edge-runtime image: `deploy`/`download` in
+ * both shells, plus `serve` (legacy-only — `next` has no native `serve`).
+ * Single home for the file-read rather than several copies of the same
+ * `readFile` -> `trim` -> fallback pipeline.
  */
 export const resolveEdgeRuntimeVersionPin = Effect.fnUntraced(function* (supabaseDir: string) {
   return yield* Effect.tryPromise(() =>

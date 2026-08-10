@@ -53,6 +53,17 @@ export interface LegacyLocalProjectContext {
 export const legacyLoadLocalProjectContext = <E>(
   workdir: string,
   mapConfigLoadError: (message: string) => E,
+  /**
+   * Go's `Eject` default (`pkg/config/config.go:561-570`): `flags.LoadConfig`
+   * pre-sets `Config.ProjectId = ProjectRef` before merging the file, so
+   * `Eject`'s own basename fallback only triggers when that default is
+   * itself empty. `undefined` for `start`/`stop`/`status`, which have no
+   * such flag — unchanged behavior for those callers. Also threaded into
+   * `loadProjectConfig`'s `projectRef` option, so a `[remotes.<ref>]` block
+   * merges over the base config, matching Go's `loadFromFile` with
+   * `Config.ProjectId` already set.
+   */
+  projectRef?: string,
 ): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // `search: false`: `workdir` already IS Go's fully-resolved chdir target (`legacy-cli-config.
@@ -96,6 +107,7 @@ export const legacyLoadLocalProjectContext = <E>(
     // via the workdir basename default. Only a malformed file (`loadProjectConfig` failing rather
     // than returning `null`) is a hard error.
     const loaded = yield* loadProjectConfig(workdir, {
+      ...(projectRef === undefined ? {} : { projectRef }),
       projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
       search: false,
       // Go's `NewPathBuilder`/`Config.Load` (`pkg/config/utils.go:43-48`) only ever resolves
@@ -114,6 +126,7 @@ export const legacyLoadLocalProjectContext = <E>(
         projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
         config.project_id,
         workdir,
+        projectRef,
       ),
     );
 

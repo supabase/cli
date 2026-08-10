@@ -62,10 +62,12 @@ const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
  * the caller's process lifecycle differs.
  *
  * `projectEnvValues` is optional (see `legacy-docker-registry.ts`'s doc
- * comment) — only `start` currently threads it through, since its caller
- * already has the project's dotenv-merged values in scope; `legacy-docker-run.layer.ts`
- * is a statically-composed `Layer` built before any `projectEnvValues` is
- * known, so its own callers stay ambient-only for now.
+ * comment) — `start` and the `functions` Docker paths (`deploy`, `download`,
+ * `serve`, via `resolveFunctionsDockerImage`) all thread it through, since
+ * each already has the project's dotenv-merged values in scope by the time
+ * it resolves an image; `legacy-docker-run.layer.ts` is a statically-composed
+ * `Layer` built before any `projectEnvValues` is known, so its own callers
+ * stay ambient-only for now.
  */
 export function legacyMakeDockerImageResolver(
   spawner: Spawner,

@@ -144,6 +144,17 @@ export interface LegacyLocalConfigValues {
   readonly gcpProjectNumber: string;
   /** Already env-overridden `analytics.gcp_jwt_path` (`SUPABASE_ANALYTICS_GCP_JWT_PATH`). */
   readonly gcpJwtPath: string;
+  /**
+   * Go's `Config.ProjectId`, sanitized (`config.go:938-944`) — the SAME
+   * env-overridden, `projectIdFallback`-aware value this function already
+   * validates internally (see `resolvedProjectId` above), just also
+   * returned so callers that need it for Docker resource naming (`functions`
+   * deploy`/`download`/`serve`) don't re-derive it with a second
+   * implementation that could drift from this one.
+   */
+  readonly projectId: string;
+  /** Already env-overridden `edge_runtime.deno_version` (`SUPABASE_EDGE_RUNTIME_DENO_VERSION`). */
+  readonly edgeRuntimeDenoVersion: number;
 }
 
 /**
@@ -2169,6 +2180,15 @@ export function legacyResolveLocalConfigValues(
    * guessed at.
    */
   document: Readonly<Record<string, unknown>> | undefined = undefined,
+  /**
+   * Go's `Eject` default (`pkg/config/config.go:561-570`): `flags.LoadConfig`
+   * pre-sets `Config.ProjectId` to the resolved `--project-ref`/linked project
+   * ref BEFORE merging the file, so `Eject`'s own basename fallback only
+   * triggers when that default is itself empty. `undefined` for `status`/
+   * `stop`, which have no such flag and fall straight to the basename, same
+   * as before this parameter existed.
+   */
+  projectIdFallback?: string,
 ): LegacyLocalConfigValues {
   // Go's `Config.Validate` checks `ProjectId` FIRST, before every other field
   // (`pkg/config/config.go:990-991`) — see this function's `@throws` doc above
@@ -2176,15 +2196,19 @@ export function legacyResolveLocalConfigValues(
   // `project_id` is absent from the file entirely. `config.project_id` is
   // `undefined` only when the key is genuinely absent (`optionalKey`, see
   // `packages/config/src/base.ts`) — that's the ONE case where Go's own
-  // sanitized-basename viper default shows through instead of a file value,
-  // so the fallback belongs here, not as a third branch after `legacyEnvOverride`.
+  // sanitized-basename-or-`projectIdFallback` viper default shows through
+  // instead of a file value, so the fallback belongs here, not as a third
+  // branch after `legacyEnvOverride`.
   // `SUPABASE_PROJECT_ID` is checked via the same `legacyEnvOverride` precedence
   // every other field here uses, since Viper's `AutomaticEnv` binds it too
   // (`config.go:529-535`) and it can turn an explicit-empty file value (or an
   // unsanitizable basename fallback) back into a valid override.
   const resolvedProjectId = legacyEnvOverride(
     "SUPABASE_PROJECT_ID",
-    config.project_id ?? legacySanitizeProjectId(basename(workdir)),
+    config.project_id ??
+      (projectIdFallback !== undefined && projectIdFallback.length > 0
+        ? projectIdFallback
+        : legacySanitizeProjectId(basename(workdir))),
     projectEnvValues,
   );
 
@@ -2971,6 +2995,12 @@ export function legacyResolveLocalConfigValues(
     gcpProjectId: gcpProjectId ?? "",
     gcpProjectNumber: gcpProjectNumber ?? "",
     gcpJwtPath: gcpJwtPath ?? "",
+    // Sanitized here (not above, in `input.projectId`) — `legacyValidateResolvedConfig`'s check is
+    // presence-only and must see the raw value to reject an explicit `project_id = ""` before any
+    // fallback; every OTHER reader of `Config.ProjectId` (Docker resource naming, labels) needs Go's
+    // post-`Validate` sanitized singleton (`config.go:938-944`).
+    projectId: legacySanitizeProjectId(resolvedProjectId ?? ""),
+    edgeRuntimeDenoVersion: denoVersion,
   };
 }
 

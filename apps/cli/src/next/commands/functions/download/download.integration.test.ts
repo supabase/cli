@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { FunctionResponse, makeApiClient } from "@supabase/api/effect";
+import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
 import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1901,6 +1902,121 @@ describe("functions download", () => {
       expect(out.messages).toContainEqual(expect.objectContaining({ type: "fail" }));
     }).pipe(
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  describe("Go's Config.Validate/env-override parity is legacy-only (CLI-1963)", () => {
+    it.live(
+      "does not fail on an explicit empty project_id, unlike the legacy shell's Config.Validate",
+      () => {
+        const tempDir = makeTempDir();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => mkdir(join(tempDir, "supabase"), { recursive: true }));
+          yield* Effect.tryPromise(() =>
+            writeFile(join(tempDir, "supabase", "config.toml"), 'project_id = ""\n'),
+          );
+          const { out, layer, proxy } = setup(tempDir, {
+            bodyBySlug: {
+              "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+            },
+            rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+            childLayer: child.layer,
+          });
+
+          yield* functionsDownload({ ...BASE_FLAGS, useDocker: true }).pipe(Effect.provide(layer));
+
+          expect(proxy.calls).toEqual([]);
+          expect(
+            child.spawned.some(
+              (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
+            ),
+          ).toBe(true);
+          expect(out.stderrText).toContain("Downloading function: hello-world\n");
+        }).pipe(
+          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+        );
+      },
+    );
+
+    it.live(
+      "does not fail on an unrelated Config.Validate branch (unsupported Postgres major version)",
+      () => {
+        const tempDir = makeTempDir();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => mkdir(join(tempDir, "supabase"), { recursive: true }));
+          yield* Effect.tryPromise(() =>
+            writeFile(
+              join(tempDir, "supabase", "config.toml"),
+              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
+            ),
+          );
+          const { out, layer, proxy } = setup(tempDir, {
+            bodyBySlug: {
+              "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+            },
+            rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+            childLayer: child.layer,
+          });
+
+          yield* functionsDownload({ ...BASE_FLAGS, useDocker: true }).pipe(Effect.provide(layer));
+
+          expect(proxy.calls).toEqual([]);
+          expect(
+            child.spawned.some(
+              (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
+            ),
+          ).toBe(true);
+          expect(out.stderrText).toContain("Downloading function: hello-world\n");
+        }).pipe(
+          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+        );
+      },
+    );
+
+    it.live(
+      "ignores SUPABASE_EDGE_RUNTIME_DENO_VERSION and resolves the default edge-runtime image tag",
+      () => {
+        const tempDir = makeTempDir();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => writeProjectConfig(tempDir));
+          const { layer, proxy } = setup(tempDir, {
+            bodyBySlug: {
+              "hello-world": { body: "fake-eszip-bytes", contentType: "application/octet-stream" },
+            },
+            rawArgs: ["functions", "download", "hello-world", "--use-docker"],
+            childLayer: child.layer,
+          });
+
+          yield* functionsDownload({ ...BASE_FLAGS, useDocker: true }).pipe(Effect.provide(layer));
+
+          expect(proxy.calls).toEqual([]);
+          const runCommand = child.spawned.find(
+            (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
+          );
+          expect(runCommand?.args).toContain(
+            `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+          );
+        }).pipe(
+          Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+              } else {
+                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
+              }
+            }),
+          ),
+        );
+      },
     );
   });
 });

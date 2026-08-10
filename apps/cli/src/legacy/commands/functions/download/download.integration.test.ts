@@ -23,6 +23,9 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import { legacyContainerRuntimeNotFoundMessage } from "../../../shared/legacy-container-cli.ts";
+import { downloadFunctions } from "../../../../shared/functions/download.ts";
+import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
+import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { ConflictingFunctionDownloadFlagsError } from "../../../../shared/functions/download.errors.ts";
 import { legacyFunctionsDownloadHandler } from "./download.command.ts";
 import type { LegacyFunctionsDownloadFlags } from "./download.command.ts";
@@ -522,6 +525,17 @@ describe("legacy functions download", () => {
           (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
         ),
       ).toHaveLength(2);
+      // The edge-runtime image is resolved/pulled once for the whole
+      // invocation, not once per function — see `PulledEdgeRuntimeImage`'s
+      // doc comment in `download.ts`.
+      expect(
+        child.spawned.filter(
+          (spawned) =>
+            spawned.command === "docker" &&
+            spawned.args[0] === "image" &&
+            spawned.args[1] === "inspect",
+        ),
+      ).toHaveLength(1);
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
@@ -746,8 +760,8 @@ describe("legacy functions download", () => {
 
     return Effect.gen(function* () {
       // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-      // registered on `functions download` itself —
-      // `explicitNonEmptyStringFlag` scans the whole argv unscoped.
+      // registered on `functions download` itself — `explicitStringFlag`
+      // scans the whole argv unscoped.
       yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
 
       expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
@@ -1807,5 +1821,488 @@ describe("legacy functions download", () => {
       );
       expect(proxy.calls).toEqual([]);
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("Config.Validate / dotenv / env-override parity (CLI-1963)", () => {
+    it.live(
+      "fails before any Docker/API work when config.toml has an explicit empty project_id",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const proxy = mockProxy();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          }),
+          proxy.layer,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "functions",
+              "download",
+              "hello-world",
+              "--project-ref",
+              PROJECT_ID,
+            ]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+          );
+          yield* Effect.tryPromise(() =>
+            writeFile(join(tempRoot.current, "supabase", "config.toml"), 'project_id = ""\n'),
+          );
+
+          const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toBe("Missing required field in config: project_id");
+          expect(api.requests).toEqual([]);
+          expect(child.spawned).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "fails before any Docker/API work on an unrelated Config.Validate branch (unsupported Postgres major version)",
+      () => {
+        // Proves the WHOLE resolved config is validated, not just `project_id`
+        // — `db.major_version = 12` is a genuinely unrelated Go `Config.Validate`
+        // branch (`config.go:1034-1062`).
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const proxy = mockProxy();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          }),
+          proxy.layer,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "functions",
+              "download",
+              "hello-world",
+              "--project-ref",
+              PROJECT_ID,
+            ]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+          );
+          yield* Effect.tryPromise(() =>
+            writeFile(
+              join(tempRoot.current, "supabase", "config.toml"),
+              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
+            ),
+          );
+
+          const error = yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true }).pipe(
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toBe(
+            "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+          );
+          expect(api.requests).toEqual([]);
+          expect(child.spawned).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "resolves the deno v1 edge-runtime image tag when SUPABASE_EDGE_RUNTIME_DENO_VERSION=1 overrides an unset config value",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const proxy = mockProxy();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          }),
+          proxy.layer,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "functions",
+              "download",
+              "hello-world",
+              "--use-docker",
+              "--project-ref",
+              PROJECT_ID,
+            ]),
+          }),
+        );
+
+        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+
+        return Effect.gen(function* () {
+          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args.slice(-6)[0]).toBe(
+            "public.ecr.aws/supabase/edge-runtime:v1.68.4",
+          );
+        })
+          .pipe(Effect.provide(layer))
+          .pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (previous === undefined) {
+                  delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+                } else {
+                  process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
+                }
+              }),
+            ),
+          );
+      },
+    );
+
+    it.live(
+      "uses SUPABASE_NETWORK_ID as the docker network when no --network-id flag is passed",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const proxy = mockProxy();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          }),
+          proxy.layer,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "functions",
+              "download",
+              "hello-world",
+              "--use-docker",
+              "--project-ref",
+              PROJECT_ID,
+            ]),
+          }),
+        );
+
+        const previous = process.env["SUPABASE_NETWORK_ID"];
+        process.env["SUPABASE_NETWORK_ID"] = "env-network";
+
+        return Effect.gen(function* () {
+          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+          expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
+            command: "docker",
+            args: ["network", "inspect", "env-network"],
+          });
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args).toContain("env-network");
+        })
+          .pipe(Effect.provide(layer))
+          .pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                if (previous === undefined) {
+                  delete process.env["SUPABASE_NETWORK_ID"];
+                } else {
+                  process.env["SUPABASE_NETWORK_ID"] = previous;
+                }
+              }),
+            ),
+          );
+      },
+    );
+
+    it.live("prefers an explicit --network-id flag over SUPABASE_NETWORK_ID", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const proxy = mockProxy();
+      const child = mockChildProcessSpawner({ exitCode: 0 });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+            "--network-id",
+            "flag-network",
+          ]),
+        }),
+      );
+
+      const previous = process.env["SUPABASE_NETWORK_ID"];
+      process.env["SUPABASE_NETWORK_ID"] = "env-network";
+
+      return Effect.gen(function* () {
+        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+        expect(child.spawned.find((spawned) => spawned.args[0] === "network")).toEqual({
+          command: "docker",
+          args: ["network", "inspect", "flag-network"],
+        });
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args).toContain("flag-network");
+        expect(runCommand?.args).not.toContain("env-network");
+      })
+        .pipe(Effect.provide(layer))
+        .pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_NETWORK_ID"];
+              } else {
+                process.env["SUPABASE_NETWORK_ID"] = previous;
+              }
+            }),
+          ),
+        );
+    });
+
+    it.live(
+      "resolves a registry override configured only via project dotenv, not the ambient shell",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const proxy = mockProxy();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          }),
+          proxy.layer,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "functions",
+              "download",
+              "hello-world",
+              "--use-docker",
+              "--project-ref",
+              PROJECT_ID,
+            ]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            mkdir(join(tempRoot.current, "supabase"), { recursive: true }),
+          );
+          yield* Effect.tryPromise(() =>
+            writeFile(
+              join(tempRoot.current, "supabase", ".env"),
+              "SUPABASE_INTERNAL_IMAGE_REGISTRY=ghcr.io\n",
+            ),
+          );
+
+          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args.slice(-6)[0]).toBe(
+            `ghcr.io/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+          );
+          expect(
+            child.spawned.filter(
+              (spawned) => spawned.args[0] === "image" && spawned.args[1] === "inspect",
+            ),
+          ).toHaveLength(1);
+          // Proves the registry came from the project dotenv file, not the
+          // ambient shell environment.
+          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live("falls back to the GHCR candidate when the ECR image cannot be inspected", () => {
+      // Simulates a registry-candidate fallback with no real pull/retry: the
+      // ECR `docker image inspect` MISSes cleanly (non-zero exit, "not found"
+      // stderr), so `hasLocalImage` moves straight to the next candidate
+      // instead of ever entering the sleeping pull-retry loop.
+      const spawnerOpts: {
+        exitCode?: number;
+        stderr?: string[];
+        onSpawn?: (record: { command: string; args: ReadonlyArray<string> }) => void;
+      } = { exitCode: 0 };
+      spawnerOpts.onSpawn = (record) => {
+        if (
+          record.command === "docker" &&
+          record.args[0] === "image" &&
+          record.args[1] === "inspect"
+        ) {
+          const image = record.args[2] ?? "";
+          const isEcrCandidate = image.startsWith("public.ecr.aws/");
+          spawnerOpts.exitCode = isEcrCandidate ? 1 : 0;
+          spawnerOpts.stderr = isEcrCandidate ? [`Error: No such image: ${image}`] : [];
+          return;
+        }
+        spawnerOpts.exitCode = 0;
+        spawnerOpts.stderr = [];
+      };
+      const child = mockChildProcessSpawner(spawnerOpts);
+
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const proxy = mockProxy();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        proxy.layer,
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--use-docker",
+            "--project-ref",
+            PROJECT_ID,
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+        expect(
+          child.spawned.filter(
+            (spawned) => spawned.args[0] === "image" && spawned.args[1] === "inspect",
+          ),
+        ).toHaveLength(2);
+        const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+        expect(runCommand?.args.slice(-6)[0]).toBe(
+          `ghcr.io/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "labels the unbundle container with the resolved project id (Go parity: docker.go:349-386)",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const proxy = mockProxy();
+        const child = mockChildProcessSpawner({ exitCode: 0 });
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          }),
+          proxy.layer,
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "functions",
+              "download",
+              "hello-world",
+              "--use-docker",
+              "--project-ref",
+              PROJECT_ID,
+            ]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
+
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args).toEqual(
+            expect.arrayContaining([
+              "--label",
+              `com.supabase.cli.project=${PROJECT_ID}`,
+              "--label",
+              `com.docker.compose.project=${PROJECT_ID}`,
+            ]),
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
+  describe("docker-not-running warning styling (Go parity: download.go:146; only WARNING: is styled)", () => {
+    it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
+      // Calls the shared `downloadFunctions` with a marker `styleWarning`
+      // instead of going through `legacyFunctionsDownload`: the real hook
+      // (`legacyYellow`) is TTY-gated and therefore inert under vitest, so
+      // only an injected marker can deterministically observe styling scope.
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) =>
+          request.url.endsWith("/body")
+            ? Effect.succeed(multipartResponse(request))
+            : Effect.succeed(legacyJsonResponse(request, 200, {})),
+      });
+      const child = mockChildProcessSpawner({ exitCode: 1 });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+        }),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed([
+            "functions",
+            "download",
+            "hello-world",
+            "--project-ref",
+            PROJECT_ID,
+          ]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        const platformApi = yield* LegacyPlatformApi;
+
+        yield* downloadFunctions(
+          { ...baseFlags, useDocker: true },
+          {
+            api: platformApi,
+            projectRoot: tempRoot.current,
+            rawArgs: ["functions", "download", "hello-world", "--project-ref", PROJECT_ID],
+            goConfigCompat: legacyFunctionsGoConfigCompat,
+            edgeRuntimeVersion: "1.69.12",
+            resolveProjectRef: () => Effect.succeed(PROJECT_ID),
+            proxyDownload: () => Effect.die("unexpected proxy invocation"),
+            styleWarning: (text) => `<warn>${text}</warn>`,
+          },
+        );
+
+        expect(out.stderrText).toContain("<warn>WARNING:</warn> Docker is not running\n");
+      }).pipe(Effect.provide(layer));
+    });
   });
 });

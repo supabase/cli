@@ -35,12 +35,14 @@ export function hasExplicitLongFlag(
  * {@link explicitBooleanLongFlag} and `legacyPflagStringValue` already
  * follow) — a repeated `--<flagName> old --<flagName> new` must resolve to
  * `new`, so this keeps scanning after a match instead of returning early
- * (review round on CLI-1963's `functions download` port). Not exported —
- * every current call site needs Go's `len(value) > 0` gate too (see
- * {@link explicitNonEmptyStringFlag}); re-export this directly if a future
- * caller genuinely needs presence-only semantics.
+ * (review round on CLI-1963's `functions download` port). Preserves the
+ * 3-way distinction `undefined` (flag never passed) / `""` (explicit
+ * `--<flagName>=`) / non-empty value — callers that need to distinguish
+ * "flag explicitly cleared" from "flag never touched" (e.g.
+ * `resolveDockerNetworkMode`'s env-fallback precedence — see its doc
+ * comment) need this rather than collapsing both to `undefined`.
  */
-function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
+export function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
   let result: string | undefined;
   for (let index = 0; index < rawArgs.length; index += 1) {
     const token = rawArgs[index];
@@ -51,21 +53,6 @@ function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
     }
   }
   return result;
-}
-
-/**
- * Same as {@link explicitStringFlag}, but treats an explicit empty value
- * (`--<flagName>=`) as unset — matching Go call sites that gate on
- * `len(viper.GetString(flagName)) > 0` rather than mere presence (e.g.
- * `--network-id`, `apps/cli-go/internal/utils/docker.go:379-382`). pflag
- * still marks the flag `Changed` for `--network-id=`, but Go's own
- * `if networkId := viper.GetString("network-id"); len(networkId) > 0`
- * falls through to the generated network name for that value just like an
- * omitted flag would (review round on CLI-1963's `functions download` port).
- */
-export function explicitNonEmptyStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
-  const value = explicitStringFlag(rawArgs, flagName);
-  return value !== undefined && value.length > 0 ? value : undefined;
 }
 
 /**

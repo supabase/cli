@@ -2,7 +2,8 @@ import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
 import { deployFunctions } from "../../../../shared/functions/deploy.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
-import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -40,7 +41,7 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
     projectRoot: cliConfig.workdir,
     supabaseDir: join(cliConfig.workdir, "supabase"),
     dashboardUrl: legacyDashboardUrl(cliConfig.profile),
-    goViperCompat: true,
+    goConfigCompat: legacyFunctionsGoConfigCompat,
     yes,
     rawArgs,
     edgeRuntimeVersion,
@@ -60,6 +61,10 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
     // and the no-functions error dir (`deploy.go:35`, rendered on stderr) —
     // both stderr-bound, matching `legacyBold`'s default TTY gate.
     styleEmphasis: (text) => legacyBold(text),
+    // Go: `utils.Yellow` on the `WARNING:` token before "Docker is not
+    // running" (`deploy.go:60`, stderr) — matches `legacyYellow`'s default
+    // TTY gate.
+    styleWarning: (text) => legacyYellow(text),
   }).pipe(
     Effect.ensuring(
       Effect.suspend(() =>

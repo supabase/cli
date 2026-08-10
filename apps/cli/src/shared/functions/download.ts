@@ -1,5 +1,4 @@
 import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
-import { loadProjectConfig } from "@supabase/config";
 import { randomUUID } from "node:crypto";
 import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
@@ -11,20 +10,24 @@ import { Output } from "../output/output.service.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
   explicitBooleanLongFlag,
-  explicitNonEmptyStringFlag,
+  explicitStringFlag,
   hasExplicitLongFlag,
 } from "../cli/cobra-flag-groups.ts";
 import { legacyDescribeContainerCliFailure } from "../../legacy/shared/legacy-container-cli.ts";
-import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
+import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import {
+  buildFunctionsDockerRunArgs,
   edgeRuntimeImageTag,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
   localDockerId,
+  resolveDockerNetworkMode,
   resolveEdgeRuntimeVersion,
+  resolveFunctionsDockerImage,
   runChildProcess,
 } from "./functions-docker.ts";
+import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import {
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
@@ -77,6 +80,12 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
    * (`suggestLegacyBundle`, `download.go:315`).
    */
   readonly styleAqua?: (text: string) => string;
+  /**
+   * Optional shell-specific styling hook for the `WARNING:` token on the
+   * "Docker is not running" fallback line — same isolation rationale as
+   * {@link styleEmphasis}. Go: `utils.Yellow("WARNING:")` (`download.go:146`).
+   */
+  readonly styleWarning?: (text: string) => string;
 }
 
 /**
@@ -87,11 +96,11 @@ interface DownloadDockerRuntimeDependencies extends DownloadRuntimeDependencies 
 interface EdgeRuntimeImageDependencies {
   readonly projectRoot: string;
   /**
-   * `true` in the legacy shell, `false` in `next` — forwarded verbatim to
-   * `loadProjectConfig`'s `goViperCompat` option (matches every other
-   * `functions`-family command, e.g. `deploy.ts`'s own `DeployFunctionsDependencies`).
+   * `undefined` in `next`; the legacy shell injects
+   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
+   * directly — see {@link FunctionsGoConfigCompat}.
    */
-  readonly goViperCompat: boolean;
+  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
   /**
    * Fallback edge-runtime image tag used when the project config doesn't pin
    * `edge_runtime.deno_version` to `1` (which forces the older
@@ -901,125 +910,57 @@ function withDockerStepFailure(step: string, slug: string, styleAqua?: (text: st
 // from `edge_runtime.deno_version` — `1` pins the older
 // `DENO1_EDGE_RUNTIME_VERSION`, anything else (including unset) uses the
 // project's configured/default tag (`resolveEdgeRuntimeVersion`, shared with
-// `deploy.ts`). `project_id` mirrors `deploy.ts`'s own
-// `deployConfig?.project_id ?? projectRef` fallback for Docker network/volume
-// naming (`GetId`, `internal/utils/config.go:57-58`). Resolved once per
-// invocation by the caller (`downloadFunctions`), not once per slug — Go's
-// `Config` is likewise loaded once, before any per-function work.
+// `deploy.ts`). Resolved once per invocation by the caller
+// (`downloadFunctions`), not once per slug — Go's `Config` is likewise loaded
+// once, before any per-function work. `loadFunctionsProjectConfig` (legacy
+// shell only) runs the same `Config.Validate`/dotenv/env-override pipeline
+// `start`/`stop`/`status` already go through — see `functions-config.ts`.
 const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   dependencies: EdgeRuntimeImageDependencies,
   projectRef: string,
 ) {
-  const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot, {
+  const context = yield* loadFunctionsProjectConfig({
+    projectRoot: dependencies.projectRoot,
     projectRef,
-    goViperCompat: dependencies.goViperCompat,
-    // `search: false`/`tomlOnly: true` only under `goViperCompat` (the legacy caller, whose
-    // `dependencies.projectRoot` is `cliConfig.workdir` — already Go's fully-resolved chdir
-    // target, same reasoning as `legacy-local-project-context.ts`/`start.handler.ts`). Go's
-    // `flags.LoadConfig` (`pkg/config/utils.go:43-48`) only ever resolves `supabase/config.toml`
-    // from that exact workdir, with no ancestor climb and no concept of a JSON project config —
-    // leaving these unset here would let an unrelated ancestor project's config win, or a stray
-    // `supabase/config.json` be preferred over `config.toml`, for the legacy shell's Docker
-    // download path specifically. The `next` shell keeps the package defaults (ancestor search,
-    // JSON preferred), matching its other non-Go-parity `loadProjectConfig` callers.
-    search: dependencies.goViperCompat ? false : undefined,
-    tomlOnly: dependencies.goViperCompat,
+    goConfigCompat: dependencies.goConfigCompat,
   });
-  // A project with no `supabase/config.toml`/`config.json` makes
-  // `loadProjectConfig` return `null` outright, so `denoVersion` below falls
-  // through to `undefined` and this always resolves the v2 default. Go's
-  // `flags.LoadConfig` never short-circuits like that: `Config.Load` →
-  // `loadFromFile` (`pkg/config/config.go:579-611`) merges the template
-  // defaults and enables `viper.AutomaticEnv()` with `SetEnvPrefix("SUPABASE")`
-  // *before* attempting to read the file — `mergeFileConfig` (`config.go:701-716`)
-  // simply no-ops on `os.ErrNotExist` — so `SUPABASE_EDGE_RUNTIME_DENO_VERSION=1`
-  // (or the same key in `supabase/.env`, via `loadNestedEnv`) still pins the
-  // deno-v1 image even with no config.toml on disk. Pre-existing, not
-  // introduced by this PR: `@supabase/config`'s `loadProjectConfig` has no
-  // equivalent of Go's generic `ExperimentalBindStruct`+`AutomaticEnv` field
-  // binding at all (it only expands literal `env(...)` references already
-  // written inside the TOML), so `deploy.ts`'s identical
-  // `resolveEdgeRuntimeVersion(deployConfig?.edge_runtime.deno_version, ...)`
-  // call has the same gap whether or not config.toml exists. A fix belongs in
-  // the shared config-loading layer every native caller goes through (`gen
-  // types`, `next start`, `functions dev/serve/deploy`, …), not duplicated
-  // per call site here — left open (review round on CLI-1963's `functions
-  // download` port).
-  const denoVersion = loadedConfig?.config?.edge_runtime.deno_version;
-  // `?? projectRef` only substitutes on `null`/`undefined`, so a config.toml
-  // with an explicit `project_id = ""` still resolves to the empty string
-  // here (`supabase_network_`/`supabase_edge_runtime_`) instead of failing
-  // up front. Go's `Config.Validate` rejects that same config with "Missing
-  // required field in config: project_id" (`pkg/config/config.go:990-991`)
-  // before `flags.LoadConfig` ever returns to `Run` — before any Docker/API
-  // work. Pre-existing and cross-cutting, not introduced by this PR:
-  // `deploy.ts`'s identical `deployConfig?.project_id ?? projectRef`
-  // fallback (`deploy.ts:2201`) has the same gap, and no native `functions`
-  // Docker path (`deploy`, `serve`, `download`) routes a loaded config
-  // through `Config.Validate` parity checks at all — that port has one home
-  // today, `legacy-config-validate.ts`'s `legacyValidateResolvedConfig`,
-  // wired up only for the db/migration loader and the status/stop resolver.
-  // Wiring `Config.Validate` into every native config-consuming command
-  // belongs in the shared config-loading layer, not duplicated per
-  // Docker-path call site here — left open, same as the config-defaults gap
-  // above (review round on CLI-1963's `functions download` port).
-  const projectId = loadedConfig?.config?.project_id ?? projectRef;
   const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
-    denoVersion,
+    context.denoVersion,
     dependencies.edgeRuntimeVersion,
   );
   return {
-    projectId,
-    denoVersion,
+    projectId: context.projectId,
+    denoVersion: context.denoVersion,
     // `edgeRuntimeImageTag` (not a bare `v${edgeRuntimeVersion}` prepend) —
     // `dependencies.edgeRuntimeVersion` comes from a `.temp/edge-runtime-version`
     // pin that may already carry its own `v` prefix (see the helper's doc).
-    //
-    // Single `legacyGetRegistryImageUrl` value, not the ECR→GHCR→Docker-Hub
-    // retry `legacyGetRegistryImageUrlCandidates` gives `start` (review round
-    // on CLI-1963's `functions download` port). Go's `DockerStart` resolves
-    // `config.Image` through `DockerResolveImageIfNotCached`
-    // (`internal/utils/docker.go:326-348,363-365`), which tries every
-    // registry candidate — including for this exact edge-runtime unbundle
-    // container — so an ECR outage/throttle that the previous Go-delegated
-    // default path would have survived can now fail this native path outright.
-    // Pre-existing, not introduced by this PR: `deploy.ts`'s and `serve.ts`'s
-    // own already-shipped native Docker paths resolve this identically
-    // (single-URL, no retry) — `legacyGetRegistryImageUrlCandidates` has only
-    // ever been wired up for `start` (see its own doc comment). Extending the
-    // retry to all three `functions` Docker paths is a shared, cross-cutting
-    // follow-up, not something to fix piecemeal for `download` alone.
-    //
-    // No `projectEnvValues` argument either (review round on CLI-1963's
-    // `functions download` port): Go's `flags.LoadConfig` → `loadNestedEnv`
-    // (`pkg/config/config.go:1220-1258`) calls `godotenv.Load` on every
-    // project dotenv file, which `os.Setenv`s each key into the process env
-    // — ambient-wins, but a `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in
-    // `supabase/.env` (not the ambient shell) is visible to `GetRegistry()`'s
-    // later `viper.GetString("INTERNAL_IMAGE_REGISTRY")` read
-    // (`internal/utils/docker.go:221-227`) regardless. `loadProjectConfig`
-    // above only uses its own dotenv read internally, for `env(...)`
-    // interpolation — it doesn't return the values, so this call falls back
-    // to `legacyGetRegistryOverride`'s ambient-only `process.env` read and
-    // misses a project-local registry mirror configured only via dotenv.
-    // Pre-existing and cross-cutting, not introduced by this PR: `deploy.ts`
-    // (`deploy.ts:1287`) and `serve.ts` (`serve.ts:1756`) call the same
-    // `legacyGetRegistryImageUrl` with no `projectEnvValues` either — the
-    // only caller that resolves and threads it today is `start`, via
-    // `legacyLoadLocalProjectContext`/`legacyGetRegistryImageUrlCandidates`.
-    // Loading project dotenv for every native `functions` Docker path belongs
-    // in the shared config-loading layer, not duplicated per call site here
-    // — left open, same treatment as the config-defaults/network-id-env/
-    // Config.Validate gaps above.
-    image: legacyGetRegistryImageUrl(
-      `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
-    ),
+    // Registry mapping + pull-with-retry happens per-container, right before
+    // `ensureDockerNetwork`, matching Go's `DockerStart` (see the caller).
+    rawImage: `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+    projectEnvValues: context.projectEnvValues,
   };
 });
 
 interface EdgeRuntimeImage {
   readonly projectId: string;
   readonly denoVersion: number | undefined;
+  /** Not yet registry-mapped/pull-resolved — see {@link resolveFunctionsDockerImage}. */
+  readonly rawImage: string;
+  readonly projectEnvValues: Readonly<Record<string, string>> | undefined;
+}
+
+/**
+ * `EdgeRuntimeImage` plus the pull-resolved reference, once per invocation
+ * (not once per slug — see {@link downloadFunctions}'s own resolve site):
+ * the image is identical for every function being downloaded, so resolving
+ * it inside the per-slug loop would multiply both the cache-check subprocess
+ * count and, on a registry outage, the retry-backoff sleep (up to ~36s) by
+ * the function count. Go's own `DockerStart` DOES run per-container (once
+ * per `extractOne`), but its image-cache check is an in-process Engine API
+ * call, not a fork+exec — the per-slug cost that justifies hoisting here has
+ * no Go equivalent to stay faithful to.
+ */
+interface PulledEdgeRuntimeImage extends EdgeRuntimeImage {
   readonly image: string;
 }
 
@@ -1031,7 +972,7 @@ interface EdgeRuntimeImage {
 // asserts this explicitly).
 const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   dependencies: DownloadDockerRuntimeDependencies,
-  edgeRuntimeImage: EdgeRuntimeImage,
+  edgeRuntimeImage: PulledEdgeRuntimeImage,
   projectRef: string,
   slug: string,
 ) {
@@ -1090,7 +1031,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
         catch: (cause) => (cause instanceof Error ? cause.message : String(cause)),
       }).pipe(Effect.catch((message) => output.raw(`${message}\n`, "stderr")));
 
-  const { projectId, denoVersion, image } = edgeRuntimeImage;
+  const { projectId, denoVersion, image, projectEnvValues } = edgeRuntimeImage;
   const functionsDir = resolve(dependencies.projectRoot, "supabase", "functions");
   const hostEszipPath = resolve(eszipPath);
   const dockerEszipPath = posix.join(DOCKER_ESZIP_DIR, eszipFileName);
@@ -1098,29 +1039,24 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
 
   // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
   // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-  // registered on `functions download` itself. Go only treats the override as
-  // set when `len(networkId) > 0`, so an explicit-but-empty `--network-id=`
-  // must fall through to the generated network name too, not just an omitted
-  // flag — `explicitNonEmptyStringFlag` (unlike the unexported
-  // `explicitStringFlag`) treats that case as unset for exactly this reason.
-  //
-  // Go's root `init()` also binds every persistent flag (including
-  // `network-id`) through `viper.BindPFlags` after enabling
-  // `viper.AutomaticEnv()` with `SetEnvPrefix("SUPABASE")` and a `-`→`_`
-  // replacer (`cmd/root.go:316-334`), so `SUPABASE_NETWORK_ID` overrides the
-  // flag's empty default whenever `--network-id` itself is never passed —
-  // this raw-argv-only lookup has no equivalent env-var fallback. Pre-existing,
-  // not introduced by this PR: `start.handler.ts`'s `LegacyNetworkIdFlag` and
-  // `deploy.ts`'s/`serve.ts`'s own network-id resolution don't check
-  // `SUPABASE_NETWORK_ID` either — no native command does today. A fix
-  // belongs in one shared place for the global `--network-id` resolution,
-  // not duplicated per Docker-path call site here — left open (review round
-  // on CLI-1963's `functions download` port).
-  const networkMode =
-    explicitNonEmptyStringFlag(dependencies.rawArgs, "network-id") ??
-    localDockerId("network", projectId);
+  // registered on `functions download` itself. `explicitStringFlag`
+  // preserves the "explicitly cleared" vs "never touched" distinction
+  // `resolveDockerNetworkMode` needs to decide whether `SUPABASE_NETWORK_ID`
+  // applies — see that function's own doc comment. `SUPABASE_NETWORK_ID`
+  // (env or project dotenv) is legacy-shell-only — same Go-viper-parity gate
+  // as `projectEnvValues` itself (`undefined` in `next`).
+  const networkMode = resolveDockerNetworkMode({
+    explicit: explicitStringFlag(dependencies.rawArgs, "network-id"),
+    envOverride:
+      projectEnvValues === undefined
+        ? undefined
+        : legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+    projectId,
+  });
 
   const extract = Effect.gen(function* () {
+    // `image` is already pull-resolved once for the whole invocation — see
+    // `downloadFunctions`'s own resolve site — not re-resolved per slug.
     yield* ensureDockerNetwork(networkMode, projectId).pipe(
       Effect.mapError(withLegacyBundleSuggestion(slug, styleAqua)),
     );
@@ -1142,66 +1078,32 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
       `${hostEszipPath}:${dockerEszipPath}:ro`,
       `${functionsDir}:${DOCKER_DENO_DIR}:rw`,
     ];
-    // No `com.supabase.cli.project`/`com.docker.compose.project` labels on
-    // this container itself — Go's `DockerStart` (`internal/utils/docker.go:372-376`)
-    // sets both unconditionally on `config.Labels` for every container it
-    // starts via the Engine API, including this exact unbundle container
-    // (`DockerRunOnceWithConfig` → `DockerStart`, `download.go:268`), so
-    // label-based cleanup/inspection can't associate an orphaned one-shot
-    // container with the project if the CLI is interrupted mid-run. Pre-existing
-    // and cross-cutting, not introduced by this PR: `deploy.ts`'s own
-    // `bundleFunctionWithDocker` builds an equally raw `docker run` command
-    // (its own `command.push(image, "bundle", ...)`) with the identical gap —
-    // only `ensureDockerNetwork`/`ensureDockerNamedVolume` (`functions-docker.ts`)
-    // thread `dockerProjectLabels` today, for the network/volume they create,
-    // not for the one-shot containers either Docker path runs. Adding `--label`
-    // to every `functions` Docker `run` invocation belongs in a shared
-    // container-build helper both call sites use, not duplicated per call site
-    // here — left open (review round on CLI-1963's `functions download` port).
-    const command = [
-      "run",
-      "--rm",
-      ...binds.flatMap((bind) => ["-v", bind]),
-      "--network",
+    const command = buildFunctionsDockerRunArgs({
+      image,
+      projectId,
       networkMode,
-    ];
-    if (process.platform === "linux") {
-      command.push("--add-host", "host.docker.internal:host-gateway");
-    }
-    command.push(image, "unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath);
+      binds,
+      containerArgs: ["unbundle", "--eszip", dockerEszipPath, "--output", dockerOutputPath],
+    });
 
     // Go pipes the container's stdout/stderr straight to `os.Stdout`/`getErrorLogger()`
     // while the container runs (`DockerRunOnceWithConfig`, copied live via the
-    // log stream) — this awaits `runChildProcess`, which buffers the whole
-    // run via `collectByteStream`'s `Stream.runFold` and only writes below
-    // once the process exits, so live progress/error output is hidden and
-    // stdout/stderr ordering can't be preserved relative to each other while
-    // the container is still running. Pre-existing and cross-cutting, not
-    // introduced by this PR: `deploy.ts`'s `bundleFunctionWithDocker` (added
-    // in #5561, before `functions-docker.ts` existed as its own file) calls
-    // the exact same `runChildProcess` helper the exact same way for its own
-    // bundler container. A real fix needs a streaming variant of
-    // `runChildProcess` used by both `functions` Docker paths, not a
-    // one-off change here — left open (review round on CLI-1963's `functions
-    // download` port).
+    // log stream) — `runChildProcess`'s `onStdout`/`onStderr` tee each chunk
+    // to `output.raw` as it arrives instead of buffering the whole run.
+    // Go pipes the container's stdout straight to `os.Stdout`
+    // (`download.go:279`); machine-output modes must keep stdout
+    // payload-only (CLI-1546), so this mirrors `deploy.ts`'s own
+    // `bundleFunctionWithDocker` routing.
     const result = yield* runChildProcess("docker", command, {
       stdout: "pipe",
       stderr: "pipe",
+      onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
+      onStderr: (chunk) => output.raw(chunk, "stderr"),
     }).pipe(
       Effect.mapError(
         withDockerStepFailure("failed to run the edge-runtime unbundle container", slug, styleAqua),
       ),
     );
-
-    // Go pipes the container's stdout straight to `os.Stdout` (`download.go:279`);
-    // machine-output modes must keep stdout payload-only (CLI-1546), so this
-    // mirrors `deploy.ts`'s own `bundleFunctionWithDocker` routing.
-    if (result.stdout.length > 0) {
-      yield* output.raw(result.stdout, output.format === "text" ? "stdout" : "stderr");
-    }
-    if (result.stderr.length > 0) {
-      yield* output.raw(result.stderr, "stderr");
-    }
 
     if (result.exitCode !== 0) {
       // Go's `getErrorLogger` (deno-v1 only) sets `CmdSuggestion =
@@ -1406,25 +1308,13 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
     // alongside this — a boolean that could disagree with whether an image
     // was actually resolved would let the loop below silently downgrade to
     // the server-side path while claiming to honor `--use-docker`.
-    //
-    // The "WARNING: Docker is not running" text below is plain, but Go
-    // styles the `WARNING:` prefix with `utils.Yellow` (`download.go:146`,
-    // same as `deploy.go:60`). Pre-existing and cross-cutting, not introduced
-    // by this PR: `deploy.ts`'s identical "WARNING: Docker is not running"
-    // fallback (added in #5561) has never styled it either — this file lives
-    // in `shared/functions/`, used by both shells, so it can't reach for
-    // `legacy/`'s `legacyYellow` directly (same isolation reason
-    // `styleEmphasis`/`styleAqua` above are injected dependencies rather than
-    // direct imports). A `styleWarning`-shaped hook belongs in a shared place
-    // both `deploy.ts` and `download.ts` inject from, not duplicated per
-    // call site here — left open (review round on CLI-1963's `functions
-    // download` port).
+    const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
     const edgeRuntimeImage: EdgeRuntimeImage | undefined =
       !flags.useApi && flags.useDocker
         ? (yield* isDockerRunning())
           ? resolvedEdgeRuntimeImage
           : yield* output
-              .raw("WARNING: Docker is not running\n", "stderr")
+              .raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr")
               .pipe(Effect.as(undefined))
         : undefined;
 
@@ -1445,6 +1335,29 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       yield* output.raw(`Found ${slugs.length} function(s) to download\n`, "stderr");
     }
 
+    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
+    // — resolved ONCE here, for the whole invocation, not once per slug
+    // inside the loop below: the image is identical for every function, so
+    // per-slug resolution would multiply both the cache-check subprocess
+    // count and, on a registry outage, the retry-backoff sleep (up to ~36s)
+    // by the function count — see `PulledEdgeRuntimeImage`'s own doc comment
+    // for why this diverges from Go's per-container `DockerStart` without
+    // losing parity (Go's cache check is in-process, not a fork+exec). The
+    // `--legacy-bundle` suggestion on a resolve failure uses the first slug
+    // as a representative example, since no single slug is "the" one being
+    // processed yet at this point.
+    const styleAqua = dependencies.styleAqua ?? ((text: string) => text);
+    const pulledEdgeRuntimeImage: PulledEdgeRuntimeImage | undefined =
+      edgeRuntimeImage === undefined
+        ? undefined
+        : {
+            ...edgeRuntimeImage,
+            image: yield* resolveFunctionsDockerImage(
+              edgeRuntimeImage.rawImage,
+              edgeRuntimeImage.projectEnvValues,
+            ).pipe(Effect.mapError(withLegacyBundleSuggestion(slugs[0] ?? "", styleAqua))),
+          };
+
     const downloaded: string[] = [];
     for (const slug of slugs) {
       // Go: CLI-1891, `downloadAll`'s per-item validation runs before any
@@ -1456,9 +1369,9 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       if (Option.isNone(flags.functionName)) {
         yield* validateRemoteSlug(slug);
       }
-      if (edgeRuntimeImage !== undefined) {
+      if (pulledEdgeRuntimeImage !== undefined) {
         downloaded.push(
-          yield* downloadWithDockerUnbundle(dependencies, edgeRuntimeImage, projectRef, slug),
+          yield* downloadWithDockerUnbundle(dependencies, pulledEdgeRuntimeImage, projectRef, slug),
         );
       } else {
         downloaded.push(yield* downloadSingle(dependencies, projectRef, slug));

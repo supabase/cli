@@ -6,7 +6,8 @@ import {
 } from "../../../../shared/functions/download.ts";
 import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
-import { legacyAqua, legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -34,7 +35,7 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
     api,
     projectRoot: cliConfig.workdir,
     rawArgs,
-    goViperCompat: true,
+    goConfigCompat: legacyFunctionsGoConfigCompat,
     edgeRuntimeVersion,
     // Go: `utils.Bold` on the `Downloading function:` slug (`downloadOne`,
     // `download.go:219`, stderr) — matches `legacyBold`'s default TTY gate.
@@ -43,6 +44,10 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
     // (`suggestLegacyBundle`, `download.go:315`, stderr) — matches
     // `legacyAqua`'s default TTY gate.
     styleAqua: (text) => legacyAqua(text),
+    // Go: `utils.Yellow` on the `WARNING:` token before "Docker is not
+    // running" (`download.go:146`, stderr) — matches `legacyYellow`'s default
+    // TTY gate.
+    styleWarning: (text) => legacyYellow(text),
     resolveProjectRef: (projectRef) =>
       resolver.resolve(projectRef).pipe(
         Effect.tap((ref) =>

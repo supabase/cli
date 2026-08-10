@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from "vitest";
 
-import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./legacy-viper-env.ts";
+import {
+  legacyViperEnvBool,
+  legacyViperEnvBoolWithProjectFallback,
+  legacyViperEnvStringWithProjectFallback,
+} from "./legacy-viper-env.ts";
 
 const KEY = "SUPABASE_TEST_VIPER_BOOL";
 
@@ -68,5 +72,35 @@ describe("legacyViperEnvBoolWithProjectFallback", () => {
   it("keeps a true shell value over a false project value", () => {
     process.env[KEY] = "true";
     expect(legacyViperEnvBoolWithProjectFallback(KEY, { [KEY]: "false" })).toBe(true);
+  });
+});
+
+describe("legacyViperEnvStringWithProjectFallback", () => {
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  it("returns the shell value and ignores the project value when both are set", () => {
+    process.env[KEY] = "shell-value";
+    expect(legacyViperEnvStringWithProjectFallback(KEY, { [KEY]: "project-value" })).toBe(
+      "shell-value",
+    );
+  });
+
+  it("treats an empty shell value as present (godotenv never overwrites an existing key)", () => {
+    process.env[KEY] = "";
+    expect(legacyViperEnvStringWithProjectFallback(KEY, { [KEY]: "project-value" })).toBe("");
+  });
+
+  it("falls back to the project value when the shell var is absent", () => {
+    delete process.env[KEY];
+    expect(legacyViperEnvStringWithProjectFallback(KEY, { [KEY]: "project-value" })).toBe(
+      "project-value",
+    );
+  });
+
+  it("returns undefined when the key is absent from both the shell and the project env", () => {
+    delete process.env[KEY];
+    expect(legacyViperEnvStringWithProjectFallback(KEY, {})).toBeUndefined();
   });
 });

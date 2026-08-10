@@ -12,16 +12,23 @@ import { basename } from "node:path";
  * Resolve the project id Go feeds into `utils.DbId`/`utils.NetId`. viper sets
  * `Config.ProjectId` from config.toml's `project_id`, then `AutomaticEnv` overrides it
  * with `SUPABASE_PROJECT_ID`; when both are absent Go falls back to the working
- * directory basename (`utils.Config.ProjectId` default). So the precedence is
- * `SUPABASE_PROJECT_ID` → config.toml `project_id` → workdir basename.
+ * directory basename (`utils.Config.ProjectId` default) — UNLESS a `--project-ref`
+ * was resolved for this invocation, in which case `flags.LoadConfig` pre-sets
+ * `Config.ProjectId = ProjectRef` before ever merging the file
+ * (`pkg/config/config.go:561-570`), so `Eject` only reaches the basename fallback
+ * when that default is itself empty. `projectRefDefault` is `undefined` for
+ * `start`/`stop`/`status`, which have no such flag. So the full precedence is
+ * `SUPABASE_PROJECT_ID` → config.toml `project_id` → `--project-ref` → workdir basename.
  */
 export function legacyResolveLocalProjectId(
   envProjectId: string | undefined,
   tomlProjectId: string | undefined,
   workdir: string,
+  projectRefDefault?: string,
 ): string {
   if (envProjectId !== undefined && envProjectId.length > 0) return envProjectId;
   if (tomlProjectId !== undefined && tomlProjectId.length > 0) return tomlProjectId;
+  if (projectRefDefault !== undefined && projectRefDefault.length > 0) return projectRefDefault;
   return basename(workdir);
 }
 

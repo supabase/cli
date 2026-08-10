@@ -22,7 +22,7 @@ export const functionsDownload = Effect.fnUntraced(function* (flags: FunctionsDo
     api,
     projectRoot: projectHome.projectRoot,
     rawArgs,
-    goViperCompat: false,
+    goConfigCompat: undefined,
     edgeRuntimeVersion,
     resolveProjectRef,
     // In machine-output mode the child's stdout is captured and discarded

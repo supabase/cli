@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { Effect, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
+import { legacyMakeDockerImageResolver } from "../../legacy/shared/legacy-docker-image-resolve.ts";
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
@@ -28,6 +29,41 @@ export function localDockerId(name: string, projectId: string) {
   return `supabase_${name}_${normalizeProjectId(projectId)}`;
 }
 
+/**
+ * Go: `DockerStart`'s network selection (`internal/utils/docker.go:379-383`)
+ * combined with root's `viper.BindPFlags`/`AutomaticEnv` for the persistent
+ * `--network-id` flag (`cmd/root.go:316-334`). viper's `find()` resolves a
+ * `Changed` pflag *before* it ever consults a bound env var (`viper.go`'s
+ * flag-override branch precedes its env-override branch) — so an explicit
+ * `--network-id=` (empty, but still marks the flag `Changed`) makes
+ * `viper.GetString("network-id")` return `""` and stop there, WITHOUT
+ * falling through to `SUPABASE_NETWORK_ID`; only THEN does the consuming
+ * `len(networkId) > 0` check fall through, straight to the generated
+ * default. An explicit-but-empty *env* value, by contrast, genuinely means
+ * unset (viper never enables `AllowEmptyEnv`) and falls through to the
+ * default the normal way. Net effect: `explicit === undefined` (flag never
+ * touched) is the ONLY case that consults `envOverride` — `explicit === ""`
+ * (flag explicitly cleared) skips straight to the generated default, same
+ * as a non-empty `explicit` skips it by using the flag's own value. Callers
+ * MUST pass a flag reader that preserves this 3-way distinction — see
+ * `explicitStringFlag`.
+ * `envOverride` is `undefined` in `next` (no Go-viper env-binding claim
+ * there) — see `resolveDockerNetworkMode`'s callers.
+ */
+export function resolveDockerNetworkMode(input: {
+  readonly explicit: string | undefined;
+  readonly envOverride: string | undefined;
+  readonly projectId: string;
+}): string {
+  if (input.explicit !== undefined) {
+    return input.explicit.length > 0 ? input.explicit : localDockerId("network", input.projectId);
+  }
+  if (input.envOverride !== undefined && input.envOverride.length > 0) {
+    return input.envOverride;
+  }
+  return localDockerId("network", input.projectId);
+}
+
 const dockerCliProjectLabel = "com.supabase.cli.project";
 const dockerComposeProjectLabel = "com.docker.compose.project";
 
@@ -43,13 +79,75 @@ export function toDockerPath(hostPath: string) {
   return normalized.replace(/^[A-Za-z]:/, "");
 }
 
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
+export interface FunctionsDockerRunSpec {
+  /** Already registry/pull-resolved image reference. */
+  readonly image: string;
+  /** Go's `Config.ProjectId` — the label value (`docker.go:374-376`). */
+  readonly projectId: string;
+  readonly networkMode: string;
+  readonly binds: ReadonlyArray<string>;
+  /** `KEY=VALUE` entries, each emitted as `-e KEY=VALUE`. */
+  readonly env?: ReadonlyArray<string>;
+  /** argv after the image, e.g. `["bundle", "--entrypoint", …]`. */
+  readonly containerArgs: ReadonlyArray<string>;
+  readonly platform?: NodeJS.Platform;
+}
+
+/**
+ * Assembles the one-shot `docker run` invocation shared by `deploy.ts`'s
+ * bundler and `download.ts`'s unbundler containers: binds, network, the
+ * linux `host.docker.internal` workaround, env, and Go's unconditional
+ * `com.supabase.cli.project`/`com.docker.compose.project` labels
+ * (`DockerStart`, `internal/utils/docker.go:349-386`) — previously applied
+ * only to the network/volume these containers depend on
+ * (`ensureDockerNetwork`/`ensureDockerNamedVolume` above), never to the
+ * one-shot containers themselves, so label-based cleanup/inspection couldn't
+ * associate an orphaned container with the project.
+ */
+export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array<string> {
+  const command = ["run", "--rm", ...spec.binds.flatMap((bind) => ["-v", bind])];
+  command.push("--network", spec.networkMode);
+  if ((spec.platform ?? process.platform) === "linux") {
+    command.push("--add-host", "host.docker.internal:host-gateway");
+  }
+  for (const env of spec.env ?? []) {
+    command.push("-e", env);
+  }
+  const labels = dockerProjectLabels(spec.projectId);
+  command.push(
+    "--label",
+    `${dockerCliProjectLabel}=${labels[dockerCliProjectLabel]}`,
+    "--label",
+    `${dockerComposeProjectLabel}=${labels[dockerComposeProjectLabel]}`,
+  );
+  command.push(spec.image, ...spec.containerArgs);
+  return command;
+}
+
+// Decodes a byte stream to text, both accumulating the full text (returned,
+// for callers that need to post-process it, e.g. scanning stderr for
+// "invalid eszip v2") AND tee-ing each decoded chunk to `onChunk` as it
+// arrives — Go's `DockerStreamLogs`/`DockerRunOnceWithConfig` copy a
+// container's log stream live while it runs, rather than buffering the whole
+// thing until exit.
+function collectByteStream(
+  stream: Stream.Stream<Uint8Array, unknown>,
+  onChunk?: (chunk: string) => Effect.Effect<void>,
+): Effect.Effect<string, unknown> {
+  return Effect.suspend(() => {
+    const decoder = new TextDecoder();
+    let text = "";
+    const append = (chunk: string) => {
+      text += chunk;
+      return chunk.length > 0 && onChunk !== undefined ? onChunk(chunk) : Effect.void;
+    };
+    return Stream.runForEach(stream, (bytes) =>
+      append(decoder.decode(bytes, { stream: true })),
+    ).pipe(
+      Effect.flatMap(() => append(decoder.decode())),
+      Effect.map(() => text),
+    );
+  });
 }
 
 // Runs a container CLI command and collects its output. Every caller runs
@@ -64,6 +162,10 @@ export const runChildProcess = Effect.fnUntraced(function* (
     readonly stderr?: "pipe" | "ignore";
     readonly env?: Readonly<Record<string, string>>;
     readonly extendEnv?: boolean;
+    /** Tees each decoded stdout chunk as it arrives, live — see {@link collectByteStream}. */
+    readonly onStdout?: (chunk: string) => Effect.Effect<void>;
+    /** Tees each decoded stderr chunk as it arrives, live — see {@link collectByteStream}. */
+    readonly onStderr?: (chunk: string) => Effect.Effect<void>;
   } = {},
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -77,8 +179,12 @@ export const runChildProcess = Effect.fnUntraced(function* (
 
   const [stdout, stderr, exitCode] = yield* Effect.all(
     [
-      opts.stdout === "ignore" ? Effect.succeed("") : collectByteStream(child.stdout),
-      opts.stderr === "ignore" ? Effect.succeed("") : collectByteStream(child.stderr),
+      opts.stdout === "ignore"
+        ? Effect.succeed("")
+        : collectByteStream(child.stdout, opts.onStdout),
+      opts.stderr === "ignore"
+        ? Effect.succeed("")
+        : collectByteStream(child.stderr, opts.onStderr),
       child.exitCode.pipe(Effect.map(Number)),
     ],
     { concurrency: "unbounded" },
@@ -220,3 +326,21 @@ export function resolveEdgeRuntimeVersion(
 export function edgeRuntimeImageTag(version: string): string {
   return version.startsWith("v") ? version : `v${version}`;
 }
+
+/**
+ * Go: `DockerStart` -> `DockerResolveImageIfNotCached`/`DockerImagePullWithRetry`
+ * (`internal/utils/docker.go:304-348,366-370`) — checks every registry
+ * candidate (ECR/GHCR/Docker Hub) for a local cache hit first, then pulls
+ * with 2 retries per candidate (4s/8s backoff), returning whichever
+ * candidate answered. Shared by both shells' `functions` Docker paths
+ * (`deploy`/`download`/`serve`) — `legacyGetRegistryImageUrl`'s single-URL
+ * mapping is already called unconditionally by both today, so the retry is
+ * strictly-better resilience, not a Go-only quirk.
+ */
+export const resolveFunctionsDockerImage = Effect.fnUntraced(function* (
+  image: string,
+  projectEnvValues?: Readonly<Record<string, string>>,
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  return yield* legacyMakeDockerImageResolver(spawner, projectEnvValues)(image);
+});
