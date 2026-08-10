@@ -1885,6 +1885,17 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([requestedRuntimeIsAvailable])).toContain(
       `${strictRuntimeScenario.id}: explicit runtime error must bind an unavailable requested runtime`,
     );
+    const differentUnavailableReason = {
+      ...strictRuntimeScenario,
+      given: strictRuntimeScenario.given.map((fact) =>
+        fact.kind === "runtime-availability" && fact.runtime === "docker"
+          ? { ...fact, reason: "socket unavailable" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([differentUnavailableReason])).toContain(
+      `${strictRuntimeScenario.id}: explicit runtime error must bind an unavailable requested runtime`,
+    );
 
     const unsupportedPlatformScenario = findScenario(
       "native-qualification.unsupported-platform-fails-preflight",

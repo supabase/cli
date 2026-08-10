@@ -2182,6 +2182,7 @@ export const validateManagedStackContractFixtures = (
         availability.available ||
         availability.reason === undefined ||
         output.json?.requested_runtime !== unavailableRuntime ||
+        output.json?.reason !== availability.reason ||
         output.json?.fallback_attempted !== false ||
         scenario.expected.details?.fallback_attempted !== false ||
         scenario.expected.runtimeEffects.some((effect) => effect.operation === "start")
@@ -4975,6 +4976,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
           outcome: "error",
           code: "docker_unavailable",
           requested_runtime: "docker",
+          reason: "daemon unavailable",
           fallback_attempted: false,
           recovery: ["Start Docker", "Remove --runtime docker to use automatic selection"],
         },
