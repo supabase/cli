@@ -108,7 +108,7 @@
  */
 
 import type { ProjectConfig } from "@supabase/config";
-import { Clock, Data, Effect, type FileSystem, Option, type Path } from "effect";
+import { Clock, Data, Effect, type FileSystem, Option, type Path, Schedule } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
@@ -1125,16 +1125,28 @@ export const legacyRunFreshDbSetup = <E>(
       const dbConnection = yield* LegacyDbConnection;
       const { setup } = input;
       const dbPassword = legacyStartInternalDbPassword(setup.dbUrl);
-      const session = yield* dbConnection.connect(
-        {
-          host: input.hostname,
-          port: input.dbPort,
-          user: "postgres",
-          password: dbPassword,
-          database: "postgres",
-        },
-        { isLocal: true, dnsResolver: "native" },
-      );
+      // Go's `SetupLocalDatabase` dials this first host-facing connect exactly
+      // once (`start.go:360-363`); we deliberately diverge and retry dial-level
+      // failures: the container's internal health check says nothing about the
+      // HOST side, where Docker Desktop (Windows/WSL2) can publish the port a
+      // few seconds late (#6136).
+      const session = yield* dbConnection
+        .connect(
+          {
+            host: input.hostname,
+            port: input.dbPort,
+            user: "postgres",
+            password: dbPassword,
+            database: "postgres",
+          },
+          { isLocal: true, dnsResolver: "native" },
+        )
+        .pipe(
+          Effect.retry({
+            schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
+            while: (error) => error.retryable === true,
+          }),
+        );
 
       // Go's `initSchema` (`start.go:243-254`) branches to `initSchema15` — the ONLY place
       // `ResolveJWKS` is ever called — solely on `majorVersion >= 15`; the PG13/14 branch

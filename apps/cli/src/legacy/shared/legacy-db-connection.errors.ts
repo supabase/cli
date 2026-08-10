@@ -14,6 +14,12 @@ import {
 export class LegacyDbConnectError extends Data.TaggedError("LegacyDbConnectError")<{
   readonly message: string;
   readonly suggestion?: string;
+  /**
+   * True when the failure was dial-level (`legacyIsDialFailure`) rather than
+   * a server, auth, or config error — the fresh-db bootstrap's connect retry
+   * keys off this field (`db-setup.ts`, #6136).
+   */
+  readonly retryable?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbConnection;
