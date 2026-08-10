@@ -303,6 +303,11 @@ const defineManagedStackContractFixtures = <
   fixtures: Fixtures,
 ): Fixtures => fixtures;
 
+const isManagedStackContractRecord = (
+  value: ManagedStackContractJson | undefined,
+): value is Readonly<Record<string, ManagedStackContractJson>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
 export const validateManagedStackContractFixtures = (
   fixtures: ReadonlyArray<ManagedStackContractScenario>,
 ): ReadonlyArray<string> => {
@@ -310,6 +315,7 @@ export const validateManagedStackContractFixtures = (
   const ids = new Set<string>();
   const nativeServices = managedNativeServiceMatrix.services.map(([service]) => service);
   const nativeServiceSet = new Set<ServiceName>(nativeServices);
+  const fixturesById = new Map(fixtures.map((scenario) => [scenario.id, scenario]));
 
   for (const scenario of fixtures) {
     if (ids.has(scenario.id)) {
@@ -363,6 +369,30 @@ export const validateManagedStackContractFixtures = (
       errors.push(`${scenario.id}: at least one observable output is required`);
     }
 
+    if (
+      scenario.when.interface === "managed-api" &&
+      scenario.when.method === "runPortableContract"
+    ) {
+      const referencedId = scenario.when.input.scenarioId;
+      const referencedScenario =
+        typeof referencedId === "string" ? fixturesById.get(referencedId) : undefined;
+      if (referencedScenario === undefined) {
+        errors.push(`${scenario.id}: portable contract must reference a declared scenario`);
+      } else {
+        for (const runtime of ["node", "bun"]) {
+          const runtimeResult = output.api?.[runtime];
+          if (
+            !isManagedStackContractRecord(runtimeResult) ||
+            runtimeResult.outcome !== referencedScenario.expected.outcome
+          ) {
+            errors.push(
+              `${scenario.id}: portable ${runtime} outcome must match ${referencedScenario.id}`,
+            );
+          }
+        }
+      }
+    }
+
     if (scenario.expected.outcome === "error") {
       if (scenario.expected.error === undefined) {
         errors.push(`${scenario.id}: error outcome requires structured error metadata`);
@@ -386,6 +416,7 @@ export const validateManagedStackContractFixtures = (
     const projectIds = new Set<string>();
     const checkoutIds = new Set<string>();
     const contextIds = new Set<string>();
+    const existingCheckoutIdentityIds = new Set<string>();
     for (const fact of scenario.given) {
       switch (fact.kind) {
         case "branch":
@@ -397,6 +428,8 @@ export const validateManagedStackContractFixtures = (
           declaredIds.add(fact.checkoutId);
           projectIds.add(fact.projectId);
           checkoutIds.add(fact.checkoutId);
+          existingCheckoutIdentityIds.add(fact.projectId);
+          existingCheckoutIdentityIds.add(fact.checkoutId);
           break;
         case "credential-state":
           declaredIds.add(fact.valuesId);
@@ -531,6 +564,25 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.expected.error?.code === "persisted_runtime_unavailable") {
+      for (const fact of scenario.given) {
+        if (fact.kind !== "persisted-runtime") {
+          continue;
+        }
+        const explicitlyStopped = scenario.given.some(
+          (candidate) =>
+            candidate.kind === "stack" &&
+            candidate.stackId === fact.stackId &&
+            candidate.lifecycle === "stopped",
+        );
+        if (!explicitlyStopped) {
+          errors.push(
+            `${scenario.id}: persisted runtime failure for ${fact.stackId} requires an explicit stopped lifecycle`,
+          );
+        }
+      }
+    }
+
     for (const write of scenario.expected.writes) {
       if (
         write.id !== undefined &&
@@ -590,9 +642,32 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (
+      scenario.expected.error?.code === "exact_port_occupied" &&
+      scenario.given.some((fact) => fact.kind === "occupied-port" && fact.owner === "managed-stack")
+    ) {
+      if (selection === undefined) {
+        errors.push(`${scenario.id}: managed sibling port conflict requires a selected target`);
+      } else if (
+        scenario.given.some(
+          (fact) =>
+            fact.kind === "occupied-port" &&
+            fact.owner === "managed-stack" &&
+            fact.ownerId === selection.stackId,
+        )
+      ) {
+        errors.push(
+          `${scenario.id}: managed sibling port owner must differ from the selected target`,
+        );
+      }
+    }
+
     for (const write of scenario.expected.writes) {
       if (write.target !== "git-config") {
         continue;
+      }
+      if (write.operation === "create" && existingCheckoutIdentityIds.has(write.id)) {
+        errors.push(`${scenario.id}: Git identity ${write.id} is already declared`);
       }
       const expectedScope = projectIds.has(write.id)
         ? "common"
@@ -2151,7 +2226,6 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       writes: [
-        { target: "git-config", operation: "create", id: "checkout-b", scope: "worktree" },
         { target: "git-config", operation: "create", id: "context-b-main", scope: "worktree" },
         { target: "registry", operation: "publish", id: "stack-b-main-default" },
         { target: "managed-state", operation: "create", id: "stack-b-main-default" },
@@ -2928,6 +3002,13 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     area: "runtime",
     given: [
       { kind: "persisted-runtime", stackId: "stack-main-default", runtime: "native" },
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-main-default",
+        contextId: "context-main",
+        lifecycle: "stopped",
+      },
       { kind: "runtime-request", source: "default", runtime: "auto" },
       {
         kind: "runtime-availability",
@@ -3987,8 +4068,8 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
       details: { results_equal: true, bun_specific_state_api: false },
       output: {
         api: {
-          node: { outcome: "reuse", stackId: "stack-main-default" },
-          bun: { outcome: "reuse", stackId: "stack-main-default" },
+          node: { outcome: "report", stackId: "stack-main-default" },
+          bun: { outcome: "report", stackId: "stack-main-default" },
           equal: true,
         },
       },
@@ -4199,6 +4280,14 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     area: "ports",
     given: [
       {
+        kind: "checkout",
+        path: "worktree-feat-a",
+        projectId: "project-a",
+        checkoutId: "checkout-feat-a",
+      },
+      { kind: "branch", name: "feat-a", contextId: "context-feat-a", checkedOut: true },
+      { kind: "managed-target", stackId: "stack-feat-a-default", exists: false },
+      {
         kind: "config-port",
         key: "api.port",
         intent: "exact",
@@ -4219,6 +4308,13 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     },
     expected: {
       outcome: "error",
+      selection: {
+        projectId: "project-a",
+        checkoutId: "checkout-feat-a",
+        contextId: "context-feat-a",
+        stackId: "stack-feat-a-default",
+        stackName: "default",
+      },
       error: {
         code: "exact_port_occupied",
         message: "api.port requires 54321, but stack-main-default already owns that port",

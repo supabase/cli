@@ -292,6 +292,86 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([siblingGitStateOnly])).toContain(
       `${bareWorktreeScenario.id}: resolving worktree worktree-b requires its Git state`,
     );
+
+    const recreatedCheckoutIdentity = {
+      ...bareWorktreeScenario,
+      expected: {
+        ...bareWorktreeScenario.expected,
+        writes: [
+          ...bareWorktreeScenario.expected.writes,
+          {
+            target: "git-config",
+            operation: "create",
+            id: "checkout-b",
+            scope: "worktree",
+          },
+        ],
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([recreatedCheckoutIdentity])).toContain(
+      `${bareWorktreeScenario.id}: Git identity checkout-b is already declared`,
+    );
+
+    const unavailableRuntimeScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "runtime.missing-persisted-prerequisite-fails",
+    );
+    if (unavailableRuntimeScenario === undefined) {
+      throw new Error("runtime.missing-persisted-prerequisite-fails fixture is required");
+    }
+    const ambiguousRuntimeFailure = {
+      ...unavailableRuntimeScenario,
+      given: unavailableRuntimeScenario.given.filter(({ kind }) => kind !== "stack"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ambiguousRuntimeFailure])).toContain(
+      `${unavailableRuntimeScenario.id}: persisted runtime failure for stack-main-default requires an explicit stopped lifecycle`,
+    );
+
+    const portabilityScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "api-boundary.managed-surface-is-node-and-bun-portable",
+    );
+    if (portabilityScenario === undefined) {
+      throw new Error("api-boundary.managed-surface-is-node-and-bun-portable fixture is required");
+    }
+    const divergentPortableResult = {
+      ...portabilityScenario,
+      expected: {
+        ...portabilityScenario.expected,
+        output: {
+          ...portabilityScenario.expected.output,
+          api: {
+            node: { outcome: "reuse", stackId: "stack-main-default" },
+            bun: { outcome: "report", stackId: "stack-main-default" },
+            equal: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([apiStatusScenario, divergentPortableResult]),
+    ).toContain(
+      `${portabilityScenario.id}: portable node outcome must match ${apiStatusScenario.id}`,
+    );
+
+    const siblingPortScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "ports.explicit-port-conflict-with-sibling-fails",
+      );
+    if (siblingPortScenario?.expected.selection === undefined) {
+      throw new Error("ports.explicit-port-conflict-with-sibling-fails selection is required");
+    }
+    const targetOwnsConflictingPort = {
+      ...siblingPortScenario,
+      expected: {
+        ...siblingPortScenario.expected,
+        selection: {
+          ...siblingPortScenario.expected.selection,
+          stackId: "stack-main-default",
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([targetOwnsConflictingPort])).toContain(
+      `${siblingPortScenario.id}: managed sibling port owner must differ from the selected target`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
