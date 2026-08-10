@@ -277,7 +277,7 @@ export const managedNativeServiceMatrix: ManagedNativeServiceMatrix = {
     ["pooler", "v2.9.10"],
     ["mailpit", "v1.30.2"],
     ["vector", "v0.53.0"],
-    ["imgproxy", "v3.8.0"],
+    ["imgproxy", "v3.27.2"],
   ],
 };
 
