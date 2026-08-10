@@ -7,6 +7,7 @@ import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from 
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { vi } from "vitest";
 
 import {
   mockOutput,
@@ -1482,6 +1483,40 @@ describe("legacy db start", () => {
       expect(out.stderrText).toContain("Postgres database is already running.");
     });
   });
+
+  it.live(
+    "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
+    () => {
+      // `legacyLoadLocalProjectContext` wraps `@supabase/config`'s `loadProjectConfig`, which
+      // unconditionally `Console.error`s a deprecation WARN for a legacy `[inbucket]` section
+      // (`packages/config/src/io.ts`'s `normalizeDeprecatedSMTPSections`, pinned to the real
+      // console — not this file's `Output` service, so it must be observed with a raw
+      // `console.error` spy, same idiom as `stop`/`status`'s own identical deprecated-provider
+      // tests). This handler used to load that context TWICE on the not-running path: once
+      // eagerly here (ahead of the already-running short-circuit), and again inside
+      // `legacyBuildLocalDbContainerInputs`'s own, now-removed, internal reload — doubling this
+      // WARN for one invocation, unlike Go's single `flags.LoadConfig` call
+      // (`internal/db/start/start.go:45`). Threading the eagerly-loaded context through as
+      // `legacyBuildLocalDbContainerInputs`'s `preloadedContext` fixes this.
+      const { layer } = setup({
+        configContents: 'project_id = "test"\n[inbucket]\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      const warnings: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const inbucketWarnings = warnings.filter((m) =>
+          m.includes(
+            "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+          ),
+        );
+        expect(inbucketWarnings).toHaveLength(1);
+      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
 
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
     // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before

@@ -93,6 +93,14 @@ export interface LegacyLocalDbContainerInputs {
 /**
  * Builds {@link LegacyLocalDbContainerInputs} — see this module's header for the full call
  * order and for which parts are deliberately excluded (kept at each call site instead).
+ *
+ * Loads its own {@link LegacyLocalProjectContext} via {@link legacyLoadLocalProjectContext}
+ * UNLESS the caller passes {@link preloadedContext} — see that parameter's own doc comment for
+ * why `db start`'s handler must pass one (a double-print bug: `@supabase/config`'s
+ * `loadProjectConfig` unconditionally prints deprecated-config-section WARN lines to stderr,
+ * and `db start` already loads a context of its own, eagerly, ahead of this function, matching
+ * Go's single `flags.LoadConfig` call in `start.Run` (`apps/cli-go/internal/db/start/
+ * start.go:45`)).
  */
 export const legacyBuildLocalDbContainerInputs = (
   spawner: Spawner,
@@ -120,6 +128,27 @@ export const legacyBuildLocalDbContainerInputs = (
   // (`apps/cli-go/pkg/config/config.go:635-640`).
   // `db start`/`db reset` never pass a `projectRef` above, so they never need this either.
   remoteOverrideKeys?: ReadonlySet<string>,
+  // `db start`'s handler — the only real caller that already has a
+  // {@link LegacyLocalProjectContext} loaded in scope BEFORE calling this function, since it
+  // must eagerly load+validate config ahead of its own "is Postgres already running"
+  // short-circuit (matching Go's single `flags.LoadConfig` call, `start.go:45`, which also runs
+  // ahead of `AssertSupabaseDbIsRunning`, `start.go:45-47`). When provided, this function uses
+  // it AS-IS instead of calling `legacyLoadLocalProjectContext(workdir, mapError, projectRef)`
+  // again — the call is skipped entirely, not just its result discarded, because that reload is
+  // the one genuinely observable side effect this function would otherwise repeat:
+  // `@supabase/config`'s `loadProjectConfig` unconditionally prints deprecated-`[inbucket]`/
+  // deprecated-`auth.external.{linkedin,slack}` WARN lines to stderr (`packages/config/src/
+  // io.ts:705-710,792-797`), so reloading would print each warning TWICE for one `db start`
+  // invocation where Postgres isn't already running, instead of once like Go — whose entire
+  // config load is a single package-level-singleton pass, with no second `Config.Load` call
+  // anywhere in `db start`'s call graph to double the print.
+  //
+  // PRECONDITION (not enforced here — see this module's header for why `db start`/`db reset`
+  // never pass a `projectRef` above, so there is nothing to reconcile): the preloaded context
+  // must correspond to the SAME `workdir`/`projectRef` this call would otherwise have passed to
+  // `legacyLoadLocalProjectContext` itself. That's only ever true today for a caller — `db
+  // start` — that never passes `projectRef` at all.
+  preloadedContext?: LegacyLocalProjectContext,
 ): Effect.Effect<
   LegacyLocalDbContainerInputs,
   LegacyDbConfigLoadError,
@@ -130,7 +159,8 @@ export const legacyBuildLocalDbContainerInputs = (
     const path = yield* Path.Path;
     const mapError = (message: string) => new LegacyDbConfigLoadError({ message });
 
-    const context = yield* legacyLoadLocalProjectContext(workdir, mapError, projectRef);
+    const context =
+      preloadedContext ?? (yield* legacyLoadLocalProjectContext(workdir, mapError, projectRef));
     const { config, projectEnvValues, loaded, hostname, projectId } = context;
     // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
     // inside `legacyRunFreshDbSetup`'s fresh-volume setup pipeline — see this field's own doc

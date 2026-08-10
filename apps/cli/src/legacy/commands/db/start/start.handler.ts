@@ -162,10 +162,14 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       (message) => new LegacyDbConfigLoadError({ message }),
     );
     // `projectId`/`hostname` are NOT destructured under their bare names here — the not-running
-    // branch below reloads its OWN (identical) copy of the whole context via
-    // `legacyBuildLocalDbContainerInputs`, which returns its own `context.projectId`/
-    // `context.hostname`, and re-declaring those names in this same scope would collide.
-    // `hostnameForValidation` is still needed here, for the eager, discarded
+    // branch below passes this SAME `context` into `legacyBuildLocalDbContainerInputs` as its
+    // `preloadedContext` param (reused, not reloaded — a second `legacyLoadLocalProjectContext`
+    // call would run `@supabase/config`'s `loadProjectConfig` again, which unconditionally
+    // prints deprecated-config-section WARN lines to stderr, doubling them for one invocation),
+    // and that function returns the SAME context back verbatim as `inputs.context`, later
+    // destructured under `context.projectId`/`context.hostname` — re-declaring those same bare
+    // names here, in this same function scope, would still collide with that later
+    // destructuring. `hostnameForValidation` is still needed here, for the eager, discarded
     // `legacyResolveLocalConfigValues` call further down.
     const { config, projectEnvValues, loaded, hostname: hostnameForValidation } = context;
 
@@ -963,13 +967,21 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // `--exclude`, no image pre-pull for any other service, no JWT/JWKS/image resolution
     // beyond what Postgres and its own fresh-volume setup jobs need. Shared with `db reset`'s
     // own identical prelude — see `legacyBuildLocalDbContainerInputs`'s own header for why
-    // `fromBackup`/rollback tracking stay here instead of moving into it.
+    // `fromBackup`/rollback tracking stay here instead of moving into it. `context` (loaded
+    // eagerly above) is threaded through as `preloadedContext` — no `projectRef`/
+    // `remoteOverrideKeys` (`db start` never has either) — so this call reuses it instead of
+    // calling `legacyLoadLocalProjectContext` a second time, which would otherwise double-print
+    // any deprecated-config-section stderr warning for this single invocation (see
+    // `preloadedContext`'s own doc comment).
     const inputs = yield* legacyBuildLocalDbContainerInputs(
       spawner,
       cliConfig.workdir,
       networkIdFlag,
       runtimeInfo.platform,
       debug,
+      undefined,
+      undefined,
+      context,
     );
     const {
       context: { projectId, hostname },
