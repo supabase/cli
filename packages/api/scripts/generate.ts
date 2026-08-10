@@ -10,7 +10,7 @@ import * as SchemaRepresentation from "effect/SchemaRepresentation";
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD";
 type OpenApiHttpMethod = Lowercase<HttpMethod>;
 
-type OpenApiDocument = {
+export type OpenApiDocument = {
   readonly openapi: string;
   readonly info?: {
     readonly title?: string;
@@ -22,7 +22,7 @@ type OpenApiDocument = {
   };
 };
 
-type OpenApiOperation = {
+export type OpenApiOperation = {
   readonly operationId?: string;
   readonly summary?: string;
   readonly description?: string;

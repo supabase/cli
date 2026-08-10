@@ -1016,4 +1016,132 @@ describe("makeSupabaseApiClient", () => {
       }),
     ).toThrow();
   });
+
+  test("surfaces a 404 on a v2 operation as a distinguishable status error and wires the request identically to v1", async () => {
+    let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
+
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenRequest = request;
+            return Effect.succeed(
+              jsonResponse(request, 404, { message: "Organization not found" }),
+            );
+          }),
+        ),
+      ),
+    );
+
+    const error = await Effect.runPromise(
+      client
+        .execute(operationDefinitions.v2ListOrganizationMembers, { slug: "my-org" })
+        .pipe(Effect.flip),
+    );
+
+    expect(HttpClientError.isHttpClientError(error)).toBe(true);
+    if (!HttpClientError.isHttpClientError(error)) {
+      throw new Error("expected HttpClientError");
+    }
+    expect(error.reason._tag).toBe("StatusCodeError");
+    if (error.reason._tag !== "StatusCodeError") {
+      throw new Error("expected StatusCodeError");
+    }
+    expect(error.reason.response.status).toBe(404);
+
+    expect(seenRequest).toBeDefined();
+    expect(seenRequest?.url).toBe("https://api.supabase.com/v2/organizations/my-org/members");
+    expect(seenRequest?.headers.authorization).toBe("Bearer test-token");
+  });
+
+  // NOTE(CLI-2157): v2GetProjectConfig is staging-only until the endpoint ships to prod; delete or re-point this test if the snapshot is regenerated from prod before then.
+  test("decodes a nested v2GetProjectConfig payload through the unified execute path", async () => {
+    const result = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v2GetProjectConfig">(operationDefinitions.v2GetProjectConfig, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                data: {
+                  type: "project_config",
+                  id: "abcdefghijklmnopqrst",
+                  attributes: {
+                    database: {
+                      ssl_enforced: true,
+                      network_restrictions: {
+                        entitlement: "disallowed",
+                        status: "stored",
+                        allowed_cidrs: [],
+                      },
+                      postgres_settings: {},
+                    },
+                    pooler: {
+                      pool_mode: "transaction",
+                      ignore_startup_parameters: "",
+                      server_idle_timeout: 0,
+                      server_lifetime: 0,
+                      query_wait_timeout: 0,
+                      reserve_pool_size: 0,
+                      default_pool_size: 0,
+                      max_client_conn: 0,
+                    },
+                    auth: {},
+                    api: {
+                      db_schema: "public",
+                      db_extra_search_path: "",
+                      max_rows: 1000,
+                      db_pool_acquisition_timeout: 0,
+                      db_pool: null,
+                    },
+                    realtime: {
+                      private_only: false,
+                      max_concurrent_users: 0,
+                      max_events_per_second: 0,
+                      max_bytes_per_second: 0,
+                      max_channels_per_client: 0,
+                      max_joins_per_second: 0,
+                      max_presence_events_per_second: 0,
+                      max_payload_size_in_kb: 0,
+                      presence_enabled: true,
+                      suspend: false,
+                      connection_pool: 0,
+                      postgres_changes_pool: null,
+                    },
+                    storage: {
+                      file_size_limit: 0,
+                      features: {
+                        image_transformation: { enabled: true },
+                        s3_protocol: { enabled: true },
+                        purge_cache: { enabled: true },
+                        iceberg_catalog: {
+                          enabled: false,
+                          max_namespaces: 0,
+                          max_tables: 0,
+                          max_catalogs: 0,
+                        },
+                        vector_buckets: { enabled: false, max_buckets: 0, max_indexes: 0 },
+                      },
+                      capabilities: { list_v2: true, iceberg_catalog: true },
+                      upstream_target: "main",
+                      migration_version: "1",
+                      database_pool_mode: "transaction",
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.data.attributes.database.network_restrictions.entitlement).toBe("disallowed");
+    expect(result.data.attributes.storage.upstream_target).toBe("main");
+    expect(result.data.attributes.api.db_pool).toBeNull();
+  });
 });

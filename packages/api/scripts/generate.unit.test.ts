@@ -3,6 +3,7 @@ import * as JsonSchema from "effect/JsonSchema";
 import * as SchemaRepresentation from "effect/SchemaRepresentation";
 import { describe, expect, test } from "vitest";
 
+import type { OpenApiDocument, OpenApiOperation } from "./generate.ts";
 import {
   extractOperations,
   normalizeNullableJsonSchema,
@@ -18,7 +19,7 @@ function jsonResponseOperation(
   operationId: string,
   pathParamName: string,
   responseSchema: Record<string, unknown>,
-) {
+): OpenApiOperation {
   return {
     operationId,
     parameters: [{ name: pathParamName, in: "path", required: true, schema: { type: "string" } }],
@@ -34,7 +35,7 @@ function jsonResponseOperation(
   };
 }
 
-function twoVersionFixture() {
+function twoVersionFixture(): OpenApiDocument {
   return {
     openapi: "3.0.0",
     info: { title: "Test API", version: "1.0.0" },
