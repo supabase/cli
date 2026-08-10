@@ -111,7 +111,7 @@
  */
 
 import type { ProjectConfig } from "@supabase/config";
-import { Clock, Data, Effect, type FileSystem, Option, type Path, Schedule } from "effect";
+import { Data, Effect, type FileSystem, Option, type Path, Schedule } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import type { LocalServiceVersionOverrides } from "../../../shared/services/services.shared.ts";
@@ -1151,7 +1151,6 @@ export const legacyStartSetupLocalDatabase = (
           },
           isLocal: true,
           migrationsDir: path.join(workdir, "supabase", "migrations"),
-          nowMillis: yield* Clock.currentTimeMillis,
         }).pipe(
           // Best-effort: Go's own `TryCacheMigrationsCatalog` failure only ever warns
           // (`fmt.Fprintln(os.Stderr, "Warning: failed to cache migrations catalog:", err)`,

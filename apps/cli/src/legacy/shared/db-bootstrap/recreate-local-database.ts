@@ -1,7 +1,7 @@
 /**
  * `db reset --local`'s container-recreate half — a strict 1:1 port of Go's
  * `resetDatabase`/`resetDatabase14`/`resetDatabase15`
- * (`apps/cli-go/internal/db/reset/reset.go:81-208`). This is DELIBERATELY NOT a
+ * (`apps/cli-go/internal/db/reset/reset.go:81-176`). This is DELIBERATELY NOT a
  * thin wrapper over {@link legacyStartDatabase} (`./start-database.ts`, the
  * `StartDatabase`-equivalent `db start`/`supabase start` share) — Go's own
  * `resetDatabase15` never calls `StartDatabase` either. It is a distinctly
@@ -10,7 +10,7 @@
  * `legacyCreateContainer`, `legacyWaitForHealthyServices`,
  * `legacyStartSetupLocalDatabase`), matching Go's own structure:
  *
- * **PG >= 15** (`resetDatabase15`, `reset.go:146-174`):
+ * **PG >= 15** (`resetDatabase15`, `reset.go:114-142`):
  * 1. `docker container rm -f <db>` — NOT tolerant of "not found" (a genuine
  *    remove failure is a hard `failed to remove container`), unlike most other
  *    container lookups in this codebase.
@@ -35,8 +35,8 @@
  * 8. `Restarting containers...\n` to stderr, then
  *    {@link legacyRestartServicesAndReloadKong} (`./restart-services.ts`).
  *
- * **PG <= 14** (`resetDatabase14`, `reset.go:128-144`):
- * 1. `recreateDatabase` (`reset.go:188-208`) — connect as `supabase_admin` to
+ * **PG <= 14** (`resetDatabase14`, `reset.go:96-112`):
+ * 1. `recreateDatabase` (`reset.go:157-176`) — connect as `supabase_admin` to
  *    `template1`, `DisconnectClients`, then four UNWRAPPED (no `BEGIN`/`COMMIT`)
  *    statements: `DROP`/`CREATE DATABASE postgres`, `DROP`/`CREATE DATABASE
  *    _supabase`. Go batches these via a pgconn protocol trick that has no TS
@@ -47,13 +47,13 @@
  *    with the pinned pgconn/pgx versions — the batching trick is real, but its
  *    OBSERVABLE effect is identical to sequential execution for this
  *    particular statement set).
- * 2. `initDatabase` (`reset.go:176-186`) — connect as `supabase_admin` to the
+ * 2. `initDatabase` (`reset.go:144-154`) — connect as `supabase_admin` to the
  *    default `postgres` database, then Go's EXPORTED `InitSchema14` (schema SQL
  *    ONLY, deliberately WITHOUT globals.sql — see `legacyInitSchema14`'s
  *    own doc comment for why this is NOT the same as `db start`'s PG<=14 path)
  *    + `ApplyApiPrivileges` (the exact same exported function `SetupDatabase`
  *    also calls).
- * 3. `RestartDatabase` (`reset.go:246-257`) — `Restarting containers...\n`
+ * 3. `RestartDatabase` (`reset.go:214-225`) — `Restarting containers...\n`
  *    FIRST, then a REAL `docker restart` of the `db` container itself (NOT
  *    tolerant of "not found" — pg_cron must restart after
  *    `pg_terminate_backend`, Go's own comment), health wait (not swallowed),
@@ -92,12 +92,16 @@ import {
 import { legacyIsSqlState } from "../legacy-connect-errors.ts";
 import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
 import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
-import type { LegacyDbConnectError, LegacyDbExecError } from "../legacy-db-connection.errors.ts";
+import { LegacyDbExecError, type LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
 import { LEGACY_CLI_PROJECT_LABEL } from "../legacy-docker-ids.ts";
 import type { LegacyDockerRun } from "../legacy-docker-run.service.ts";
 import type { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
-import type { LegacyMigrationApplyError } from "../legacy-migration-apply.ts";
+import {
+  legacyFormatExecBatchError,
+  type LegacyMigrationApplyError,
+} from "../legacy-migration-apply.ts";
+import { legacyErrorMessage } from "../legacy-error-message.ts";
 import type { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import type { LegacyMigrationSeedError } from "../legacy-seed.ts";
 import {
@@ -149,7 +153,7 @@ const errMessage = (e: unknown): string =>
 /**
  * One or more replication slots are still active (retryable — the WAL sender
  * that owns the slot may still be tearing down), OR counting them failed
- * outright (permanent — Go's `backoff.PermanentError`, `reset.go:236-238`:
+ * outright (permanent — Go's `backoff.PermanentError`, `reset.go:204-206`:
  * a query-execution failure is never retried, only "count > 0" is). Exported
  * only so the exhaustive actionability guard can inspect its
  * declaration; runtime callers discriminate it through the
@@ -218,7 +222,7 @@ export interface LegacyRecreateLocalDatabaseInput<E> {
 const PG_INVALID_CATALOG_NAME = "3D000";
 
 /**
- * Port of Go's `DisconnectClients` (`reset.go:215-244`): disable new connections
+ * Port of Go's `DisconnectClients` (`reset.go:183-212`): disable new connections
  * to `postgres`/`_supabase`, terminate existing backends, then wait for WAL
  * senders to drop their replication slots (constant 1-second backoff, 10
  * retries max — Go's `NewBackoffPolicy(ctx, 10*time.Second)`).
@@ -236,7 +240,7 @@ const PG_INVALID_CATALOG_NAME = "3D000";
  */
 export const legacyResetDisconnectClients = Effect.fnUntraced(function* (session: LegacyDbSession) {
   // Must be executed separately because looping in a transaction is unsupported
-  // (Go's own comment, `reset.go:216-217`) — sequential, unwrapped execs, relying on
+  // (Go's own comment, `reset.go:184-185`) — sequential, unwrapped execs, relying on
   // Effect's short-circuit-on-failure to stop at the first bad statement, exactly
   // like pgconn's own batch-pipeline semantics would.
   const disconnectResult = yield* Effect.forEach(
@@ -303,22 +307,48 @@ export const legacyResetDisconnectClients = Effect.fnUntraced(function* (session
   );
 });
 
+// Go builds these four as a single `migration.MigrationFile{Statements: [...]}`
+// and calls `.ExecBatch` (`reset.go:165-173`), which formats a failed statement
+// with the same rich error context (caret-marked position, `Detail` line, the
+// SQLSTATE-42704 extension hint, `At statement: <index>`) real migration files
+// get — NOT a real SQL transaction: `DROP`/`CREATE DATABASE` cannot run inside a
+// `BEGIN`/`COMMIT` block at all, so these stay bare, sequential, UNWRAPPED
+// `session.exec` calls (the pgconn network-pipeline batching `ExecBatch` uses
+// instead has no TS equivalent and no observable difference here). Each
+// statement's index matches its position in this list, mirroring Go's
+// `m.Statements` indexing.
+const RESET_RECREATE_DATABASES_STATEMENTS = [
+  "DROP DATABASE IF EXISTS postgres WITH (FORCE)",
+  "CREATE DATABASE postgres WITH OWNER postgres",
+  "DROP DATABASE IF EXISTS _supabase WITH (FORCE)",
+  "CREATE DATABASE _supabase WITH OWNER postgres",
+] as const;
+
 /**
- * Port of Go's `recreateDatabase` (`reset.go:188-208`): connect as
+ * Port of Go's `recreateDatabase` (`reset.go:157-176`): connect as
  * `supabase_admin` to `template1`, disconnect clients, then four UNWRAPPED
  * statements. "We are not dropping roles here because they are cluster level
  * entities. Use stop && start instead." (Go's own comment.)
  */
 const legacyResetRecreateDatabases = Effect.fnUntraced(function* (session: LegacyDbSession) {
   yield* legacyResetDisconnectClients(session);
-  yield* session.exec("DROP DATABASE IF EXISTS postgres WITH (FORCE)");
-  yield* session.exec("CREATE DATABASE postgres WITH OWNER postgres");
-  yield* session.exec("DROP DATABASE IF EXISTS _supabase WITH (FORCE)");
-  yield* session.exec("CREATE DATABASE _supabase WITH OWNER postgres");
+  for (const [index, statement] of RESET_RECREATE_DATABASES_STATEMENTS.entries()) {
+    yield* session.exec(statement).pipe(
+      Effect.mapError(
+        (error) =>
+          new LegacyDbExecError({
+            message: legacyErrorMessage(legacyFormatExecBatchError(error, index, statement)),
+            code: error.code,
+            detail: error.detail,
+            position: error.position,
+          }),
+      ),
+    );
+  }
 });
 
 /**
- * Port of Go's `resetDatabase15` (`reset.go:146-174`) — see this module's own
+ * Port of Go's `resetDatabase15` (`reset.go:114-142`) — see this module's own
  * header for the full sequence and citations.
  */
 const legacyRecreateLocalDatabase15 = <E>(
@@ -384,7 +414,7 @@ const legacyRecreateLocalDatabase15 = <E>(
   });
 
 /**
- * Port of Go's `resetDatabase14` (`reset.go:128-144`) — see this module's own
+ * Port of Go's `resetDatabase14` (`reset.go:96-112`) — see this module's own
  * header for the full sequence and citations. Loads `config.toml` once, ahead of
  * `initDatabase` (needs `api.auto_expose_new_tables`) and the final
  * `MigrateAndSeed` (needs `db.migrations.enabled`/`[db.seed]`/pg-delta gate) —

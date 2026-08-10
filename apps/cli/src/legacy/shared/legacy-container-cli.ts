@@ -139,7 +139,7 @@ export const containerCliExitCode = (
  * `legacy-docker-lifecycle.ts` — every module that spawns `docker`/`podman` and
  * needs its stdout/stderr as text — stop each defining their own copy.
  */
-export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
+export function legacyCollectText(stream: Stream.Stream<Uint8Array, unknown>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -182,7 +182,7 @@ export function legacyIsContainerNotFoundMessage(message: string): boolean {
  * `verb` is the human-readable action embedded in the error message (e.g.
  * `"remove container"` → `"failed to remove container: <cause>"`).
  */
-export function runContainerCliExpectSuccess<E>(
+export function legacyRunContainerCliExpectSuccess<E>(
   spawner: Spawner,
   args: ReadonlyArray<string>,
   verb: string,
@@ -200,7 +200,7 @@ export function runContainerCliExpectSuccess<E>(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(Effect.mapError(() => makeError(`failed to ${verb}`)));
       if (exitCode !== 0) {
@@ -252,7 +252,7 @@ export const legacyContainerCliExitCodeAndStdout = (
       // so a late subscriber would see an already-ended, empty stream (same
       // pattern as `legacy-docker-lifecycle.ts`'s `spawnDockerPsLines`).
       const [exitCode, stdout] = yield* Effect.all(
-        [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
+        [handle.exitCode.pipe(Effect.map(Number)), legacyCollectText(handle.stdout)],
         { concurrency: "unbounded" },
       );
       return { exitCode, stdout };
@@ -308,7 +308,7 @@ export const legacyDockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
         }),
       );
       const [exitCode, stdout] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stdout)],
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) return false;

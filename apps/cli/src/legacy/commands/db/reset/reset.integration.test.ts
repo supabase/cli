@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -34,11 +34,13 @@ import {
   LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../../shared/legacy/global-flags.ts";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
-import { LegacyGoChildExitError } from "../../../../shared/legacy/legacy-go-child-exit.error.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
-import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
+import {
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type {
@@ -80,10 +82,8 @@ const DEFAULT_FLAGS: LegacyDbResetFlags = {
 
 /**
  * Tracks every `resolve`/`resolvePoolerFallback` invocation so tests can prove a
- * connection was (or, for the delegated-experimental path, was NOT) resolved —
- * `resolve()` mints/verifies a temporary Postgres login role over the Management
- * API, so calling it on a path that immediately discards the result is wasted
- * (and duplicated) work (CLI-1879).
+ * connection was resolved exactly once per reset — `resolve()` mints/verifies a
+ * temporary Postgres login role over the Management API for a `--linked` target.
  */
 function mockResolver(opts: {
   isLocal: boolean;
@@ -141,6 +141,9 @@ function mockConnection(
     replicationSlotQueryFails?: boolean;
     /** Fails one exact statement with the given SQLSTATE `code` (or no code, for a non-PgError failure). */
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
+    /** When set, an `exec` whose SQL contains this substring fails instead of succeeding. */
+    execFailsOn?: string;
+    execFailsMessage?: string;
   } = {},
 ) {
   const execs: Array<string> = [];
@@ -154,6 +157,11 @@ function mockConnection(
         queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
         exec: (sql: string): Effect.Effect<void, LegacyDbExecError> =>
           Effect.suspend((): Effect.Effect<void, LegacyDbExecError> => {
+            if (opts.execFailsOn !== undefined && sql.includes(opts.execFailsOn)) {
+              return Effect.fail(
+                new LegacyDbExecError({ message: opts.execFailsMessage ?? "syntax error" }),
+              );
+            }
             execs.push(sql);
             if (opts.failStatement !== undefined && sql === opts.failStatement.sql) {
               return Effect.fail(
@@ -199,42 +207,6 @@ function mockConnection(
     },
     get queries() {
       return queries;
-    },
-  };
-}
-
-/**
- * `execCaptureExitCode`, when set, makes `execCapture` fail with a
- * `LegacyGoChildExitError` carrying that code instead of succeeding — simulating
- * a delegated Go child exiting non-zero under a machine-output mode (CLI-1879).
- */
-function mockProxy(opts: { execCaptureExitCode?: number } = {}) {
-  const calls: Array<{ args: ReadonlyArray<string>; env?: Record<string, string> }> = [];
-  const layer = Layer.succeed(LegacyGoProxy, {
-    exec: (args, execOpts) =>
-      Effect.sync(() => {
-        calls.push({ args, env: execOpts?.env });
-      }),
-    execCapture: (args, execOpts) =>
-      Effect.sync(() => {
-        calls.push({ args, env: execOpts?.env });
-      }).pipe(
-        Effect.flatMap(() =>
-          opts.execCaptureExitCode !== undefined
-            ? Effect.fail(
-                new LegacyGoChildExitError({
-                  exitCode: opts.execCaptureExitCode,
-                  message: `supabase-go exited with code ${opts.execCaptureExitCode}`,
-                }),
-              )
-            : Effect.succeed(""),
-        ),
-      ),
-  });
-  return {
-    layer,
-    get calls() {
-      return calls;
     },
   };
 }
@@ -358,7 +330,6 @@ interface DefaultRouteOpts {
   readonly kongNotRunning?: boolean;
   readonly kongReloadFails?: boolean;
   readonly storageMissing?: boolean;
-  readonly storageUnhealthy?: boolean;
   readonly restartFails?: ReadonlyArray<string>;
 }
 
@@ -398,7 +369,11 @@ function defaultLocalResetRoute(opts: DefaultRouteOpts = {}) {
       if (id === STORAGE_ID) {
         if (opts.storageMissing === true)
           return { exitCode: 1, stderr: [`Error: No such container: ${id}`] };
-        return { stdout: [opts.storageUnhealthy === true ? STARTING_STATE : HEALTHY_STATE] };
+        // A present-but-unhealthy storage container's wait-then-timeout-fails-the-reset
+        // behavior is pinned precisely (exact 30s boundary) by
+        // `await-storage-ready.unit.test.ts`'s own fake-clock tests — no route knob for
+        // it here (review CLI-1958).
+        return { stdout: [HEALTHY_STATE] };
       }
       if (opts.running === false)
         return { exitCode: 1, stderr: [`Error: No such container: ${id}`] };
@@ -432,16 +407,21 @@ function setup(
     /** `--debug`. Defaults to `false`. */
     debug?: boolean;
     remoteSeeds?: Readonly<Record<string, string>>;
+    execFailsOn?: string;
+    execFailsMessage?: string;
     yes?: boolean;
     omitRef?: boolean;
     resolveFails?: boolean;
-    execCaptureExitCode?: number;
     // Local-reset-only knobs.
     route?: (args: ReadonlyArray<string>) => RouteResult;
     routeOpts?: DefaultRouteOpts;
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
+    // pg-delta migrations-catalog cache (Go's `down.ResetAll` → `pgcache.TryCacheMigrationsCatalog`,
+    // wired into the remote-reset path after a successful migrate/schema-files + seed).
+    catalogStdout?: string;
+    catalogExportFailWith?: string;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -456,7 +436,6 @@ function setup(
 
   const out = mockOutput({ format: opts.format ?? "text", promptConfirmResponses: opts.confirm });
   const conn = mockConnection(opts);
-  const proxy = mockProxy({ execCaptureExitCode: opts.execCaptureExitCode });
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
   // The local-reset bucket-seed core statically requires the (lazy) Management-API
@@ -470,13 +449,24 @@ function setup(
   });
   const route = opts.route ?? defaultLocalResetRoute(opts.routeOpts);
   const child = mockContainerCliSpawner(route);
-  // Never actually invoked by the tests in this file — the pg-delta migrations-catalog
-  // warmup `legacyStartSetupLocalDatabase` reaches on a PG15 recreate (`db-setup.ts`) gates
-  // on `[experimental.pgdelta] enabled`/`SUPABASE_EXPERIMENTAL_PG_DELTA`, neither of which
-  // any config here sets — present only to satisfy the effect's widened requirements, same
-  // as `db push`'s own integration tests (`push.integration.test.ts`).
+  // Backs both the local recreate's post-setup pg-delta migrations-catalog warmup
+  // (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`) and the remote path's own
+  // post-reset catalog-cache call — tracked so tests can assert on it directly
+  // (`edgeRunCalls`/`registryEnvAtRunTime`), same as `db push`'s own integration
+  // tests (`push.integration.test.ts`).
+  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const registryEnvAtRunTime: Array<string | undefined> = [];
   const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () => Effect.succeed({ stdout: '{"version":1}', stderr: "" }),
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      edgeRunCalls.push(runOpts);
+      registryEnvAtRunTime.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
+      if (opts.catalogExportFailWith !== undefined) {
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
+        );
+      }
+      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
+    },
   });
   const pgDeltaSslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
     requireSsl: () => Effect.succeed(false),
@@ -486,7 +476,6 @@ function setup(
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
-    proxy.layer,
     resolver.layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
@@ -527,7 +516,17 @@ function setup(
     telemetry.layer,
     linkedCache.layer,
   );
-  return { layer, out, conn, proxy, telemetry, linkedCache, resolver, child };
+  return {
+    layer,
+    out,
+    conn,
+    telemetry,
+    linkedCache,
+    resolver,
+    child,
+    edgeRunCalls,
+    registryEnvAtRunTime,
+  };
 }
 
 const migrationFile = (version: string, body = "create table t ();") => ({
@@ -898,6 +897,35 @@ describe("legacy db reset", () => {
           );
           expect(dbRestartIndex).toBeGreaterThanOrEqual(0);
           expect(kongReloadIndex).toBeGreaterThan(dbRestartIndex);
+        });
+      },
+    );
+
+    it.live(
+      "attaches Go's ExecBatch error context to a failed DROP/CREATE DATABASE statement",
+      () => {
+        // Go builds these four statements as a `migration.MigrationFile` and runs them
+        // through `.ExecBatch` (`reset.go:165-173`), so a failure gets the same rich
+        // context (`At statement: <index>` + the statement text) a real migration file
+        // failure would — not the bare driver error (review CLI-1958).
+        const { layer } = setup(tmp.current, {
+          toml: PG14_TOML,
+          args: ["db", "reset", "--local"],
+          isLocal: true,
+          failStatement: {
+            sql: "CREATE DATABASE postgres WITH OWNER postgres",
+            message: "permission denied to create database",
+          },
+        });
+        return Effect.gen(function* () {
+          const exit = yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const cause = JSON.stringify(exit.cause);
+            expect(cause).toContain("permission denied to create database");
+            expect(cause).toContain("At statement: 1");
+            expect(cause).toContain("CREATE DATABASE postgres WITH OWNER postgres");
+          }
         });
       },
     );
@@ -1513,153 +1541,459 @@ describe("legacy db reset", () => {
       });
     });
 
-    it.live("delegates an experimental remote reset to the Go binary", () => {
-      const { layer, proxy } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        experimental: true,
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        expect(proxy.calls).toHaveLength(1);
-        expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked", "--yes=false"]);
-        expect(proxy.calls[0]!.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
-      });
-    });
-
     it.live(
-      "does not resolve a linked DB connection before delegating an experimental reset",
+      "caches the migrations catalog after a successful remote reset with SUPABASE_EXPERIMENTAL_PG_DELTA set",
       () => {
-        const { layer, proxy, resolver } = setup(tmp.current, {
+        // Go's `down.ResetAll` (`internal/migration/down/down.go:48-61`, the function
+        // `resetRemote` delegates to) best-effort caches the pg-delta migrations
+        // catalog right after `apply.MigrateAndSeed` succeeds — gated on
+        // `pgcache.ShouldCacheMigrationsCatalog()` (`experimental.pgdelta.enabled` OR
+        // the legacy `SUPABASE_EXPERIMENTAL_PG_DELTA` env switch), independent of
+        // `--experimental`'s own schema-files gate.
+        const { layer, out, edgeRunCalls } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
-          experimental: true,
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/.env": "SUPABASE_EXPERIMENTAL_PG_DELTA=true\n",
+          },
+          confirm: [true],
         });
         return Effect.gen(function* () {
           yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(proxy.calls).toHaveLength(1);
-          // The delegated Go child re-runs its own connection resolution (including
-          // minting/verifying the temp login role) once it starts — the TS wrapper
-          // must not do that same Management-API work first only to discard it (CLI-1879).
-          expect(resolver.calls).toBe(0);
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+          expect(edgeRunCalls).toHaveLength(1);
         });
       },
     );
 
-    it.live("still caches the linked ref when delegating an experimental reset", () => {
-      // `linkedRefForCache` is pre-loaded via `LegacyProjectRefResolver.loadProjectRef`
-      // separately from `resolver.resolve()`, specifically so the post-run
-      // linked-project-cache finalizer still fires on this path even though
-      // `resolve()` itself is skipped entirely (CLI-1879).
-      const { layer, linkedCache } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        experimental: true,
-        ref: LEGACY_VALID_REF,
+    it.live(
+      "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
+      () => {
+        // Go's `loadNestedEnv` (`os.Setenv`) makes a `supabase/.env`-only
+        // `SUPABASE_INTERNAL_IMAGE_REGISTRY` visible to the WHOLE reset run, including
+        // the pg-delta catalog export the reset handler triggers after a successful
+        // remote reset (review CLI-1958 round 18) — mirroring `db push`'s own
+        // `legacyApplyProjectEnv(projectEnv)` scoping (same-named test in
+        // `push.integration.test.ts`). Without that scoping, this reads only real
+        // `process.env` and falls back to the default registry instead.
+        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+        const { layer, registryEnvAtRunTime } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+          files: {
+            ...migrationFile("20240101000000"),
+            "supabase/.env": "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+          },
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(registryEnvAtRunTime).toEqual(["my-mirror.example.com"]);
+          // The finalizer reverted it — never leaks into the surrounding process.
+          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live("warns without failing the reset when the migrations-catalog cache write fails", () => {
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogExportFailWith: "edge-runtime script produced no output",
       });
       return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        expect(linkedCache.cached).toBe(true);
-        expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+        const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+          Effect.provide(layer),
+          Effect.exit,
+        );
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain(
+          "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+        );
       });
     });
 
     it.live(
-      "surfaces a delegated experimental-reset child failure as a LegacyGoChildExitError under json output",
+      "falls back to the linked project ref for the pg-delta cache when config.toml has no project_id",
       () => {
-        const { layer } = setup(tmp.current, {
-          toml: 'project_id = "test"\n',
-          experimental: true,
-          format: "json",
-          execCaptureExitCode: 3,
+        // Go's `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` BEFORE
+        // `Config.Load` runs, so on the linked remote path an absent `project_id`
+        // retains the linked ref rather than falling to the workdir basename.
+        const { layer, out, edgeRunCalls } = setup(tmp.current, {
+          toml: "[experimental.pgdelta]\nenabled = true\n",
+          ref: LEGACY_VALID_REF,
+          files: migrationFile("20240101000000"),
+          confirm: [true],
         });
         return Effect.gen(function* () {
-          // Under json/stream-json, the delegated path uses `execCapture` (non-text
-          // branch of `delegateExperimentalReset`) — this must flow through the normal
-          // Effect failure channel (reachable by `withJsonErrorHandling` at the
-          // command-wiring layer) instead of an immediate `ProcessControl.exit()` that a
-          // handler-level test could never observe (CLI-1879).
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+          expect(edgeRunCalls).toHaveLength(1);
+        });
+      },
+    );
+
+    it.live(
+      "skips the migrations-catalog cache for a versioned remote reset even with pg-delta caching enabled",
+      () => {
+        // `pgcache.TryCacheMigrationsCatalog` no-ops on any non-empty `version`
+        // (`pgcache/cache.go:73`, `len(version) > 0`) — a `--version`/`--last` reset
+        // never refreshes the cache, unlike a full (versionless) reset.
+        const { layer, out, edgeRunCalls } = setup(tmp.current, {
+          toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+          files: {
+            ...migrationFile("20240101000000"),
+            ...migrationFile("20240202000000"),
+          },
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({
+            ...DEFAULT_FLAGS,
+            linked: true,
+            version: Option.some("20240101000000"),
+          }).pipe(Effect.provide(layer));
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+          expect(edgeRunCalls).toHaveLength(0);
+        });
+      },
+    );
+
+    it.live(
+      "applies configured schema files instead of replaying migrations on an experimental remote reset",
+      () => {
+        // `--linked=false` still selects the linked/remote target (Cobra `Changed`
+        // semantics) — exercised here alongside the schema-files branch itself.
+        const { layer, out, conn, resolver, linkedCache } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+            "supabase/seed.sql": "insert into t values (1);",
+          },
+          experimental: true,
+          args: ["db", "reset", "--linked=false"],
+          confirm: [true],
+          ref: LEGACY_VALID_REF,
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
+          // The configured schema file ran...
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
+          // ...but the timestamped migration did NOT — Go's `if`/`else if` is mutually
+          // exclusive (`apply.go:19-27`); taking the schema-files branch means migrations
+          // never run at all.
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
+          expect(out.stderrText).not.toContain("Applying migration");
+          // Seeding still runs afterward — Go's `applySeedFiles` sits outside the
+          // if/else if (`apply.go:26`).
+          expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
+          // A real connection is resolved now — this is a fully native path, not a
+          // delegated one that discarded the resolve (CLI-1958 removed the delegate).
+          expect(resolver.calls).toBe(1);
+          expect(linkedCache.cached).toBe(true);
+          expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+        });
+      },
+    );
+
+    it.live(
+      "applies schema files across multiple schema_paths patterns in declaration order, sorted within each pattern",
+      () => {
+        // Go sorts matches WITHIN each pattern (`sort.Strings`, `config.go:155`) but
+        // preserves DECLARATION order ACROSS patterns (no global re-sort) — `zz/*.sql`'s
+        // files must all run before `aa/*.sql`'s, even though "aa" sorts before "zz".
+        const { layer, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n',
+          files: {
+            "supabase/zz/b.sql": "create table zz_b ();",
+            "supabase/zz/a.sql": "create table zz_a ();",
+            "supabase/aa/b.sql": "create table aa_b ();",
+            "supabase/aa/a.sql": "create table aa_a ();",
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          const order = conn.execs
+            .map((s) => /create table (\w+) \(\)/.exec(s)?.[1])
+            .filter((name): name is string => name !== undefined);
+          expect(order).toEqual(["zz_a", "zz_b", "aa_a", "aa_b"]);
+        });
+      },
+    );
+
+    it.live(
+      "expands a schema_paths directory entry to its nested .sql files on an experimental remote reset",
+      () => {
+        // `[db.migrations].schema_paths` resolves through Go's `Glob.SQLFiles` (not
+        // `Glob.Files`), which expands a directory match to its regular `.sql` files,
+        // recursively — unlike a plain glob pattern.
+        const { layer, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n',
+          files: {
+            "supabase/some-dir/01_top.sql": "create table dir_top ();",
+            "supabase/some-dir/nested/02_nested.sql": "create table dir_nested ();",
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          expect(conn.execs.some((s) => s.includes("create table dir_top"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table dir_nested"))).toBe(true);
+        });
+      },
+    );
+
+    it.live(
+      "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
+      () => {
+        // Go's `schema_paths` default is `[]` (`pkg/config/templates/config.toml:64`).
+        // With no patterns to glob, `SQLFiles` returns a nil error, so `applySchemaFiles`
+        // is a silent no-op — Go does NOT fall back to replaying migrations (`apply.go:
+        // 19-27` is a hard `if`/`else if`).
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n',
+          files: migrationFile("20240101000000", "create table migrated_table ();"),
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          // Schemas are still dropped (ResetAll drops before MigrateAndSeed)...
+          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          // ...but the local migration is silently skipped, not applied.
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
+          expect(out.stderrText).not.toContain("Applying migration");
+        });
+      },
+    );
+
+    it.live(
+      "replays migrations instead of schema files on an experimental remote reset when pg-delta is enabled",
+      () => {
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n\n[experimental.pgdelta]\nenabled = true\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+          // `IsPgDeltaEnabled()` disables the schema-files branch (`apply.go:19`) even
+          // though `--experimental` and `schema_paths` are both set.
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+          expect(out.stderrText).toContain("Applying migration");
+        });
+      },
+    );
+
+    it.live(
+      "replays migrations instead of schema files on an experimental remote reset with a resolved version",
+      () => {
+        const { layer, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({
+            ...DEFAULT_FLAGS,
+            linked: true,
+            version: Option.some("20240101000000"),
+          }).pipe(Effect.provide(layer));
+          // A resolved --version disables the schema-files branch (`apply.go:19` requires
+          // `len(version) == 0`), even with `--experimental` set.
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+        });
+      },
+    );
+
+    it.live(
+      "fails an experimental remote reset when no schema_paths pattern matches anything",
+      () => {
+        const { layer, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["nomatch/*.sql"]\n',
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
           const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
             Effect.provide(layer),
             Effect.exit,
           );
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
-            const error = Cause.squash(exit.cause);
-            expect(error).toBeInstanceOf(LegacyGoChildExitError);
-            expect((error as LegacyGoChildExitError).exitCode).toBe(3);
+            const cause = JSON.stringify(exit.cause);
+            expect(cause).toContain("no files matched pattern: supabase/nomatch/*.sql");
+            // No CmdSuggestion on this failure mode — only a per-file exec failure sets one.
+            expect(cause).not.toContain("See schema file");
+          }
+          // Schemas were already dropped before the failed apply step (Go's ResetAll order).
+          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+        });
+      },
+    );
+
+    it.live("ignores a partial schema_paths glob failure once at least one pattern matches", () => {
+      // Go's `applySchemaFiles` only surfaces the joined glob error when NO pattern
+      // matched anything at all (`apply.go:53-55`); a partial failure is silently dropped.
+      const { layer, out, conn } = setup(tmp.current, {
+        toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n',
+        files: {
+          "supabase/schemas/01_users.sql": "create table schema_users ();",
+          // Present so the (unrelated) seed glob's own "no files matched" WARN line
+          // doesn't show up and get confused with the schema-files warning below.
+          "supabase/seed.sql": "insert into t values (1);",
+        },
+        experimental: true,
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
+        expect(out.stderrText).not.toContain("no files matched pattern");
+      });
+    });
+
+    it.live(
+      "attaches Go's schema-file suggestion when a schema file fails to apply on an experimental remote reset",
+      () => {
+        const { layer } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: { "supabase/schemas/01_users.sql": "not valid sql;" },
+          experimental: true,
+          confirm: [true],
+          execFailsOn: "not valid sql",
+          execFailsMessage: 'syntax error at or near "not"',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provide(layer),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const cause = JSON.stringify(exit.cause);
+            expect(cause).toContain("syntax error at or near");
+            // Go's `CmdSuggestion = "See schema file: <Bold(fp)>"` (`apply.go:63`).
+            expect(cause).toContain("See schema file:");
+            expect(cause).toContain("supabase/schemas/01_users.sql");
           }
         });
       },
     );
 
-    it.live("forwards the linked selector to the delegate even for --linked=false", () => {
-      // Cobra `Changed` semantics: `--linked=false` still selects the linked/remote target in
-      // the parent, so the delegated argv must carry `--linked` — otherwise the Go child falls
-      // back to its local default and resets the wrong database.
-      const { layer, proxy } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        experimental: true,
-        args: ["db", "reset", "--linked=false"],
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
-        expect(proxy.calls).toHaveLength(1);
-        expect(proxy.calls[0]!.args).toEqual(["db", "reset", "--linked", "--yes=false"]);
-      });
-    });
+    const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
 
-    it.live("forwards --yes=false to the delegate even when SUPABASE_YES is set", () => {
-      // Explicit `--yes=false` beats `AutomaticEnv` in Go; the delegated child must receive the
-      // bound false flag so an inherited `SUPABASE_YES=true` doesn't auto-confirm the reset and
-      // drop the remote schemas the user tried to protect.
-      const previous = process.env["SUPABASE_YES"];
-      process.env["SUPABASE_YES"] = "true";
-      const { layer, proxy } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        experimental: true,
-        args: ["db", "reset", "--linked", "--yes=false"],
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        expect(proxy.calls[0]!.args).toContain("--yes=false");
-      }).pipe(
-        Effect.ensuring(
-          Effect.sync(() => {
-            if (previous === undefined) delete process.env["SUPABASE_YES"];
-            else process.env["SUPABASE_YES"] = previous;
-          }),
-        ),
-      );
-    });
+    it.live.skipIf(isRoot)(
+      "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
+      () => {
+        // Go's `NewMigrationFromFile` (the file-read/parse step, `apply.go:57-59`) returns
+        // BEFORE `CmdSuggestion` is ever set — only a later `ExecBatch` (statement
+        // execution) failure attaches it (`apply.go:61-63`). A file that glob-matches but
+        // can't be read (permissions changed after the glob) must fail WITHOUT the
+        // suggestion, unlike the exec-failure case above.
+        const schemaFile = join(tmp.current, "supabase", "schemas", "01_users.sql");
+        const { layer, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
+          experimental: true,
+          confirm: [true],
+        });
+        chmodSync(schemaFile, 0o000);
+        return Effect.gen(function* () {
+          const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provide(layer),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const cause = JSON.stringify(exit.cause);
+            expect(cause).not.toContain("See schema file");
+          }
+          // The statement was never reached, so it was never executed.
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemaFile, 0o644))));
+      },
+    );
 
-    it.live("forwards --yes=true to the delegate when --yes is set", () => {
-      const { layer, proxy } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        experimental: true,
-        args: ["db", "reset", "--linked", "--yes"],
-        yes: true,
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-        expect(proxy.calls[0]!.args).toContain("--yes=true");
-      });
-    });
+    it.live.skipIf(isRoot)(
+      "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
+      () => {
+        // Go's `fs.WalkDir` stops on the first `ReadDir` failure and `applySchemaFiles`
+        // only silently drops that error when at least one OTHER file was still found
+        // (`apply.go:53-55`); with a single pattern matching only the unreadable
+        // directory, `declared` stays empty and Go aborts the command — it must not
+        // report success having applied nothing. Verified empirically against `apps/cli-go`.
+        const schemasDir = join(tmp.current, "supabase", "schemas");
+        const { layer, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
+          files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
+          experimental: true,
+          confirm: [true],
+        });
+        chmodSync(schemasDir, 0o000);
+        return Effect.gen(function* () {
+          const exit = yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(
+            Effect.provide(layer),
+            Effect.exit,
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const cause = JSON.stringify(exit.cause);
+            expect(cause).toContain("failed to walk matched directory");
+            expect(cause).not.toContain("See schema file");
+          }
+          // Schemas were already dropped before the failed apply step (Go's ResetAll order).
+          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
+        }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemasDir, 0o755))));
+      },
+    );
 
     it.live(
-      "takes the experimental delegate path via SUPABASE_EXPERIMENTAL in the project .env",
+      "takes the native experimental schema-files path via SUPABASE_EXPERIMENTAL in the project .env",
       () => {
-        // Go loads nested env before reset.Run reads viper EXPERIMENTAL, so the versionless remote
-        // reset delegates to the Go binary rather than replaying migrations natively.
+        // Go loads nested env before `reset.Run` reads viper's EXPERIMENTAL, so a
+        // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` reaches the native
+        // three-conjunct gate the same way an explicit `--experimental` does.
         const previous = process.env["SUPABASE_EXPERIMENTAL"];
         delete process.env["SUPABASE_EXPERIMENTAL"];
-        const { layer, proxy, conn } = setup(tmp.current, {
-          toml: 'project_id = "test"\n',
-          files: { "supabase/.env": "SUPABASE_EXPERIMENTAL=true\n" },
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/.env": "SUPABASE_EXPERIMENTAL=true\n",
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            ...migrationFile("20240101000000", "create table migrated_table ();"),
+          },
+          confirm: [true],
           // No experimental flag / shell env — only the project .env sets it.
         });
         return Effect.gen(function* () {
           yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          expect(proxy.calls).toHaveLength(1);
-          // Delegated, so the native remote path never dropped schemas.
-          expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(false);
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
+          expect(out.stderrText).not.toContain("Applying migration");
         }).pipe(
           Effect.ensuring(
             Effect.sync(() => {
@@ -1688,32 +2022,30 @@ describe("legacy db reset", () => {
       });
     });
 
-    it.live("forwards --db-url and --no-seed on an experimental remote db-url reset", () => {
-      const { layer, proxy, resolver } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        experimental: true,
-        args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbReset({
-          ...DEFAULT_FLAGS,
-          dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
-          noSeed: true,
-        }).pipe(Effect.provide(layer));
-        expect(proxy.calls[0]!.args).toEqual([
-          "db",
-          "reset",
-          "--db-url",
-          "postgresql://db.example.com:5432/postgres",
-          "--no-seed",
-          "--yes=false",
-        ]);
-        // Unlike the `connType === "linked"` branch above, a `--db-url` target still
-        // resolves a connection before delegating — the pre-delegation skip (CLI-1879)
-        // is scoped to the linked branch only, not "never call resolve when delegating".
-        expect(resolver.calls).toBe(1);
-      });
-    });
+    it.live(
+      "applies configured schema files and skips seeding on an experimental remote --db-url reset",
+      () => {
+        const { layer, conn, resolver } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: { "supabase/schemas/01_users.sql": "create table schema_users ();" },
+          experimental: true,
+          args: ["db", "reset", "--db-url", "postgresql://db.example.com:5432/postgres"],
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({
+            ...DEFAULT_FLAGS,
+            dbUrl: Option.some("postgresql://db.example.com:5432/postgres"),
+            noSeed: true,
+          }).pipe(Effect.provide(layer));
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
+          expect(conn.execs.some((s) => s.includes("insert into"))).toBe(false);
+          // A `--db-url` target always resolves a real connection — this is no longer
+          // delegated at all (CLI-1958).
+          expect(resolver.calls).toBe(1);
+        });
+      },
+    );
 
     it.live("recreates to a specific --version on a local db-url reset", () => {
       const { layer, out, conn } = setup(tmp.current, {
@@ -1904,26 +2236,31 @@ describe("legacy db reset", () => {
       });
     });
 
-    it.live("forwards --sql-paths to the Go binary on an experimental remote reset", () => {
-      const { layer, proxy } = setup(tmp.current, {
-        toml: 'project_id = "test"\n',
-        experimental: true,
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbReset({
-          ...DEFAULT_FLAGS,
-          linked: true,
-          sqlPaths: ["custom-seed.sql"],
-        }).pipe(Effect.provide(layer));
-        expect(proxy.calls[0]!.args).toEqual([
-          "db",
-          "reset",
-          "--linked",
-          "--sql-paths",
-          "custom-seed.sql",
-          "--yes=false",
-        ]);
-      });
-    });
+    it.live(
+      "seeds from --sql-paths on an experimental remote reset, independently of the schema-files apply",
+      () => {
+        // `--sql-paths` overrides `[db.seed].sql_paths` regardless of which branch of
+        // `apply.MigrateAndSeed` ran — Go's `applySeedFiles` sits outside the if/else if
+        // (`apply.go:26`), and the seed override is resolved entirely upstream of it.
+        const { layer, out, conn } = setup(tmp.current, {
+          toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
+          files: {
+            "supabase/schemas/01_users.sql": "create table schema_users ();",
+            "supabase/custom-seed.sql": "insert into t values (2);",
+          },
+          experimental: true,
+          confirm: [true],
+        });
+        return Effect.gen(function* () {
+          yield* legacyDbReset({
+            ...DEFAULT_FLAGS,
+            linked: true,
+            sqlPaths: ["custom-seed.sql"],
+          }).pipe(Effect.provide(layer));
+          expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
+          expect(out.stderrText).toContain("Seeding data from supabase/custom-seed.sql...");
+        });
+      },
+    );
   });
 });

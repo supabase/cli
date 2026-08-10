@@ -1,7 +1,7 @@
 /**
  * Post-recreate satellite-container restart + Kong reload, shared by both PG14's
  * `RestartDatabase` and PG15's `resetDatabase15` (`apps/cli-go/internal/db/reset/
- * reset.go:246-317`) — the ONLY two Go call sites of `restartServices`. Neither `db
+ * reset.go:214-288`) — the ONLY two Go call sites of `restartServices`. Neither `db
  * start` nor `supabase start` calls any of this: it exists purely to bring the
  * satellite containers (storage/auth/realtime/pooler) back in sync with a `db`
  * container that was just recreated or force-restarted out from under them, and to
@@ -19,10 +19,10 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua } from "../legacy-colors.ts";
 import {
-  collectText,
+  legacyCollectText,
   legacyDescribeContainerCliFailure,
   legacyIsContainerNotFoundMessage,
-  runContainerCliExpectSuccess,
+  legacyRunContainerCliExpectSuccess,
   spawnContainerCli,
 } from "../legacy-container-cli.ts";
 import { legacyInspectContainerState } from "../legacy-docker-lifecycle.ts";
@@ -41,7 +41,7 @@ export class LegacyContainerRestartError extends Data.TaggedError("LegacyContain
 
 /**
  * Port of Go's `Docker.ContainerRestart(ctx, utils.DbId, container.StopOptions{})`
- * (`apps/cli-go/internal/db/reset/reset.go:250-252`), used ONLY by PG14's
+ * (`apps/cli-go/internal/db/reset/reset.go:218-220`), used ONLY by PG14's
  * `RestartDatabase` to restart the `db` container itself after `pg_terminate_backend`
  * (pg_cron must restart, per Go's own comment). Unlike the satellite restarts below,
  * this one does NOT tolerate "not found" — Go's own `RestartDatabase` has no
@@ -52,7 +52,7 @@ export function legacyRestartContainer(
   spawner: Spawner,
   containerId: string,
 ): Effect.Effect<void, LegacyContainerRestartError> {
-  return runContainerCliExpectSuccess(
+  return legacyRunContainerCliExpectSuccess(
     spawner,
     ["restart", containerId],
     "restart container",
@@ -62,7 +62,7 @@ export function legacyRestartContainer(
 
 /**
  * One satellite service's restart, tolerant of "not found" (Go's `!errdefs.IsNotFound(err)`
- * guard, `reset.go:263`) — a service excluded from the stack (e.g. `[realtime] enabled =
+ * guard, `reset.go:231`) — a service excluded from the stack (e.g. `[realtime] enabled =
  * false`) has no container to restart, and that's not an error. Never fails the surrounding
  * `Effect.all` itself: resolves `Option.some(message)` on a genuine failure so the caller
  * can join every service's outcome the way Go's `errors.Join(result...)` does, and
@@ -80,7 +80,7 @@ const legacyRestartSatelliteService = (
         stderr: "pipe",
       });
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       );
       if (exitCode === 0) return Option.none();
@@ -110,7 +110,7 @@ export class LegacyRestartServicesError extends Data.TaggedError("LegacyRestartS
 }
 
 /**
- * Port of Go's `restartServices` restart half (`reset.go:259-271`): restarts
+ * Port of Go's `restartServices` restart half (`reset.go:227-239`): restarts
  * storage/auth/realtime/pooler CONCURRENTLY (Go's `utils.WaitAll`, a goroutine per
  * service) — NOT PostgREST, which "automatically reconnects and listens for schema
  * changes" (Go's own comment) — and does NOT wait for them to become healthy
@@ -143,7 +143,7 @@ function legacyRestartSatelliteServices(
 
 /**
  * Gateway-recovery hint, byte-matching Go's `suggestKongRecovery`
- * (`reset.go:307-317`): rendered as a `Suggestion:` line by `Output.fail`, mirroring
+ * (`reset.go:281-288`): rendered as a `Suggestion:` line by `Output.fail`, mirroring
  * `utils.CmdSuggestion`.
  */
 function legacyKongRecoverySuggestion(kongId: string): string {
@@ -181,8 +181,8 @@ function legacyExecCaptureCombined(
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectText(child.stdout),
-          collectText(child.stderr),
+          legacyCollectText(child.stdout),
+          legacyCollectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       );
@@ -196,7 +196,7 @@ function legacyExecCaptureCombined(
 }
 
 /**
- * Port of Go's `reloadKong` (`reset.go:285-305`): inspect Kong's container — not
+ * Port of Go's `reloadKong` (`reset.go:253-276`): inspect Kong's container — not
  * found means Kong is excluded from the stack (`return nil`, not an error); any OTHER
  * inspect failure is wrapped with the recovery suggestion; not running means there's
  * no stale cache to flush (`return nil`); otherwise `docker exec <kongId> kong reload
@@ -235,7 +235,7 @@ function legacyReloadKong(
       // Go's `DockerExecOnceWithStream` (`utils/docker.go:646-648`) sets a FIXED constant
       // error, `errors.New("error executing command")`, for `iresp.ExitCode > 0` — not the
       // exit code itself. `reloadKong` then wraps it as `failed to reload kong: %w[:\n%s]`
-      // (`reset.go:298-303`), so the `%w` slot is always this exact string, never `exit N`.
+      // (`reset.go:269-274`), so the `%w` slot is always this exact string, never `exit N`.
       return yield* Effect.fail(
         new LegacyKongReloadError({
           message:
@@ -250,7 +250,7 @@ function legacyReloadKong(
 }
 
 /**
- * Port of Go's `restartServices` (`reset.go:259-273`): the satellite restarts above,
+ * Port of Go's `restartServices` (`reset.go:227-241`): the satellite restarts above,
  * then {@link legacyReloadKong} — ONLY when every restart succeeded (Go returns the
  * joined restart error immediately, without ever attempting the Kong reload).
  */

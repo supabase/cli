@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../shared/output/errors.ts";
@@ -351,7 +351,6 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             conn,
             isLocal,
             migrationsDir: path.join(workdir, "supabase", "migrations"),
-            nowMillis: yield* Clock.currentTimeMillis,
           }).pipe(
             Effect.catch((error) =>
               output.raw(

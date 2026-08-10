@@ -56,7 +56,7 @@ documented at its exact Go call site in `start.handler.ts`:
 
 Ported: Go's `SetupLocalDatabase` → `initSchema` →
 `initRealtimeJob`/`initStorageJob`/`initAuthJob` pipeline (`internal/db/start/`). Gated on
-`isFreshVolume` (`legacyStartVolumeExists` on the Postgres volume, checked BEFORE the
+`isFreshVolume` (`legacyVolumeExists` on the Postgres volume, checked BEFORE the
 volume is created), matching Go's `NoBackupVolume` — this same check also selects which of
 `Starting database...`/`Starting database from backup...` prints to stderr immediately
 before Postgres's container is created (`db/start/start.go:165-175`). Runs immediately

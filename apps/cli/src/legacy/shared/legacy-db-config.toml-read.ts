@@ -101,8 +101,11 @@ export interface LegacyDbTomlValues {
   /**
    * `[db.migrations] schema_paths`, default `[]` — resolved (supabase-prefixed when
    * relative, Go's `path.Join`/`path.Clean`) and `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`
-   * env-overridable exactly like `seed.sqlPaths` below. Only consumed by the
-   * `--experimental` declarative-schema-files branch of `legacyMigrateAndSeed`.
+   * env-overridable exactly like `seed.sqlPaths` below, resolved unconditionally (not
+   * gated on `db.migrations.enabled`). Feeds `apply.MigrateAndSeed`'s EXPERIMENTAL
+   * declarative branch (`legacyApplySchemaFiles`) — consumed by `legacyMigrateAndSeed`
+   * (`start`'s fresh-volume setup, `migration down`) and by `db reset`'s own
+   * `--experimental` remote path.
    */
   readonly schemaPaths: ReadonlyArray<string>;
   /**
@@ -212,8 +215,6 @@ const DEFAULT_SHADOW_PORT = 54320;
 const DEFAULT_MAJOR_VERSION = 17;
 const DEFAULT_PASSWORD = "postgres";
 const DEFAULT_API_SCHEMAS = ["public", "graphql_public"] as const;
-/** `[db.migrations] schema_paths` default — Go's `Glob` zero value (`pkg/config/db.go:101`). */
-const DEFAULT_SCHEMA_PATHS: ReadonlyArray<string> = [];
 /** `[edge_runtime] deno_version` default (`config.toml` template). 2 → the current edge-runtime image. */
 const DEFAULT_DENO_VERSION = 2;
 
@@ -944,6 +945,38 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
 }
 
 /**
+ * Go's `filepath.IsAbs` on Windows (`internal/filepathlite/path_windows.go`'s
+ * `IsAbs`/`volumeNameLen`) requires a volume name — a drive letter (`C:\`) or a UNC
+ * prefix (`\\server\share`) — before a path counts as absolute; a bare leading
+ * separator (`/schemas`, `\schemas`) has no volume name, so Go treats it as RELATIVE
+ * and joins it under `supabase/`. `pathSvc.isAbsolute` is backed by `node:path`, which
+ * selects `path.win32` on an actual Windows host, and Node's win32 `isAbsolute` treats
+ * a bare leading separator as rooted at the *current drive* — i.e. absolute — so it
+ * disagrees with Go on exactly this shape. Verified empirically: Node's
+ * `path.win32.isAbsolute("/schemas/*.sql")` is `true`, while Go's `filepath.IsAbs` on
+ * the same input is `false` (`volumeNameLen` returns `0` — none of its drive-letter,
+ * UNC, or device-path cases match a path with no volume component). Only the resolve
+ * step below (`config.go:970-980`'s literal `!filepath.IsAbs(pattern)` gate for
+ * `[db.seed].sql_paths`/`[db.migrations].schema_paths`) needs this Go-exact rule —
+ * real filesystem calls elsewhere in this shell still need the platform's own
+ * `isAbsolute` to resolve an actual path on disk.
+ */
+const legacyGoIsAbs = (pathSvc: Path.Path, pattern: string): boolean => {
+  if (process.platform !== "win32") {
+    return pathSvc.isAbsolute(pattern);
+  }
+  const isSeparator = (c: string | undefined): boolean => c === "/" || c === "\\";
+  // Drive-letter volume (`C:\`, `c:/`): Go's `volumeNameLen` accepts any byte before
+  // `:` (case 2, `path[1] === ':'`), then `IsAbs` requires a separator right after.
+  if (pattern.length >= 3 && pattern[1] === ":" && isSeparator(pattern[2])) {
+    return true;
+  }
+  // UNC volume (`\\server\share`, `//server/share`): Go's `IsAbs` treats a
+  // double-separator-prefixed volume as absolute unconditionally.
+  return pattern.length >= 2 && isSeparator(pattern[0]) && isSeparator(pattern[1]);
+};
+
+/**
  * Resolves a single seed/schema-paths entry to Go's config-load form: a relative
  * pattern is joined under `supabase/` (Go's `path.Join`, `config.go:918-921` for
  * `db.seed.sql_paths`, `config.go:976-978` for `db.migrations.schema_paths` — both
@@ -954,7 +987,7 @@ function legacyJoinSupabaseSeedPath(pattern: string): string {
  * the glob the same resolved paths.
  */
 export const legacyResolveSeedSqlPath = (pathSvc: Path.Path, pattern: string): string =>
-  pattern.length === 0 || pathSvc.isAbsolute(pattern)
+  pattern.length === 0 || legacyGoIsAbs(pathSvc, pattern)
     ? pattern
     : legacyJoinSupabaseSeedPath(pattern);
 
@@ -2347,31 +2380,6 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     lookup,
     remoteWins("db.migrations.enabled") ? undefined : envOverride("SUPABASE_DB_MIGRATIONS_ENABLED"),
   );
-  // `[db.migrations] schema_paths` — Go default `[]`; overridable by
-  // `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` via viper AutomaticEnv (`config.go:494-498`) — EXCEPT
-  // when the matched remote block explicitly set it, same tiering as every other field in
-  // `LEGACY_ENV_OVERRIDABLE_KEYS`. A STRING value (the env override, or a TOML string) is
-  // env-expanded then comma-split; a TOML ARRAY is expanded element-by-element with no
-  // re-split (`resolveStringSlice`, shared with `api.schemas`). Each resulting pattern is then
-  // resolved to Go's config-load form (`path.Join(builder.SupabaseDirPath, pattern)`,
-  // `config.go:976-978`) via the same `legacyResolveSeedSqlPath` helper `db.seed.sql_paths` uses
-  // below — this is the only current TS reader of this field that needs real, Go-path-cleaned
-  // filesystem paths, so resolution happens here rather than in the declarative-schema-files
-  // consumer (`legacy-migrate-and-seed.ts`), matching where `seedSqlPaths` is resolved.
-  const rawSchemaPaths =
-    (remoteWins("db.migrations.schema_paths")
-      ? undefined
-      : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS")) ?? migrationsRaw?.["schema_paths"];
-  const schemaPathPatterns = resolveStringSlice(rawSchemaPaths, DEFAULT_SCHEMA_PATHS, lookup);
-  if (schemaPathPatterns === undefined) {
-    return yield* Effect.fail(
-      new LegacyDbConfigLoadError({
-        message: "failed to parse config: invalid db.migrations.schema_paths.",
-      }),
-    );
-  }
-  const schemaPaths = schemaPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
-
   // `[db.seed]` — Go defaults enabled true, sql_paths ["seed.sql"]; relative
   // patterns are supabase-prefixed (`config.go:801-806`). `db.seed.enabled` is
   // overridable by `SUPABASE_DB_SEED_ENABLED` via viper AutomaticEnv — EXCEPT when a
@@ -2398,23 +2406,271 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     const expanded = legacyExpandEnv(value, lookup);
     return expanded.length === 0 ? [] : expanded.split(",");
   };
+  // Go's `decodeString` renders a weakly-converted float via `strconv.FormatFloat(v,
+  // 'f', -1, 64)` (`mapstructure.go:747-748`, format `'f'`) — ALWAYS fixed decimal
+  // notation, never scientific, regardless of magnitude. JS's `String(value)` agrees
+  // for ordinary magnitudes (both use the same shortest-round-trip digit sequence —
+  // `String()` just chooses "e" notation once `|value| >= 1e21` or `< 1e-6`, which
+  // `FormatFloat('f', …)` never does). Verified empirically: `strconv.FormatFloat(1e21,
+  // 'f', -1, 64)` returns `"1000000000000000000000"`, not `"1e+21"`. Expand JS's own
+  // exponential notation back into fixed notation instead of re-deriving the digits,
+  // since `Number.prototype.toString()`/`toExponential()` already computed the same
+  // shortest round-tripping digit sequence Go's algorithm would — only the notation
+  // differs.
+  //
+  // `strconv.FormatFloat` special-cases the three non-finite values BEFORE it ever
+  // looks at the format verb, so `'f'` never applies to them: verified empirically
+  // (`apps/cli-go` probe against a real `schema_paths = [inf, -inf, nan]` config load) —
+  // `+Inf`/`-Inf`/`NaN` (note the "+Inf" sign Go always prints, and the short "Inf"/"NaN"
+  // spelling) — never JS's own `Infinity`/`-Infinity`/`NaN` (which happens to already
+  // match the "NaN" case, but not the two `Infinity` ones). TOML v1.0's bare `inf`/
+  // `+inf`/`-inf`/`nan` float literals (smol-toml) parse to exactly these JS values, so
+  // a `schema_paths`/`sql_paths` array entry can realistically hit this branch.
+  //
+  // `strconv.FormatFloat` also preserves the IEEE754 sign bit on zero: a genuine
+  // negative-zero float64 formats as `"-0"`, never `"0"`. Verified empirically —
+  // `strconv.FormatFloat(math.Copysign(0, -1), 'f', -1, 64)` returns `"-0"` — and
+  // end-to-end through the real decode pipeline this weak-decode mirrors
+  // (`BurntSushi/toml` + `go-viper/mapstructure`'s `WeaklyTypedInput`): a
+  // `schema_paths = [-0.0]` config decodes its glob entry to the literal string
+  // `"-0"`. JS's own `(-0).toString()` is `"0"` (the sign is dropped), by spec —
+  // `Object.is(value, -0)` is JS's only way to detect it, since `-0 === 0`.
+  const legacyFormatGoWeakFloat = (value: number): string => {
+    if (Number.isNaN(value)) return "NaN";
+    if (value === Number.POSITIVE_INFINITY) return "+Inf";
+    if (value === Number.NEGATIVE_INFINITY) return "-Inf";
+    if (Object.is(value, -0)) return "-0";
+    const str = value.toString();
+    const match = /^(-?)(\d+)(?:\.(\d+))?e([+-]\d+)$/.exec(str);
+    if (match === null) return str;
+    const [, sign = "", intPart = "", fracPart = "", expStr = "0"] = match;
+    const digits = intPart + fracPart;
+    const pointPos = intPart.length + Number(expStr);
+    if (pointPos <= 0) return `${sign}0.${"0".repeat(-pointPos)}${digits}`;
+    if (pointPos >= digits.length) return `${sign}${digits}${"0".repeat(pointPos - digits.length)}`;
+    return `${sign}${digits.slice(0, pointPos)}.${digits.slice(pointPos)}`;
+  };
+  // Go decodes both `[db.seed].sql_paths` and `[db.migrations].schema_paths` as
+  // `config.Glob` (`[]string`) through the SAME mapstructure `UnmarshalExact` call
+  // (`config.go:749-756`), whose decoder config never sets `WeaklyTypedInput: false`
+  // — viper's `defaultDecoderConfig` defaults it to `true` and nothing here overrides
+  // it. So a non-string array element isn't dropped: `decodeString`
+  // (`github.com/go-viper/mapstructure/v2@v2.5.0/mapstructure.go:729-780`) weakly
+  // converts a bool to `"1"`/`"0"` and a number to its decimal string, THEN the
+  // result flows through the same env-expand/resolve pipeline as a real string
+  // entry. Verified empirically against `apps/cli-go` (`schema_paths = [42]` resolves
+  // to `supabase/42`, `schema_paths = [true]` to `supabase/1`).
+  const legacyWeakCoerceGlobEntry = (value: unknown): string | undefined => {
+    if (typeof value === "string") return value;
+    if (typeof value === "boolean") return value ? "1" : "0";
+    if (typeof value === "number") return legacyFormatGoWeakFloat(value);
+    return undefined;
+  };
+  // A non-scalar element (nested array/table, e.g. `schema_paths = [[]]` or
+  // `[{path = "x.sql"}]`) is mapstructure's `UnconvertibleTypeError` instead of a weak
+  // conversion, and mapstructure reports every offending index from the SAME
+  // `UnmarshalExact` call together, joined by its own `Error.Error()` — which is what
+  // aborts the entire config load, not just that one array. Verified empirically
+  // against `apps/cli-go`: `schema_paths = [[]]` / `[{path = "x.sql"}]` both fail with
+  // `failed to parse config: decoding failed due to the following error(s):\n\n'db.
+  // migrations.schema_paths[0]' expected type 'string', got unconvertible type
+  // '[]interface {}'` / `'map[string]interface {}'` respectively — never silently
+  // dropping the element and continuing with an empty/partial glob list.
+  //
+  // A bare TOML datetime (e.g. `schema_paths = 1979-05-27T07:32:00Z`) hits this same
+  // `UnconvertibleTypeError` path in Go, but as a DIFFERENT Go type per TOML datetime
+  // variant — `BurntSushi/toml` decodes an offset date-time to stdlib `time.Time` and
+  // each of the 3 zone-less "local" variants to its own `toml.Local*` wrapper type.
+  // Verified empirically against the real `apps/cli-go` `config.Load` (review
+  // CLI-1958): `schema_paths = 1979-05-27T07:32:00Z` → `unconvertible type
+  // 'time.Time'`; `= 1979-05-27T07:32:00` (no zone) → `'toml.LocalDateTime'`;
+  // `= 1979-05-27` → `'toml.LocalDate'`; `= 07:32:00` → `'toml.LocalTime'` — same four
+  // messages whether the datetime is this top-level scalar or an array element.
+  // `smol-toml` parses every TOML datetime to a `TomlDate` (a `Date` subclass, so
+  // `typeof`/`Array.isArray` alone can't tell it apart from an inline table) exposing
+  // exactly the `isDate`/`isTime`/`isDateTime`/`isLocal` discriminators needed to
+  // reproduce Go's per-variant type name.
+  const legacyGoTomlDateType = (value: SmolToml.TomlDate): string => {
+    if (value.isDate()) return "toml.LocalDate";
+    if (value.isTime()) return "toml.LocalTime";
+    return value.isLocal() ? "toml.LocalDateTime" : "time.Time";
+  };
+  const legacyGoUnconvertibleType = (value: unknown): string | undefined =>
+    value instanceof SmolToml.TomlDate
+      ? legacyGoTomlDateType(value)
+      : Array.isArray(value)
+        ? "[]interface {}"
+        : typeof value === "object" && value !== null
+          ? "map[string]interface {}"
+          : undefined;
+  // Pure — returns the mapstructure-style issue strings for a real `Glob` array's
+  // unconvertible elements WITHOUT failing. Go's `UnmarshalExact` decodes the WHOLE
+  // config in a SINGLE mapstructure pass: `decodeStructFromMap`'s per-field loop
+  // (`mapstructure.go:1657-1724`) appends each field's decode error to a shared `errs`
+  // slice and keeps going — it never stops at the first field's error — then
+  // `errors.Join(errs...)`-s everything together at the very end
+  // (`mapstructure.go:1777`). So an invalid `db.migrations.schema_paths` does NOT
+  // prevent `db.seed.sql_paths` from ALSO being decoded (and erroring) in the same
+  // pass; both surface together in ONE combined error. Verified empirically against
+  // `apps/cli-go` (`config.Load` with both fields containing an unconvertible entry,
+  // e.g. `sql_paths = [[]]` + `schema_paths = [[]]`): the single returned error
+  // contains BOTH lines, `db.migrations.schema_paths[0]` BEFORE `db.seed.sql_paths[0]`
+  // — Go's `db` struct declares `Migrations` before `Seed` (`pkg/config/db.go:90-91`),
+  // and mapstructure iterates struct fields in declaration order, not alphabetically,
+  // so callers below must combine in that same order before failing once (see
+  // `legacyFailOnGlobIssues`).
+  const legacyGlobArrayIssues = (
+    keyPath: string,
+    values: ReadonlyArray<unknown>,
+  ): ReadonlyArray<string> =>
+    values.flatMap((value, index) => {
+      const goType = legacyGoUnconvertibleType(value);
+      return goType === undefined
+        ? []
+        : [`'${keyPath}[${index}]' expected type 'string', got unconvertible type '${goType}'`];
+    });
+  // Fails ONCE with every issue collected across BOTH `Glob` fields (see
+  // `legacyGlobArrayIssues`'s doc comment) — never called per-field, so a config
+  // invalid in both `db.seed.sql_paths` and `db.migrations.schema_paths` reports both,
+  // matching Go's single combined `UnmarshalExact` error instead of only the first
+  // field checked.
+  const legacyFailOnGlobIssues = (
+    issues: ReadonlyArray<string>,
+  ): Effect.Effect<void, LegacyDbConfigLoadError> =>
+    issues.length === 0
+      ? Effect.void
+      : fail(
+          `failed to parse config: decoding failed due to the following error(s):\n\n${issues.join("\n")}`,
+        );
+  // A TOP-LEVEL raw value that is neither an array nor a string (e.g.
+  // `schema_paths = 42`/`true`, or a stray inline table) still reaches
+  // mapstructure's `decodeSlice`, which is weakly typed the same way an array
+  // ELEMENT is (see `legacyWeakCoerceGlobEntry` above): a zero-length map
+  // decodes straight to an empty slice; anything else is wrapped into a
+  // synthetic single-element `[]any{value}` and decoded through the exact
+  // same per-element rules as a real array entry — a scalar weakly coerces,
+  // an unconvertible value (map/array) fails with `'<keyPath>[0]' expected
+  // type 'string', got unconvertible type '...'` (mapstructure always
+  // reports the synthetic wrapped index, which is `0`). Verified empirically
+  // against `apps/cli-go`: `schema_paths = 42` → `["42"]`, `= true` →
+  // `["1"]`, `= {}` → `[]`, `[db.migrations.schema_paths]\nfoo = "bar"` →
+  // `failed to parse config: … 'db.migrations.schema_paths[0]' expected type
+  // 'string', got unconvertible type 'map[string]interface {}'`. Never
+  // called with `undefined` — an absent key has its own Go-matching default
+  // per caller below, so callers guard that case before reaching here.
+  //
+  // The zero-length-map special case must NOT match a `TomlDate` (e.g. `schema_paths =
+  // 1979-05-27T07:32:00Z`): a `TomlDate` stores its value internally, not as an
+  // enumerable own property, so `Object.keys(tomlDate).length === 0` is ALSO true for
+  // it — but Go does not treat a bare datetime as an empty map; mapstructure reports it
+  // unconvertible and aborts the whole load (see `legacyGoUnconvertibleType` above).
+  // Without this exclusion, a `TomlDate` would silently resolve to `[]` here instead of
+  // falling through to the unconvertible-type issue below, turning Go's hard config-load
+  // failure into a silently-empty schema/seed path list (review CLI-1958).
+  // Pure — the TOP-LEVEL scalar fallback (see doc comment above), returning either the
+  // one resolved pattern or the one issue it would raise, WITHOUT failing (same reason
+  // as `legacyGlobArrayIssues`: the caller combines issues across both `Glob` fields
+  // before deciding whether to fail).
+  const legacyResolveScalarGlobFallback = (
+    keyPath: string,
+    value: unknown,
+  ): { readonly resolved: ReadonlyArray<string>; readonly issues: ReadonlyArray<string> } => {
+    if (
+      typeof value === "object" &&
+      value !== null &&
+      !(value instanceof SmolToml.TomlDate) &&
+      Object.keys(value).length === 0
+    ) {
+      return { resolved: [], issues: [] };
+    }
+    const coerced = legacyWeakCoerceGlobEntry(value);
+    if (coerced !== undefined) {
+      return { resolved: [coerced], issues: [] };
+    }
+    return { resolved: [], issues: legacyGlobArrayIssues(keyPath, [value]) };
+  };
+  /**
+   * Resolves ONE `Glob`-typed field (`[db.seed].sql_paths` / `[db.migrations].
+   * schema_paths`) into its pre-supabase-join patterns, covering every decode branch
+   * in one place: override env var, real array, bare string, absent key (caller's own
+   * Go-matching default), or the top-level scalar fallback. Returns any issues
+   * alongside the best-effort patterns rather than failing here — see
+   * `legacyFailOnGlobIssues`'s doc comment for why the two `Glob` fields must combine
+   * their issues into ONE error before failing, matching Go's single `UnmarshalExact`
+   * pass, instead of each field failing independently on its own first bad entry.
+   */
+  const legacyResolveGlobField = (
+    keyPath: string,
+    raw: unknown,
+    override: string | undefined,
+    absentDefault: ReadonlyArray<string>,
+  ): { readonly patterns: ReadonlyArray<string>; readonly issues: ReadonlyArray<string> } => {
+    if (override !== undefined) {
+      return { patterns: splitGoSeedPaths(override), issues: [] };
+    }
+    if (Array.isArray(raw)) {
+      return {
+        patterns: raw
+          .map((pattern) => legacyWeakCoerceGlobEntry(pattern))
+          .filter((pattern): pattern is string => pattern !== undefined)
+          .map((pattern) => legacyExpandEnv(pattern, lookup)),
+        issues: legacyGlobArrayIssues(keyPath, raw),
+      };
+    }
+    if (typeof raw === "string") {
+      return { patterns: splitGoSeedPaths(raw), issues: [] };
+    }
+    if (raw === undefined) {
+      return { patterns: absentDefault, issues: [] };
+    }
+    const fallback = legacyResolveScalarGlobFallback(keyPath, raw);
+    return {
+      patterns: fallback.resolved.map((pattern) => legacyExpandEnv(pattern, lookup)),
+      issues: fallback.issues,
+    };
+  };
   const rawSqlPaths = seedRaw?.["sql_paths"];
   const sqlPathsOverride = remoteWins("db.seed.sql_paths")
     ? undefined
     : envOverride("SUPABASE_DB_SEED_SQL_PATHS");
-  const sqlPathPatterns =
-    sqlPathsOverride !== undefined
-      ? splitGoSeedPaths(sqlPathsOverride)
-      : Array.isArray(rawSqlPaths)
-        ? rawSqlPaths
-            .filter((pattern): pattern is string => typeof pattern === "string")
-            .map((pattern) => legacyExpandEnv(pattern, lookup))
-        : typeof rawSqlPaths === "string"
-          ? splitGoSeedPaths(rawSqlPaths)
-          : ["seed.sql"];
+  const sqlPathsResolved = legacyResolveGlobField(
+    "db.seed.sql_paths",
+    rawSqlPaths,
+    sqlPathsOverride,
+    ["seed.sql"],
+  );
   // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split);
   // resolve each to Go's config-load form (absolute verbatim, relative supabase-joined).
-  const seedSqlPaths = sqlPathPatterns.map((pattern) => legacyResolveSeedSqlPath(path, pattern));
+  const seedSqlPaths = sqlPathsResolved.patterns.map((pattern) =>
+    legacyResolveSeedSqlPath(path, pattern),
+  );
+
+  // `[db.migrations] schema_paths` — Go default `[]` (`pkg/config/templates/config.toml:64`),
+  // resolved through the exact same decode + env-expand + supabase-join pipeline as
+  // `[db.seed].sql_paths` above, but UNCONDITIONALLY (Go's resolve loop for schema_paths,
+  // `config.go:976-980`, is not gated on `db.migrations.enabled` the way the seed loop is
+  // gated on `db.seed.enabled`, `config.go:968-975`).
+  const rawSchemaPaths = migrationsRaw?.["schema_paths"];
+  const schemaPathsOverride = remoteOverrideKeys.has("db.migrations.schema_paths")
+    ? undefined
+    : envOverride("SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS");
+  const schemaPathsResolved = legacyResolveGlobField(
+    "db.migrations.schema_paths",
+    rawSchemaPaths,
+    schemaPathsOverride,
+    [],
+  );
+
+  // Go's `UnmarshalExact` decodes the whole config in ONE mapstructure pass (see
+  // `legacyGlobArrayIssues`'s doc comment) — combine BOTH `Glob` fields' issues, in
+  // Go's struct-declaration order (`Migrations` before `Seed`), before failing once,
+  // so a config invalid in both surfaces both, matching Go's single combined error
+  // instead of only the first field checked.
+  yield* legacyFailOnGlobIssues([...schemaPathsResolved.issues, ...sqlPathsResolved.issues]);
+
+  const schemaPaths = schemaPathsResolved.patterns.map((pattern) =>
+    legacyResolveSeedSqlPath(path, pattern),
+  );
 
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
   // ciphertext. `resolved` mirrors Go's `len(SHA256) > 0` gate (Go sets SHA256 only
@@ -2510,7 +2766,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     },
     migrationsEnabled,
     schemaPaths,
-    schemaPathPatterns,
+    schemaPathPatterns: schemaPathsResolved.patterns,
     seed: { enabled: seedEnabled, sqlPaths: seedSqlPaths },
     vault,
     appliedRemote,

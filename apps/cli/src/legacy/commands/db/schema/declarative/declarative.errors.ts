@@ -114,6 +114,13 @@ export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclara
    * (`dbConnection.connect`) rather than the migration SQL failing to apply.
    */
   readonly connect?: boolean;
+  /**
+   * Forwarded from the underlying typed failure this wraps (e.g. a
+   * `LegacyKongReloadError`'s recovery hint, or a health-timeout architecture
+   * hint) when the local-reset recovery path fails — the wrap must not drop it
+   * (review CLI-1958).
+   */
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     if (this.connect === true) {
@@ -121,6 +128,18 @@ export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclara
     }
     return actionability.dbFinding;
   }
+}
+
+/**
+ * Duck-types an optional `suggestion: string` off an arbitrary typed failure —
+ * used when wrapping a lower-level error (e.g. `legacyResetLocalDatabase`'s
+ * `LegacyKongReloadError`) into a {@link LegacyDeclarativeApplyError} so its
+ * recovery hint isn't silently dropped by the wrap.
+ */
+export function legacyReadErrorSuggestion(error: unknown): string | undefined {
+  if (typeof error !== "object" || error === null || !("suggestion" in error)) return undefined;
+  const { suggestion } = error as { suggestion: unknown };
+  return typeof suggestion === "string" ? suggestion : undefined;
 }
 
 /**

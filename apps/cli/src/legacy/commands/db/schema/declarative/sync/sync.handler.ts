@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
 
 import {
   LegacyDnsResolverFlag,
@@ -42,6 +42,7 @@ import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNoFilesGeneratedError,
   LegacyDeclarativeNonInteractiveError,
+  legacyReadErrorSuggestion,
 } from "../declarative.errors.ts";
 import {
   legacyResolveDeclarativeMigrationName,
@@ -372,10 +373,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         return;
       }
 
+      // A Ctrl-C or defect during the apply is not a migration-apply failure —
+      // propagate it unchanged instead of synthesizing a fake
+      // `LegacyDeclarativeApplyError` (review CLI-1958).
+      const applyFailure = Cause.findFail(applyExit.cause);
+      if (Result.isFailure(applyFailure)) {
+        return yield* Effect.failCause(applyFailure.failure);
+      }
+
       // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
-      const applyError =
-        applyExit.cause.reasons.find(Cause.isFailReason)?.error ??
-        new LegacyDeclarativeApplyError({ message: "failed to apply migration" });
+      const applyError = applyFailure.success.error;
       yield* output.raw(
         `${legacyRed(`Migration failed to apply: ${applyError.message}`)}\n`,
         "stderr",
@@ -404,13 +411,22 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           // argv-forwarding is needed to stay on a custom network.
           const resetExit = yield* legacyResetLocalDatabase().pipe(Effect.exit);
           if (Exit.isFailure(resetExit)) {
+            // A Ctrl-C or defect during the recovery reset must cancel the command,
+            // not get rewritten into a synthetic "unknown error" apply failure —
+            // propagate it unchanged (review CLI-1958).
+            const resetFailure = Cause.findFail(resetExit.cause);
+            if (Result.isFailure(resetFailure)) {
+              return yield* Effect.failCause(resetFailure.failure);
+            }
             // Go returns `resetErr` here, surfacing the failure that actually blocked
-            // recovery — not the original apply error. Build the reset error from the
-            // real typed failure and use that one value for the message, debug bundle,
-            // and return.
-            const resetFailure = resetExit.cause.reasons.find(Cause.isFailReason)?.error;
+            // recovery — not the original apply error — and prints it exactly once (no
+            // extra "database reset failed:" wrapper). Build the reset error from the
+            // real typed failure and use that one value for the message, suggestion,
+            // debug bundle, and return.
+            const rawResetFailure = resetFailure.success.error;
             const resetError = new LegacyDeclarativeApplyError({
-              message: `database reset failed: ${resetFailure?.message ?? "unknown error"}`,
+              message: rawResetFailure.message,
+              suggestion: legacyReadErrorSuggestion(rawResetFailure),
             });
             yield* output.raw(
               `${legacyRed(`Database reset also failed: ${resetError.message}`)}\n`,

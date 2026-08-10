@@ -26,10 +26,10 @@ import {
   ErrorActionabilityId,
 } from "../../../shared/telemetry/error-actionability.ts";
 import {
-  collectText,
+  legacyCollectText,
   containerCliExitCode,
   legacyDescribeContainerCliFailure,
-  runContainerCliExpectSuccess,
+  legacyRunContainerCliExpectSuccess,
   spawnContainerCli,
 } from "../legacy-container-cli.ts";
 import {
@@ -310,7 +310,7 @@ export function legacyEnsureNetwork(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
@@ -385,7 +385,7 @@ export function legacyEnsureVolume(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
@@ -470,7 +470,7 @@ export function legacyVolumeExists(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
@@ -507,7 +507,7 @@ export function legacyRemoveContainer(
   spawner: Spawner,
   containerId: string,
 ): Effect.Effect<void, LegacyContainerRemoveError> {
-  return runContainerCliExpectSuccess(
+  return legacyRunContainerCliExpectSuccess(
     spawner,
     ["container", "rm", "-f", containerId],
     "remove container",
@@ -538,7 +538,7 @@ export function legacyRemoveVolume(
   spawner: Spawner,
   volumeName: string,
 ): Effect.Effect<void, LegacyVolumeRemoveError> {
-  return runContainerCliExpectSuccess(
+  return legacyRunContainerCliExpectSuccess(
     spawner,
     ["volume", "rm", "-f", volumeName],
     "remove volume",
@@ -589,8 +589,8 @@ function legacyDockerCreateContainer(
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectText(child.stdout),
-          collectText(child.stderr),
+          legacyCollectText(child.stdout),
+          legacyCollectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
@@ -640,7 +640,7 @@ function legacyDockerStartContainer(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
@@ -709,7 +709,7 @@ function legacyDockerCopyIntoContainer(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(

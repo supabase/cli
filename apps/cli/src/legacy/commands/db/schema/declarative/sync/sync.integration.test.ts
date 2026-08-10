@@ -992,13 +992,12 @@ describe("legacy db schema declarative sync integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
-        message: "database reset failed: supabase start is not running.",
+        message: "supabase start is not running.",
       });
+      // Printed exactly once — no "database reset failed:" double-wrap (review CLI-1958).
       expect(
         s.out.rawChunks.some((c) =>
-          c.text.includes(
-            "Database reset also failed: database reset failed: supabase start is not running.",
-          ),
+          c.text.includes("Database reset also failed: supabase start is not running."),
         ),
       ).toBe(true);
       // A real failure, before any destructive container work.

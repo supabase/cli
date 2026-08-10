@@ -1,14 +1,17 @@
 /**
- * The local-container-bring-up prelude BOTH `db start` (`commands/db/start/start.handler.ts`)
- * and `db reset` (`commands/db/reset/reset.handler.ts`) build before calling their own
- * composition (`legacyStartDatabase`/`legacyRecreateLocalDatabase`): load the local project
- * context, resolve config values + the `LegacyDbBootstrapConfig` derivation, the container's
- * network id/opts/id, the Postgres container-spec fields common to both callers, the lazy
- * image-resolve `Effect`, and the `LegacyFreshDbSetupInput` `setup` object `legacyRunFreshDbSetup`
- * needs. Hoisted here (CLI-1955 review follow-up) — the two callers used to each run an
- * independently-typed ~130-line copy of this exact sequence, with no test comparing them.
+ * The local-container-bring-up prelude shared by `db start`
+ * (`commands/db/start/start.handler.ts`), `db reset`
+ * (`commands/db/reset/reset.handler.ts`, via `reset-local-database.ts`), and
+ * `db diff`/`db pull`'s shadow-database provisioning (CLI-1956): load the local
+ * project context, resolve config values + the `LegacyDbBootstrapConfig`
+ * derivation, the container's network id/opts/id, the Postgres container-spec
+ * fields common to every caller, the lazy image-resolve `Effect`, and the
+ * `LegacyFreshDbSetupInput` `setup` object `legacyRunFreshDbSetup` needs. Hoisted
+ * here (CLI-1955 review follow-up) — `db start`/`db reset` used to each run an
+ * independently-typed ~130-line copy of this exact sequence, with no test
+ * comparing them.
  *
- * Deliberately does NOT include the two callers' genuinely divergent parts, which stay at each
+ * Deliberately does NOT include the callers' genuinely divergent parts, which stay at each
  * call site instead of being forced into this shared shape:
  *  - `db start`'s `fromBackup` (spliced into its OWN `postgresSpec` on top of
  *    {@link LegacyLocalDbContainerInputs.postgresSpecBase}) and its `isFreshVolume`/`filterValue`
