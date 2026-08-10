@@ -580,6 +580,32 @@ export const validateManagedStackContractFixtures = (
     if (output.human === undefined && output.json === undefined && output.api === undefined) {
       errors.push(`${scenario.id}: at least one observable output is required`);
     }
+
+    if (scenario.when.interface === "stack-api" && scenario.when.method === "createStack") {
+      const directOptions = scenario.given.filter((fact) => fact.kind === "direct-stack-options");
+      const explicitRootKeys = ["cacheRoot", "projectDir", "runtimeRoot", "stackRoot"];
+      const directInput = scenario.when.input;
+      const hasExplicitRoot = explicitRootKeys.some((key) => typeof directInput[key] === "string");
+      const rootMode = hasExplicitRoot ? "explicit" : "omitted";
+      const hasTemporaryDetails = scenario.expected.details?.state_root === "temporary";
+      const hasTemporaryProjection = output.api?.state_root === "temporary";
+      const hasEphemeralWrite = scenario.expected.writes.some(
+        (write) => write.target === "ephemeral-state" && write.operation === "create",
+      );
+      const usesTemporaryState = hasTemporaryDetails && hasTemporaryProjection && hasEphemeralWrite;
+      const exposesTemporaryState =
+        hasTemporaryDetails || hasTemporaryProjection || hasEphemeralWrite;
+      if (
+        directOptions.length !== 1 ||
+        directOptions[0]?.roots !== rootMode ||
+        (rootMode === "omitted" && !usesTemporaryState) ||
+        (rootMode === "explicit" && exposesTemporaryState)
+      ) {
+        errors.push(
+          `${scenario.id}: direct stack root inputs must agree with temporary-state behavior`,
+        );
+      }
+    }
     for (const write of scenario.expected.writes) {
       if (write.id.trim().length === 0) {
         errors.push(`${scenario.id}: ${write.target} write requires a target ID`);
@@ -686,6 +712,16 @@ export const validateManagedStackContractFixtures = (
           if (projectedRuntime !== undefined && projectedRuntime !== explicitRuntime) {
             errors.push(
               `${scenario.id}: resolved runtime must match explicit request ${explicitRuntime}`,
+            );
+          }
+        }
+        if (isManagedStartAction(scenario.when) && scenario.expected.outcome !== "error") {
+          const availability = scenario.given.find(
+            (fact) => fact.kind === "runtime-availability" && fact.runtime === explicitRuntime,
+          );
+          if (availability?.kind !== "runtime-availability" || availability.available !== true) {
+            errors.push(
+              `${scenario.id}: successful explicit runtime requires matching availability`,
             );
           }
         }
@@ -955,6 +991,29 @@ export const validateManagedStackContractFixtures = (
           ) {
             errors.push(`${scenario.id}: portable runtimes must match declared runtime facts`);
           }
+          const runtimeOptions = scenario.given.filter(
+            (fact) => fact.kind === "managed-api-options",
+          );
+          const firstRuntimeOptions = runtimeOptions[0];
+          if (
+            firstRuntimeOptions === undefined ||
+            runtimeOptions.length !== runtimes.length ||
+            runtimes.some(
+              (runtime) =>
+                runtimeOptions.filter((options) => options.runtime === runtime).length !== 1,
+            ) ||
+            runtimeOptions.some(
+              (options) =>
+                options.repository !== firstRuntimeOptions.repository ||
+                options.repositoryId !== firstRuntimeOptions.repositoryId ||
+                options.stateRoot !== firstRuntimeOptions.stateRoot ||
+                options.stateRootPath !== firstRuntimeOptions.stateRootPath,
+            )
+          ) {
+            errors.push(
+              `${scenario.id}: portable comparison must hold repository and state root constant`,
+            );
+          }
 
           let firstRuntimeResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
           let runtimeResultsEqual = true;
@@ -1026,6 +1085,28 @@ export const validateManagedStackContractFixtures = (
             [...declaredRepositorySet].some((adapter) => !repositoryFactSet.has(adapter))
           ) {
             errors.push(`${scenario.id}: repository adapters must match declared repository facts`);
+          }
+          const repositoryOptions = scenario.given.filter(
+            (fact) => fact.kind === "managed-api-options",
+          );
+          const firstRepositoryOptions = repositoryOptions[0];
+          if (
+            firstRepositoryOptions === undefined ||
+            repositoryOptions.length !== adapters.length ||
+            adapters.some(
+              (adapter) =>
+                repositoryOptions.filter((options) => options.repository === adapter).length !== 1,
+            ) ||
+            repositoryOptions.some(
+              (options) =>
+                options.runtime !== firstRepositoryOptions.runtime ||
+                options.stateRoot !== firstRepositoryOptions.stateRoot ||
+                options.stateRootPath !== firstRepositoryOptions.stateRootPath,
+            )
+          ) {
+            errors.push(
+              `${scenario.id}: repository comparison must hold runtime and state root constant`,
+            );
           }
 
           let firstAdapterResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
@@ -1776,6 +1857,29 @@ export const validateManagedStackContractFixtures = (
             );
           }
         }
+        if (
+          scenario.expected.outcome === "reuse" &&
+          (!scenario.given.some(
+            (fact) =>
+              fact.kind === "identity-claim" &&
+              fact.scope === "project" &&
+              fact.id === selection.projectId &&
+              fact.path === actionCwd &&
+              fact.status === "exact",
+          ) ||
+            !scenario.given.some(
+              (fact) =>
+                fact.kind === "identity-claim" &&
+                fact.scope === "checkout" &&
+                fact.id === selection.checkoutId &&
+                fact.path === actionCwd &&
+                fact.status === "exact",
+            ))
+        ) {
+          errors.push(
+            `${scenario.id}: folder-to-Git reuse requires exact project and checkout claims`,
+          );
+        }
       }
 
       const createsSelectedContext = scenario.expected.writes.some(
@@ -1977,12 +2081,28 @@ export const validateManagedStackContractFixtures = (
       if (selection === undefined) {
         errors.push(`${scenario.id}: sticky port conflict requires a selected target`);
       } else {
+        const assignment = scenario.given.find(
+          (fact) =>
+            fact.kind === "port-assignment" &&
+            fact.stackId === selection.stackId &&
+            fact.intent === "automatic",
+        );
+        const occupiedPort =
+          assignment?.kind === "port-assignment"
+            ? scenario.given.find(
+                (fact) => fact.kind === "occupied-port" && fact.port === assignment.port,
+              )
+            : undefined;
         if (
-          !scenario.given.some(
-            (fact) => fact.kind === "port-assignment" && fact.stackId === selection.stackId,
-          )
+          assignment?.kind !== "port-assignment" ||
+          occupiedPort?.kind !== "occupied-port" ||
+          output.json?.port !== assignment.port ||
+          output.json?.config_key !== assignment.key ||
+          output.json?.relocated !== false
         ) {
-          errors.push(`${scenario.id}: sticky port assignment must belong to the selected target`);
+          errors.push(
+            `${scenario.id}: sticky port conflict must bind assignment, occupancy, and projections`,
+          );
         }
         if (
           !scenario.given.some(
@@ -1994,6 +2114,65 @@ export const validateManagedStackContractFixtures = (
         ) {
           errors.push(`${scenario.id}: sticky port conflict requires a stopped selected stack`);
         }
+      }
+    }
+
+    const changedExactPort = scenario.given.find(
+      (fact) =>
+        fact.kind === "config-port" &&
+        fact.intent === "exact" &&
+        typeof fact.value === "number" &&
+        typeof fact.previousValue === "number",
+    );
+    const expectsExactPortChange =
+      (scenario.expected.outcome === "update" &&
+        typeof output.json?.previous_port === "number" &&
+        typeof output.json?.port === "number") ||
+      scenario.expected.warning?.code === "running_stack_config_drift";
+    if (expectsExactPortChange) {
+      let exactPortChangeMatches = false;
+      if (
+        changedExactPort?.kind === "config-port" &&
+        typeof changedExactPort.value === "number" &&
+        typeof changedExactPort.previousValue === "number"
+      ) {
+        const previousAssignment = scenario.given.find(
+          (fact) =>
+            fact.kind === "port-assignment" &&
+            fact.stackId === selection?.stackId &&
+            fact.key === changedExactPort.key &&
+            fact.port === changedExactPort.previousValue,
+        );
+        const updateProjectionMatches =
+          scenario.expected.outcome !== "update" ||
+          (output.json?.previous_port === changedExactPort.previousValue &&
+            output.json?.port === changedExactPort.value &&
+            output.human?.fields.apiUrl === `http://127.0.0.1:${changedExactPort.value}`);
+        const driftProjectionMatches =
+          scenario.expected.warning?.code !== "running_stack_config_drift" ||
+          (scenario.given.some(
+            (fact) =>
+              fact.kind === "stack" &&
+              fact.stackId === selection?.stackId &&
+              fact.lifecycle === "running",
+          ) &&
+            output.json?.config_key === changedExactPort.key &&
+            output.json?.running_port === changedExactPort.previousValue &&
+            output.json?.requested_port === changedExactPort.value &&
+            output.human?.fields.configKey === changedExactPort.key &&
+            output.human?.fields.runningPort === String(changedExactPort.previousValue) &&
+            output.human?.fields.configuredPort === String(changedExactPort.value));
+        exactPortChangeMatches =
+          previousAssignment?.kind === "port-assignment" &&
+          previousAssignment.intent === "exact" &&
+          changedExactPort.value !== changedExactPort.previousValue &&
+          updateProjectionMatches &&
+          driftProjectionMatches;
+      }
+      if (!exactPortChangeMatches) {
+        errors.push(
+          `${scenario.id}: exact port change must bind previous assignment and requested value`,
+        );
       }
     }
 
@@ -2193,17 +2372,52 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.expected.error?.code === "legacy_source_running") {
+      const legacySource = scenario.given.find((fact) => fact.kind === "legacy-state");
+      if (
+        legacySource?.kind !== "legacy-state" ||
+        legacySource.lifecycle !== "running" ||
+        scenario.expected.writes.length > 0 ||
+        scenario.expected.runtimeEffects.length > 0
+      ) {
+        errors.push(`${scenario.id}: running legacy error requires a running source`);
+      }
+    }
+
     if (scenario.expected.error?.code === "legacy_bootstrap_failed") {
+      const rollbackStackId =
+        scenario.when.interface === "managed-api" && scenario.when.method === "startStack"
+          ? scenario.when.input.stackId
+          : undefined;
       if (
         scenario.when.interface !== "managed-api" ||
         scenario.when.method !== "startStack" ||
         scenario.when.input.injectCopyFailure !== true ||
         !scenario.expected.writes.some(
-          (write) => write.target === "managed-state" && write.operation === "delete",
+          (write) =>
+            write.target === "managed-state" &&
+            write.operation === "delete" &&
+            write.id === rollbackStackId,
         ) ||
-        !scenario.expected.runtimeEffects.some((effect) => effect.operation === "delete")
+        !scenario.expected.runtimeEffects.some(
+          (effect) => effect.operation === "delete" && effect.stackId === rollbackStackId,
+        )
       ) {
         errors.push(`${scenario.id}: bootstrap rollback requires enabled copy-failure injection`);
+      }
+      if (
+        typeof rollbackStackId !== "string" ||
+        !scenario.given.some(
+          (fact) =>
+            fact.kind === "managed-target" &&
+            fact.stackId === rollbackStackId &&
+            fact.exists === false,
+        ) ||
+        scenario.given.some((fact) => fact.kind === "stack" && fact.stackId === rollbackStackId)
+      ) {
+        errors.push(
+          `${scenario.id}: bootstrap rollback requires failure injection against an absent target`,
+        );
       }
     }
 
@@ -2218,6 +2432,49 @@ export const validateManagedStackContractFixtures = (
       !scenario.when.argv.includes("--no-backup")
     ) {
       errors.push(`${scenario.id}: destructive stop requires --no-backup`);
+    }
+
+    if (scenario.expected.details?.idempotent === true || output.json?.already_deleted === true) {
+      if (
+        typeof explicitActionStackId !== "string" ||
+        !scenario.given.some(
+          (fact) =>
+            fact.kind === "managed-record" &&
+            fact.stackId === explicitActionStackId &&
+            fact.status === "tombstoned",
+        ) ||
+        scenario.expected.outcome !== "no-op" ||
+        scenario.expected.details?.tombstoned !== true ||
+        scenario.expected.details?.idempotent !== true ||
+        output.json?.tombstoned !== true ||
+        scenario.expected.writes.length > 0 ||
+        scenario.expected.runtimeEffects.length > 0
+      ) {
+        errors.push(`${scenario.id}: idempotent deletion requires a tombstoned target`);
+      }
+    }
+
+    const globallyTargetedStack = scenario.given.find(
+      (fact) => fact.kind === "stack" && fact.stackId === explicitActionStackId,
+    );
+    if (
+      scenario.when.interface === "cli" &&
+      scenario.when.argv[0] === "stop" &&
+      scenario.when.argv.includes("--stack-id") &&
+      scenario.expected.outcome === "delete" &&
+      globallyTargetedStack?.kind === "stack" &&
+      (globallyTargetedStack.orphaned !== undefined ||
+        output.json?.orphaned !== undefined ||
+        output.human?.fields.orphaned !== undefined)
+    ) {
+      if (
+        typeof explicitActionStackId !== "string" ||
+        globallyTargetedStack.orphaned !== true ||
+        output.json?.orphaned !== true ||
+        output.human?.fields.orphaned !== "true"
+      ) {
+        errors.push(`${scenario.id}: global orphan deletion requires an orphaned target`);
+      }
     }
 
     if (
@@ -2253,6 +2510,46 @@ export const validateManagedStackContractFixtures = (
         ))
     ) {
       errors.push(`${scenario.id}: credential update must bind old and new persisted references`);
+    }
+
+    if (scenario.expected.warning?.code === "running_stack_credentials_drift") {
+      if (
+        selection === undefined ||
+        changedCredentials?.kind !== "credential-state" ||
+        !scenario.given.some(
+          (fact) =>
+            fact.kind === "stack" &&
+            fact.stackId === selection.stackId &&
+            fact.lifecycle === "running",
+        ) ||
+        scenario.expected.outcome !== "report" ||
+        scenario.expected.writes.length > 0 ||
+        scenario.expected.runtimeEffects.length > 0 ||
+        output.json?.stack_id !== selection.stackId ||
+        output.json?.drift !== true ||
+        output.human?.fields.stackId !== selection.stackId ||
+        output.human?.fields.drift !== "true"
+      ) {
+        errors.push(`${scenario.id}: credential drift report requires a running selected stack`);
+      }
+    }
+
+    const legacyCredentials = scenario.given.find(
+      (fact) => fact.kind === "credential-state" && fact.source === "legacy",
+    );
+    const copiesManagedCredentials = scenario.expected.writes.some(
+      (write) => write.target === "managed-state" && write.operation === "copy",
+    );
+    if (
+      copiesManagedCredentials &&
+      (legacyCredentials?.kind === "credential-state" ||
+        typeof scenario.expected.details?.credential_values_id === "string" ||
+        typeof output.api?.credentialsValuesId === "string") &&
+      (legacyCredentials?.kind !== "credential-state" ||
+        scenario.expected.details?.credential_values_id !== legacyCredentials.valuesId ||
+        output.api?.credentialsValuesId !== legacyCredentials.valuesId)
+    ) {
+      errors.push(`${scenario.id}: copied legacy credentials must bind their persisted reference`);
     }
 
     if (scenario.expected.details?.retry_after_rollback === true) {

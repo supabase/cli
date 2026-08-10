@@ -1911,6 +1911,198 @@ describe("managed stack acceptance contract", () => {
     );
   });
 
+  it("rejects lifecycle, ownership, and comparison results with contradictory evidence", () => {
+    const findScenario = (id: string): ManagedStackContractScenario => {
+      const scenario = managedStackContractFixtures.find((candidate) => candidate.id === id);
+      if (scenario === undefined) {
+        throw new Error(`${id} fixture is required`);
+      }
+      return scenario;
+    };
+
+    const runningLegacyScenario = findScenario(
+      "bootstrap.running-legacy-source-fails-without-mutation",
+    );
+    const stoppedLegacyReportedRunning = {
+      ...runningLegacyScenario,
+      given: runningLegacyScenario.given.map((fact) =>
+        fact.kind === "legacy-state" ? { ...fact, lifecycle: "stopped" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([stoppedLegacyReportedRunning])).toContain(
+      `${runningLegacyScenario.id}: running legacy error requires a running source`,
+    );
+
+    const directStackScenario = findScenario("api-boundary.direct-create-stack-is-ephemeral");
+    const explicitRootsReportedTemporary = {
+      ...directStackScenario,
+      given: directStackScenario.given.map((fact) =>
+        fact.kind === "direct-stack-options" ? { ...fact, roots: "explicit" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([explicitRootsReportedTemporary])).toContain(
+      `${directStackScenario.id}: direct stack root inputs must agree with temporary-state behavior`,
+    );
+
+    const failedCopyScenario = findScenario("bootstrap.failed-copy-rolls-back");
+    const rollbackAgainstExistingTarget = {
+      ...failedCopyScenario,
+      given: failedCopyScenario.given.map((fact) =>
+        fact.kind === "managed-target" ? { ...fact, exists: true } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([rollbackAgainstExistingTarget])).toContain(
+      `${failedCopyScenario.id}: bootstrap rollback requires failure injection against an absent target`,
+    );
+
+    const stickyCollisionScenario = findScenario("ports.later-sticky-port-collision-fails");
+    const unrelatedStickyAssignment = {
+      ...stickyCollisionScenario,
+      given: stickyCollisionScenario.given.map((fact) =>
+        fact.kind === "port-assignment" ? { ...fact, port: 55422 } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unrelatedStickyAssignment])).toContain(
+      `${stickyCollisionScenario.id}: sticky port conflict must bind assignment, occupancy, and projections`,
+    );
+
+    const exactPortChangeScenario = findScenario("ports.config-change-on-stopped-stack-applies");
+    const ignoredExactPortChange = {
+      ...exactPortChangeScenario,
+      given: exactPortChangeScenario.given.map((fact) =>
+        fact.kind === "config-port" ? { ...fact, value: 55322 } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ignoredExactPortChange])).toContain(
+      `${exactPortChangeScenario.id}: exact port change must bind previous assignment and requested value`,
+    );
+    const automaticIntentReportedAsExactChange = {
+      ...exactPortChangeScenario,
+      given: exactPortChangeScenario.given.map((fact) =>
+        fact.kind === "config-port" ? { ...fact, intent: "automatic" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([automaticIntentReportedAsExactChange])).toContain(
+      `${exactPortChangeScenario.id}: exact port change must bind previous assignment and requested value`,
+    );
+
+    const explicitRuntimeScenario = findScenario("runtime.explicit-api-overrides-auto");
+    const unavailableExplicitRuntimeStarts = {
+      ...explicitRuntimeScenario,
+      given: explicitRuntimeScenario.given.map((fact) =>
+        fact.kind === "runtime-availability" && fact.runtime === "native"
+          ? { ...fact, available: false }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unavailableExplicitRuntimeStarts])).toContain(
+      `${explicitRuntimeScenario.id}: successful explicit runtime requires matching availability`,
+    );
+
+    const orphanDeletionScenario = findScenario("reclamation.delete-orphan-by-stack-id");
+    const activeStackReportedOrphaned = {
+      ...orphanDeletionScenario,
+      given: orphanDeletionScenario.given.map((fact) =>
+        fact.kind === "stack" ? { ...fact, orphaned: false } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([activeStackReportedOrphaned])).toContain(
+      `${orphanDeletionScenario.id}: global orphan deletion requires an orphaned target`,
+    );
+
+    const legacyCredentialsScenario = findScenario(
+      "credentials.compatible-legacy-auth-is-retained",
+    );
+    const differentLegacyCredentialReference = {
+      ...legacyCredentialsScenario,
+      given: legacyCredentialsScenario.given.map((fact) =>
+        fact.kind === "credential-state" ? { ...fact, valuesId: "legacy-auth-v2" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([differentLegacyCredentialReference])).toContain(
+      `${legacyCredentialsScenario.id}: copied legacy credentials must bind their persisted reference`,
+    );
+
+    const credentialDriftScenario = findScenario("credentials.running-change-reports-drift");
+    const stoppedStackReportedRunningCredentialDrift = {
+      ...credentialDriftScenario,
+      given: credentialDriftScenario.given.map((fact) =>
+        fact.kind === "stack" ? { ...fact, lifecycle: "stopped" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([stoppedStackReportedRunningCredentialDrift]),
+    ).toContain(
+      `${credentialDriftScenario.id}: credential drift report requires a running selected stack`,
+    );
+
+    const idempotentDeletionScenario = findScenario("reclamation.delete-repeat-is-idempotent");
+    const activeRecordReportedDeleted = {
+      ...idempotentDeletionScenario,
+      given: idempotentDeletionScenario.given.map((fact) =>
+        fact.kind === "managed-record" ? { ...fact, status: "active" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([activeRecordReportedDeleted])).toContain(
+      `${idempotentDeletionScenario.id}: idempotent deletion requires a tombstoned target`,
+    );
+
+    const folderReuseScenario = findScenario(
+      "identity.folder-to-git-exact-claim-preserves-identity",
+    );
+    const ambiguousProjectClaimReused = {
+      ...folderReuseScenario,
+      given: folderReuseScenario.given.map((fact) =>
+        fact.kind === "identity-claim" && fact.scope === "project"
+          ? { ...fact, status: "ambiguous" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ambiguousProjectClaimReused])).toContain(
+      `${folderReuseScenario.id}: folder-to-Git reuse requires exact project and checkout claims`,
+    );
+
+    const repositoryMatrixScenario = findScenario(
+      "api-boundary.repository-contract-is-storage-agnostic",
+    );
+    const repositoryMatrixChangesRuntime = {
+      ...repositoryMatrixScenario,
+      given: repositoryMatrixScenario.given.map((fact) =>
+        fact.kind === "managed-api-options" && fact.repository === "in-memory"
+          ? { ...fact, runtime: "bun" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([
+        repositoryMatrixChangesRuntime,
+        findScenario("identity.return-to-branch-reuses-stack"),
+      ]),
+    ).toContain(
+      `${repositoryMatrixScenario.id}: repository comparison must hold runtime and state root constant`,
+    );
+
+    const portableMatrixScenario = findScenario(
+      "api-boundary.managed-surface-is-node-and-bun-portable",
+    );
+    const portableMatrixChangesRepository = {
+      ...portableMatrixScenario,
+      given: portableMatrixScenario.given.map((fact) =>
+        fact.kind === "managed-api-options" && fact.runtime === "bun"
+          ? { ...fact, repository: "persistent-adapter" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([
+        portableMatrixChangesRepository,
+        findScenario("identity.same-checkout-branch-and-name-reuses-stack"),
+      ]),
+    ).toContain(
+      `${portableMatrixScenario.id}: portable comparison must hold repository and state root constant`,
+    );
+  });
+
   it("covers the approved identity journeys through public commands and APIs", () => {
     expect(
       managedStackContractFixtures

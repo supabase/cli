@@ -96,6 +96,10 @@ declare an absent target plus fully compatible stopped legacy state; managed sta
 registry publication must imply each other, as must managed-state deletion and registry tombstoning;
 reuse must begin from an existing target, runtime stop effects must begin from a running stack, and
 target-existence facts cannot contradict stack facts;
+running-source and credential-drift reports must begin from running sources, idempotent deletion
+must begin from a tombstone, orphan deletion must target orphaned state, and failed-copy cleanup may
+delete only a target proven absent before the attempt; direct-stack root facts must agree with
+caller-supplied root inputs and temporary-state behavior;
 every state write and runtime effect must identify its target; contextual CLI stack results must
 bind their output to a selected target; Git identity writes must use the correct common or worktree
 scope, context writes must name the active branch as owner, and adapters cannot recreate an identity
@@ -108,7 +112,8 @@ its checkout, Git state, context, and orphaned stack; managed and sticky port co
 persisted-runtime conflicts must
 identify their actual target; managed port ownership requires an owner stack ID that agrees with
 every projection; exact-port conflicts must bind the same configured, occupied, and projected port;
-sticky reuse must bind the assignment to the selected target; a sibling automatic
+sticky reuse and collision must bind the assignment key and port to the selected target, while an
+exact-port change must bind the previous assignment and newly configured value; a sibling automatic
 port allocation fixture must use unique service ports through the public managed start action without
 reusing sibling-owned ports; concurrent creation must bind its action target, contender count,
 result cardinality, and single-publication outcome to the declared race; persisted-runtime preflight
@@ -118,13 +123,16 @@ runtime selection must reuse persisted state or follow Docker-then-qualified-nat
 native preflight results must agree with the action platform and complete qualified and failed
 service partitions;
 credential create, update, and copy operations must prove that global state contains references
-instead of plaintext, and credential changes must bind distinct old and new references;
+instead of plaintext, credential changes must bind distinct old and new references, and copied
+legacy credentials must retain their declared reference;
 data-preserving prune must begin with mutable data and delete metadata only for an orphaned record
 with matching orphaned stack state; tracked identity markers
 must remain untouched; native qualification facts must partition the service matrix, use a declared
 platform, and match the platform passed to preflight; status operations must remain read-only
 reports; repository adapter matrices must be non-empty, unique, and match their declared repository
-facts, and portable runtime matrices must satisfy the same rules against runtime facts, while
+facts while holding runtime and state-root options constant, and portable runtime matrices must
+satisfy the same rules against runtime facts while holding repository and state-root options
+constant, while
 repository adapter and portable runtime projections must reference a declared scenario, match its
 identity, agree on their complete decision, and publish equality flags derived from that comparison;
 every invalid stack name and every pair of
