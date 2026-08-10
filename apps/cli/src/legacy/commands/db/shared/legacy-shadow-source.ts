@@ -15,7 +15,6 @@
  */
 
 import { Effect, Option, Result, type FileSystem, type Path } from "effect";
-import type { PlatformError } from "effect/PlatformError";
 import type { GlobalFlag } from "effect/unstable/cli";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -35,7 +34,12 @@ import {
   type LegacyPgDeltaTomlConfig,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import type { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
-import { legacyResolveUnderWorkdir, legacyGlobPattern } from "../../../shared/legacy-glob.ts";
+import {
+  legacyResolveUnderWorkdir,
+  legacyGlobPattern,
+  legacyWalkSqlFiles,
+  legacyCompareUtf8Bytes,
+} from "../../../shared/legacy-glob.ts";
 import type { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import type { LegacyImagePrepullError } from "../../../shared/db-bootstrap/image-prepull.ts";
 import type { LegacyHealthCheckTimeoutError } from "../../../shared/db-bootstrap/health-check.ts";
@@ -235,7 +239,7 @@ export const legacyPrepareShadowSource = <E>(
   | CliArgs
 > =>
   Effect.gen(function* () {
-    const { containerId, secretDirId } = handle;
+    const { containerId } = handle;
 
     yield* legacyWaitForHealthyServices(spawner, [containerId], {
       timeoutSeconds: input.healthTimeoutSeconds,
@@ -292,6 +296,7 @@ export const legacyPrepareShadowSource = <E>(
             yield* legacyApplyDeclarativePgDelta(input.ctx, {
               fs: input.fs,
               declarativeDirAbs: declDirAbs,
+              declarativeDirRel: declDirRel,
               target: legacyToPostgresURL(overrideConn),
             });
             appliedViaPgDelta = true;
@@ -312,7 +317,6 @@ export const legacyPrepareShadowSource = <E>(
 
     return {
       container: containerId,
-      secretDirId,
       sourceUrl,
       targetUrlOverride,
     } satisfies LegacyShadowSourceResult;
@@ -321,94 +325,6 @@ export const legacyPrepareShadowSource = <E>(
 /** Go's `pkg/config.hasGlobMeta` (`config.go:211-213`) — `*?[` only, NOT `io/fs.hasMeta`'s broader set (which also counts `\`). */
 function legacyHasConfigGlobMeta(pattern: string): boolean {
   return /[*?[]/u.test(pattern);
-}
-
-/**
- * Go's `sort.Strings` compares byte-wise over each string's UTF-8 encoding; JS's default
- * `Array.prototype.sort()` instead compares UTF-16 CODE UNITS, which diverges from byte/codepoint
- * order for a supplementary-plane character (encoded as a surrogate pair, code units
- * `0xD800`-`0xDBFF` + `0xDC00`-`0xDFFF`) alongside a BMP private-use character (`0xE000`-
- * `0xFFFF`): JS ranks the surrogate pair BEFORE the private-use character (`0xD800 < 0xE000`),
- * while Go's UTF-8 byte order — which preserves Unicode codepoint order — ranks the
- * supplementary-plane codepoint (`>= U+10000 > U+FFFF`) AFTER it. Verified empirically:
- * `["a\u{1F600}.sql","a.sql"].sort()` (default) disagrees with `Buffer.compare` on the
- * same two strings' UTF-8 bytes. Used for every `sort.Strings` this module ports so a schema
- * directory with such filenames applies in the same order Go would.
- */
-// Exported (not module-private) so `legacy-pgdelta.cache.ts`'s `legacyListLocalMigrations` — the
-// same command family (`commands/db/shared/`), per `apps/cli/CLAUDE.md`'s "Hoist Before You
-// Duplicate" rule — can reuse it for Go's `fs.ReadDir`-backed `migration.ListLocalMigrations`
-// (`pkg/migration/list.go:34`), which is byte-sorted the exact same way (review:
-// PRRT_kwDOErm0O86W3OyD).
-export function legacyCompareUtf8Bytes(a: string, b: string): number {
-  return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
-}
-
-/**
- * Manual, no-follow-symlink directory walk shared by `legacyGlobDeclaredSchemaPaths` (Go's
- * `walkMatchedDir`/`fs.WalkDir`) and `legacyWalkSqlFilesSorted` (Go's `afero.Walk`). Both Go
- * walkers are `Lstat`-based and therefore never descend into a symlinked directory —
- * `io/fs.WalkDir`'s doc comment: "WalkDir does not follow symbolic links found in directories,
- * but if root itself is a symbolic link, its target will be walked"; `afero.walk` confirms the
- * same via its own `lstatIfPossible` call (`github.com/spf13/afero/path.go`), which reports a
- * symlinked subdirectory's `IsDir()` as false so the recursive `walk` call returns without
- * descending. Effect's `FileSystem.readDirectory(dir, { recursive: true })` is instead backed by
- * Node's recursive `fs.readdir` (`NodeFileSystem.ts`'s `readDirectory` passes `options` straight
- * to `fs.promises.readdir`), which DOES follow symlinked subdirectories — verified empirically: a
- * directory containing a symlink to an external directory has the external directory's files
- * appear in the recursive listing. Left uncorrected, a schema directory symlinking outside the
- * configured schema tree would leak external `.sql` files into a local-target diff/pull that Go
- * would never have picked up. Walking manually here, one `fs.readDirectory(dir)` (non-recursive)
- * per level, and testing each entry with `readLink` BEFORE `stat` (the same no-follow-detector
- * idiom as `cp.handler.ts`'s `walkUploadDir`) — skipping a symlinked directory entirely, exactly
- * like Lstat-based Go — reproduces that behavior. Both Go walkers also finish with a plain
- * `sort.Strings` over the complete set of collected paths (`config.go:186`,
- * `internal/db/diff/diff.go:75,95`), which is a full lexicographic sort over full relative paths,
- * NOT merely a per-directory-level sort — so the final `.sort()` below is required even though
- * entries are already read in sorted order at each level; it uses {@link legacyCompareUtf8Bytes},
- * not JS's default comparator, to match Go's byte order — see that function's own doc comment.
- * A per-entry `fs.stat` failure (permission denied, I/O error, a concurrent filesystem change
- * between `readDirectory` and `stat`) is NOT swallowed: both Go walkers pass the entry's error to
- * their callback, which returns it and aborts the whole walk — silently treating it as "file
- * absent" here could build an incomplete declarative target instead.
- */
-function legacyWalkRegularSqlFilesNoFollow(
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  rootAbs: string,
-): Effect.Effect<ReadonlyArray<string>, PlatformError> {
-  return Effect.gen(function* () {
-    const result: Array<string> = [];
-
-    const visit = (dirAbs: string, dirRel: string): Effect.Effect<void, PlatformError> =>
-      Effect.gen(function* () {
-        // Go's `os.ReadDir`/`io/fs.ReadDir` (backing both `fs.WalkDir` and `afero.Walk` — see
-        // `afero/path.go`'s `readDirNames`) byte-sort EVERY directory level via
-        // `bytealg.CompareString`/`sort.Strings`, not just a final flattened result — so the
-        // traversal order itself (which determines which entry's read/stat error surfaces
-        // first when a walk aborts early) must use {@link legacyCompareUtf8Bytes} here too, not
-        // JS's default UTF-16-code-unit comparator (review: PRRT_kwDOErm0O86XAlIo).
-        const names = [...(yield* fs.readDirectory(dirAbs))].sort(legacyCompareUtf8Bytes);
-        for (const name of names) {
-          const entryAbs = path.join(dirAbs, name);
-          const entryRel = dirRel === "" ? name : `${dirRel}/${name}`;
-          const isSymlink = yield* fs.readLink(entryAbs).pipe(
-            Effect.as(true),
-            Effect.orElseSucceed(() => false),
-          );
-          if (isSymlink) continue;
-          const entryStat = yield* fs.stat(entryAbs);
-          if (entryStat.type === "Directory") {
-            yield* visit(entryAbs, entryRel);
-          } else if (entryStat.type === "File" && entryRel.endsWith(".sql")) {
-            result.push(entryRel);
-          }
-        }
-      });
-
-    yield* visit(rootAbs, "");
-    return result.sort(legacyCompareUtf8Bytes);
-  });
 }
 
 /**
@@ -530,11 +446,10 @@ function legacyGlobDeclaredSchemaPaths(
         // error (e.g. a permission-denied or I/O-erroring subdirectory) as `failed to walk
         // matched directory: <err>` — it does NOT treat an unreadable directory as an empty
         // match set, since silently doing so can omit declared schemas and compare a
-        // local-target diff against the wrong target. `legacyWalkRegularSqlFilesNoFollow` also
-        // matches Go's no-follow-symlink walk semantics — see its doc comment.
-        const sqlRelativeResult = yield* legacyWalkRegularSqlFilesNoFollow(fs, path, absMatch).pipe(
-          Effect.result,
-        );
+        // local-target diff against the wrong target. `legacyWalkSqlFiles` (`legacy-glob.ts`)
+        // also matches Go's byte-sorted, no-follow-symlink walk semantics — see its own doc
+        // comment.
+        const sqlRelativeResult = yield* legacyWalkSqlFiles(fs, absMatch, "").pipe(Effect.result);
         if (Result.isFailure(sqlRelativeResult)) {
           problems.push(`failed to walk matched directory: ${sqlRelativeResult.failure.message}`);
           continue;
@@ -573,17 +488,17 @@ function legacyGlobDeclaredSchemaPaths(
 /**
  * Port of Go's `afero.Walk` + regular-`.sql`-file filter + `sort.Strings` (the shared tail of
  * both `loadDeclaredSchemas`'s pg-delta-declarative-dir and `SchemasDir` branches,
- * `apps/cli-go/internal/db/diff/diff.go:65-76,86-96`). `legacyWalkRegularSqlFilesNoFollow` also
- * matches Go's no-follow-symlink walk semantics — see its doc comment.
+ * `apps/cli-go/internal/db/diff/diff.go:65-76,86-96`). `legacyWalkSqlFiles` (`legacy-glob.ts`)
+ * also matches Go's byte-sorted, no-follow-symlink walk semantics — see its own doc comment.
  *
  * The walk ROOT itself is checked for being a symlink here, unlike `legacyGlobDeclaredSchemaPaths`'s
  * directory branch (Go's `fs.WalkDir`, whose own doc comment says "if root itself is a symbolic
  * link, its target will be walked" — so a symlinked `schema_paths` match is deliberately followed,
- * matching `legacyWalkRegularSqlFilesNoFollow`'s existing never-checks-its-own-root behavior).
- * `afero.Walk` is the opposite: its `Walk(fs, root, walkFn)` entry point `Lstat`s the root BEFORE
- * ever calling `walkFn`, so a symlinked root is treated as a non-directory and produces zero files
- * silently, never descending into the target — verified against `afero`'s own source
- * (`path.go`'s `Walk`/`lstatIfPossible`). The PRECEDING `fs.stat`-based existence check in
+ * matching `legacyWalkSqlFiles`'s existing never-checks-its-own-root behavior). `afero.Walk` is the
+ * opposite: its `Walk(fs, root, walkFn)` entry point `Lstat`s the root BEFORE ever calling
+ * `walkFn`, so a symlinked root is treated as a non-directory and produces zero files silently,
+ * never descending into the target — verified against `afero`'s own source (`path.go`'s
+ * `Walk`/`lstatIfPossible`). The PRECEDING `fs.stat`-based existence check in
  * `legacyLoadDeclaredSchemas` (which follows symlinks, matching Go's `afero.DirExists` — also
  * `fs.Stat`-based) can't substitute for this: existence and walkability are different checks in
  * Go, and only the latter uses `Lstat`.
@@ -592,8 +507,8 @@ function legacyGlobDeclaredSchemaPaths(
  * result matches Go's own `filepath.Join`-built path on every platform — on Windows this yields
  * native backslashes (Go's `afero.Walk` never calls `filepath.ToSlash` on this branch, unlike
  * `walkMatchedDir`'s `schema_paths` branch, which does), and `path.join` normalizes ANY `/`
- * `legacyWalkRegularSqlFilesNoFollow`'s own relative-path construction produced internally, not
- * just the outer `dirRel`/`relative` join (verified: `path.win32.join("supabase/database",
+ * `legacyWalkSqlFiles`'s own relative-path construction produced internally, not just the outer
+ * `dirRel`/`relative` join (verified: `path.win32.join("supabase/database",
  * "sub/dir/file.sql")` returns `"supabase\\database\\sub\\dir\\file.sql"`, not a mixed-separator
  * string) — on POSIX this is a no-op (`path.posix.join` is byte-identical to the old template).
  *
@@ -617,7 +532,7 @@ function legacyWalkSqlFilesSorted(
       Effect.orElseSucceed(() => false),
     );
     if (isSymlinkRoot) return [];
-    const sqlRelative = yield* legacyWalkRegularSqlFilesNoFollow(fs, path, dirAbs).pipe(
+    const sqlRelative = yield* legacyWalkSqlFiles(fs, dirAbs, "").pipe(
       Effect.mapError(
         (cause) =>
           new LegacyDeclarativeShadowDbError({ message: `${errorPrefix}: ${cause.message}` }),

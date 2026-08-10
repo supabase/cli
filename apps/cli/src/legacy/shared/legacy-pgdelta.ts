@@ -1,10 +1,11 @@
-import { Effect, FileSystem, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
 import {
   type LegacyEdgeRuntimeFile,
   LegacyEdgeRuntimeScript,
 } from "./legacy-edge-runtime-script.service.ts";
+import { legacyResolveLocalProjectId, legacySanitizeProjectId } from "./legacy-docker-ids.ts";
 import {
   LEGACY_PG_DELTA_SOURCE_SSL_ENV,
   LEGACY_PG_DELTA_TARGET_SSL_ENV,
@@ -92,6 +93,42 @@ export interface LegacyPgDeltaContext {
    * function's doc comment).
    */
   readonly projectEnv: Readonly<Record<string, string>>;
+}
+
+/**
+ * Resolves {@link LegacyPgDeltaContext.projectId}: Go's `Config.ProjectId` singleton
+ * (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir basename,
+ * `pkg/config/config.go:563-570` + `Validate` :989-996), sanitized the same way
+ * `UpdateDockerIds` derives `EdgeRuntimeId` from it (`internal/utils/config.go:57-76`) —
+ * NOT `LegacyCliConfig.projectId` alone, which is env-only and resolves to `""` for a
+ * project that relies on config.toml's `project_id` or the workdir-basename default,
+ * mounting the WRONG `supabase_edge_runtime_` Deno-cache volume (review:
+ * PRRT_kwDOErm0O86XAlIw). Hoisted here — the single home for every pg-delta context
+ * builder (`db diff`, `db pull`, `db schema declarative generate`/`sync`) — per
+ * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ *
+ * `toml.appliedRemote !== undefined` suppresses the raw `cliProjectId` argument entirely:
+ * `toml.projectId` already reflects the matched `[remotes.<ref>]` block's own `project_id`
+ * at viper's override tier (`legacyReadDbToml`'s `remoteOverrideKeys.has("project_id")`
+ * gate, review: PRRT_kwDOErm0O86XHGDL) — but `legacyResolveLocalProjectId` tries its FIRST
+ * argument before its second, so passing the raw, ungated `cliProjectId` through would let
+ * an unrelated ambient `SUPABASE_PROJECT_ID` win back over the matched remote's own id,
+ * mounting the wrong Deno-cache volume for a linked pg-delta run. Mirrors the same
+ * suppression `legacy-local-project-context.ts`'s own `legacyLoadLocalProjectContext`
+ * already applies (review: PRRT_kwDOErm0O86XI1w8).
+ */
+export function legacyResolvePgDeltaProjectId(
+  cliProjectId: Option.Option<string>,
+  toml: { readonly projectId: Option.Option<string>; readonly appliedRemote: string | undefined },
+  workdir: string,
+): string {
+  return legacySanitizeProjectId(
+    legacyResolveLocalProjectId(
+      toml.appliedRemote !== undefined ? undefined : Option.getOrUndefined(cliProjectId),
+      Option.getOrUndefined(toml.projectId),
+      workdir,
+    ),
+  );
 }
 
 /** Mirrors Go's `isPostgresURL` (`internal/db/diff/pgdelta.go:46`). */

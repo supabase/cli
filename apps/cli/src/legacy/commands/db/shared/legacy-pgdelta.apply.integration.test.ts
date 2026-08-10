@@ -53,34 +53,41 @@ const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
 describe("legacyApplyDeclarativePgDelta", () => {
-  it.effect("fails with LegacyDeclarativeApplyError when the declarative dir doesn't exist", () => {
-    const edge = fakeEdgeRuntime();
-    const out = mockOutput();
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
-        fs,
-        declarativeDirAbs: "/does/not/exist",
-        target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
-      }).pipe(Effect.exit);
-      expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
-      expect((failError(exit) as { message: string }).message).toContain(
-        "declarative schema directory not found",
-      );
-      // Never even reaches the edge-runtime — the exists() check runs first.
-      expect(edge.calls).toHaveLength(0);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          BunServices.layer,
-          edge.layer,
-          out.layer,
-          Layer.succeed(LegacyDebugFlag, false),
-          Layer.succeed(CliArgs, { args: [] }),
+  it.effect(
+    "fails with LegacyDeclarativeApplyError interpolating the RELATIVE dir, not the absolute one, when the declarative dir doesn't exist",
+    () => {
+      // Go's `ApplyDeclarative` interpolates `utils.GetDeclarativeDir()` (relative) into
+      // this error, never the `filepath.Abs`-resolved dir it separately computes only for
+      // the bind (`apply.go:304-307`).
+      const edge = fakeEdgeRuntime();
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: "/does/not/exist",
+          declarativeDirRel: "supabase/database",
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toBe(
+          "declarative schema directory not found: supabase/database",
+        );
+        // Never even reaches the edge-runtime — the exists() check runs first.
+        expect(edge.calls).toHaveLength(0);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
+            Layer.succeed(CliArgs, { args: [] }),
+          ),
         ),
-      ),
-    );
-  });
+      );
+    },
+  );
 
   it.effect("maps an edge-runtime failure to LegacyDeclarativeApplyError", () => {
     const dir = makeDeclarativeDir();
@@ -91,6 +98,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
+        declarativeDirRel: "supabase/database",
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
       expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
@@ -120,6 +128,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
+        declarativeDirRel: "supabase/database",
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
       expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
@@ -150,6 +159,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
+        declarativeDirRel: "supabase/database",
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
       expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
@@ -191,6 +201,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
           {
             fs,
             declarativeDirAbs: dir,
+            declarativeDirRel: "supabase/database",
             target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
           },
         ).pipe(Effect.exit);
@@ -236,6 +247,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -278,6 +290,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -310,6 +323,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
       const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
         fs,
         declarativeDirAbs: dir,
+        declarativeDirRel: "supabase/database",
         target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
       }).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -348,6 +362,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -389,6 +404,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -428,6 +444,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -471,6 +488,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -513,6 +531,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -558,6 +577,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
@@ -598,6 +618,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isSuccess(exit)).toBe(true);
@@ -633,6 +654,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -684,6 +706,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
@@ -720,6 +743,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -761,6 +785,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
@@ -777,6 +802,46 @@ describe("legacyApplyDeclarativePgDelta", () => {
             out.layer,
             Layer.succeed(LegacyDebugFlag, false),
             Layer.succeed(CliArgs, { args: [] }),
+            Layer.succeed(CliArgs, { args: [] }),
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "fails with LegacyDeclarativeApplyError (not an unhandled defect) when an int field arrives as a value outside Go's int64 range",
+    () => {
+      // `Number.isInteger(1e20)` is `true`, but Go's `json.Unmarshal` of that same literal
+      // into `int` fails with "value out of range" (`strconv.ParseInt`'s int64 width) — so a
+      // mistyped/oversized numeric field must be rejected here too, not accepted as a (false)
+      // successful-apply count.
+      const dir = makeDeclarativeDir();
+      const edge = fakeEdgeRuntime({
+        stdout: JSON.stringify({ status: "success", totalApplied: 1e20 }),
+      });
+      const out = mockOutput();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
+          fs,
+          declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
+          target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
+        }).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to parse pg-delta apply output",
+        );
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            edge.layer,
+            out.layer,
+            Layer.succeed(LegacyDebugFlag, false),
             Layer.succeed(CliArgs, { args: [] }),
           ),
         ),
@@ -802,6 +867,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         const exit = yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(failError(exit)?.constructor.name).toBe("LegacyDeclarativeApplyError");
@@ -845,6 +911,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         }).pipe(Effect.exit);
         expect(out.stderrText).toContain("pg-delta apply result:");
@@ -883,6 +950,7 @@ describe("legacyApplyDeclarativePgDelta", () => {
         yield* legacyApplyDeclarativePgDelta(CTX, {
           fs,
           declarativeDirAbs: dir,
+          declarativeDirRel: "supabase/database",
           target: "postgresql://postgres:postgres@127.0.0.1:54320/contrib_regression",
         });
         expect(out.stderrText).toContain("Applying declarative schemas via pg-delta...");

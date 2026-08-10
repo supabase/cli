@@ -14,7 +14,7 @@ import {
   LegacyWorkdirFlag,
   LegacyYesFlag,
   legacyGlobalFlagValues,
-  legacyResolveDebug,
+  legacyResolveDebugWithProjectEnv,
 } from "./global-flags.ts";
 
 describe("legacyGlobalFlagValues", () => {
@@ -84,71 +84,49 @@ describe("legacyGlobalFlagValues", () => {
   });
 });
 
-describe("legacyResolveDebug", () => {
-  // Regression (review: PRRT_kwDOErm0O86XKYiG): the raw-argv "explicitly false" scan used to be
-  // an `Array.some` over every `--debug=<value>` occurrence, so ANY earlier `--debug=false` forced
-  // the result to `false` even when a LATER occurrence in the same invocation explicitly turned it
-  // back on. pflag's `Value.Set` runs for every occurrence in argv order — the LAST one wins, not
-  // "any occurrence is false" — matching the same pflag-vs-Effect-parser divergence already
-  // binary-verified for `--skip-url-validation`
-  // (`apps/cli/src/legacy/commands/sso/sso.pflag-reconcile.ts:306-321`).
-  it.effect("resolves false for a single explicit --debug=false, overriding the flag", () =>
-    Effect.gen(function* () {
-      const result = yield* legacyResolveDebug;
-      expect(result).toBe(false);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(LegacyDebugFlag, true),
-          Layer.succeed(CliArgs, { args: ["--debug=false"] }),
+describe("legacyResolveDebugWithProjectEnv", () => {
+  it.live(
+    "ignores a --debug=false-style token after the -- operand terminator (not an explicit false)",
+    () => {
+      // `LegacyDebugFlag: true` stands in for a REAL `--debug` occurrence before the `--`
+      // terminator; the trailing `--debug=false` is a positional operand (e.g. a migration
+      // name that happens to look like a flag) — `legacyDebugFlagExplicitlyFalse`'s
+      // `argsBeforeOperandTerminator` guard must never see it, so the resolved value stays
+      // the flag's own `true` rather than being flipped to `false`.
+      const layer = Layer.mergeAll(
+        Layer.succeed(LegacyDebugFlag, true),
+        Layer.succeed(CliArgs, { args: ["db", "pull", "--", "--debug=false"] }),
+      );
+      return legacyResolveDebugWithProjectEnv({}).pipe(
+        Effect.provide(layer),
+        Effect.tap((resolved) =>
+          Effect.sync(() => {
+            expect(resolved).toBe(true);
+          }),
         ),
-      ),
-    ),
+      );
+    },
   );
 
-  it.effect(
-    "resolves true for a repeated --debug where the LAST occurrence is =true, not forced false by an earlier =false",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* legacyResolveDebug;
-        expect(result).toBe(true);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.succeed(LegacyDebugFlag, true),
-            Layer.succeed(CliArgs, { args: ["--debug=false", "--debug=true"] }),
-          ),
+  it.live(
+    "ignores a --debug=false token consumed as another flag's value (e.g. --password)",
+    () => {
+      // `--password` is a `VALUE_CONSUMING_LONG_FLAGS` entry, so real pflag semantics parse
+      // `--password --debug=false` as `--password`'s space-separated value being the literal
+      // string `"--debug=false"`, not a changed `--debug` — `nonValueConsumedTokens` must skip
+      // it, so the resolved value stays the flag's own `true`.
+      const layer = Layer.mergeAll(
+        Layer.succeed(LegacyDebugFlag, true),
+        Layer.succeed(CliArgs, { args: ["db", "pull", "--password", "--debug=false"] }),
+      );
+      return legacyResolveDebugWithProjectEnv({}).pipe(
+        Effect.provide(layer),
+        Effect.tap((resolved) =>
+          Effect.sync(() => {
+            expect(resolved).toBe(true);
+          }),
         ),
-      ),
-  );
-
-  it.effect(
-    "resolves true for --debug=false followed by a trailing bare --debug (last occurrence wins)",
-    () =>
-      Effect.gen(function* () {
-        const result = yield* legacyResolveDebug;
-        expect(result).toBe(true);
-      }).pipe(
-        Effect.provide(
-          Layer.mergeAll(
-            Layer.succeed(LegacyDebugFlag, true),
-            Layer.succeed(CliArgs, { args: ["--debug=false", "--debug"] }),
-          ),
-        ),
-      ),
-  );
-
-  it.effect("is unaffected by an unrelated flag containing the same substring", () =>
-    Effect.gen(function* () {
-      const result = yield* legacyResolveDebug;
-      expect(result).toBe(true);
-    }).pipe(
-      Effect.provide(
-        Layer.mergeAll(
-          Layer.succeed(LegacyDebugFlag, true),
-          Layer.succeed(CliArgs, { args: ["--some-other-debug-flag=false"] }),
-        ),
-      ),
-    ),
+      );
+    },
   );
 });

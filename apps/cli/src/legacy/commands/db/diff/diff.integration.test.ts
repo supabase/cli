@@ -42,7 +42,6 @@ import {
   LegacyEdgeRuntimeScript,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyDbDiff } from "./diff.handler.ts";
 
@@ -56,6 +55,9 @@ interface SetupOpts {
   readonly diffFiles?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
+  // When set, the PGDELTA_DEBUG shadow-catalog export (Go's `DiffDatabase`,
+  // `internal/db/diff/diff.go:228-244`) fails with this message instead of succeeding.
+  readonly catalogExportFailWith?: string;
   // When set, the shadow's own PG15+ one-shot platform-baseline job(s) exit
   // non-zero, exercising cleanup-on-partial-failure (the shadow is still removed).
   readonly failShadowSetupJob?: boolean;
@@ -109,18 +111,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
 
-  const exportCalls: string[] = [];
-  const exportCatalogCalls: Array<{ mode: string; projectRef?: string }> = [];
-  const seam = Layer.succeed(LegacyDeclarativeSeam, {
-    exportCatalog: ({ mode, projectRef }) => {
-      exportCalls.push(mode);
-      exportCatalogCalls.push({ mode, projectRef });
-      return Effect.succeed("supabase/.temp/pgdelta/migrations.json");
-    },
-    ensureLocalDatabaseStarted: () => Effect.void,
-    ensureLocalPostgresImageCurrent: () => Effect.void,
-  });
-
   // Shadow provisioning is native (CLI-1956): a real docker-spawner fake backs
   // container create/start/health-inspect/cleanup, and a real (fake) Postgres
   // session backs the shadow's own platform-baseline/migration/declarative setup.
@@ -137,6 +127,16 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         return Effect.fail(
           new LegacyEdgeRuntimeScriptError({ message: "Fatal JavaScript out of memory" }),
         );
+      }
+      // The PGDELTA_DEBUG shadow-catalog export uses a distinct errPrefix (`legacy-
+      // pgdelta.ts`'s `legacyExportCatalogPgDelta`), same as `db pull`'s own mock.
+      if (runOpts.errPrefix.includes("catalog")) {
+        if (opts.catalogExportFailWith !== undefined) {
+          return Effect.fail(
+            new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
+          );
+        }
+        return Effect.succeed({ stdout: '{"tables":[]}', stderr: "" });
       }
       const diffSql = opts.diffSql ?? "";
       // The pg-delta diff script (uniquely identified by `renderPlanFiles`) prints a
@@ -244,7 +244,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out.layer,
     telemetry.layer,
     cache.layer,
-    seam,
     edge,
     docker,
     shadowDbConnection.layer,
@@ -279,8 +278,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     out,
     cache,
     telemetry,
-    exportCalls,
-    exportCatalogCalls,
     edgeCalls,
     resolverCalls,
     proxyCalls,
@@ -377,6 +374,47 @@ describe("legacy db diff", () => {
       expect(stdout(s.out)).toBe("create table p ();\n\n");
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "PGDELTA_DEBUG exports the shadow's baseline catalog before diffing (Go's DiffDatabase)",
+    () => {
+      const s = setup(tmp.current, { diffSql: "create table p ();\n" });
+      return Effect.gen(function* () {
+        const prev = process.env["PGDELTA_DEBUG"];
+        process.env["PGDELTA_DEBUG"] = "1";
+        try {
+          yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+        } finally {
+          if (prev === undefined) delete process.env["PGDELTA_DEBUG"];
+          else process.env["PGDELTA_DEBUG"] = prev;
+        }
+        expect(s.edgeCalls.some((c) => c.errPrefix.includes("catalog"))).toBe(true);
+        expect(stdout(s.out)).toBe("create table p ();\n\n");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "a failed PGDELTA_DEBUG shadow-catalog export only warns; the diff still succeeds",
+    () => {
+      const s = setup(tmp.current, {
+        diffSql: "create table p ();\n",
+        catalogExportFailWith: "boom",
+      });
+      return Effect.gen(function* () {
+        const prev = process.env["PGDELTA_DEBUG"];
+        process.env["PGDELTA_DEBUG"] = "1";
+        try {
+          yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+        } finally {
+          if (prev === undefined) delete process.env["PGDELTA_DEBUG"];
+          else process.env["PGDELTA_DEBUG"] = prev;
+        }
+        expect(stderr(s.out)).toContain("Warning: failed to export shadow pg-delta catalog: boom");
+        expect(stdout(s.out)).toBe("create table p ();\n\n");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect(
     "mounts the pg-delta Deno-cache volume by the config/workdir-resolved project id, not just SUPABASE_PROJECT_ID (review: PRRT_kwDOErm0O86XAlIw)",
@@ -932,6 +970,42 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "explicit mode mounts the pg-delta Deno-cache volume by the config.toml-resolved project id",
+    () => {
+      // `explicitCtx` (built for the actual `--from`/`--to` diff) and `migrationsCtx`
+      // (built when a `migrations` ref is in the cascade) both used to pass the raw,
+      // env-only `cliConfig.projectId` straight through — resolving to `""` whenever a
+      // project relies on config.toml's `project_id` (or the workdir-basename default)
+      // instead of `SUPABASE_PROJECT_ID`, mounting `supabase_edge_runtime_:...` instead
+      // of the real project's volume.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "demo"\n');
+      const s = setup(tmp.current, { diffSql: "create table e ();\n", projectId: Option.none() });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ from: Option.some("local"), to: Option.some("local") }));
+        const diffCall = s.edgeCalls.find((c) => c.script.includes("renderPlanFiles"));
+        expect(diffCall?.binds).toContain("supabase_edge_runtime_demo:/root/.cache/deno:rw");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "the migrations-catalog shadow export mounts the same config.toml-resolved project id",
+    () => {
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", "config.toml"), 'project_id = "demo"\n');
+      const s = setup(tmp.current, { diffSql: "create table m ();\n", projectId: Option.none() });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
+        const catalogExportCall = s.edgeCalls.find((c) => !c.script.includes("renderPlanFiles"));
+        expect(catalogExportCall?.binds).toContain(
+          "supabase_edge_runtime_demo:/root/.cache/deno:rw",
+        );
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("explicit --output writes raw SQL to the given path", () => {
     const s = setup(tmp.current, { diffSql: "create table w ();\n" });
     return Effect.gen(function* () {
@@ -995,12 +1069,10 @@ describe("legacy db diff", () => {
     // ref now resolves via the SAME native `legacyCreateShadowDatabase`/
     // `legacyPrepareShadowSource`/`legacyRemoveShadowDatabase` primitives `db
     // diff`'s own shadow uses, not the retired `db __shadow` seam — a shadow is
-    // created and torn down (`s.shadowSpawned`), and no seam `exportCatalog` call
-    // is made (unlike the "declarative"/"baseline" modes, still seam-backed).
+    // created and torn down (`s.shadowSpawned`).
     const s = setup(tmp.current, { diffSql: "create table m ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
-      expect(s.exportCalls).toEqual([]);
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
       // `resolveMigrationsCatalogRef` (Go's `explicit.go:88-126`) calls the shadow
@@ -1030,7 +1102,6 @@ describe("legacy db diff", () => {
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ from: Option.some("migrations"), to: Option.some("local") }));
         expect(s.shadowSpawned).toEqual([]);
-        expect(s.exportCalls).toEqual([]);
         const diffCall = s.edgeCalls.find((c) => c.script.includes("renderPlanFiles"));
         expect(diffCall?.env["SOURCE"]).toBe(
           `/workspace/${join("supabase", ".temp", "pgdelta", `catalog-local-migrations-${noMigrationsHash}-1000.json`)}`,

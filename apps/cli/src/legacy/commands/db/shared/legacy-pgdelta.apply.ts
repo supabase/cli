@@ -1,5 +1,5 @@
 /**
- * Port of Go's `pgdelta.ApplyDeclarative` (`apps/cli-go/internal/pgdelta/apply.go:299-360`) —
+ * Port of Go's `pgdelta.ApplyDeclarative` (`apps/cli-go/internal/pgdelta/apply.go:303-354`) —
  * CLI-1956's declarative-apply runner: applies `supabase/database` (or the configured
  * declarative dir) to the shadow's `contrib_regression` override database via pg-delta's
  * declarative apply engine, run inside the edge-runtime container.
@@ -14,6 +14,11 @@ import { Data, Effect, type FileSystem } from "effect";
 
 import { legacyResolveDebugWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import {
   legacyInterpolatePgDeltaScript,
@@ -30,12 +35,49 @@ const errMessage = (e: unknown): string =>
     ? e.message
     : String(e);
 
-/** `pgdelta.ApplyDeclarative` failed — Go's own error messages at each step (see call sites below). */
+/**
+ * `pgdelta.ApplyDeclarative` failed — Go's own error messages at each step (see call sites
+ * below). `reason` narrows the actionability classification below beyond the "user's own
+ * SQL/schema" (`dbFinding`) default that a failed-status apply (Go's own `pg-delta declarative
+ * apply failed with status: %s`) and a plain reset/apply fallback (`sync.handler.ts`,
+ * `declarative.smart-target.ts`) both keep: `missing_schema_dir`/`output_parse` (this file's
+ * own directory-not-found/malformed-subprocess-output branches) and `connect`/`daemon`/`pull`/
+ * `inspect` (a local-Postgres connect failure, or a docker-boundary failure threaded from
+ * `LegacyEdgeRuntimeScriptError.docker` — see that class's own doc comment for the same three
+ * values) are genuinely NOT the user's schema/SQL failing, and must not be misclassified as
+ * such.
+ */
 export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclarativeApplyError")<{
   readonly message: string;
-}> {}
+  readonly reason?:
+    | "missing_schema_dir"
+    | "output_parse"
+    | "connect"
+    | "daemon"
+    | "pull"
+    | "inspect";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    switch (this.reason) {
+      case "missing_schema_dir":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      case "output_parse":
+        return { ...actionability.impossibleState, fingerprint_suffix: "invalid_content" };
+      case "connect":
+        return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
+      case "daemon":
+        return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "pull":
+        return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      case "inspect":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
+      default:
+        return actionability.dbFinding;
+    }
+  }
+}
 
-/** Go's `containerSchemaPath` (`apply.go:311`). */
+/** Go's `containerSchemaPath` (`apply.go:313`). */
 const LEGACY_PG_DELTA_APPLY_CONTAINER_SCHEMA_PATH = "/declarative";
 
 /** One statement/error entry — Go's `ApplyIssue`, which may arrive as a bare string or an object. */
@@ -70,7 +112,7 @@ export interface LegacyPgDeltaApplyIssue {
   // (`Code`/`Message`/`IsDependencyError`/`Position`/`Detail`/`Hint`) are all plain,
   // non-pointer Go types (`string`/`bool`/`int`) decoded via the default `encoding/json`
   // inside `(i *ApplyIssue) UnmarshalJSON`'s `json.Unmarshal(trimmed, &parsed)` call
-  // (`apply.go:133-138`) — verified empirically that unmarshaling a JSON `null` into a
+  // (`apply.go:135-140`) — verified empirically that unmarshaling a JSON `null` into a
   // non-pointer struct field produces NO error and leaves the zero value untouched (Go's
   // documented "null means absent" rule applies to any Go type, not just pointers/maps/
   // slices/interfaces). So `{"message":null}` is a valid, Go-accepted `ApplyIssue` element —
@@ -107,7 +149,7 @@ export interface LegacyPgDeltaApplyStatementLocation {
 /** Go's `ApplyDiagnosis` — a pg-topo static-analysis diagnostic. */
 export interface LegacyPgDeltaApplyDiagnosis {
   // `| null` on `code`/`message`/`suggestedFix` (not just `?`): `(d *ApplyDiagnosis)
-  // UnmarshalJSON`'s shadow `raw` struct (`apply.go:87-92`) declares these as plain,
+  // UnmarshalJSON`'s shadow `raw` struct (`apply.go:88-93`) declares these as plain,
   // non-pointer `string` fields with no custom unmarshaler of their own, so — same
   // empirically-verified "null means absent" `encoding/json` rule as
   // {@link LegacyPgDeltaApplyIssue.code} — a JSON `null` for any of them decodes with no
@@ -174,9 +216,20 @@ export interface LegacyPgDeltaApplyResult {
  * sub-case can't be reproduced post-parse — but `Number.isInteger` still correctly rejects any
  * genuinely fractional value like `1.5`, which is the reachable and observable part of this
  * parity gap.
+ *
+ * The `[-2^63, 2^63)` bound mirrors Go's `int64` range (`strconv.ParseInt`'s target width on
+ * every build this CLI ships for): `Number.isInteger(1e20)` is `true`, but Go's `json.Unmarshal`
+ * of that same literal into `int` fails with "value out of range" — so a mistyped/oversized
+ * numeric field must be rejected here too, not accepted as a (false) match. Residual gap, same
+ * class as the `1.0`/exponent one above: the exact boundary literal `9223372036854775807`
+ * (`2^63-1`, the largest valid `int64`) round-trips through `JSON.parse`'s double-precision
+ * `float64` as `9223372036854775808` (`2^63`) — indistinguishable from the boundary this check
+ * rejects — so that one exact literal is spuriously rejected where Go would accept it.
  */
 function legacyIsGoIntNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isInteger(value);
+  return (
+    typeof value === "number" && Number.isInteger(value) && value >= -(2 ** 63) && value < 2 ** 63
+  );
 }
 
 /**
@@ -257,7 +310,7 @@ function legacyIsValidApplyIssueElement(value: unknown): boolean {
  *
  * Same "null tolerated on a scalar field" rule as {@link legacyIsValidApplyIssueElement}
  * applies to `code`/`message`/`suggestedFix` here too: `UnmarshalJSON`'s shadow `raw` struct
- * (`apply.go:87-92`) decodes them via the default `encoding/json`, which accepts a JSON
+ * (`apply.go:88-93`) decodes them via the default `encoding/json`, which accepts a JSON
  * `null` for a plain `string` field with no error (verified empirically).
  */
 function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
@@ -293,7 +346,7 @@ function legacyIsValidApplyDiagnosisElement(value: unknown): boolean {
  * Every field `ApplyResult` itself declares a type for is checked when present — Go's
  * `json.Unmarshal` rejects the whole payload with an `UnmarshalTypeError` the moment any of
  * these doesn't match its struct field's declared type (`Errors []ApplyIssue`, `TotalApplied
- * int`, etc., `apps/cli-go/internal/pgdelta/apply.go:27-44`), so e.g. an `errors` field that
+ * int`, etc., `apps/cli-go/internal/pgdelta/apply.go:27-40`), so e.g. an `errors` field that
  * arrives as an object (`{"length":1}`) instead of an array must fail here too, not reach
  * `legacyFormatApplyFailure`'s `for (const issue of errors)` and throw an unhandled
  * `TypeError` defect. Each ARRAY field's elements are also validated ({@link
@@ -629,7 +682,7 @@ function legacyGoJsonIndentTokens(src: string): string {
 }
 
 /**
- * Go's `formatDebugJSON` (`apply.go:285-294`): pretty-print if parseable, else the trimmed raw
+ * Go's `formatDebugJSON` (`apply.go:286-296`): pretty-print if parseable, else the trimmed raw
  * bytes. `JSON.parse` here is used ONLY as a well-formedness check (its result is discarded);
  * the actual reformatting goes through {@link legacyGoJsonIndentTokens} so token values are
  * never decoded and re-encoded — see that function's own doc comment for why
@@ -646,7 +699,7 @@ export function legacyFormatDebugJson(raw: string): string {
   return legacyGoJsonIndentTokens(trimmed);
 }
 
-/** Go's `formatApplyIssueMessage` (`apply.go:222-238`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
+/** Go's `formatApplyIssueMessage` (`apply.go:223-242`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
 function legacyFormatApplyIssueMessage(issue: LegacyPgDeltaApplyIssue): string {
   const trimmed = String(issue.message ?? "").trim();
   const message = trimmed.length > 0 ? trimmed : "unknown pg-delta issue";
@@ -702,7 +755,7 @@ function legacyFormatApplyIssue(rawIssue: LegacyPgDeltaApplyIssue | string | nul
   return legacyJoinLines(lines);
 }
 
-/** Go's `formatApplyDiagnosis` (`apply.go:240-258`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
+/** Go's `formatApplyDiagnosis` (`apply.go:244-261`). `String(x ?? "")` throughout — see {@link legacyFormatApplyIssue}'s own doc comment for why. */
 function legacyFormatApplyDiagnosis(rawDiagnosis: LegacyPgDeltaApplyDiagnosis | null): string {
   const diagnosis = legacyNormalizeApplyDiagnosis(rawDiagnosis);
   const trimmed = String(diagnosis.message ?? "").trim();
@@ -719,7 +772,7 @@ function legacyFormatApplyDiagnosis(rawDiagnosis: LegacyPgDeltaApplyDiagnosis | 
 }
 
 /**
- * Port of Go's `formatApplyFailure` (`apply.go:145-183`): a human-readable summary of an
+ * Port of Go's `formatApplyFailure` (`apply.go:150-199`): a human-readable summary of an
  * unsuccessful pg-delta apply, rendered on failure regardless of `--debug`. `verbose`
  * (Go's `viper.GetBool("DEBUG")`) only expands pg-topo diagnostics inline — collapsed to a
  * one-line count by default since a large schema can produce hundreds of them.
@@ -802,7 +855,7 @@ export function legacyFormatApplyFailure(
 }
 
 /**
- * Port of Go's `pgdelta.ApplyDeclarative` (`apps/cli-go/internal/pgdelta/apply.go:299-360`):
+ * Port of Go's `pgdelta.ApplyDeclarative` (`apps/cli-go/internal/pgdelta/apply.go:303-354`):
  * applies `declarativeDirAbs` to `target` (the shadow's `contrib_regression` override
  * database) via pg-delta's declarative apply engine. Unlike the diff/export/catalog scripts
  * (`legacy-pgdelta.ts`), this binds the declarative directory itself read-only at
@@ -816,8 +869,16 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
   ctx: LegacyPgDeltaContext,
   params: {
     readonly fs: FileSystem.FileSystem;
-    /** Absolute host path to the declarative schema directory. */
+    /** Absolute host path to the declarative schema directory (stat/bind use this). */
     readonly declarativeDirAbs: string;
+    /**
+     * Go's `utils.GetDeclarativeDir()` (`apply.go:304`) — the config value verbatim
+     * (already `supabase/`-prefixed when relative) or the relative `supabase/database`
+     * default. Used ONLY in the not-found error message below: Go interpolates this
+     * relative value, never the `filepath.Abs`-resolved `absDir` it separately computes
+     * for the bind.
+     */
+    readonly declarativeDirRel: string;
     /** The shadow override database's Postgres URL. */
     readonly target: string;
   },
@@ -828,7 +889,8 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
   if (!exists) {
     return yield* Effect.fail(
       new LegacyDeclarativeApplyError({
-        message: `declarative schema directory not found: ${params.declarativeDirAbs}`,
+        message: `declarative schema directory not found: ${params.declarativeDirRel}`,
+        reason: "missing_schema_dir",
       }),
     );
   }
@@ -837,7 +899,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
   const edgeRuntime = yield* LegacyEdgeRuntimeScript;
   // Go's `pgdelta.ApplyDeclarative` reads `viper.GetBool("DEBUG")` (`apply.go:332,342`), which
   // falls back to `SUPABASE_DEBUG` via `AutomaticEnv` when `--debug` itself is unset —
-  // `legacyResolveDebug` (not the bare `LegacyDebugFlag`) reproduces that (review:
+  // `legacyResolveDebugWithProjectEnv` (not the bare `LegacyDebugFlag`) reproduces that (review:
   // PRRT_kwDOErm0O86XDr4V). By the time either `db diff`/`db pull` reaches here,
   // `ParseDatabaseConfig` has already run `Config.Load` -> `loadNestedEnv`, which really
   // `os.Setenv`s the merged project `supabase/.env` into the process (`godotenv.Load`,
@@ -868,8 +930,14 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
       extraFiles: npm.extraFiles,
       extraEnv: npm.extraEnv,
       denoVersion: ctx.denoVersion,
+      workdir: ctx.cwd,
     })
-    .pipe(Effect.mapError((cause) => new LegacyDeclarativeApplyError({ message: cause.message })));
+    .pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyDeclarativeApplyError({ message: cause.message, reason: cause.docker }),
+      ),
+    );
 
   const parsed = yield* Effect.try({
     try: () => {
@@ -890,6 +958,7 @@ export const legacyApplyDeclarativePgDelta = Effect.fnUntraced(function* (
         message: debug
           ? `failed to parse pg-delta apply output: ${errMessage(cause)}\nstdout: ${result.stdout}`
           : `failed to parse pg-delta apply output: ${errMessage(cause)}`,
+        reason: "output_parse",
       }),
   });
 

@@ -624,6 +624,46 @@ describe("legacy db schema declarative sync integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect(
+    "validates the migrations-catalog shadow's own local config (api.tls cert file) BEFORE printing 'Creating shadow database...'",
+    () => {
+      // `legacyGetMigrationsCatalogRef`'s own second `@supabase/config` load
+      // (`legacyBuildLocalDbContainerInputs`, run via `legacyBuildShadowCatalogInputs`)
+      // validates fields (e.g. an enabled API TLS's cert/key files) that `toml` never
+      // reads — Go performs this exact validation once, in the root
+      // `PersistentPreRunE`, strictly before `declarative.go`'s `createShadowContainer`
+      // ever prints "Creating shadow database..." (`declarative.go:490`). So a broken
+      // build must fail here without ever printing that banner.
+      seedDeclarative(tmp.current);
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[api]",
+          "enabled = true",
+          "[api.tls]",
+          "enabled = true",
+          'cert_path = "missing-cert.pem"',
+          'key_path = "missing-key.pem"',
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { experimental: true });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to read TLS cert",
+        );
+        expect(
+          s.out.rawChunks.some(
+            (c) => c.stream === "stderr" && stripAnsi(c.text) === "Creating shadow database...\n",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect("bootstrap with migrations offers the smart target choice (not local-only)", () => {
     // Go delegates the no-files bootstrap to runDeclarativeGenerate; with migrations
     // present it offers local/linked/custom rather than silently generating from

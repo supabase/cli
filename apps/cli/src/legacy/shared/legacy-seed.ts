@@ -8,7 +8,12 @@ import {
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
-import { legacyGlobPattern, legacyResolveUnderWorkdir, legacyWalkSqlFiles } from "./legacy-glob.ts";
+import {
+  legacyCompareUtf8Bytes,
+  legacyGlobPattern,
+  legacyResolveUnderWorkdir,
+  legacyWalkSqlFiles,
+} from "./legacy-glob.ts";
 import {
   legacyCreateSeedTable,
   legacyReadSeedTable,
@@ -97,12 +102,16 @@ const resolveSeedFiles = (
         // Go's `walkMatchedDir`: recursively list the matched directory, keep only regular
         // `.sql` files, sorted (a global sort over the full relative-to-fsys-root path, not
         // per-directory — matches `sort.Strings(files)` running once after the whole walk).
+        // `legacyWalkSqlFiles` already returns this byte-sorted (see its own doc comment); the
+        // `.sort(legacyCompareUtf8Bytes)` here is a no-op re-assertion of that order, NOT JS's
+        // default comparator, which would silently re-scramble a supplementary-plane filename
+        // back to UTF-16 order.
         const namesResult = yield* legacyWalkSqlFiles(fs, absMatch, "").pipe(Effect.result);
         if (Result.isFailure(namesResult)) {
           unmatched.push(`failed to walk matched directory: ${match}`);
           continue;
         }
-        const sqlRelative = [...namesResult.success].sort();
+        const sqlRelative = [...namesResult.success].sort(legacyCompareUtf8Bytes);
         for (const relative of sqlRelative) {
           const relativeToWorkdir = `${match}/${relative}`;
           if (!seen.has(relativeToWorkdir)) {

@@ -26,10 +26,6 @@ import {
   legacyCreateShadowDatabase,
   legacyRemoveShadowDatabase,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
-import {
-  legacyResolveLocalProjectId,
-  legacySanitizeProjectId,
-} from "../../../shared/legacy-docker-ids.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
@@ -44,7 +40,13 @@ import {
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { legacyResolveMigrationsCatalogRef } from "../../../shared/legacy-pgdelta.cache.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
-import { type LegacyPgDeltaContext, legacyDiffPgDelta } from "../../../shared/legacy-pgdelta.ts";
+import {
+  type LegacyPgDeltaContext,
+  legacyDiffPgDelta,
+  legacyExportCatalogPgDelta,
+  legacyIsPgDeltaDebugEnabled,
+  legacyResolvePgDeltaProjectId,
+} from "../../../shared/legacy-pgdelta.ts";
 import {
   legacyPrepareShadowSource,
   legacyShadowRunInputFromLocalContainerInputs,
@@ -259,7 +261,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               // the cascade (possibly re-merged by an earlier "linked" ref above),
               // matching Go's stateful pre-run.
               const migrationsCtx: LegacyPgDeltaContext = {
-                projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+                projectId: legacyResolvePgDeltaProjectId(
+                  cliConfig.projectId,
+                  cfg,
+                  cliConfig.workdir,
+                ),
                 cwd: cliConfig.workdir,
                 npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
                 denoVersion: cfg.denoVersion,
@@ -288,7 +294,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       const sourceRef = yield* resolveRef(from);
       const targetRef = yield* resolveRef(to);
       const explicitCtx: LegacyPgDeltaContext = {
-        projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+        projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, cfg, cliConfig.workdir),
         cwd: cliConfig.workdir,
         npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
         denoVersion: cfg.denoVersion,
@@ -469,34 +475,16 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = legacyToPostgresURL(resolved.conn);
     const ctx: LegacyPgDeltaContext = {
-      // Go's `UpdateDockerIds` derives `EdgeRuntimeId` from the ALREADY-sanitized
-      // `Config.ProjectId` singleton (`internal/utils/config.go:57-76`, sanitized once by
-      // `Config.Validate` at config-load time) — `SUPABASE_PROJECT_ID` env override wins,
-      // then config.toml's `project_id`, then the workdir basename fallback
-      // (`pkg/config/config.go:563-570`). `cliConfig.projectId` alone is env-only, so a
-      // project that relies on `config.toml`'s `project_id` (or the workdir-basename
-      // default) previously resolved to an empty project id here, mounting the WRONG
-      // `supabase_edge_runtime_` Deno-cache volume — see `legacy-pgdelta.seam.layer.ts`'s
-      // `ensureLocalDatabaseStarted` for the same resolution already established for this
-      // command family (review: PRRT_kwDOErm0O86XAlIw).
-      //
-      // `cfg.appliedRemote !== undefined` suppresses that env argument entirely: `cfg.projectId`
-      // already reflects the matched `[remotes.<ref>]` block's own `project_id` at viper's
-      // override tier (`legacyReadDbToml`'s `remoteOverrideKeys.has("project_id")` gate, review:
-      // PRRT_kwDOErm0O86XHGDL) — but `legacyResolveLocalProjectId` tries its FIRST argument
-      // before its second, so passing the raw, ungated `cliConfig.projectId` here re-introduced
-      // exactly the bug that fix closed for `cfg.projectId` itself: an unrelated ambient
-      // `SUPABASE_PROJECT_ID` would still win over the matched remote's own id, mounting the
-      // wrong Deno-cache volume for a linked pg-delta diff. Mirrors the same suppression
-      // `legacy-local-project-context.ts`'s own `legacyLoadLocalProjectContext` already applies
-      // (review: PRRT_kwDOErm0O86XI1w8).
-      projectId: legacySanitizeProjectId(
-        legacyResolveLocalProjectId(
-          cfg.appliedRemote !== undefined ? undefined : Option.getOrUndefined(cliConfig.projectId),
-          Option.getOrUndefined(cfg.projectId),
-          cliConfig.workdir,
-        ),
-      ),
+      // `legacyResolvePgDeltaProjectId` mirrors Go's `UpdateDockerIds`, which derives
+      // `EdgeRuntimeId` from the ALREADY-sanitized `Config.ProjectId` singleton
+      // (`internal/utils/config.go:57-76`, sanitized once by `Config.Validate` at
+      // config-load time): `SUPABASE_PROJECT_ID` env override wins, then config.toml's
+      // `project_id`, then the workdir basename fallback (`pkg/config/config.go:563-570`),
+      // with the matched `[remotes.<ref>]` block's own `project_id` (`cfg.projectId`,
+      // already gated on `remoteOverrideKeys` by `legacyReadDbToml`) suppressing the raw env
+      // argument on the linked path — see that helper's own doc comment (review:
+      // PRRT_kwDOErm0O86XAlIw, PRRT_kwDOErm0O86XI1w8).
+      projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, cfg, cliConfig.workdir),
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(cfg.pgDelta.npmVersion),
       denoVersion: cfg.denoVersion,
@@ -544,11 +532,14 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // between the shadow's successful creation and the `Effect.ensuring` finalizer actually
     // being attached — a fiber interrupt landing in that gap (between the two `yield*`
     // statements) would skip `legacyRemoveShadowDatabase` entirely, leaking the live shadow
-    // container and its staged secret directory and leaving the shadow port occupied.
-    // `acquireUseRelease` closes that: `acquire` runs inside an `uninterruptibleMask`, and the
-    // release finalizer is registered in the SAME uninterruptible continuation `acquire`
-    // resolves into, matching Go's `defer DockerRemove` immediately after successful creation
-    // (review: PRRT_kwDOErm0O86XDr4Y).
+    // container and leaving the shadow port occupied. `acquireUseRelease` closes that:
+    // `acquire` runs inside an `uninterruptibleMask`, and the release finalizer is registered
+    // in the SAME uninterruptible continuation `acquire` resolves into, matching Go's `defer
+    // DockerRemove` immediately after successful creation (review: PRRT_kwDOErm0O86XDr4Y).
+    // This does NOT make removal unconditional, though — see `legacyCreateShadowDatabase`'s
+    // own doc comment (`shadow-database.ts`) for the still-present, deliberate-Go-parity leak
+    // window when `acquire` itself fails partway through (a `docker create` success followed
+    // by a `docker cp`/`docker start` failure).
     //
     // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT the
     // health-wait/migrate/declarative-apply `legacyPrepareShadowSource` performs. Those run
@@ -571,6 +562,24 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
             "stderr",
           );
           if (useDelta) {
+            // With PGDELTA_DEBUG set, export the shadow's baseline catalog before diffing
+            // (Go's `DiffDatabase`, `internal/db/diff/diff.go:228-244`, shared by `db diff`
+            // AND `db pull`) — the snapshot itself is unused here (unlike `db pull`'s
+            // `legacySaveEmptyPgDeltaPullDebug`, `db diff` has no debug-bundle consumer for
+            // it); a failed export only warns and the diff continues.
+            if (legacyIsPgDeltaDebugEnabled()) {
+              yield* legacyExportCatalogPgDelta(ctx, {
+                targetRef: shadow.sourceUrl,
+                role: "postgres",
+              }).pipe(
+                Effect.catch((error) =>
+                  output.raw(
+                    `Warning: failed to export shadow pg-delta catalog: ${error.message}\n`,
+                    "stderr",
+                  ),
+                ),
+              );
+            }
             const result = yield* legacyDiffPgDelta(ctx, {
               sourceRef: shadow.sourceUrl,
               targetRef: target,
@@ -592,12 +601,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           // single migration file (Go's `SaveDiff` single-file path).
           return { sql, files: undefined };
         }),
-      (handle) =>
-        legacyRemoveShadowDatabase(spawner, {
-          containerId: handle.containerId,
-          secretDirId: handle.secretDirId,
-          workdir: cliConfig.workdir,
-        }),
+      (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
     );
     const out = diffResult.sql;
 

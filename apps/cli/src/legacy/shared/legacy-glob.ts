@@ -106,25 +106,62 @@ export const legacyGlobPattern = (
   });
 
 /**
+ * Go's `sort.Strings` compares byte-wise over each string's UTF-8 encoding; JS's default
+ * `Array.prototype.sort()` instead compares UTF-16 CODE UNITS, which diverges from byte/codepoint
+ * order for a supplementary-plane character (encoded as a surrogate pair, code units
+ * `0xD800`-`0xDBFF` + `0xDC00`-`0xDFFF`) alongside a BMP private-use character (`0xE000`-
+ * `0xFFFF`): JS ranks the surrogate pair BEFORE the private-use character (`0xD800 < 0xE000`),
+ * while Go's UTF-8 byte order — which preserves Unicode codepoint order — ranks the
+ * supplementary-plane codepoint (`>= U+10000 > U+FFFF`) AFTER it. Verified empirically:
+ * `["a\u{1F600}.sql","a.sql"].sort()` (default) disagrees with `Buffer.compare` on the
+ * same two strings' UTF-8 bytes. Used for every `sort.Strings` this module (and its callers
+ * across `legacy-shadow-source.ts`/`legacy-pgdelta.cache.ts`) ports, so a directory with such
+ * filenames applies/lists in the same order Go would.
+ */
+export function legacyCompareUtf8Bytes(a: string, b: string): number {
+  return Buffer.compare(Buffer.from(a, "utf8"), Buffer.from(b, "utf8"));
+}
+
+/**
  * Port of Go's `walkMatchedDir` (`pkg/config/config.go:194-207`, called by `Glob.SQLFiles` on
- * every directory match): a manual, non-recursing-through-`{recursive: true}` walk, because
- * Go's `fs.WalkDir` never follows a symlinked `DirEntry` — its `IsDir()` is false for a
- * symlink regardless of target, so `WalkDir` neither descends into a symlinked subdirectory
- * nor lets `entry.Type().IsRegular()` (the `.sql`-file inclusion check) pass a symlinked file.
- * The `FileSystem` service exposes no non-following `lstat`; `fs.readLink` succeeding on a
- * path IS Effect's only non-following "is this a symlink" primitive, so it stands in for that
- * check at each level, both for recursion (a symlinked directory is skipped, not walked) and
- * for file inclusion (a symlinked `.sql` file is skipped, not applied) — using `fs.stat`
- * (which follows) here instead would silently include a symlink's target, unlike Go. Returns
- * paths relative to `dir`; the caller does the single final sort over the whole aggregate,
- * matching Go's one `sort.Strings(files)` after the complete walk rather than per-directory.
+ * every directory match) AND `afero.Walk` (`commands/db/shared/legacy-shadow-source.ts`'s
+ * declared-schema walkers' own Go counterpart, `apps/cli-go/internal/db/diff/diff.go:65-76,
+ * 86-96`) — both are `Lstat`-based and therefore never descend into a symlinked directory:
+ * `io/fs.WalkDir`'s doc comment: "WalkDir does not follow symbolic links found in directories,
+ * but if root itself is a symbolic link, its target will be walked"; `afero.walk` confirms the
+ * same via its own `lstatIfPossible` call (`github.com/spf13/afero/path.go`), which reports a
+ * symlinked subdirectory's `IsDir()` as false so the recursive `walk` call returns without
+ * descending. The `FileSystem` service exposes no non-following `lstat`; `fs.readLink`
+ * succeeding on a path IS Effect's only non-following "is this a symlink" primitive, so it
+ * stands in for that check at each level, both for recursion (a symlinked directory is skipped,
+ * not walked) and for file inclusion (a symlinked `.sql` file is skipped, not applied) — using
+ * `fs.stat` (which follows) here instead would silently include a symlink's target, unlike Go.
+ * Deliberately never checks its OWN root (`dir`) for being a symlink — only entries it reads
+ * FROM that root — so each caller layers on whichever of Go's two root-symlink behaviors its
+ * own Go counterpart needs (`fs.WalkDir` follows a symlinked root; `afero.Walk` does not) on
+ * top of this shared walk.
+ *
+ * Both Go walkers byte-sort every directory level (`os.ReadDir`/`io/fs.ReadDir`'s
+ * `bytealg.CompareString`/`sort.Strings`, not just the final flattened result — see
+ * `afero/path.go`'s `readDirNames`), so the traversal order itself (which determines which
+ * entry's read/stat error surfaces first when a walk aborts early) uses
+ * {@link legacyCompareUtf8Bytes} too, not JS's default UTF-16-code-unit comparator (review:
+ * PRRT_kwDOErm0O86XAlIo). They also both finish with a plain `sort.Strings` over the complete
+ * set of collected paths (`config.go:186`/`walkMatchedDir:207`, `diff.go:75,95`) — a full
+ * lexicographic sort over full relative paths, NOT merely a per-directory-level sort (a
+ * directory's own files can byte-sort AFTER a sibling's full path even though the directory
+ * NAME sorts first, e.g. `"foo.sql" < "foo/bar.sql"` since `.` (`0x2E`) sorts before `/`
+ * (`0x2F`)) — so the final sort below is required even though entries are already read in
+ * sorted order at each level. Returns paths relative to `dir`.
  *
  * Hoisted here (from `legacy-migrate-and-seed.ts`, the first caller, for `db.migrations.
  * schema_paths`) once `legacy-seed.ts`'s `db.seed.sql_paths` resolution became a second
- * caller — Go's `Glob.SQLFiles` (`pkg/config/config.go:122-128`) is the SAME method both
- * config fields resolve through (`GetPendingSeeds` calls `locals.SQLFiles(fsys)` exactly like
- * `applySchemaFiles`'s `SchemaPaths.SQLFiles(fsys)`), so a matched seed directory must expand
- * to its sorted regular `.sql` files exactly like a matched schema-path directory does.
+ * caller, and `legacy-shadow-source.ts`'s declared-schema walkers (a matched `schema_paths`
+ * directory, or the `supabase/schemas`/pg-delta-declarative-dir fallbacks) became a third —
+ * Go's `Glob.SQLFiles` (`pkg/config/config.go:122-128`) and `afero.Walk` are the SAME shape
+ * (byte-sorted, no-follow, regular-`.sql`-file-filtered) every one of these config fields
+ * resolves through, so a matched directory must expand to its sorted regular `.sql` files
+ * identically regardless of which config field it came from.
  */
 export const legacyWalkSqlFiles = (
   fs: FileSystem.FileSystem,
@@ -132,7 +169,7 @@ export const legacyWalkSqlFiles = (
   relativePrefix: string,
 ): Effect.Effect<ReadonlyArray<string>, PlatformError> =>
   Effect.gen(function* () {
-    const names = yield* fs.readDirectory(dir);
+    const names = [...(yield* fs.readDirectory(dir))].sort(legacyCompareUtf8Bytes);
     const files: Array<string> = [];
     for (const name of names) {
       const absChild = `${dir}/${name}`;
@@ -157,5 +194,5 @@ export const legacyWalkSqlFiles = (
         files.push(relChild);
       }
     }
-    return files;
+    return files.sort(legacyCompareUtf8Bytes);
   });
