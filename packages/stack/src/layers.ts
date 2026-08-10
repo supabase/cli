@@ -12,7 +12,7 @@ import { DaemonMessageSchema } from "./DaemonProtocol.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack } from "./Stack.ts";
-import { localStackLayer } from "./LocalStack.ts";
+import { LocalStackLifecycle, localStackLayer } from "./LocalStack.ts";
 import { StackMetadataPersistence } from "./StackMetadataPersistence.ts";
 import { StackPreparation } from "./StackPreparation.ts";
 import {
@@ -24,7 +24,7 @@ import {
 } from "./StateManager.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { ResolvedDaemonConfig, ResolvedStackConfig } from "./StackConfig.ts";
-import type { DaemonConfigInput } from "./StackConfigResolver.ts";
+import { sanitizeDaemonConfigInput, type DaemonConfigInput } from "./StackConfigResolver.ts";
 import { UnixHttpClient } from "./UnixHttpClient.ts";
 import { resolveManagedStack } from "./managed-stack.ts";
 import {
@@ -45,7 +45,7 @@ export const foregroundLayer = (
   config: ResolvedStackConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack | ApiProxy> => {
+): Layer.Layer<Stack | ApiProxy | LocalStackLifecycle> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -102,7 +102,7 @@ export const foregroundDaemonLayer = (
   config: ResolvedDaemonConfig,
   platformFactory: PlatformFactory,
   portLease: PortLease,
-): Layer.Layer<Stack | StateManager | ApiProxy> => {
+): Layer.Layer<Stack | StateManager | ApiProxy | LocalStackLifecycle> => {
   const platform = platformFactory({
     apiPort: config.apiPort,
     releaseApiPort: portLease.release(["apiPort"]),
@@ -169,21 +169,22 @@ export const daemonLayer = (
   FileSystem.FileSystem | Path.Path | UnixHttpClient
 > =>
   Effect.gen(function* () {
-    if (input.stackRoot !== undefined || input.runtimeRoot !== undefined) {
+    const daemonInput = sanitizeDaemonConfigInput(input);
+    if (daemonInput.stackRoot !== undefined || daemonInput.runtimeRoot !== undefined) {
       return yield* new DaemonStartError({
         message: "Managed daemon stacks derive stackRoot and runtimeRoot automatically",
       });
     }
-    const projectDir = input.projectDir ?? input.cwd;
-    const name = input.name ?? DEFAULT_MANAGED_STACK_NAME;
-    const cacheRoot = input.cacheRoot ?? defaultCacheRoot();
+    const projectDir = daemonInput.projectDir ?? daemonInput.cwd;
+    const name = daemonInput.name ?? DEFAULT_MANAGED_STACK_NAME;
+    const cacheRoot = daemonInput.cacheRoot ?? defaultCacheRoot();
     const stackRoot =
-      input.projectStateRoot !== undefined
-        ? join(input.projectStateRoot, "stacks", name)
+      daemonInput.projectStateRoot !== undefined
+        ? join(daemonInput.projectStateRoot, "stacks", name)
         : defaultManagedStackRoot(cacheRoot, projectDir, name);
     const runtimeRoot = defaultManagedRuntimeRoot(stackRoot);
     const config: DaemonConfigInput = {
-      ...input,
+      ...daemonInput,
       cacheRoot,
       projectDir,
       name,

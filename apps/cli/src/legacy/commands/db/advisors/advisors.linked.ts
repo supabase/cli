@@ -18,8 +18,15 @@ import { apiResponseToLegacyAdvisorLints } from "./advisors.format.ts";
 
 interface AdvisorEndpoint {
   readonly path: "security" | "performance";
-  /** Builds the network/parse failure (Go's `failed to fetch … advisors: %w`). */
-  readonly network: (message: string) => LegacyAdvisorNetworkError;
+  /**
+   * Builds the network/parse failure (Go's `failed to fetch … advisors: %w`).
+   * `decode: true` marks a 200-response body decode failure rather than a
+   * transport failure, even though Go folds both into the same message path.
+   */
+  readonly network: (
+    message: string,
+    opts?: { readonly decode?: boolean },
+  ) => LegacyAdvisorNetworkError;
   /** Builds the non-200 failure (Go's `unexpected … advisors status %d: %s`). */
   readonly status: (status: number, body: string) => LegacyAdvisorStatusError;
 }
@@ -92,7 +99,7 @@ const fetchAdvisors = Effect.fnUntraced(function* (
   // `apiResponseToLegacyAdvisorLints`) to the endpoint's network error.
   return yield* Effect.try({
     try: () => apiResponseToLegacyAdvisorLints(JSON.parse(rawBody) as unknown),
-    catch: (cause) => endpoint.network(String(cause)),
+    catch: (cause) => endpoint.network(String(cause), { decode: true }),
   });
 });
 
@@ -101,9 +108,10 @@ export const legacyFetchSecurityAdvisors = (ref: string, stitch: LegacyStitchFn)
     ref,
     {
       path: "security",
-      network: (message) =>
+      network: (message, opts) =>
         new LegacyDbAdvisorsSecurityNetworkError({
           message: `failed to fetch security advisors: ${message}`,
+          decode: opts?.decode,
         }),
       status: (status, body) =>
         new LegacyDbAdvisorsSecurityStatusError({
@@ -120,9 +128,10 @@ export const legacyFetchPerformanceAdvisors = (ref: string, stitch: LegacyStitch
     ref,
     {
       path: "performance",
-      network: (message) =>
+      network: (message, opts) =>
         new LegacyDbAdvisorsPerformanceNetworkError({
           message: `failed to fetch performance advisors: ${message}`,
+          decode: opts?.decode,
         }),
       status: (status, body) =>
         new LegacyDbAdvisorsPerformanceStatusError({

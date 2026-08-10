@@ -70,20 +70,6 @@ interface LegacyDeclarativeSeamShape {
     readonly projectRef?: string;
   }) => Effect.Effect<string, LegacyDeclarativeShadowDbError>;
   /**
-   * Runs the bundled Go binary with the given args, inheriting stdio (so the
-   * user sees its output) and returning its exit code — without exiting the
-   * host process. Used for the sync apply-failure recovery, which shells out
-   * to the Go binary's own `db reset --local` (`declarative.smart-target.ts`)
-   * rather than calling the native TS `legacyDbReset` handler in-process —
-   * `db reset` itself is `ported`, but its handler isn't yet structured to be
-   * invoked from other TS commands rather than the CLI's own dispatch. Known,
-   * documented scope-leak (not a porting-status gap): two live `db reset`
-   * implementations remain until `legacyDbReset` is made in-process-callable.
-   */
-  readonly execInherit: (
-    args: ReadonlyArray<string>,
-  ) => Effect.Effect<number, LegacyDeclarativeShadowDbError>;
-  /**
    * Go's `ensureLocalDatabaseStarted` for the `--local` declarative paths
    * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`): inspects the local
    * Postgres container and, when it is not running, starts ONLY the database via

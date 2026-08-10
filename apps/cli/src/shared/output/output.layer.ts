@@ -112,6 +112,7 @@ export const textOutputLayer = Layer.effect(
         readonly autocompleteThreshold?: number;
         readonly placeholder?: string;
         readonly maxItems?: number;
+        readonly stream?: "stdout" | "stderr";
       } = {},
     ) =>
       Effect.gen(function* () {
@@ -122,6 +123,11 @@ export const textOutputLayer = Layer.effect(
               ? "autocomplete"
               : "select"
             : mode;
+        // clack itself defaults every one of these to `process.stdout` (verified against
+        // the installed `@clack/prompts` source) — only override when a caller explicitly
+        // asks for stderr (e.g. a command whose own stdout is a machine-readable payload
+        // even in text mode).
+        const clackOutput = behavior.stream === "stderr" ? process.stderr : undefined;
         const value = yield* Effect.promise(() =>
           effectiveMode === "autocomplete"
             ? autocomplete<string>({
@@ -131,15 +137,20 @@ export const textOutputLayer = Layer.effect(
                   ? { placeholder: behavior.placeholder }
                   : {}),
                 ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
+                ...(clackOutput !== undefined ? { output: clackOutput } : {}),
               })
             : select<string>({
                 message,
                 options: buildSelectOptions(options),
                 ...(behavior.maxItems !== undefined ? { maxItems: behavior.maxItems } : {}),
+                ...(clackOutput !== undefined ? { output: clackOutput } : {}),
               }),
         );
         if (isCancel(value)) {
-          cancel("Operation cancelled.");
+          cancel(
+            "Operation cancelled.",
+            clackOutput !== undefined ? { output: clackOutput } : undefined,
+          );
           return yield* Effect.interrupt;
         }
         return value;

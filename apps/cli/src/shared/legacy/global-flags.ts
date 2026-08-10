@@ -17,6 +17,15 @@ import { legacyViperEnvBool, legacyViperEnvBoolWithProjectFallback } from "./leg
 // only the values its Go counterpart does (e.g. `db query` reads `table`/`csv`,
 // resource commands ignore them and fall through to text). `table`/`csv` are
 // only meaningful to `db query`.
+//
+// Every description string below is copied VERBATIM (including Go's own
+// lowercase, no-trailing-period house style for root persistent flags) from
+// `apps/cli-go/cmd/root.go:324-333` — this text is directly user-visible now
+// that native shell completion (CLI-1965) surfaces it in `__complete`
+// candidate descriptions, where a prior Go-binary passthrough used to emit
+// Go's own text byte-for-byte; before that, this only reached the TS-native
+// `--help` renderer, whose overall layout already diverges from cobra's, so
+// the mismatch was harder to notice (CLI-1965 review finding).
 export const LegacyOutputFlag = GlobalFlag.setting("output")({
   flag: Flag.choice("output", [
     "env",
@@ -28,60 +37,60 @@ export const LegacyOutputFlag = GlobalFlag.setting("output")({
     "csv",
   ] as const).pipe(
     Flag.withAlias("o"),
-    Flag.withDescription("Output format of status variables."),
+    Flag.withDescription("output format of status variables"),
     Flag.optional,
   ),
 });
 
 export const LegacyProfileFlag = GlobalFlag.setting("profile")({
   flag: Flag.string("profile").pipe(
-    Flag.withDescription("Use a specific profile for connecting to Supabase API."),
+    Flag.withDescription("use a specific profile for connecting to Supabase API"),
     Flag.withDefault("supabase"),
   ),
 });
 
 export const LegacyDebugFlag = GlobalFlag.setting("debug")({
-  flag: Flag.boolean("debug").pipe(Flag.withDescription("Output debug logs to stderr.")),
+  flag: Flag.boolean("debug").pipe(Flag.withDescription("output debug logs to stderr")),
 });
 
 export const LegacyWorkdirFlag = GlobalFlag.setting("workdir")({
   flag: Flag.string("workdir").pipe(
-    Flag.withDescription("Path to a Supabase project directory."),
+    Flag.withDescription("path to a Supabase project directory"),
     Flag.optional,
   ),
 });
 
 export const LegacyExperimentalFlag = GlobalFlag.setting("experimental")({
-  flag: Flag.boolean("experimental").pipe(Flag.withDescription("Enable experimental features.")),
+  flag: Flag.boolean("experimental").pipe(Flag.withDescription("enable experimental features")),
 });
 
 export const LegacyNetworkIdFlag = GlobalFlag.setting("network-id")({
   flag: Flag.string("network-id").pipe(
-    Flag.withDescription("Use the specified Docker network instead of a generated one."),
+    Flag.withDescription("use the specified docker network instead of a generated one"),
     Flag.optional,
   ),
 });
 
 export const LegacyYesFlag = GlobalFlag.setting("yes")({
-  flag: Flag.boolean("yes").pipe(Flag.withDescription("Answer yes to all prompts.")),
+  flag: Flag.boolean("yes").pipe(Flag.withDescription("answer yes to all prompts")),
 });
 
 export const LegacyDnsResolverFlag = GlobalFlag.setting("dns-resolver")({
   flag: Flag.choice("dns-resolver", ["native", "https"] as const).pipe(
-    Flag.withDescription("Look up domain names using the specified resolver."),
+    Flag.withDescription("lookup domain names using the specified resolver"),
     Flag.withDefault("native" as const),
   ),
 });
 
 export const LegacyCreateTicketFlag = GlobalFlag.setting("create-ticket")({
   flag: Flag.boolean("create-ticket").pipe(
-    Flag.withDescription("Create a support ticket for any CLI error."),
+    Flag.withDescription("create a support ticket for any CLI error"),
   ),
 });
 
 export const LegacyAgentFlag = GlobalFlag.setting("agent")({
   flag: Flag.choice("agent", ["auto", "yes", "no"] as const).pipe(
-    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)."),
+    Flag.withDescription("Override agent detection: yes, no, or auto (default auto)"),
     Flag.withDefault("auto" as const),
   ),
 });

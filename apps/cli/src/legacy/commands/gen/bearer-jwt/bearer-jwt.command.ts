@@ -1,28 +1,77 @@
+import { Layer } from "effect";
 import { Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
+import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
+import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
+import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyGenBearerJwt } from "./bearer-jwt.handler.ts";
+import { legacyParseBearerJwtExp, legacyParseBearerJwtValidFor } from "./bearer-jwt.flags.ts";
 
 const config = {
+  // Go: `cobra.CheckErr(genJWTCmd.MarkFlagRequired("role"))` (`cmd/gen.go:175`) — but
+  // cobra's `ValidateRequiredFlags` runs AFTER `PersistentPreRunE`
+  // (`cobra@v1.10.2/command.go:985,1007`), which is where Go's telemetry service gets
+  // constructed and later flushed to `telemetry.json` on Execute()'s return path. A
+  // missing `--role` must still flush telemetry (verified against the real binary:
+  // CI-1961 e2e parity run showed `telemetry.json` written on this exact failure).
+  // The framework's own `MissingOption` parse-time rejection (`normalize-error.ts`)
+  // would short-circuit before this command's handler — and its
+  // `Effect.ensuring(telemetryState.flush)` — ever runs, so `role` stays optional at
+  // parse time and presence is enforced in the handler instead, same established
+  // pattern as `vanity-subdomains activate`'s `--desired-subdomain`
+  // (`activate.command.ts`/`activate.handler.ts`).
   role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
+  // Go's `DefValue` is cosmetically overwritten to "anonymous" (`cmd/gen.go:177`) but the
+  // bound variable's real default stays "" — verified against the real binary, an
+  // omitted `--sub` never puts a `sub` claim in the token at all.
   sub: Flag.string("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
   exp: Flag.string("exp").pipe(
-    Flag.withDescription("Expiry timestamp for this token (RFC3339 format)."),
+    Flag.withDescription("Expiry timestamp for this token."),
+    Flag.mapTryCatch(
+      (value) => legacyParseBearerJwtExp(value),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
     Flag.optional,
   ),
   validFor: Flag.string("valid-for").pipe(
     Flag.withDescription("Validity duration for this token."),
-    Flag.optional,
+    Flag.withDefault("30m"),
+    Flag.mapTryCatch(
+      (value) => legacyParseBearerJwtValidFor(value),
+      (err) => (err instanceof Error ? err.message : String(err)),
+    ),
   ),
   payload: Flag.string("payload").pipe(
     Flag.withDescription("Custom claims in JSON format."),
-    Flag.optional,
+    Flag.withDefault("{}"),
   ),
 } as const;
 
 export type LegacyGenBearerJwtFlags = CliCommand.Command.Config.Infer<typeof config>;
 
+const legacyGenBearerJwtRuntimeLayer = Layer.mergeAll(
+  legacyDebugLoggerLayer,
+  legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer)),
+  legacyTelemetryStateLayer,
+  commandRuntimeLayer(["gen", "bearer-jwt"]),
+  // Branch A's stdin JWK prompt and Branch B's stdin kid prompt (`getSigningKey`,
+  // `bearerjwt.go:37-68`) both read piped stdin even on a non-TTY, same as
+  // `gen signing-key`'s overwrite confirmation.
+  stdinLayer,
+);
+
 export const legacyGenBearerJwtCommand = Command.make("bearer-jwt", config).pipe(
-  Command.withDescription("Generate a Bearer Auth JWT for accessing Data API."),
+  Command.withDescription("Generate a Bearer Auth JWT for accessing Data API"),
   Command.withShortDescription("Generate a Bearer Auth JWT for accessing Data API"),
-  Command.withHandler((flags) => legacyGenBearerJwt(flags)),
+  Command.withHandler((flags) =>
+    legacyGenBearerJwt(flags).pipe(
+      withLegacyCommandInstrumentation({ flags }),
+      withJsonErrorHandling,
+    ),
+  ),
+  Command.provide(legacyGenBearerJwtRuntimeLayer),
 );

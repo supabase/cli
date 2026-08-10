@@ -331,7 +331,10 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       Effect.gen(function* () {
         const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
         if (output.format !== "text") {
-          const captured = yield* proxy.execCapture(rebuildDelegateArgs(flags), { env });
+          const captured = yield* proxy.execCapture(rebuildDelegateArgs(flags), {
+            env,
+            suppressChildTelemetry: true,
+          });
           yield* output.success("Diff complete.", {
             diff: captured,
             file: null,
@@ -340,7 +343,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           });
           return;
         }
-        yield* proxy.exec(rebuildDelegateArgs(flags), { env });
+        yield* proxy.exec(rebuildDelegateArgs(flags), { env, suppressChildTelemetry: true });
       });
     if (usePgAdmin) {
       yield* delegateDiff("pgadmin");

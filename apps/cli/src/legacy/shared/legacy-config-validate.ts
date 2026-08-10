@@ -1,5 +1,11 @@
 import { isAbsolute, join } from "node:path";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyGoUrlParse } from "./legacy-storage-url.ts";
 
 /**
@@ -161,7 +167,12 @@ export function legacyParseGoBool(value: string): boolean | undefined {
  * `.toThrow("substring")`), so swapping their inline `throw new Error(...)` calls for this class
  * is a byte-identical, purely internal refactor.
  */
-export class LegacyConfigValidateError extends Error {}
+export class LegacyConfigValidateError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyConfigValidateError";
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /** One `[api.tls]` section, post-env-override. See {@link LegacyConfigValidationInput}. */
 export interface LegacyApiInput {

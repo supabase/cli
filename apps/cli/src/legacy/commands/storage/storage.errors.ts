@@ -1,5 +1,10 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
 import { legacyGoQuote } from "../../shared/legacy-go-quote.ts";
 
@@ -22,6 +27,10 @@ export class LegacyStorageInvalidUrlError extends Data.TaggedError("LegacyStorag
   constructor() {
     super({ message: "URL must match pattern ss:///bucket/[prefix]" });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /**
@@ -31,7 +40,11 @@ export class LegacyStorageInvalidUrlError extends Data.TaggedError("LegacyStorag
  */
 export class LegacyStorageUrlParseError extends Data.TaggedError("LegacyStorageUrlParseError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `cp`'s local→local branch (`internal/storage/cp/cp.go:59-60`). Go sets
@@ -49,6 +62,10 @@ export class LegacyStorageUnsupportedOperationError extends Data.TaggedError(
       message: "Unsupported operation",
       suggestion: `Run ${legacyAqua("cp -r <src> <dst>")} to copy between local directories.`,
     });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -82,6 +99,10 @@ export class LegacyStorageCopyBetweenBucketsError extends Data.TaggedError(
   constructor() {
     super({ message: "Copying between buckets is not supported" });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /** `mv`'s cross-bucket branch (`internal/storage/mv/mv.go:19,38`). */
@@ -92,6 +113,10 @@ export class LegacyStorageUnsupportedMoveError extends Data.TaggedError(
 }> {
   constructor() {
     super({ message: "Moving between buckets is unsupported" });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -104,6 +129,10 @@ export class LegacyStorageMissingPathError extends Data.TaggedError(
   constructor() {
     super({ message: "You must specify an object path" });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /** `rm`'s root-arg branch (`internal/storage/rm/rm.go:21,41`). */
@@ -115,6 +144,10 @@ export class LegacyStorageMissingBucketError extends Data.TaggedError(
   constructor() {
     super({ message: "You must specify a bucket to delete." });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
 }
 
 /** `rm`'s directory-without-`-r` branch (`internal/storage/rm/rm.go:22,44,53`). */
@@ -125,6 +158,10 @@ export class LegacyStorageMissingFlagError extends Data.TaggedError(
 }> {
   constructor() {
     super({ message: "You must specify -r flag to delete directories." });
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -141,12 +178,20 @@ export class LegacyStorageObjectNotFoundError extends Data.TaggedError(
   constructor(path: string) {
     super({ message: `Object not found: ${path}` });
   }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
 }
 
 /** `failed to read file:` / `failed to create file:` (`pkg/storage/objects.go`). */
 export class LegacyStorageFileError extends Data.TaggedError("LegacyStorageFileError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * Both `--linked` and `--local` set, reproducing cobra's
@@ -156,4 +201,8 @@ export class LegacyStorageMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyStorageMutuallyExclusiveFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

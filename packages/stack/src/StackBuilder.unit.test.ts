@@ -3,6 +3,7 @@ import { Deferred, Effect, Layer, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
+import { candidateCleanupTargets } from "./cleanup.ts";
 import { StackBuilder } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
@@ -48,6 +49,7 @@ const baseConfig: ResolvedStackConfig = {
   mode: "auto",
   startupMode: "eager",
   readiness: DEFAULT_STACK_READINESS_POLICY,
+  readinessSource: "default",
   jwtSecret: testJwtSecret,
   ports: basePorts,
   apiPort: 3000,
@@ -197,6 +199,11 @@ describe("StackBuilder", () => {
 
       expect(graph.startOrder.length).toBe(4);
       expect(cleanupTargets.dockerContainerNames).toEqual([]);
+      expect(candidateCleanupTargets(baseConfig).dockerContainerNames).toEqual([
+        `supabase-postgres-${baseConfig.apiPort}`,
+        `supabase-postgrest-${baseConfig.apiPort}`,
+        `supabase-auth-${baseConfig.apiPort}`,
+      ]);
 
       const names = graph.startOrder.map((s) => s.name);
       expect(names).toContain("postgres");

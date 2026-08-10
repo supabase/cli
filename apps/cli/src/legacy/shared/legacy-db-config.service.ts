@@ -1,4 +1,6 @@
 import { Context, type Effect, type Option } from "effect";
+import type { SupabaseApiInputError } from "@supabase/api/effect";
+import type * as HttpBody from "effect/unstable/http/HttpBody";
 import type { LegacyPlatformApiFactoryError } from "../auth/legacy-platform-api-factory.service.ts";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import type {
@@ -38,6 +40,8 @@ export type LegacyDbConfigError =
   | LegacyDbConfigListBansStatusError
   | LegacyDbConfigUnbanNetworkError
   | LegacyDbConfigUnbanStatusError
+  | SupabaseApiInputError
+  | HttpBody.HttpBodyError
   | LegacyDbConfigIpv6Error
   | LegacyDbConfigConnectTempRoleError
   | LegacyDbConfigPoolerLoginError

@@ -15,7 +15,7 @@
  *  - `SetupLocalDatabase` (initial schema bootstrap, `start.go:184-187`) — an
  *    explicit follow-up, not container construction.
  *  - Actually creating/starting the container and waiting for it to become
- *    healthy — that's {@link legacyStartContainer} (`./container-lifecycle.ts`)
+ *    healthy — that's {@link legacyCreateContainer} (`./container-lifecycle.ts`)
  *    and {@link legacyWaitForHealthyServices} (`./health-check.ts`), wired
  *    up by each caller's own handler.
  */

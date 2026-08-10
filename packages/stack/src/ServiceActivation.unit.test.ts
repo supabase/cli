@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  activationReadinessPolicy,
   activationTimeoutSecondsForService,
   activationTargetsForService,
   eagerServices,
@@ -48,6 +49,18 @@ describe("service activation", () => {
     expect(activationTimeoutSecondsForService("auth")).toBe(180);
     expect(activationTimeoutSecondsForService("analytics")).toBe(554);
     expect(activationTimeoutSecondsForService("studio")).toBe(825);
+  });
+
+  it("expands only the package-default activation deadline", () => {
+    expect(
+      activationReadinessPolicy("analytics", { mode: "finite", timeoutMs: 180_000 }, "default"),
+    ).toEqual({ mode: "finite", timeoutMs: 554_000 });
+    expect(
+      activationReadinessPolicy("analytics", { mode: "finite", timeoutMs: 10_000 }, "configured"),
+    ).toEqual({ mode: "finite", timeoutMs: 10_000 });
+    expect(activationReadinessPolicy("analytics", { mode: "infinite" }, "configured")).toEqual({
+      mode: "infinite",
+    });
   });
 
   it("does not assign shared public dependencies to their consumers", () => {

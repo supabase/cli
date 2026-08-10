@@ -154,6 +154,9 @@ const runLinked = Effect.fnUntraced(function* (
           new LegacyDbAdvisorsInvalidTokenError({
             message: cause.message,
             suggestion: loginSuggestion(),
+            // Preserve the token source so an env-provided malformed token keeps
+            // its `set_env_var` remediation instead of degrading to `supabase login`.
+            source: cause.source,
           }),
         ),
       ),

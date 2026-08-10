@@ -8,7 +8,7 @@ import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-comm
 import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
 import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage-runtime.layer.ts";
 import { legacyStorageInvalidJobsMessage } from "../storage.errors.ts";
-import { legacyParseUintBase0 } from "./cp.parse-uint.ts";
+import { legacyParseUintBase0 } from "../../../shared/legacy-parse-uint.ts";
 import {
   LegacyStorageLinkedFlagDef,
   LegacyStorageLocalFlagDef,

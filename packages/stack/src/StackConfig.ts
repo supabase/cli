@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import type { FunctionsConfig, ResolvedFunctionsConfig } from "./functions.ts";
+import type { ResolvedFunctionsBundle } from "./functions.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
 
 type StackMode = "native" | "auto" | "docker";
@@ -27,7 +27,7 @@ export const ReadyOptionsSchema = Schema.Union([
 
 export const inheritReadyOptions: ReadyOptions = { mode: "inherit" };
 
-/** Standalone stacks wait at most three minutes unless a caller or launch Adapter chooses otherwise. */
+/** Default readiness deadline; lazy activation expands it for longer transitive startup budgets. */
 export const DEFAULT_STACK_READINESS_POLICY: ReadinessPolicy = {
   mode: "finite",
   timeoutMs: 180_000,
@@ -159,7 +159,7 @@ export interface StackConfig {
   readonly port?: number;
   readonly publishableKey?: string;
   readonly secretKey?: string;
-  readonly functions?: FunctionsConfig | false;
+  readonly functions?: ResolvedFunctionsBundle | false;
   readonly postgres?: PostgresConfig;
   readonly postgrest?: PostgrestConfig | false;
   readonly auth?: AuthConfig | false;
@@ -281,13 +281,15 @@ export interface ResolvedStackConfig {
   readonly mode: StackMode;
   readonly startupMode: StackStartupMode;
   readonly readiness: ReadinessPolicy;
+  /** Whether readiness came from the package default or an explicit stack policy. */
+  readonly readinessSource: "default" | "configured";
   readonly jwtSecret: string;
   readonly ports: AllocatedPorts;
   readonly apiPort: number;
   readonly dbPort: number;
   readonly publishableKey: string;
   readonly secretKey: string;
-  readonly functions: ResolvedFunctionsConfig | false;
+  readonly functions: ResolvedFunctionsBundle | false;
   readonly autoManagedPaths: ReadonlyArray<string>;
   readonly anonJwt: string;
   readonly serviceRoleJwt: string;

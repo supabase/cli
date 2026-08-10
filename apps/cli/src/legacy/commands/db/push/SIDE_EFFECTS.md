@@ -2,7 +2,8 @@
 
 Native TypeScript port of `apps/cli-go/internal/db/push/push.go`. Applies pending
 local migrations (and optionally seed data and custom roles) to the local or
-linked/remote Postgres database.
+linked/remote Postgres database, updating configured Vault secrets before migrations
+unless `--skip-vault` is set.
 
 ## Files Read
 
@@ -32,7 +33,7 @@ linked/remote Postgres database.
 | `RESET ALL` + `BEGIN` … migration statements … `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` … `COMMIT` | per pending migration (after confirmation); pipeline-incompatible statements run standalone between batches — see Notes |
 | `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                                              | once before applying migrations (idempotent)                                                                            |
 | `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                                                 | per `--include-roles` globals file (after confirmation)                                                                 |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets and migrations are applied                                                       |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                           |
 | `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …`                      | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                  |
 
 ## API Routes
@@ -48,6 +49,7 @@ linked/remote Postgres database.
 | `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                                                        | no (`--password`/`-p` takes precedence)                 |
 | `SUPABASE_YES`                     | auto-confirm prompts (Go's `viper YES`)                                                                          | no (also `--yes`)                                       |
+| `DOTENV_PRIVATE_KEY*`              | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                  | no                                                      |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset                              | no (project `.env` or shell)                            |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export                                          | no (project `.env` or shell)                            |
 | `PGDELTA_NPM_REGISTRY`             | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the cache export | no (project `.env` or shell)                            |
@@ -101,7 +103,8 @@ stdout is payload-only. A single `result` object is emitted:
 - **`[db.migrations].enabled = false`** / **`[db.seed].enabled = false`** print a
   skip notice naming the project ref (empty for local/db-url).
 - **Vault**: non-empty, non-`env()` `[db.vault]` values are synced after config
-  load, including decrypted `encrypted:` values.
+  load, including decrypted `encrypted:` values. `--skip-vault` leaves them unchanged
+  and does not resolve or decrypt their configured values.
 - **Pipeline-incompatible statements**: `CREATE [UNIQUE] INDEX CONCURRENTLY`,
   `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`, and `CLUSTER` cannot run inside a
   transaction block (SQLSTATE 25001). The apply flushes (commits) the open batch, runs

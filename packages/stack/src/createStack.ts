@@ -1,14 +1,13 @@
 import type { LogEntry } from "@supabase/process-compose";
-import { Context, Effect, type Layer, ManagedRuntime, Stream } from "effect";
-import { FileSystem, Path } from "effect";
+import { Context, Effect, FileSystem, type Layer, ManagedRuntime, Path, Stream } from "effect";
 import { HttpServer } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
-import { cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
-import type { CleanupTargets } from "./CleanupTargets.ts";
 import { ApiProxy } from "./ApiProxy.ts";
+import { candidateCleanupTargets, cleanupAutoManagedPaths, dockerForceRemove } from "./cleanup.ts";
 import { toStackError } from "./errors.ts";
-import type { FunctionsConfig } from "./functions.ts";
-import { daemonLayer, foregroundLayer, type DaemonStartError } from "./layers.ts";
+import type { FunctionsReloadConfig } from "./functions.ts";
+import { foregroundLayer } from "./layers.ts";
+import { LocalStackLifecycle } from "./LocalStack.ts";
 import { PORT_FIELDS, reservePorts, type PortLease } from "./PortAllocator.ts";
 import { allocatedPortFieldsForConfig } from "./ServicePorts.ts";
 import { Stack } from "./Stack.ts";
@@ -16,34 +15,33 @@ import type { EdgeRuntimeReloadConfig } from "./Stack.ts";
 import type { ReadyOptions, ResolvedStackConfig, StackConfig } from "./StackConfig.ts";
 import { resolveConfig } from "./StackConfigResolver.ts";
 import type { StackServiceState } from "./StackServiceState.ts";
-import { InvalidStackStateError, StackAlreadyRunningError } from "./StateManager.ts";
-import { UnixHttpClient } from "./UnixHttpClient.ts";
 
-export type PlatformServices =
+type PlatformServices =
   | FileSystem.FileSystem
   | Path.Path
   | ChildProcessSpawner.ChildProcessSpawner
   | HttpServer.HttpServer;
 
-export type PlatformLayer = Layer.Layer<PlatformServices>;
+type PlatformLayer = Layer.Layer<PlatformServices>;
 /** Supplies the platform HTTP server used by the stack and HTTP proxy. */
-export interface PlatformFactoryOptions {
+interface PlatformFactoryOptions {
   readonly apiPort: number;
   readonly releaseApiPort: Effect.Effect<void>;
 }
 
 export type PlatformFactory = (options: PlatformFactoryOptions) => PlatformLayer;
 
-/** @internal Converts foreground operation failures and closes the runtime after terminal timeouts. */
+/** @internal Converts operation failures and closes a terminal foreground runtime. */
 export async function runForegroundOperation<A>(
   operation: Promise<A>,
+  isDisposed: () => Promise<boolean>,
   dispose: () => Promise<void>,
 ): Promise<A> {
   try {
     return await operation;
   } catch (error: unknown) {
     const stackError = toStackError(error);
-    if (stackError.code === "STACK_READINESS_TIMEOUT") {
+    if (await isDisposed()) {
       await dispose();
     }
     throw stackError;
@@ -61,7 +59,7 @@ export interface StackHandle extends AsyncDisposable {
   startService(name: string): Promise<void>;
   stopService(name: string): Promise<void>;
   restartService(name: string): Promise<void>;
-  reloadFunctions(opts?: FunctionsConfig): Promise<void>;
+  reloadFunctions(opts?: FunctionsReloadConfig): Promise<void>;
   reloadEdgeRuntime(opts: EdgeRuntimeReloadConfig): Promise<void>;
   ready(opts?: ReadyOptions): Promise<void>;
   serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
@@ -71,49 +69,6 @@ export interface StackHandle extends AsyncDisposable {
   logs(): AsyncIterable<LogEntry>;
   serviceLogs(name: string): AsyncIterable<LogEntry>;
   logHistory(name: string, limit?: number): Promise<ReadonlyArray<LogEntry>>;
-}
-
-export const projectDaemonLayer = (opts: {
-  readonly cacheRoot: string;
-  readonly cwd: string;
-  readonly projectDir?: string;
-  readonly projectStateRoot?: string;
-  readonly name?: string;
-  readonly daemonEntryPoint: string;
-  readonly stackConfig?: Omit<StackConfig, "cacheRoot" | "stackRoot" | "runtimeRoot">;
-}): Effect.Effect<
-  Layer.Layer<Stack>,
-  DaemonStartError | InvalidStackStateError | StackAlreadyRunningError,
-  FileSystem.FileSystem | Path.Path | UnixHttpClient
-> =>
-  daemonLayer(
-    {
-      cacheRoot: opts.cacheRoot,
-      cwd: opts.cwd,
-      projectDir: opts.projectDir,
-      projectStateRoot: opts.projectStateRoot,
-      name: opts.name,
-      ...opts.stackConfig,
-    },
-    opts.daemonEntryPoint,
-  );
-
-function possibleCleanupTargetsForConfig(config: ResolvedStackConfig): CleanupTargets {
-  const dockerContainerNames = [`supabase-postgres-${config.apiPort}`];
-  if (config.postgrest !== false) dockerContainerNames.push(`supabase-postgrest-${config.apiPort}`);
-  if (config.auth !== false) dockerContainerNames.push(`supabase-auth-${config.apiPort}`);
-  if (config.edgeRuntime !== false)
-    dockerContainerNames.push(`supabase-edge-runtime-${config.apiPort}`);
-  if (config.realtime !== false) dockerContainerNames.push(`supabase-realtime-${config.apiPort}`);
-  if (config.storage !== false) dockerContainerNames.push(`supabase-storage-${config.apiPort}`);
-  if (config.imgproxy !== false) dockerContainerNames.push(`supabase-imgproxy-${config.apiPort}`);
-  if (config.mailpit !== false) dockerContainerNames.push(`supabase-mailpit-${config.apiPort}`);
-  if (config.pgmeta !== false) dockerContainerNames.push(`supabase-pgmeta-${config.apiPort}`);
-  if (config.studio !== false) dockerContainerNames.push(`supabase-studio-${config.apiPort}`);
-  if (config.analytics !== false) dockerContainerNames.push(`supabase-analytics-${config.apiPort}`);
-  if (config.vector !== false) dockerContainerNames.push(`supabase-vector-${config.apiPort}`);
-  if (config.pooler !== false) dockerContainerNames.push(`supabase-pooler-${config.apiPort}`);
-  return { dockerContainerNames };
 }
 
 export async function createStack(
@@ -157,6 +112,7 @@ export async function createStack(
       const services = await runtime.context();
       const localStack = Context.get(services, Stack);
       const apiProxy = Context.get(services, ApiProxy);
+      const lifecycle = Context.get(services, LocalStackLifecycle);
       const info = await runtime.runPromise(localStack.getInfo());
 
       let disposal: Promise<void> | undefined;
@@ -165,12 +121,17 @@ export async function createStack(
         return disposal;
       };
       const run = <A>(effect: Effect.Effect<A, unknown>) =>
-        runForegroundOperation(runtime.runPromise(effect), gracefulDispose);
+        runForegroundOperation(
+          runtime.runPromise(effect),
+          () => runtime.runPromise(lifecycle.isDisposed),
+          gracefulDispose,
+        );
 
-      // A terminal lazy-activation timeout disposes LocalStack. Close the
-      // foreground runtime as well so the public API port cannot outlive it.
+      // The HTTP module has no response-flushed hook. Give the proxy's final
+      // 503 response a brief opportunity to leave the socket before closing
+      // the runtime after terminal lazy activation.
       void runtime
-        .runPromise(apiProxy.awaitTerminalFailure)
+        .runPromise(apiProxy.awaitTerminalFailure.pipe(Effect.andThen(Effect.sleep("25 millis"))))
         .then(gracefulDispose)
         .catch(() => {});
 
@@ -205,7 +166,7 @@ export async function createStack(
     }
   } catch (error: unknown) {
     await Effect.runPromise(portLease.releaseAll);
-    dockerForceRemove(possibleCleanupTargetsForConfig(resolved).dockerContainerNames);
+    dockerForceRemove(candidateCleanupTargets(resolved).dockerContainerNames);
     cleanupAutoManagedPaths(resolved);
     throw toStackError(error);
   }

@@ -821,6 +821,8 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
   );
 });
 
+const LEGACY_VAULT_SECRET_PATH = ["db", "vault", "*"] as const;
+
 /**
  * Dotted paths of every `config.Secret`-typed field Go decrypts via its global
  * `DecryptSecretHookFunc` (`pkg/config/secret.go`, `config.go:730`) — the hook only runs
@@ -838,7 +840,7 @@ const resolveOptionalBoolOrFail = Effect.fnUntraced(function* (
  */
 const LEGACY_SECRET_PATHS: ReadonlyArray<ReadonlyArray<string>> = [
   ["db", "root_key"],
-  ["db", "vault", "*"],
+  LEGACY_VAULT_SECRET_PATH,
   ["auth", "publishable_key"],
   ["auth", "secret_key"],
   ["auth", "jwt_secret"],
@@ -921,9 +923,11 @@ export const legacyAssertDecryptableSecrets = (
   doc: unknown,
   lookup: EnvLookup,
   dotenvPrivateKeys: ReadonlyArray<string>,
+  opts?: { readonly includeVault?: boolean },
 ): string | undefined => {
   const scan = (node: unknown): string | undefined => {
     for (const segs of LEGACY_SECRET_PATHS) {
+      if (opts?.includeVault === false && segs === LEGACY_VAULT_SECRET_PATH) continue;
       const values: Array<string> = [];
       legacyCollectSecretStrings(node, segs, 0, values);
       for (const value of values) {
@@ -986,6 +990,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `false` so the warning still fires exactly once per invocation, matching
   // Go, instead of two or three times.
   warnOnUnresolvedEnv = true,
+  resolveVaultSecrets = true,
 ) {
   const supabaseDir = path.join(workdir, "supabase");
   const configPath = path.join(supabaseDir, "config.toml");
@@ -1109,10 +1114,12 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
     // in the merged config that cannot be decrypted (e.g. no DOTENV_PRIVATE_KEY) aborts the
     // load with `failed to parse config: <error>` (secret.go:34,103; config.go:704) — before
-    // Validate and before connecting. This also covers `[db.vault]` (see
-    // `LEGACY_SECRET_PATHS`), so the vault loop below never actually reaches an
-    // undecryptable value — it just decrypts-and-populates the already-asserted-valid ones.
-    const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys);
+    // Validate and before connecting. This covers `[db.vault]` unless the caller is
+    // explicitly skipping Vault sync, so the vault loop below only materializes values
+    // that this assertion has already proved decryptable.
+    const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys, {
+      includeVault: resolveVaultSecrets,
+    });
     if (secretError !== undefined) {
       return yield* Effect.fail(new LegacyDbConfigLoadError({ message: secretError }));
     }
@@ -2250,7 +2257,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `failed to parse config: <error>` (`secret.go:30-73`, `config.go:661-667`) — it
   // is never silently skipped, which an earlier port did and which diverged from Go.
   const vault: Array<LegacyDbVaultSecretToml> = [];
-  if (vaultRaw !== undefined) {
+  if (resolveVaultSecrets && vaultRaw !== undefined) {
     for (const name of Object.keys(vaultRaw).sort()) {
       const raw = vaultRaw[name];
       const value = typeof raw === "string" ? legacyExpandEnv(raw, lookup) : "";
@@ -2362,8 +2369,21 @@ export const legacyCheckDbToml = (
   // caller known to run AFTER an earlier, same-invocation `legacyCheckDbToml`/
   // `legacyReadDbToml` call already printed the OrioleDB S3 `assertEnvLoaded` WARN
   // once. Omit (default `true`) for every standalone command entry point.
-  opts?: { readonly warnOnUnresolvedEnv?: boolean },
-) => readDbTomlCore(fs, path, workdir, ref, false, opts?.warnOnUnresolvedEnv ?? true);
+  opts?: {
+    readonly warnOnUnresolvedEnv?: boolean;
+    /** Skip resolving `[db.vault]` values while validating the rest of the config. */
+    readonly resolveVaultSecrets?: boolean;
+  },
+) =>
+  readDbTomlCore(
+    fs,
+    path,
+    workdir,
+    ref,
+    false,
+    opts?.warnOnUnresolvedEnv ?? true,
+    opts?.resolveVaultSecrets ?? true,
+  );
 
 /**
  * Read `config.toml`. Defaults to Go's validating behavior (identical to
@@ -2378,18 +2398,23 @@ export const legacyReadDbToml = (
   path: Path.Path,
   workdir: string,
   ref?: string,
-  opts?: { readonly validate?: boolean; readonly warnOnUnresolvedEnv?: boolean },
+  opts?: {
+    readonly validate?: boolean;
+    readonly warnOnUnresolvedEnv?: boolean;
+    readonly resolveVaultSecrets?: boolean;
+  },
 ) => {
   const warnOnUnresolvedEnv = opts?.warnOnUnresolvedEnv ?? true;
+  const resolveVaultSecrets = opts?.resolveVaultSecrets ?? true;
   return opts?.validate === false
-    ? readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv).pipe(
+    ? readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv, resolveVaultSecrets).pipe(
         // Fall back to the ignore-file defaults path (never re-reads the broken config)
         // so a best-effort caller gets a well-formed defaults result instead of a throw.
         Effect.catchTag("LegacyDbConfigLoadError", () =>
-          readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv),
+          readDbTomlCore(fs, path, workdir, ref, true, warnOnUnresolvedEnv, resolveVaultSecrets),
         ),
       )
-    : readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv);
+    : readDbTomlCore(fs, path, workdir, ref, false, warnOnUnresolvedEnv, resolveVaultSecrets);
 };
 
 /**

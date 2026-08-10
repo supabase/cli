@@ -25,6 +25,7 @@ import {
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
   LegacyDbConnection,
   type LegacyDbSession,
@@ -154,6 +155,7 @@ function defaultRoute(opts: { readonly neverHealthy?: boolean } = {}) {
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
+    if (args[0] === "network" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "inspect") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
@@ -275,6 +277,10 @@ interface SetupOpts {
   readonly catalogStdout?: string;
   /** Fails the mocked catalog-export call with this message instead of succeeding. */
   readonly catalogExportFailWith?: string;
+  /** Number of initial `LegacyDbConnection.connect` attempts that fail before succeeding. */
+  readonly connectFailures?: number;
+  /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
+  readonly connectFailuresRetryable?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -311,6 +317,25 @@ function setup(opts: SetupOpts = {}) {
     requireSslForHost: () => Effect.succeed(false),
   });
 
+  let connectAttempts = 0;
+  const connectFailures = opts.connectFailures ?? 0;
+  const dbConnection = Layer.succeed(LegacyDbConnection, {
+    connect: () =>
+      Effect.suspend(() => {
+        connectAttempts += 1;
+        if (connectAttempts <= connectFailures) {
+          return Effect.fail(
+            new LegacyDbConnectError({
+              message:
+                "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: connect ECONNREFUSED 127.0.0.1:54322",
+              ...(opts.connectFailuresRetryable === false ? {} : { retryable: true }),
+            }),
+          );
+        }
+        return Effect.succeed(dbSession.session);
+      }),
+  });
+
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
@@ -318,7 +343,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     child.layer,
     alwaysReadyHttpClientLayer,
-    Layer.succeed(LegacyDbConnection, { connect: () => Effect.succeed(dbSession.session) }),
+    dbConnection,
     legacyDockerRunLayer.pipe(
       Layer.provide(child.layer),
       Layer.provide(mockProcessControl().layer),
@@ -335,7 +360,17 @@ function setup(opts: SetupOpts = {}) {
     edgeRuntime,
     sslProbe,
   );
-  return { layer, out, telemetry, child, dbSession, edgeRunCalls };
+  return {
+    layer,
+    out,
+    telemetry,
+    child,
+    dbSession,
+    edgeRunCalls,
+    get connectAttempts() {
+      return connectAttempts;
+    },
+  };
 }
 
 const currentBranchPath = (workdir: string) =>
@@ -377,6 +412,32 @@ describe("legacy db start", () => {
       });
     },
   );
+
+  it.live(
+    "fresh volume: retries the host connect while the published port is not yet reachable (#6136)",
+    () => {
+      const s = setup({ route: freshVolumeRoute(defaultRoute()), connectFailures: 2 });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+        expect(s.connectAttempts).toBe(3);
+        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+      });
+    },
+    15_000,
+  );
+
+  it.live("fresh volume: a non-dial connect failure is not retried", () => {
+    const s = setup({
+      route: freshVolumeRoute(defaultRoute()),
+      connectFailures: 1,
+      connectFailuresRetryable: false,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(s.connectAttempts).toBe(1);
+    });
+  });
 
   it.live(
     "PG <= 14 on a fresh volume: execs schema/globals SQL directly instead of the PG15+ one-shot migrate jobs",

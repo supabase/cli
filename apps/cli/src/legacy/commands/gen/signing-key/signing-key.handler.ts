@@ -1,6 +1,5 @@
 import { generateKeyPairSync, randomUUID } from "node:crypto";
 import { styleText } from "node:util";
-import { loadProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
@@ -8,12 +7,18 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyResolveYesWithProjectEnv } from "../../../../shared/legacy/global-flags.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
+import {
+  legacyReadSigningKeysFile,
+  legacyResolveSigningKeysConfigPaths,
+  type LegacyStoredSigningKeyJwk,
+} from "../gen.signing-keys-config.ts";
 import type { LegacyGenSigningKeyFlags } from "./signing-key.command.ts";
 import {
   LegacyGenSigningKeyCancelledError,
@@ -46,14 +51,12 @@ interface SigningKeyJwk {
   readonly qi?: string;
 }
 
-type StoredSigningKeyJwk = Readonly<Record<string, unknown>>;
-
 interface ResolvedSigningKeysConfig {
   readonly configDisplayPath: string;
   readonly configured: Option.Option<{
     actualPath: string;
     displayPath: string;
-    existingKeys: ReadonlyArray<StoredSigningKeyJwk>;
+    existingKeys: ReadonlyArray<LegacyStoredSigningKeyJwk>;
   }>;
 }
 
@@ -73,28 +76,6 @@ function readStringField(
           message: `failed to generate signing key: missing jwk field ${field}`,
         }),
       );
-}
-
-function readJwkArray(
-  value: unknown,
-): Effect.Effect<ReadonlyArray<StoredSigningKeyJwk>, LegacyGenSigningKeyDecodeError> {
-  if (!Array.isArray(value)) {
-    return Effect.fail(
-      new LegacyGenSigningKeyDecodeError({
-        message: "failed to decode signing keys: expected a JSON array",
-      }),
-    );
-  }
-  for (const item of value) {
-    if (!isRecord(item)) {
-      return Effect.fail(
-        new LegacyGenSigningKeyDecodeError({
-          message: "failed to decode signing keys: expected a JSON array of objects",
-        }),
-      );
-    }
-  }
-  return Effect.succeed(value);
 }
 
 function styleIfTty(
@@ -162,64 +143,42 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   } satisfies SigningKeyJwk;
 });
 
+// `gen signing-key` goes through the exact same `flags.LoadConfig` -> `Config.Validate`
+// pipeline as `gen bearer-jwt` (`signingkeys.go:111` vs `bearerjwt.go:20`) — there is no
+// separate, ungated Go code path for this command. Go's `Config.Validate` only reads
+// `[auth].signing_keys_path`'s file INSIDE `if c.Auth.Enabled` (`config.go:1087-1116`), so
+// with auth disabled `utils.Config.Auth.SigningKeys` never advances past `NewConfig()`'s own
+// default single-key array — meaning `--append` appends to (and a subsequent overwrite
+// clobbers) that phantom default set, NOT the file's real content. Verified against the real
+// binary (CLI-1961 Codex review finding): with `auth.enabled = false` and a configured
+// `signing_keys_path` pointing at a file containing a real custom key, `gen signing-key
+// --append` overwrote the file with the default ES256 key plus the newly generated one,
+// discarding the original entry entirely — surprising, but this is what Go actually does, so
+// this must gate the read on `paths.authEnabled` exactly like `gen bearer-jwt`'s own
+// `legacyResolveBearerJwtSigningKey` already does.
 const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
-  const path = yield* Path.Path;
-  const loaded = yield* loadProjectConfig(cwd, { goViperCompat: true }).pipe(
-    Effect.catchTag("ProjectConfigParseError", (cause) =>
-      Effect.fail(
-        new LegacyGenSigningKeyConfigParseError({
-          message: `failed to parse ${cause.path}: ${String(cause.cause)}`,
-        }),
-      ),
-    ),
+  const paths = yield* legacyResolveSigningKeysConfigPaths(
+    cwd,
+    (message) => new LegacyGenSigningKeyConfigParseError({ message }),
   );
-  if (loaded === null) {
+  if (Option.isNone(paths.signingKeysPath)) {
     return {
-      configDisplayPath: path.join("supabase", "config.toml"),
+      configDisplayPath: paths.configDisplayPath,
       configured: Option.none(),
     } satisfies ResolvedSigningKeysConfig;
   }
 
-  // Go displays the CWD-relative `supabase/config.toml` (utils.ConfigPath), never an absolute
-  // path. `@supabase/config` always resolves `loaded.path` to an absolute path, so relativize it
-  // back against the project root to match Go's output.
-  const projectRoot = path.dirname(path.dirname(loaded.path));
-  const configDisplayPath = path.relative(projectRoot, loaded.path);
-
-  const configuredPath = loaded.config.auth.signing_keys_path;
-  if (configuredPath === undefined || configuredPath.length === 0) {
-    return {
-      configDisplayPath,
-      configured: Option.none(),
-    } satisfies ResolvedSigningKeysConfig;
-  }
-
-  const resolvedPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.join(path.dirname(loaded.path), configuredPath);
-  const displayPath = path.isAbsolute(configuredPath)
-    ? configuredPath
-    : path.relative(projectRoot, resolvedPath);
-  const fs = yield* FileSystem.FileSystem;
-  const raw = yield* fs.readFileString(resolvedPath).pipe(
-    Effect.mapError(
-      (cause) =>
-        new LegacyGenSigningKeyReadError({
-          message: `failed to read signing keys: ${String(cause)}`,
-        }),
-    ),
-  );
-  const decoded = yield* Effect.try({
-    try: () => JSON.parse(raw),
-    catch: (cause) =>
-      new LegacyGenSigningKeyDecodeError({
-        message: `failed to decode signing keys: ${String(cause)}`,
-      }),
-  });
-  const existingKeys = yield* readJwkArray(decoded);
+  const { actualPath, displayPath } = paths.signingKeysPath.value;
+  const existingKeys = paths.authEnabled
+    ? yield* legacyReadSigningKeysFile(
+        actualPath,
+        (message) => new LegacyGenSigningKeyReadError({ message }),
+        (message) => new LegacyGenSigningKeyDecodeError({ message }),
+      )
+    : [{ ...LEGACY_DEFAULT_SIGNING_KEY }];
   return {
-    configDisplayPath,
-    configured: Option.some({ actualPath: resolvedPath, displayPath, existingKeys }),
+    configDisplayPath: paths.configDisplayPath,
+    configured: Option.some({ actualPath, displayPath, existingKeys }),
   } satisfies ResolvedSigningKeysConfig;
 });
 

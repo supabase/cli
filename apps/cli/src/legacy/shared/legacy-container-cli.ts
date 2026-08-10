@@ -2,6 +2,12 @@ import { Data, Effect, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Container CLIs tried in order: Docker is preferred, Podman is the fallback
  * for Docker-less hosts (e.g. Podman-only Linux setups).
@@ -17,16 +23,21 @@ type Spawner = ChildProcessSpawner["Service"];
 /**
  * Raised when neither `docker` nor `podman` can be spawned at all (e.g. neither
  * is installed or on `PATH`) — distinct from a spawned process exiting non-zero.
- * Not exported: callers never need to match on this type directly, they fold it
- * into their own tagged error via {@link legacyDescribeContainerCliFailure} so
- * the "no runtime found" root cause survives instead of collapsing into a
- * generic "failed to ..." message.
+ * Callers never need to match on this type directly, they fold it into their
+ * own tagged error via {@link legacyDescribeContainerCliFailure} so the "no
+ * runtime found" root cause survives instead of collapsing into a generic
+ * "failed to ..." message. Exported only so the coverage test can verify its
+ * own actionability declaration.
  */
-class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
+export class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
   "LegacyContainerRuntimeNotFoundError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
 /**
  * Exported so `legacy-docker-suggest.ts`'s daemon-unreachable matcher can test
@@ -48,26 +59,6 @@ export function legacyDescribeContainerCliFailure(cause: unknown): string {
   if (cause instanceof LegacyContainerRuntimeNotFoundError) return cause.message;
   if (cause instanceof Error) return cause.message;
   return String(cause);
-}
-
-/**
- * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect` — Docker's
- * "No such container"/"No such object" (either casing depending on daemon version/CLI path) or
- * Podman's own differently worded "no container with name or ID ... found: no such container" —
- * the subprocess equivalent of Go's `errdefs.IsNotFound` for a CLI-shelled-out (rather than
- * Engine-API) caller. Case-insensitive and covers all three shapes so a lowercase Podman message
- * is tolerated exactly like an uppercase Docker one — the same distinction
- * `legacy-docker-image-resolve.ts`'s `isImageNotFoundMessage` draws for `image inspect`.
- * Hoisted here (rather than left as separate per-caller copies) so every container-not-found
- * check across the container-lifecycle/start/health-check domain shares one predicate instead of
- * re-deriving the same match with different Podman coverage.
- */
-export function legacyIsContainerNotFoundMessage(message: string): boolean {
-  return (
-    /no such container/iu.test(message) ||
-    /no such object/iu.test(message) ||
-    /no container with name or id/iu.test(message)
-  );
 }
 
 /** Which of the two supported container CLIs actually answered a spawn. */
@@ -142,13 +133,84 @@ export const containerCliExitCode = (
     ),
   );
 
-function collectDockerCliText(stream: Stream.Stream<Uint8Array, unknown>) {
+/**
+ * Folds a byte stream into a decoded string. Hoisted here (the shared home for
+ * container-CLI plumbing) so `container-lifecycle.ts`/`restart-services.ts`/
+ * `legacy-docker-lifecycle.ts` — every module that spawns `docker`/`podman` and
+ * needs its stdout/stderr as text — stop each defining their own copy.
+ */
+export function legacyCollectText(stream: Stream.Stream<Uint8Array, unknown>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
     () => "",
     (text, chunk) => text + decoder.decode(chunk, { stream: true }),
   ).pipe(Effect.map((text) => text + decoder.decode()));
+}
+
+/**
+ * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect` — Docker's
+ * "No such container"/"No such object" (either casing depending on daemon version/CLI path) or
+ * Podman's own differently worded "no container with name or ID ... found: no such container" —
+ * the subprocess equivalent of Go's `errdefs.IsNotFound` for a CLI-shelled-out (rather than
+ * Engine-API) caller. Case-insensitive and covers all three shapes so a lowercase Podman message
+ * is tolerated exactly like an uppercase Docker one — the same distinction
+ * `legacy-docker-image-resolve.ts`'s `isImageNotFoundMessage` draws for `image inspect`, and the
+ * same distinction the pre-existing Podman-aware parser in `commands/start/start.handler.ts`'s
+ * own (now-removed) local `isContainerNotFoundMessage` used to draw. Hoisted here (rather than
+ * left as separate per-caller copies) so every container-not-found check across the
+ * container-lifecycle/start/restart/health-check domain (`legacyIsLocalDbRunning`,
+ * `legacyRestartSatelliteService`, `legacyReloadKong`, …) shares one predicate instead of
+ * re-deriving the same match with different Podman coverage — a reset excluding a satellite
+ * service (storage/auth/realtime/pooler) or Kong would otherwise report a hard restart/reload
+ * failure instead of tolerating the absent container.
+ */
+export function legacyIsContainerNotFoundMessage(message: string): boolean {
+  return (
+    /no such container/iu.test(message) ||
+    /no such object/iu.test(message) ||
+    /no container with name or id/iu.test(message)
+  );
+}
+
+/**
+ * Runs a container-CLI command that must succeed outright — no tolerance for any
+ * failure mode (spawn failure, non-zero exit) — the shared shape behind every
+ * "docker verb target" primitive that fails hard on any problem
+ * (`legacyRemoveContainer`/`legacyRemoveVolume`/`legacyRestartContainer`; see
+ * `containers/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
+ * `verb` is the human-readable action embedded in the error message (e.g.
+ * `"remove container"` → `"failed to remove container: <cause>"`).
+ */
+export function legacyRunContainerCliExpectSuccess<E>(
+  spawner: Spawner,
+  args: ReadonlyArray<string>,
+  verb: string,
+  makeError: (message: string) => E,
+): Effect.Effect<void, E> {
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnContainerCli(spawner, args, {
+        stdin: "ignore",
+        stdout: "ignore",
+        stderr: "pipe",
+      }).pipe(
+        Effect.mapError((cause) =>
+          makeError(`failed to ${verb}: ${legacyDescribeContainerCliFailure(cause)}`),
+        ),
+      );
+      const [exitCode, stderr] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(() => makeError(`failed to ${verb}`)));
+      if (exitCode !== 0) {
+        const message = stderr.trim();
+        return yield* Effect.fail(
+          makeError(message.length > 0 ? `failed to ${verb}: ${message}` : `failed to ${verb}`),
+        );
+      }
+    }),
+  );
 }
 
 /**
@@ -190,7 +252,7 @@ export const legacyContainerCliExitCodeAndStdout = (
       // so a late subscriber would see an already-ended, empty stream (same
       // pattern as `legacy-docker-lifecycle.ts`'s `spawnDockerPsLines`).
       const [exitCode, stdout] = yield* Effect.all(
-        [handle.exitCode.pipe(Effect.map(Number)), collectDockerCliText(handle.stdout)],
+        [handle.exitCode.pipe(Effect.map(Number)), legacyCollectText(handle.stdout)],
         { concurrency: "unbounded" },
       );
       return { exitCode, stdout };
@@ -246,7 +308,7 @@ export const legacyDockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
         }),
       );
       const [exitCode, stdout] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectDockerCliText(child.stdout)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stdout)],
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) return false;

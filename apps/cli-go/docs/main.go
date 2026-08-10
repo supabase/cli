@@ -47,7 +47,6 @@ func generate(version string) error {
 		return err
 	}
 	root := cli.GetRootCmd()
-	root.InitDefaultCompletionCmd()
 	root.InitDefaultHelpFlag()
 	spec := SpecDoc{
 		Clispec: "001",

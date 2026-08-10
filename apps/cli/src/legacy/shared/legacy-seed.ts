@@ -2,6 +2,11 @@ import { createHash } from "node:crypto";
 import { Data, Effect, FileSystem, Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyResolveUnderWorkdir } from "./legacy-glob.ts";
 import { checkScannerBufferSize } from "./legacy-migration-apply.ts";
@@ -16,7 +21,11 @@ import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 /** Applying a seed file failed (Go's `SeedData` / `ExecBatchWithCache` errors). */
 export class LegacyMigrationSeedError extends Data.TaggedError("LegacyMigrationSeedError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /** `[db.seed]` config: `enabled` + the (supabase-prefixed) `sql_paths` glob list. */
 export interface LegacySeedConfig {

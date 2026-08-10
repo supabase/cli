@@ -3,6 +3,11 @@ import { Data, Effect, type FileSystem, type Path } from "effect";
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { legacyErrorMessage, legacyRelativizeErrorMessage } from "./legacy-error-message.ts";
 import {
@@ -25,7 +30,11 @@ import { legacySplitAndTrim, legacySplitSqlTokens } from "./legacy-sql-split.ts"
 export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigrationApplyError")<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 // Byte order mark (U+FEFF) — stripped from the head of a statement like Go does.
 const BOM_CODE_POINT = 0xfeff;
@@ -432,6 +441,43 @@ export const legacyMarkError = (stat: string, pos: number): string => {
 const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
 
 /**
+ * Mirrors Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
+ * on a failed statement, render the `^` caret under the server-reported error
+ * position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
+ * then `At statement: <index>` and the (caret-marked) statement text. The
+ * structured `detail`/`position` fields are only set by the driver for server
+ * ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
+ *
+ * Exported so any caller that runs a raw `migration.MigrationFile{Statements:
+ * [...]}.ExecBatch(...)`-equivalent batch outside a real migration file (e.g.
+ * `legacyResetRecreateDatabases`'s PG14 `DROP`/`CREATE DATABASE` statements,
+ * `reset.go:169-172`, which Go itself routes through this exact formatter) gets
+ * the same rich error context instead of the bare driver error.
+ */
+export const legacyFormatExecBatchError = (
+  e: LegacyDbExecError,
+  index: number,
+  stat: string,
+): Error => {
+  const marked = legacyMarkError(stat, e.position ?? 0);
+  const msg: Array<string> = [];
+  if (e.detail !== undefined && e.detail.length > 0) {
+    msg.push(e.detail);
+  }
+  // Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
+  const typeName = TYPE_NAME_PATTERN.exec(e.message)?.[1];
+  if (typeName !== undefined && e.code === "42704" && !typeName.includes(".")) {
+    msg.push("");
+    msg.push("Hint: This type may be defined in a schema that's not in your search_path.");
+    msg.push("      Use schema-qualified type references to avoid this error:");
+    msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
+    msg.push("      Learn more: supabase migration new --help");
+  }
+  msg.push(`At statement: ${index}`, marked);
+  return new Error(`${legacyErrorMessage(e)}\n${msg.join("\n")}`);
+};
+
+/**
  * Runs a single migration/seed file's statements (plus the optional history insert).
  * Mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`): statements run
  * inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
@@ -524,31 +570,6 @@ const execMigrationBatch = <E>(
       const version = forceNoVersion ? "" : (matches?.[1] ?? "");
       const name = matches?.[2] ?? "";
 
-      // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
-      // on a failed statement, render the `^` caret under the server-reported error
-      // position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
-      // then `At statement: <index>` and the (caret-marked) statement text. The
-      // structured `detail`/`position` fields are only set by the driver for server
-      // ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
-      const atStatement = (e: LegacyDbExecError, index: number, stat: string) => {
-        const marked = legacyMarkError(stat, e.position ?? 0);
-        const msg: Array<string> = [];
-        if (e.detail !== undefined && e.detail.length > 0) {
-          msg.push(e.detail);
-        }
-        // Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
-        const typeName = TYPE_NAME_PATTERN.exec(e.message)?.[1];
-        if (typeName !== undefined && e.code === "42704" && !typeName.includes(".")) {
-          msg.push("");
-          msg.push("Hint: This type may be defined in a schema that's not in your search_path.");
-          msg.push("      Use schema-qualified type references to avoid this error:");
-          msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
-          msg.push("      Learn more: supabase migration new --help");
-        }
-        msg.push(`At statement: ${index}`, marked);
-        return new Error(`${legacyErrorMessage(e)}\n${msg.join("\n")}`);
-      };
-
       // `executed` is the global statement index of the next statement to run, so the
       // error context stays accurate across flushed batches and standalone statements
       // (Go threads the same counter through `ExecBatch`).
@@ -568,12 +589,16 @@ const execMigrationBatch = <E>(
               yield* session
                 .query(INSERT_MIGRATION_VERSION, [version, name, statements])
                 .pipe(
-                  Effect.mapError((cause) => atStatement(cause, index, INSERT_MIGRATION_VERSION)),
+                  Effect.mapError((cause) =>
+                    legacyFormatExecBatchError(cause, index, INSERT_MIGRATION_VERSION),
+                  ),
                 );
             } else {
               yield* session
                 .exec(item.sql)
-                .pipe(Effect.mapError((cause) => atStatement(cause, index, item.sql)));
+                .pipe(
+                  Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, item.sql)),
+                );
             }
           }
           yield* session.exec("COMMIT");
@@ -591,7 +616,7 @@ const execMigrationBatch = <E>(
           const index = executed;
           yield* session
             .exec(statement)
-            .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
+            .pipe(Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)));
           executed += 1;
         } else {
           pending = [...pending, { kind: "exec", sql: statement }];

@@ -8,6 +8,7 @@ import {
 } from "effect/unstable/http";
 import * as Sse from "effect/unstable/encoding/Sse";
 import type { DaemonErrorResponse } from "./DaemonProtocol.ts";
+import { FunctionsReloadConfigSchema } from "./functions.ts";
 import { EdgeRuntimeReloadConfigSchema, Stack } from "./Stack.ts";
 import { ReadyOptionsSchema } from "./StackConfig.ts";
 
@@ -19,6 +20,7 @@ export class DaemonServer extends Context.Service<
   DaemonServer,
   {
     readonly address: HttpServer.Address;
+    readonly beginShutdown: Effect.Effect<void>;
     readonly awaitShutdown: Effect.Effect<void>;
   }
 >()("stack/DaemonServer") {
@@ -32,7 +34,7 @@ export class DaemonServer extends Context.Service<
         const server = yield* HttpServer.HttpServer;
         const shutdownDeferred = yield* Deferred.make<void>();
         const textEncoder = new TextEncoder();
-        const errorResponse = (body: DaemonErrorResponse, status: 404 | 500) =>
+        const errorResponse = (body: DaemonErrorResponse, status: 400 | 404 | 500) =>
           HttpServerResponse.jsonUnsafe(body, { status });
         const notFoundResponse = (name: string) =>
           errorResponse(
@@ -49,8 +51,22 @@ export class DaemonServer extends Context.Service<
             },
             500,
           );
-        const buildErrorResponse = (detail: string) =>
-          errorResponse({ code: "STACK_BUILD_ERROR", error: detail }, 500);
+        const buildErrorResponse = (detail: string, reason?: DaemonErrorResponse["reason"]) =>
+          errorResponse(
+            {
+              code: "STACK_BUILD_ERROR",
+              error: detail,
+              ...(reason === undefined ? {} : { reason }),
+            },
+            500,
+          );
+        const invalidReloadPayloadResponse = () =>
+          errorResponse(
+            { code: "STACK_BUILD_ERROR", error: "Invalid Edge Functions reload payload" },
+            400,
+          );
+        const invalidReadinessOptionsResponse = () =>
+          errorResponse({ code: "STACK_BUILD_ERROR", error: "Invalid readiness options" }, 400);
         const readinessTimeoutResponse = (target: string, timeoutMs: number, detail: string) =>
           errorResponse(
             {
@@ -135,7 +151,7 @@ export class DaemonServer extends Context.Service<
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
@@ -151,11 +167,15 @@ export class DaemonServer extends Context.Service<
               yield* stack.waitAllReady(opts);
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
+              Effect.catchTags({
+                SchemaError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+                HttpServerError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+              }),
               Effect.catchTag("ServiceReadyError", (e) =>
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
@@ -239,7 +259,7 @@ export class DaemonServer extends Context.Service<
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
@@ -256,6 +276,10 @@ export class DaemonServer extends Context.Service<
               yield* stack.waitReady(routeParams.name!, opts);
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
+              Effect.catchTags({
+                SchemaError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+                HttpServerError: () => Effect.succeed(invalidReadinessOptionsResponse()),
+              }),
               Effect.catchTag("ServiceNotFoundError", (e) =>
                 Effect.succeed(notFoundResponse(e.name)),
               ),
@@ -263,7 +287,7 @@ export class DaemonServer extends Context.Service<
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
@@ -283,7 +307,7 @@ export class DaemonServer extends Context.Service<
                 Effect.succeed(notFoundResponse(e.name)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
             ),
           ),
@@ -303,7 +327,7 @@ export class DaemonServer extends Context.Service<
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
@@ -315,13 +339,14 @@ export class DaemonServer extends Context.Service<
             "POST",
             "/functions/reload",
             Effect.gen(function* () {
-              const searchParams = yield* HttpServerRequest.ParsedSearchParams;
-              yield* stack.reloadFunctions({
-                envFile: parseSingleParam(searchParams.envFile),
-                noVerifyJwt: parseBoolean(searchParams.noVerifyJwt),
-              });
+              const body = yield* HttpServerRequest.schemaBodyJson(FunctionsReloadConfigSchema);
+              yield* stack.reloadFunctions(body);
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
+              Effect.catchTags({
+                SchemaError: () => Effect.succeed(invalidReloadPayloadResponse()),
+                HttpServerError: () => Effect.succeed(invalidReloadPayloadResponse()),
+              }),
               Effect.catchTag("ServiceNotFoundError", (e) =>
                 Effect.succeed(notFoundResponse(e.name)),
               ),
@@ -329,7 +354,7 @@ export class DaemonServer extends Context.Service<
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
@@ -345,6 +370,10 @@ export class DaemonServer extends Context.Service<
               yield* stack.reloadEdgeRuntime(body);
               return HttpServerResponse.jsonUnsafe({ ok: true });
             }).pipe(
+              Effect.catchTags({
+                SchemaError: () => Effect.succeed(invalidReloadPayloadResponse()),
+                HttpServerError: () => Effect.succeed(invalidReloadPayloadResponse()),
+              }),
               Effect.catchTag("ServiceNotFoundError", (e) =>
                 Effect.succeed(notFoundResponse(e.name)),
               ),
@@ -352,7 +381,7 @@ export class DaemonServer extends Context.Service<
                 Effect.succeed(notReadyResponse(e.name, e.reason, e.exitCode)),
               ),
               Effect.catchTag("StackBuildError", (e) =>
-                Effect.succeed(buildErrorResponse(e.detail)),
+                Effect.succeed(buildErrorResponse(e.detail, e.reason)),
               ),
               Effect.catchTag("StackReadinessError", (e) =>
                 terminalReadinessResponse(e.target, e.timeoutMs, e.detail),
@@ -366,6 +395,7 @@ export class DaemonServer extends Context.Service<
 
         return {
           address: server.address,
+          beginShutdown,
           awaitShutdown: Deferred.await(shutdownDeferred),
         };
       }),
@@ -392,10 +422,4 @@ function parseServices(
 function parseSingleParam(value: string | ReadonlyArray<string> | undefined): string | undefined {
   if (value === undefined) return undefined;
   return typeof value === "string" ? value : value[0];
-}
-
-function parseBoolean(value: string | ReadonlyArray<string> | undefined): boolean | undefined {
-  const raw = parseSingleParam(value);
-  if (raw === undefined) return undefined;
-  return raw === "true";
 }

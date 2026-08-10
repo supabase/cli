@@ -375,6 +375,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       includeAll: false,
       includeRoles: true,
       includeSeed: true,
+      includeVault: true,
       dnsResolver,
       projectId: cliConfig.projectId,
       toml,
@@ -423,6 +424,16 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   );
 });
 
+// Whether `cause` is the generated client's `SchemaError` — a 200 response the
+// client could not decode, as opposed to a transport failure (DNS, TLS,
+// timeout).
+function isDecodeFailureCause(cause: unknown): boolean {
+  if (typeof cause !== "object" || cause === null || !("_tag" in cause)) {
+    return false;
+  }
+  return cause._tag === "SchemaError";
+}
+
 // Mirrors Go's `checkProjectHealth` non-200 branch: `Error status %d: %s`.
 const mapHealthError = (cause: unknown): Effect.Effect<never, LegacyBootstrapHealthError> => {
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
@@ -431,9 +442,15 @@ const mapHealthError = (cause: unknown): Effect.Effect<never, LegacyBootstrapHea
       Effect.orElseSucceed(() => ""),
       Effect.map(sanitizeLegacyErrorBody),
       Effect.flatMap((body) =>
-        Effect.fail(new LegacyBootstrapHealthError({ message: `Error status ${status}: ${body}` })),
+        Effect.fail(
+          new LegacyBootstrapHealthError({ message: `Error status ${status}: ${body}`, status }),
+        ),
       ),
     );
   }
-  return Effect.fail(new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}` }));
+  return Effect.fail(
+    isDecodeFailureCause(cause)
+      ? new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}`, decode: true })
+      : new LegacyBootstrapHealthError({ message: `Error status 0: ${cause}`, transport: true }),
+  );
 };

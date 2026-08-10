@@ -368,7 +368,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       Effect.gen(function* () {
         const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
         if (output.format !== "text") {
-          yield* proxy.execCapture(rebuildDelegateArgs(flags), { env, stdin: "ignore" });
+          yield* proxy.execCapture(rebuildDelegateArgs(flags), {
+            env,
+            stdin: "ignore",
+            suppressChildTelemetry: true,
+          });
           yield* output.success("Schema pulled.", {
             declarative: false,
             schemaWritten: null,
@@ -377,7 +381,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           });
           return;
         }
-        yield* proxy.exec(rebuildDelegateArgs(flags), { env });
+        yield* proxy.exec(rebuildDelegateArgs(flags), { env, suppressChildTelemetry: true });
       });
 
     // Connectivity check (Go's `ConnectByConfig` at the top of `pull.Run`).
@@ -536,7 +540,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             columnInsert: false,
           };
           const toDumpOpenError = (cause: { readonly message: string }) =>
-            new LegacyDbPullDumpError({ message: `failed to open dump file: ${cause.message}` });
+            new LegacyDbPullDumpError({
+              message: `failed to open dump file: ${cause.message}`,
+              fileOpen: true,
+            });
           // Stream pg_dump → migration file, (re)truncating per attempt so a pooler
           // retry leaves only the successful attempt's bytes (Go's `resetOutput`).
           const runSchemaDump = (target: LegacyPgConnInput) => {

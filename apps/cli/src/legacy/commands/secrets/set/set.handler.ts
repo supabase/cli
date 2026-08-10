@@ -23,6 +23,7 @@ import {
   LegacySecretsEnvFileOpenError,
   LegacySecretsEnvFileParseError,
   LegacySecretsNoArgumentsError,
+  LegacySecretsSetInputError,
   LegacySecretsSetNetworkError,
   LegacySecretsSetUnexpectedStatusError,
 } from "../secrets.errors.ts";
@@ -323,6 +324,12 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
           (cause) =>
             new LegacySecretsEnvFileOpenError({
               message: `failed to open env file: ${String(cause)}`,
+              reason:
+                cause.reason._tag === "NotFound"
+                  ? "not_found"
+                  : cause.reason._tag === "PermissionDenied"
+                    ? "permission"
+                    : "other",
             }),
         ),
       );
@@ -391,13 +398,18 @@ export const legacySecretsSet = Effect.fn("legacy.secrets.set")(function* (
     // cap) before sending any request. Without this, a schema-invalid entry in a
     // later batch would only surface after earlier batches had already been
     // uploaded, leaving the project partially updated. Decoding fails with the
-    // same `SchemaError` `bulkCreateSecrets` raises, so `mapSetError` keeps the
-    // error surface identical to the previous single-call path.
+    // same `SchemaError` `bulkCreateSecrets` raises. This validation is wholly
+    // user-derived, so keep it distinct from response-schema decode failures.
     yield* Effect.forEach(
       batches,
       (batch) => Schema.decodeUnknownEffect(V1BulkCreateSecretsInput)({ ref, body: batch }),
       { discard: true },
-    ).pipe(Effect.catch(mapSetError));
+    ).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacySecretsSetInputError({ message: `failed to set secrets: ${String(cause)}` }),
+      ),
+    );
 
     const setting = output.format === "text" ? yield* output.task("Setting secrets...") : undefined;
     yield* Effect.forEach(batches, (batch) => api.v1.bulkCreateSecrets({ ref, body: batch }), {

@@ -11,6 +11,7 @@ import {
   Layer,
   Path,
   Ref,
+  Schema,
   Semaphore,
   Stream,
   SubscriptionRef,
@@ -18,11 +19,22 @@ import {
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { CleanupTargets } from "./CleanupTargets.ts";
 import { cleanupLocalStackResources } from "./cleanup.ts";
-import { StackBuildError, StackNotRunningError, StackReadinessError } from "./errors.ts";
-import { configureFunctionsRuntime, type FunctionsConfig } from "./functions.ts";
+import {
+  DockerPullError,
+  StackBuildError,
+  StackNotRunningError,
+  StackReadinessError,
+} from "./errors.ts";
+import {
+  clearFunctionsRuntimeConfig,
+  configureFunctionsRuntime,
+  resolvedFunctionsBundleSchemaForProject,
+  type ResolvedFunctionsBundle,
+} from "./functions.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
 import type { PortLease } from "./PortAllocator.ts";
 import {
+  activationReadinessPolicy,
   activationTargetsForService,
   eagerServices,
   lifecycleTargetsForService,
@@ -58,11 +70,19 @@ type LifecyclePhase =
 
 type StackService = typeof Stack.Service;
 
+/** Private signal used by the Promise adapter to close its enclosing managed runtime. */
+export class LocalStackLifecycle extends Context.Service<
+  LocalStackLifecycle,
+  {
+    readonly awaitDisposed: Effect.Effect<void>;
+    readonly isDisposed: Effect.Effect<boolean>;
+  }
+>()("stack/LocalStackLifecycle") {}
+
 interface RuntimeState {
   readonly orchestrator: Orchestrator["Service"];
   readonly graph: ResolvedGraph;
   readonly serviceProjection: StackServiceProjectionCatalog;
-  readonly cleanupTargets: CleanupTargets;
 }
 
 const initialPublicStates = (config: ResolvedStackConfig): ReadonlyArray<StackServiceState> =>
@@ -147,7 +167,7 @@ export const localStackLayer = (
   config: ResolvedStackConfig,
   portLease: PortLease,
 ): Layer.Layer<
-  Stack | StackServiceActivator,
+  Stack | StackServiceActivator | LocalStackLifecycle,
   StackBuildError,
   | StackBuilder
   | StackPreparation
@@ -170,6 +190,11 @@ export const localStackLayer = (
       const enabledServices = enabledServicesForConfig(config);
       const stateRef = yield* SubscriptionRef.make(initialPublicStates(config));
       const phaseRef = yield* Ref.make<LifecyclePhase>("idle");
+      const functionsBundleRef = yield* Ref.make<ResolvedFunctionsBundle | undefined>(
+        config.functions === false ? undefined : config.functions,
+      );
+      const edgeRuntimeConfigRef = yield* Ref.make(config.edgeRuntime);
+      const disposedSignal = yield* Deferred.make<void>();
       const lifecycleLock = Semaphore.makeUnsafe(1);
       const projectionLock = Semaphore.makeUnsafe(1);
 
@@ -223,6 +248,7 @@ export const localStackLayer = (
       let prepareDeferred: Deferred.Deferred<PreparedStackArtifacts, StackBuildError> | undefined;
       let runtimeState: RuntimeState | undefined;
       let runtimeDeferred: Deferred.Deferred<RuntimeState, StackBuildError> | undefined;
+      let exactCleanupTargets: CleanupTargets | undefined;
 
       const ensurePrepared = Effect.suspend(() => {
         if (preparedArtifacts !== undefined) {
@@ -252,6 +278,10 @@ export const localStackLayer = (
                   new StackBuildError({
                     detail: "Failed to prepare stack assets",
                     cause,
+                    reason:
+                      cause instanceof DockerPullError && cause.daemonDown
+                        ? "docker_not_running"
+                        : "asset_preparation",
                   }),
               ),
             )
@@ -337,6 +367,7 @@ export const localStackLayer = (
             config,
             prepared,
           );
+          exactCleanupTargets = cleanupTargets;
 
           yield* metadataPersistence.persistCleanupTargets(cleanupTargets).pipe(
             Effect.mapError(
@@ -366,7 +397,6 @@ export const localStackLayer = (
             orchestrator,
             graph,
             serviceProjection,
-            cleanupTargets,
           } satisfies RuntimeState;
         }).pipe(
           Effect.tap((value) =>
@@ -405,11 +435,25 @@ export const localStackLayer = (
           Effect.provideService(FileSystem.FileSystem, fs),
           Effect.provideService(Path.Path, path),
         );
+      const decodeFunctionsBundle = (bundle: unknown) =>
+        Schema.decodeUnknownEffect(resolvedFunctionsBundleSchemaForProject(config.projectDir))(
+          bundle,
+        ).pipe(
+          Effect.mapError(
+            (cause) =>
+              new StackBuildError({
+                detail: "Invalid Edge Functions bundle",
+                cause,
+                reason: "invalid_config",
+              }),
+          ),
+        );
       const configureFunctions = (
         nextConfig: ResolvedStackConfig,
+        bundle: ResolvedFunctionsBundle | undefined,
       ): Effect.Effect<void, StackBuildError> =>
         Effect.gen(function* () {
-          yield* providePlatform(configureFunctionsRuntime(nextConfig, yield* runtimeHost));
+          yield* providePlatform(configureFunctionsRuntime(nextConfig, yield* runtimeHost, bundle));
         }).pipe(
           Effect.mapError(
             (cause) =>
@@ -419,36 +463,23 @@ export const localStackLayer = (
               }),
           ),
         );
-      const configWithFunctionOptions = (opts?: FunctionsConfig): ResolvedStackConfig => {
-        if (opts === undefined) {
-          return config;
-        }
-        const base = config.functions === false ? { noVerifyJwt: false } : config.functions;
-        return {
-          ...config,
-          functions: {
-            envFile: opts.envFile ?? base.envFile,
-            noVerifyJwt: opts.noVerifyJwt ?? base.noVerifyJwt,
-          },
-        };
-      };
       const configWithEdgeRuntimeOptions = (
         opts: EdgeRuntimeReloadConfig,
       ): Effect.Effect<ResolvedStackConfig, ServiceNotFoundError> =>
         Effect.gen(function* () {
-          if (config.edgeRuntime === false || opts.edgeRuntime.enabled === false) {
+          const currentEdgeRuntime = yield* Ref.get(edgeRuntimeConfigRef);
+          if (currentEdgeRuntime === false || opts.edgeRuntime.enabled === false) {
             return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
           }
 
-          const base = configWithFunctionOptions(opts.functions);
           return {
-            ...base,
+            ...config,
             edgeRuntime: {
-              ...config.edgeRuntime,
-              enabled: opts.edgeRuntime.enabled ?? config.edgeRuntime.enabled,
-              inspectorPort: opts.edgeRuntime.inspectorPort ?? config.edgeRuntime.inspectorPort,
-              policy: opts.edgeRuntime.policy ?? config.edgeRuntime.policy,
-              env: opts.edgeRuntime.env ?? config.edgeRuntime.env,
+              ...currentEdgeRuntime,
+              enabled: opts.edgeRuntime.enabled ?? currentEdgeRuntime.enabled,
+              inspectorPort: opts.edgeRuntime.inspectorPort ?? currentEdgeRuntime.inspectorPort,
+              policy: opts.edgeRuntime.policy ?? currentEdgeRuntime.policy,
+              env: opts.edgeRuntime.env ?? currentEdgeRuntime.env,
             },
           };
         });
@@ -596,14 +627,18 @@ export const localStackLayer = (
             yield* cleanupLocalStackResources({
               stop: () =>
                 runtimeState === undefined ? Effect.void : runtimeState.orchestrator.stop(),
-              cleanupTargets: runtimeState?.cleanupTargets ?? { dockerContainerNames: [] },
+              cleanupTargets: exactCleanupTargets ?? { dockerContainerNames: [] },
               config,
             }).pipe(
+              Effect.ensuring(providePlatform(clearFunctionsRuntimeConfig(config.runtimeRoot))),
               Effect.ensuring(portLease.releaseAll),
               Effect.ensuring(Ref.set(phaseRef, "disposed")),
             );
           }).pipe(withLifecycleLock);
-        }).pipe(Effect.uninterruptible);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(disposedSignal, undefined).pipe(Effect.asVoid)),
+          Effect.uninterruptible,
+        );
 
       const withReadinessPolicy = <A, E, R>(
         effect: Effect.Effect<A, E, R>,
@@ -639,7 +674,6 @@ export const localStackLayer = (
             disposeOnce().pipe(Effect.andThen(Effect.fail(error))),
           ),
         );
-
       yield* Effect.addFinalizer(disposeOnce);
 
       const activateService = (name: ServiceName) =>
@@ -654,7 +688,13 @@ export const localStackLayer = (
             return;
           }
           if (existing !== undefined) {
-            yield* waitForTargets(existing).pipe((effect) => withReadinessPolicy(effect, name));
+            yield* waitForTargets(existing).pipe((effect) =>
+              withReadinessPolicy(
+                effect,
+                name,
+                activationReadinessPolicy(service, config.readiness, config.readinessSource),
+              ),
+            );
             return;
           }
           const started = yield* Effect.gen(function* () {
@@ -663,17 +703,25 @@ export const localStackLayer = (
             if (concurrentlyStarted !== undefined) return concurrentlyStarted;
             return yield* beginStartTargets(service, new Set());
           }).pipe(withLifecycleLock);
-          yield* waitForTargets(started).pipe((effect) => withReadinessPolicy(effect, name));
+          yield* waitForTargets(started).pipe((effect) =>
+            withReadinessPolicy(
+              effect,
+              name,
+              activationReadinessPolicy(service, config.readiness, config.readinessSource),
+            ),
+          );
         }).pipe(cleanupOnReadinessFailure);
 
       const stack = {
         getInfo: () => Effect.succeed(info),
-        start: () =>
-          Effect.gen(function* () {
+        start: () => {
+          let serviceStartupBegan = false;
+          return Effect.gen(function* () {
             yield* requireMutable("start");
             yield* Ref.set(phaseRef, "starting");
             const runtime = yield* ensureRuntime;
-            yield* configureFunctions(config);
+            yield* configureFunctions(config, yield* Ref.get(functionsBundleRef));
+            serviceStartupBegan = true;
 
             if (config.startupMode === "lazy") {
               const readiness: Array<Effect.Effect<void, ServiceReadyError | StackBuildError>> = [];
@@ -718,8 +766,9 @@ export const localStackLayer = (
           }).pipe(
             Effect.onError(() => Ref.set(phaseRef, "stopped")),
             withLifecycleLock,
-            cleanupOnReadinessFailure,
-          ),
+            Effect.onError(() => (serviceStartupBegan ? disposeOnce() : Effect.void)),
+          );
+        },
         stop: () =>
           Effect.gen(function* () {
             if (disposed) {
@@ -774,7 +823,13 @@ export const localStackLayer = (
             const started = yield* Effect.gen(function* () {
               yield* requireMutable("reload functions");
               yield* requireKnownService("edge-runtime");
-              yield* configureFunctions(configWithFunctionOptions(opts));
+              const currentBundle = yield* Ref.get(functionsBundleRef);
+              const nextBundle =
+                opts?.functions === undefined
+                  ? currentBundle
+                  : yield* decodeFunctionsBundle(opts.functions);
+              yield* configureFunctions(config, nextBundle);
+              yield* Ref.set(functionsBundleRef, nextBundle);
               const runtime = yield* ensureRuntime;
               const state = yield* runtime.orchestrator.getState("edge-runtime");
               if (state.desired !== "running") {
@@ -793,6 +848,11 @@ export const localStackLayer = (
               yield* requireMutable("reload Edge Runtime");
               yield* requireKnownService("edge-runtime");
               const nextConfig = yield* configWithEdgeRuntimeOptions(opts);
+              const currentBundle = yield* Ref.get(functionsBundleRef);
+              const nextBundle =
+                opts.functions === undefined
+                  ? currentBundle
+                  : yield* decodeFunctionsBundle(opts.functions);
               const prepared = yield* ensurePrepared;
               const runtime = yield* ensureRuntime;
               const buildResult = yield* builder.build(nextConfig, prepared);
@@ -804,7 +864,8 @@ export const localStackLayer = (
                 return yield* Effect.fail(new ServiceNotFoundError({ name: "edge-runtime" }));
               }
 
-              yield* configureFunctions(nextConfig);
+              yield* configureFunctions(nextConfig, nextBundle);
+              yield* Ref.set(functionsBundleRef, nextBundle);
               yield* runtime.orchestrator
                 .updateServiceDefinition("edge-runtime", edgeRuntimeDef)
                 .pipe(
@@ -816,6 +877,7 @@ export const localStackLayer = (
                       }),
                   ),
                 );
+              yield* Ref.set(edgeRuntimeConfigRef, nextConfig.edgeRuntime);
               const state = yield* runtime.orchestrator.getState("edge-runtime");
               if (state.desired !== "running") {
                 return yield* beginStartTargets("edge-runtime", new Set(["edge-runtime"]));
@@ -889,6 +951,10 @@ export const localStackLayer = (
 
       return Context.make(Stack, stack).pipe(
         Context.add(StackServiceActivator, { activate: activateService }),
+        Context.add(LocalStackLifecycle, {
+          awaitDisposed: Deferred.await(disposedSignal),
+          isDisposed: Effect.sync(() => disposed),
+        }),
       );
     }),
   );

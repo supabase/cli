@@ -270,66 +270,6 @@ var (
 		},
 	}
 
-	bootstrapMode     string
-	bootstrapSqlPaths []string
-	bootstrapVersion  string
-	bootstrapNoSeed   bool
-
-	// dbBootstrapCmd is a hidden seam used by the native-TypeScript `db reset --local`
-	// command to drive the container-bootstrap primitives that are not yet ported to
-	// TypeScript: recreating the local Postgres container, applying the initial
-	// schema, and the storage health gate. The TS caller orchestrates everything else
-	// (version/last resolution, bucket seeding, the git-branch "Finished…" line,
-	// telemetry, and --output-format shaping); the seam stays in Go only for the
-	// Docker lifecycle. It mirrors the existing db __shadow seam: it carries no
-	// db-url/local/linked target flags, so it loads supabase/config.toml explicitly
-	// (the root PersistentPreRunE only loads it when a target flag is set). Progress
-	// goes to stderr; the only stdout output is a single machine-parseable marker
-	// for --mode await-storage ("ready" or "absent"). `db start`'s own container
-	// bootstrap (--mode start) was removed from this seam by CLI-1954 — it is now a
-	// fully native TypeScript implementation
-	// (apps/cli/src/legacy/commands/db/start/start.handler.ts), reusing
-	// legacy/shared/db-bootstrap/'s already-ported container-bootstrap primitives
-	// instead of shelling out to this binary. `start.StartDatabase` itself (called
-	// below by the real, customer-facing `db start` Go command) is untouched — it
-	// remains the parity oracle this TS port was checked against.
-	dbBootstrapCmd = &cobra.Command{
-		Use:    "__db-bootstrap",
-		Hidden: true,
-		Short:  "Internal: container bootstrap for the native db start / db reset commands",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := flags.LoadConfig(fsys); err != nil {
-				return err
-			}
-			switch bootstrapMode {
-			case "recreate":
-				// The PG14/PG15 container-recreate half of local db reset. The TS
-				// caller has already printed "Resetting local database…" and validated
-				// the flags. Apply the same seed handling as `db reset` (dbResetCmd):
-				// `--no-seed` disables the seed, `--sql-paths` overrides the seed paths,
-				// before MigrateAndSeed runs inside the recreate.
-				if err := applyDbResetSeedFlags(bootstrapNoSeed, bootstrapSqlPaths); err != nil {
-					return err
-				}
-				return reset.RecreateLocalDatabase(cmd.Context(), bootstrapVersion, fsys)
-			case "await-storage":
-				ready, err := reset.AwaitStorageReady(cmd.Context())
-				if err != nil {
-					return err
-				}
-				if ready {
-					fmt.Println("ready")
-				} else {
-					fmt.Println("absent")
-				}
-				return nil
-			default:
-				return fmt.Errorf("unknown bootstrap mode: %s", bootstrapMode)
-			}
-		},
-	}
-
 	dbRemoteCmd = &cobra.Command{
 		Hidden: true,
 		Use:    "remote",
@@ -680,13 +620,6 @@ func init() {
 	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
 	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
 	dbCmd.AddCommand(dbShadowCmd)
-	// Build hidden container-bootstrap seam command (native db start / db reset)
-	bootstrapFlags := dbBootstrapCmd.Flags()
-	bootstrapFlags.StringVar(&bootstrapMode, "mode", "recreate", "Bootstrap mode: recreate or await-storage.")
-	bootstrapFlags.StringVar(&bootstrapVersion, "version", "", "Reset up to the specified version (recreate mode).")
-	bootstrapFlags.BoolVar(&bootstrapNoSeed, "no-seed", false, "Skip the seed script after recreate (recreate mode).")
-	bootstrapFlags.StringArrayVar(&bootstrapSqlPaths, "sql-paths", nil, "Override [db.seed].sql_paths for the recreate (recreate mode).")
-	dbCmd.AddCommand(dbBootstrapCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")

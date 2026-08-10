@@ -1,4 +1,5 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
@@ -14,7 +15,7 @@ interface DockerRealtimeOptions {
   readonly encryptionKey: string;
   readonly secretKeyBase: string;
   readonly maxHeaderLength: number;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -38,9 +39,9 @@ const realtimeHealthCheck = (port: number, tenantId: string): ServiceDef["health
 export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceDef =>
   dockerRunService({
     name: "realtime",
-    containerName: `supabase-realtime-${opts.apiPort}`,
+    apiPort: opts.apiPort,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     env: {
       PORT: String(opts.port),
       DB_HOST: opts.dbHost,
@@ -62,6 +63,6 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
       RUN_JANITOR: "true",
       MAX_HEADER_LENGTH: String(opts.maxHeaderLength),
     },
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: realtimeHealthCheck(opts.port, opts.tenantId),
   });

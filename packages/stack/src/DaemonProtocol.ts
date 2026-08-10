@@ -8,12 +8,19 @@ const DaemonErrorCodeSchema = Schema.Literals([
   "STACK_BUILD_ERROR",
 ]);
 
+const StackBuildReasonSchema = Schema.Literals([
+  "invalid_config",
+  "docker_not_running",
+  "asset_preparation",
+]);
+
 export const DaemonErrorResponseSchema = Schema.Struct({
   code: DaemonErrorCodeSchema,
   error: Schema.String,
   service: Schema.optionalKey(Schema.String),
   exitCode: Schema.optionalKey(Schema.Number),
   timeoutMs: Schema.optionalKey(Schema.Number),
+  reason: Schema.optionalKey(StackBuildReasonSchema),
 });
 
 export type DaemonErrorResponse = typeof DaemonErrorResponseSchema.Type;

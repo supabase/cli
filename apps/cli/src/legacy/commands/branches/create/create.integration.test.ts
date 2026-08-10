@@ -22,6 +22,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyBranchesCreateCommand, type LegacyBranchesCreateFlags } from "./create.command.ts";
 import { legacyBranchesCreate } from "./create.handler.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
@@ -217,6 +218,33 @@ describe("legacy branches create integration", () => {
         git_branch: "feature/login-page",
       });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports a missing name before contacting the API outside a git repository", () => {
+    const previousHead = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* legacyBranchesCreate(baseFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyBranchesBranchNameEmptyError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "user_actionable",
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
+      }
+      expect(api.requests).toHaveLength(0);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousHead === undefined) delete process.env["GITHUB_HEAD_REF"];
+          else process.env["GITHUB_HEAD_REF"] = previousHead;
+        }),
+      ),
+      Effect.provide(layer),
+    );
   });
 
   // ---------------------------------------------------------------------------

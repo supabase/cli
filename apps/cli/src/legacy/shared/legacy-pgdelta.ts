@@ -179,8 +179,14 @@ const buildDiffEnv = Effect.fnUntraced(function* (
   return env;
 });
 
-const toDeclarativeEdgeRuntimeError = (error: { readonly message: string }) =>
-  new LegacyDeclarativeEdgeRuntimeError({ message: error.message });
+const toDeclarativeEdgeRuntimeError = (error: {
+  readonly message: string;
+  readonly docker?: "daemon" | "inspect" | "pull";
+}) =>
+  new LegacyDeclarativeEdgeRuntimeError({
+    message: error.message,
+    ...(error.docker !== undefined ? { docker: error.docker } : {}),
+  });
 
 /**
  * Diffs SOURCE → TARGET via the pg-delta diff script. Mirrors Go's

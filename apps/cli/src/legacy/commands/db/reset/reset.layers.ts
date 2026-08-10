@@ -11,36 +11,42 @@ import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.la
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
 import { legacyEdgeRuntimeScriptLayer } from "../../../shared/legacy-edge-runtime-script.layer.ts";
+import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { legacyIdentityStitchLayer } from "../../../shared/legacy-identity-stitch.ts";
-import { legacyPgDeltaSslProbeLayer } from "../../../shared/legacy-pgdelta-ssl-probe.layer.ts";
 import { legacyLinkedProjectCacheLayer } from "../../../telemetry/legacy-linked-project-cache.layer.ts";
 import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
-import { legacyDbBootstrapSeamLayer } from "../shared/legacy-db-bootstrap.seam.layer.ts";
 
 /**
  * Runtime layer for `supabase db reset`. Same composition as `db push` / `db lint`:
  * the Postgres connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache, all over the lazy management-API factory so the local /
- * `--db-url` paths never resolve an access token at layer-build time. The remote
- * reset path (including the `--experimental` remote schema-files apply, CLI-1958)
- * is fully native. The local path's container primitives still reach `LegacyGoProxy`
- * through the bootstrap seam below (`legacyDbBootstrapSeamLayer`, ambient from the
- * root) — that native port is CLI-1955's scope, not this one.
+ * `--db-url` paths never resolve an access token at layer-build time. Both targets
+ * are fully native (CLI-1955/CLI-2062 for the local container-recreate primitives,
+ * CLI-1958 for the remote `--experimental` schema-files apply) — no Go delegation
+ * remains on this command, so `LegacyGoProxy` is not composed here.
  *
- * `legacyDockerRunLayer` + `edgeRuntime` + `legacyPgDeltaSslProbeLayer` (same shape
- * as `db push`'s `legacyDbPushRuntimeLayer`) are required by the post-reset
- * best-effort pg-delta catalog cache below (`legacyTryCacheMigrationsCatalog` →
- * `legacyExportCatalogPgDelta` → `LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe`,
- * `legacy-pgdelta.ts`/`legacy-pgdelta-ssl.ts`). Without them, a versionless remote
- * reset with pg-delta enabled (`[experimental.pgdelta].enabled` or
- * `SUPABASE_EXPERIMENTAL_PG_DELTA`) would hit an unhandled missing-service defect
- * — not caught by the handler's typed `Effect.catch` — AFTER the remote database
- * has already been reset, instead of writing the catalog or emitting Go's
- * best-effort warning (review CLI-1958).
+ * `legacyDockerRunLayer` backs the native local recreate's PG15+ one-shot migrate
+ * jobs (`legacyStartSetupLocalDatabase`, reused via `legacyRecreateLocalDatabase`)
+ * — same reasoning as `db start`'s own `start.layers.ts`.
+ * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back that same shared
+ * setup pipeline's best-effort pg-delta migrations-catalog warmup (`db-setup.ts`'s
+ * `legacyTryCacheMigrationsCatalog` call, reachable from `db reset`'s PG15 recreate
+ * too) AND the remote path's own post-reset catalog-cache call — the exact same
+ * pair `db start`/`db push` already compose for their own calls to that function
+ * (`db/start/start.layers.ts`, `push.layers.ts`). Without them, a versionless reset
+ * with pg-delta enabled would hit an unhandled missing-service defect — not caught
+ * by the handler's typed `Effect.catch` — AFTER the database has already been
+ * reset, instead of writing the catalog or emitting Go's best-effort warning
+ * (review CLI-1958). `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/
+ * `RuntimeInfo` are ambient from the root runtime (`shared/cli/run.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(cliConfig),
+);
 const credentials = legacyCredentialsLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDebugLoggerLayer),
@@ -72,17 +78,9 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(legacyIdentityStitchLayer),
 );
 
-const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
-  Layer.provide(legacyDockerRunLayer),
-  Layer.provide(cliConfig),
-);
-
 export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDbConnectionLayer,
-  legacyDockerRunLayer,
-  edgeRuntime,
-  legacyPgDeltaSslProbeLayer,
   cliConfig,
   httpClient,
   credentials,
@@ -99,7 +97,10 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   // `console.ReadLine`); without it a CI/piped remote `db reset` that reaches the
   // confirmation prompt fails with a missing-service defect instead of the default.
   stdinLayer,
-  // Container-recreate / storage-health primitives for the native local reset.
-  legacyDbBootstrapSeamLayer.pipe(Layer.provide(cliConfig)),
+  // Backs the native local recreate's PG15+ one-shot migrate jobs, and the remote
+  // path's own post-reset pg-delta catalog-cache call.
+  legacyDockerRunLayer,
+  edgeRuntime,
+  legacyPgDeltaSslProbeLayer,
   commandRuntimeLayer(["db", "reset"]),
 );
