@@ -115,7 +115,11 @@ describe("managed stack acceptance contract", () => {
     const identityMarkerWrite = {
       target: "identity-marker",
       operation: "create",
-      id: "project-clone",
+      id: "marker-project-a",
+      storage: "project-local-untracked",
+      projectId: "project-a",
+      checkoutId: "checkout-a",
+      contextId: "context-main",
     } satisfies ManagedStackContractScenario["expected"]["writes"][number];
     const trackedMarkerMutation = {
       ...trackedMarkerScenario,
@@ -237,6 +241,26 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([incompleteQualification])).toContain(
       `${qualificationScenario.id}: native qualification omits service postgres`,
+    );
+
+    const qualificationForDifferentPlatform = {
+      ...qualificationScenario,
+      given: qualificationScenario.given.map((fact) =>
+        fact.kind === "native-qualification" ? { ...fact, platform: "linux-amd64" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([qualificationForDifferentPlatform])).toContain(
+      `${qualificationScenario.id}: native qualification platform must match the preflight action`,
+    );
+
+    const qualificationForUnknownPlatform = {
+      ...qualificationScenario,
+      given: qualificationScenario.given.map((fact) =>
+        fact.kind === "native-qualification" ? { ...fact, platform: "solaris-sparc" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([qualificationForUnknownPlatform])).toContain(
+      `${qualificationScenario.id}: native qualification uses unknown platform solaris-sparc`,
     );
 
     const statusScenario: ManagedStackContractScenario | undefined =
@@ -409,6 +433,20 @@ describe("managed stack acceptance contract", () => {
       `${stickyPortScenario.id}: sticky port conflict requires a stopped selected stack`,
     );
 
+    const portUpdateScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "ports.config-change-on-stopped-stack-applies",
+    );
+    if (portUpdateScenario === undefined) {
+      throw new Error("ports.config-change-on-stopped-stack-applies fixture is required");
+    }
+    const unboundPortUpdate = {
+      ...portUpdateScenario,
+      expected: { ...portUpdateScenario.expected, selection: undefined },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unboundPortUpdate])).toContain(
+      `${portUpdateScenario.id}: contextual CLI stack result requires a selected target`,
+    );
+
     const runtimeConflictScenario: ManagedStackContractScenario | undefined =
       managedStackContractFixtures.find(
         ({ id }) => id === "runtime.persisted-runtime-conflict-fails",
@@ -524,6 +562,19 @@ describe("managed stack acceptance contract", () => {
       `${deleteScenario.id}: runtime-state delete requires a matching runtime effect`,
     );
 
+    const deleteWithoutTombstone = {
+      ...deleteScenario,
+      expected: {
+        ...deleteScenario.expected,
+        writes: deleteScenario.expected.writes.filter(
+          (write) => write.target !== "registry" || write.operation !== "tombstone",
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([deleteWithoutTombstone])).toContain(
+      `${deleteScenario.id}: managed-state deletion requires a registry tombstone`,
+    );
+
     const stickyReuseScenario = managedStackContractFixtures.find(
       ({ id }) => id === "ports.sticky-ports-reuse-on-return",
     );
@@ -580,6 +631,30 @@ describe("managed stack acceptance contract", () => {
       `${repositoryContractScenario.id}: repository in-memory outcome must match ${scenario.id}`,
     );
 
+    const divergentRepositoryIdentity = {
+      ...repositoryContractScenario,
+      expected: {
+        ...repositoryContractScenario.expected,
+        output: {
+          ...repositoryContractScenario.expected.output,
+          api: {
+            ...repositoryApiOutput,
+            "persistent-adapter": { outcome: "reuse", stackId: "stack-other" },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    const divergentRepositoryErrors = validateManagedStackContractFixtures([
+      scenario,
+      divergentRepositoryIdentity,
+    ]);
+    expect(divergentRepositoryErrors).toContain(
+      `${repositoryContractScenario.id}: repository persistent-adapter stackId must match ${scenario.id}`,
+    );
+    expect(divergentRepositoryErrors).toContain(
+      `${repositoryContractScenario.id}: repository adapter decisions must be identical`,
+    );
+
     const invalidNameScenario: ManagedStackContractScenario | undefined =
       managedStackContractFixtures.find(
         ({ id }) => id === "identity.invalid-stack-name-uppercase-underscore-fails",
@@ -600,6 +675,74 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([divergentHumanRecovery])).toContain(
       `${invalidNameScenario.id}: human recovery disagrees with the managed result`,
+    );
+
+    const divergentJsonRecovery = {
+      ...invalidNameScenario,
+      expected: {
+        ...invalidNameScenario.expected,
+        output: {
+          ...invalidNameScenario.expected.output,
+          json: { ...invalidNameScenario.expected.output.json, recovery: ["Try again"] },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([divergentJsonRecovery])).toContain(
+      `${invalidNameScenario.id}: JSON recovery disagrees with the managed result`,
+    );
+
+    const newBranchScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.new-branch-first-start-creates-stack",
+    );
+    if (newBranchScenario === undefined) {
+      throw new Error("identity.new-branch-first-start-creates-stack fixture is required");
+    }
+    const contextOwnedByDifferentBranch = {
+      ...newBranchScenario,
+      expected: {
+        ...newBranchScenario.expected,
+        writes: newBranchScenario.expected.writes.map((write) =>
+          write.target === "git-config" && write.id === "context-feat-a"
+            ? { ...write, owner: "main" }
+            : write,
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([contextOwnedByDifferentBranch])).toContain(
+      `${newBranchScenario.id}: Git context context-feat-a must belong to branch feat-a`,
+    );
+
+    const firstOrdinaryFolderStart = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.non-git-folder-first-start-persists-identity",
+    );
+    if (firstOrdinaryFolderStart === undefined) {
+      throw new Error("identity.non-git-folder-first-start-persists-identity fixture is required");
+    }
+    const ordinaryFolderWithoutMarkerWrite = {
+      ...firstOrdinaryFolderStart,
+      expected: {
+        ...firstOrdinaryFolderStart.expected,
+        writes: firstOrdinaryFolderStart.expected.writes.filter(
+          (write) => write.target !== "identity-marker",
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ordinaryFolderWithoutMarkerWrite])).toContain(
+      `${firstOrdinaryFolderStart.id}: ordinary-folder creation must persist its identity marker`,
+    );
+
+    const laterOrdinaryFolderStart = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.non-git-folder-recovers-persisted-identity",
+    );
+    if (laterOrdinaryFolderStart === undefined) {
+      throw new Error("identity.non-git-folder-recovers-persisted-identity fixture is required");
+    }
+    const ordinaryFolderWithoutMarkerFact = {
+      ...laterOrdinaryFolderStart,
+      given: laterOrdinaryFolderStart.given.filter((fact) => fact.kind !== "identity-marker"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ordinaryFolderWithoutMarkerFact])).toContain(
+      `${laterOrdinaryFolderStart.id}: ordinary-folder reuse must resolve its identity marker`,
     );
   });
 
@@ -638,7 +781,8 @@ describe("managed stack acceptance contract", () => {
         "identity.moved-checkout-reuses-identity",
         "identity.named-stacks-are-context-scoped",
         "identity.new-branch-first-start-creates-stack",
-        "identity.non-git-folder-reuses-workspace-context",
+        "identity.non-git-folder-first-start-persists-identity",
+        "identity.non-git-folder-recovers-persisted-identity",
         "identity.original-gone-turns-copy-into-rename",
         "identity.read-only-unregistered-checkout-does-not-write",
         "identity.return-to-branch-reuses-stack",
@@ -650,6 +794,61 @@ describe("managed stack acceptance contract", () => {
         "identity.bare-repository-linked-worktrees-share-project",
       ].sort(),
     );
+  });
+
+  it("persists and recovers ordinary-folder identity across starts", () => {
+    const firstStart = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.non-git-folder-first-start-persists-identity",
+    );
+    const laterStart = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.non-git-folder-recovers-persisted-identity",
+    );
+
+    expect(firstStart).toMatchObject({
+      when: { interface: "cli", argv: ["start", "--experimental"], cwd: "/work/project-a" },
+      expected: {
+        outcome: "create",
+        selection: {
+          projectId: "project-a",
+          checkoutId: "checkout-a",
+          contextId: "context-workspace",
+          stackId: "stack-workspace-default",
+        },
+        writes: expect.arrayContaining([
+          {
+            target: "identity-marker",
+            operation: "create",
+            id: "marker-project-a",
+            storage: "project-local-untracked",
+            projectId: "project-a",
+            checkoutId: "checkout-a",
+            contextId: "context-workspace",
+          },
+        ]),
+      },
+    });
+    expect(laterStart).toMatchObject({
+      given: expect.arrayContaining([
+        {
+          kind: "identity-marker",
+          markerId: "marker-project-a",
+          workspacePath: "/work/project-a",
+          projectId: "project-a",
+          checkoutId: "checkout-a",
+          contextId: "context-workspace",
+          tracked: false,
+        },
+      ]),
+      expected: {
+        outcome: "reuse",
+        selection: {
+          projectId: "project-a",
+          checkoutId: "checkout-a",
+          contextId: "context-workspace",
+          stackId: "stack-workspace-default",
+        },
+      },
+    });
   });
 
   it("executes every invalid stack name through the public CLI action", () => {
