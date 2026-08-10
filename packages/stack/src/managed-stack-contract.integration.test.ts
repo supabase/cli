@@ -58,6 +58,53 @@ describe("managed stack acceptance contract", () => {
       `${scenario.id}: selection references undeclared ID stack-undeclared`,
     );
 
+    const independentBranchesScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.same-commit-different-branches-are-independent",
+      );
+    if (
+      independentBranchesScenario === undefined ||
+      independentBranchesScenario.expected.selection === undefined
+    ) {
+      throw new Error(
+        "identity.same-commit-different-branches-are-independent selection is required",
+      );
+    }
+    const selectionWithWrongContext = {
+      ...independentBranchesScenario,
+      expected: {
+        ...independentBranchesScenario.expected,
+        selection: {
+          ...independentBranchesScenario.expected.selection,
+          contextId: "context-main",
+        },
+        output: {
+          ...independentBranchesScenario.expected.output,
+          api: {
+            ...independentBranchesScenario.expected.output.api,
+            contextId: "context-main",
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([selectionWithWrongContext])).toContain(
+      `${independentBranchesScenario.id}: selected stack stack-feat-default belongs to context context-feat, not context-main`,
+    );
+
+    const selectionWithWrongName = {
+      ...independentBranchesScenario,
+      expected: {
+        ...independentBranchesScenario.expected,
+        selection: {
+          ...independentBranchesScenario.expected.selection,
+          stackName: "review",
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([selectionWithWrongName])).toContain(
+      `${independentBranchesScenario.id}: selected stack stack-feat-default is named default, not review`,
+    );
+
     const undeclaredWrite = {
       ...scenario,
       expected: {
@@ -480,6 +527,33 @@ describe("managed stack acceptance contract", () => {
       `${siblingPortScenario.id}: managed sibling port owner must differ from the selected target`,
     );
 
+    const siblingAllocationScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "ports.sibling-targets-allocate-independent-ports",
+      );
+    if (
+      siblingAllocationScenario === undefined ||
+      siblingAllocationScenario.expected.output.api === undefined
+    ) {
+      throw new Error("ports.sibling-targets-allocate-independent-ports API fixture is required");
+    }
+    const siblingAllocationCollision = {
+      ...siblingAllocationScenario,
+      expected: {
+        ...siblingAllocationScenario.expected,
+        output: {
+          ...siblingAllocationScenario.expected.output,
+          api: {
+            ...siblingAllocationScenario.expected.output.api,
+            ports: { api: 55421, db: 55424 },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([siblingAllocationCollision])).toContain(
+      `${siblingAllocationScenario.id}: allocated port 55421 conflicts with a sibling target`,
+    );
+
     const stickyPortScenario: ManagedStackContractScenario | undefined =
       managedStackContractFixtures.find(
         ({ id }) => id === "ports.later-sticky-port-collision-fails",
@@ -695,6 +769,42 @@ describe("managed stack acceptance contract", () => {
     if (repositoryApiOutput === undefined) {
       throw new Error("repository contract API output is required");
     }
+    const emptyRepositoryMatrix = {
+      ...repositoryContractScenario,
+      when: {
+        ...repositoryContractScenario.when,
+        input: { ...repositoryContractScenario.when.input, adapters: [] },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([scenario, emptyRepositoryMatrix])).toContain(
+      `${repositoryContractScenario.id}: repository contract must declare its adapters`,
+    );
+
+    const duplicateRepositoryMatrix = {
+      ...repositoryContractScenario,
+      when: {
+        ...repositoryContractScenario.when,
+        input: {
+          ...repositoryContractScenario.when.input,
+          adapters: ["in-memory", "in-memory"],
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([scenario, duplicateRepositoryMatrix])).toContain(
+      `${repositoryContractScenario.id}: repository contract adapters must be unique`,
+    );
+
+    const repositoryMatrixMissingFact = {
+      ...repositoryContractScenario,
+      when: {
+        ...repositoryContractScenario.when,
+        input: { ...repositoryContractScenario.when.input, adapters: ["in-memory"] },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([scenario, repositoryMatrixMissingFact])).toContain(
+      `${repositoryContractScenario.id}: repository adapters must match declared repository facts`,
+    );
+
     const unknownRepositoryReference = {
       ...repositoryContractScenario,
       when: {
@@ -783,6 +893,23 @@ describe("managed stack acceptance contract", () => {
       `${invalidNameScenario.id}: JSON recovery disagrees with the managed result`,
     );
 
+    const invalidNameJson = invalidNameScenario.expected.output.json;
+    if (invalidNameJson === undefined) {
+      throw new Error("invalid stack name JSON fixture is required");
+    }
+    const { code: omittedCode, ...jsonWithoutCode } = invalidNameJson;
+    expect(omittedCode).toBe("invalid_stack_name");
+    const jsonProjectionWithoutCode = {
+      ...invalidNameScenario,
+      expected: {
+        ...invalidNameScenario.expected,
+        output: { ...invalidNameScenario.expected.output, json: jsonWithoutCode },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([jsonProjectionWithoutCode])).toContain(
+      `${invalidNameScenario.id}: JSON projection requires a code`,
+    );
+
     const credentialDefaultsScenario: ManagedStackContractScenario | undefined =
       managedStackContractFixtures.find(
         ({ id }) => id === "credentials.omitted-values-use-stable-defaults",
@@ -823,6 +950,20 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([contextOwnedByDifferentBranch])).toContain(
       `${newBranchScenario.id}: Git context context-feat-a must belong to branch feat-a`,
+    );
+
+    const recreatedBranchScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.branch-delete-recreate-creates-context",
+    );
+    if (recreatedBranchScenario === undefined) {
+      throw new Error("identity.branch-delete-recreate-creates-context fixture is required");
+    }
+    const recreatedBranchWithoutGitState = {
+      ...recreatedBranchScenario,
+      given: recreatedBranchScenario.given.filter((fact) => fact.kind !== "git-state"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([recreatedBranchWithoutGitState])).toContain(
+      `${recreatedBranchScenario.id}: creating a Git context requires Git state for the workspace`,
     );
 
     const firstOrdinaryFolderStart = managedStackContractFixtures.find(
@@ -869,7 +1010,7 @@ describe("managed stack acceptance contract", () => {
       given: runtimeCreationScenario.given.filter((fact) => fact.kind !== "managed-target"),
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([runtimeCreationWithoutAbsentTarget])).toContain(
-      `${runtimeCreationScenario.id}: runtime creation must declare absent target stack-main-default`,
+      `${runtimeCreationScenario.id}: managed creation must declare absent target stack-main-default`,
     );
 
     const runtimeCreationWithoutLegacyState = {
@@ -877,7 +1018,29 @@ describe("managed stack acceptance contract", () => {
       given: runtimeCreationScenario.given.filter((fact) => fact.kind !== "legacy-state"),
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([runtimeCreationWithoutLegacyState])).toContain(
-      `${runtimeCreationScenario.id}: runtime creation must declare legacy state absent`,
+      `${runtimeCreationScenario.id}: managed creation must declare legacy state absent`,
+    );
+
+    const credentialCreationScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "credentials.configured-values-are-authoritative",
+    );
+    if (credentialCreationScenario === undefined) {
+      throw new Error("credentials.configured-values-are-authoritative fixture is required");
+    }
+    const credentialCreationWithoutAbsentTarget = {
+      ...credentialCreationScenario,
+      given: credentialCreationScenario.given.filter((fact) => fact.kind !== "managed-target"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([credentialCreationWithoutAbsentTarget])).toContain(
+      `${credentialCreationScenario.id}: managed creation must declare absent target stack-main-default`,
+    );
+
+    const credentialCreationWithoutLegacyState = {
+      ...credentialCreationScenario,
+      given: credentialCreationScenario.given.filter((fact) => fact.kind !== "legacy-state"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([credentialCreationWithoutLegacyState])).toContain(
+      `${credentialCreationScenario.id}: managed creation must declare legacy state absent`,
     );
   });
 
@@ -1134,10 +1297,24 @@ describe("managed stack acceptance contract", () => {
         "reclamation.delete-orphan-by-stack-id",
         "reclamation.delete-repeat-is-idempotent",
         "reclamation.prune-removes-metadata-only",
-        "reclamation.selectors-are-mutually-exclusive",
+        "reclamation.selectors-stack-and-all-conflict",
+        "reclamation.selectors-stack-and-stack-id-conflict",
+        "reclamation.selectors-stack-id-and-all-conflict",
         "reclamation.stop-is-engine-scoped",
       ].sort(),
     );
+  });
+
+  it("rejects every pair of explicit stop selectors through the public CLI action", () => {
+    expect(
+      managedStackContractFixtures
+        .filter(({ id }) => id.startsWith("reclamation.selectors-"))
+        .map((scenario) => (scenario.when.interface === "cli" ? scenario.when.argv : undefined)),
+    ).toEqual([
+      ["stop", "--experimental", "--stack", "review", "--stack-id", "stack-main-default"],
+      ["stop", "--experimental", "--stack", "review", "--all"],
+      ["stop", "--experimental", "--stack-id", "stack-main-default", "--all"],
+    ]);
   });
 
   it("freezes the direct, managed, repository, CLI, and portable runtime boundaries", () => {

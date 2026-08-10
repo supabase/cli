@@ -83,26 +83,32 @@ fixtures. CLI integration coverage begins when a real command boundary exists; a
 test is not evidence that an unimplemented command already satisfies the behavior.
 
 The fixture validator therefore checks more than catalog shape: selected, written, and effected
-identities must be declared; starts of existing stacks must declare a stopped lifecycle; managed
+identities must be declared, and a selected stack's context and name must match its declared stack
+fact; starts of existing stacks must declare a stopped lifecycle; managed
 state creation and registry publication must imply each other, as must managed-state deletion and
 registry tombstoning; every state write and runtime effect must identify its target; contextual CLI
 stack results must bind their output to a selected target; Git identity writes must use the correct
 common or worktree scope, context writes must name the active branch as owner, and adapters cannot
 recreate an identity already declared by a checkout; new Git-derived contexts, manual ref
-replacement, detached-commit reuse, and selected linked worktrees must declare the relevant Git
-state or transition; ordinary folders must write their full untracked identity marker on creation
+replacement, branch deletion and recreation, detached-commit reuse, and selected linked worktrees
+must declare the relevant Git state or transition; ordinary folders must write their full untracked identity marker on creation
 and resolve it on reuse; managed and sticky port conflicts and persisted-runtime conflicts must
 identify their actual target; sticky reuse must bind the assignment to the selected target;
-runtime-selection creation fixtures must establish both an absent managed target and the legacy
-state decision; persisted-runtime preflight failures must identify a stopped stack; a successful
+runtime-selection and credential creation fixtures must establish both an absent managed target and
+the legacy state decision; a sibling automatic-port fixture must allocate a new target through the
+public managed start action without reusing sibling-owned ports; persisted-runtime preflight
+failures must identify a stopped stack; a successful
 bootstrap retry must follow an explicit rolled-back attempt;
 credential create, update, and copy operations must prove that global state contains references
 rather than plaintext; data-preserving prune must begin with mutable data; tracked identity markers
 must remain untouched; native qualification facts must partition the service matrix, use a declared
 platform, and match the platform passed to preflight; status operations must remain read-only
-reports; repository adapter and portable runtime projections must reference a declared scenario,
-match its identity, and agree on their complete decision; every invalid stack name must be exercised
-through a public action; structured JSON projections must always name their outcome; destructive
+reports; repository adapter matrices must be non-empty, unique, and match their declared repository
+facts, while repository adapter and portable runtime projections must reference a declared scenario,
+match its identity, and agree on their complete decision; every invalid stack name and every pair of
+mutually exclusive stop selectors must be exercised through a public action; structured JSON
+projections must always name their outcome and include the matching structured error or warning
+code; destructive
 runtime effects must map to mutable-state deletion and runtime-state deletion must stop the running
 target; other runtime effects must agree with permitted state writes; and stable identity plus exact
 human and JSON recovery fields cannot contradict the managed result. We deliberately do not

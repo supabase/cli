@@ -498,9 +498,28 @@ export const validateManagedStackContractFixtures = (
         errors.push(`${scenario.id}: repository contract must reference a declared scenario`);
       } else {
         const adapters = scenario.when.input.adapters;
-        if (!Array.isArray(adapters) || !adapters.every((adapter) => typeof adapter === "string")) {
+        if (
+          !Array.isArray(adapters) ||
+          adapters.length === 0 ||
+          !adapters.every((adapter) => typeof adapter === "string" && adapter.length > 0)
+        ) {
           errors.push(`${scenario.id}: repository contract must declare its adapters`);
         } else {
+          if (new Set(adapters).size !== adapters.length) {
+            errors.push(`${scenario.id}: repository contract adapters must be unique`);
+          }
+          const repositoryFacts = scenario.given.flatMap((fact) =>
+            fact.kind === "managed-api-options" ? [fact.repository] : [],
+          );
+          const declaredRepositorySet = new Set(adapters);
+          const repositoryFactSet = new Set(repositoryFacts);
+          if (
+            declaredRepositorySet.size !== repositoryFactSet.size ||
+            [...declaredRepositorySet].some((adapter) => !repositoryFactSet.has(adapter))
+          ) {
+            errors.push(`${scenario.id}: repository adapters must match declared repository facts`);
+          }
+
           let firstAdapterResult: Readonly<Record<string, ManagedStackContractJson>> | undefined;
           for (const adapter of adapters) {
             const adapterResult = output.api?.[adapter];
@@ -750,7 +769,10 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.area === "runtime" && scenario.expected.outcome === "create") {
+    if (
+      (scenario.area === "credentials" || scenario.area === "runtime") &&
+      scenario.expected.outcome === "create"
+    ) {
       const createdStackIds = scenario.expected.writes.flatMap((write) =>
         write.target === "managed-state" && write.operation === "create" ? [write.id] : [],
       );
@@ -760,7 +782,7 @@ export const validateManagedStackContractFixtures = (
             (fact) => fact.kind === "managed-target" && fact.stackId === stackId && !fact.exists,
           )
         ) {
-          errors.push(`${scenario.id}: runtime creation must declare absent target ${stackId}`);
+          errors.push(`${scenario.id}: managed creation must declare absent target ${stackId}`);
         }
       }
       if (
@@ -774,7 +796,7 @@ export const validateManagedStackContractFixtures = (
             fact.credentials === "absent",
         )
       ) {
-        errors.push(`${scenario.id}: runtime creation must declare legacy state absent`);
+        errors.push(`${scenario.id}: managed creation must declare legacy state absent`);
       }
     }
 
@@ -843,6 +865,22 @@ export const validateManagedStackContractFixtures = (
         }
       }
 
+      const selectedStack = scenario.given.find(
+        (fact) => fact.kind === "stack" && fact.stackId === selection.stackId,
+      );
+      if (selectedStack?.kind === "stack") {
+        if (selectedStack.contextId !== selection.contextId) {
+          errors.push(
+            `${scenario.id}: selected stack ${selection.stackId} belongs to context ${selectedStack.contextId}, not ${selection.contextId}`,
+          );
+        }
+        if (selectedStack.name !== selection.stackName) {
+          errors.push(
+            `${scenario.id}: selected stack ${selection.stackId} is named ${selectedStack.name}, not ${selection.stackName}`,
+          );
+        }
+      }
+
       if (
         scenario.given.some(
           (fact) => fact.kind === "identity-transition" && fact.operation === "folder-to-git",
@@ -871,6 +909,7 @@ export const validateManagedStackContractFixtures = (
         (fact) =>
           fact.kind === "identity-transition" &&
           (fact.operation === "clone" ||
+            fact.operation === "branch-delete-recreate" ||
             fact.operation === "folder-to-git" ||
             fact.operation === "ref-replacement"),
       );
@@ -979,6 +1018,35 @@ export const validateManagedStackContractFixtures = (
         )
       ) {
         errors.push(`${scenario.id}: reused sticky port must belong to the selected target`);
+      }
+    }
+
+    if (
+      scenario.area === "ports" &&
+      scenario.when.interface === "managed-api" &&
+      scenario.when.method === "startStack" &&
+      scenario.expected.outcome === "create"
+    ) {
+      const targetStackId = scenario.when.input.stackId;
+      const siblingAssignments = scenario.given.flatMap((fact) =>
+        fact.kind === "port-assignment" &&
+        typeof targetStackId === "string" &&
+        fact.stackId !== targetStackId
+          ? [fact]
+          : [],
+      );
+      if (siblingAssignments.length > 0) {
+        const projectedPorts = scenario.expected.output.api?.ports;
+        if (!isManagedStackContractRecord(projectedPorts)) {
+          errors.push(`${scenario.id}: sibling allocation must project its allocated ports`);
+        } else {
+          const occupiedSiblingPorts = new Set(siblingAssignments.map(({ port }) => port));
+          for (const port of Object.values(projectedPorts)) {
+            if (typeof port === "number" && occupiedSiblingPorts.has(port)) {
+              errors.push(`${scenario.id}: allocated port ${port} conflicts with a sibling target`);
+            }
+          }
+        }
       }
     }
 
@@ -1213,6 +1281,14 @@ export const validateManagedStackContractFixtures = (
       scenario.expected.output.json.outcome === undefined
     ) {
       errors.push(`${scenario.id}: JSON projection requires an outcome`);
+    }
+    const structuredCode = scenario.expected.error?.code ?? scenario.expected.warning?.code;
+    if (
+      scenario.expected.output.json !== undefined &&
+      structuredCode !== undefined &&
+      scenario.expected.output.json.code === undefined
+    ) {
+      errors.push(`${scenario.id}: JSON projection requires a code`);
     }
     for (const projection of [scenario.expected.output.json, scenario.expected.output.api]) {
       checkProjection(projection, "outcome", scenario.expected.outcome);
@@ -1559,6 +1635,15 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     area: "identity",
     given: [
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
+      {
+        kind: "git-state",
+        workspacePath: "checkout-a",
+        commonDirectory: "repo/.git",
+        gitDirectory: "repo/.git",
+        head: "branch",
+        branch: "feat-a",
+        commit: "commit-new",
+      },
       {
         kind: "identity-transition",
         operation: "branch-delete-recreate",
@@ -3052,9 +3137,12 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
   },
   {
     id: "ports.sibling-targets-allocate-independent-ports",
-    title: "Sibling branches, worktrees, and named stacks allocate independent automatic ports",
+    title: "A new sibling target allocates around existing host-wide port ownership",
     area: "ports",
     given: [
+      { kind: "managed-target", stackId: "stack-feat-default", exists: false },
+      { kind: "config-port", key: "api.port", intent: "automatic", source: "omitted" },
+      { kind: "config-port", key: "db.port", intent: "automatic", source: "omitted" },
       {
         kind: "port-assignment",
         stackId: "stack-main-default",
@@ -3064,37 +3152,39 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       },
       {
         kind: "port-assignment",
-        stackId: "stack-feat-default",
-        key: "api.port",
+        stackId: "stack-main-review",
+        key: "db.port",
         port: 55422,
         intent: "automatic",
       },
-      {
-        kind: "port-assignment",
-        stackId: "stack-worktree-default",
-        key: "api.port",
-        port: 55423,
-        intent: "automatic",
-      },
-      {
-        kind: "port-assignment",
-        stackId: "stack-main-review",
-        key: "api.port",
-        port: 55424,
-        intent: "automatic",
-      },
     ],
-    when: { interface: "managed-api", method: "listStackPorts", input: { projectId: "project-a" } },
+    when: {
+      interface: "managed-api",
+      method: "startStack",
+      input: {
+        stackId: "stack-feat-default",
+        portIntents: { "api.port": "automatic", "db.port": "automatic" },
+      },
+    },
     expected: {
-      outcome: "report",
-      writes: [],
-      runtimeEffects: [],
+      outcome: "create",
+      writes: [
+        { target: "managed-state", operation: "create", id: "stack-feat-default" },
+        { target: "registry", operation: "publish", id: "stack-feat-default" },
+        { target: "runtime-state", operation: "start", id: "stack-feat-default" },
+      ],
+      runtimeEffects: [{ operation: "start", stackId: "stack-feat-default" }],
+      details: {
+        host_wide: true,
+        sticky: true,
+        avoided_sibling_stack_ids: ["stack-main-default", "stack-main-review"],
+      },
       output: {
         api: {
-          "stack-main-default": { api: 55421 },
-          "stack-feat-default": { api: 55422 },
-          "stack-worktree-default": { api: 55423 },
-          "stack-main-review": { api: 55424 },
+          outcome: "create",
+          stackId: "stack-feat-default",
+          ports: { api: 55423, db: 55424 },
+          intents: { api: "automatic", db: "automatic" },
         },
       },
     },
@@ -3929,6 +4019,45 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
   },
 ]);
 
+const selectorConflictFixture = (
+  id: string,
+  title: string,
+  selectors: ReadonlyArray<string>,
+  selectorSummary: string,
+): ManagedStackContractScenario => ({
+  id,
+  title,
+  area: "reclamation",
+  given: [{ kind: "managed-record", stackId: "stack-main-default", status: "active" }],
+  when: {
+    interface: "cli",
+    argv: ["stop", "--experimental", ...selectors],
+    cwd: "checkout-a",
+  },
+  expected: {
+    outcome: "error",
+    error: {
+      code: "mutually_exclusive_stack_selectors",
+      message: "Choose exactly one of contextual, --stack, --stack-id, or --all selection",
+      recovery: ["Remove all but one stack selector"],
+    },
+    writes: [],
+    runtimeEffects: [],
+    output: {
+      human: {
+        summary: "Stack selectors cannot be combined",
+        fields: { selectors: selectorSummary },
+        recovery: ["Remove all but one stack selector"],
+      },
+      json: {
+        outcome: "error",
+        code: "mutually_exclusive_stack_selectors",
+        recovery: ["Remove all but one stack selector"],
+      },
+    },
+  },
+});
+
 const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
   {
     id: "bootstrap.existing-managed-target-ignores-legacy",
@@ -4221,7 +4350,10 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     id: "credentials.configured-values-are-authoritative",
     title: "Configured auth values are authoritative and persist globally only by reference",
     area: "credentials",
-    given: [{ kind: "credential-state", source: "configured", valuesId: "configured-auth-v1" }],
+    given: [
+      ...absentMainManagedStateFacts,
+      { kind: "credential-state", source: "configured", valuesId: "configured-auth-v1" },
+    ],
     when: {
       interface: "managed-api",
       method: "startStack",
@@ -4256,6 +4388,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     area: "credentials",
     given: [
       ...mainCheckoutContextFacts,
+      ...absentMainManagedStateFacts,
       { kind: "credential-state", source: "local-default", valuesId: "stable-local-defaults-v1" },
     ],
     when: { interface: "cli", argv: ["start", "--experimental"], cwd: "checkout-a" },
@@ -4547,47 +4680,24 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       },
     },
   },
-  {
-    id: "reclamation.selectors-are-mutually-exclusive",
-    title: "Contextual, named, global-ID, and all-stack selectors cannot be combined",
-    area: "reclamation",
-    given: [{ kind: "managed-record", stackId: "stack-main-default", status: "active" }],
-    when: {
-      interface: "cli",
-      argv: [
-        "stop",
-        "--experimental",
-        "--stack",
-        "review",
-        "--stack-id",
-        "stack-main-default",
-        "--all",
-      ],
-      cwd: "checkout-a",
-    },
-    expected: {
-      outcome: "error",
-      error: {
-        code: "mutually_exclusive_stack_selectors",
-        message: "Choose exactly one of contextual, --stack, --stack-id, or --all selection",
-        recovery: ["Remove all but one stack selector"],
-      },
-      writes: [],
-      runtimeEffects: [],
-      output: {
-        human: {
-          summary: "Stack selectors cannot be combined",
-          fields: { selectors: "--stack, --stack-id, --all" },
-          recovery: ["Remove all but one stack selector"],
-        },
-        json: {
-          outcome: "error",
-          code: "mutually_exclusive_stack_selectors",
-          recovery: ["Remove all but one stack selector"],
-        },
-      },
-    },
-  },
+  selectorConflictFixture(
+    "reclamation.selectors-stack-and-stack-id-conflict",
+    "Named and global-ID stack selectors cannot be combined",
+    ["--stack", "review", "--stack-id", "stack-main-default"],
+    "--stack, --stack-id",
+  ),
+  selectorConflictFixture(
+    "reclamation.selectors-stack-and-all-conflict",
+    "Named and all-stack selectors cannot be combined",
+    ["--stack", "review", "--all"],
+    "--stack, --all",
+  ),
+  selectorConflictFixture(
+    "reclamation.selectors-stack-id-and-all-conflict",
+    "Global-ID and all-stack selectors cannot be combined",
+    ["--stack-id", "stack-main-default", "--all"],
+    "--stack-id, --all",
+  ),
   {
     id: "reclamation.stop-is-engine-scoped",
     title: "Experimental stop affects the selected managed stack and never the legacy engine",
