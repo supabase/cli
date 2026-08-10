@@ -374,6 +374,20 @@ const managedStackContractJsonEquals = (
   return false;
 };
 
+const managedStackContractDecision = (
+  scenario: ManagedStackContractScenario,
+): Readonly<Record<string, ManagedStackContractJson>> =>
+  scenario.expected.selection === undefined
+    ? { outcome: scenario.expected.outcome }
+    : {
+        outcome: scenario.expected.outcome,
+        projectId: scenario.expected.selection.projectId,
+        checkoutId: scenario.expected.selection.checkoutId,
+        contextId: scenario.expected.selection.contextId,
+        stackId: scenario.expected.selection.stackId,
+        stackName: scenario.expected.selection.stackName,
+      };
+
 const managedStackContractStringSetEquals = (
   left: ReadonlyArray<string>,
   right: ReadonlyArray<string>,
@@ -387,6 +401,8 @@ const managedStackContractStringSetEquals = (
     [...leftSet].every((value) => rightSet.has(value))
   );
 };
+
+const managedStackNamePattern = /^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
 const isManagedStartAction = (action: ManagedStackContractAction): boolean =>
   (action.interface === "cli" && action.argv[0] === "start") ||
@@ -580,6 +596,36 @@ export const validateManagedStackContractFixtures = (
     if (output.human === undefined && output.json === undefined && output.api === undefined) {
       errors.push(`${scenario.id}: at least one observable output is required`);
     }
+    if (scenario.expected.error?.code === "mutually_exclusive_stack_selectors") {
+      const stopArgv =
+        scenario.when.interface === "cli" && scenario.when.argv[0] === "stop"
+          ? scenario.when.argv
+          : [];
+      const selectorModes = ["--stack", "--stack-id", "--all"].filter((selector) =>
+        stopArgv.includes(selector),
+      );
+      const jsonSelectors = output.json?.selectors;
+      const projectedJsonSelectors =
+        Array.isArray(jsonSelectors) &&
+        jsonSelectors.every((selector): selector is string => typeof selector === "string")
+          ? jsonSelectors
+          : undefined;
+      const projectedHumanSelectors = output.human?.fields.selectors
+        ?.split(",")
+        .map((selector) => selector.trim())
+        .filter((selector) => selector.length > 0);
+      if (
+        selectorModes.length < 2 ||
+        projectedJsonSelectors === undefined ||
+        !managedStackContractStringSetEquals(selectorModes, projectedJsonSelectors) ||
+        projectedHumanSelectors === undefined ||
+        !managedStackContractStringSetEquals(selectorModes, projectedHumanSelectors)
+      ) {
+        errors.push(
+          `${scenario.id}: selector conflict must bind at least two requested selection modes`,
+        );
+      }
+    }
 
     if (scenario.when.interface === "stack-api" && scenario.when.method === "createStack") {
       const directOptions = scenario.given.filter((fact) => fact.kind === "direct-stack-options");
@@ -678,6 +724,22 @@ export const validateManagedStackContractFixtures = (
       errors.push(
         `${scenario.id}: explicit stack name ${explicitActionStackName} disagrees with selected stack ${scenario.expected.selection.stackName}`,
       );
+    }
+    if (scenario.expected.error?.code === "invalid_stack_name") {
+      const declaredNames = scenario.given.find((fact) => fact.kind === "stack-names");
+      if (
+        explicitActionStackName === undefined ||
+        managedStackNamePattern.test(explicitActionStackName) ||
+        declaredNames?.kind !== "stack-names" ||
+        declaredNames.names.length !== 1 ||
+        declaredNames.names[0] !== explicitActionStackName ||
+        output.human?.fields.stack !== explicitActionStackName ||
+        output.json?.stack_name !== explicitActionStackName
+      ) {
+        errors.push(
+          `${scenario.id}: invalid stack name error must bind a requested name outside the supported grammar`,
+        );
+      }
     }
 
     const cliRuntimeIndex =
@@ -829,7 +891,9 @@ export const validateManagedStackContractFixtures = (
         if (
           scenario.expected.outcome !== "error" ||
           scenario.expected.error?.code !== "persisted_runtime_unavailable" ||
+          typeof persistedAvailability.reason !== "string" ||
           output.json?.runtime !== persistedRuntime.runtime ||
+          output.json.reason !== persistedAvailability.reason ||
           scenario.expected.runtimeEffects.some((effect) => effect.operation === "start")
         ) {
           errors.push(`${scenario.id}: unavailable persisted runtime must fail without switching`);
@@ -1055,6 +1119,7 @@ export const validateManagedStackContractFixtures = (
       if (referencedScenario === undefined) {
         errors.push(`${scenario.id}: portable contract must reference a declared scenario`);
       } else {
+        const referencedDecision = managedStackContractDecision(referencedScenario);
         const runtimes = scenario.when.input.runtimes;
         if (
           !Array.isArray(runtimes) ||
@@ -1123,6 +1188,11 @@ export const validateManagedStackContractFixtures = (
                 `${scenario.id}: portable ${runtime} stackId must match ${referencedScenario.id}`,
               );
             }
+            if (!managedStackContractJsonEquals(runtimeResult, referencedDecision)) {
+              errors.push(
+                `${scenario.id}: portable ${runtime} decision must completely match ${referencedScenario.id}`,
+              );
+            }
             if (firstRuntimeResult === undefined) {
               firstRuntimeResult = runtimeResult;
             } else if (!managedStackContractJsonEquals(firstRuntimeResult, runtimeResult)) {
@@ -1150,17 +1220,7 @@ export const validateManagedStackContractFixtures = (
       if (referencedScenario === undefined) {
         errors.push(`${scenario.id}: repository contract must reference a declared scenario`);
       } else {
-        const referencedDecision: Readonly<Record<string, ManagedStackContractJson>> =
-          referencedScenario.expected.selection === undefined
-            ? { outcome: referencedScenario.expected.outcome }
-            : {
-                outcome: referencedScenario.expected.outcome,
-                projectId: referencedScenario.expected.selection.projectId,
-                checkoutId: referencedScenario.expected.selection.checkoutId,
-                contextId: referencedScenario.expected.selection.contextId,
-                stackId: referencedScenario.expected.selection.stackId,
-                stackName: referencedScenario.expected.selection.stackName,
-              };
+        const referencedDecision = managedStackContractDecision(referencedScenario);
         const adapters = scenario.when.input.adapters;
         if (
           !Array.isArray(adapters) ||
@@ -1454,6 +1514,19 @@ export const validateManagedStackContractFixtures = (
         );
       }
     }
+    const refReplacement = scenario.given.find(
+      (fact) => fact.kind === "identity-transition" && fact.operation === "ref-replacement",
+    );
+    if (
+      refReplacement?.kind === "identity-transition" &&
+      (typeof refReplacement.from !== "string" ||
+        typeof refReplacement.to !== "string" ||
+        refReplacement.from === refReplacement.to ||
+        actionGitState?.kind !== "git-state" ||
+        refReplacement.to !== actionGitState.commit)
+    ) {
+      errors.push(`${scenario.id}: ref replacement target must match the action workspace commit`);
+    }
     if (scenario.expected.error?.code === "ambiguous_context_owner") {
       const projectedContextId = output.json?.context_id;
       const projectedBranches = output.json?.branches;
@@ -1727,6 +1800,18 @@ export const validateManagedStackContractFixtures = (
             !managedStackContractJsonEquals(projectedFailures, fact.failedServices))
         ) {
           errors.push(`${scenario.id}: native preflight failures must match failed services`);
+        }
+        const projectedAvailableServices = scenario.expected.output.api?.availableServices;
+        if (
+          !platformQualified &&
+          (!Array.isArray(projectedAvailableServices) ||
+            projectedAvailableServices.length !== 0 ||
+            scenario.expected.details?.reduced_graph !== false ||
+            scenario.expected.details.docker_fallback_per_service !== false)
+        ) {
+          errors.push(
+            `${scenario.id}: failed native qualification must expose no reduced service graph`,
+          );
         }
       }
     }
@@ -2486,24 +2571,17 @@ export const validateManagedStackContractFixtures = (
           ? [fact]
           : [],
       );
-      if (siblingAssignments.length > 0) {
-        const projectedPorts = scenario.expected.output.api?.ports;
-        if (!isManagedStackContractRecord(projectedPorts)) {
+      const projectedPorts = scenario.expected.output.api?.ports;
+      if (!isManagedStackContractRecord(projectedPorts)) {
+        if (siblingAssignments.length > 0) {
           errors.push(`${scenario.id}: sibling allocation must project its allocated ports`);
-        } else {
-          const occupiedSiblingPorts = new Set(siblingAssignments.map(({ port }) => port));
-          const allocatedPorts = new Set<number>();
-          for (const port of Object.values(projectedPorts)) {
-            if (typeof port === "number") {
-              if (allocatedPorts.has(port)) {
-                errors.push(`${scenario.id}: allocated port ${port} is assigned more than once`);
-              }
-              allocatedPorts.add(port);
-              if (occupiedSiblingPorts.has(port)) {
-                errors.push(
-                  `${scenario.id}: allocated port ${port} conflicts with a sibling target`,
-                );
-              }
+        }
+      } else {
+        const occupiedSiblingPorts = new Set(siblingAssignments.map(({ port }) => port));
+        for (const port of Object.values(projectedPorts)) {
+          if (typeof port === "number") {
+            if (occupiedSiblingPorts.has(port)) {
+              errors.push(`${scenario.id}: allocated port ${port} conflicts with a sibling target`);
             }
           }
         }
@@ -2519,6 +2597,18 @@ export const validateManagedStackContractFixtures = (
       const projectedIntents = scenario.expected.output.api?.intents;
       const requestedEntries = Object.entries(scenario.when.input.portIntents);
       const configPorts = scenario.given.filter((fact) => fact.kind === "config-port");
+      if (isManagedStackContractRecord(projectedPorts)) {
+        const allocatedPorts = new Set<number>();
+        for (const port of Object.values(projectedPorts)) {
+          if (typeof port !== "number") {
+            continue;
+          }
+          if (allocatedPorts.has(port)) {
+            errors.push(`${scenario.id}: allocated port ${port} is assigned more than once`);
+          }
+          allocatedPorts.add(port);
+        }
+      }
       if (
         !managedStackContractStringSetEquals(
           requestedEntries.map(([key]) => key),
@@ -3018,6 +3108,26 @@ export const validateManagedStackContractFixtures = (
         if (!orphanedRecord || !orphanedStack) {
           errors.push(`${scenario.id}: prune may delete only orphaned registry metadata`);
         }
+      }
+      const deletedRecordIds = scenario.expected.writes.flatMap((write) =>
+        write.target === "registry" && write.operation === "delete" ? [write.id] : [],
+      );
+      const projectedRecords = output.json?.pruned_records;
+      const projectedRecordIds =
+        Array.isArray(projectedRecords) &&
+        projectedRecords.every((record): record is string => typeof record === "string")
+          ? projectedRecords
+          : undefined;
+      const deletedRecordCount = deletedRecordIds.length;
+      const expectedSummary = `Pruned ${deletedRecordCount} orphaned metadata record${deletedRecordCount === 1 ? "" : "s"}`;
+      if (
+        deletedRecordCount === 0 ||
+        projectedRecordIds === undefined ||
+        !managedStackContractStringSetEquals(deletedRecordIds, projectedRecordIds) ||
+        output.json?.pruned_count !== deletedRecordCount ||
+        output.human?.summary !== expectedSummary
+      ) {
+        errors.push(`${scenario.id}: prune projections must match deleted registry records`);
       }
     }
 
@@ -5992,6 +6102,7 @@ const selectorConflictFixture = (
       json: {
         outcome: "error",
         code: "mutually_exclusive_stack_selectors",
+        selectors: selectorSummary.split(", "),
         recovery: ["Remove all but one stack selector"],
       },
     },
@@ -6632,7 +6743,12 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       details: { metadata_removed: true, mutable_data_deleted: false },
       output: {
         human: { summary: "Pruned 1 orphaned metadata record", fields: { dataDeleted: "false" } },
-        json: { outcome: "update", pruned_records: ["stack-orphan"], mutable_data_deleted: false },
+        json: {
+          outcome: "update",
+          pruned_records: ["stack-orphan"],
+          pruned_count: 1,
+          mutable_data_deleted: false,
+        },
       },
     },
   },
@@ -6950,8 +7066,22 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
       details: { results_equal: true, bun_specific_state_api: false },
       output: {
         api: {
-          node: { outcome: "report", stackId: "stack-main-default" },
-          bun: { outcome: "report", stackId: "stack-main-default" },
+          node: {
+            outcome: "report",
+            projectId: "project-a",
+            checkoutId: "checkout-a",
+            contextId: "context-main",
+            stackId: "stack-main-default",
+            stackName: "default",
+          },
+          bun: {
+            outcome: "report",
+            projectId: "project-a",
+            checkoutId: "checkout-a",
+            contextId: "context-main",
+            stackId: "stack-main-default",
+            stackName: "default",
+          },
           equal: true,
         },
       },

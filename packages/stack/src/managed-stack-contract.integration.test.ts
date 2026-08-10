@@ -2451,6 +2451,192 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([independentBranchesReportedAmbiguous])).toContain(
       `${ambiguousContextScenario.id}: ambiguous context must bind at least two claiming branches to its projections`,
     );
+
+    const invalidStackNameScenario = findScenario(
+      "identity.invalid-stack-name-uppercase-underscore-fails",
+    );
+    if (invalidStackNameScenario.when.interface !== "cli") {
+      throw new Error("invalid stack name fixture must use the CLI");
+    }
+    const validStackNameRejected = {
+      ...invalidStackNameScenario,
+      given: invalidStackNameScenario.given.map((fact) =>
+        fact.kind === "stack-names" ? { ...fact, names: ["review"] } : fact,
+      ),
+      when: {
+        ...invalidStackNameScenario.when,
+        argv: invalidStackNameScenario.when.argv.map((argument) =>
+          argument === "Feature_A" ? "review" : argument,
+        ),
+      },
+      expected: {
+        ...invalidStackNameScenario.expected,
+        output: {
+          ...invalidStackNameScenario.expected.output,
+          human: {
+            ...invalidStackNameScenario.expected.output.human!,
+            fields: { stack: "review" },
+          },
+          json: { ...invalidStackNameScenario.expected.output.json, stack_name: "review" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([validStackNameRejected])).toContain(
+      `${invalidStackNameScenario.id}: invalid stack name error must bind a requested name outside the supported grammar`,
+    );
+
+    const automaticPortScenario = findScenario(
+      "ports.new-target-allocates-and-persists-omitted-ports",
+    );
+    const duplicateAutomaticPort = {
+      ...automaticPortScenario,
+      expected: {
+        ...automaticPortScenario.expected,
+        output: {
+          ...automaticPortScenario.expected.output,
+          api: {
+            ...automaticPortScenario.expected.output.api,
+            ports: { api: 55421, db: 55421 },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([duplicateAutomaticPort])).toContain(
+      `${automaticPortScenario.id}: allocated port 55421 is assigned more than once`,
+    );
+
+    const refReplacementScenario = findScenario("identity.manual-ref-replacement-orphans-context");
+    const refReplacementTargetsUnobservedCommit = {
+      ...refReplacementScenario,
+      given: refReplacementScenario.given.map((fact) =>
+        fact.kind === "identity-transition" && fact.operation === "ref-replacement"
+          ? { ...fact, to: "commit-unrelated" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([refReplacementTargetsUnobservedCommit])).toContain(
+      `${refReplacementScenario.id}: ref replacement target must match the action workspace commit`,
+    );
+
+    const selectorConflictScenario = findScenario(
+      "reclamation.selectors-stack-and-stack-id-conflict",
+    );
+    if (selectorConflictScenario.when.interface !== "cli") {
+      throw new Error("selector conflict fixture must use the CLI");
+    }
+    const singleSelectorReportedAsConflict = {
+      ...selectorConflictScenario,
+      when: {
+        ...selectorConflictScenario.when,
+        argv: ["stop", "--experimental", "--stack", "review"],
+      },
+      expected: {
+        ...selectorConflictScenario.expected,
+        output: {
+          ...selectorConflictScenario.expected.output,
+          human: {
+            ...selectorConflictScenario.expected.output.human!,
+            fields: { selectors: "--stack" },
+          },
+          json: { ...selectorConflictScenario.expected.output.json, selectors: ["--stack"] },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([singleSelectorReportedAsConflict])).toContain(
+      `${selectorConflictScenario.id}: selector conflict must bind at least two requested selection modes`,
+    );
+
+    const pruneScenario = findScenario("reclamation.prune-removes-metadata-only");
+    const pruneReportsDifferentRecord = {
+      ...pruneScenario,
+      expected: {
+        ...pruneScenario.expected,
+        output: {
+          ...pruneScenario.expected.output,
+          json: { ...pruneScenario.expected.output.json, pruned_records: ["stack-other"] },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([pruneReportsDifferentRecord])).toContain(
+      `${pruneScenario.id}: prune projections must match deleted registry records`,
+    );
+
+    const portableDecisionScenario = findScenario(
+      "api-boundary.managed-surface-is-node-and-bun-portable",
+    );
+    const referencedPortableDecisionScenario = findScenario(
+      "identity.same-checkout-branch-and-name-reuses-stack",
+    );
+    const portableRuntimesAgreeOnWrongContext = {
+      ...portableDecisionScenario,
+      expected: {
+        ...portableDecisionScenario.expected,
+        output: {
+          ...portableDecisionScenario.expected.output,
+          api: {
+            ...portableDecisionScenario.expected.output.api,
+            node: {
+              outcome: "report",
+              projectId: "project-a",
+              checkoutId: "checkout-a",
+              contextId: "context-unrelated",
+              stackId: "stack-main-default",
+              stackName: "default",
+            },
+            bun: {
+              outcome: "report",
+              projectId: "project-a",
+              checkoutId: "checkout-a",
+              contextId: "context-unrelated",
+              stackId: "stack-main-default",
+              stackName: "default",
+            },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([
+        referencedPortableDecisionScenario,
+        portableRuntimesAgreeOnWrongContext,
+      ]),
+    ).toContain(
+      `${portableDecisionScenario.id}: portable node decision must completely match ${referencedPortableDecisionScenario.id}`,
+    );
+
+    const persistedRuntimeFailureScenario = findScenario(
+      "runtime.missing-persisted-prerequisite-fails",
+    );
+    const persistedRuntimeReportsUnrelatedReason = {
+      ...persistedRuntimeFailureScenario,
+      given: persistedRuntimeFailureScenario.given.map((fact) =>
+        fact.kind === "runtime-availability" && fact.runtime === "native"
+          ? { ...fact, reason: "unrelated failure" }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([persistedRuntimeReportsUnrelatedReason]),
+    ).toContain(
+      `${persistedRuntimeFailureScenario.id}: unavailable persisted runtime must fail without switching`,
+    );
+
+    const reducedNativeGraph = {
+      ...qualificationScenario,
+      expected: {
+        ...qualificationScenario.expected,
+        output: {
+          ...qualificationScenario.expected.output,
+          api: {
+            ...qualificationScenario.expected.output.api,
+            availableServices: ["postgres"],
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([reducedNativeGraph])).toContain(
+      `${qualificationScenario.id}: failed native qualification must expose no reduced service graph`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
