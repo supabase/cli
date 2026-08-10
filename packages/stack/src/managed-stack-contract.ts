@@ -135,8 +135,8 @@ export type ManagedStackContractFact =
   | {
       readonly kind: "native-qualification";
       readonly platform: string;
-      readonly qualifiedServices: ReadonlyArray<string>;
-      readonly failedServices: ReadonlyArray<string>;
+      readonly qualifiedServices: ReadonlyArray<ServiceName>;
+      readonly failedServices: ReadonlyArray<ServiceName>;
     }
   | {
       readonly kind: "managed-target";
@@ -292,6 +292,8 @@ export const validateManagedStackContractFixtures = (
 ): ReadonlyArray<string> => {
   const errors: Array<string> = [];
   const ids = new Set<string>();
+  const nativeServices = managedNativeServiceMatrix.services.map(([service]) => service);
+  const nativeServiceSet = new Set<ServiceName>(nativeServices);
 
   for (const scenario of fixtures) {
     if (ids.has(scenario.id)) {
@@ -320,6 +322,21 @@ export const validateManagedStackContractFixtures = (
       if (scenario.when.method.trim().length === 0) {
         errors.push(`${scenario.id}: public API method is required`);
       }
+    }
+
+    const isCliStatus = scenario.when.interface === "cli" && scenario.when.argv[0] === "status";
+    if (
+      isCliStatus &&
+      scenario.expected.outcome !== "error" &&
+      scenario.expected.outcome !== "report"
+    ) {
+      errors.push(`${scenario.id}: successful status commands must report`);
+    }
+    if (
+      isCliStatus &&
+      (scenario.expected.writes.length > 0 || scenario.expected.runtimeEffects.length > 0)
+    ) {
+      errors.push(`${scenario.id}: status commands must not mutate state`);
     }
 
     const { output } = scenario.expected;
@@ -384,6 +401,41 @@ export const validateManagedStackContractFixtures = (
           break;
         default:
           break;
+      }
+    }
+
+    for (const fact of scenario.given) {
+      if (fact.kind !== "native-qualification") {
+        continue;
+      }
+
+      const qualified = new Set<ServiceName>();
+      const failed = new Set<ServiceName>();
+      for (const service of fact.qualifiedServices) {
+        if (!nativeServiceSet.has(service)) {
+          errors.push(`${scenario.id}: native qualification contains unknown service ${service}`);
+        }
+        if (qualified.has(service)) {
+          errors.push(`${scenario.id}: native qualification duplicates service ${service}`);
+        }
+        qualified.add(service);
+      }
+      for (const service of fact.failedServices) {
+        if (!nativeServiceSet.has(service)) {
+          errors.push(`${scenario.id}: native qualification contains unknown service ${service}`);
+        }
+        if (failed.has(service)) {
+          errors.push(`${scenario.id}: native qualification duplicates service ${service}`);
+        }
+        if (qualified.has(service)) {
+          errors.push(`${scenario.id}: native qualification places ${service} in both partitions`);
+        }
+        failed.add(service);
+      }
+      for (const service of nativeServices) {
+        if (!qualified.has(service) && !failed.has(service)) {
+          errors.push(`${scenario.id}: native qualification omits service ${service}`);
+        }
       }
     }
 
@@ -459,6 +511,24 @@ export const validateManagedStackContractFixtures = (
           errors.push(`${scenario.id}: selection references undeclared ID ${id}`);
         }
       }
+
+      if (
+        scenario.given.some(
+          (fact) => fact.kind === "identity-transition" && fact.operation === "folder-to-git",
+        )
+      ) {
+        for (const id of [selection.projectId, selection.checkoutId, selection.contextId]) {
+          if (
+            !scenario.expected.writes.some(
+              (write) => write.target === "git-config" && write.id === id,
+            )
+          ) {
+            errors.push(
+              `${scenario.id}: folder-to-Git identity ${id} must be persisted in Git-local metadata`,
+            );
+          }
+        }
+      }
     }
 
     for (const effect of scenario.expected.runtimeEffects) {
@@ -513,11 +583,13 @@ export const validateManagedStackContractFixtures = (
       const requiredRuntimeOperation =
         write.target === "runtime-state" && write.operation === "start"
           ? "start"
-          : write.target === "managed-state" && write.operation === "copy"
-            ? "copy"
-            : write.target === "managed-state" && write.operation === "delete"
-              ? "delete"
-              : undefined;
+          : write.target === "runtime-state" && write.operation === "update"
+            ? "stop"
+            : write.target === "managed-state" && write.operation === "copy"
+              ? "copy"
+              : write.target === "managed-state" && write.operation === "delete"
+                ? "delete"
+                : undefined;
       if (
         requiredRuntimeOperation !== undefined &&
         !scenario.expected.runtimeEffects.some(
@@ -1239,7 +1311,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       cwd: "/alias/project-a",
     },
     expected: {
-      outcome: "reuse",
+      outcome: "report",
       selection: {
         projectId: "project-a",
         checkoutId: "checkout-a",
@@ -1250,7 +1322,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       writes: [],
       runtimeEffects: [],
       output: {
-        json: { outcome: "reuse", checkout_id: "checkout-a", canonical_path: "/work/project-a" },
+        json: { outcome: "report", checkout_id: "checkout-a", canonical_path: "/work/project-a" },
       },
     },
   },
@@ -1833,7 +1905,9 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       writes: [
+        { target: "git-config", operation: "create", id: "project-a" },
         { target: "git-config", operation: "create", id: "checkout-a" },
+        { target: "git-config", operation: "create", id: "context-main" },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
@@ -3621,6 +3695,15 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
     title: "The managed API can run against an isolated caller-provided state root",
     area: "api-boundary",
     given: [
+      { kind: "workspace", mode: "git", path: "checkout-a" },
+      {
+        kind: "git-state",
+        commonDirectory: "repo/.git",
+        gitDirectory: "repo/.git",
+        head: "branch",
+        branch: "main",
+        commit: "commit-a",
+      },
       {
         kind: "managed-api-options",
         stateRoot: "isolated",
@@ -3714,6 +3797,14 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
       { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "branch", name: "main", contextId: "context-main", checkedOut: true },
       { kind: "managed-record", stackId: "stack-main-default", status: "active" },
+      {
+        kind: "stack",
+        name: "default",
+        stackId: "stack-main-default",
+        contextId: "context-main",
+        lifecycle: "running",
+      },
+      { kind: "persisted-runtime", stackId: "stack-main-default", runtime: "docker" },
     ],
     when: {
       interface: "cli",

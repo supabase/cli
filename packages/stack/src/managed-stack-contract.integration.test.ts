@@ -140,6 +140,88 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([unpublishedManagedState])).toContain(
       `${absentLegacyScenario.id}: managed-state create requires registry publication`,
     );
+
+    const stoppedStackScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "reclamation.default-stop-preserves-data",
+    );
+    if (stoppedStackScenario === undefined) {
+      throw new Error("reclamation.default-stop-preserves-data fixture is required");
+    }
+    const missingStopEffect = {
+      ...stoppedStackScenario,
+      expected: { ...stoppedStackScenario.expected, runtimeEffects: [] },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([missingStopEffect])).toContain(
+      `${stoppedStackScenario.id}: runtime-state update requires a matching runtime effect`,
+    );
+
+    const folderToGitScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.folder-to-git-exact-claim-preserves-identity",
+    );
+    if (folderToGitScenario === undefined) {
+      throw new Error("identity.folder-to-git-exact-claim-preserves-identity fixture is required");
+    }
+    const incompleteGitIdentity = {
+      ...folderToGitScenario,
+      expected: {
+        ...folderToGitScenario.expected,
+        writes: folderToGitScenario.expected.writes.filter(({ id }) => id !== "project-a"),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([incompleteGitIdentity])).toContain(
+      `${folderToGitScenario.id}: folder-to-Git identity project-a must be persisted in Git-local metadata`,
+    );
+
+    const qualificationScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "native-qualification.all-services-qualify-platform",
+    );
+    if (qualificationScenario === undefined) {
+      throw new Error("native-qualification.all-services-qualify-platform fixture is required");
+    }
+    const incompleteQualification = {
+      ...qualificationScenario,
+      given: qualificationScenario.given.map((fact) =>
+        fact.kind === "native-qualification"
+          ? { ...fact, qualifiedServices: fact.qualifiedServices.slice(1) }
+          : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([incompleteQualification])).toContain(
+      `${qualificationScenario.id}: native qualification omits service postgres`,
+    );
+
+    const statusScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.symlink-alias-reuses-checkout",
+      );
+    if (statusScenario === undefined || statusScenario.expected.output.json === undefined) {
+      throw new Error("identity.symlink-alias-reuses-checkout JSON fixture is required");
+    }
+    const mutatingStatus = {
+      ...statusScenario,
+      expected: {
+        ...statusScenario.expected,
+        outcome: "reuse",
+        output: {
+          ...statusScenario.expected.output,
+          json: { ...statusScenario.expected.output.json, outcome: "reuse" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([mutatingStatus])).toContain(
+      `${statusScenario.id}: successful status commands must report`,
+    );
+
+    const stateWritingStatus = {
+      ...statusScenario,
+      expected: {
+        ...statusScenario.expected,
+        writes: [{ target: "registry", operation: "update", id: "checkout-a" }],
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([stateWritingStatus])).toContain(
+      `${statusScenario.id}: status commands must not mutate state`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
