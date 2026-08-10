@@ -55,6 +55,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0009 | [Configuration Schema & Validation](0009-configuration-schema-and-validation.md)         | proposed |
 | 0011 | [CLI Release & Distribution Strategy](0011-cli-release-and-distribution-strategy.md)     | proposed |
 | 0013 | [Live E2E Tests Bypass the Replay Server](0013-live-e2e-bypasses-replay-server.md)       | proposed |
+| 0015 | [Managed Stack Contract Fixtures](0015-managed-stack-contract-fixtures.md)           | accepted |
 
 ## Template
 

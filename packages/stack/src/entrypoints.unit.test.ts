@@ -71,6 +71,12 @@ describe("@supabase/stack entrypoints", () => {
   });
 
   it("isolates consumer test seams in the testing entry", () => {
-    expect(Object.keys(testing).sort()).toEqual(["DaemonServer", "UnixHttpClient"]);
+    expect(Object.keys(testing).sort()).toEqual([
+      "DaemonServer",
+      "UnixHttpClient",
+      "managedNativeServiceMatrix",
+      "managedStackContractFixtures",
+      "validateManagedStackContractFixtures",
+    ]);
   });
 });
