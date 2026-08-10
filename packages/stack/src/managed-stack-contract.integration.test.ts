@@ -372,6 +372,118 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([targetOwnsConflictingPort])).toContain(
       `${siblingPortScenario.id}: managed sibling port owner must differ from the selected target`,
     );
+
+    const stickyPortScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "ports.later-sticky-port-collision-fails",
+      );
+    if (stickyPortScenario === undefined) {
+      throw new Error("ports.later-sticky-port-collision-fails fixture is required");
+    }
+    const stickyPortWithoutStoppedTarget = {
+      ...stickyPortScenario,
+      given: stickyPortScenario.given.filter(({ kind }) => kind !== "stack"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([stickyPortWithoutStoppedTarget])).toContain(
+      `${stickyPortScenario.id}: sticky port conflict requires a stopped selected stack`,
+    );
+
+    const runtimeConflictScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "runtime.persisted-runtime-conflict-fails",
+      );
+    if (runtimeConflictScenario === undefined) {
+      throw new Error("runtime.persisted-runtime-conflict-fails fixture is required");
+    }
+    const unrelatedPersistedRuntime = {
+      ...runtimeConflictScenario,
+      given: runtimeConflictScenario.given.map((fact) =>
+        fact.kind === "persisted-runtime" ? { ...fact, stackId: "stack-other" } : fact,
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unrelatedPersistedRuntime])).toContain(
+      `${runtimeConflictScenario.id}: persisted runtime must belong to the selected target`,
+    );
+
+    const freshCloneScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.fresh-clone-creates-project-and-checkout",
+    );
+    if (freshCloneScenario === undefined) {
+      throw new Error("identity.fresh-clone-creates-project-and-checkout fixture is required");
+    }
+    const cloneWithoutGitState = {
+      ...freshCloneScenario,
+      given: freshCloneScenario.given.filter(({ kind }) => kind !== "git-state"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([cloneWithoutGitState])).toContain(
+      `${freshCloneScenario.id}: creating a Git context requires Git state for the workspace`,
+    );
+
+    const retryScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "bootstrap.retry-after-failed-copy-succeeds",
+    );
+    if (retryScenario === undefined) {
+      throw new Error("bootstrap.retry-after-failed-copy-succeeds fixture is required");
+    }
+    const retryWithoutRollback = {
+      ...retryScenario,
+      given: retryScenario.given.filter(({ kind }) => kind !== "operation-result"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([retryWithoutRollback])).toContain(
+      `${retryScenario.id}: bootstrap retry requires a rolled-back prior attempt`,
+    );
+
+    const configuredCredentialsScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "credentials.configured-values-are-authoritative",
+      );
+    if (configuredCredentialsScenario === undefined) {
+      throw new Error("credentials.configured-values-are-authoritative fixture is required");
+    }
+    const globallyPersistedPlaintext = {
+      ...configuredCredentialsScenario,
+      expected: {
+        ...configuredCredentialsScenario.expected,
+        details: {
+          ...configuredCredentialsScenario.expected.details,
+          plaintext_secrets_in_global_state: true,
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([globallyPersistedPlaintext])).toContain(
+      `${configuredCredentialsScenario.id}: configured credentials must not persist plaintext globally`,
+    );
+
+    const pruneScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "reclamation.prune-removes-metadata-only",
+    );
+    if (pruneScenario === undefined) {
+      throw new Error("reclamation.prune-removes-metadata-only fixture is required");
+    }
+    const pruneWithoutMutableData = {
+      ...pruneScenario,
+      given: pruneScenario.given.filter(({ kind }) => kind !== "stack"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([pruneWithoutMutableData])).toContain(
+      `${pruneScenario.id}: data-preserving prune must declare mutable stack data`,
+    );
+
+    const deleteScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "reclamation.delete-orphan-by-stack-id",
+    );
+    if (deleteScenario === undefined) {
+      throw new Error("reclamation.delete-orphan-by-stack-id fixture is required");
+    }
+    const runtimeMetadataOnlyDelete = {
+      ...deleteScenario,
+      expected: {
+        ...deleteScenario.expected,
+        writes: deleteScenario.expected.writes.filter((write) => write.target !== "managed-state"),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([runtimeMetadataOnlyDelete])).toContain(
+      `${deleteScenario.id}: delete runtime effect requires a matching state write`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
@@ -502,10 +614,11 @@ describe("managed stack acceptance contract", () => {
       [
         "bootstrap.absent-legacy-starts-fresh",
         "bootstrap.existing-managed-target-ignores-legacy",
-        "bootstrap.failed-copy-rolls-back-and-retries",
+        "bootstrap.failed-copy-rolls-back",
         "bootstrap.first-start-copies-compatible-legacy-state",
         "bootstrap.incompatible-legacy-starts-fresh",
         "bootstrap.managed-and-legacy-diverge-after-copy",
+        "bootstrap.retry-after-failed-copy-succeeds",
         "bootstrap.running-legacy-source-fails-without-mutation",
       ].sort(),
     );
@@ -523,7 +636,6 @@ describe("managed stack acceptance contract", () => {
         "credentials.configured-values-are-authoritative",
         "credentials.explicit-change-applies-after-stop",
         "credentials.omitted-values-use-stable-defaults",
-        "credentials.plaintext-secrets-stay-out-of-global-state",
         "credentials.running-change-reports-drift",
         "credentials.unchanged-values-survive-restart",
       ].sort(),
@@ -773,7 +885,7 @@ describe("managed stack acceptance contract", () => {
 
     expect(scenario).toMatchObject({
       area: "runtime",
-      given: [
+      given: expect.arrayContaining([
         {
           kind: "persisted-runtime",
           stackId: "stack-main-default",
@@ -784,7 +896,7 @@ describe("managed stack acceptance contract", () => {
           source: "cli",
           runtime: "native",
         },
-      ],
+      ]),
       when: {
         interface: "cli",
         argv: ["start", "--experimental", "--runtime", "native"],

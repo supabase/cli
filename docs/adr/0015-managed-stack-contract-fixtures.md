@@ -84,14 +84,18 @@ The fixture validator therefore checks more than catalog shape: selected, writte
 identities must be declared; starts of existing stacks must declare a stopped lifecycle; managed
 state creation and registry publication must imply each other; Git identity writes must use the
 correct common or worktree scope and cannot recreate an identity already declared by a checkout;
-selected linked worktrees must declare their own Git state; managed sibling-port conflicts must
-identify a distinct target; persisted-runtime preflight failures must identify a stopped stack;
+new Git-derived contexts and selected linked worktrees must declare the relevant Git state; managed
+and sticky port conflicts and persisted-runtime conflicts must identify their actual target;
+persisted-runtime preflight failures must identify a stopped stack; a successful bootstrap retry
+must follow an explicit rolled-back attempt; configured-credential creation must prove that global
+state contains references rather than plaintext; data-preserving prune must begin with mutable data;
 tracked identity markers must remain untouched; native qualification facts must partition the
 service matrix; status operations must remain read-only reports; portable runtime projections must
-match their referenced scenario; runtime effects must agree with permitted state writes; and
-human/API/JSON projections cannot contradict the managed result. We deliberately do not introduce
-a parallel test-only identity resolver; it would duplicate product policy before the real managed
-surface exists and could pass while the production implementation drifts.
+match their referenced scenario; destructive runtime effects must map to mutable-state deletion;
+other runtime effects must agree with permitted state writes; and human/API/JSON projections cannot
+contradict the managed result. We deliberately do not introduce a parallel test-only identity
+resolver; it would duplicate product policy before the real managed surface exists and could pass
+while the production implementation drifts.
 
 ## Implementation Handoff
 
