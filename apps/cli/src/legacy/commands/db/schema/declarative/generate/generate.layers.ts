@@ -2,6 +2,7 @@ import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../../../../shared/runtime/stdin.layer.ts";
+import { legacyHttpClientLayer } from "../../../../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../../../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../../../shared/legacy-db-connection.layer.ts";
@@ -22,8 +23,8 @@ import { legacyPgDeltaNextShadowLayer } from "../../../shared/legacy-pgdelta-nex
  *
  * `Output` / `LegacyGoProxy` / global flags come from the legacy root; the Bun
  * platform (FileSystem / Path / ChildProcessSpawner / ProcessControl / Tty) from
- * `runCli`. This layer adds both pg-delta implementations and the Go
- * shadow-database seam, plus the db-config resolver for `--linked` / `--db-url`.
+ * `runCli`. This layer adds both pg-delta implementations, the native shadow
+ * runtime, and the db-config resolver for `--linked` / `--db-url`.
  * The bundled implementation runs in-process by default; edge-runtime is retained
  * only for the explicit legacy opt-out. Per the "provide doesn't share to siblings" rule,
  * `LegacyCliConfig` is provided to every layer that needs it. `legacyDockerRunLayer`
@@ -49,8 +50,13 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(cliConfig),
 );
 
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
-const nextShadow = legacyPgDeltaNextShadowLayer.pipe(Layer.provide(seam));
+const nextShadow = legacyPgDeltaNextShadowLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(httpClient),
+);
 const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyPgDeltaNextAdapterLayer),
@@ -58,6 +64,9 @@ const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
   Layer.provide(edgeRuntime),
   Layer.provide(legacyPgDeltaSslProbeLayer),
   Layer.provide(seam),
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(httpClient),
   Layer.provide(legacyDebugLoggerLayer),
 );
 
@@ -69,6 +78,7 @@ export const legacyDbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
   legacyPgDeltaSslProbeLayer,
   seam,
   pgDeltaEngine,
+  httpClient,
   cliConfig,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,

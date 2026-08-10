@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * The pg-delta edge-runtime script failed. Byte-matches Go's
  * `"<errPrefix>: <err>:\n<stderr>"` wrapping in `RunEdgeRuntimeScript`
@@ -11,7 +17,21 @@ export class LegacyDeclarativeEdgeRuntimeError extends Data.TaggedError(
   "LegacyDeclarativeEdgeRuntimeError",
 )<{
   readonly message: string;
-}> {}
+  readonly docker?: "daemon" | "inspect" | "pull";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.docker === "daemon") {
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    }
+    if (this.docker === "pull") {
+      return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+    }
+    if (this.docker === "inspect") {
+      return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
+    }
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Setting up / connecting to / migrating the throwaway shadow database failed.
@@ -23,7 +43,14 @@ export class LegacyDeclarativeShadowDbError extends Data.TaggedError(
   "LegacyDeclarativeShadowDbError",
 )<{
   readonly message: string;
-}> {}
+  readonly docker?: "daemon";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.docker === "daemon"
+      ? { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" }
+      : actionability.startStack;
+  }
+}
 
 /**
  * Exporting declarative schema produced no output. Byte-matches Go's
@@ -35,7 +62,11 @@ export class LegacyDeclarativeEmptyOutputError extends Data.TaggedError(
   "LegacyDeclarativeEmptyOutputError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.impossibleState;
+  }
+}
 
 /**
  * Parsing the declarative export envelope failed. Byte-matches Go's
@@ -46,7 +77,11 @@ export class LegacyDeclarativeParseOutputError extends Data.TaggedError(
   "LegacyDeclarativeParseOutputError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.impossibleState;
+  }
+}
 
 /**
  * Parsing the pg-delta diff envelope failed. Byte-matches Go's
@@ -55,7 +90,11 @@ export class LegacyDeclarativeParseOutputError extends Data.TaggedError(
  */
 export class LegacyPgDeltaDiffParseError extends Data.TaggedError("LegacyPgDeltaDiffParseError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.impossibleState;
+  }
+}
 
 /**
  * Materializing the declarative export on disk failed. Byte-matches Go's
@@ -66,4 +105,8 @@ export class LegacyPgDeltaDiffParseError extends Data.TaggedError("LegacyPgDelta
  */
 export class LegacyDeclarativeWriteError extends Data.TaggedError("LegacyDeclarativeWriteError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}

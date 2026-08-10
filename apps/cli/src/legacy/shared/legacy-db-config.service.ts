@@ -1,4 +1,6 @@
 import { Context, type Effect, type Option } from "effect";
+import type { SupabaseApiInputError } from "@supabase/api/effect";
+import type * as HttpBody from "effect/unstable/http/HttpBody";
 import type { LegacyPlatformApiFactoryError } from "../auth/legacy-platform-api-factory.service.ts";
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import type {
@@ -8,7 +10,6 @@ import type {
 import type { LegacyProfileLoadError } from "./legacy-profile-load.ts";
 import type { LegacyProjectRefReadError } from "./legacy-temp-paths.ts";
 import type { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
-import type { LegacyApiResponseSchemaError } from "./legacy-http-errors.ts";
 import type {
   LegacyDbConfigConnectTempRoleError,
   LegacyDbConfigIpv6Error,
@@ -39,11 +40,12 @@ export type LegacyDbConfigError =
   | LegacyDbConfigListBansStatusError
   | LegacyDbConfigUnbanNetworkError
   | LegacyDbConfigUnbanStatusError
+  | SupabaseApiInputError
+  | HttpBody.HttpBodyError
   | LegacyDbConfigIpv6Error
   | LegacyDbConfigConnectTempRoleError
   | LegacyDbConfigPoolerLoginError
   | LegacyDbConnectError
-  | LegacyApiResponseSchemaError
   // The `--linked` path resolves the access token lazily via
   // `LegacyPlatformApiFactory.make` (only when minting a temp login role), so the
   // auth-required / invalid-token / api-config errors surface from the resolver

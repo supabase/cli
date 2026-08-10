@@ -1,7 +1,6 @@
 package diff
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -9,7 +8,6 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
-	stdfs "testing/fstest"
 	"time"
 
 	"github.com/docker/docker/api/types"
@@ -37,6 +35,80 @@ var dbConfig = pgconn.Config{
 	User:     "admin",
 	Password: "password",
 	Database: "postgres",
+}
+
+func TestLoadDeclaredSchemas(t *testing.T) {
+	t.Run("respects schema_paths order when pg-delta declarative dir exists", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/a_table.sql",
+		}
+		utils.Config.Experimental.PgDelta = &pkgconfig.PgDeltaConfig{
+			Enabled:               true,
+			DeclarativeSchemaPath: utils.SchemasDir,
+		}
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, fsys.MkdirAll(utils.SchemasDir, 0755))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/schemas/a_table.sql", []byte("create table a();"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, "supabase/schemas/z_function.sql", []byte("create function z() returns void language sql as $$ select 1 $$;"), 0644))
+
+		declared, err := loadDeclaredSchemas(fsys)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/a_table.sql",
+		}, declared)
+	})
+
+	t.Run("expands schema_paths directory entries deterministically", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{utils.DeclarativeDir}
+		fsys := afero.NewMemMapFs()
+		require.NoError(t, fsys.MkdirAll(filepath.Join(utils.DeclarativeDir, "nested"), 0755))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.DeclarativeDir, "nested", "b.sql"), []byte("select 2;"), 0644))
+		require.NoError(t, afero.WriteFile(fsys, filepath.Join(utils.DeclarativeDir, "a.sql"), []byte("select 1;"), 0644))
+
+		declared, err := loadDeclaredSchemas(fsys)
+
+		require.NoError(t, err)
+		assert.Equal(t, []string{
+			filepath.Join(utils.DeclarativeDir, "a.sql"),
+			filepath.Join(utils.DeclarativeDir, "nested", "b.sql"),
+		}, declared)
+	})
+}
+
+func TestShouldApplyDeclarativeWithPgDelta(t *testing.T) {
+	t.Run("uses pg-delta declarative apply when no schema_paths override is configured", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = nil
+
+		assert.True(t, shouldApplyDeclarativeWithPgDelta(true))
+	})
+
+	t.Run("uses pg-delta declarative apply when schema_paths points at the declarative dir", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{utils.DeclarativeDir + "/"}
+
+		assert.True(t, shouldApplyDeclarativeWithPgDelta(true))
+	})
+
+	t.Run("uses ordered migration apply for explicit schema_paths files", func(t *testing.T) {
+		originalConfig := utils.Config
+		t.Cleanup(func() { utils.Config = originalConfig })
+		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{
+			"supabase/schemas/z_function.sql",
+			"supabase/schemas/a_table.sql",
+		}
+
+		assert.False(t, shouldApplyDeclarativeWithPgDelta(true))
+	})
 }
 
 func TestRun(t *testing.T) {
@@ -72,12 +144,6 @@ func TestRun(t *testing.T) {
 		// Setup mock postgres: with auto_expose_new_tables unset, the shadow database setup
 		// revokes the default Data API GRANTs before creating the regression template.
 		conn := pgtest.NewConn()
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query("create extension if not exists pg_net schema extensions").
-			Reply("CREATE EXTENSION").
-			Query("COMMIT").
-			Reply("COMMIT")
 		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
@@ -107,7 +173,7 @@ func TestRun(t *testing.T) {
 		assert.Equal(t, []byte(diff), contents)
 	})
 
-	t.Run("ignores schema_paths and diffs the selected database", func(t *testing.T) {
+	t.Run("applies schema_paths in order before saving generated diff", func(t *testing.T) {
 		originalConfig := utils.Config
 		t.Cleanup(func() { utils.Config = originalConfig })
 		utils.Config.Db.MajorVersion = 14
@@ -145,27 +211,19 @@ func TestRun(t *testing.T) {
 			Reply(http.StatusOK)
 		shadowConn := pgtest.NewConn()
 		defer shadowConn.Close(t)
-		shadowConn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(utils.GlobalsSql).
+		shadowConn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
-			Query("create extension if not exists pg_net schema extensions").
-			Reply("CREATE EXTENSION").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("CREATE SCHEMA")
 		helper.MockApiPrivilegesRevoke(shadowConn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
+		declaredConn := pgtest.NewConn()
+		defer declaredConn.Close(t)
+		declaredConn.Query(functionSQL).
+			Reply("CREATE FUNCTION").
+			Query(tableSQL).
+			Reply("CREATE TABLE")
 		// pg-delta bypasses the injected DiffFunc and runs the real edge-runtime
 		// pipeline, so stub the seam DiffDatabase uses (mirrors exportCatalogPgDelta).
 		// The migra differ must never be reached on this path.
@@ -174,7 +232,7 @@ func TestRun(t *testing.T) {
 		diffCalled := false
 		diffPgDeltaRefDetailed = func(_ context.Context, _, targetRef string, schema []string, _ string, _ ...func(*pgx.ConnConfig)) (PgDeltaDiffResult, error) {
 			diffCalled = true
-			assert.Contains(t, targetRef, ":54322/postgres")
+			assert.Contains(t, targetRef, "contrib_regression")
 			assert.Equal(t, []string{"public"}, schema)
 			return PgDeltaDiffResult{
 				Files: []PgDeltaPlanFile{{Order: 1, Name: "schema_changes", TransactionMode: "transactional", SQL: generated}},
@@ -193,7 +251,11 @@ func TestRun(t *testing.T) {
 		}
 
 		err := Run(context.Background(), []string{"public"}, "ordered_schema", localConfig, differ, true, fsys, func(cc *pgx.ConnConfig) {
-			shadowConn.Intercept(cc)
+			if cc.Database == "contrib_regression" {
+				declaredConn.Intercept(cc)
+			} else {
+				shadowConn.Intercept(cc)
+			}
 		})
 
 		require.NoError(t, err)
@@ -239,38 +301,20 @@ func TestMigrateShadow(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(utils.GlobalsSql).
+		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
-			Query("create extension if not exists pg_net schema extensions").
-			Reply("CREATE EXTENSION").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("CREATE SCHEMA")
 		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		// Run test
 		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
 		// Check error
@@ -307,12 +351,8 @@ func TestMigrateShadow(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(utils.GlobalsSql).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+		conn.Query(utils.GlobalsSql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
 		err := MigrateShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
 		// Check error
@@ -320,38 +360,7 @@ func TestMigrateShadow(t *testing.T) {
 	})
 }
 
-func TestMigratePgDeltaNextShadowDatabase(t *testing.T) {
-	originalConfig := utils.Config
-	t.Cleanup(func() { utils.Config = originalConfig })
-	utils.Config = pkgconfig.NewConfig()
-	utils.Config.Db.MajorVersion = 17
-	utils.Config.Db.ShadowPort = 54320
-	utils.Config.Auth.Enabled = false
-	utils.Config.Storage.Enabled = false
-	utils.Config.Realtime.Enabled = false
-
-	conn := pgtest.NewConn()
-	defer conn.Close(t)
-	// The config has no Database Webhooks section. Expecting API privileges first
-	// makes any leaked legacy pg_net activation fail as an unmatched query.
-	helper.MockApiPrivilegesRevoke(conn).
-		Query(CREATE_TEMPLATE).
-		Reply("CREATE DATABASE")
-
-	err := MigratePgDeltaNextShadowDatabase(
-		context.Background(),
-		"pg-delta-next-migrations",
-		afero.NewMemMapFs(),
-		conn.Intercept,
-	)
-
-	require.NoError(t, err)
-}
-
 func TestSetupShadowDatabase(t *testing.T) {
-	originalConfig := utils.Config
-	t.Cleanup(func() { utils.Config = originalConfig })
-	utils.Config = pkgconfig.NewConfig()
 	utils.Config.Db.MajorVersion = 14
 
 	t.Run("sets up platform baseline without applying migrations", func(t *testing.T) {
@@ -367,29 +376,14 @@ func TestSetupShadowDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(utils.GlobalsSql).
+		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
-			Query("create extension if not exists pg_net schema extensions").
-			Reply("CREATE EXTENSION").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("CREATE SCHEMA")
 		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
-		// Run with Database Webhooks disabled. Legacy shadows still include pg_net
-		// because declarative directories historically diffed against that baseline.
+		// Run test
 		err := SetupShadowDatabase(context.Background(), "test-shadow-db", fsys, conn.Intercept)
 		// Check error
 		assert.NoError(t, err)
@@ -401,95 +395,12 @@ func TestSetupShadowDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(utils.GlobalsSql).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+		conn.Query(utils.GlobalsSql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
 		err := SetupShadowDatabase(context.Background(), "test-shadow-db", afero.NewMemMapFs(), conn.Intercept)
 		// Check error
 		assert.ErrorContains(t, err, `ERROR: schema "public" already exists (SQLSTATE 42P06)`)
-	})
-}
-
-func TestSetupPgDeltaNextDeclarativeShadowDatabase(t *testing.T) {
-	originalConfig := utils.Config
-	t.Cleanup(func() { utils.Config = originalConfig })
-
-	newPg17Config := func(t *testing.T) {
-		t.Helper()
-		cfg := pkgconfig.NewConfig()
-		require.NoError(t, cfg.Load("config.toml", stdfs.MapFS{
-			"config.toml": &stdfs.MapFile{Data: []byte("[experimental.webhooks]\nenabled = true\n")},
-		}))
-		cfg.Db.MajorVersion = 17
-		cfg.Db.Image = "public.ecr.aws/supabase/postgres:17.6.1.104"
-		cfg.Db.ShadowPort = 54320
-		cfg.Realtime.Enabled = false
-		cfg.Storage.Enabled = false
-		cfg.Auth.Enabled = false
-		utils.Config = cfg
-	}
-
-	t.Run("keeps pg-delta-next declarative baseline free of pg_net", func(t *testing.T) {
-		newPg17Config(t)
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		helper.MockApiPrivilegesRevoke(conn).
-			Query("DROP EXTENSION IF EXISTS pgcrypto").
-			Reply("DROP EXTENSION").
-			Query(`DROP EXTENSION IF EXISTS "uuid-ossp"`).
-			Reply("DROP EXTENSION")
-
-		err := SetupPgDeltaNextDeclarativeShadowDatabase(
-			context.Background(),
-			"declarative-container",
-			afero.NewMemMapFs(),
-			conn.Intercept,
-		)
-
-		require.NoError(t, err)
-	})
-
-	t.Run("identifies an extension whose non-cascade drop fails", func(t *testing.T) {
-		newPg17Config(t)
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		helper.MockApiPrivilegesRevoke(conn).
-			Query("DROP EXTENSION IF EXISTS pgcrypto").
-			ReplyError(pgerrcode.DependentObjectsStillExist, `cannot drop extension pgcrypto because other objects depend on it`)
-
-		err := SetupPgDeltaNextDeclarativeShadowDatabase(
-			context.Background(),
-			"declarative-container",
-			afero.NewMemMapFs(),
-			conn.Intercept,
-		)
-
-		require.Error(t, err)
-		assert.ErrorContains(t, err, `user-managed extension "pgcrypto"`)
-		assert.ErrorContains(t, err, `public.ecr.aws/supabase/postgres:17.6.1.104`)
-		assert.ErrorContains(t, err, "SQLSTATE 2BP01")
-	})
-
-	t.Run("rejects unaudited Postgres majors", func(t *testing.T) {
-		cfg := pkgconfig.NewConfig()
-		cfg.Db.MajorVersion = 14
-		cfg.Db.Image = "public.ecr.aws/supabase/postgres:14.1.0"
-		utils.Config = cfg
-
-		err := SetupPgDeltaNextDeclarativeShadowDatabase(
-			context.Background(),
-			"declarative-container",
-			afero.NewMemMapFs(),
-		)
-
-		require.Error(t, err)
-		assert.ErrorContains(t, err, "requires Postgres 17")
-		assert.ErrorContains(t, err, "major 14")
-		assert.ErrorContains(t, err, "public.ecr.aws/supabase/postgres:14.1.0")
 	})
 }
 
@@ -500,8 +411,6 @@ func TestDiffDatabase(t *testing.T) {
 	utils.InitialSchemaPg14Sql = "create schema private"
 
 	t.Run("throws error on failure to create shadow", func(t *testing.T) {
-		utils.Config.Db.Migrations.SchemaPaths = pkgconfig.Glob{"supabase/database/*.sql"}
-		t.Cleanup(func() { utils.Config.Db.Migrations.SchemaPaths = nil })
 		errNetwork := errors.New("network error")
 		// Setup in-memory fs
 		fsys := afero.NewMemMapFs()
@@ -512,12 +421,10 @@ func TestDiffDatabase(t *testing.T) {
 			Get("/v" + utils.Docker.ClientVersion() + "/images/" + utils.GetRegistryImageUrl(utils.Config.Db.Image) + "/json").
 			ReplyError(errNetwork)
 		// Run test
-		var output bytes.Buffer
-		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, &output, fsys, DiffSchemaMigra, false)
+		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false)
 		// Check error
 		assert.Empty(t, result)
 		assert.ErrorIs(t, err, errNetwork)
-		assert.Contains(t, output.String(), schemaPathsTransitionWarning)
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 
@@ -574,12 +481,8 @@ func TestDiffDatabase(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(utils.GlobalsSql).
-			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+		conn.Query(utils.GlobalsSql).
+			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`)
 		// Run test
 		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, conn.Intercept)
 		// Check error
@@ -632,38 +535,20 @@ create schema public`)
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(utils.GlobalsSql).
+		conn.Query(utils.GlobalsSql).
 			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(utils.InitialSchemaPg14Sql).
-			Reply("CREATE SCHEMA").
-			Query("COMMIT").
-			Reply("COMMIT").
-			Query("BEGIN").
-			Reply("BEGIN").
-			Query("create extension if not exists pg_net schema extensions").
-			Reply("CREATE EXTENSION").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("CREATE SCHEMA")
 		helper.MockApiPrivilegesRevoke(conn).
 			Query(CREATE_TEMPLATE).
 			Reply("CREATE DATABASE")
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		// Run test
 		result, err := DiffDatabase(context.Background(), []string{"public"}, dbConfig, io.Discard, fsys, DiffSchemaMigra, false, func(cc *pgx.ConnConfig) {
 			if cc.Host == dbConfig.Host {
@@ -686,4 +571,71 @@ create schema public`)
 func TestDropStatements(t *testing.T) {
 	drops := findDropStatements("create table t(); drop table t; alter table t drop column c")
 	assert.Equal(t, []string{"drop table t", "alter table t drop column c"}, drops)
+}
+
+func TestLoadSchemas(t *testing.T) {
+	expected := []string{
+		filepath.Join(utils.SchemasDir, "comment", "model.sql"),
+		filepath.Join(utils.SchemasDir, "model.sql"),
+		filepath.Join(utils.SchemasDir, "reaction", "dislike", "model.sql"),
+		filepath.Join(utils.SchemasDir, "reaction", "like", "model.sql"),
+	}
+	fsys := afero.NewMemMapFs()
+	for _, fp := range expected {
+		require.NoError(t, afero.WriteFile(fsys, fp, nil, 0644))
+	}
+	// Run test
+	schemas, err := loadDeclaredSchemas(fsys)
+	// Check error
+	assert.NoError(t, err)
+	assert.ElementsMatch(t, expected, schemas)
+}
+
+func TestLoadSchemasSkipsEmptySchemaPathGlobs(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	matched := filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "players.sql")
+	require.NoError(t, afero.WriteFile(fsys, matched, nil, 0644))
+	utils.Config.Db.Migrations.SchemaPaths = []string{
+		filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "*.sql"),
+		filepath.Join(utils.SupabaseDirPath, "schemas", "materialized_views", "*.sql"),
+	}
+	t.Cleanup(func() {
+		utils.Config.Db.Migrations.SchemaPaths = nil
+	})
+
+	schemas, err := loadDeclaredSchemas(fsys)
+
+	assert.NoError(t, err)
+	assert.Equal(t, []string{filepath.ToSlash(matched)}, schemas)
+}
+
+func TestLoadSchemasErrorsOnMissingLiteralSchemaPath(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	utils.Config.Db.Migrations.SchemaPaths = []string{
+		filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "players.sql"),
+	}
+	t.Cleanup(func() {
+		utils.Config.Db.Migrations.SchemaPaths = nil
+	})
+
+	schemas, err := loadDeclaredSchemas(fsys)
+
+	assert.ErrorContains(t, err, "no files matched pattern")
+	assert.Empty(t, schemas)
+}
+
+func TestLoadSchemasErrorsWhenAllSchemaPathGlobsAreEmpty(t *testing.T) {
+	fsys := afero.NewMemMapFs()
+	utils.Config.Db.Migrations.SchemaPaths = []string{
+		filepath.Join(utils.SupabaseDirPath, "schemas", "tables", "*.sql"),
+		filepath.Join(utils.SupabaseDirPath, "schemas", "views", "*.sql"),
+	}
+	t.Cleanup(func() {
+		utils.Config.Db.Migrations.SchemaPaths = nil
+	})
+
+	schemas, err := loadDeclaredSchemas(fsys)
+
+	assert.ErrorContains(t, err, "no files matched pattern")
+	assert.Empty(t, schemas)
 }

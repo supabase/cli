@@ -19,11 +19,15 @@ import {
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyListLocalMigrations } from "../../../../../shared/legacy-pgdelta.cache.ts";
-import { legacyIsPgDeltaDebugEnabled } from "../../../../../shared/legacy-pgdelta.ts";
+import {
+  legacyIsPgDeltaDebugEnabled,
+  legacyResolvePgDeltaProjectId,
+} from "../../../../../shared/legacy-pgdelta.ts";
 import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseEndpoint,
 } from "../../../shared/legacy-pgdelta-engine.service.ts";
+import { LegacyDeclarativeWriteError } from "../../../shared/legacy-pgdelta.errors.ts";
 import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNonInteractiveError,
@@ -112,7 +116,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // "Linked project" does NOT re-load in Go, so it is excluded — only `flags.linked`.)
       let toml = baseToml;
       // The resolved linked ref (explicit `--linked` only) is threaded into the
-      // baseline `__catalog` export (so its platform baseline is built from the
+      // native raw-shadow export source (so its platform setup uses the
       // remote-merged config, matching Go's `Generate`) and into the post-run
       // linked-project cache finalizer below.
       if (Option.isSome(flags.linked)) {
@@ -133,17 +137,36 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         legacyResolveDeclarativeDir(path, toml.pgDelta),
       );
       const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
+      if (
+        declarativeDirRel.trim().length === 0 ||
+        declarativeDir === path.resolve(cliConfig.workdir)
+      ) {
+        return yield* Effect.fail(
+          new LegacyDeclarativeWriteError({
+            message:
+              "declarative output directory must not be empty or resolve to the project directory",
+          }),
+        );
+      }
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const local: LegacyLocalConn = { port: toml.port, password: toml.password };
 
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
-          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
+          // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
+          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // `""` for a project relying on config.toml's `project_id` or the workdir-basename
+          // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume. `toml`
+          // reflects any `--linked` remote merge above, so its own `appliedRemote`/`projectId`
+          // suppress a conflicting ambient env var the same way `db diff`/`db pull` do.
+          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           // Merged config's deno_version (re-loaded with the linked ref above on
           // `--linked`), so pg-delta runs under the remote-configured Deno image.
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
@@ -243,7 +266,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         overwrite = true;
       }
 
-      const result = yield* legacyGenerateDeclarativeOutput(run, target);
+      const result = yield* legacyGenerateDeclarativeOutput(run, toml, target);
 
       if (!overwrite && (yield* confirmOverwriteHasFiles(fs, declarativeDir))) {
         // Go's confirmOverwrite goes through Console.PromptYesNo (`internal/db/
@@ -272,13 +295,12 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       // `local` key a subsequent `sync` reuses; a schema that cannot be applied makes
       // `generate` fail here rather than succeeding and forcing `sync` to reprovision.
       //
-      // On explicit `--linked`, thread the resolved ref as `SUPABASE_PROJECT_ID` into the
-      // `__catalog` subprocess (the same channel the baseline export uses), so it loads
-      // the `[remotes.<ref>]`-merged config and its own `GetDeclarativeDir()` resolves the
-      // remote-overridden `declarative_schema_path` — i.e. the warm builds from the same
-      // merged config and targets the same dir the handler wrote to (also computed from
-      // the merged `toml`). Go warms against the in-process merged config identically
-      // (`declarative.go:138-154`), so this always runs when `!--no-cache`.
+      // On explicit `--linked`, thread the resolved ref into the legacy cache-warm seam,
+      // so it loads the `[remotes.<ref>]`-merged config and its own `GetDeclarativeDir()`
+      // resolves the remote-overridden `declarative_schema_path` — i.e. the warm builds
+      // from the same merged config and targets the same dir the handler wrote to (also
+      // computed from the merged `toml`). Go warms against the in-process merged config
+      // identically (`declarative.go:138-154`), so this always runs when `!--no-cache`.
       // A command-local --output is deliberately not activated in config. The
       // legacy catalog seam resolves the configured declarative path itself, so
       // warming here would inspect the wrong tree. Skip that optional legacy-only

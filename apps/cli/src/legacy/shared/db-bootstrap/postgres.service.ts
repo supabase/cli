@@ -32,9 +32,13 @@ import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 
-/** Go's `Db.Password` default (`pkg/config/config.go:459`). `db.password` has no
- * config.toml field (`toml:"-"`, `pkg/config/db.go:88`), so this is the only value
- * this port can ever observe — matches `DEFAULT_DB_PASSWORD` in
+/** Go's `Db.Password` default (`pkg/config/config.go:459`). In Go this is the only
+ * value the field can ever hold on a db path: viper decodes with the `json` tag
+ * (`config.go:749-750`), and `json:"-"` (`pkg/config/db.go:88`) both blocks the
+ * `SUPABASE_DB_PASSWORD` env binding and makes a literal `[db] password` key a fatal
+ * `UnmarshalExact` error (`'db' has invalid keys: password`). The TS port honors the
+ * toml key as a deliberate extension — see `legacyBuildShadowPostgresContainerSpec`'s
+ * `password` field below. Matches `DEFAULT_DB_PASSWORD` in
  * `legacy-local-config-values.ts`, not imported from there since that constant
  * isn't exported and status/stop's resolver is otherwise unrelated to this module. */
 const LEGACY_POSTGRES_PASSWORD = "postgres";
@@ -254,20 +258,25 @@ function legacyPostgresExtraEnv(
  * {@link legacyBuildPostgresStartContainerSpec}), so it never appears in this
  * process's own `docker create` argv (CWE-214/522).
  *
- * Otherwise byte-for-byte derived from Go's raw-string concatenation
- * (including the trailing space after `/etc/postgresql` — Go's
- * `NewContainerConfig(args ...string)` joins its variadic `args` there,
- * always empty for `supabase start`, so the space survives as-is); built via
- * explicit `"...\n" +` concatenation rather than a multi-line template
- * literal so that trailing space stays a visible, lint/format-proof string
- * character instead of invisible end-of-line whitespace.
+ * Otherwise byte-for-byte derived from Go's raw-string concatenation —
+ * `NewContainerConfig(args ...string)` splices `strings.Join(args, " ")`
+ * straight after the literal trailing space following `/etc/postgresql`
+ * (`start.go:95`): `supabase start`'s own Postgres container always calls it
+ * with zero args (`args` here defaults to `""`, so the trailing space
+ * survives on its own, unchanged from before), while the shadow-database
+ * variant (`CreateShadowDatabase`, `apps/cli-go/internal/db/diff/diff.go:140`)
+ * passes {@link LEGACY_SHADOW_ENTRYPOINT_ARGS} — see
+ * {@link legacyBuildShadowPostgresContainerSpec}. Built via explicit
+ * `"...\n" +` concatenation rather than a multi-line template literal so that
+ * the trailing space (when `args` is empty) stays a visible, lint/format-proof
+ * string character instead of invisible end-of-line whitespace.
  */
-function legacyPostgresEntrypointScriptPg15(postgresConfig: string): string {
+function legacyPostgresEntrypointScriptPg15(postgresConfig: string, args = ""): string {
   return (
     "\n" +
     "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    "docker-entrypoint.sh postgres -D /etc/postgresql \n" +
+    `docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
     `${LEGACY_START_DB_SCHEMA_SQL}\n` +
     `${LEGACY_START_DB_WEBHOOK_SQL}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
@@ -284,14 +293,15 @@ function legacyPostgresEntrypointScriptPg15(postgresConfig: string): string {
  * only), appends `postgresConfig` to `postgresql.conf`, then execs
  * `docker-entrypoint.sh`. See {@link legacyPostgresEntrypointScriptPg15}'s doc
  * comment for why this is explicit concatenation rather than a template
- * literal.
+ * literal, and for the `args` parameter (same trailing-space splice, same
+ * default).
  */
-function legacyPostgresEntrypointScriptPg14(postgresConfig: string): string {
+function legacyPostgresEntrypointScriptPg14(postgresConfig: string, args = ""): string {
   return (
     "\n" +
     "cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    "docker-entrypoint.sh postgres -D /etc/postgresql \n" +
+    `docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
     "EOF\n" +
     `${postgresConfig}\n` +
@@ -346,6 +356,12 @@ export function legacyBuildPostgresStartContainerSpec(
   const isRestore = input.fromBackup !== undefined;
 
   const env: Record<string, string> = {
+    // The constant `"postgres"` literal, matching Go, where `Db.Password` is
+    // `toml:"-"` (never decoded from config.toml) and only ever holds the default
+    // (`pkg/config/db.go:88`, `config.go:459`). The sibling shadow builder below
+    // (`legacyBuildShadowPostgresContainerSpec`) instead threads a config-derived
+    // `input.password` — a deliberate TS extension on the shadow path only; if this
+    // container ever honors `[db] password` too, both must change together.
     POSTGRES_PASSWORD: LEGACY_POSTGRES_PASSWORD,
     POSTGRES_HOST: "/var/run/postgresql",
     JWT_SECRET: input.jwtSecret,
@@ -398,6 +414,129 @@ export function legacyBuildPostgresStartContainerSpec(
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
     networkAliases: LEGACY_POSTGRES_NETWORK_ALIASES,
+    labels: {},
+  };
+}
+
+/**
+ * Go's `NewContainerConfig("-c", "max_worker_processes=0")` (`CreateShadowDatabase`,
+ * `apps/cli-go/internal/db/diff/diff.go:140`) — disables background workers in the
+ * shadow database. Not a docker flag: it is spliced into the entrypoint script's own
+ * `docker-entrypoint.sh postgres -D /etc/postgresql <args>` line, exactly like every
+ * other `args` value {@link legacyPostgresEntrypointScriptPg15}/`Pg14` accept.
+ */
+export const LEGACY_SHADOW_ENTRYPOINT_ARGS = "-c max_worker_processes=0";
+
+/**
+ * Input to {@link legacyBuildShadowPostgresContainerSpec} — the subset of
+ * {@link LegacyPostgresStartServiceInput} the shadow variant actually needs (no
+ * `projectId`/`fromBackup`: the shadow container has no name and never restores from a
+ * backup) plus the shadow's own host port.
+ */
+export interface LegacyShadowPostgresContainerSpecInput {
+  readonly db: Pick<ProjectConfig["db"], "major_version" | "settings">;
+  readonly experimental: ProjectConfig["experimental"];
+  readonly jwtSecret: string;
+  readonly jwtExpiry: number;
+  readonly networkId: string;
+  readonly image: string;
+  readonly configImage: string;
+  readonly rootKey?: string;
+  /** `utils.Config.Db.ShadowPort` — the shadow's own host port, published to `5432/tcp` in-container. */
+  readonly shadowPort: number;
+  /**
+   * `[db] password` (already resolved from `config.toml`, `DEFAULT_DB_PASSWORD`/"postgres" when
+   * unset). Honoring the toml key is a deliberate TS extension, NOT Go parity: Go's
+   * `NewContainerConfig` does source `POSTGRES_PASSWORD` from `utils.Config.Db.Password` for both
+   * the real container and the shadow (`CreateShadowDatabase` reuses it verbatim, `diff.go:140`),
+   * but in Go that field is invariably the `"postgres"` default — `json:"-"` (`db.go:88`, the tag
+   * viper decodes with, `config.go:749-750`) makes a literal `[db] password` key a fatal
+   * `UnmarshalExact` config error, and blocks the env binding. The TS extension mirrors what
+   * `--local` connections already do on develop (`legacy-db-config.layer.ts`). Must be threaded
+   * through so the shadow's actual Postgres password matches what
+   * `legacyShadowRunInputFromLocalContainerInputs`'s caller connects with — otherwise a
+   * non-default `[db] password` authenticates against the wrong secret.
+   */
+  readonly password: string;
+}
+
+/**
+ * Builds the {@link LegacyStartContainerSpec} for the shadow database container. Port of
+ * Go's `CreateShadowDatabase` (`apps/cli-go/internal/db/diff/diff.go:138-151`) — reuses
+ * the EXACT SAME `NewContainerConfig` (image/env/healthcheck/entrypoint-script shape) the
+ * real local `db` container uses, just with {@link LEGACY_SHADOW_ENTRYPOINT_ARGS} spliced
+ * into the entrypoint and a materially different `container.HostConfig`/networking:
+ *
+ *  - **Empty `containerName`** (Go passes `""` to `DockerStart`, letting Docker
+ *    auto-generate one) — see {@link LegacyStartContainerSpec.containerName}'s own doc
+ *    comment for how the arg-builder and secret-file staging handle this.
+ *  - **`autoRemove: true`** — Go's `hostConfig.AutoRemove` (`--rm`).
+ *  - **No volume bind** — the shadow is throwaway; Go's `hostConfig` sets no `Binds` at all.
+ *  - **No `restartPolicy`** — Go's `hostConfig` sets no `RestartPolicy` either.
+ *  - **No `networkAliases`** — Go's `networkingConfig` is a bare, empty
+ *    `network.NetworkingConfig{}` (no `db`/`db.supabase.internal` aliases). The shadow
+ *    still joins the network via `DockerStart`'s own default `NetworkMode` (confirmed
+ *    empirically: Docker's embedded DNS resolves a container on a user-defined network by
+ *    BOTH its auto-generated name and its 12-char short container id, with no alias
+ *    needed — see `shadow-database.ts`'s header for why this matters).
+ *  - **Tmpfs on PG <= 14 IS still applied** — same `isPg14OrEarlier` condition as the real
+ *    `db` container.
+ *  - **The pgsodium root key `secretFiles` entry is still applied on PG >= 15** — the
+ *    shadow's entrypoint script is the SAME `legacyPostgresEntrypointScriptPg15`, which
+ *    still heredocs it in Go (splice point unaffected by `args`), so this port still needs
+ *    it delivered before `docker start` — via `docker cp` straight into the container
+ *    (`container-lifecycle.ts`), same as every other container's `secretFiles`, never a
+ *    host temp file.
+ *  - **Labels ARE still applied** (merged in by `legacyCreateContainer`, same as every
+ *    other container) so `supabase stop`'s label-filtered sweep catches an orphaned shadow
+ *    too — Go's `DockerStart` sets `CliProjectLabel`/`composeProjectLabel` unconditionally,
+ *    regardless of the `container.Config` literal passed in. The project label alone is
+ *    enough for that sweep to recognize an orphaned shadow: it filters and removes by
+ *    container id, so the shadow's lack of a stable name doesn't matter.
+ */
+export function legacyBuildShadowPostgresContainerSpec(
+  input: LegacyShadowPostgresContainerSpecInput,
+): LegacyStartContainerSpec {
+  const rootKeyValue = input.rootKey ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY;
+  const postgresConfig = legacyPostgresSettingsToPostgresConfig(input.db.settings);
+  const isPg14OrEarlier = input.db.major_version <= 14;
+
+  const env: Record<string, string> = {
+    POSTGRES_PASSWORD: input.password,
+    POSTGRES_HOST: "/var/run/postgresql",
+    JWT_SECRET: input.jwtSecret,
+    JWT_EXP: String(input.jwtExpiry),
+    ...legacyPostgresExtraEnv(input.experimental, input.configImage),
+  };
+
+  const script = isPg14OrEarlier
+    ? legacyPostgresEntrypointScriptPg14(postgresConfig, LEGACY_SHADOW_ENTRYPOINT_ARGS)
+    : legacyPostgresEntrypointScriptPg15(postgresConfig, LEGACY_SHADOW_ENTRYPOINT_ARGS);
+
+  return {
+    image: input.image,
+    containerName: "",
+    env,
+    entrypoint: "sh",
+    cmd: ["-c", script],
+    binds: [],
+    autoRemove: true,
+    ...(isPg14OrEarlier ? { tmpfs: { "/docker-entrypoint-initdb.d": "" } } : {}),
+    ...(isPg14OrEarlier
+      ? {}
+      : {
+          secretFiles: [
+            { containerPath: LEGACY_POSTGRES_PGSODIUM_ROOT_KEY_PATH, content: rootKeyValue },
+          ],
+        }),
+    ports: [{ hostPort: String(input.shadowPort), containerPort: "5432" }],
+    healthcheck: {
+      test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1", "-p", "5432"],
+      intervalSeconds: LEGACY_POSTGRES_HEALTHCHECK_INTERVAL_SECONDS,
+      timeoutSeconds: LEGACY_POSTGRES_HEALTHCHECK_TIMEOUT_SECONDS,
+      retries: LEGACY_POSTGRES_HEALTHCHECK_RETRIES,
+    },
+    networkId: input.networkId,
     labels: {},
   };
 }

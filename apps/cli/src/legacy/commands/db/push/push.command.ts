@@ -16,6 +16,9 @@ const config = {
   includeSeed: Flag.boolean("include-seed").pipe(
     Flag.withDescription("Include seed data from your config."),
   ),
+  skipVault: Flag.boolean("skip-vault").pipe(
+    Flag.withDescription("Skip updating vault secrets from config.toml."),
+  ),
   dryRun: Flag.boolean("dry-run").pipe(
     Flag.withDescription(
       "Print the migrations that would be applied, but don't actually apply them.",
@@ -39,7 +42,9 @@ const config = {
 export type LegacyDbPushFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyDbPushCommand = Command.make("push", config).pipe(
-  Command.withDescription("Push new migrations to the remote database."),
+  Command.withDescription(
+    "Push new migrations to the remote database. Vault secrets from config.toml are updated before migrations unless --skip-vault is set.",
+  ),
   Command.withShortDescription("Push new migrations to the remote database"),
   Command.withHandler((flags) =>
     legacyDbPush(flags).pipe(
@@ -48,6 +53,7 @@ export const legacyDbPushCommand = Command.make("push", config).pipe(
           "include-all": flags.includeAll,
           "include-roles": flags.includeRoles,
           "include-seed": flags.includeSeed,
+          "skip-vault": flags.skipVault,
           "dry-run": flags.dryRun,
           "db-url": flags.dbUrl,
           linked: flags.linked,

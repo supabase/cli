@@ -2,6 +2,12 @@ import { Data, Effect, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Container CLIs tried in order: Docker is preferred, Podman is the fallback
  * for Docker-less hosts (e.g. Podman-only Linux setups).
@@ -17,16 +23,21 @@ type Spawner = ChildProcessSpawner["Service"];
 /**
  * Raised when neither `docker` nor `podman` can be spawned at all (e.g. neither
  * is installed or on `PATH`) — distinct from a spawned process exiting non-zero.
- * Not exported: callers never need to match on this type directly, they fold it
- * into their own tagged error via {@link legacyDescribeContainerCliFailure} so
- * the "no runtime found" root cause survives instead of collapsing into a
- * generic "failed to ..." message.
+ * Callers never need to match on this type directly, they fold it into their
+ * own tagged error via {@link legacyDescribeContainerCliFailure} so the "no
+ * runtime found" root cause survives instead of collapsing into a generic
+ * "failed to ..." message. Exported only so the coverage test can verify its
+ * own actionability declaration.
  */
-class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
+export class LegacyContainerRuntimeNotFoundError extends Data.TaggedError(
   "LegacyContainerRuntimeNotFoundError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
 /**
  * Exported so `legacy-docker-suggest.ts`'s daemon-unreachable matcher can test
@@ -128,7 +139,7 @@ export const containerCliExitCode = (
  * `legacy-docker-lifecycle.ts` — every module that spawns `docker`/`podman` and
  * needs its stdout/stderr as text — stop each defining their own copy.
  */
-export function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
+export function legacyCollectText(stream: Stream.Stream<Uint8Array, unknown>) {
   const decoder = new TextDecoder();
   return Stream.runFold(
     stream,
@@ -167,11 +178,11 @@ export function legacyIsContainerNotFoundMessage(message: string): boolean {
  * failure mode (spawn failure, non-zero exit) — the shared shape behind every
  * "docker verb target" primitive that fails hard on any problem
  * (`legacyRemoveContainer`/`legacyRemoveVolume`/`legacyRestartContainer`; see
- * `containers/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
+ * `db-bootstrap/container-lifecycle.ts` and `db-bootstrap/restart-services.ts`).
  * `verb` is the human-readable action embedded in the error message (e.g.
  * `"remove container"` → `"failed to remove container: <cause>"`).
  */
-export function runContainerCliExpectSuccess<E>(
+export function legacyRunContainerCliExpectSuccess<E>(
   spawner: Spawner,
   args: ReadonlyArray<string>,
   verb: string,
@@ -189,7 +200,7 @@ export function runContainerCliExpectSuccess<E>(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(Effect.mapError(() => makeError(`failed to ${verb}`)));
       if (exitCode !== 0) {
@@ -241,7 +252,7 @@ export const legacyContainerCliExitCodeAndStdout = (
       // so a late subscriber would see an already-ended, empty stream (same
       // pattern as `legacy-docker-lifecycle.ts`'s `spawnDockerPsLines`).
       const [exitCode, stdout] = yield* Effect.all(
-        [handle.exitCode.pipe(Effect.map(Number)), collectText(handle.stdout)],
+        [handle.exitCode.pipe(Effect.map(Number)), legacyCollectText(handle.stdout)],
         { concurrency: "unbounded" },
       );
       return { exitCode, stdout };
@@ -297,7 +308,7 @@ export const legacyDockerSupportsVolumePruneAllFlag = (spawner: Spawner) =>
         }),
       );
       const [exitCode, stdout] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stdout)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stdout)],
         { concurrency: "unbounded" },
       );
       if (exitCode !== 0) return false;

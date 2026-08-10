@@ -14,12 +14,8 @@ func TestDropSchemas(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(DropObjects).
-			Reply("INSERT 0").
-			Query("COMMIT").
-			Reply("COMMIT")
+		conn.Query(DropObjects).
+			Reply("INSERT 0")
 		// Run test
 		err := DropUserSchemas(context.Background(), conn.MockClient(t))
 		// Check error
@@ -30,12 +26,8 @@ func TestDropSchemas(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(DropObjects).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+		conn.Query(DropObjects).
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := DropUserSchemas(context.Background(), conn.MockClient(t))
 		// Check error

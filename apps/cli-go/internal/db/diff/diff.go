@@ -4,8 +4,11 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -20,13 +23,12 @@ import (
 	"github.com/spf13/afero"
 	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
+	configpkg "github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 	"github.com/supabase/cli/pkg/parser"
 )
 
 type DiffFunc func(context.Context, pgconn.Config, pgconn.Config, []string, ...func(*pgx.ConnConfig)) (string, error)
-
-const schemaPathsTransitionWarning = "WARNING: [db.migrations].schema_paths no longer changes the target of db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files."
 
 func Run(ctx context.Context, schema []string, file string, config pgconn.Config, differ DiffFunc, usePgDelta bool, fsys afero.Fs, options ...func(*pgx.ConnConfig)) (err error) {
 	result, err := DiffDatabase(ctx, schema, config, os.Stderr, fsys, differ, usePgDelta, options...)
@@ -45,6 +47,75 @@ func Run(ctx context.Context, schema []string, file string, config pgconn.Config
 		fmt.Fprintln(os.Stderr, utils.Yellow(strings.Join(drops, "\n")))
 	}
 	return nil
+}
+
+func loadDeclaredSchemas(fsys afero.Fs) ([]string, error) {
+	if schemas := utils.Config.Db.Migrations.SchemaPaths; len(schemas) > 0 {
+		return schemas.SQLFiles(
+			afero.NewIOFS(fsys),
+			configpkg.WithSkipEmptyGlobs(),
+			configpkg.WithErrorOnAllSkippedGlobs(),
+		)
+	}
+	// When pg-delta is enabled, declarative path is the source of truth (config or default).
+	if utils.IsPgDeltaEnabled() {
+		declDir := utils.GetDeclarativeDir()
+		if exists, err := afero.DirExists(fsys, declDir); err == nil && exists {
+			var declared []string
+			if err := afero.Walk(fsys, declDir, func(path string, info fs.FileInfo, err error) error {
+				if err != nil {
+					return err
+				}
+				if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
+					declared = append(declared, path)
+				}
+				return nil
+			}); err != nil {
+				return nil, errors.Errorf("failed to walk declarative dir: %w", err)
+			}
+			sort.Strings(declared)
+			return declared, nil
+		}
+	}
+	if exists, err := afero.DirExists(fsys, utils.SchemasDir); err != nil {
+		return nil, errors.Errorf("failed to check schemas: %w", err)
+	} else if !exists {
+		return nil, nil
+	}
+	var declared []string
+	if err := afero.Walk(fsys, utils.SchemasDir, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.Mode().IsRegular() && filepath.Ext(info.Name()) == ".sql" {
+			declared = append(declared, path)
+		}
+		return nil
+	}); err != nil {
+		return nil, errors.Errorf("failed to walk dir: %w", err)
+	}
+	// Keep file application order deterministic so diff output stays stable across
+	// filesystems and operating systems. This is only if no schema paths in config are set.
+	sort.Strings(declared)
+	return declared, nil
+}
+
+func shouldApplyDeclarativeWithPgDelta(usePgDelta bool) bool {
+	if !usePgDelta {
+		return false
+	}
+	schemas := utils.Config.Db.Migrations.SchemaPaths
+	if len(schemas) == 0 {
+		return true
+	}
+	if len(schemas) != 1 {
+		return false
+	}
+	return cleanSchemaPath(schemas[0]) == cleanSchemaPath(utils.GetDeclarativeDir())
+}
+
+func cleanSchemaPath(path string) string {
+	return filepath.ToSlash(filepath.Clean(path))
 }
 
 // https://github.com/djrobstep/migra/blob/master/migra/statements.py#L6
@@ -97,8 +168,8 @@ const CREATE_TEMPLATE = "CREATE DATABASE contrib_regression TEMPLATE postgres"
 // database. It deliberately stops short of applying user migrations so that
 // callers which only need the platform baseline (declarative apply) share the
 // exact same starting point as callers that also replay migrations.
-func setupShadowConn(ctx context.Context, conn *pgx.Conn, container string, fsys afero.Fs, options ...start.SetupDatabaseOption) error {
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys, options...); err != nil {
+func setupShadowConn(ctx context.Context, conn *pgx.Conn, container string, fsys afero.Fs) error {
+	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys); err != nil {
 		return err
 	}
 	if _, err := conn.Exec(ctx, CREATE_TEMPLATE); err != nil {
@@ -118,51 +189,10 @@ func SetupShadowDatabase(ctx context.Context, container string, fsys afero.Fs, o
 		return err
 	}
 	defer conn.Close(context.Background())
-	return setupShadowConn(ctx, conn, container, fsys, start.WithLegacyPgNetBaseline())
+	return setupShadowConn(ctx, conn, container, fsys)
 }
 
-var pgDeltaNextDeclarativeExtensionDrops = []struct {
-	name string
-	sql  string
-}{
-	{name: "pgcrypto", sql: "DROP EXTENSION IF EXISTS pgcrypto"},
-	{name: "uuid-ossp", sql: `DROP EXTENSION IF EXISTS "uuid-ossp"`},
-}
-
-// SetupPgDeltaNextDeclarativeShadowDatabase provisions cluster B with the
-// platform baseline but without activating user-managed extensions. Those
-// extensions must come exclusively from declarative SQL so deleting their files
-// can produce DROP EXTENSION plans.
-func SetupPgDeltaNextDeclarativeShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	if utils.Config.Db.MajorVersion != 17 {
-		return errors.Errorf(
-			"pg-delta declarative shadow baseline requires Postgres 17 (got major %d, image %q)",
-			utils.Config.Db.MajorVersion,
-			utils.Config.Db.Image,
-		)
-	}
-	conn, err := ConnectShadowDatabase(ctx, 10*time.Second, options...)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if err := start.SetupDatabase(ctx, conn, container[:12], os.Stderr, fsys, start.WithoutUserExtensionActivation()); err != nil {
-		return err
-	}
-	for _, extension := range pgDeltaNextDeclarativeExtensionDrops {
-		if _, err := conn.Exec(ctx, extension.sql); err != nil {
-			return errors.Errorf(
-				"failed to remove user-managed extension %q from pg-delta declarative shadow baseline (image %q): %w",
-				extension.name,
-				utils.Config.Db.Image,
-				err,
-			)
-		}
-	}
-	return nil
-}
-
-func migrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, setupOptions []start.SetupDatabaseOption, options ...func(*pgx.ConnConfig)) error {
+func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
 	migrations, err := migration.ListLocalMigrations(utils.MigrationsDir, afero.NewIOFS(fsys))
 	if err != nil {
 		return err
@@ -172,35 +202,23 @@ func migrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs,
 		return err
 	}
 	defer conn.Close(context.Background())
-	if err := setupShadowConn(ctx, conn, container, fsys, setupOptions...); err != nil {
+	if err := setupShadowConn(ctx, conn, container, fsys); err != nil {
 		return err
 	}
 	return migration.ApplyMigrations(ctx, migrations, conn, afero.NewIOFS(fsys))
 }
 
-// MigrateShadowDatabase preserves the historical platform baseline used by the
-// legacy diff engines, including pg_net even when Database Webhooks is disabled.
-func MigrateShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	return migrateShadowDatabase(ctx, container, fsys, []start.SetupDatabaseOption{start.WithLegacyPgNetBaseline()}, options...)
-}
-
-// MigratePgDeltaNextShadowDatabase provisions the migrations side of the
-// isolated pg-delta-next comparison without inheriting legacy baseline behavior.
-func MigratePgDeltaNextShadowDatabase(ctx context.Context, container string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
-	return migrateShadowDatabase(ctx, container, fsys, nil, options...)
-}
-
 func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w io.Writer, fsys afero.Fs, differ DiffFunc, usePgDelta bool, options ...func(*pgx.ConnConfig)) (DatabaseDiff, error) {
-	if len(utils.Config.Db.Migrations.SchemaPaths) > 0 {
-		fmt.Fprintln(w, schemaPathsTransitionWarning)
-	}
 	fmt.Fprintln(w, "Creating shadow database...")
-	shadowSource, err := PrepareShadowSource(ctx, fsys, options...)
+	shadowSource, err := PrepareShadowSource(ctx, schema, utils.IsLocalDatabase(config), usePgDelta, fsys, options...)
 	if err != nil {
 		return DatabaseDiff{}, err
 	}
 	defer utils.DockerRemove(shadowSource.Container)
 	shadowConfig := shadowSource.Source
+	if shadowSource.TargetOverride != nil {
+		config = *shadowSource.TargetOverride
+	}
 	// Load all user defined schemas
 	if len(schema) > 0 {
 		fmt.Fprintln(w, "Diffing schemas:", strings.Join(schema, ","))
@@ -238,4 +256,19 @@ func DiffDatabase(ctx context.Context, schema []string, config pgconn.Config, w 
 		return DatabaseDiff{}, err
 	}
 	return DatabaseDiff{SQL: output}, nil
+}
+
+func migrateBaseDatabase(ctx context.Context, config pgconn.Config, migrations []string, fsys afero.Fs, options ...func(*pgx.ConnConfig)) error {
+	fmt.Fprintln(os.Stderr, "Creating local database from declarative schemas:")
+	msg := make([]string, len(migrations))
+	for i, m := range migrations {
+		msg[i] = fmt.Sprintf(" • %s", utils.Bold(m))
+	}
+	fmt.Fprintln(os.Stderr, strings.Join(msg, "\n"))
+	conn, err := utils.ConnectLocalPostgres(ctx, config, options...)
+	if err != nil {
+		return err
+	}
+	defer conn.Close(context.Background())
+	return migration.SeedGlobals(ctx, migrations, conn, afero.NewIOFS(fsys))
 }

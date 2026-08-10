@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { mapLegacyHttpError } from "../../shared/legacy-http-errors.ts";
 
 /**
@@ -7,22 +13,33 @@ import { mapLegacyHttpError } from "../../shared/legacy-http-errors.ts";
  * Mirrors Go's `errors.Errorf("failed to <verb> pgsodium config: %w", err)`
  * (`apps/cli-go/internal/encryption/{get,update}`).
  */
-class LegacyEncryptionNetworkError extends Data.TaggedError("LegacyEncryptionNetworkError")<{
+export class LegacyEncryptionNetworkError extends Data.TaggedError("LegacyEncryptionNetworkError")<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 /**
  * The pgsodium endpoint returned a status the Go CLI does not treat as success
  * (it only accepts `JSON200`). Mirrors Go's
  * `errors.Errorf("unexpected <verb> pgsodium config status %d: %s", code, body)`.
  */
-class LegacyEncryptionUnexpectedStatusError extends Data.TaggedError(
+export class LegacyEncryptionUnexpectedStatusError extends Data.TaggedError(
   "LegacyEncryptionUnexpectedStatusError",
 )<{
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 /**
  * Build the network/status error mapper for an encryption subcommand. Go uses

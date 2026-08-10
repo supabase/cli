@@ -7,6 +7,7 @@ import { Cause, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from 
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
+import { vi } from "vitest";
 
 import {
   mockOutput,
@@ -25,6 +26,7 @@ import {
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
+import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import {
   LegacyDbConnection,
   type LegacyDbSession,
@@ -154,6 +156,7 @@ function defaultRoute(opts: { readonly neverHealthy?: boolean } = {}) {
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
+    if (args[0] === "network" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "inspect") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
@@ -276,6 +279,10 @@ interface SetupOpts {
   readonly catalogStdout?: string;
   /** Fails the mocked catalog-export call with this message instead of succeeding. */
   readonly catalogExportFailWith?: string;
+  /** Number of initial `LegacyDbConnection.connect` attempts that fail before succeeding. */
+  readonly connectFailures?: number;
+  /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
+  readonly connectFailuresRetryable?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -315,6 +322,25 @@ function setup(opts: SetupOpts = {}) {
     requireSslForHost: () => Effect.succeed(false),
   });
 
+  let connectAttempts = 0;
+  const connectFailures = opts.connectFailures ?? 0;
+  const dbConnection = Layer.succeed(LegacyDbConnection, {
+    connect: () =>
+      Effect.suspend(() => {
+        connectAttempts += 1;
+        if (connectAttempts <= connectFailures) {
+          return Effect.fail(
+            new LegacyDbConnectError({
+              message:
+                "failed to connect to postgres: failed to connect to `host=127.0.0.1 user=postgres database=postgres`: connect ECONNREFUSED 127.0.0.1:54322",
+              ...(opts.connectFailuresRetryable === false ? {} : { retryable: true }),
+            }),
+          );
+        }
+        return Effect.succeed(dbSession.session);
+      }),
+  });
+
   const layer = Layer.mergeAll(
     BunServices.layer,
     out.layer,
@@ -322,7 +348,7 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     child.layer,
     alwaysReadyHttpClientLayer,
-    Layer.succeed(LegacyDbConnection, { connect: () => Effect.succeed(dbSession.session) }),
+    dbConnection,
     legacyDockerRunLayer.pipe(
       Layer.provide(child.layer),
       Layer.provide(mockProcessControl().layer),
@@ -339,7 +365,17 @@ function setup(opts: SetupOpts = {}) {
     edgeRuntime,
     sslProbe,
   );
-  return { layer, out, telemetry, child, dbSession, edgeRunCalls };
+  return {
+    layer,
+    out,
+    telemetry,
+    child,
+    dbSession,
+    edgeRunCalls,
+    get connectAttempts() {
+      return connectAttempts;
+    },
+  };
 }
 
 const currentBranchPath = (workdir: string) =>
@@ -381,6 +417,32 @@ describe("legacy db start", () => {
       });
     },
   );
+
+  it.live(
+    "fresh volume: retries the host connect while the published port is not yet reachable (#6136)",
+    () => {
+      const s = setup({ route: freshVolumeRoute(defaultRoute()), connectFailures: 2 });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer));
+        expect(s.connectAttempts).toBe(3);
+        expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
+      });
+    },
+    15_000,
+  );
+
+  it.live("fresh volume: a non-dial connect failure is not retried", () => {
+    const s = setup({
+      route: freshVolumeRoute(defaultRoute()),
+      connectFailures: 1,
+      connectFailuresRetryable: false,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(s.layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(s.connectAttempts).toBe(1);
+    });
+  });
 
   it.live(
     "PG <= 14 on a fresh volume: execs schema/globals SQL directly instead of the PG15+ one-shot migrate jobs",
@@ -741,6 +803,31 @@ describe("legacy db start", () => {
       expect(args?.[networkIndex + 1]).toBe("env-network");
     });
   });
+
+  it.live(
+    "an explicitly empty --network-id falls back to the generated network name, not a literal empty override",
+    () => {
+      // Go's gate is `len(viper.GetString("network-id")) > 0` (docker.go:379-383), not merely
+      // "the flag was passed" — an empty override (e.g. a shell expanding an unset var to "")
+      // must fall through to the generated `supabase_network_<projectId>` name, not produce a
+      // literal `--network ""` on the `docker create` call.
+      const { layer, child } = setup({
+        route: freshVolumeRoute(defaultRoute()),
+        networkId: "",
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "network" && s.args.at(-1) === "supabase_network_test",
+          ),
+        ).toBe(true);
+        const args = createArgs(child.spawned);
+        const networkIndex = args?.indexOf("--network") ?? -1;
+        expect(args?.[networkIndex + 1]).toBe("supabase_network_test");
+      });
+    },
+  );
 
   it.live(
     "fails with a typed config error on a malformed SUPABASE_DB_HEALTH_TIMEOUT, before any container is created",
@@ -1462,6 +1549,40 @@ describe("legacy db start", () => {
       expect(out.stderrText).toContain("Postgres database is already running.");
     });
   });
+
+  it.live(
+    "prints @supabase/config's deprecated-[inbucket]-section WARN only once on a fresh, not-already-running start",
+    () => {
+      // `legacyLoadLocalProjectContext` wraps `@supabase/config`'s `loadProjectConfig`, which
+      // unconditionally `Console.error`s a deprecation WARN for a legacy `[inbucket]` section
+      // (`packages/config/src/io.ts`'s `normalizeDeprecatedSMTPSections`, pinned to the real
+      // console — not this file's `Output` service, so it must be observed with a raw
+      // `console.error` spy, same idiom as `stop`/`status`'s own identical deprecated-provider
+      // tests). This handler used to load that context TWICE on the not-running path: once
+      // eagerly here (ahead of the already-running short-circuit), and again inside
+      // `legacyBuildLocalDbContainerInputs`'s own, now-removed, internal reload — doubling this
+      // WARN for one invocation, unlike Go's single `flags.LoadConfig` call
+      // (`internal/db/start/start.go:45`). Threading the eagerly-loaded context through as
+      // `legacyBuildLocalDbContainerInputs`'s `preloadedContext` fixes this.
+      const { layer } = setup({
+        configContents: 'project_id = "test"\n[inbucket]\n',
+        route: freshVolumeRoute(defaultRoute()),
+      });
+      const warnings: Array<string> = [];
+      const errorSpy = vi.spyOn(console, "error").mockImplementation((...args) => {
+        warnings.push(args.map((a) => String(a)).join(" "));
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const inbucketWarnings = warnings.filter((m) =>
+          m.includes(
+            "WARN: config section [inbucket] is deprecated. Please use [local_smtp] instead.",
+          ),
+        );
+        expect(inbucketWarnings).toHaveLength(1);
+      }).pipe(Effect.ensuring(Effect.sync(() => errorSpy.mockRestore())));
+    },
+  );
 
   it.live("fails on a malformed auth duration field even when the db is already running", () => {
     // Go's `flags.LoadConfig` (and therefore this eager duration validation) runs before

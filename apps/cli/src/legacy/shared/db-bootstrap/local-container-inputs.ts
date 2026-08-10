@@ -1,14 +1,17 @@
 /**
- * The local-container-bring-up prelude BOTH `db start` (`commands/db/start/start.handler.ts`)
- * and `db reset` (`commands/db/reset/reset.handler.ts`) build before calling their own
- * composition (`legacyStartDatabase`/`legacyRecreateLocalDatabase`): load the local project
- * context, resolve config values + the `LegacyDbBootstrapConfig` derivation, the container's
- * network id/opts/id, the Postgres container-spec fields common to both callers, the lazy
- * image-resolve `Effect`, and the `LegacyFreshDbSetupInput` `setup` object `legacyRunFreshDbSetup`
- * needs. Hoisted here (CLI-1955 review follow-up) — the two callers used to each run an
- * independently-typed ~130-line copy of this exact sequence, with no test comparing them.
+ * The local-container-bring-up prelude shared by `db start`
+ * (`commands/db/start/start.handler.ts`), `db reset`
+ * (`commands/db/reset/reset.handler.ts`, via `reset-local-database.ts`), and
+ * `db diff`/`db pull`'s shadow-database provisioning (CLI-1956): load the local
+ * project context, resolve config values + the `LegacyDbBootstrapConfig`
+ * derivation, the container's network id/opts/id, the Postgres container-spec
+ * fields common to every caller, the lazy image-resolve `Effect`, and the
+ * `LegacyFreshDbSetupInput` `setup` object `legacyRunFreshDbSetup` needs. Hoisted
+ * here (CLI-1955 review follow-up) — `db start`/`db reset` used to each run an
+ * independently-typed ~130-line copy of this exact sequence, with no test
+ * comparing them.
  *
- * Deliberately does NOT include the two callers' genuinely divergent parts, which stay at each
+ * Deliberately does NOT include the callers' genuinely divergent parts, which stay at each
  * call site instead of being forced into this shared shape:
  *  - `db start`'s `fromBackup` (spliced into its OWN `postgresSpec` on top of
  *    {@link LegacyLocalDbContainerInputs.postgresSpecBase}) and its `isFreshVolume`/`filterValue`
@@ -93,6 +96,14 @@ export interface LegacyLocalDbContainerInputs {
 /**
  * Builds {@link LegacyLocalDbContainerInputs} — see this module's header for the full call
  * order and for which parts are deliberately excluded (kept at each call site instead).
+ *
+ * Loads its own {@link LegacyLocalProjectContext} via {@link legacyLoadLocalProjectContext}
+ * UNLESS the caller passes {@link preloadedContext} — see that parameter's own doc comment for
+ * why `db start`'s handler must pass one (a double-print bug: `@supabase/config`'s
+ * `loadProjectConfig` unconditionally prints deprecated-config-section WARN lines to stderr,
+ * and `db start` already loads a context of its own, eagerly, ahead of this function, matching
+ * Go's single `flags.LoadConfig` call in `start.Run` (`apps/cli-go/internal/db/start/
+ * start.go:45`)).
  */
 export const legacyBuildLocalDbContainerInputs = (
   spawner: Spawner,
@@ -100,6 +111,47 @@ export const legacyBuildLocalDbContainerInputs = (
   networkIdFlag: Option.Option<string>,
   platform: string,
   debug: boolean,
+  // The resolved `--linked` ref, when the caller already has one (`db diff`/`db pull` —
+  // CLI-1956) — threaded straight through to `legacyLoadLocalProjectContext` so the shadow's
+  // OWN container-spec fields (image, `db.major_version`, JWT secret, root key,
+  // `db.settings`, service enabled-for-setup flags) reflect the matching `[remotes.<ref>]`
+  // override, the same way `legacyReadDbToml(..., ref)` already does for those commands'
+  // other config read. `db start`/`db reset` never pass this — see that function's own doc
+  // comment.
+  projectRef?: string,
+  // The `remoteOverrideKeys` the caller's OWN, separate `legacyReadDbToml(..., ref)` read
+  // already computed for the SAME matched `[remotes.<ref>]` block (`@supabase/config`'s
+  // `loadProjectConfig`, used by `legacyLoadLocalProjectContext` just above, merges the
+  // remote block's VALUES but tracks none of which keys it set) — threaded into
+  // `legacyResolveDbBootstrapConfig`/`legacyResolveDbSettingsEnvOverrides` AND
+  // `legacyResolveLocalConfigValues` below so a remote-set field (e.g. `db.major_version`,
+  // `auth.jwt_secret`, `db.root_key`) isn't re-overridden by a conflicting `SUPABASE_*` env
+  // var (review: PRRT_kwDOErm0O86W2LL4, PRRT_kwDOErm0O86W2tRi). Go's `mergeRemoteConfig`
+  // installs remote leaves at viper's OVERRIDE tier, above `AutomaticEnv`
+  // (`apps/cli-go/pkg/config/config.go:718-730`).
+  // `db start`/`db reset` never pass a `projectRef` above, so they never need this either.
+  remoteOverrideKeys?: ReadonlySet<string>,
+  // `db start`'s handler — the only real caller that already has a
+  // {@link LegacyLocalProjectContext} loaded in scope BEFORE calling this function, since it
+  // must eagerly load+validate config ahead of its own "is Postgres already running"
+  // short-circuit (matching Go's single `flags.LoadConfig` call, `start.go:45`, which also runs
+  // ahead of `AssertSupabaseDbIsRunning`, `start.go:45-47`). When provided, this function uses
+  // it AS-IS instead of calling `legacyLoadLocalProjectContext(workdir, mapError, projectRef)`
+  // again — the call is skipped entirely, not just its result discarded, because that reload is
+  // the one genuinely observable side effect this function would otherwise repeat:
+  // `@supabase/config`'s `loadProjectConfig` unconditionally prints deprecated-`[inbucket]`/
+  // deprecated-`auth.external.{linkedin,slack}` WARN lines to stderr (`packages/config/src/
+  // io.ts:705-710,792-797`), so reloading would print each warning TWICE for one `db start`
+  // invocation where Postgres isn't already running, instead of once like Go — whose entire
+  // config load is a single package-level-singleton pass, with no second `Config.Load` call
+  // anywhere in `db start`'s call graph to double the print.
+  //
+  // PRECONDITION (not enforced here — see this module's header for why `db start`/`db reset`
+  // never pass a `projectRef` above, so there is nothing to reconcile): the preloaded context
+  // must correspond to the SAME `workdir`/`projectRef` this call would otherwise have passed to
+  // `legacyLoadLocalProjectContext` itself. That's only ever true today for a caller — `db
+  // start` — that never passes `projectRef` at all.
+  preloadedContext?: LegacyLocalProjectContext,
 ): Effect.Effect<
   LegacyLocalDbContainerInputs,
   LegacyDbConfigLoadError,
@@ -110,7 +162,8 @@ export const legacyBuildLocalDbContainerInputs = (
     const path = yield* Path.Path;
     const mapError = (message: string) => new LegacyDbConfigLoadError({ message });
 
-    const context = yield* legacyLoadLocalProjectContext(workdir, mapError);
+    const context =
+      preloadedContext ?? (yield* legacyLoadLocalProjectContext(workdir, mapError, projectRef));
     const { config, projectEnvValues, loaded, hostname, projectId } = context;
     // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
     // inside `legacyRunFreshDbSetup`'s fresh-volume setup pipeline — see this field's own doc
@@ -125,6 +178,7 @@ export const legacyBuildLocalDbContainerInputs = (
           workdir,
           projectEnvValues,
           loaded?.document,
+          remoteOverrideKeys,
         ),
       catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
     });
@@ -132,7 +186,7 @@ export const legacyBuildLocalDbContainerInputs = (
     const bootstrapConfig = yield* legacyResolveDbBootstrapConfig(
       fs,
       path,
-      { config, projectEnvValues, workdir },
+      { config, projectEnvValues, workdir, remoteOverrideKeys },
       mapError,
     );
 
@@ -165,7 +219,11 @@ export const legacyBuildLocalDbContainerInputs = (
         ...config.db,
         port: values.dbPort,
         major_version: bootstrapConfig.majorVersion,
-        settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+        settings: legacyResolveDbSettingsEnvOverrides(
+          config.db.settings,
+          projectEnvValues,
+          remoteOverrideKeys,
+        ),
       },
       experimental: {
         ...config.experimental,
@@ -220,11 +278,22 @@ export const legacyBuildLocalDbContainerInputs = (
       // `Realtime.Enabled` (`internal/db/start/start.go:337-341`) — `legacyRunFreshDbSetup` only
       // evaluates this Effect when reached AND `realtimeEnabledForSetup`.
       jwks: Effect.tryPromise({
-        try: () => legacyResolveLocalJwks(config, workdir, values.jwtSecret, projectEnvValues),
+        try: () =>
+          legacyResolveLocalJwks(
+            config,
+            workdir,
+            values.jwtSecret,
+            projectEnvValues,
+            remoteOverrideKeys,
+          ),
         catch: (cause) => mapError(cause instanceof Error ? cause.message : String(cause)),
       }),
       apiUrl: values.apiUrl,
-      authExternalUrl: legacyResolveAuthExternalUrl(loaded?.document, projectEnvValues),
+      authExternalUrl: legacyResolveAuthExternalUrl(
+        loaded?.document,
+        projectEnvValues,
+        remoteOverrideKeys,
+      ),
       siteUrl: values.authSiteUrl,
       anonKey: values.anonKey,
       serviceRoleKey: values.serviceRoleKey,

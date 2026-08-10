@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
+
 /**
  * Conflicting database-target flags. Reproduces cobra's
  * `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` (`cmd/db.go:573`).
@@ -8,7 +14,11 @@ export class LegacyDbResetTargetFlagsError extends Data.TaggedError(
   "LegacyDbResetTargetFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `--version` and `--last` together. Reproduces cobra's
@@ -18,7 +28,11 @@ export class LegacyDbResetVersionFlagsError extends Data.TaggedError(
   "LegacyDbResetVersionFlagsError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `--version` is not a valid integer. Byte-matches Go's bare
@@ -30,7 +44,11 @@ export class LegacyDbResetInvalidVersionError extends Data.TaggedError(
   "LegacyDbResetInvalidVersionError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * No migration file matches `--version`. Byte-matches Go's
@@ -41,7 +59,11 @@ export class LegacyDbResetMigrationFileError extends Data.TaggedError(
   "LegacyDbResetMigrationFileError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * The user declined the reset confirmation. Go returns
@@ -49,12 +71,26 @@ export class LegacyDbResetMigrationFileError extends Data.TaggedError(
  */
 export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbResetCancelledError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.cancelled;
+  }
+}
 
-/** A drop / migrate / seed / vault statement failed during the remote reset. */
+/**
+ * A drop / migrate / seed / vault statement failed during the remote reset. `suggestion`
+ * is Go's `CmdSuggestion` — set only by the `--experimental` schema-files apply branch
+ * (`"See schema file: <Bold(fp)>"`, `apply.go:63`); every other apply failure on this
+ * command leaves it unset, matching Go.
+ */
 export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetApplyError")<{
   readonly message: string;
-}> {}
+  readonly suggestion?: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * `--last` was given a negative value. Go declares `--last` as an unsigned flag
@@ -63,7 +99,11 @@ export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetAppl
  */
 export class LegacyDbResetLastFlagError extends Data.TaggedError("LegacyDbResetLastFlagError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Invalid `--sql-paths` usage. Byte-matches Go's `validateDbResetSeedFlags`
@@ -77,4 +117,8 @@ export class LegacyDbResetSeedFlagsError extends Data.TaggedError("LegacyDbReset
    * `validateDbResetSeedFlags` `utils.CmdSuggestion` (`cmd/db.go`).
    */
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

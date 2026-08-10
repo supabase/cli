@@ -3,21 +3,11 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import {
-  LegacyDebugFlag,
-  LegacyNetworkIdFlag,
-  legacyResolveExperimentalWithProjectEnv,
-} from "../../../../shared/legacy/global-flags.ts";
+import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
-import { legacyIsBitbucketPipeline } from "../../../shared/legacy-bitbucket-pipeline.ts";
 import { legacyCheckDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
-import {
-  legacyCliProjectFilterValue,
-  legacyResolveNetworkId,
-  localDbContainerId,
-} from "../../../shared/legacy-docker-ids.ts";
 import {
   legacyEnvOverride,
   legacyEnvOverrideApiMaxRows,
@@ -34,7 +24,6 @@ import {
   legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
   legacyResolveAuthExternalProviders,
-  legacyResolveAuthExternalUrl,
   legacyResolveAuthHooks,
   legacyResolveAuthMfa,
   legacyResolveAuthSms,
@@ -45,7 +34,6 @@ import {
   legacyResolveGotrueSessions,
   legacyResolveGotrueWeb3,
   legacyResolveLocalConfigValues,
-  legacyResolveLocalJwks,
   legacyResolveThirdPartyProviders,
 } from "../../../shared/legacy-local-config-values.ts";
 import {
@@ -55,12 +43,11 @@ import {
 import { ramInBytes } from "../../../shared/legacy-size-units.ts";
 import { legacyGoUrlParse } from "../../../shared/legacy-storage-url.ts";
 import { legacyLoadLocalProjectContext } from "../../../shared/legacy-local-project-context.ts";
-import { legacyResolveDbBootstrapConfig } from "../../../shared/db-bootstrap/bootstrap-config.ts";
-import { legacyEnsureImagesCached } from "../../../shared/db-bootstrap/image-prepull.ts";
+import { legacyCliProjectFilterValue } from "../../../shared/legacy-docker-ids.ts";
+import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
 import { legacyRollbackStart } from "../../../shared/db-bootstrap/rollback.ts";
 import { legacyStartDatabase } from "../../../shared/db-bootstrap/start-database.ts";
-import type { LegacyContainerOpts } from "../../../shared/db-bootstrap/container-lifecycle.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -125,6 +112,12 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
   const runtimeInfo = yield* RuntimeInfo;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
+  // Threaded into `legacyRollbackStart`'s own `legacyDockerRemoveAll` teardown — Go's
+  // `--debug` gates that function's `Pruned …:` stderr reports (`docker.go:123-143`,
+  // `viper.GetBool("DEBUG")`), matching `supabase start`'s own handler — and into
+  // `legacyBuildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume
+  // Realtime/Storage/Auth migrate job tees its own stderr (`db-setup.ts`'s
+  // `legacyRunStartMigrateJob`).
   const debug = yield* LegacyDebugFlag;
 
   const body = Effect.gen(function* () {
@@ -168,7 +161,17 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       cliConfig.workdir,
       (message) => new LegacyDbConfigLoadError({ message }),
     );
-    const { config, projectEnvValues, loaded, hostname, projectId } = context;
+    // `projectId`/`hostname` are NOT destructured under their bare names here — the not-running
+    // branch below passes this SAME `context` into `legacyBuildLocalDbContainerInputs` as its
+    // `preloadedContext` param (reused, not reloaded — a second `legacyLoadLocalProjectContext`
+    // call would run `@supabase/config`'s `loadProjectConfig` again, which unconditionally
+    // prints deprecated-config-section WARN lines to stderr, doubling them for one invocation),
+    // and that function returns the SAME context back verbatim as `inputs.context`, later
+    // destructured under `context.projectId`/`context.hostname` — re-declaring those same bare
+    // names here, in this same function scope, would still collide with that later
+    // destructuring. `hostnameForValidation` is still needed here, for the eager, discarded
+    // `legacyResolveLocalConfigValues` call further down.
+    const { config, projectEnvValues, loaded, hostname: hostnameForValidation } = context;
 
     // Go decodes every `time.Duration` config field — including these 5 — in the same single,
     // unconditional `Config.Load` pass (`mapstructure.StringToTimeDurationHookFunc()`,
@@ -883,18 +886,15 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     }
 
     // Closes an entire recurring class of gaps in the battery above, rather than adding another
-    // one-off field check: `legacyResolveLocalConfigValues` (below) is the SAME resolver this
-    // handler already calls, unconditionally, to build `values` for the not-running branch — it
-    // was simply called too LATE, after the already-running shortcut, so every Go `Config.Load`/
-    // `Validate` step it performs internally (not just the ones this battery separately
-    // hand-duplicates above) was skipped whenever Postgres was already up. Moving the SAME call
-    // here — before the shortcut, matching every other check in this battery — closes 6 review
-    // findings at once, because they're all steps this one resolver already performs internally:
-    // `auth.captcha` decode (`legacyResolveAuthCaptcha`, review: PRRT_kwDOErm0O86WYMj_),
-    // `auth.jwt_secret` length validation (`resolveJwtSecret`/`generateAPIKeys`, review:
-    // PRRT_kwDOErm0O86WYMkJ), `auth.signing_keys_path` file read
-    // (`legacyResolveConfiguredSigningKeys`, review: PRRT_kwDOErm0O86WYMkM), `api.tls` cert/key
-    // path validation + file reads (`readApiTlsFiles`, review: PRRT_kwDOErm0O86WYMkP),
+    // one-off field check: `legacyResolveLocalConfigValues` is the SAME resolver
+    // `legacyBuildLocalDbContainerInputs` calls again below, in the not-running branch, to build
+    // the REAL `values` the container bring-up needs — calling it EAGERLY here too, before the
+    // already-running shortcut, closes 6 review findings at once, because they're all steps this
+    // one resolver already performs internally: `auth.captcha` decode (`legacyResolveAuthCaptcha`,
+    // review: PRRT_kwDOErm0O86WYMj_), `auth.jwt_secret` length validation
+    // (`resolveJwtSecret`/`generateAPIKeys`, review: PRRT_kwDOErm0O86WYMkJ), `auth.signing_keys_path`
+    // file read (`legacyResolveConfiguredSigningKeys`, review: PRRT_kwDOErm0O86WYMkM), `api.tls`
+    // cert/key path validation + file reads (`readApiTlsFiles`, review: PRRT_kwDOErm0O86WYMkP),
     // `auth.external.*` required-field validation (`validateAuthExternalProviders`, review:
     // PRRT_kwDOErm0O86WYMkT), and `auth.email`/notification template content reads
     // (`readAuthEmailTemplateContent`, review: PRRT_kwDOErm0O86WYMkW) — all genuinely unconditional
@@ -906,17 +906,15 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // `db.ssl_enforcement.enabled`, `db.health_timeout`, `storage.{enabled,file_size_limit}`,
     // Mailpit/Logflare's non-primary ports) — `status`/`stop` never read those either, so
     // `legacyResolveLocalConfigValues` never decodes them, and they still need their own eager
-    // check the same way they always have. It's harmless (not incorrect) that this also
-    // re-validates a handful of fields the battery above already covers one-by-one (e.g.
-    // `studio.port`/`local_smtp.port`, `api.tls.enabled`) — same "resolve once, still call again
-    // to force the decode" precedent `db.settings`/`realtime.*` already use elsewhere in this
-    // battery — removing those now-redundant individual checks is a separate cleanup, not required
-    // to close the gaps above.
-    const values = yield* Effect.try({
+    // check the same way they always have. Its result is discarded here — only the fail-fast
+    // behavior matters — and `legacyBuildLocalDbContainerInputs` below re-resolves the REAL
+    // `values`, same "resolve once, still call again to force the decode" precedent
+    // `db.settings`/`realtime.*` already use elsewhere in this battery.
+    yield* Effect.try({
       try: () =>
         legacyResolveLocalConfigValues(
           config,
-          hostname,
+          hostnameForValidation,
           cliConfig.workdir,
           projectEnvValues,
           loaded?.document,
@@ -967,49 +965,36 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     // resolver) plus the shared `legacyResolveDbBootstrapConfig` derivation `supabase
     // start` also uses — deliberately narrower than `supabase start`'s own prelude: no
     // `--exclude`, no image pre-pull for any other service, no JWT/JWKS/image resolution
-    // beyond what Postgres and its own fresh-volume setup jobs need.
-    // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
-    // inside `legacyStartDatabase`'s fresh-volume setup pipeline — resolved here (project `.env`
-    // aware, like `db reset`'s identical gate) so it can be threaded straight through.
-    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
-
-    // `values` was already resolved above, before the already-running shortcut (see that call's
-    // own doc comment) — reused here rather than calling `legacyResolveLocalConfigValues` a
-    // second time.
-    const bootstrapConfig = yield* legacyResolveDbBootstrapConfig(
-      fs,
-      path,
-      { config, projectEnvValues, workdir: cliConfig.workdir },
-      (message) => new LegacyDbConfigLoadError({ message }),
+    // beyond what Postgres and its own fresh-volume setup jobs need. Shared with `db reset`'s
+    // own identical prelude — see `legacyBuildLocalDbContainerInputs`'s own header for why
+    // `fromBackup`/rollback tracking stay here instead of moving into it. `context` (loaded
+    // eagerly above) is threaded through as `preloadedContext` — no `projectRef`/
+    // `remoteOverrideKeys` (`db start` never has either) — so this call reuses it instead of
+    // calling `legacyLoadLocalProjectContext` a second time, which would otherwise double-print
+    // any deprecated-config-section stderr warning for this single invocation (see
+    // `preloadedContext`'s own doc comment).
+    const inputs = yield* legacyBuildLocalDbContainerInputs(
+      spawner,
+      cliConfig.workdir,
+      networkIdFlag,
+      runtimeInfo.platform,
+      debug,
+      undefined,
+      undefined,
+      context,
     );
+    const {
+      context: { projectId, hostname },
+      values,
+      bootstrapConfig,
+      networkId,
+      containerOpts,
+      dbContainerId,
+      postgresSpecBase,
+      resolvePostgresImage,
+      setup,
+    } = inputs;
 
-    // Go's `DockerStart` forces every container's network mode (and the network it creates)
-    // to `--network-id` when set, ahead of the generated `supabase_network_<project>` fallback
-    // (`docker.go:379-383`) — and `--network-id` falls back to the `SUPABASE_NETWORK_ID`
-    // shell/project-dotenv env var when the flag itself is omitted, via the same
-    // `viper`/`AutomaticEnv` mechanism as `SUPABASE_YES`/`SUPABASE_EXPERIMENTAL` (review:
-    // PRRT_kwDOErm0O86VlqIL; see {@link legacyResolveNetworkId}'s doc comment for why this is NOT
-    // the same freeze-at-package-init shape as `utils.Config.Hostname`).
-    const networkId = legacyResolveNetworkId(
-      Option.getOrUndefined(networkIdFlag),
-      projectId,
-      projectEnvValues,
-    );
-    // Go's `DockerStart` unconditionally appends the Linux-only
-    // `host.docker.internal:host-gateway` extra host for every container it starts
-    // (`docker_linux.go`; empty on darwin/windows, where Docker Desktop already resolves that
-    // hostname).
-    const extraHosts =
-      runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    const isBitbucketPipeline = legacyIsBitbucketPipeline();
-    const startOpts: LegacyContainerOpts = {
-      projectId,
-      isBitbucketPipeline,
-      workdir: cliConfig.workdir,
-      extraHosts,
-    };
-
-    const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
 
     // Go's `utils.NoBackupVolume` package var — assigned by `legacyStartDatabase`'s own
@@ -1033,96 +1018,25 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       hostname,
       dbContainerId,
       dbPort: values.dbPort,
-      containerOpts: startOpts,
-      postgresSpec: {
-        db: {
-          ...config.db,
-          port: values.dbPort,
-          major_version: bootstrapConfig.majorVersion,
-          settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
-        },
-        experimental: {
-          ...config.experimental,
-          orioledb_version: bootstrapConfig.orioledbVersion,
-          s3_host: bootstrapConfig.s3Host,
-          s3_region: bootstrapConfig.s3Region,
-          s3_access_key: bootstrapConfig.s3AccessKey,
-          s3_secret_key: bootstrapConfig.s3SecretKey,
-        },
-        jwtSecret: values.jwtSecret,
-        jwtExpiry: values.authJwtExpiry,
-        projectId,
-        networkId,
-        configImage: bootstrapConfig.postgresImage,
-        rootKey: values.rootKey,
-        fromBackup,
-      },
+      containerOpts,
+      // `fromBackup` (if set) drives BOTH the restore-entrypoint variant and
+      // `legacyStartDatabase`'s own backup-volume-exists guard — `db reset` has no
+      // `fromBackup` concept at all, so `postgresSpecBase` omits it.
+      postgresSpec: { ...postgresSpecBase, fromBackup },
       // Go's `db start` never pre-pulls any OTHER service's image (it has no
       // `ensureImagesCached`-equivalent pre-pull pass at all — `internal/start/start.go`'s own
       // pre-pull is top-level-`start`-only) — only the `db` container's own image, resolved
       // lazily, right where Go's `DockerStart` would resolve it internally
       // (`DockerResolveImageIfNotCached`, `internal/utils/docker.go:363-365`).
-      resolvePostgresImage: legacyEnsureImagesCached(
-        spawner,
-        [bootstrapConfig.postgresImage],
-        projectEnvValues,
-      ).pipe(
-        Effect.map(
-          (resolved) =>
-            resolved.get(bootstrapConfig.postgresImage) ?? bootstrapConfig.postgresImage,
-        ),
-      ),
+      resolvePostgresImage,
       dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
-      setup: {
-        majorVersion: bootstrapConfig.majorVersion,
-        experimental,
-        config: {
-          ...config,
-          realtime: {
-            ...config.realtime,
-            enabled: bootstrapConfig.realtimeEnabledForSetup,
-            ip_version: bootstrapConfig.realtimeIpVersion,
-            max_header_length: bootstrapConfig.realtimeMaxHeaderLength,
-          },
-          storage: {
-            ...config.storage,
-            enabled: bootstrapConfig.storageEnabledForSetup,
-            file_size_limit: bootstrapConfig.storageFileSizeLimit,
-          },
-          auth: {
-            ...config.auth,
-            enabled: bootstrapConfig.authEnabledForSetup,
-          },
-        },
-        dbUrl: values.dbUrl,
-        jwtSecret: values.jwtSecret,
-        // Go's `initSchema15`'s realtime job resolves JWKS itself, LOCALLY, gated on
-        // `Realtime.Enabled` (`internal/db/start/start.go:337-341`) — unlike `supabase
-        // start`'s OWN unconditional, up-front `ResolveJWKS` call (which also feeds the
-        // long-running Realtime/GoTrue/PostgREST containers `db start` never creates).
-        // `legacyStartDatabase` only evaluates this Effect when reached AND
-        // `realtimeEnabledForSetup` — see its own header for why this is lazy.
-        jwks: Effect.tryPromise({
-          try: () =>
-            legacyResolveLocalJwks(config, cliConfig.workdir, values.jwtSecret, projectEnvValues),
-          catch: (cause) =>
-            new LegacyDbConfigLoadError({
-              message: cause instanceof Error ? cause.message : String(cause),
-            }),
-        }),
-        apiUrl: values.apiUrl,
-        authExternalUrl: legacyResolveAuthExternalUrl(loaded?.document, projectEnvValues),
-        siteUrl: values.authSiteUrl,
-        anonKey: values.anonKey,
-        serviceRoleKey: values.serviceRoleKey,
-        storageTargetMigration: bootstrapConfig.storageTargetMigration,
-        realtimeEnabledForSetup: bootstrapConfig.realtimeEnabledForSetup,
-        storageEnabledForSetup: bootstrapConfig.storageEnabledForSetup,
-        authEnabledForSetup: bootstrapConfig.authEnabledForSetup,
-        serviceVersionOverrides: bootstrapConfig.serviceVersionOverrides,
-        projectEnvValues,
-        debug,
-      },
+      // Go's `initSchema15`'s realtime job resolves JWKS itself, LOCALLY, gated on
+      // `Realtime.Enabled` (`internal/db/start/start.go:337-341`) — unlike `supabase
+      // start`'s OWN unconditional, up-front `ResolveJWKS` call (which also feeds the
+      // long-running Realtime/GoTrue/PostgREST containers `db start` never creates).
+      // `legacyStartDatabase` only evaluates this Effect when reached AND
+      // `realtimeEnabledForSetup` — see its own header for why this is lazy.
+      setup,
       onFreshVolumeResolved: (resolved) => {
         isFreshVolume = resolved;
       },

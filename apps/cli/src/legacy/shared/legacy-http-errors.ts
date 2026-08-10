@@ -1,5 +1,6 @@
-import { isSupabaseApiResponseSchemaError, type SupabaseApiError } from "@supabase/api/effect";
-import { Data, Effect } from "effect";
+import { SupabaseApiInputError, type SupabaseApiError } from "@supabase/api/effect";
+import { Effect } from "effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
@@ -47,19 +48,16 @@ function sanitizeErrorBody(input: string): string {
   return out;
 }
 
-export type NetworkErrorFactory<E> = new (args: { readonly message: string }) => E;
+export type NetworkErrorFactory<E> = new (args: {
+  readonly message: string;
+  readonly decode?: boolean;
+}) => E;
 
 export type StatusErrorFactory<E> = new (args: {
   readonly status: number;
   readonly body: string;
   readonly message: string;
 }) => E;
-
-/** A 2xx Management API response that violates the generated response contract. */
-export class LegacyApiResponseSchemaError extends Data.TaggedError("LegacyApiResponseSchemaError")<{
-  readonly operationId: string;
-  readonly message: string;
-}> {}
 
 /**
  * Build an error mapper that classifies a `SupabaseApiError` into either a typed network
@@ -75,16 +73,16 @@ export function mapLegacyHttpError<N, S>(opts: {
   readonly statusError: StatusErrorFactory<S>;
   readonly networkMessage: (cause: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-}): (cause: SupabaseApiError) => Effect.Effect<never, N | S | LegacyApiResponseSchemaError> {
+}): (
+  cause: SupabaseApiError,
+) => Effect.Effect<never, N | S | SupabaseApiInputError | HttpBody.HttpBodyError> {
   return (cause) =>
     Effect.gen(function* () {
-      if (isSupabaseApiResponseSchemaError(cause)) {
-        return yield* Effect.fail(
-          new LegacyApiResponseSchemaError({
-            operationId: cause.operationId,
-            message: cause.message,
-          }),
-        );
+      if (cause instanceof SupabaseApiInputError || cause instanceof HttpBody.HttpBodyError) {
+        // These failures occur while the generated client validates or builds
+        // the request. Keep their identity because this generic mapper cannot
+        // safely infer user provenance or reclassify them as response errors.
+        return yield* Effect.fail(cause);
       }
       if (HttpClientError.isHttpClientError(cause)) {
         if (RESPONSE_ERROR_TAGS.has(cause.reason._tag) && cause.response !== undefined) {
@@ -106,9 +104,12 @@ export function mapLegacyHttpError<N, S>(opts: {
           new opts.networkError({ message: opts.networkMessage(description) }),
         );
       }
-      // Input SchemaError or HttpBodyError — retain their historical mapping.
+      // SchemaError — the server returned a response whose body failed schema
+      // decoding (a 200 the generated client could not parse). This is not a
+      // transport failure, so flag `decode` to classify it as an API-response
+      // problem rather than a network problem.
       return yield* Effect.fail(
-        new opts.networkError({ message: opts.networkMessage(String(cause)) }),
+        new opts.networkError({ message: opts.networkMessage(String(cause)), decode: true }),
       );
     });
 }

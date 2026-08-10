@@ -1,8 +1,20 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import {
+  LegacyDebugFlag,
+  LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
+import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import {
   LegacyPgDeltaEngine,
@@ -62,44 +74,66 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
     const path = yield* Path.Path;
     const seam = yield* LegacyDeclarativeSeam;
     const output = yield* Output;
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const runtimeInfo = yield* RuntimeInfo;
+    const dbConnection = yield* LegacyDbConnection;
+    const docker = yield* LegacyDockerRun;
+    const httpClient = yield* HttpClient.HttpClient;
+    const cliArgs = yield* CliArgs;
+    const debugFlag = yield* LegacyDebugFlag;
+    const experimentalFlag = yield* LegacyExperimentalFlag;
+    const networkIdFlag = yield* LegacyNetworkIdFlag;
 
-    const provideRuntime = <Success, Error>(
-      operation: Effect.Effect<
-        Success,
-        Error,
-        | LegacyDeclarativeSeam
-        | LegacyEdgeRuntimeScript
-        | LegacyPgDeltaSslProbe
-        | FileSystem.FileSystem
-        | Output
-        | Path.Path
-      >,
+    const runtime = Layer.mergeAll(
+      Layer.succeed(LegacyEdgeRuntimeScript, edgeRuntime),
+      Layer.succeed(LegacyPgDeltaSslProbe, sslProbe),
+      Layer.succeed(FileSystem.FileSystem, fs),
+      Layer.succeed(Path.Path, path),
+      Layer.succeed(LegacyDeclarativeSeam, seam),
+      Layer.succeed(Output, output),
+      Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      Layer.succeed(RuntimeInfo, runtimeInfo),
+      Layer.succeed(LegacyDbConnection, dbConnection),
+      Layer.succeed(LegacyDockerRun, docker),
+      Layer.succeed(HttpClient.HttpClient, httpClient),
+      Layer.succeed(CliArgs, cliArgs),
+      Layer.succeed(LegacyDebugFlag, debugFlag),
+      Layer.succeed(LegacyExperimentalFlag, experimentalFlag),
+      Layer.succeed(LegacyNetworkIdFlag, networkIdFlag),
+    );
+
+    const provideRuntime = <Success, Error, Requirements>(
+      operation: Effect.Effect<Success, Error, Requirements>,
+    ) => operation.pipe(Effect.provide(runtime));
+
+    const endpointRef = (
+      context: LegacyPgDeltaContext,
+      endpoint: LegacyPgDeltaEndpoint,
+      toml: LegacyDbTomlValues | undefined,
     ) =>
-      operation.pipe(
-        Effect.provideService(LegacyEdgeRuntimeScript, edgeRuntime),
-        Effect.provideService(LegacyPgDeltaSslProbe, sslProbe),
-        Effect.provideService(FileSystem.FileSystem, fs),
-        Effect.provideService(Path.Path, path),
-        Effect.provideService(LegacyDeclarativeSeam, seam),
-        Effect.provideService(Output, output),
-      );
-
-    const endpointRef = (context: LegacyPgDeltaContext, endpoint: LegacyPgDeltaEndpoint) =>
       endpoint.kind === "database"
         ? Effect.succeed(endpoint.ref)
-        : legacyResolveMigrationsCatalogRef(
-            fs,
-            path,
-            context,
-            endpoint.projectRef !== undefined ? { projectRef: endpoint.projectRef } : {},
-          ).pipe(provideRuntime);
+        : toml === undefined
+          ? Effect.fail(
+              new LegacyPgDeltaEngineError({
+                message: "pg-delta migrations endpoint requires loaded database config",
+                cause: "missing database config",
+              }),
+            )
+          : legacyResolveMigrationsCatalogRef(
+              fs,
+              path,
+              context,
+              toml,
+              endpoint.projectRef !== undefined ? { projectRef: endpoint.projectRef } : {},
+            ).pipe(provideRuntime);
 
     return LegacyPgDeltaEngine.of({
       implementation: "legacy",
       diffExplicit: (input) =>
         Effect.gen(function* () {
-          const sourceRef = yield* endpointRef(input.context, input.source);
-          const targetRef = yield* endpointRef(input.context, input.desired);
+          const sourceRef = yield* endpointRef(input.context, input.source, input.toml);
+          const targetRef = yield* endpointRef(input.context, input.desired, input.toml);
           const result = yield* provideRuntime(
             legacyDiffPgDelta(input.context, {
               sourceRef,
@@ -112,22 +146,17 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         }).pipe(Effect.mapError(mapError)),
       diffDatabase: (input) =>
         Effect.gen(function* () {
-          const shadow = yield* seam.provisionShadow({
-            mode: "diff",
-            schema: input.schema,
-            ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
-          });
           const sourceSnapshot = input.debug
             ? yield* provideRuntime(
                 legacyExportCatalogPgDelta(input.context, {
-                  targetRef: shadow.sourceUrl,
+                  targetRef: input.source.ref,
                   role: "postgres",
                 }),
               ).pipe(Effect.orElseSucceed(() => undefined))
             : undefined;
           return yield* provideRuntime(
             legacyDiffPgDelta(input.context, {
-              sourceRef: shadow.sourceUrl,
+              sourceRef: input.source.ref,
               targetRef: input.target.ref,
               schema: input.schema,
               formatOptions: input.formatOptions,
@@ -145,19 +174,21 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
                   }
                 : normalized;
             }),
-            Effect.ensuring(seam.removeShadowContainer(shadow.container)),
           );
         }).pipe(Effect.mapError(mapError)),
       exportDeclarativeSchema: (input) =>
         Effect.gen(function* () {
-          const baselineRef = yield* seam.exportCatalog({
-            mode: "baseline",
-            noCache: input.noCache,
-            ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
-          });
+          if (input.source === undefined) {
+            return yield* Effect.fail(
+              new LegacyPgDeltaEngineError({
+                message: "legacy pg-delta declarative export requires an empty shadow database",
+                cause: "missing declarative export source",
+              }),
+            );
+          }
           const result = yield* provideRuntime(
             legacyDeclarativeExportPgDelta(input.context, {
-              sourceRef: baselineRef,
+              sourceRef: input.source.ref,
               targetRef: input.target.ref,
               schema: input.schema,
               formatOptions: input.formatOptions,
@@ -173,6 +204,7 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
             fs,
             path,
             input.context,
+            input.toml,
             input.setupInputs,
             {
               noCache: input.noCache,

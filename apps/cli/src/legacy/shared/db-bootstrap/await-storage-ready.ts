@@ -1,7 +1,8 @@
 /**
- * Port of Go's `AwaitStorageReady` (`apps/cli-go/internal/db/reset/reset.go:115-126`) —
- * the storage-health gate local `db reset` runs before seeding buckets. Two things the
- * seam this replaces got subtly wrong, corrected here:
+ * Port of the storage-health gate `Run` runs inline before seeding buckets — not a
+ * standalone Go function despite the name here (`apps/cli-go/internal/db/reset/
+ * reset.go:66-71`). Two things the seam this replaces got subtly wrong, corrected
+ * here:
  *
  * 1. `resp, err := utils.Docker.ContainerInspect(ctx, utils.StorageId); if err != nil {
  *    return false, nil }` — ANY inspect error (not just "not found") maps to "absent"
@@ -36,7 +37,7 @@ import {
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** Go's hardcoded `30*time.Second` (`reset.go:121`) — independent of `db.health_timeout`. */
+/** Go's hardcoded `30*time.Second` (`reset.go:68`) — independent of `db.health_timeout`. */
 const LEGACY_AWAIT_STORAGE_READY_TIMEOUT_SECONDS = 30;
 
 /**

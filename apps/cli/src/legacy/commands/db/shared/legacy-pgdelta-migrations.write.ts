@@ -1,5 +1,10 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import { legacyMakeDir } from "../../../shared/legacy-make-dir.ts";
 import {
   legacyFormatMigrationTimestamp,
@@ -21,7 +26,11 @@ export class LegacyPgDeltaMigrationWriteError extends Data.TaggedError(
   "LegacyPgDeltaMigrationWriteError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * Bounds the base-timestamp bump retry so a directory already full of same-second

@@ -673,8 +673,8 @@ func baselineVersionToken() string {
 	return catalogPrefixRegexp.ReplaceAllString(image, "-")
 }
 
-// setupInputsToken hashes every project input that shapes the legacy shadow
-// baseline produced by start.SetupDatabase with WithLegacyPgNetBaseline:
+// setupInputsToken hashes every project input that start.SetupDatabase consumes
+// and that therefore shapes the platform baseline:
 //
 //   - the Postgres image (initSchema content);
 //   - the service toggles that gate initSchema — auth/storage/realtime;

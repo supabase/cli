@@ -1,14 +1,23 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import { legacyBold } from "./legacy-colors.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import { legacyErrorMessage, legacyRelativizeErrorMessage } from "./legacy-error-message.ts";
 import {
   INSERT_MIGRATION_VERSION,
   MIGRATE_FILE_PATTERN,
   legacyCreateMigrationTable,
 } from "./legacy-migration-history.ts";
 import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
+import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
+import { legacySplitSqlTokens } from "./legacy-sql-split.ts";
 
 /**
  * Applying a migration file failed (Go's `ApplyMigrations` / `ExecBatch` error).
@@ -22,7 +31,11 @@ import { legacyParseMigrationContent } from "./legacy-migration-file.ts";
 export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigrationApplyError")<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 // Byte order mark (U+FEFF) — stripped from the head of a statement like Go does.
 const BOM_CODE_POINT = 0xfeff;
@@ -108,12 +121,298 @@ type LegacyBatchItem =
   | { readonly kind: "exec"; readonly sql: string }
   | { readonly kind: "version" };
 
-const errMessage = (e: unknown): string =>
-  typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
-    ? e.message
-    : String(e);
-
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
+
+// Go's `startBufSize` (`pkg/parser/token.go:15`) — the fixed initial `bufio.Scanner`
+// buffer `parser.Split` pre-allocates before applying the configured/default max
+// (`scanner.Buffer(buf, maxbuf)` where `buf := make([]byte, startBufSize)`). The
+// scanner's buffer therefore starts at exactly this size regardless of how small
+// `SUPABASE_SCANNER_BUFFER_SIZE` is set, and `bufio.Scanner`'s too-long check
+// (`len(s.buf) >= s.maxTokenSize`, `$GOROOT/src/bufio/scan.go:200`) only fires once
+// the buffer is full — so a statement must reach at least this many raw bytes
+// before Go can ever raise `bufio.ErrTooLong`, no matter how small the override.
+// Verified empirically against `apps/cli-go/pkg/parser` (`parser.SplitAndTrim`): a
+// single-statement probe of exactly 4096 raw bytes always succeeds — even with
+// `SUPABASE_SCANNER_BUFFER_SIZE` set to 10 bytes — while 4097 bytes always fails;
+// with the override set above this floor (e.g. 5000 bytes), the exact same
+// pattern repeats at the override's own value (5000 succeeds, 5001 fails).
+const GO_SCANNER_START_BUF_SIZE = 4096;
+
+// Go's `parser.MaxScannerCapacity` (`pkg/parser/token.go:19`) — the hardcoded default
+// `parser.Split` falls back to when `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")`
+// returns `0`. Reached whenever the env var is SET but resolves to a non-positive size
+// — including a value `legacyParseScannerBufferSize` can't parse at all. Verified
+// empirically against `apps/cli-go/pkg/parser` + vendored `viper@v1.21.0`:
+// `SUPABASE_SCANNER_BUFFER_SIZE=5M` (a bare multiplier suffix with NO trailing `b`/`B`)
+// behaves byte-for-byte identically to the var being completely unset from the default
+// cap's own first-failure point on — because `parseSizeInBytes` only ever recognizes a
+// `k`/`m`/`g` multiplier when it immediately precedes a trailing `b`/`B`
+// (`util.go:156-174`); "5M" never strips a suffix, so it falls through to
+// `cast.ToInt("5M")`, which fails whole (not a leading-digits prefix parse — unlike
+// JS's lenient `Number.parseInt`) and returns `0`. This is NOT the same as truly unset,
+// though: `viper.IsSet("SCANNER_BUFFER_SIZE")` is still `true` (the var IS present, just
+// unparseable), so `parseFile`'s file-size auto-growth (see `checkScannerBufferSize`'s
+// doc comment) never runs — the cap stays pinned at this hardcoded default regardless of
+// the real file's size, unlike the genuinely-unset case where it grows to match.
+const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
+
+/**
+ * Go's `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")` (env-prefixed
+ * `SUPABASE_SCANNER_BUFFER_SIZE`, `pkg/parser/token.go:87`): an integer byte count,
+ * optionally suffixed `k`/`K`/`m`/`M`/`g`/`G` (× 1024/1024²/1024³) plus a trailing
+ * `b`/`B` (e.g. `"5MB"`, `"256KB"`, or a bare byte count). Ported 1:1 from viper's
+ * own parser (`parseSizeInBytes`, `github.com/spf13/viper@v1.21.0/util.go:151-179`):
+ * an unparseable or non-positive result is treated as unset (`0`).
+ *
+ * The multiplier is recognized ONLY when the string's LAST character is literally
+ * `b`/`B` — a bare `"5M"` (no trailing `B`) is NOT 5 MiB in real Go: `sizeStr[lastChar]`
+ * isn't `b`/`B`, so the multiplier branch never runs and the whole (unstripped) string
+ * is handed to `cast.ToInt`, which fails on the trailing letter and yields `0`. Do NOT
+ * special-case a bare `k`/`m`/`g` suffix here; that would make this port accept a value
+ * real Go rejects.
+ *
+ * Go's inner `lastChar > 1` gate (`util.go:158`) means the trailing-`B`-strip ALSO never
+ * runs for a 2-character value like `"5B"`/`"5b"` — only 3+ characters (an actual
+ * multiplier letter, or at least one digit, before the `B`) reach the switch at all — so
+ * `"5B"` is unstripped, `cast.ToInt("5B")` fails, and the whole thing is `0` too, same as
+ * `"5M"`. `cast.ToInt` (`strconv.ParseInt`) also requires the ENTIRE remaining string to
+ * be a clean integer — trailing garbage fails the WHOLE parse, unlike JS's lenient
+ * `Number.parseInt`, which stops at the first non-digit and returns whatever numeric
+ * prefix it found (`Number.parseInt("5M", 10) === 5`, silently discarding the "M", where
+ * Go's parse rejects the string outright). `cast.ToInt` does tolerate one decimal point
+ * via its own `trimDecimal` (keeps only the integer part, e.g. `"5.5"` → `"5"`), so allow
+ * exactly that one exception. All of the above verified empirically against
+ * `apps/cli-go/pkg/parser` + vendored `viper@v1.21.0`
+ * (`"5"→5, "5B"→0, "50B"→50, "5KB"→5120, "5M"→0, "0"→0, "5.5"→5, "5.5MB"→5242880`).
+ *
+ * `cast.ToInt`'s underlying `strconv.ParseInt(s, 0, 0)` (review CLI-1958) uses base
+ * `0`, so the remaining (post multiplier-strip) string is ALSO accepted as a
+ * `0x`/`0X`-prefixed hex literal, an `0o`/`0O`-prefixed OR bare-leading-zero octal
+ * literal, or a `0b`/`0B`-prefixed binary literal — handled below by
+ * {@link parseGoBaseZeroInt}. Verified empirically against vendored `viper@v1.21.0`
+ * (via `viper.GetSizeInBytes`, since `cast.ToInt` is itself unexported call
+ * plumbing): `"0x100000"→1048576`, `"0o40000"→16384`,
+ * `"0b100000000000000000000"→2097152`, `"0755"` (legacy octal, no `"o"`)`→493`,
+ * `"0x"/"garbage"/"0x1g"→unparseable (0)`. A hex/octal/binary value ending in a
+ * literal `b`/`B` digit (e.g. `"0x1B"`) still hits the multiplier-strip switch
+ * ABOVE first, same as any other value — that consumes the trailing `B` before
+ * base-0 parsing ever sees it (`"0x1B"→1`, not `27`), which is a genuine Go quirk
+ * this port reproduces automatically by keeping the same two-step order, not a bug.
+ * Go's base-0 grammar also permits `_` digit separators (e.g. `"1_048_576"`) — see
+ * {@link parseGoBaseZeroInt}'s own doc comment for the exact placement grammar.
+ */
+/**
+ * Go's underscore digit-separator grammar (`go.dev/ref/spec#Integer_literals`,
+ * reproduced by `strconv.ParseInt`'s base-0 mode, review CLI-1958): a SINGLE `_`
+ * may sit immediately after a base prefix (explicit `0x`/`0o`/`0b`, or the bare
+ * leading `"0"` of legacy octal) or between two digits of the same base — never
+ * doubled, never leading a plain (no-prefix) decimal literal, and never trailing.
+ * Verified empirically against the real `strconv.ParseInt(s, 0, 64)`:
+ * `"1_048_576"→1048576`, `"0x_100000"/"0x10_0000"→1048576`,
+ * `"0o_40000"/"0o4_0000"→16384`, `"0b_100000000000000000000"→1048576`,
+ * `"0_755"/"07_55"→493` (legacy octal, underscore right after the leading `"0"`
+ * or between later octal digits); while `"_1048576"`, `"1048576_"`,
+ * `"1__048576"`, `"0x100000_"`, and `"0_x100000"` (underscore splitting the
+ * leading `"0"` from the `"x"` — not a real prefix, so it's parsed as legacy
+ * octal digits `"x100000"`) all fail, matching Go exactly.
+ */
+// `strconv.ParseInt(s, 0, 0)`'s bitSize-0 mode requires the result to fit in Go's `int`
+// — 64 bits on every platform this CLI ships for (amd64/arm64). A magnitude outside
+// this range is a range error (`strconv.ErrRange`), and `cast.ToInt` (`spf13/cast@v1.10.0
+// /number.go:407-414`'s `parseInt[T]`) discards ANY `parseFn` error — range or
+// syntax — and returns exactly `0`, not the (possibly huge, saturated-to-max-magnitude)
+// value `strconv.ParseInt` itself returns alongside that error. Verified empirically
+// against the pinned `spf13/cast@v1.10.0`: `cast.ToInt("9223372036854775808")` (one over
+// `math.MaxInt64`) → `0`. `Number.parseInt` has no such range check (it silently rounds
+// via IEEE-754 double precision instead), so this port must reject the same magnitudes
+// Go does, or it would treat an out-of-range override as an enormous-but-finite limit
+// instead of falling back to the 256KiB default like Go (review CLI-1958 round 18).
+const GO_MAX_INT64 = 9223372036854775807n;
+const GO_MIN_INT64 = -9223372036854775808n;
+
+const parseGoBaseZeroInt = (value: string): number | undefined => {
+  const negative = value.startsWith("-");
+  const unsigned = negative || value.startsWith("+") ? value.slice(1) : value;
+  if (unsigned.length === 0) return undefined;
+
+  let base = 10;
+  let digits = unsigned;
+  const prefix = unsigned.slice(0, 2).toLowerCase();
+  if (prefix === "0x") {
+    base = 16;
+    digits = unsigned.slice(2);
+  } else if (prefix === "0o") {
+    base = 8;
+    digits = unsigned.slice(2);
+  } else if (prefix === "0b") {
+    base = 2;
+    digits = unsigned.slice(2);
+  } else if (unsigned.length > 1 && unsigned[0] === "0") {
+    // Legacy (no "o") leading-zero octal, e.g. "0755".
+    base = 8;
+    digits = unsigned.slice(1);
+  }
+  if (digits.length === 0) return undefined;
+
+  // Only a real base prefix (or the legacy-octal leading "0") may be followed
+  // immediately by an underscore; a plain decimal literal has no prefix to
+  // follow, so a leading underscore there is always invalid (matches Go).
+  const hadPrefix = base !== 10;
+  const digitClass = base === 16 ? "0-9a-fA-F" : base === 8 ? "0-7" : base === 2 ? "01" : "0-9";
+  const validPattern = new RegExp(
+    `^${hadPrefix ? "_?" : ""}[${digitClass}](?:_?[${digitClass}])*$`,
+  );
+  if (!validPattern.test(digits)) return undefined;
+
+  const cleanDigits = digits.replace(/_/g, "");
+  // Exact-magnitude range check via BigInt — `Number.parseInt` below loses precision
+  // past 2^53 and never errors, so the int64 bound must be checked independently of it.
+  const bigPrefix = base === 16 ? "0x" : base === 8 ? "0o" : base === 2 ? "0b" : "";
+  const magnitude = BigInt(`${bigPrefix}${cleanDigits}`);
+  const signedMagnitude = negative ? -magnitude : magnitude;
+  if (signedMagnitude > GO_MAX_INT64 || signedMagnitude < GO_MIN_INT64) return undefined;
+
+  const n = Number.parseInt(cleanDigits, base);
+  return negative ? -n : n;
+};
+
+// `cast.ToInt`'s `trimDecimal` (`spf13/cast@v1.10.0/number.go:507-525`) runs BEFORE
+// `strconv.ParseInt`: when the whole string is a sign + plain decimal digits + an
+// optional ".digits" tail (`stringNumberRe`, `^([-+]?\d*)(\.\d*)?$` — never matches
+// a `0x`/`0o`/`0b` literal, which contains letters), it drops the fractional part
+// outright rather than rounding (`"5.5"` → `"5"`). Anything else (including a
+// non-decimal-looking string that merely contains a ".") passes through unchanged
+// and is left for {@link parseGoBaseZeroInt} to accept or reject.
+const trimGoDecimal = (value: string): string => {
+  if (!value.includes(".")) return value;
+  const match = /^([+-]?\d*)(?:\.\d*)?$/.exec(value);
+  if (!match) return value;
+  const intPart = match[1] ?? "";
+  if (intPart === "+" || intPart === "-") return `${intPart}0`;
+  return intPart === "" ? "0" : intPart;
+};
+
+const legacyParseScannerBufferSize = (raw: string): number => {
+  let value = raw.trim();
+  let multiplier = 1;
+  const lastIndex = value.length - 1;
+  if (lastIndex > 1 && (value[lastIndex] === "b" || value[lastIndex] === "B")) {
+    switch (value[lastIndex - 1]!.toLowerCase()) {
+      case "k":
+        multiplier = 1 << 10;
+        value = value.slice(0, lastIndex - 1).trim();
+        break;
+      case "m":
+        multiplier = 1 << 20;
+        value = value.slice(0, lastIndex - 1).trim();
+        break;
+      case "g":
+        multiplier = 1 << 30;
+        value = value.slice(0, lastIndex - 1).trim();
+        break;
+      default:
+        value = value.slice(0, lastIndex).trim();
+        break;
+    }
+  }
+  const size = parseGoBaseZeroInt(trimGoDecimal(value));
+  return size !== undefined && Number.isFinite(size) && size > 0 ? size * multiplier : 0;
+};
+
+/**
+ * Go's `parser.Split`/`SplitAndTrim` (`pkg/parser/token.go:81-119`) enforces
+ * `SUPABASE_SCANNER_BUFFER_SIZE` as the `bufio.Scanner`'s max token size — but only
+ * when the env var is actually SET: `parseFile` (`pkg/migration/file.go:55-70`)
+ * otherwise grows the package-level `parser.MaxScannerCapacity` to the real file's
+ * byte length before the scan even starts (`viper.IsSet("SCANNER_BUFFER_SIZE")`
+ * gates the auto-growth), so the DEFAULT (unset) path can never hit
+ * `bufio.ErrTooLong` for a file read this way — no single statement can be bigger
+ * than the whole file. Every caller of `execMigrationBatch` mirrors exactly this
+ * Go call site (`ApplyMigrations`, `SeedGlobals`, `applySchemaFiles` all read their
+ * file via `NewMigrationFromFile`/`parseFile`), so this is the correct single home
+ * for the check (CLI-1958 review) rather than duplicating it per caller.
+ *
+ * Fails the same way `parser.Split` does on the FIRST raw (pre-trim) statement
+ * whose byte length exceeds the effective limit (`Math.max(configured,
+ * GO_SCANNER_START_BUF_SIZE)` — see that constant's comment). `"After statement
+ * <n>: …"` reports the count and RAW text of the last statement successfully
+ * scanned BEFORE the oversized one: Go's loop body (`token = scanner.Text()`)
+ * never runs for the failing `Scan()` call, so `token` still holds whatever the
+ * previous iteration left it as (`""` if the very first statement is already
+ * oversized) — verified empirically against the same `apps/cli-go/pkg/parser`
+ * probe. This is a "read"-phase failure (`NewMigrationFromFile`/`parseFile`
+ * returns before `apply.go`'s `CmdSuggestion` is ever set), so it carries no
+ * suggestion, same as the file-open failure above.
+ *
+ * `projectEnv`, when given, is the caller's already-loaded `legacyLoadProjectEnv` map:
+ * Go's `loadNestedEnv` (`pkg/config/config.go:1220`) `os.Setenv`s every project-`.env`
+ * key that isn't already in the shell env BEFORE `ParseDatabaseConfig` returns — i.e.
+ * before ANY command body (including this scan) runs — so `viper.AutomaticEnv()` sees a
+ * `supabase/.env`-only `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported
+ * one. Defaults to `{}` for callers that haven't threaded a project-env map through
+ * (shell-only, same as before this parameter existed).
+ */
+export const checkScannerBufferSize = <E>(
+  content: string,
+  mapError: (message: string, phase: "read" | "exec") => E,
+  projectEnv: Readonly<Record<string, string>> = {},
+): Effect.Effect<void, E> => {
+  const raw =
+    process.env["SUPABASE_SCANNER_BUFFER_SIZE"] ?? projectEnv["SUPABASE_SCANNER_BUFFER_SIZE"];
+  if (raw === undefined) return Effect.void;
+  const configuredLimit = legacyParseScannerBufferSize(raw);
+  // `configuredLimit <= 0` covers both an explicit non-positive size and an unparseable
+  // value (e.g. a bare "5M", see `GO_DEFAULT_MAX_SCANNER_CAPACITY`'s comment) — Go's
+  // `viper.GetSizeInBytes` collapses all of these to `0` too, and `parser.Split` then
+  // falls back to its OWN hardcoded default cap, not to "no limit".
+  const limit =
+    configuredLimit > 0
+      ? Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE)
+      : GO_DEFAULT_MAX_SCANNER_CAPACITY;
+  // Go's suggestion reports `maxbuf>>10` — the EFFECTIVE cap actually passed to
+  // `scanner.Buffer` (`pkg/parser/token.go:110`), which is the raw configured value
+  // (even below the `GO_SCANNER_START_BUF_SIZE` floor — the floor only affects when
+  // `bufio.ErrTooLong` can fire, never the number Go prints) when positive, or the
+  // hardcoded default once Go has fallen back to it.
+  const reportedLimit = configuredLimit > 0 ? configuredLimit : GO_DEFAULT_MAX_SCANNER_CAPACITY;
+  let emitted = 0;
+  let lastRaw = "";
+  for (const token of legacySplitSqlTokens(content)) {
+    // A delimiter-terminated token is found (and emitted) by `parser.Split`'s scan in
+    // the SAME `Scan()` call that fills the buffer to capacity — before Go's too-long
+    // check is ever reached — so a token exactly AT `limit` still succeeds; only
+    // strictly-over fails (`>`). The trailing, unterminated token (only ever the LAST
+    // one `legacySplitSqlTokens` returns, if any — see `LegacySplitSqlToken.terminated`)
+    // has no delimiter to find: once the buffer fills to `limit` bytes without one, the
+    // too-long check fires immediately, without Go ever attempting the extra `Read()`
+    // that would reveal real EOF — so a trailing token AT `limit` already fails (`>=`).
+    const tooLong = token.terminated
+      ? utf8ByteLength(token.raw) > limit
+      : utf8ByteLength(token.raw) >= limit;
+    if (tooLong) {
+      const suggestion = `Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is ${Math.floor(reportedLimit / 1024)}KB)`;
+      return Effect.fail(
+        mapError(
+          `bufio.Scanner: token too long\nAfter statement ${emitted}: ${lastRaw}\n${suggestion}`,
+          "read",
+        ),
+      );
+    }
+    // Go's `token = scanner.Text()` (`pkg/parser/token.go:96`) runs on EVERY successful
+    // `Scan()` — unconditionally, before the `len(trim) > 0` gate that decides whether to
+    // `append` to `stats` — so `token` (and therefore the eventual `bufio.ErrTooLong`
+    // message) reflects the last RAW text scanned even when that statement trimmed to
+    // empty and was never appended (e.g. a lone `;` immediately before an oversized
+    // statement reports "After statement N: ;", not a blank token). `emitted` mirrors
+    // Go's `len(stats)` (append-gated); `lastRaw` must NOT share that gate — verified
+    // against the Go source directly (review CLI-1958 round 18).
+    lastRaw = token.raw;
+    if (token.trimmed.length > 0) {
+      emitted += 1;
+    }
+  }
+  return Effect.void;
+};
 
 /**
  * Port of Go's `markError` (`pkg/migration/file.go:117-132`): renders a `^` caret
@@ -149,6 +448,43 @@ export const legacyMarkError = (stat: string, pos: number): string => {
 const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
 
 /**
+ * Mirrors Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
+ * on a failed statement, render the `^` caret under the server-reported error
+ * position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
+ * then `At statement: <index>` and the (caret-marked) statement text. The
+ * structured `detail`/`position` fields are only set by the driver for server
+ * ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
+ *
+ * Exported so any caller that runs a raw `migration.MigrationFile{Statements:
+ * [...]}.ExecBatch(...)`-equivalent batch outside a real migration file (e.g.
+ * `legacyResetRecreateDatabases`'s PG14 `DROP`/`CREATE DATABASE` statements,
+ * `reset.go:169-172`, which Go itself routes through this exact formatter) gets
+ * the same rich error context instead of the bare driver error.
+ */
+export const legacyFormatExecBatchError = (
+  e: LegacyDbExecError,
+  index: number,
+  stat: string,
+): Error => {
+  const marked = legacyMarkError(stat, e.position ?? 0);
+  const msg: Array<string> = [];
+  if (e.detail !== undefined && e.detail.length > 0) {
+    msg.push(e.detail);
+  }
+  // Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
+  const typeName = TYPE_NAME_PATTERN.exec(e.message)?.[1];
+  if (typeName !== undefined && e.code === "42704" && !typeName.includes(".")) {
+    msg.push("");
+    msg.push("Hint: This type may be defined in a schema that's not in your search_path.");
+    msg.push("      Use schema-qualified type references to avoid this error:");
+    msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
+    msg.push("      Learn more: supabase migration new --help");
+  }
+  msg.push(`At statement: ${index}`, marked);
+  return new Error(`${legacyErrorMessage(e)}\n${msg.join("\n")}`);
+};
+
+/**
  * Runs a single migration/seed file's statements (plus the optional history insert).
  * Mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`): statements run
  * inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
@@ -168,154 +504,198 @@ const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
  * cleanup after a failed pg-delta no-transaction file. When `forceNoVersion` is set
  * the history insert is skipped regardless of filename (Go's `SeedGlobals` clears
  * `Version`).
+ *
+ * `projectEnv` is forwarded to {@link checkScannerBufferSize} — see its own doc comment
+ * for why a project-`.env`-only `SUPABASE_SCANNER_BUFFER_SIZE` must be visible here too.
  */
 const execMigrationBatch = <E>(
   session: LegacyDbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationPath: string,
-  mapError: (message: string) => E,
+  mapError: (message: string, phase: "read" | "exec") => E,
   forceNoVersion: boolean,
+  displayPath: string = migrationPath,
+  projectEnv: Readonly<Record<string, string>> = {},
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
-    const content = yield* fs.readFileString(migrationPath);
-    const parsed = legacyParseMigrationContent(content);
-    const { statements, transactionMode } = parsed;
-    const filename = path.basename(migrationPath);
-    const matches = MIGRATE_FILE_PATTERN.exec(filename);
-    const version = forceNoVersion ? "" : (matches?.[1] ?? "");
-    const name = matches?.[2] ?? "";
+    // Go's `MigrationFile.ExecBatch` receives an already-read/parsed file (the read
+    // happens earlier, in `NewMigrationFromFile`/`parseFile`, which wraps the open
+    // failure as `"failed to open migration file: %w"`, `pkg/migration/file.go:57-58`)
+    // — so a read failure here is a DIFFERENT error class than a statement-execution
+    // failure below, and needs the same Go prefix so stderr/JSON errors don't surface
+    // the bare platform error text. Tagged "read" so callers that attach a suggestion
+    // only around execution failures (`apply.go:61-63`) can tell the two apart.
+    //
+    // Go opens `fp` — the workdir-RELATIVE form `[db.migrations].schema_paths`/
+    // `[db.seed].sql_paths` already resolved to at config-load time — because Go's
+    // process cwd is always the workdir (`ChangeWorkDir`, `cmd/root.go:104`). This
+    // module deliberately never `process.chdir`s (only `bootstrap` does, as its own
+    // documented one-off), so callers must pass an ABSOLUTE `migrationPath` for the
+    // real read to work — but that means the platform error's embedded path is
+    // absolute too. When it differs from `displayPath` (the caller's Go-equivalent
+    // relative path), substitute it in so the wrapped message still reports the
+    // relative form Go would, not a leaked local temp/absolute path.
+    //
+    // Known residual delta (CLI-1958 review): `readFileString` decodes via `TextDecoder`
+    // with `fatal: false` (the Effect `FileSystem` default), so an invalid-UTF-8 byte
+    // sequence in the file is lossily replaced with U+FFFD before it ever reaches
+    // `legacySplitAndTrim`/`session.exec`. Go's `parseFile` instead scans the raw byte
+    // stream and preserves those bytes verbatim into the statement strings it sends to
+    // PostgreSQL. Reading raw bytes here (`fs.readFile`) and mapping them 1:1 into a
+    // "binary string" would fix the split/parse stage, but the fix dies at the wire: the
+    // shared `pg`/`pg-protocol` layer this session is built on unconditionally UTF-8-
+    // encodes query text before writing it (`pg-protocol/dist/serializer.js` —
+    // `buff.write(string, offset, 'utf-8')`, no raw-byte send API), so ANY string
+    // representation still gets re-mangled at that boundary, just differently. Faithful
+    // byte parity would require patching that shared wire-serializer — infrastructure
+    // every legacy DB command's `session.exec` funnels through, not something scoped to
+    // this file's read path — so it's flagged here rather than "fixed" underneath it.
+    const content = yield* fs.readFileString(migrationPath).pipe(
+      Effect.mapError((error) => {
+        const message = legacyRelativizeErrorMessage(
+          legacyErrorMessage(error),
+          migrationPath,
+          displayPath,
+        );
+        return mapError(`failed to open migration file: ${message}`, "read");
+      }),
+    );
 
-    // Mirror Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
-    // on a failed statement, render the `^` caret under the server-reported error
-    // position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
-    // then `At statement: <index>` and the (caret-marked) statement text. The
-    // structured `detail`/`position` fields are only set by the driver for server
-    // ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
-    const atStatement = (e: LegacyDbExecError, index: number, stat: string) => {
-      const marked = legacyMarkError(stat, e.position ?? 0);
-      const msg: Array<string> = [];
-      if (e.detail !== undefined && e.detail.length > 0) {
-        msg.push(e.detail);
-      }
-      // Provide helpful hint for extension type errors (SQLSTATE 42704: undefined_object)
-      const typeName = TYPE_NAME_PATTERN.exec(e.message)?.[1];
-      if (typeName !== undefined && e.code === "42704" && !typeName.includes(".")) {
-        msg.push("");
-        msg.push("Hint: This type may be defined in a schema that's not in your search_path.");
-        msg.push("      Use schema-qualified type references to avoid this error:");
-        msg.push(`        CREATE TABLE example (col extensions.${typeName});`);
-        msg.push("      Learn more: supabase migration new --help");
-      }
-      msg.push(`At statement: ${index}`, marked);
-      return new Error(`${errMessage(e)}\n${msg.join("\n")}`);
-    };
+    // Still `NewMigrationFromFile`/`parseFile`'s territory (`pkg/migration/file.go:55-70`) —
+    // `parser.SplitAndTrim` runs INSIDE `parseFile`, before `ExecBatch` ever sees the
+    // statements, so a `SUPABASE_SCANNER_BUFFER_SIZE` violation is a "read"-phase
+    // failure like the open failure above, not an "exec"-phase one. See
+    // `checkScannerBufferSize`'s comment for why this is a no-op unless the env var
+    // is explicitly set.
+    yield* checkScannerBufferSize(content, mapError, projectEnv);
 
-    // The pg-delta directive is file-level execution metadata. Run the complete
-    // sequence on this session without adding transaction boundaries so session
-    // settings remain active for the nontransactional action. History is recorded
-    // only after every statement succeeds. A failed sequence gets a best-effort
-    // session reset because the generated trailing RESET ALL may not have run yet.
-    if (transactionMode === "none") {
-      const nonTransactional = Effect.gen(function* () {
-        for (const [index, statement] of statements.entries()) {
-          yield* session
-            .exec(statement)
-            .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
-        }
-        if (version.length > 0) {
-          yield* session
-            .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-            .pipe(
-              Effect.mapError((cause) =>
-                atStatement(cause, statements.length, INSERT_MIGRATION_VERSION),
-              ),
-            );
-        }
-      });
-      return yield* nonTransactional.pipe(
-        Effect.tapError(() => session.exec("RESET ALL").pipe(Effect.ignore)),
-      );
-    }
+    // Everything below mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
+    // which runs against an already-read file — so every failure from here on is an
+    // execution failure, tagged "exec" (as opposed to the "read" failure above, which
+    // mirrors `NewMigrationFromFile`). Only execution failures get `CmdSuggestion`
+    // (`apply.go:61-63`); callers rely on this tag to replicate that split.
+    yield* Effect.gen(function* () {
+      const { statements, transactionMode } = legacyParseMigrationContent(content);
+      const filename = path.basename(migrationPath);
+      const matches = MIGRATE_FILE_PATTERN.exec(filename);
+      const version = forceNoVersion ? "" : (matches?.[1] ?? "");
+      const name = matches?.[2] ?? "";
 
-    // A headerless file with authored transaction boundaries owns those semantics.
-    // Execute the statements exactly as written, clean up a failed authored
-    // transaction, and only send the history insert after every statement succeeds.
-    if (statements.some(legacyHasTransactionControl)) {
-      const authored = Effect.gen(function* () {
-        for (const [index, statement] of statements.entries()) {
-          yield* session
-            .exec(statement)
-            .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
-        }
-        if (version.length > 0) {
-          yield* session
-            .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-            .pipe(
-              Effect.mapError((cause) =>
-                atStatement(cause, statements.length, INSERT_MIGRATION_VERSION),
-              ),
-            );
-        }
-      });
-      return yield* authored.pipe(
-        Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
-      );
-    }
-
-    // `executed` is the global statement index of the next statement to run, so the
-    // error context stays accurate across flushed batches and standalone statements
-    // (Go threads the same counter through `ExecBatch`).
-    let pending: ReadonlyArray<LegacyBatchItem> = [];
-    let executed = 0;
-
-    const flushBatch = Effect.gen(function* () {
-      if (pending.length === 0) return;
-      const items = pending;
-      pending = [];
-      const base = executed;
-      const body = Effect.gen(function* () {
-        for (const [offset, item] of items.entries()) {
-          const index = base + offset;
-          if (item.kind === "version") {
-            // Go defaults to the version-insert statement when all listed statements succeed.
+      // The pg-delta directive is file-level execution metadata. Run the complete
+      // sequence on this session without adding transaction boundaries so session
+      // settings remain active for the nontransactional action. History is recorded
+      // only after every statement succeeds. A failed sequence gets a best-effort
+      // session reset because the generated trailing RESET ALL may not have run yet.
+      if (transactionMode === "none") {
+        const nonTransactional = Effect.gen(function* () {
+          for (const [index, statement] of statements.entries()) {
+            yield* session
+              .exec(statement)
+              .pipe(
+                Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)),
+              );
+          }
+          if (version.length > 0) {
             yield* session
               .query(INSERT_MIGRATION_VERSION, [version, name, statements])
               .pipe(
-                Effect.mapError((cause) => atStatement(cause, index, INSERT_MIGRATION_VERSION)),
+                Effect.mapError((cause) =>
+                  legacyFormatExecBatchError(cause, statements.length, INSERT_MIGRATION_VERSION),
+                ),
               );
-          } else {
-            yield* session
-              .exec(item.sql)
-              .pipe(Effect.mapError((cause) => atStatement(cause, index, item.sql)));
           }
-        }
-        yield* session.exec("COMMIT");
-      });
-      yield* session.exec("BEGIN");
-      yield* body.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
-      executed += items.length;
-    });
-
-    for (const statement of statements) {
-      if (legacyIsPipelineIncompatible(statement)) {
-        // Flush the open batch, then run the incompatible statement on its own (no
-        // surrounding transaction) so PostgreSQL accepts it.
-        yield* flushBatch;
-        const index = executed;
-        yield* session
-          .exec(statement)
-          .pipe(Effect.mapError((cause) => atStatement(cause, index, statement)));
-        executed += 1;
-      } else {
-        pending = [...pending, { kind: "exec", sql: statement }];
+        });
+        return yield* nonTransactional.pipe(
+          Effect.tapError(() => session.exec("RESET ALL").pipe(Effect.ignore)),
+        );
       }
-    }
-    if (version.length > 0) {
-      pending = [...pending, { kind: "version" }];
-    }
-    yield* flushBatch;
-  }).pipe(Effect.mapError((error) => mapError(errMessage(error))));
+
+      // A headerless file with authored transaction boundaries owns those semantics.
+      // Execute the statements exactly as written, clean up a failed authored
+      // transaction, and only send the history insert after every statement succeeds.
+      if (statements.some(legacyHasTransactionControl)) {
+        const authored = Effect.gen(function* () {
+          for (const [index, statement] of statements.entries()) {
+            yield* session
+              .exec(statement)
+              .pipe(
+                Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)),
+              );
+          }
+          if (version.length > 0) {
+            yield* session
+              .query(INSERT_MIGRATION_VERSION, [version, name, statements])
+              .pipe(
+                Effect.mapError((cause) =>
+                  legacyFormatExecBatchError(cause, statements.length, INSERT_MIGRATION_VERSION),
+                ),
+              );
+          }
+        });
+        return yield* authored.pipe(
+          Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
+        );
+      }
+
+      // `executed` is the global statement index of the next statement to run, so the
+      // error context stays accurate across flushed batches and standalone statements
+      // (Go threads the same counter through `ExecBatch`).
+      let pending: ReadonlyArray<LegacyBatchItem> = [];
+      let executed = 0;
+
+      const flushBatch = Effect.gen(function* () {
+        if (pending.length === 0) return;
+        const items = pending;
+        pending = [];
+        const base = executed;
+        const body = Effect.gen(function* () {
+          for (const [offset, item] of items.entries()) {
+            const index = base + offset;
+            if (item.kind === "version") {
+              // Go defaults to the version-insert statement when all listed statements succeed.
+              yield* session
+                .query(INSERT_MIGRATION_VERSION, [version, name, statements])
+                .pipe(
+                  Effect.mapError((cause) =>
+                    legacyFormatExecBatchError(cause, index, INSERT_MIGRATION_VERSION),
+                  ),
+                );
+            } else {
+              yield* session
+                .exec(item.sql)
+                .pipe(
+                  Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, item.sql)),
+                );
+            }
+          }
+          yield* session.exec("COMMIT");
+        });
+        yield* session.exec("BEGIN");
+        yield* body.pipe(Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)));
+        executed += items.length;
+      });
+
+      for (const statement of statements) {
+        if (legacyIsPipelineIncompatible(statement)) {
+          // Flush the open batch, then run the incompatible statement on its own (no
+          // surrounding transaction) so PostgreSQL accepts it.
+          yield* flushBatch;
+          const index = executed;
+          yield* session
+            .exec(statement)
+            .pipe(Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)));
+          executed += 1;
+        } else {
+          pending = [...pending, { kind: "exec", sql: statement }];
+        }
+      }
+      if (version.length > 0) {
+        pending = [...pending, { kind: "version" }];
+      }
+      yield* flushBatch;
+    }).pipe(Effect.mapError((error) => mapError(legacyErrorMessage(error), "exec")));
+  });
 
 /**
  * Go's per-migration connection reset (`apply.go:65-69`): `RESET ALL` clears any
@@ -328,7 +708,7 @@ const resetConnectionState = <E>(
   session: LegacyDbSession,
   mapError: (message: string) => E,
 ): Effect.Effect<void, E> =>
-  session.exec("RESET ALL").pipe(Effect.mapError((e) => mapError(errMessage(e))));
+  session.exec("RESET ALL").pipe(Effect.mapError((e) => mapError(legacyErrorMessage(e))));
 
 /**
  * Applies a single migration file to the connected database and records it in
@@ -338,7 +718,7 @@ const resetConnectionState = <E>(
  * `SET default_transaction_read_only = on`) before the history-table DDL, then create
  * the history table, then run the file's statements + the history insert.
  *
- * `mapError` lets the caller tag the failure (e.g. `LegacyDeclarativeApplyError`).
+ * `mapError` lets the caller tag the failure (e.g. `LegacyPgDeltaDeclarativeApplyError`).
  */
 export const legacyApplyMigrationFile = <E>(
   session: LegacyDbSession,
@@ -350,7 +730,7 @@ export const legacyApplyMigrationFile = <E>(
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
     yield* legacyCreateMigrationTable(session).pipe(
-      Effect.mapError((e) => mapError(errMessage(e))),
+      Effect.mapError((e) => mapError(legacyErrorMessage(e))),
     );
     yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
   });
@@ -372,7 +752,7 @@ export const legacyApplyMigrations = <E>(
     const output = yield* Output;
     if (pending.length === 0) return;
     yield* legacyCreateMigrationTable(session).pipe(
-      Effect.mapError((e) => mapError(errMessage(e))),
+      Effect.mapError((e) => mapError(legacyErrorMessage(e))),
     );
     for (const migrationPath of pending) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
@@ -416,11 +796,98 @@ export const legacySeedGlobals = <E>(
  * would print an extra line Go never prints. Callers write the in-memory SQL
  * constant to a temp file first (this module only reads files, like
  * `execMigrationBatch`'s other callers).
+ *
+ * `displayPath`, when given, is the path a read-failure's wrapped message should
+ * report instead of `filePath` — see `execMigrationBatch`'s comment on why the two
+ * can differ (an absolute path is required for the real read, but Go's equivalent
+ * error names the workdir-relative form). `projectEnv`, when given, is forwarded to
+ * {@link checkScannerBufferSize} via `execMigrationBatch` — see that helper's doc
+ * comment.
  */
 export const legacyExecSqlFile = <E>(
   session: LegacyDbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   filePath: string,
-  mapError: (message: string) => E,
-): Effect.Effect<void, E> => execMigrationBatch(session, fs, path, filePath, mapError, true);
+  mapError: (message: string, phase: "read" | "exec") => E,
+  displayPath?: string,
+  projectEnv?: Readonly<Record<string, string>>,
+): Effect.Effect<void, E> =>
+  execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv);
+
+/**
+ * Applies Go's EXPERIMENTAL declarative schema-files branch of `apply.MigrateAndSeed`
+ * (`apps/cli-go/internal/migration/apply/apply.go:19,51-68`). Reads `[db.migrations]
+ * schema_paths` (already resolved to Go's config-load form — supabase-joined when
+ * relative, verbatim when absolute) via the shared `Glob.SQLFiles` port
+ * ({@link legacySqlFilesGlob}), then runs each matched file's statements with
+ * {@link legacyExecSqlFile} in glob order — no history table, no history row, and no
+ * `RESET ALL` between files, matching Go's `schema.Version = ""` discard (`apply.go:61`)
+ * and the fact that `ExecBatch` (unlike `ApplyMigrations`) never resets connection state.
+ *
+ * Callers gate the call on Go's three-conjunct condition (`--experimental` + no resolved
+ * version + pg-delta NOT enabled, `apply.go:19`) themselves — this function only performs
+ * the branch's body, mirroring `applySchemaFiles`'s own signature (it never re-checks the
+ * gate). It is the caller's responsibility to skip `legacyApplyMigrations` entirely when
+ * this is called (Go's `if`/`else if` is mutually exclusive, `apply.go:19-27`).
+ *
+ * Faithfully reproduces two undocumented, unfixed-upstream Go quirks that are load-bearing
+ * for the strict 1:1 contract (CLI-1958):
+ *  - **Empty `schema_paths` (the `supabase init` default) silently applies nothing** and
+ *    returns success — `Config.Db.Migrations.SchemaPaths.SQLFiles` returns a `nil` error
+ *    when there are zero patterns to glob (`errors.Join()` with no arguments is `nil`), so
+ *    `applySchemaFiles` returns `nil` too (`apply.go:53-54`).
+ *  - **A PARTIAL glob failure is silently dropped**: per-pattern warnings are only
+ *    surfaced (as the returned failure) when NO pattern matched anything at all
+ *    (`declared` empty, `apply.go:53-55`); once at least one file is found, every other
+ *    pattern's warning is discarded — unlike the seed path's `WARN:` line.
+ *
+ * On a per-file EXECUTION failure only, attaches Go's `CmdSuggestion = "See schema file:
+ * <Bold(fp)>"` (`apply.go:63`) via the optional second argument of `mapError`. A file-READ
+ * failure (Go's `NewMigrationFromFile`, `apply.go:57-59`) returns before `CmdSuggestion` is
+ * ever set, so it must NOT carry the suggestion — {@link legacyExecSqlFile}'s `mapError`
+ * receives the `"read"`/`"exec"` phase precisely so this call site can tell them apart.
+ *
+ * `projectEnv` is the caller's already-loaded `legacyLoadProjectEnv` map, forwarded to
+ * {@link checkScannerBufferSize} (via `legacyExecSqlFile`/`execMigrationBatch`) so a
+ * `SUPABASE_SCANNER_BUFFER_SIZE` set only in `supabase/.env` is honored here exactly like
+ * a real Go run — see that helper's doc comment.
+ */
+export const legacyApplySchemaFiles = <E>(
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  workdir: string,
+  schemaPaths: ReadonlyArray<string>,
+  mapError: (message: string, suggestion?: string) => E,
+  projectEnv: Readonly<Record<string, string>> = {},
+): Effect.Effect<void, E> =>
+  Effect.gen(function* () {
+    const { files, warnings } = yield* legacySqlFilesGlob(fs, path, schemaPaths, workdir);
+    if (files.length === 0) {
+      // Go: `if len(declared) == 0 { return err }` — `err` is `nil` when there were no
+      // patterns to glob at all, and the joined per-pattern warnings otherwise.
+      if (warnings.length > 0) {
+        return yield* Effect.fail(mapError(warnings.join("\n")));
+      }
+      return;
+    }
+    for (const file of files) {
+      const absolutePath = path.isAbsolute(file) ? file : path.join(workdir, file);
+      // `file` is already Go's `fp` form (workdir-relative when the declared pattern
+      // was relative, verbatim when absolute) — pass it through as the display path so
+      // a read failure reports it instead of the `absolutePath` the real read needs.
+      yield* legacyExecSqlFile(
+        session,
+        fs,
+        path,
+        absolutePath,
+        (message, phase) =>
+          phase === "exec"
+            ? mapError(message, `See schema file: ${legacyBold(file)}`)
+            : mapError(message),
+        file,
+        projectEnv,
+      );
+    }
+  });

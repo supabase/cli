@@ -54,22 +54,23 @@ as a new timestamped migration.
 
 | What                                                                                                                              | When                                                              |
 | --------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| `supabase-go db __shadow` / declarative shadow seam — platform baseline plus migrations and clean declarative target              | default engine                                                    |
-| `supabase-go db __shadow --mode diff` — shadow + migrations; catalog exported natively (CLI-1959)                                 | legacy opt-out, migrations-catalog cache miss                     |
+| Two scoped, natively-provisioned shadow Postgres databases: migrated source and declarative target                                | default engine                                                    |
+| Natively-provisioned raw shadow used as the declarative export source                                                             | no files, bootstrap generation accepted, legacy opt-out           |
+| Natively-provisioned migrated shadow plus native migration replay and catalog export                                              | legacy opt-out, migrations-catalog cache miss                     |
 | `supabase-go db schema declarative __catalog --mode declarative --experimental` — declarative catalog target                      | legacy opt-out                                                    |
 | Edge-runtime container running pg-delta diff/catalog-export scripts                                                               | legacy opt-out                                                    |
 | `docker`/`podman` container recreate for local `db` (+ satellite restarts, Kong reload) via in-process `legacyResetLocalDatabase` | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                     | Required? |
-| ---------------------------- | ----------------------------------------------------------- | --------- |
-| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for the legacy edge-runtime engine           | no        |
-| `PGDELTA_NPM_REGISTRY`       | legacy opt-out only: private npm registry                   | no        |
-| `PGDELTA_DEBUG`              | structured default-engine debug artifacts                   | no        |
-| `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary                      | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate (Go `GetHostname`) | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback          | no        |
+| Variable                     | Purpose                                                 | Required? |
+| ---------------------------- | ------------------------------------------------------- | --------- |
+| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for the legacy edge-runtime engine       | no        |
+| `PGDELTA_NPM_REGISTRY`       | legacy opt-out only: private npm registry               | no        |
+| `PGDELTA_DEBUG`              | structured default-engine debug artifacts               | no        |
+| `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary                  | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for native bootstrap shadow orchestration | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback      | no        |
 
 ## Exit Codes
 
@@ -136,12 +137,12 @@ and stops with the exact SQL to add.
   plans/renders in-process. Under the legacy opt-out, the migrations-catalog diff
   source resolves natively (CLI-1959):
   the setup-inputs-folded cache key, the zero-local-migrations → platform-baseline
-  reuse, and the pg-delta catalog export are all native TS; only the shadow-database
-  platform-baseline provisioning + migrations apply still runs via the bundled
-  `supabase-go`, reusing the SAME `db __shadow --mode diff` seam call `db diff`
-  uses (not a `__catalog`-specific shadow). The declarative-catalog diff target
-  still provisions its shadow-database platform baseline (and applies declarative
-  files) via the hidden `db schema declarative __catalog --mode declarative` seam,
-  since neither a baseline-only shadow nor `pgdelta.ApplyDeclarative` has a native
-  TS port yet (tracked by CLI-1956/CLI-1823). Its diff still uses the legacy Deno
-  script.
+  reuse, and the pg-delta catalog export are all native TS; the shadow-database
+  platform-baseline provisioning + migrations apply is native too now (CLI-1956 —
+  `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`, the SAME native primitives
+  `db diff` uses for its own shadow, not a `__catalog`-specific one). The
+  declarative-catalog diff target still provisions its shadow-database platform
+  baseline (and applies declarative files) via the hidden `db schema declarative
+__catalog --mode declarative` seam, since neither a baseline-only shadow nor
+  `pgdelta.ApplyDeclarative` has a native TS port yet (tracked by CLI-1823). The
+  legacy opt-out still runs its diff through the edge-runtime Deno script.

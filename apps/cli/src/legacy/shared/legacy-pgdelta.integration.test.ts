@@ -25,15 +25,28 @@ const CTX: LegacyPgDeltaContext = {
   cwd: "/proj",
   npmVersion: undefined,
   denoVersion: 2,
+  projectEnv: {},
 };
 
-function fakeEdgeRuntime(outcome: { stdout?: string; stderr?: string; fail?: string } = {}) {
+function fakeEdgeRuntime(
+  outcome: {
+    stdout?: string;
+    stderr?: string;
+    fail?: string;
+    docker?: "daemon" | "inspect" | "pull";
+  } = {},
+) {
   const calls: LegacyEdgeRuntimeRunOpts[] = [];
   const layer = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (opts: LegacyEdgeRuntimeRunOpts) => {
       calls.push(opts);
       if (outcome.fail !== undefined) {
-        return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: outcome.fail }));
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({
+            message: outcome.fail,
+            ...(outcome.docker !== undefined ? { docker: outcome.docker } : {}),
+          }),
+        );
       }
       return Effect.succeed({
         stdout: outcome.stdout ?? "",
@@ -150,6 +163,30 @@ describe("legacyDiffPgDelta", () => {
           expect((failError(exit) as { message: string }).message).toBe(
             "error diffing schema: boom",
           );
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),
+    );
+  });
+
+  it.effect("preserves docker failure classification through the pg-delta wrapper", () => {
+    const edge = fakeEdgeRuntime({
+      fail: "error diffing schema: docker unavailable",
+      docker: "daemon",
+    });
+    return legacyDiffPgDelta(CTX, {
+      targetRef: "postgresql://t",
+      sourceRef: "",
+      schema: [],
+      formatOptions: "",
+    }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(failError(exit)).toMatchObject({
+            _tag: "LegacyDeclarativeEdgeRuntimeError",
+            docker: "daemon",
+          });
         }),
       ),
       Effect.provide(Layer.mergeAll(edge.layer, probe, BunServices.layer)),

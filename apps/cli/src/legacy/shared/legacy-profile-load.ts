@@ -2,6 +2,11 @@ import { Data, Effect, FileSystem } from "effect";
 import { parse as parseYaml } from "yaml";
 
 import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+import {
   legacyApiUrl,
   legacyDashboardUrl,
   legacyIsBuiltinProfileName,
@@ -19,7 +24,11 @@ import {
 // classes.
 export class LegacyProfileLoadError extends Data.TaggedError("LegacyProfileLoadError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Emulates Go's `LoadProfile` (`apps/cli-go/internal/utils/profile.go:94-118`)

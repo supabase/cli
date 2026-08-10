@@ -54,6 +54,14 @@ export interface LegacyLocalProjectContext {
 export const legacyLoadLocalProjectContext = <E>(
   workdir: string,
   mapConfigLoadError: (message: string) => E,
+  // The resolved `--linked` ref, when the caller already has one in scope (`db diff`/`db
+  // pull`'s shadow-provisioning prelude — CLI-1956) — threaded straight into
+  // `loadProjectConfig`'s own `projectRef` option so the matching `[remotes.<ref>]` block
+  // merges over the base config, exactly like `legacyReadDbToml(..., ref)` already does for
+  // those same commands' OTHER config read. `db start`/`db reset` never pass this (neither
+  // operates against a linked target), so it defaults to `undefined` — no remote merge,
+  // unchanged from before.
+  projectRef?: string,
 ): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
     // `search: false`: `workdir` already IS Go's fully-resolved chdir target (`legacy-cli-config.
@@ -166,14 +174,28 @@ export const legacyLoadLocalProjectContext = <E>(
       // `config.toml`.
       tomlOnly: true,
       goViperCompat: true,
+      projectRef,
     }).pipe(
       Effect.mapError((cause) => mapConfigLoadError(`failed to read config: ${String(cause)}`)),
     );
     const config = loaded?.config ?? Schema.decodeUnknownSync(ProjectConfigSchema)({});
     const hostname = legacyGetHostname();
+    // `loaded?.appliedRemote !== undefined` means a `[remotes.<ref>]` block matched
+    // `projectRef` above and `loadProjectConfig` merged it over the base document
+    // (`packages/config/src/io.ts`'s `applyRemoteOverride`) — including that block's OWN
+    // `project_id` field, which is what selected it (`config.project_id` already equals
+    // `projectRef`). Go's `mergeRemoteConfig` installs that value at viper's override tier,
+    // above `AutomaticEnv` (`apps/cli-go/pkg/config/config.go:718-724`), so a stale/
+    // differently-scoped `SUPABASE_PROJECT_ID` must not win over it here either — otherwise
+    // this context's `projectId` (network id, container labels — same field
+    // `legacy-db-config.toml-read.ts`'s own `project_id` gating protects for the pg-delta
+    // context) resolves the WRONG id for a linked `db diff --linked`/`db pull` shadow
+    // (review: PRRT_kwDOErm0O86XHGDL).
     const projectId = legacySanitizeProjectId(
       legacyResolveLocalProjectId(
-        projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"],
+        loaded?.appliedRemote !== undefined
+          ? undefined
+          : (projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"]),
         config.project_id,
         workdir,
       ),

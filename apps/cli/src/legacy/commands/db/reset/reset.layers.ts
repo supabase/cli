@@ -21,18 +21,25 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * Runtime layer for `supabase db reset`. Same composition as `db push` / `db lint`:
  * the Postgres connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache, all over the lazy management-API factory so the local /
- * `--db-url` paths never resolve an access token at layer-build time. `LegacyGoProxy`
- * (used to delegate the remaining `--experimental` reset path) is ambient from the
- * root. `legacyDockerRunLayer` backs the native local recreate's PG15+ one-shot
- * migrate jobs (`legacyStartSetupLocalDatabase`, reused via
- * `legacyRecreateLocalDatabase`) — same reasoning as `db start`'s own
- * `start.layers.ts`. `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back
- * that same shared setup pipeline's best-effort pg-delta migrations-catalog warmup
- * (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog` call, reachable from `db reset`'s
- * PG15 recreate too) — the exact same pair `db start`/`db push` already compose for
- * their own calls to that function (`db/start/start.layers.ts`, `push.layers.ts`).
- * `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/`RuntimeInfo` are
- * ambient from the root runtime (`shared/cli/run.ts`).
+ * `--db-url` paths never resolve an access token at layer-build time. Both targets
+ * are fully native (CLI-1955/CLI-2062 for the local container-recreate primitives,
+ * CLI-1958 for the remote `--experimental` schema-files apply) — no Go delegation
+ * remains on this command, so `LegacyGoProxy` is not composed here.
+ *
+ * `legacyDockerRunLayer` backs the native local recreate's PG15+ one-shot migrate
+ * jobs (`legacyStartSetupLocalDatabase`, reused via `legacyRecreateLocalDatabase`)
+ * — same reasoning as `db start`'s own `start.layers.ts`.
+ * `legacyEdgeRuntimeScriptLayer`/`legacyPgDeltaSslProbeLayer` back that same shared
+ * setup pipeline's best-effort pg-delta migrations-catalog warmup (`db-setup.ts`'s
+ * `legacyTryCacheMigrationsCatalog` call, reachable from `db reset`'s PG15 recreate
+ * too) AND the remote path's own post-reset catalog-cache call — the exact same
+ * pair `db start`/`db push` already compose for their own calls to that function
+ * (`db/start/start.layers.ts`, `push.layers.ts`). Without them, a versionless reset
+ * with pg-delta enabled would hit an unhandled missing-service defect — not caught
+ * by the handler's typed `Effect.catch` — AFTER the database has already been
+ * reset, instead of writing the catalog or emitting Go's best-effort warning
+ * (review CLI-1958). `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/
+ * `RuntimeInfo` are ambient from the root runtime (`shared/cli/run.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -90,7 +97,8 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   // `console.ReadLine`); without it a CI/piped remote `db reset` that reaches the
   // confirmation prompt fails with a missing-service defect instead of the default.
   stdinLayer,
-  // Backs the native local recreate's PG15+ one-shot migrate jobs.
+  // Backs the native local recreate's PG15+ one-shot migrate jobs, and the remote
+  // path's own post-reset pg-delta catalog-cache call.
   legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,

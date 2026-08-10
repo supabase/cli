@@ -196,8 +196,17 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                   ? input.desired
                   : undefined;
             if (migrationsEndpoint !== undefined) {
+              if (input.toml === undefined) {
+                return yield* Effect.fail(
+                  new LegacyPgDeltaEngineError({
+                    message: "pg-delta migrations endpoint requires loaded database config",
+                    cause: "missing database config",
+                  }),
+                );
+              }
               shadow = yield* shadowService.provisionMigrations({
-                schema: input.schema,
+                context: input.context,
+                toml: input.toml,
                 ...(migrationsEndpoint.projectRef !== undefined
                   ? { projectRef: migrationsEndpoint.projectRef }
                   : {}),
@@ -249,23 +258,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       diffDatabase: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const shadow = yield* shadowService.provisionMigrations({
-              schema: input.schema,
-              ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
-            });
-            const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
-            if (migrations === undefined) {
-              return yield* Effect.fail(
-                new LegacyPgDeltaEngineError({
-                  message: "failed to parse pg-delta next shadow database URL",
-                  cause: "invalid password-free shadow output",
-                }),
-              );
-            }
-            const migrationsPool = yield* legacyAcquirePgPool(migrations, {
-              isLocal: true,
-              dnsResolver: "native",
-            });
+            const migrationsPool = yield* acquireDatabase(input.source);
             const desiredPool = yield* acquireDatabase(input.target);
             const result = yield* adapter.diff({
               sourcePool: migrationsPool,
@@ -320,7 +313,11 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       planDeclarativeSchema: (input) =>
         Effect.scoped(
           Effect.gen(function* () {
-            const shadow = yield* shadowService.provisionPlan({ schema: input.schema });
+            const shadow = yield* shadowService.provisionPlan({
+              context: input.context,
+              toml: input.toml,
+              ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+            });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
             const declarative = parseLegacyConnectionString(shadow.declarativeUrl);
             if (migrations === undefined || declarative === undefined) {

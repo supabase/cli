@@ -1,5 +1,12 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Errors raised while deriving Storage connection credentials, shared by
  * `seed buckets` and `storage ls/cp/mv/rm`.
@@ -11,7 +18,11 @@ import { Data } from "effect";
  */
 export class LegacyStorageConfigError extends Data.TaggedError("LegacyStorageConfigError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /**
  * Raised on `--linked` when the project's api-keys response yields no keys,
@@ -23,14 +34,27 @@ export class LegacyStorageMissingApiKeyError extends Data.TaggedError(
   "LegacyStorageMissingApiKeyError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A 200 api-keys response with no usable key — an API response problem, not
+    // a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
 
 /** Transport failure fetching the project's api-keys (`failed to get api keys: <cause>`). */
 export class LegacyStorageApiKeysNetworkError extends Data.TaggedError(
   "LegacyStorageApiKeysNetworkError",
 )<{
   readonly message: string;
-}> {}
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 /**
  * `GET /v1/projects/{ref}/api-keys?reveal=true` returned a non-200 on a
@@ -42,4 +66,11 @@ export class LegacyStorageAuthTokenError extends Data.TaggedError("LegacyStorage
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // The shared mapper wraps any non-200 in this tag; the status policy maps
+    // 401 → re-login, 404 → user-supplied ref not found, everything else →
+    // API status.
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}

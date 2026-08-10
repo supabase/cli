@@ -338,3 +338,67 @@ export const legacyResolveExperimentalWithProjectEnv = (projectEnv: Record<strin
     }
     return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_EXPERIMENTAL", projectEnv);
   });
+
+/**
+ * True when the LAST `--debug`/`--debug=<value>` occurrence in argv resolves to a pflag `false`
+ * (`PFLAG_FALSE_VALUES`, matching `ParseBool`'s false set). pflag's `Value.Set` runs for every
+ * occurrence in argv order, so the last one wins: `--debug=false --debug=true` (or a trailing
+ * bare `--debug`) is `true` to Go/pflag, not `false` — the Effect parser itself resolves repeats
+ * first-wins instead (binary-verified precedent for this exact pflag-vs-Effect divergence:
+ * `apps/cli/src/legacy/commands/sso/sso.pflag-reconcile.ts:306-321`). `--debug` is bound to
+ * viper the same way as `--yes`/`--experimental` (`apps/cli-go/cmd/root.go:318-334`).
+ * {@link legacyYesFlagExplicitlyFalse}/{@link legacyExperimentalFlagExplicitlyFalse} above have
+ * the identical `Array.some` "any occurrence is false" gap (review: PRRT_kwDOErm0O86XKYiG) —
+ * left as-is here as a pre-existing, cross-cutting fix spanning those two flags too, not folded
+ * into this port (same scoping precedent as this file's own {@link legacyResolveDebugWithProjectEnv}
+ * doc comment for existing `LegacyDebugFlag` call sites). Like those siblings, this scans only the
+ * flag-parsing region (see {@link argsBeforeOperandTerminator}) and skips tokens pflag would
+ * consume as another flag's value (see {@link nonValueConsumedTokens}) — `db pull -- --debug=false`
+ * and `db pull --password --debug=false` leave `--debug` unchanged to pflag, so `SUPABASE_DEBUG`
+ * must still win.
+ */
+const legacyDebugFlagExplicitlyFalse = (args: ReadonlyArray<string>): boolean => {
+  let lastExplicitlyFalse = false;
+  for (const arg of nonValueConsumedTokens(argsBeforeOperandTerminator(args))) {
+    if (arg === "--debug") {
+      lastExplicitlyFalse = false;
+    } else if (arg.startsWith("--debug=")) {
+      lastExplicitlyFalse = PFLAG_FALSE_VALUES.has(arg.slice("--debug=".length));
+    }
+  }
+  return lastExplicitlyFalse;
+};
+
+/**
+ * `--debug` resolved with Go's viper `AutomaticEnv` fallback (EVERY Go debug read goes through
+ * `viper.GetBool("DEBUG")` — never the bare pflag — across the whole Go CLI, `apps/cli-go/cmd/
+ * root.go:122,289`, `internal/utils/{connect,docker,edgeruntime,logger}.go`,
+ * `internal/pgdelta/apply.go:332,342`, …) AND the project `.env` consulted too, for debug-gated
+ * behavior that runs downstream of a command that has already loaded the nested project env
+ * (e.g. `legacyApplyDeclarativePgDelta`, reached by `db diff`/`db pull` after
+ * `ParseDatabaseConfig`; `legacyBuildShadowCatalogInputs`, reached by `db diff --from/--to
+ * migrations` and `db schema declarative sync`). Go's `Config.Load` -> `loadNestedEnv` calls
+ * `godotenv.Load`, which `os.Setenv`s every project `.env` key not already present in the shell
+ * env (`godotenv@v1.5.1/godotenv.go:184-200`) — a REAL process-wide mutation that persists for
+ * the rest of that Go process, so a later `viper.GetBool("DEBUG")` (e.g.
+ * `pgdelta.ApplyDeclarative`, `apply.go:332,342`) sees a `SUPABASE_DEBUG` set only in
+ * `supabase/.env`. This port's own `legacyLoadProjectEnv` is deliberately pure (no
+ * `process.env` side effect, see its doc comment), so callers that need that same env-file
+ * value for a `viper.GetBool`-shaped read must pass the loaded map through explicitly instead
+ * — same shape as {@link legacyResolveYesWithProjectEnv}/
+ * {@link legacyResolveExperimentalWithProjectEnv} above (review: PRRT_kwDOErm0O86XL_oz).
+ * Shell *presence* — any value, including `false`, empty, or garbage — suppresses the file
+ * value entirely; an explicit `--debug` — including `--debug=false` — wins over both, matching
+ * viper's bound-pflag precedence. `projectEnv` is the loaded map from `legacyLoadProjectEnv`
+ * (or `legacyReadDbToml`'s re-export of it). Existing bare {@link LegacyDebugFlag} call sites
+ * are unaffected — this is additive, for call sites that opt in.
+ */
+export const legacyResolveDebugWithProjectEnv = (projectEnv: Record<string, string>) =>
+  Effect.gen(function* () {
+    const flag = yield* LegacyDebugFlag;
+    const cliArgs = yield* CliArgs;
+    if (legacyDebugFlagExplicitlyFalse(cliArgs.args)) {
+      return false;
+    }
+    return flag || legacyViperEnvBoolWithProjectFallback("SUPABASE_DEBUG", projectEnv);
+  });

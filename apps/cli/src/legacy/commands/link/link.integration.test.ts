@@ -1,7 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { SupabaseApiResponseSchemaError } from "@supabase/api/effect";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
@@ -350,26 +349,6 @@ describe("legacy link integration", () => {
         const json = JSON.stringify(exit.cause);
         expect(json).toContain("LegacyLinkProjectStatusError");
         expect(json).toContain("Unexpected error retrieving remote project status");
-      }
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("surfaces project response schema failures separately from network failures", () => {
-    const { layer } = setup({
-      project: {
-        fail: new SupabaseApiResponseSchemaError(
-          "v1GetProject",
-          new Error("created_at is not RFC3339"),
-        ),
-      },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyLink(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyApiResponseSchemaError");
-        expect(json).not.toContain("LegacyLinkProjectStatusNetworkError");
       }
     }).pipe(Effect.provide(layer));
   });

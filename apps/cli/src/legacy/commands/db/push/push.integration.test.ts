@@ -55,6 +55,7 @@ const DEFAULT_FLAGS: LegacyDbPushFlags = {
   includeAll: false,
   includeRoles: false,
   includeSeed: false,
+  skipVault: false,
   dryRun: false,
   dbUrl: Option.none(),
   linked: false,
@@ -62,11 +63,15 @@ const DEFAULT_FLAGS: LegacyDbPushFlags = {
   password: Option.none(),
 };
 
-function mockResolver(opts: { isLocal?: boolean; onResolve?: () => void } = {}) {
-  return Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) =>
+function mockResolver(
+  opts: { isLocal?: boolean; onResolve?: (flags: LegacyDbConfigFlags) => void } = {},
+) {
+  const calls: Array<LegacyDbConfigFlags> = [];
+  const layer = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: (flags: LegacyDbConfigFlags) =>
       Effect.sync(() => {
-        opts.onResolve?.();
+        calls.push(flags);
+        opts.onResolve?.(flags);
         return {
           conn: LOCAL_CONN,
           isLocal: opts.isLocal ?? true,
@@ -74,6 +79,7 @@ function mockResolver(opts: { isLocal?: boolean; onResolve?: () => void } = {}) 
       }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
+  return { layer, calls };
 }
 
 function mockConnection(opts: {
@@ -226,18 +232,19 @@ function setup(
     promptProjectRef: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
   });
 
+  const resolver = mockResolver({
+    isLocal: opts.isLocal ?? true,
+    onResolve:
+      opts.simulateInitialisingLoginRole === true
+        ? () => {
+            out.rawChunks.push({ text: "Initialising login role...\n", stream: "stderr" });
+          }
+        : undefined,
+  });
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
-    mockResolver({
-      isLocal: opts.isLocal ?? true,
-      onResolve:
-        opts.simulateInitialisingLoginRole === true
-          ? () => {
-              out.rawChunks.push({ text: "Initialising login role...\n", stream: "stderr" });
-            }
-          : undefined,
-    }),
+    resolver.layer,
     mockLegacyCliConfig({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
@@ -263,6 +270,7 @@ function setup(
     conn,
     telemetry,
     linkedCache,
+    resolver,
     edgeRunCalls,
     registryEnvAtRunTime,
   };
@@ -632,6 +640,21 @@ describe("legacy db push", () => {
     });
   });
 
+  it.live("skips vault decryption in dry-run mode with --skip-vault", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:not-valid"\n',
+      files: migrationFile("20240101000000"),
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true, skipVault: true }).pipe(
+        Effect.provide(layer),
+      );
+      expect(out.stderrText).toContain("Would push these migrations:");
+      expect(conn.queries.some((query) => query.sql.includes("vault."))).toBe(false);
+      expect(conn.execs).toEqual([]);
+    });
+  });
+
   it.live(
     "prints the DRY RUN heads-up line after the connection resolves, not before (Go's push.Run order)",
     () => {
@@ -967,7 +990,7 @@ describe("legacy db push", () => {
   });
 
   it.live("upserts vault secrets (update existing, create new) before migrating", () => {
-    const { layer, out, conn } = setup(tmp.current, {
+    const { layer, out, conn, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
       files: migrationFile("20240101000000"),
       // `existing` already present remotely → update; `fresh` → create.
@@ -977,9 +1000,62 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Updating vault secrets...");
+      expect(resolver.calls[0]?.resolveVaultSecrets).toBe(true);
       const sqls = conn.queries.map((q) => q.sql);
       expect(sqls).toContain("SELECT vault.update_secret($1, $2)");
       expect(sqls).toContain("SELECT vault.create_secret($1, $2)");
+    });
+  });
+
+  it.live("applies migrations without touching vault when --skip-vault is set", () => {
+    const { layer, out, conn, resolver } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
+      files: migrationFile("20240101000000"),
+      vaultRows: [{ id: "id-1", name: "existing" }],
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("Updating vault secrets...");
+      expect(resolver.calls[0]?.resolveVaultSecrets).toBe(false);
+      expect(conn.queries.some((query) => query.sql.includes("vault."))).toBe(false);
+      expect(
+        conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+      ).toBe(true);
+    });
+  });
+
+  it.live("does not decrypt vault secrets skipped by --skip-vault", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:not-valid"\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+      expect(conn.queries.some((query) => query.sql.includes("vault."))).toBe(false);
+    });
+  });
+
+  it.live("still validates non-vault secrets with --skip-vault", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db]\nroot_key = "encrypted:not-valid"\n',
+      files: migrationFile("20240101000000"),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to parse config:");
+      expect(out.stderrText).not.toContain("Connecting to local database...");
+      expect(conn.queries).toEqual([]);
     });
   });
 

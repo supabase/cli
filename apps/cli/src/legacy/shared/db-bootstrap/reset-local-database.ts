@@ -48,6 +48,11 @@ import {
 } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua, legacyYellow } from "../legacy-colors.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { legacyCheckDbToml, legacyLoadProjectEnv } from "../legacy-db-config.toml-read.ts";
@@ -61,16 +66,19 @@ import { legacyRecreateLocalDatabase } from "./recreate-local-database.ts";
  * The local database container is not running. Byte-matches Go's
  * `utils.ErrNotRunning` (`internal/utils/misc.go:116`), `"<aqua>supabase start</aqua>
  * is not running."`, returned by `AssertSupabaseDbIsRunning` before the local
- * reset (`internal/db/reset/reset.go:57`). Not exported outside this module —
- * callers discriminate this via the failure's own message, never by importing the
- * class itself (same pattern as `recreate-local-database.ts`'s own
- * `LegacyResetReplicationSlotsError`).
+ * reset (`internal/db/reset/reset.go:57`). Exported only so the exhaustive
+ * actionability guard can inspect its declaration; runtime callers consume the
+ * enclosing effect rather than importing this class.
  */
-class LegacyResetLocalDbNotRunningError extends Data.TaggedError(
+export class LegacyResetLocalDbNotRunningError extends Data.TaggedError(
   "LegacyResetLocalDbNotRunningError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.startStack;
+  }
+}
 
 /** Go's `toLogMessage` (`internal/db/reset/reset.go:88-91`). */
 const toLogMessage = (version: string): string =>
@@ -155,7 +163,7 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     debug,
   );
   const {
-    context: { projectId, hostname },
+    context: { projectId, hostname, config, loaded },
     values,
     bootstrapConfig,
     networkId,
@@ -202,22 +210,20 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
     // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
     // confirmations take their defaults instead of blocking on input.
     //
-    // `legacyCheckDbToml` above resolves `env(VAR)` via `legacyLoadProjectEnv`, which
-    // mirrors Go's full nested-env walk (`.env.<SUPABASE_ENV>.local`, `.env.local`,
-    // `.env.<SUPABASE_ENV>`, `.env`, across both `supabase/` and the project root —
-    // `pkg/config/config.go:1220-1257`). This reload instead goes through
-    // `@supabase/config`'s `loadProjectConfig` → `loadProjectEnvironment`, which only
-    // ever reads `supabase/.env`/`.env.local` plus ambient env
-    // (`packages/config/src/project.ts:209-245`) — regardless of `goViperCompat`, which
-    // only widens `env(VAR)` matching, not the file set consulted. So a config whose
-    // `env(VAR)` reference is backed by e.g. `supabase/.env.development` is genuinely
+    // `resolvedConfig` passes through the SAME config this function already resolved
+    // via `legacyBuildLocalDbContainerInputs`'s `context` (itself loaded through
+    // `legacyLoadLocalProjectContext`, which mirrors Go's full nested-env walk —
+    // `.env.<SUPABASE_ENV>.local`, `.env.local`, `.env.<SUPABASE_ENV>`, `.env`, across
+    // both `supabase/` and the project root, `pkg/config/config.go:1220-1257`) — so
+    // `legacySeedBucketsRun` never independently reloads config.toml through
+    // `@supabase/config`'s narrower `loadProjectConfig` → `loadProjectEnvironment`
+    // (`supabase/.env`/`.env.local` plus ambient env only,
+    // `packages/config/src/project.ts:209-245`), which used to reject a config whose
+    // `env(VAR)` reference is backed by e.g. `supabase/.env.development` — genuinely
     // Go-valid (Go's `godotenv.Load` calls `os.Setenv`, so the value is real ambient env
-    // by the time Go resolves it — `config.go:1260-1261`) and already passed
-    // `legacyCheckDbToml` and the real recreate above, but this narrower reload can
-    // still reject it. A `LegacySeedConfigLoadError` here is that env-file-set gap, not
-    // a genuinely invalid config — and recreate already dropped/rebuilt the DB, so
-    // aborting now would leave the reset half-done; warn and skip buckets so the reset
-    // finishes like Go instead.
+    // by the time Go resolves it, `config.go:1260-1261`) and already accepted by
+    // `legacyCheckDbToml` and the real recreate above (review CLI-1958). Same pattern
+    // `start.handler.ts` already uses for its own `legacySeedBucketsRun` calls.
     yield* legacySeedBucketsRun({
       projectRef: "",
       emitSummary: false,
@@ -225,7 +231,11 @@ export const legacyResetLocalDatabase = Effect.fnUntraced(function* (
       // Go loads nested env before `buckets.Run`, so `SUPABASE_YES` in `supabase/.env`
       // auto-confirms bucket/vector/analytics prune prompts.
       yes,
+      resolvedConfig: { config, document: loaded?.document },
     }).pipe(
+      // A genuinely invalid bucket entry (bad name, unparseable `file_size_limit`, …) —
+      // recreate already dropped/rebuilt the DB, so aborting now would leave the reset
+      // half-done; warn and skip buckets so the reset finishes like Go instead.
       Effect.catchTag("LegacySeedConfigLoadError", (error) =>
         output.raw(
           `${legacyYellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,

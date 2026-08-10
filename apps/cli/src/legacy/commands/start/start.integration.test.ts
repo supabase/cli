@@ -24,6 +24,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
   LegacyDebugFlag,
   LegacyExperimentalFlag,
@@ -242,6 +243,7 @@ function defaultRoute(opts: { readonly neverHealthy?: ReadonlySet<string> } = {}
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
+    if (args[0] === "network" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "context" && args[1] === "inspect") return { exitCode: 1 };
@@ -1289,6 +1291,11 @@ describe("legacy start integration", () => {
             const serialized = JSON.stringify(exit.cause);
             expect(serialized).toContain("LegacyDockerLifecycleInspectError");
             expect(serialized).toContain("docker: command not found (podman also not found)");
+            expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+              error_kind: "user_actionable",
+              error_category: "docker_not_running",
+              error_fingerprint: "tag:LegacyDockerLifecycleInspectError:docker_not_running",
+            });
           }
         }).pipe(Effect.provide(layer));
       },
@@ -3364,7 +3371,7 @@ content_path = "./templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
           // Reported by container name, with the recovery advice naming the image
           // Postgres's own health wait resolved for it.
-          expect(out.stderrText).toContain("supabase_db_demo: container is not ready");
+          expect(out.stderrText).toContain("supabase_db_demo container is not ready");
           expect(out.stderrText).toContain("supabase_db_demo's image");
           expect(out.stderrText).toContain("image rm -f public.ecr.aws/supabase/postgres:");
           // `--ignore-health-check` leaves the stack up, so a bare restart would be a
@@ -3470,7 +3477,7 @@ content_path = "./templates/custom_notice.html"
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
         // Reported by container name, not `docker create`'s opaque id, and the
         // advice names the image actually resolved for that container.
-        expect(out.stderrText).toContain("supabase_auth_demo: container is not ready");
+        expect(out.stderrText).toContain("supabase_auth_demo container is not ready");
         expect(out.stderrText).toContain("docker image rm -f public.ecr.aws/supabase/gotrue:");
         // Go never fires `cli_stack_started` on the ignored-unhealthy
         // fallthrough (`start.go:1287` sits after the `if err != nil` block) —
@@ -3631,6 +3638,29 @@ content_path = "./templates/custom_notice.html"
         );
         const networkFlagIndex = kongCreate?.args.indexOf("--network") ?? -1;
         expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("never spawns a create for a pre-created --network-id network", () => {
+      const base = defaultRoute();
+      const route = (args: ReadonlyArray<string>): RouteResult => {
+        if (args[0] === "network" && args[1] === "inspect") return { exitCode: 0 };
+        if (args[0] === "network" && args[1] === "create") {
+          return { exitCode: 1, stderr: ["error during connect: write: broken pipe"] };
+        }
+        return base(args);
+      };
+      const { layer, child } = setup({ networkId: Option.some("custom-net"), route });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        expect(child.spawned.some((s) => s.args[0] === "network" && s.args[1] === "create")).toBe(
+          false,
+        );
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "network" && s.args[1] === "inspect" && s.args[2] === "custom-net",
+          ),
+        ).toBe(true);
       }).pipe(Effect.provide(layer));
     });
 

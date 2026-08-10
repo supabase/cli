@@ -206,6 +206,7 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
       const port = yield* Effect.promise(acquireClosedPort);
       const error = yield* connectFailure({ port });
       expect(error.suggestion).toBe(LEGACY_SUGGEST_LOCAL_STACK);
+      expect(error.retryable).toBe(true);
     }),
   );
 
@@ -238,6 +239,7 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
         );
         expect(error.suggestion).toBe(LEGACY_SUGGEST_ENV_VAR);
         expect(error.message).not.toContain(SENTINEL_PASSWORD);
+        expect(error.retryable).toBeUndefined();
       }),
   );
 
@@ -262,6 +264,8 @@ describe("legacyDbConnectionSqlPgLayer connect failures", () => {
             "Connection terminated unexpectedly",
         );
         expect(error.suggestion).toBeUndefined();
+        // An unexpected EOF is not a dial-level failure — never marked retryable.
+        expect(error.retryable).toBeUndefined();
       }),
   );
 });

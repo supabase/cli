@@ -1,4 +1,4 @@
-import { Cause, Clock, Effect, Exit, FileSystem, Option, Path } from "effect";
+import { Cause, Clock, Effect, Exit, FileSystem, Option, Path, Result } from "effect";
 
 import {
   LegacyDnsResolverFlag,
@@ -29,7 +29,10 @@ import {
   legacyResolveSetupInputs,
 } from "../../../../../shared/legacy-pgdelta.cache.ts";
 import { LegacyPgDeltaEngine } from "../../../shared/legacy-pgdelta-engine.service.ts";
-import { legacyIsPgDeltaDebugEnabled } from "../../../../../shared/legacy-pgdelta.ts";
+import {
+  legacyIsPgDeltaDebugEnabled,
+  legacyResolvePgDeltaProjectId,
+} from "../../../../../shared/legacy-pgdelta.ts";
 import { legacyWritePgDeltaMigrations } from "../../../shared/legacy-pgdelta-migrations.write.ts";
 import { legacyResolveSmartTargetEndpoint } from "../declarative.smart-target.ts";
 import {
@@ -45,6 +48,7 @@ import {
   LegacyDeclarativeMutuallyExclusiveFlagsError,
   LegacyDeclarativeNoFilesGeneratedError,
   LegacyDeclarativeNonInteractiveError,
+  legacyReadErrorSuggestion,
 } from "../declarative.errors.ts";
 import {
   legacyClassifyDeclarativeCompatibilityGap,
@@ -152,10 +156,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       const tempDir = legacyPgDeltaTempPath(path, cliConfig.workdir);
       const run: LegacyDeclarativeRunContext = {
         pgDelta: {
-          projectId: Option.getOrElse(cliConfig.projectId, () => ""),
+          // `legacyResolvePgDeltaProjectId` mirrors Go's `Config.ProjectId` singleton
+          // (`SUPABASE_PROJECT_ID` env → config.toml's `project_id` → sanitized workdir
+          // basename) — NOT `cliConfig.projectId` alone, which is env-only and resolves to
+          // `""` for a project relying on config.toml's `project_id` or the workdir-basename
+          // default, mounting the WRONG `supabase_edge_runtime_` Deno-cache volume.
+          projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
           cwd: cliConfig.workdir,
           npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
           denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
@@ -247,7 +257,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           linkedRef,
           ensureLocalPostgresImageCurrent,
         );
-        const generated = yield* legacyGenerateDeclarativeOutput(run, target);
+        const generated = yield* legacyGenerateDeclarativeOutput(run, toml, target);
         yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
         if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
           return yield* Effect.fail(
@@ -288,7 +298,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         toml.baseline,
       );
       const planDeclarativeSync = () =>
-        legacyDiffDeclarativeToMigrations(run, setupInputs).pipe(
+        legacyDiffDeclarativeToMigrations(run, toml, setupInputs).pipe(
           Effect.tapError((error) =>
             Effect.gen(function* () {
               const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
@@ -466,10 +476,16 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         return;
       }
 
+      // A Ctrl-C or defect during the apply is not a migration-apply failure —
+      // propagate it unchanged instead of synthesizing a fake
+      // `LegacyDeclarativeApplyError` (review CLI-1958).
+      const applyFailure = Cause.findFail(applyExit.cause);
+      if (Result.isFailure(applyFailure)) {
+        return yield* Effect.failCause(applyFailure.failure);
+      }
+
       // Apply failed: print, save a debug bundle, and (in a TTY) offer reset+reapply.
-      const applyError =
-        applyExit.cause.reasons.find(Cause.isFailReason)?.error ??
-        new LegacyDeclarativeApplyError({ message: "failed to apply migration" });
+      const applyError = applyFailure.success.error;
       yield* output.raw(
         `${legacyRed(`Migration failed to apply: ${applyError.message}`)}\n`,
         "stderr",
@@ -498,13 +514,22 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           // argv-forwarding is needed to stay on a custom network.
           const resetExit = yield* legacyResetLocalDatabase().pipe(Effect.exit);
           if (Exit.isFailure(resetExit)) {
+            // A Ctrl-C or defect during the recovery reset must cancel the command,
+            // not get rewritten into a synthetic "unknown error" apply failure —
+            // propagate it unchanged (review CLI-1958).
+            const resetFailure = Cause.findFail(resetExit.cause);
+            if (Result.isFailure(resetFailure)) {
+              return yield* Effect.failCause(resetFailure.failure);
+            }
             // Go returns `resetErr` here, surfacing the failure that actually blocked
-            // recovery — not the original apply error. Build the reset error from the
-            // real typed failure and use that one value for the message, debug bundle,
-            // and return.
-            const resetFailure = resetExit.cause.reasons.find(Cause.isFailReason)?.error;
+            // recovery — not the original apply error — and prints it exactly once (no
+            // extra "database reset failed:" wrapper). Build the reset error from the
+            // real typed failure and use that one value for the message, suggestion,
+            // debug bundle, and return.
+            const rawResetFailure = resetFailure.success.error;
             const resetError = new LegacyDeclarativeApplyError({
-              message: `database reset failed: ${resetFailure?.message ?? "unknown error"}`,
+              message: rawResetFailure.message,
+              suggestion: legacyReadErrorSuggestion(rawResetFailure),
             });
             yield* output.raw(
               `${legacyRed(`Database reset also failed: ${resetError.message}`)}\n`,
@@ -594,7 +619,9 @@ const applyMigrationToLocal = (
         { isLocal: true, dnsResolver: local.dnsResolver },
       )
       .pipe(
-        Effect.mapError((error) => new LegacyDeclarativeApplyError({ message: error.message })),
+        Effect.mapError(
+          (error) => new LegacyDeclarativeApplyError({ message: error.message, connect: true }),
+        ),
       );
     for (const migrationPath of migrationPaths) {
       yield* legacyApplyMigrationFile(

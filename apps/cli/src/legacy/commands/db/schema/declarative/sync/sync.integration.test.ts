@@ -38,7 +38,10 @@ import { LegacyPlatformApi } from "../../../../../auth/legacy-platform-api.servi
 import { LegacyPlatformApiFactory } from "../../../../../auth/legacy-platform-api-factory.service.ts";
 import { legacyDockerRunLayer } from "../../../../../shared/legacy-docker-run.layer.ts";
 import { LegacyDbConfigResolver } from "../../../../../shared/legacy-db-config.service.ts";
-import { LegacyDbConnection } from "../../../../../shared/legacy-db-connection.service.ts";
+import {
+  LegacyDbConnection,
+  type LegacyPgConnInput,
+} from "../../../../../shared/legacy-db-connection.service.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
@@ -114,12 +117,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // so tests can assert output ordering relative to the exports (e.g. the bootstrap's
   // written-to line lands after the declarative warm, before the diff's exports).
   const exportCatalogCalls: Array<{ mode: string; rawChunksAt: number }> = [];
-  // The migrations-catalog source now resolves natively (CLI-1959) via
-  // `legacyGetMigrationsCatalogRef`, which provisions its shadow through
-  // `provisionShadow` (Go's unchanged `db __shadow --mode diff`) instead of the
-  // retired `exportCatalog({mode:"migrations"})` seam call. "baseline"/
-  // "declarative" still go through `exportCatalog`.
-  const provisionShadowCalls: Array<{ mode: string; rawChunksAt: number }> = [];
+  // The migrations-catalog source now resolves natively (CLI-1959 cache mechanics
+  // + CLI-1956 shadow provisioning) via `legacyGetMigrationsCatalogRef`, which
+  // provisions its shadow through the SAME `legacyCreateShadowDatabase`/
+  // `legacyPrepareShadowSource`/`legacyRemoveShadowDatabase` primitives `db
+  // diff`/`db pull` use for their own shadow — via `child.layer`/
+  // `legacyDockerRunLayer` below (the same real container-lifecycle mocks
+  // `legacyResetLocalDatabase`'s own recovery-reset flow already needs), not the
+  // retired `db __shadow` seam. "baseline"/"declarative" still go through
+  // `exportCatalog`.
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode }) =>
       Effect.sync(() => {
@@ -141,19 +147,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             : Effect.void,
         ),
       ),
-    provisionNextMigrationsShadow: () =>
-      Effect.die("next migrations shadow not used in declarative tests"),
-    provisionNextPlanShadows: () => Effect.die("next plan shadows not used in declarative tests"),
-    provisionShadow: ({ mode }) =>
-      Effect.sync(() => {
-        provisionShadowCalls.push({ mode, rawChunksAt: out.rawChunks.length });
-        return {
-          container: "shadow-1",
-          sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
-          targetUrlOverride: undefined,
-        };
-      }),
-    removeShadowContainer: () => Effect.void,
   });
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
@@ -191,18 +184,27 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     },
   });
   const dbExec: string[] = [];
+  // Go's default `[db] shadow_port` (`legacy-db-config.toml-read.ts`'s
+  // `DEFAULT_SHADOW_PORT`) — none of these tests override it. The migrations-
+  // catalog resolution's shadow (CLI-1956) now ALSO connects through this same
+  // fake `LegacyDbConnection` for its own platform-baseline setup/migration
+  // replay, so its SQL (BEGIN/REVOKE.../CREATE DATABASE contrib_regression) must
+  // be excluded from `dbExec`, which every "not yet applied" assertion below
+  // expects to stay empty until the REAL local-apply connection
+  // (`applyMigrationToLocal`, `toml.port`) runs.
+  const SHADOW_PORT = 54320;
   const dbConn = Layer.succeed(LegacyDbConnection, {
-    connect: () =>
+    connect: (cfg: LegacyPgConnInput) =>
       Effect.succeed({
         exec: (sql: string) =>
           opts.applyFails === true && sql.startsWith("ALTER")
             ? Effect.fail({ _tag: "LegacyDbExecError", message: "boom" } as never)
             : Effect.sync(() => {
-                dbExec.push(sql);
+                if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
               }),
         query: (sql: string) =>
           Effect.sync(() => {
-            dbExec.push(sql);
+            if (cfg.port !== SHADOW_PORT) dbExec.push(sql);
             return [];
           }),
         extensionExists: () => Effect.succeed(false),
@@ -230,6 +232,38 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     requireSsl: () => Effect.succeed(false),
     requireSslForHost: () => Effect.succeed(false),
   });
+  const runtimeInfo = mockRuntimeInfo({ platform: "linux" });
+  const processControl = mockProcessControl();
+  const experimentalFlag = Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true);
+  const cliArgs = Layer.succeed(CliArgs, {
+    args: opts.args ?? ["db", "schema", "declarative", "sync"],
+  });
+  const networkIdFlag = Layer.succeed(
+    LegacyNetworkIdFlag,
+    opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
+  );
+  const debugFlag = Layer.succeed(LegacyDebugFlag, false);
+  const dockerRun = legacyDockerRunLayer.pipe(
+    Layer.provide(child.layer),
+    Layer.provide(processControl.layer),
+  );
+  const engineRuntime = Layer.mergeAll(
+    seam,
+    edge,
+    sslProbe,
+    out.layer,
+    dbConn,
+    runtimeInfo,
+    experimentalFlag,
+    cliArgs,
+    networkIdFlag,
+    debugFlag,
+    processControl.layer,
+    alwaysReadyHttpClientLayer,
+    dockerRun,
+    BunServices.layer,
+    child.layer,
+  );
   const nextFiles = opts.renderedFiles ?? [];
   const engine =
     opts.engineImplementation === "next"
@@ -273,9 +307,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             },
           }),
         )
-      : legacyPgDeltaLegacyEngineLayer.pipe(
-          Layer.provide(Layer.mergeAll(seam, edge, sslProbe, out.layer, BunServices.layer)),
-        );
+      : legacyPgDeltaLegacyEngineLayer.pipe(Layer.provide(engineRuntime));
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -288,15 +320,12 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(opts.stdinIsTty ?? false),
-    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? true),
-    Layer.succeed(CliArgs, { args: opts.args ?? ["db", "schema", "declarative", "sync"] }),
+    experimentalFlag,
+    cliArgs,
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
-    Layer.succeed(
-      LegacyNetworkIdFlag,
-      opts.networkId === undefined ? Option.none() : Option.some(opts.networkId),
-    ),
+    networkIdFlag,
     Layer.succeed(LegacyDnsResolverFlag, "native"),
-    Layer.succeed(LegacyDebugFlag, false),
+    debugFlag,
     // Sync diffs against the local DB, which refuses TLS → no SSL env injected.
     sslProbe,
     // The local-reset bucket-seed core statically requires the (lazy) Management-API
@@ -309,13 +338,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     // resolves a duplicate service tag to whichever layer is listed LAST, so this
     // mock overrides Bun's real `ChildProcessSpawner` instead of the reverse.
     child.layer,
-    mockRuntimeInfo({ platform: "linux" }),
-    mockProcessControl().layer,
+    runtimeInfo,
+    processControl.layer,
     alwaysReadyHttpClientLayer,
-    legacyDockerRunLayer.pipe(
-      Layer.provide(child.layer),
-      Layer.provide(mockProcessControl().layer),
-    ),
+    dockerRun,
   );
   return {
     layer,
@@ -326,7 +352,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     localPostgresImageChecks,
     exportCatalogCalls,
-    provisionShadowCalls,
   };
 }
 
@@ -615,12 +640,16 @@ describe("legacy db schema declarative sync integration", () => {
       // The warm (first declarative-mode export) fires before the line is printed…
       const warm = s.exportCatalogCalls.find((c) => c.mode === "declarative");
       expect(warm?.rawChunksAt).toBeLessThanOrEqual(lineAt);
-      // …and the diff's migrations-catalog resolution (now native, CLI-1959 —
-      // provisions its shadow via `provisionShadow` instead of a seam `exportCatalog`
-      // call) fires after it, so the line sits at the end of the bootstrap, matching
-      // Go's ordering.
-      const diffStart = s.provisionShadowCalls.find((c) => c.mode === "diff");
-      expect(diffStart?.rawChunksAt).toBeGreaterThan(lineAt);
+      // …and the diff's migrations-catalog resolution (native, CLI-1959 cache
+      // mechanics + CLI-1956 native shadow provisioning — no seam `exportCatalog`
+      // call for it at all) fires after it, so the line sits at the end of the
+      // bootstrap, matching Go's ordering. `legacyGetMigrationsCatalogRef` prints
+      // "Creating shadow database..." right before provisioning; use that line's
+      // own position as the "diff's shadow started" signal.
+      const diffStartIndex = s.out.rawChunks.findIndex(
+        (c) => c.stream === "stderr" && stripAnsi(c.text) === "Creating shadow database...\n",
+      );
+      expect(diffStartIndex).toBeGreaterThan(lineAt);
       // The generated files actually landed in the printed (resolved) dir.
       expect(
         existsSync(
@@ -677,6 +706,46 @@ describe("legacy db schema declarative sync integration", () => {
       expect(declarativeExports[0]?.rawChunksAt).toBeGreaterThan(lineAt);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "validates the migrations-catalog shadow's own local config (api.tls cert file) BEFORE printing 'Creating shadow database...'",
+    () => {
+      // `legacyGetMigrationsCatalogRef`'s own second `@supabase/config` load
+      // (`legacyBuildLocalDbContainerInputs`, run via `legacyBuildShadowCatalogInputs`)
+      // validates fields (e.g. an enabled API TLS's cert/key files) that `toml` never
+      // reads — Go performs this exact validation once, in the root
+      // `PersistentPreRunE`, strictly before `declarative.go`'s `createShadowContainer`
+      // ever prints "Creating shadow database..." (`declarative.go:490`). So a broken
+      // build must fail here without ever printing that banner.
+      seedDeclarative(tmp.current);
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[api]",
+          "enabled = true",
+          "[api.tls]",
+          "enabled = true",
+          'cert_path = "missing-cert.pem"',
+          'key_path = "missing-key.pem"',
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { experimental: true });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyDbSchemaDeclarativeSync(flags()));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect((failError(exit) as { message: string }).message).toContain(
+          "failed to read TLS cert",
+        );
+        expect(
+          s.out.rawChunks.some(
+            (c) => c.stream === "stderr" && stripAnsi(c.text) === "Creating shadow database...\n",
+          ),
+        ).toBe(false);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("bootstrap with migrations offers the smart target choice (not local-only)", () => {
     // Go delegates the no-files bootstrap to runDeclarativeGenerate; with migrations
@@ -1136,13 +1205,12 @@ describe("legacy db schema declarative sync integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failError(exit)).toMatchObject({
-        message: "database reset failed: supabase start is not running.",
+        message: "supabase start is not running.",
       });
+      // Printed exactly once — no "database reset failed:" double-wrap (review CLI-1958).
       expect(
         s.out.rawChunks.some((c) =>
-          c.text.includes(
-            "Database reset also failed: database reset failed: supabase start is not running.",
-          ),
+          c.text.includes("Database reset also failed: supabase start is not running."),
         ),
       ).toBe(true);
       // A real failure, before any destructive container work.

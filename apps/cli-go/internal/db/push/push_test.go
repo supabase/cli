@@ -101,12 +101,8 @@ func TestMigrationPush(t *testing.T) {
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
-			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`).
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+			ReplyError(pgerrcode.NotNullViolation, `null value in column "version" of relation "schema_migrations"`)
 		// Run test
 		err := Run(context.Background(), false, false, false, false, dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -129,12 +125,8 @@ func TestPushAll(t *testing.T) {
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		// Run test
 		err := Run(context.Background(), false, false, true, true, dbConfig, fsys, conn.Intercept)
 		// Check error
@@ -193,12 +185,8 @@ func TestPushAll(t *testing.T) {
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", nil).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		helper.MockSeedHistory(conn).
 			Query(migration.UPSERT_SEED_FILE, seedPath, digest).
 			ReplyError(pgerrcode.NotNullViolation, `null value in column "hash" of relation "seed_files"`)

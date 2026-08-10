@@ -1,6 +1,6 @@
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
@@ -9,14 +9,55 @@ import { legacyPgDeltaNextEngineLayer } from "./legacy-pgdelta-engine.next.layer
 import { LegacyPgDeltaEngine, LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
 import { LegacyPgDeltaNextAdapter } from "./legacy-pgdelta-next-adapter.service.ts";
 import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
+import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
 
 const common = {
-  context: { projectId: "test", cwd: "/tmp/test", npmVersion: undefined, denoVersion: 2 },
+  context: {
+    projectId: "test",
+    cwd: "/tmp/test",
+    npmVersion: undefined,
+    denoVersion: 2,
+    projectEnv: {},
+  },
   schema: ["public"],
   formatOptions: "",
   debug: false,
   strictCoverage: false,
 } as const;
+
+const toml: LegacyDbTomlValues = {
+  projectEnv: {},
+  envLookup: () => undefined,
+  apiSchemas: ["public", "graphql_public"],
+  port: 54322,
+  shadowPort: 54320,
+  password: "postgres",
+  poolerConnectionString: Option.none(),
+  projectId: Option.none(),
+  majorVersion: 17,
+  orioledbVersion: Option.none(),
+  denoVersion: 2,
+  pgDelta: {
+    enabled: false,
+    declarativeSchemaPath: Option.none(),
+    formatOptions: Option.none(),
+    npmVersion: Option.none(),
+  },
+  baseline: {
+    authEnabled: true,
+    storageEnabled: true,
+    realtimeEnabled: true,
+    apiAutoExposeNewTables: Option.none(),
+    vaultNames: [],
+  },
+  migrationsEnabled: true,
+  schemaPaths: [],
+  schemaPathPatterns: [],
+  seed: { enabled: true, sqlPaths: [] },
+  vault: [],
+  appliedRemote: undefined,
+  remoteOverrideKeys: new Set(),
+};
 
 function setup() {
   const state = { migrations: 0, plan: 0 };
@@ -62,13 +103,18 @@ function setup() {
 }
 
 describe("pg-delta next shadow selection", () => {
-  it.effect("uses only the migrated shadow for database diffs", () => {
+  it.effect("does not provision a second shadow for prepared database diffs", () => {
     const { state, layer } = setup();
     return Effect.gen(function* () {
       const engine = yield* LegacyPgDeltaEngine;
       yield* engine
         .diffDatabase({
           ...common,
+          source: {
+            kind: "database",
+            ref: "postgresql://postgres@localhost/source",
+            connectOptions: { isLocal: true, dnsResolver: "native" },
+          },
           target: {
             kind: "database",
             ref: "postgresql://postgres@localhost/postgres",
@@ -77,7 +123,7 @@ describe("pg-delta next shadow selection", () => {
         })
         .pipe(Effect.exit);
 
-      expect(state).toEqual({ migrations: 1, plan: 0 });
+      expect(state).toEqual({ migrations: 0, plan: 0 });
     }).pipe(Effect.provide(layer));
   });
 
@@ -88,6 +134,7 @@ describe("pg-delta next shadow selection", () => {
       yield* engine
         .diffExplicit({
           ...common,
+          toml,
           source: { kind: "migrations", projectRef: "linked-project" },
           desired: {
             kind: "database",
@@ -108,6 +155,7 @@ describe("pg-delta next shadow selection", () => {
       yield* engine
         .planDeclarativeSchema({
           ...common,
+          toml,
           files: [{ name: "schema.sql", sql: "create table example(id int);" }],
           noCache: false,
           setupInputs: {

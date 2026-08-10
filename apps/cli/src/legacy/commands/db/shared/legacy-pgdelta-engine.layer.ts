@@ -1,17 +1,24 @@
 import { Effect, FileSystem, Layer, Path } from "effect";
+import type * as HttpClient from "effect/unstable/http/HttpClient";
+import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
+import type { GlobalFlag } from "effect/unstable/cli";
 
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
+import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyPgDeltaLegacyEngineLayer } from "./legacy-pgdelta-engine.legacy.layer.ts";
 import { legacyPgDeltaNextEngineLayer } from "./legacy-pgdelta-engine.next.layer.ts";
 import { LegacyPgDeltaEngine } from "./legacy-pgdelta-engine.service.ts";
 import { LegacyPgDeltaNextAdapter } from "./legacy-pgdelta-next-adapter.service.ts";
 import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
-import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { legacyResolvePgDeltaImplementation } from "../../../shared/legacy-pgdelta-next-flag.ts";
 
 const FLAG = "SUPABASE_USE_PG_DELTA_NEXT";
@@ -69,9 +76,18 @@ function selectProductionLayer(
   | LegacyDeclarativeSeam
   | LegacyEdgeRuntimeScript
   | LegacyPgDeltaSslProbe
+  | LegacyDbConnection
+  | LegacyDockerRun
   | FileSystem.FileSystem
   | Output
   | Path.Path
+  | RuntimeInfo
+  | CliArgs
+  | HttpClient.HttpClient
+  | ChildProcessSpawner.ChildProcessSpawner
+  | GlobalFlag.Setting.Identifier<"debug">
+  | GlobalFlag.Setting.Identifier<"experimental">
+  | GlobalFlag.Setting.Identifier<"network-id">
 > {
   return implementation === "next" ? legacyPgDeltaNextEngineLayer : legacyPgDeltaLegacyEngineLayer;
 }

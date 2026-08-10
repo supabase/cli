@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Option, Path } from "effect";
+import { Effect, FileSystem, Option, Path } from "effect";
 
 import { legacyPromptYesNo } from "../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../shared/output/errors.ts";
@@ -106,6 +106,7 @@ export interface LegacyDbPushCoreInput {
   readonly includeAll: boolean;
   readonly includeRoles: boolean;
   readonly includeSeed: boolean;
+  readonly includeVault: boolean;
   readonly dnsResolver: "native" | "https";
   /**
    * `LegacyCliConfig.projectId` (`SUPABASE_PROJECT_ID` env override only) — the
@@ -162,6 +163,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
     includeAll,
     includeRoles,
     includeSeed,
+    includeVault,
     dnsResolver,
     projectId,
     toml,
@@ -314,7 +316,9 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
               new LegacyDbPushCancelledError({ message: CONTEXT_CANCELED_MESSAGE }),
             );
           }
-          yield* legacyUpsertVaultSecrets(session, vaultSecrets);
+          if (includeVault) {
+            yield* legacyUpsertVaultSecrets(session, vaultSecrets);
+          }
           yield* legacyApplyMigrations(session, fs, path, pending, applyError);
           const cacheEnabled =
             toml.pgDelta.enabled ||
@@ -343,6 +347,7 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             cwd: workdir,
             npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
             denoVersion: toml.denoVersion,
+            projectEnv: toml.projectEnv,
           };
           yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
             // The catalog is an alpha.33-only artifact with no next-engine
@@ -353,7 +358,6 @@ export const legacyDbPushCore = Effect.fnUntraced(function* (input: LegacyDbPush
             conn,
             isLocal,
             migrationsDir: path.join(workdir, "supabase", "migrations"),
-            nowMillis: yield* Clock.currentTimeMillis,
           }).pipe(
             Effect.catch((error) =>
               output.raw(

@@ -29,14 +29,10 @@ func TestMigrateDatabase(t *testing.T) {
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		// Run test
 		err := MigrateAndSeed(context.Background(), "", conn.MockClient(t), fsys)
 		// Check error
@@ -58,14 +54,10 @@ func TestMigrateDatabase(t *testing.T) {
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(sql).
 			Reply("CREATE SCHEMA").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "test", []string{sql}).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		utils.Config.Db.Seed.Enabled = false
 		// Run test
 		err := MigrateAndSeed(context.Background(), "", conn.MockClient(t), fsys)

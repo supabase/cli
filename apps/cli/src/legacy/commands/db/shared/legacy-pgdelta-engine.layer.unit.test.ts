@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Effect, Exit, Layer } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as BunServices from "@effect/platform-bun/BunServices";
 import { it } from "@effect/vitest";
 import { afterEach, describe, expect } from "vitest";
@@ -9,8 +10,16 @@ import {
   mockLegacyCliConfig,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import {
+  LegacyDebugFlag,
+  LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../shared/legacy/global-flags.ts";
+import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
+import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
@@ -46,6 +55,7 @@ function metadataLayer(implementation: "next" | "legacy") {
 
 const unusedLegacyRuntime = Layer.mergeAll(
   BunServices.layer,
+  FetchHttpClient.layer,
   Layer.succeed(LegacyEdgeRuntimeScript, {
     run: () => Effect.die("edge runtime not needed"),
   }),
@@ -57,10 +67,6 @@ const unusedLegacyRuntime = Layer.mergeAll(
     exportCatalog: () => Effect.die("catalog not needed"),
     ensureLocalDatabaseStarted: () => Effect.die("local start not needed"),
     ensureLocalPostgresImageCurrent: () => Effect.die("image check not needed"),
-    provisionShadow: () => Effect.die("shadow not needed"),
-    provisionNextMigrationsShadow: () => Effect.die("next migrations shadow not needed"),
-    provisionNextPlanShadows: () => Effect.die("next plan shadows not needed"),
-    removeShadowContainer: () => Effect.die("cleanup not needed"),
   }),
   Layer.succeed(LegacyPgDeltaNextAdapter, {
     diff: () => Effect.die("adapter not needed"),
@@ -72,6 +78,19 @@ const unusedLegacyRuntime = Layer.mergeAll(
     provisionMigrations: () => Effect.die("next migrations shadow not needed"),
     provisionPlan: () => Effect.die("next plan shadows not needed"),
   }),
+  Layer.succeed(LegacyDbConnection, {
+    connect: () => Effect.die("database connection not needed"),
+  }),
+  Layer.succeed(LegacyDockerRun, {
+    run: () => Effect.die("docker run not needed"),
+    runCapture: () => Effect.die("docker capture not needed"),
+    runStream: () => Effect.die("docker stream not needed"),
+  }),
+  Layer.succeed(CliArgs, { args: [] }),
+  Layer.succeed(LegacyDebugFlag, false),
+  Layer.succeed(LegacyExperimentalFlag, false),
+  Layer.succeed(LegacyNetworkIdFlag, Option.none<string>()),
+  mockRuntimeInfo(),
   mockOutput().layer,
 );
 
@@ -148,7 +167,13 @@ describe("legacyPgDeltaEngineSelectorLayer", () => {
       const engine = yield* LegacyPgDeltaEngine;
       const exit = yield* engine
         .diffExplicit({
-          context: { projectId: "test", cwd: "/tmp/test", npmVersion: undefined, denoVersion: 2 },
+          context: {
+            projectId: "test",
+            cwd: "/tmp/test",
+            npmVersion: undefined,
+            denoVersion: 2,
+            projectEnv: {},
+          },
           source: {
             kind: "database",
             ref: "postgresql://localhost/source",

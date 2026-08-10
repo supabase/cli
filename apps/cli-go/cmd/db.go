@@ -1,12 +1,8 @@
 package cmd
 
 import (
-	"bufio"
-	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
@@ -33,92 +29,6 @@ import (
 	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/migration"
 )
-
-type pgDeltaNextShadowEndpoint struct {
-	ContainerID string `json:"containerId"`
-	URL         string `json:"url"`
-}
-
-type pgDeltaNextShadowHandoff struct {
-	Migrations  pgDeltaNextShadowEndpoint  `json:"migrations"`
-	Declarative *pgDeltaNextShadowEndpoint `json:"declarative,omitempty"`
-}
-
-// handoffPgDeltaNextShadow transfers cleanup ownership only after the caller
-// has received and acknowledged the complete JSON description. Until then Go
-// removes every described container on exit, including cancellation and I/O failure.
-func handoffPgDeltaNextShadow(ctx context.Context, payload pgDeltaNextShadowHandoff, in io.Reader, out io.Writer, remove func(string)) error {
-	transferred := false
-	defer func() {
-		if transferred {
-			return
-		}
-		remove(payload.Migrations.ContainerID)
-		if payload.Declarative != nil {
-			remove(payload.Declarative.ContainerID)
-		}
-	}()
-
-	if err := json.NewEncoder(out).Encode(payload); err != nil {
-		return fmt.Errorf("failed to encode pg-delta shadow handoff: %w", err)
-	}
-	if flusher, ok := out.(interface{ Flush() error }); ok {
-		if err := flusher.Flush(); err != nil {
-			return fmt.Errorf("failed to flush pg-delta shadow handoff: %w", err)
-		}
-	}
-
-	type readResult struct {
-		line string
-		err  error
-	}
-	result := make(chan readResult, 1)
-	go func() {
-		line, err := bufio.NewReader(in).ReadString('\n')
-		result <- readResult{line: line, err: err}
-	}()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case read := <-result:
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if read.err != nil {
-			return fmt.Errorf("failed to read pg-delta shadow handoff acknowledgment: %w", read.err)
-		}
-		if read.line != "ack\n" {
-			return fmt.Errorf("unexpected pg-delta shadow handoff acknowledgment %q", read.line)
-		}
-	}
-
-	transferred = true
-	return nil
-}
-
-func handoffPgDeltaNextMigrationsShadow(ctx context.Context, shadow diff.PgDeltaNextShadowDatabase, in io.Reader, out io.Writer, remove func(string)) error {
-	return handoffPgDeltaNextShadow(ctx, pgDeltaNextShadowHandoff{
-		Migrations: pgDeltaNextShadowEndpoint{
-			ContainerID: shadow.Container,
-			URL:         utils.ToPostgresURLWithoutPassword(shadow.Config),
-		},
-	}, in, out, remove)
-}
-
-func handoffPgDeltaNextPlanShadow(ctx context.Context, shadow diff.PgDeltaNextPlanShadow, in io.Reader, out io.Writer, remove func(string)) error {
-	declarative := pgDeltaNextShadowEndpoint{
-		ContainerID: shadow.Declarative.Container,
-		URL:         utils.ToPostgresURLWithoutPassword(shadow.Declarative.Config),
-	}
-	return handoffPgDeltaNextShadow(ctx, pgDeltaNextShadowHandoff{
-		Migrations: pgDeltaNextShadowEndpoint{
-			ContainerID: shadow.Migrations.Container,
-			URL:         utils.ToPostgresURLWithoutPassword(shadow.Migrations.Config),
-		},
-		Declarative: &declarative,
-	}, in, out, remove)
-}
 
 var (
 	dbCmd = &cobra.Command{
@@ -287,82 +197,6 @@ var (
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
-		},
-	}
-
-	shadowMode       string
-	shadowSchema     []string
-	shadowProjectRef string
-
-	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
-	// commands to provision throwaway shadow databases, then leave them running
-	// so the TS caller can run the differ itself and remove the containers
-	// afterwards. Legacy modes print two newline-separated lines. pgdelta-next
-	// modes emit a JSON object describing the requested isolated clusters, then retain
-	// cleanup ownership until the caller acknowledges receipt. URLs are emitted
-	// WITHOUT the password
-	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
-	// (CWE-312); the TS caller re-injects the local Postgres password it already
-	// resolves from config.toml, which is the same value the shadow uses. Shadow
-	// provisioning (start.SetupDatabase) is not yet ported, which is why this
-	// stays in Go.
-	dbShadowCmd = &cobra.Command{
-		Use:    "__shadow",
-		Hidden: true,
-		Short:  "Internal: provision a shadow database for the native db diff/pull commands",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// The hidden __shadow command carries none of the db-url/local/linked
-			// target flags, so the root PersistentPreRunE's ParseDatabaseConfig
-			// never loads supabase/config.toml (it only loads when a target flag
-			// is set, internal/utils/flags/db_url.go:46-90). Load it explicitly so
-			// the shadow is provisioned from the project's [db] settings — shadow
-			// port, Postgres version, service baseline, and especially the
-			// password: the native-TS caller injects the config.toml password into
-			// the seam URLs, so the shadow must be created with that same password.
-			fsys := afero.NewOsFs()
-			// On the linked path the native-TS caller passes the resolved project
-			// ref via --project-ref so the shadow is built from the same
-			// remote-merged config the Go monolith uses: LoadConfig seeds
-			// utils.Config.ProjectId from flags.ProjectRef and merges the matching
-			// [remotes.<ref>] block (pkg/config/config.go). Omitted on local/db-url
-			// shadows, which the monolith never remote-merges, so the base config is
-			// used exactly as before.
-			if len(shadowProjectRef) > 0 {
-				flags.ProjectRef = shadowProjectRef
-			}
-			if err := flags.LoadConfig(fsys); err != nil {
-				return err
-			}
-			if shadowMode == "pgdelta-next-migrations" {
-				nextShadow, err := diff.PreparePgDeltaNextMigrationsShadow(cmd.Context(), fsys)
-				if err != nil {
-					return err
-				}
-				return handoffPgDeltaNextMigrationsShadow(cmd.Context(), nextShadow, os.Stdin, os.Stdout, utils.DockerRemove)
-			}
-			if shadowMode == "pgdelta-next-plan" {
-				nextShadow, err := diff.PreparePgDeltaNextPlanShadow(cmd.Context(), fsys)
-				if err != nil {
-					return err
-				}
-				return handoffPgDeltaNextPlanShadow(cmd.Context(), nextShadow, os.Stdin, os.Stdout, utils.DockerRemove)
-			}
-			var src diff.ShadowSource
-			var err error
-			switch shadowMode {
-			case "declarative":
-				src, err = diff.PrepareRawShadow(cmd.Context())
-			case "diff", "":
-				src, err = diff.PrepareShadowSource(cmd.Context(), fsys)
-			default:
-				return fmt.Errorf("unknown shadow mode: %s", shadowMode)
-			}
-			if err != nil {
-				return err
-			}
-			fmt.Println(src.Container)
-			fmt.Println(utils.ToPostgresURLWithoutPassword(src.Source))
-			return nil
 		},
 	}
 
@@ -708,12 +542,6 @@ func init() {
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPullCmd)
-	// Build hidden shadow-provisioning seam command
-	shadowFlags := dbShadowCmd.Flags()
-	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations), declarative (bare shadow), pgdelta-next-migrations (migrated), or pgdelta-next-plan (migrated + declarative scratch).")
-	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
-	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
-	dbCmd.AddCommand(dbShadowCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")

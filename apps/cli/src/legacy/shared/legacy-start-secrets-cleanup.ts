@@ -1,5 +1,5 @@
 import { rm } from "node:fs/promises";
-import { join } from "node:path";
+import { resolve, sep } from "node:path";
 
 import { Effect } from "effect";
 
@@ -62,6 +62,16 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  * Never fails: a directory that was never staged (every service besides Edge
  * Runtime) is a harmless no-op, and a real deletion error is not worth
  * failing `stop`/rollback over.
+ *
+ * `container.name` is a `docker ps` field value read back off whatever containers matched
+ * the caller's label filter (`legacyListContainerIdsAndNames`) — external metadata, not
+ * something this function generated itself, so it cannot be trusted as a bare path segment
+ * without a defence-in-depth check. Resolve the candidate and require it to be a direct
+ * child of the staging root before deleting it — same defence-in-depth shape as
+ * `bootstrap.templates.ts`'s identical guard against a GitHub-supplied path escaping its
+ * target directory. This also covers the degenerate case where `container.name` ends up
+ * empty (would otherwise resolve to the staging root itself and wipe every project's
+ * secrets).
  */
 export function legacyCleanupStartSecrets(
   containers: ReadonlyArray<LegacyContainerIdName>,
@@ -71,7 +81,12 @@ export function legacyCleanupStartSecrets(
     Promise.all(
       containers.map((container) => {
         const workdir = container.workdir.length > 0 ? container.workdir : fallbackWorkdir;
-        return rm(join(workdir, "supabase", ".temp", "start-secrets", container.name), {
+        const stagingRoot = resolve(workdir, "supabase", ".temp", "start-secrets");
+        const target = resolve(stagingRoot, container.name);
+        if (target === stagingRoot || !target.startsWith(stagingRoot + sep)) {
+          return Promise.resolve();
+        }
+        return rm(target, {
           recursive: true,
           force: true,
         });

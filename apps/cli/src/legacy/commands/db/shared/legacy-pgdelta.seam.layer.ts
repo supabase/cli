@@ -1,26 +1,26 @@
-import { Effect, FileSystem, Layer, Option, Path, Scope, Stream } from "effect";
+import { Effect, FileSystem, Layer, Option, Path, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { LegacyNetworkIdFlag, LegacyProfileFlag } from "../../../../shared/legacy/global-flags.ts";
 import { type BinaryResolution, resolveBinary } from "../../../../shared/legacy/go-proxy.layer.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { containerCliExitCode, spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
+import { spawnContainerCli } from "../../../shared/legacy-container-cli.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
 import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
+import { legacyIsDockerDaemonUnreachable } from "../../../shared/legacy-docker-suggest.ts";
 import {
   legacyResolveLocalProjectId,
   localDbContainerId,
 } from "../../../shared/legacy-docker-ids.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
-import {
-  LegacyDeclarativeSeam,
-  type LegacyNextMigrationsShadowSource,
-  type LegacyNextPlanShadowSource,
-  type LegacyShadowSource,
-} from "./legacy-pgdelta.seam.service.ts";
-import { legacyInjectPostgresPassword } from "./legacy-pgdelta.seam.url.ts";
+import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
+
+const legacyShadowDockerCause = (
+  stderr: string,
+): { readonly docker: "daemon" } | Record<never, never> =>
+  legacyIsDockerDaemonUnreachable(stderr) ? { docker: "daemon" } : {};
 
 /**
  * Real `LegacyDeclarativeSeam`: runs the bundled `supabase-go`'s hidden
@@ -48,127 +48,6 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
     const spawner = yield* ChildProcessSpawner;
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const removeShadowContainer = (container: string) =>
-      Effect.gen(function* () {
-        if (container.length === 0) return;
-        // Best-effort and volume-aware, matching Go's DockerRemove. Each next
-        // shadow registers this independently so one cleanup defect cannot
-        // prevent the sibling container from being removed.
-        yield* containerCliExitCode(spawner, ["rm", "-f", "-v", container], {
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "ignore",
-          extendEnv: true,
-        }).pipe(Effect.ignore);
-      });
-
-    const provisionNextShadow = <Protocol, Source>(
-      mode: "pgdelta-next-migrations" | "pgdelta-next-plan",
-      opts: { readonly schema: ReadonlyArray<string>; readonly projectRef?: string },
-      parseProtocol: (line: string) => Protocol,
-      containerIds: (protocol: Protocol) => ReadonlyArray<string>,
-      injectPassword: (protocol: Protocol, password: string) => Source,
-    ) =>
-      Effect.gen(function* () {
-        if (!("found" in resolved)) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeShadowDbError({
-              message:
-                "Could not find the supabase-go binary required to provision the shadow databases.",
-            }),
-          );
-        }
-
-        // Keep the process in a nested scope. Until `ack\n`, Go owns every
-        // container, so parsing/password failures and interruption close the
-        // child and let its deferred cleanup run. The caller scope receives all
-        // Docker finalizers before ownership is acknowledged.
-        const ownerScope = yield* Effect.scope;
-        return yield* Effect.scoped(
-          Effect.gen(function* () {
-            const args = [
-              "db",
-              "__shadow",
-              "--mode",
-              mode,
-              ...(opts.schema.length > 0 ? ["--schema", opts.schema.join(",")] : []),
-              ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
-              ...(opts.projectRef !== undefined ? ["--project-ref", opts.projectRef] : []),
-              ...profileArgs,
-            ];
-            const command = ChildProcess.make(resolved.found, args, {
-              cwd: cliConfig.workdir,
-              stdin: "pipe",
-              stdout: "pipe",
-              stderr: "inherit",
-              extendEnv: true,
-              env: { SUPABASE_TELEMETRY_DISABLED: "1" },
-              detached: false,
-            });
-            const handle = yield* spawner.spawn(command).pipe(
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: "failed to run the shadow-database provisioner (supabase-go).",
-                  }),
-              ),
-            );
-            // `runHead` returns as soon as the newline-delimited JSON object is
-            // emitted; waiting for stdout EOF would deadlock because Go waits
-            // for the acknowledgment before exiting.
-            const line = yield* handle.stdout.pipe(
-              Stream.decodeText,
-              Stream.splitLines,
-              Stream.runHead,
-              Effect.mapError(() => failure()),
-            );
-            if (Option.isNone(line)) {
-              return yield* Effect.fail(failure());
-            }
-            const protocol = yield* Effect.try({
-              try: () => parseProtocol(line.value),
-              catch: () => failure(),
-            });
-            const password = yield* legacyReadDbToml(
-              fs,
-              path,
-              cliConfig.workdir,
-              opts.projectRef,
-            ).pipe(
-              Effect.map((toml) => toml.password),
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message:
-                      "failed to read the local database password from config.toml to connect to the shadow databases.",
-                  }),
-              ),
-            );
-            const databases = yield* Effect.try({
-              try: () => injectPassword(protocol, password),
-              catch: () => failure(),
-            });
-
-            for (const containerId of containerIds(protocol)) {
-              yield* Scope.addFinalizer(
-                ownerScope,
-                removeShadowContainer(containerId).pipe(Effect.ignoreCause),
-              );
-            }
-            yield* Stream.make("ack\n").pipe(
-              Stream.encodeText,
-              Stream.run(handle.stdin),
-              Effect.mapError(() => failure()),
-            );
-            const exitCode = yield* handle.exitCode.pipe(Effect.mapError(() => failure()));
-            if (exitCode !== 0) {
-              return yield* Effect.fail(failure(exitCode));
-            }
-            return databases;
-          }),
-        );
-      });
-
     return LegacyDeclarativeSeam.of({
       exportCatalog: ({ mode, noCache, projectRef }) =>
         Effect.scoped(
@@ -203,7 +82,9 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
               // calls `flags.LoadConfig` directly without `LoadProjectRef`, so the
               // env (read only by LoadProjectRef) never reaches the merge — the Go
               // command seeds `flags.ProjectRef` from `--project-ref` before
-              // LoadConfig instead (mirrors `db __shadow`).
+              // LoadConfig instead (the same trick the Go `db __shadow` hidden
+              // command used to use, before CLI-1956 removed it in favor of a
+              // native shadow-provisioning port).
               ...(projectRef !== undefined ? ["--project-ref", projectRef] : []),
               ...profileArgs,
             ];
@@ -277,7 +158,11 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
               extendEnv: true,
             }).pipe(
               Effect.mapError(
-                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect service",
+                    docker: "daemon",
+                  }),
               ),
             );
             const stderrChunks: Array<Uint8Array> = [];
@@ -287,13 +172,21 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
               }),
             ).pipe(
               Effect.mapError(
-                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect service",
+                    docker: "daemon",
+                  }),
               ),
             );
             const inspectExit = yield* child.exitCode.pipe(
               Effect.map(Number),
               Effect.mapError(
-                () => new LegacyDeclarativeShadowDbError({ message: "failed to inspect service" }),
+                () =>
+                  new LegacyDeclarativeShadowDbError({
+                    message: "failed to inspect service",
+                    docker: "daemon",
+                  }),
               ),
             );
             if (inspectExit === 0) return; // already running
@@ -323,6 +216,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
                     stderr.length > 0
                       ? `failed to inspect service: ${stderr}`
                       : "failed to inspect service",
+                  ...legacyShadowDockerCause(stderr),
                 }),
               );
             }
@@ -407,6 +301,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -421,6 +316,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -433,6 +329,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -442,6 +339,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
                 () =>
                   new LegacyDeclarativeShadowDbError({
                     message: "failed to inspect local Postgres container.",
+                    docker: "daemon",
                   }),
               ),
             );
@@ -465,6 +363,7 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
                     stderr.length > 0
                       ? `failed to inspect local Postgres container: ${stderr}`
                       : "failed to inspect local Postgres container.",
+                  ...legacyShadowDockerCause(stderr),
                 }),
               );
             }
@@ -482,127 +381,6 @@ const makeLegacyDeclarativeSeam = (resolved: BinaryResolution) =>
             );
           }),
         ),
-      provisionShadow: ({ mode, schema, projectRef }) =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            if (!("found" in resolved)) {
-              return yield* Effect.fail(
-                new LegacyDeclarativeShadowDbError({
-                  message:
-                    "Could not find the supabase-go binary required to provision the shadow database.",
-                }),
-              );
-            }
-            const args = [
-              "db",
-              "__shadow",
-              "--mode",
-              mode,
-              ...(schema.length > 0 ? ["--schema", schema.join(",")] : []),
-              ...(Option.isSome(networkId) ? ["--network-id", networkId.value] : []),
-              // Linked path only: pass the resolved ref so the hidden `db __shadow`
-              // child's LoadConfig merges the matching `[remotes.<ref>]` override
-              // into the shadow baseline (db.major_version, service enables, vault),
-              // matching the Go monolith which builds the shadow from the
-              // remote-merged config. A flag (not env) keeps the Go-proxy channel
-              // parity and avoids over-merging on local/db-url shadows.
-              ...(projectRef !== undefined ? ["--project-ref", projectRef] : []),
-              ...profileArgs,
-            ];
-            const command = ChildProcess.make(resolved.found, args, {
-              cwd: cliConfig.workdir,
-              stdin: "inherit",
-              stdout: "pipe",
-              stderr: "inherit",
-              extendEnv: true,
-              // Disable the child's telemetry so the hidden `db __shadow` seam
-              // doesn't record its own `cli_command_executed` (and run Go post-run
-              // work) on top of the user's TS command, matching the explicit
-              // LegacyGoProxy delegates which set the same env.
-              env: { SUPABASE_TELEMETRY_DISABLED: "1" },
-              detached: false,
-            });
-            const handle = yield* spawner.spawn(command).pipe(
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message: "failed to run the shadow-database provisioner (supabase-go).",
-                  }),
-              ),
-            );
-            const chunks: Array<Uint8Array> = [];
-            yield* Stream.runForEach(handle.stdout, (chunk) =>
-              Effect.sync(() => {
-                chunks.push(chunk);
-              }),
-            ).pipe(Effect.mapError(() => failure()));
-            const exitCode = yield* handle.exitCode.pipe(Effect.mapError(() => failure()));
-            if (exitCode !== 0) {
-              return yield* Effect.fail(failure(exitCode));
-            }
-            const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
-            const bytes = new Uint8Array(total);
-            let offset = 0;
-            for (const chunk of chunks) {
-              bytes.set(chunk, offset);
-              offset += chunk.length;
-            }
-            // stdout is two newline-separated lines: container id and source URL.
-            // The URLs arrive WITHOUT a password — the Go seam prints them via
-            // ToPostgresURLWithoutPassword so it never logs a credential to stdout
-            // (CWE-312). The shadow uses the local Postgres password, so we re-inject
-            // the password resolved from config.toml before handing the URLs to the
-            // differ / sql-pg connection. On the linked path the child built the
-            // shadow from the remote-merged config (via --project-ref), so re-read
-            // with the same ref to pick up a `[remotes.<ref>].db.password` override —
-            // otherwise the injected password wouldn't match the shadow's and the
-            // connection would fail auth. Absent (local/db-url) → base config.
-            const lines = new TextDecoder().decode(bytes).split(/\r?\n/u);
-            const container = (lines[0] ?? "").trim();
-            const sourceUrl = (lines[1] ?? "").trim();
-            if (container.length === 0 || sourceUrl.length === 0) {
-              return yield* Effect.fail(failure());
-            }
-            const password = yield* legacyReadDbToml(fs, path, cliConfig.workdir, projectRef).pipe(
-              Effect.map((toml) => toml.password),
-              Effect.mapError(
-                () =>
-                  new LegacyDeclarativeShadowDbError({
-                    message:
-                      "failed to read the local database password from config.toml to connect to the shadow database.",
-                  }),
-              ),
-            );
-            return {
-              container,
-              sourceUrl: legacyInjectPostgresPassword(sourceUrl, password),
-            } satisfies LegacyShadowSource;
-          }),
-        ),
-      provisionNextMigrationsShadow: ({ schema, projectRef }) =>
-        provisionNextShadow(
-          "pgdelta-next-migrations",
-          { schema, ...(projectRef !== undefined ? { projectRef } : {}) },
-          legacyParseNextMigrationsShadowProtocol,
-          (protocol) => [protocol.migrations.containerId],
-          (protocol, password) =>
-            ({
-              migrationsUrl: legacyInjectPostgresPassword(protocol.migrations.url, password),
-            }) satisfies LegacyNextMigrationsShadowSource,
-        ),
-      provisionNextPlanShadows: ({ schema, projectRef }) =>
-        provisionNextShadow(
-          "pgdelta-next-plan",
-          { schema, ...(projectRef !== undefined ? { projectRef } : {}) },
-          legacyParseNextPlanShadowProtocol,
-          (protocol) => [protocol.migrations.containerId, protocol.declarative.containerId],
-          (protocol, password) =>
-            ({
-              migrationsUrl: legacyInjectPostgresPassword(protocol.migrations.url, password),
-              declarativeUrl: legacyInjectPostgresPassword(protocol.declarative.url, password),
-            }) satisfies LegacyNextPlanShadowSource,
-        ),
-      removeShadowContainer,
     });
   });
 
@@ -663,57 +441,4 @@ export function legacyResolveContainerInspectImageName(stdout: string): string {
 
 function isJsonRecord(value: unknown): value is { readonly [key: string]: unknown } {
   return typeof value === "object" && value !== null;
-}
-
-interface LegacyNextShadowProtocolDatabase {
-  readonly containerId: string;
-  readonly url: string;
-}
-
-interface LegacyNextMigrationsShadowProtocol {
-  readonly migrations: LegacyNextShadowProtocolDatabase;
-}
-
-interface LegacyNextPlanShadowProtocol extends LegacyNextMigrationsShadowProtocol {
-  readonly declarative: LegacyNextShadowProtocolDatabase;
-}
-
-/** Strict validation for the Go migrations-only next-shadow ownership protocol. */
-export function legacyParseNextMigrationsShadowProtocol(
-  line: string,
-): LegacyNextMigrationsShadowProtocol {
-  const parsed: unknown = JSON.parse(line);
-  if (!isJsonRecord(parsed)) throw new Error("invalid next-shadow protocol");
-  const migrations = parseNextShadowProtocolDatabase(parsed["migrations"]);
-  if ("declarative" in parsed) {
-    throw new Error("unexpected declarative database in migrations-only next-shadow protocol");
-  }
-  return { migrations };
-}
-
-/** Strict validation for the Go dual-database next-shadow ownership protocol. */
-export function legacyParseNextPlanShadowProtocol(line: string): LegacyNextPlanShadowProtocol {
-  const parsed: unknown = JSON.parse(line);
-  if (!isJsonRecord(parsed)) throw new Error("invalid next-shadow protocol");
-  const migrations = parseNextShadowProtocolDatabase(parsed["migrations"]);
-  const declarative = parseNextShadowProtocolDatabase(parsed["declarative"]);
-  if (migrations.containerId === declarative.containerId) {
-    throw new Error("next-shadow containers must be distinct");
-  }
-  return { migrations, declarative };
-}
-
-function parseNextShadowProtocolDatabase(value: unknown): LegacyNextShadowProtocolDatabase {
-  if (!isJsonRecord(value)) throw new Error("invalid next-shadow database");
-  const containerId = value["containerId"];
-  const url = value["url"];
-  if (
-    typeof containerId !== "string" ||
-    containerId.trim().length === 0 ||
-    typeof url !== "string" ||
-    url.trim().length === 0
-  ) {
-    throw new Error("invalid next-shadow database");
-  }
-  return { containerId: containerId.trim(), url: url.trim() };
 }

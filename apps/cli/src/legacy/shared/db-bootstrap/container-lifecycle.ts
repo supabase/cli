@@ -21,9 +21,15 @@ import { Data, Effect } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
-  collectText,
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
+import {
+  legacyCollectText,
+  containerCliExitCode,
   legacyDescribeContainerCliFailure,
-  runContainerCliExpectSuccess,
+  legacyRunContainerCliExpectSuccess,
   spawnContainerCli,
 } from "../legacy-container-cli.ts";
 import {
@@ -31,6 +37,7 @@ import {
   legacyIsBindMountSource,
 } from "../legacy-docker-bind-classify.ts";
 import { LEGACY_CLI_PROJECT_LABEL, LEGACY_CLI_WORKDIR_LABEL } from "../legacy-docker-ids.ts";
+import { legacyIsDockerDaemonUnreachable } from "../legacy-docker-suggest.ts";
 import { isUserDefinedDockerNetwork } from "../../../shared/functions/deploy.ts";
 import {
   legacyBuildStartContainerCreateArgs,
@@ -61,24 +68,65 @@ type Spawner = ChildProcessSpawner["Service"];
  */
 export const LEGACY_COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
+type LegacyContainerOperationReason = "runtime" | "configuration" | "filesystem" | "port_conflict";
+
+function legacyContainerOperationActionability(
+  reason: LegacyContainerOperationReason | undefined,
+): CliErrorActionabilityDeclaration {
+  switch (reason) {
+    case "runtime":
+      return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+    case "filesystem":
+      return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+    case "port_conflict":
+      return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
+    default:
+      return { ...actionability.invalidConfig, fingerprint_suffix: "container_configuration" };
+  }
+}
+
+function legacyContainerCliReason(message: string): "runtime" | "configuration" {
+  return legacyIsDockerDaemonUnreachable(message) ? "runtime" : "configuration";
+}
+
 /** `docker network create --label ...`/`docker volume create --label ...` failed. */
 export class LegacyNetworkCreateError extends Data.TaggedError("LegacyNetworkCreateError")<{
   readonly message: string;
-}> {}
+  readonly reason: "runtime" | "configuration";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return legacyContainerOperationActionability(this.reason);
+  }
+}
 
 export class LegacyVolumeCreateError extends Data.TaggedError("LegacyVolumeCreateError")<{
   readonly message: string;
-}> {}
+  readonly reason: "runtime" | "configuration";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return legacyContainerOperationActionability(this.reason);
+  }
+}
 
 /** `docker create` failed. */
 export class LegacyContainerCreateError extends Data.TaggedError("LegacyContainerCreateError")<{
   readonly message: string;
-}> {}
+  readonly reason: "runtime" | "configuration" | "filesystem";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return legacyContainerOperationActionability(this.reason);
+  }
+}
 
 /** `docker start` failed — see {@link legacyPortConflictSuggestion} for the port-already-allocated case. */
 export class LegacyContainerStartError extends Data.TaggedError("LegacyContainerStartError")<{
   readonly message: string;
-}> {}
+  readonly reason: "runtime" | "configuration" | "port_conflict";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return legacyContainerOperationActionability(this.reason);
+  }
+}
 
 /** Every failure {@link legacyCreateContainer} itself can produce (network creation is separate, see {@link legacyEnsureNetwork}). */
 export type LegacyContainerError =
@@ -234,6 +282,14 @@ export function legacyEnsureNetwork(
   }
   return Effect.scoped(
     Effect.gen(function* () {
+      const inspectExitCode = yield* containerCliExitCode(
+        spawner,
+        ["network", "inspect", networkId],
+        { stdin: "ignore", stdout: "ignore", stderr: "ignore" },
+      ).pipe(Effect.orElseSucceed(() => 1));
+      if (inspectExitCode === 0) {
+        return;
+      }
       const args = [
         "network",
         "create",
@@ -249,15 +305,20 @@ export function legacyEnsureNetwork(
           (cause) =>
             new LegacyNetworkCreateError({
               message: `failed to create docker network: ${legacyDescribeContainerCliFailure(cause)}`,
+              reason: "runtime",
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
-          () => new LegacyNetworkCreateError({ message: "failed to create docker network" }),
+          () =>
+            new LegacyNetworkCreateError({
+              message: "failed to create docker network",
+              reason: "runtime",
+            }),
         ),
       );
       if (exitCode !== 0 && !legacyIsNetworkAlreadyExistsError(stderr)) {
@@ -268,6 +329,7 @@ export function legacyEnsureNetwork(
               message.length > 0
                 ? `failed to create docker network: ${message}`
                 : "failed to create docker network",
+            reason: legacyContainerCliReason(message),
           }),
         );
       }
@@ -318,14 +380,21 @@ export function legacyEnsureVolume(
           (cause) =>
             new LegacyVolumeCreateError({
               message: `failed to create volume: ${legacyDescribeContainerCliFailure(cause)}`,
+              reason: "runtime",
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
-        Effect.mapError(() => new LegacyVolumeCreateError({ message: "failed to create volume" })),
+        Effect.mapError(
+          () =>
+            new LegacyVolumeCreateError({
+              message: "failed to create volume",
+              reason: "runtime",
+            }),
+        ),
       );
       if (exitCode !== 0 && !legacyIsVolumeAlreadyExistsError(stderr)) {
         const message = stderr.trim();
@@ -335,6 +404,7 @@ export function legacyEnsureVolume(
               message.length > 0
                 ? `failed to create volume: ${message}`
                 : "failed to create volume",
+            reason: legacyContainerCliReason(message),
           }),
         );
       }
@@ -345,7 +415,11 @@ export function legacyEnsureVolume(
 /** `docker volume inspect` failed to spawn at all (no docker/podman binary). */
 export class LegacyVolumeInspectError extends Data.TaggedError("LegacyVolumeInspectError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dockerNotRunning;
+  }
+}
 
 /** Docker's/Podman's "no such volume" stderr shape for `volume inspect`. */
 function isVolumeNotFoundMessage(message: string): boolean {
@@ -396,7 +470,7 @@ export function legacyVolumeExists(
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
@@ -412,7 +486,12 @@ export function legacyVolumeExists(
 /** `docker container rm -f <id>` (or `docker rm -f`) failed. */
 export class LegacyContainerRemoveError extends Data.TaggedError("LegacyContainerRemoveError")<{
   readonly message: string;
-}> {}
+  readonly reason: "runtime" | "configuration";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return legacyContainerOperationActionability(this.reason);
+  }
+}
 
 /**
  * Port of Go's `db reset`-only `Docker.ContainerRemove(ctx, DbId,
@@ -428,18 +507,24 @@ export function legacyRemoveContainer(
   spawner: Spawner,
   containerId: string,
 ): Effect.Effect<void, LegacyContainerRemoveError> {
-  return runContainerCliExpectSuccess(
+  return legacyRunContainerCliExpectSuccess(
     spawner,
     ["container", "rm", "-f", containerId],
     "remove container",
-    (message) => new LegacyContainerRemoveError({ message }),
+    (message) =>
+      new LegacyContainerRemoveError({ message, reason: legacyContainerCliReason(message) }),
   );
 }
 
 /** `docker volume rm -f <name>` failed. */
 export class LegacyVolumeRemoveError extends Data.TaggedError("LegacyVolumeRemoveError")<{
   readonly message: string;
-}> {}
+  readonly reason: "runtime" | "configuration";
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return legacyContainerOperationActionability(this.reason);
+  }
+}
 
 /**
  * Port of Go's `db reset`-only `Docker.VolumeRemove(ctx, DbId, true)`
@@ -453,11 +538,12 @@ export function legacyRemoveVolume(
   spawner: Spawner,
   volumeName: string,
 ): Effect.Effect<void, LegacyVolumeRemoveError> {
-  return runContainerCliExpectSuccess(
+  return legacyRunContainerCliExpectSuccess(
     spawner,
     ["volume", "rm", "-f", volumeName],
     "remove volume",
-    (message) => new LegacyVolumeRemoveError({ message }),
+    (message) =>
+      new LegacyVolumeRemoveError({ message, reason: legacyContainerCliReason(message) }),
   );
 }
 
@@ -496,19 +582,24 @@ function legacyDockerCreateContainer(
           (cause) =>
             new LegacyContainerCreateError({
               message: `failed to create docker container: ${legacyDescribeContainerCliFailure(cause)}`,
+              reason: "runtime",
             }),
         ),
       );
       const [exitCode, stdout, stderr] = yield* Effect.all(
         [
           child.exitCode.pipe(Effect.map(Number)),
-          collectText(child.stdout),
-          collectText(child.stderr),
+          legacyCollectText(child.stdout),
+          legacyCollectText(child.stderr),
         ],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
-          () => new LegacyContainerCreateError({ message: "failed to create docker container" }),
+          () =>
+            new LegacyContainerCreateError({
+              message: "failed to create docker container",
+              reason: "runtime",
+            }),
         ),
       );
       if (exitCode !== 0) {
@@ -519,6 +610,7 @@ function legacyDockerCreateContainer(
               message.length > 0
                 ? `failed to create docker container: ${message}`
                 : "failed to create docker container",
+            reason: legacyContainerCliReason(message),
           }),
         );
       }
@@ -543,17 +635,19 @@ function legacyDockerStartContainer(
           (cause) =>
             new LegacyContainerStartError({
               message: `failed to start docker container "${spec.containerName}": ${legacyDescribeContainerCliFailure(cause)}`,
+              reason: "runtime",
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
           () =>
             new LegacyContainerStartError({
               message: `failed to start docker container "${spec.containerName}"`,
+              reason: "runtime",
             }),
         ),
       );
@@ -564,12 +658,18 @@ function legacyDockerStartContainer(
         }`;
         const hostPort = legacyParsePortBindError(trimmed);
         if (hostPort === undefined) {
-          return yield* Effect.fail(new LegacyContainerStartError({ message: base }));
+          return yield* Effect.fail(
+            new LegacyContainerStartError({
+              message: base,
+              reason: legacyContainerCliReason(trimmed),
+            }),
+          );
         }
         const serviceLabel = spec.networkAliases?.[0] ?? spec.containerName;
         return yield* Effect.fail(
           new LegacyContainerStartError({
             message: `${base}${legacyPortConflictSuggestion(hostPort, serviceLabel)}`,
+            reason: "port_conflict",
           }),
         );
       }
@@ -604,11 +704,12 @@ function legacyDockerCopyIntoContainer(
           (cause) =>
             new LegacyContainerCreateError({
               message: `failed to create docker container: failed to copy secret file into container: ${legacyDescribeContainerCliFailure(cause)}`,
+              reason: "runtime",
             }),
         ),
       );
       const [exitCode, stderr] = yield* Effect.all(
-        [child.exitCode.pipe(Effect.map(Number)), collectText(child.stderr)],
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
         { concurrency: "unbounded" },
       ).pipe(
         Effect.mapError(
@@ -616,6 +717,7 @@ function legacyDockerCopyIntoContainer(
             new LegacyContainerCreateError({
               message:
                 "failed to create docker container: failed to copy secret file into container",
+              reason: "runtime",
             }),
         ),
       );
@@ -627,6 +729,7 @@ function legacyDockerCopyIntoContainer(
               message.length > 0
                 ? `failed to create docker container: failed to copy secret file into container: ${message}`
                 : "failed to create docker container: failed to copy secret file into container",
+            reason: legacyContainerCliReason(message),
           }),
         );
       }
@@ -674,6 +777,7 @@ function legacyCopyStartSecretFileIntoContainer(
         message: `failed to create docker container: failed to stage container secret file: ${
           cause instanceof Error ? cause.message : String(cause)
         }`,
+        reason: "filesystem",
       }),
   }).pipe(
     Effect.flatMap((dir) => {
@@ -690,6 +794,7 @@ function legacyCopyStartSecretFileIntoContainer(
             message: `failed to create docker container: failed to stage container secret file: ${
               cause instanceof Error ? cause.message : String(cause)
             }`,
+            reason: "filesystem",
           }),
       }).pipe(
         Effect.flatMap(() =>

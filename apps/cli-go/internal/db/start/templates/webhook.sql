@@ -1,5 +1,8 @@
 BEGIN;
 
+-- Create pg_net extension
+CREATE EXTENSION IF NOT EXISTS pg_net SCHEMA extensions;
+
 -- Create supabase_functions schema
 CREATE SCHEMA supabase_functions AUTHORIZATION supabase_admin;
 

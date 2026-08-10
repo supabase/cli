@@ -1,6 +1,8 @@
 import { Context, type Effect, type Scope } from "effect";
 
 import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
+import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
+import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 
 /** The live migrated database needed by pg-delta next database diffs. */
 export interface LegacyPgDeltaNextMigrationsShadow {
@@ -14,15 +16,20 @@ export interface LegacyPgDeltaNextPlanShadows extends LegacyPgDeltaNextMigration
   readonly declarativeUrl: string;
 }
 
+export interface LegacyPgDeltaNextShadowInput {
+  readonly context: LegacyPgDeltaContext;
+  readonly toml: LegacyDbTomlValues;
+  readonly projectRef?: string;
+}
+
 interface LegacyPgDeltaNextShadowShape {
   /**
    * Provisions only the migrated next-engine shadow needed by database diffs.
    * The container is removed when the current Effect scope closes.
    */
-  readonly provisionMigrations: (opts: {
-    readonly schema: ReadonlyArray<string>;
-    readonly projectRef?: string;
-  }) => Effect.Effect<
+  readonly provisionMigrations: (
+    opts: LegacyPgDeltaNextShadowInput,
+  ) => Effect.Effect<
     LegacyPgDeltaNextMigrationsShadow,
     LegacyDeclarativeShadowDbError,
     Scope.Scope
@@ -31,10 +38,9 @@ interface LegacyPgDeltaNextShadowShape {
    * Provisions the independent migrated and declarative shadows needed by a
    * declarative plan. Both are removed when the current Effect scope closes.
    */
-  readonly provisionPlan: (opts: {
-    readonly schema: ReadonlyArray<string>;
-    readonly projectRef?: string;
-  }) => Effect.Effect<LegacyPgDeltaNextPlanShadows, LegacyDeclarativeShadowDbError, Scope.Scope>;
+  readonly provisionPlan: (
+    opts: LegacyPgDeltaNextShadowInput,
+  ) => Effect.Effect<LegacyPgDeltaNextPlanShadows, LegacyDeclarativeShadowDbError, Scope.Scope>;
 }
 
 export class LegacyPgDeltaNextShadow extends Context.Service<

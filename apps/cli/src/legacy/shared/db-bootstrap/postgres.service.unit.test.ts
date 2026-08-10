@@ -7,11 +7,14 @@ import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import {
+  LEGACY_SHADOW_ENTRYPOINT_ARGS,
   legacyBuildPostgresStartContainerSpec,
+  legacyBuildShadowPostgresContainerSpec,
   legacyPostgresImageVersionTag,
   legacyPostgresSettingsToPostgresConfig,
   legacyPostgresVersionCompare,
   type LegacyPostgresStartServiceInput,
+  type LegacyShadowPostgresContainerSpecInput,
 } from "./postgres.service.ts";
 
 const POSTGRES_CONFIG_HEADER = "\n# supabase [db.settings] configuration\n";
@@ -380,5 +383,77 @@ describe("legacyPostgresImageVersionTag", () => {
 
   test("degrades to the whole string when there is no colon at all, matching Go's Image[i+1:] with i=-1", () => {
     expect(legacyPostgresImageVersionTag("supabase/postgres")).toBe("supabase/postgres");
+  });
+});
+
+function baseShadowInput(
+  overrides: Partial<LegacyShadowPostgresContainerSpecInput> = {},
+): LegacyShadowPostgresContainerSpecInput {
+  return {
+    db: { major_version: 17, settings: {} },
+    experimental: baseExperimental(),
+    jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
+    jwtExpiry: 3600,
+    networkId: "supabase_network_myproj",
+    image: "public.ecr.aws/supabase/postgres:17.4.1.030",
+    configImage: "supabase/postgres:17.4.1.030",
+    shadowPort: 54320,
+    password: "postgres",
+    ...overrides,
+  };
+}
+
+describe("legacyBuildShadowPostgresContainerSpec", () => {
+  test("PG >= 15: splices the shadow entrypoint args into the SAME trailing-space join point the real db container uses, and still carries the pgsodium root key as a secretFile", () => {
+    const spec = legacyBuildShadowPostgresContainerSpec(
+      baseShadowInput({ db: { major_version: 17, settings: {} } }),
+    );
+    const script = spec.cmd?.[1];
+    expect(script).toContain(
+      `docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
+    );
+    expect(spec.secretFiles).toEqual([
+      {
+        containerPath: "/etc/postgresql-custom/pgsodium_root.key",
+        content: LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
+      },
+    ]);
+    expect(spec.tmpfs).toBeUndefined();
+  });
+
+  test("PG <= 14: splices the same args, no pgsodium secretFile, and sets the initdb tmpfs mount", () => {
+    const spec = legacyBuildShadowPostgresContainerSpec(
+      baseShadowInput({ db: { major_version: 14, settings: {} } }),
+    );
+    const script = spec.cmd?.[1];
+    expect(script).toContain(
+      `docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}\n`,
+    );
+    expect(spec.secretFiles).toBeUndefined();
+    expect(spec.tmpfs).toEqual({ "/docker-entrypoint-initdb.d": "" });
+  });
+
+  test("has no name (Docker auto-generates one), no network aliases, no volume bind, and no restart policy — unlike the real db container", () => {
+    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput());
+    expect(spec.containerName).toBe("");
+    expect(spec.networkAliases).toBeUndefined();
+    expect(spec.binds).toEqual([]);
+    expect(spec.restartPolicy).toBeUndefined();
+  });
+
+  test("sets autoRemove and publishes the shadow port to 5432/tcp", () => {
+    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput({ shadowPort: 54399 }));
+    expect(spec.autoRemove).toBe(true);
+    expect(spec.ports).toEqual([{ hostPort: "54399", containerPort: "5432" }]);
+  });
+
+  test("labels are still applied (empty map here — the caller merges project/compose labels in, same as every other container)", () => {
+    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput());
+    expect(spec.labels).toEqual({});
+  });
+
+  test("initializes POSTGRES_PASSWORD from the resolved [db] password, not a hardcoded literal — the deliberate TS extension the input's own doc describes (Go rejects the toml key at config load and always uses 'postgres')", () => {
+    const spec = legacyBuildShadowPostgresContainerSpec(baseShadowInput({ password: "hunter2" }));
+    expect(spec.env?.["POSTGRES_PASSWORD"]).toBe("hunter2");
   });
 });

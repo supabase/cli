@@ -1,4 +1,4 @@
-import { isSupabaseApiResponseSchemaError, type ApiClient } from "@supabase/api/effect";
+import type { ApiClient } from "@supabase/api/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -18,10 +18,7 @@ import {
 } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
-import {
-  LegacyApiResponseSchemaError,
-  sanitizeLegacyErrorBody,
-} from "../../shared/legacy-http-errors.ts";
+import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
@@ -45,16 +42,8 @@ const classifyProjectError = (
   cause: unknown,
 ): Effect.Effect<
   Option.Option<LegacyLinkProject>,
-  LegacyApiResponseSchemaError | LegacyLinkProjectStatusError | LegacyLinkProjectStatusNetworkError
+  LegacyLinkProjectStatusError | LegacyLinkProjectStatusNetworkError
 > => {
-  if (isSupabaseApiResponseSchemaError(cause)) {
-    return Effect.fail(
-      new LegacyApiResponseSchemaError({
-        operationId: cause.operationId,
-        message: cause.message,
-      }),
-    );
-  }
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const status = cause.response.status;
     if (status === 404) {
@@ -76,9 +65,13 @@ const classifyProjectError = (
       ),
     );
   }
+  // Everything else: a transport `HttpClientError` (no response) is a network
+  // failure; a non-`HttpClientError` (the generated client's `SchemaError`
+  // rejecting the response body) is an API response problem.
   return Effect.fail(
     new LegacyLinkProjectStatusNetworkError({
       message: `failed to retrieve remote project status: ${String(cause)}`,
+      decode: !HttpClientError.isHttpClientError(cause),
     }),
   );
 };

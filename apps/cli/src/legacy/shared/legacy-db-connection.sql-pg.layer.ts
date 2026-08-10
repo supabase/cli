@@ -14,6 +14,7 @@ import { to as pgCopyTo } from "pg-copy-streams";
 import {
   legacyConnectFailureMessage,
   legacyConnectSuggestion,
+  legacyIsDialFailure,
   legacyIsSqlState,
 } from "./legacy-connect-errors.ts";
 import {
@@ -587,6 +588,7 @@ const legacyToConnectError = (
   return new LegacyDbConnectError({
     message: `failed to connect to postgres: ${legacyConnectFailureMessage(cfg, error)}`,
     ...(suggestion === undefined ? {} : { suggestion }),
+    ...(legacyIsDialFailure(error) ? { retryable: true } : {}),
   });
 };
 

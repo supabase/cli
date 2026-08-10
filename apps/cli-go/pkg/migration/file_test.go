@@ -49,14 +49,10 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.Statements[0]).
+		conn.Query(migration.Statements[0]).
 			Reply("CREATE SCHEMA").
 			Query(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
 		// Check error
@@ -76,22 +72,14 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.Statements[0]).
+		conn.Query(migration.Statements[0]).
 			Reply("CREATE TABLE").
-			Query("COMMIT").
-			Reply("COMMIT").
 			SimpleQuery(migration.Statements[1]).
 			Reply("CREATE INDEX").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(migration.Statements[2]).
 			Reply("ALTER TABLE").
 			Query(INSERT_MIGRATION_VERSION, migration.Version, migration.Name, migration.Statements).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
 		// Check error
@@ -106,86 +94,12 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(INSERT_MIGRATION_VERSION, migration.Version, migration.Name, migration.Statements).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+		conn.Query(INSERT_MIGRATION_VERSION, migration.Version, migration.Name, migration.Statements).
+			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
 		// Check error
 		assert.NoError(t, err)
-	})
-
-	t.Run("keeps SET LOCAL and history in the same transaction", func(t *testing.T) {
-		migration := MigrationFile{
-			Statements: []string{
-				"SET LOCAL check_function_bodies = off",
-				"CREATE FUNCTION public.answer() RETURNS int LANGUAGE sql AS 'SELECT 42'",
-			},
-			Version: "20260101000000",
-			Name:    "create_answer",
-		}
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.Statements[0]).
-			Reply("SET").
-			Query(migration.Statements[1]).
-			Reply("CREATE FUNCTION").
-			Query(INSERT_MIGRATION_VERSION, migration.Version, migration.Name, migration.Statements).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
-
-		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
-		assert.NoError(t, err)
-	})
-
-	t.Run("preserves user-authored transaction boundaries", func(t *testing.T) {
-		migration := MigrationFile{
-			Statements: []string{"BEGIN", "SET LOCAL check_function_bodies = off", "COMMIT"},
-			Version:    "20260101000000",
-			Name:       "authored_transaction",
-		}
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		// Exactly the authored BEGIN/COMMIT are sent; no automatic wrapper nests them.
-		conn.Query(migration.Statements[0]).
-			Reply("BEGIN").
-			Query(migration.Statements[1]).
-			Reply("SET").
-			Query(migration.Statements[2]).
-			Reply("COMMIT").
-			Query(INSERT_MIGRATION_VERSION, migration.Version, migration.Name, migration.Statements).
-			Reply("INSERT 0 1")
-
-		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
-		assert.NoError(t, err)
-	})
-
-	t.Run("never records history after an authored transaction fails", func(t *testing.T) {
-		migration := MigrationFile{
-			Statements: []string{"BEGIN", "CREATE TABLE broken (", "COMMIT"},
-			Version:    "20260101000000",
-			Name:       "broken_authored_transaction",
-		}
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		conn.Query(migration.Statements[0]).
-			Reply("BEGIN").
-			Query(migration.Statements[1]).
-			ReplyError(pgerrcode.SyntaxError, "syntax error at end of input").
-			Query(migration.Statements[2]).
-			Reply("ROLLBACK").
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
-
-		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
-		assert.ErrorContains(t, err, "syntax error at end of input")
-		assert.ErrorContains(t, err, "At statement: 1")
 	})
 
 	t.Run("reports pipeline incompatible statement errors with statement index", func(t *testing.T) {
@@ -201,12 +115,8 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.Statements[0]).
+		conn.Query(migration.Statements[0]).
 			Reply("CREATE TABLE").
-			Query("COMMIT").
-			Reply("COMMIT").
 			SimpleQuery(migration.Statements[1]).
 			ReplyError("25001", "CREATE INDEX CONCURRENTLY cannot be executed within a pipeline")
 		// Run test
@@ -224,14 +134,10 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.Statements[0]).
+		conn.Query(migration.Statements[0]).
 			ReplyError(pgerrcode.DuplicateSchema, `schema "public" already exists`).
 			Query(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
-			Reply("INSERT 0 1").
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
 		// Check error
@@ -247,14 +153,10 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.Statements[0]).
+		conn.Query(migration.Statements[0]).
 			ReplyError("42704", `type "ltree" does not exist`).
 			Query(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
-			Reply("INSERT 0 1").
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
 		// Check error
@@ -273,14 +175,10 @@ func TestMigrationFile(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.Statements[0]).
+		conn.Query(migration.Statements[0]).
 			ReplyError("42704", `type "extensions.ltree" does not exist`).
 			Query(INSERT_MIGRATION_VERSION, "0", "", migration.Statements).
-			Reply("INSERT 0 1").
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+			Reply("INSERT 0 1")
 		// Run test
 		err := migration.ExecBatch(context.Background(), conn.MockClient(t))
 		// Check error - should NOT contain hint since type is already schema-qualified

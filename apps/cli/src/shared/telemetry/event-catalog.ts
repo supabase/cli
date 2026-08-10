@@ -1,6 +1,9 @@
 // CLI telemetry catalog. Mirrors apps/cli-go/internal/telemetry/events.go
 // 1:1 so legacy/ ports send byte-identical PostHog payloads. When the Go
-// catalog changes, update this file in the same PR.
+// catalog changes, update this file in the same PR. The failure-classification
+// properties below (error_kind … workflow) are TS-only: the native shells
+// classify failures (CLI-1561) and the Go binary never emits these fields, so
+// they are deliberately absent from the Go catalog.
 
 export const EventCommandExecuted = "cli_command_executed";
 export const EventProjectLinked = "cli_project_linked";
@@ -29,6 +32,15 @@ export const PropFlags = "flags";
 export const PropExitCode = "exit_code";
 export const PropDurationMs = "duration_ms";
 export const PropOutputFormat = "output_format";
+export const PropErrorKind = "error_kind";
+export const PropErrorCategory = "error_category";
+export const PropErrorFingerprint = "error_fingerprint";
+export const PropHasSuggestion = "has_suggestion";
+export const PropSuggestionType = "suggestion_type";
+export const PropSuggestedCommand = "suggested_command";
+// Reserved for a closed workflow label; nothing emits it until a closed
+// vocabulary is agreed (tests assert its absence on failure events).
+export const PropWorkflow = "workflow";
 
 export const GroupOrganization = "organization";
 export const GroupProject = "project";

@@ -1,13 +1,16 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "./legacy-pgdelta-ssl-probe.service.ts";
+import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
 import {
   type LegacySetupInputs,
   legacyBaselineCatalogFileName,
@@ -28,6 +31,7 @@ import {
   legacyResolveSetupInputs,
   legacySanitizedCatalogPrefix,
   legacySetupInputsToken,
+  legacyTryCacheMigrationsCatalog,
   legacyWriteMigrationCatalogSnapshot,
 } from "./legacy-pgdelta.cache.ts";
 
@@ -196,6 +200,66 @@ describe("legacyListLocalMigrations", () => {
           }),
         ),
       ) as Effect.Effect<unknown>;
+    },
+  );
+
+  it.effect(
+    "includes a validly-named .sql symlink to a directory, matching Go's IsDir() (no follow)",
+    () => {
+      // Go's `os.ReadDir`/`DirEntry.IsDir()` (`pkg/migration/list.go:34-43`) classifies a
+      // directory entry from its own type without following symlinks, so a `.sql` symlink
+      // whose target is a directory is NOT skipped as a directory — it is only ever dropped
+      // later, if something actually tries to read it as a file. A naive `fs.stat`-based
+      // directory check (which follows symlinks) would misclassify it and silently skip it.
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const targetDir = join(dir, "outside-target");
+      mkdirSync(targetDir, { recursive: true });
+      writeFileSync(join(migrationsDir, "20240101120000_create.sql"), "create table x();");
+      symlinkSync(targetDir, join(migrationsDir, "20240102000000_link.sql"));
+      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
+        Effect.tap((paths) =>
+          Effect.sync(() => {
+            expect(paths.map((p) => p.split("/").pop())).toEqual([
+              "20240101120000_create.sql",
+              "20240102000000_link.sql",
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "sorts by UTF-8 byte order, matching Go's fs.ReadDir, not JS's default UTF-16 code-unit order",
+    () => {
+      // Go's `fs.ReadDir` (`pkg/migration/list.go:34`) sorts entries byte-wise over each name's
+      // UTF-8 encoding. A BMP private-use character (U+E000, single UTF-16 code unit `0xE000`)
+      // and a supplementary-plane character (U+1F600, a surrogate pair starting `0xD83D`) reverse
+      // order between the two schemes: JS's default `Array.prototype.sort()` ranks the surrogate
+      // pair first (`0xD83D < 0xE000`), while Go's byte order — which preserves codepoint order —
+      // ranks U+1F600 (`> U+FFFF`) after U+E000. A migrations directory with such filenames must
+      // replay in Go's order, not JS's default, or a dependent migration could apply out of order.
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      const privateUseFile = "20240101120000_z\uE000.sql";
+      const supplementaryFile = "20240101120000_z\u{1F600}.sql";
+      writeFileSync(join(migrationsDir, privateUseFile), "create table x();");
+      writeFileSync(join(migrationsDir, supplementaryFile), "create table y();");
+      return withServices((fs, path) => legacyListLocalMigrations(fs, path, migrationsDir)).pipe(
+        Effect.tap((paths) =>
+          Effect.sync(() => {
+            expect(paths.map((p) => p.split("/").pop())).toEqual([
+              privateUseFile,
+              supplementaryFile,
+            ]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
     },
   );
 
@@ -518,6 +582,72 @@ describe("legacyWriteMigrationCatalogSnapshot + cleanup", () => {
   });
 });
 
+describe("legacyTryCacheMigrationsCatalog — timestamp ordering (review CLI-1958)", () => {
+  // `it.live` (not `it.effect`): the mocked export below uses a real `Effect.sleep`
+  // to create a measurable time gap, which needs the real wall clock, not
+  // `it.effect`'s virtual `TestClock` (which never auto-advances and would hang).
+  it.live(
+    "reads the clock AFTER the pg-delta export resolves, matching Go's WriteMigrationCatalogSnapshot ordering",
+    () => {
+      // Go's `TryCacheMigrationsCatalog` (`pgcache/cache.go:71-91`) resolves `hash`
+      // and `snapshot` FIRST and only THEN calls `WriteMigrationCatalogSnapshot`,
+      // which itself reads `time.Now().UTC()` (`pgcache/cache.go:151-163`) — i.e.
+      // Go's clock read happens LAST, right before the file write. The mocked
+      // edge-runtime export below sleeps for a real, measurable interval before
+      // resolving; the written snapshot's embedded timestamp must reflect a moment
+      // AFTER that sleep, proving the clock was read after the export — not
+      // captured up front by a caller before this function even started (the
+      // pre-fix bug).
+      const dir = withTemp();
+      const migrationsDir = join(dir, "supabase", "migrations");
+      mkdirSync(migrationsDir, { recursive: true });
+      // Mirrors `legacyPgDeltaTempPath` (`<workdir>/supabase/.temp/pgdelta`).
+      const tempDir = join(dir, "supabase", ".temp", "pgdelta");
+      const beforeCallMillis = Date.now();
+      const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
+        run: () =>
+          Effect.gen(function* () {
+            yield* Effect.sleep("30 millis");
+            return { stdout: "{}", stderr: "" };
+          }),
+      });
+      const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+        requireSsl: () => Effect.succeed(false),
+        requireSslForHost: () => Effect.succeed(false),
+      });
+      const ctx: LegacyPgDeltaContext = {
+        projectId: "test",
+        cwd: dir,
+        npmVersion: undefined,
+        denoVersion: 1,
+        projectEnv: {},
+      };
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* legacyTryCacheMigrationsCatalog(fs, path, ctx, {
+          enabled: true,
+          targetUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+          conn: { host: "127.0.0.1", port: 5432, user: "postgres", database: "postgres" },
+          isLocal: true,
+          migrationsDir,
+        });
+        const names = (yield* fs.readDirectory(tempDir)).filter((n) =>
+          n.startsWith("catalog-local-migrations-"),
+        );
+        expect(names.length).toBe(1);
+        const match = /-(\d+)\.json$/.exec(names[0]!);
+        expect(match).not.toBeNull();
+        const embeddedMillis = Number(match![1]);
+        expect(embeddedMillis).toBeGreaterThanOrEqual(beforeCallMillis + 25);
+      }).pipe(
+        Effect.provide(Layer.mergeAll(BunServices.layer, mockOutput().layer, edge, sslProbe)),
+        Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+      );
+    },
+  );
+});
+
 describe("legacyCleanupOldMigrationCatalogs", () => {
   it.effect("only prunes files matching the given prefix's family", () => {
     const dir = withTemp();
@@ -539,4 +669,32 @@ describe("legacyCleanupOldMigrationCatalogs", () => {
       }),
     ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
   });
+
+  it.effect(
+    "propagates a permission-denied directory read instead of treating it as empty (Go ReadDir parity)",
+    () => {
+      // Go's CleanupOldMigrationCatalogs only tolerates a genuinely MISSING temp dir
+      // (ensureTempDir already created it before ReadDir runs) — any other ReadDir
+      // failure propagates, so a permission-denied listing must fail here too rather
+      // than silently look like "no cached catalogs" (which would bypass retention
+      // indefinitely, since the caller's own best-effort warning never fires without
+      // a propagated failure).
+      const dir = withTemp();
+      const tempDir = join(dir, "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      writeFileSync(join(tempDir, "catalog-local-migrations-h-100.json"), "{}");
+      chmodSync(tempDir, 0o000);
+      return withServices((fs, path) =>
+        legacyCleanupOldMigrationCatalogs(fs, path, tempDir, "local").pipe(Effect.exit),
+      ).pipe(
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            chmodSync(tempDir, 0o755);
+            expect(Exit.isFailure(exit)).toBe(true);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

@@ -7,6 +7,12 @@ import type {
 import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 import type { LegacySetupInputs } from "../../../shared/legacy-pgdelta.cache.ts";
 import type { LegacyPgDeltaImplementation } from "../../../shared/legacy-pgdelta-next-flag.ts";
+import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 export interface LegacyPgDeltaDatabaseEndpoint {
   readonly kind: "database";
@@ -93,13 +99,19 @@ interface LegacyPgDeltaCommonInput {
 export interface LegacyPgDeltaExplicitDiffInput extends LegacyPgDeltaCommonInput {
   readonly source: LegacyPgDeltaEndpoint;
   readonly desired: LegacyPgDeltaEndpoint;
+  /** Already-loaded config used when a migrations endpoint needs a native shadow. */
+  readonly toml?: LegacyDbTomlValues;
 }
 
 export interface LegacyPgDeltaDatabaseDiffInput extends LegacyPgDeltaCommonInput {
+  /** Workflow-owned, migrated shadow database. */
+  readonly source: LegacyPgDeltaDatabaseEndpoint;
   readonly target: LegacyPgDeltaDatabaseEndpoint;
 }
 
 interface LegacyPgDeltaDeclarativeExportInput extends LegacyPgDeltaCommonInput {
+  /** Workflow-owned empty shadow used only by the legacy declarative exporter. */
+  readonly source?: LegacyPgDeltaDatabaseEndpoint;
   readonly target: LegacyPgDeltaDatabaseEndpoint;
   readonly noCache: boolean;
 }
@@ -113,6 +125,8 @@ export interface LegacyPgDeltaDeclarativePlanInput extends LegacyPgDeltaCommonIn
   readonly files: ReadonlyArray<LegacyPgDeltaSqlFile>;
   readonly manifest?: LegacyPgDeltaExportManifest;
   readonly noCache: boolean;
+  /** Already-loaded config used by native shadow/catalog provisioning. */
+  readonly toml: LegacyDbTomlValues;
   readonly setupInputs: LegacySetupInputs;
 }
 
@@ -126,7 +140,11 @@ export class LegacyPgDeltaEngineError extends Data.TaggedError("LegacyPgDeltaEng
   readonly message: string;
   readonly cause: unknown;
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 export interface LegacyPgDeltaEngineShape {
   readonly implementation: LegacyPgDeltaImplementation;

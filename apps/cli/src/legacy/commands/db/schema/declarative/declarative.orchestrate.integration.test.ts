@@ -3,9 +3,24 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Path } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
-import { mockOutput } from "../../../../../../tests/helpers/mocks.ts";
+import { mockLegacyShadowContainerCliSpawner } from "../../../../../../tests/helpers/legacy-mocks.ts";
+import { alwaysReadyHttpClientLayer } from "../../../../../../tests/helpers/legacy-local-reset.ts";
+import { mockOutput, mockRuntimeInfo } from "../../../../../../tests/helpers/mocks.ts";
+import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
+import {
+  LegacyDebugFlag,
+  LegacyExperimentalFlag,
+  LegacyNetworkIdFlag,
+} from "../../../../../shared/legacy/global-flags.ts";
+import type { LegacyDbTomlValues } from "../../../../shared/legacy-db-config.toml-read.ts";
+import {
+  LegacyDbConnection,
+  type LegacyDbSession,
+  type LegacyPgConnInput,
+} from "../../../../shared/legacy-db-connection.service.ts";
+import { LegacyDockerRun } from "../../../../shared/legacy-docker-run.service.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
@@ -37,11 +52,6 @@ import {
 
 function mockSeam(paths: Record<LegacyCatalogMode, string>) {
   const calls: Array<{ mode: LegacyCatalogMode; noCache: boolean }> = [];
-  const provisionCalls: Array<{
-    mode: string;
-    projectRef?: string;
-  }> = [];
-  const removedContainers: string[] = [];
   const layer = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: ({ mode, noCache }) => {
       calls.push({ mode, noCache });
@@ -49,27 +59,55 @@ function mockSeam(paths: Record<LegacyCatalogMode, string>) {
     },
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
-    provisionNextMigrationsShadow: () =>
-      Effect.die("next migrations shadow not used in declarative tests"),
-    provisionNextPlanShadows: () => Effect.die("next plan shadows not used in declarative tests"),
-    // The migrations-catalog source now resolves natively (CLI-1959) via
-    // `legacyGetMigrationsCatalogRef`, which provisions its shadow through this
-    // EXISTING `provisionShadow` (Go's unchanged `db __shadow --mode diff`) rather
-    // than the retired `exportCatalog({mode:"migrations"})` seam call.
-    provisionShadow: ({ mode, projectRef }) => {
-      provisionCalls.push({ mode, projectRef });
-      return Effect.succeed({
-        container: "shadow-1",
-        sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
-        targetUrlOverride: undefined,
-      });
-    },
-    removeShadowContainer: (container) =>
+  });
+  return { layer, calls };
+}
+
+/**
+ * The native shadow-provisioning stack `legacyGetMigrationsCatalogRef`'s
+ * cache-miss path needs (CLI-1956): the SAME `legacyCreateShadowDatabase`/
+ * `legacyPrepareShadowSource`/`legacyRemoveShadowDatabase` primitives `db diff`/
+ * `db pull` use for their own shadow, not the retired `db __shadow` seam — see
+ * `legacy-pgdelta.cache.ts`'s `exportViaShadowCatalog` doc comment. Mirrors
+ * `diff.integration.test.ts`'s own shadow mocks (`mockLegacyShadowContainerCliSpawner`
+ * + a fake `LegacyDbConnection`/`LegacyDockerRun`), scoped down to this file's
+ * lower-level, seam-free tests.
+ */
+function mockShadowInfra() {
+  const spawner = mockLegacyShadowContainerCliSpawner();
+  const connectedDatabases: Array<string> = [];
+  const dbConnection = Layer.succeed(LegacyDbConnection, {
+    connect: (cfg: LegacyPgConnInput) =>
       Effect.sync(() => {
-        removedContainers.push(container);
+        connectedDatabases.push(cfg.database);
+        const session: LegacyDbSession = {
+          exec: () => Effect.void,
+          query: () => Effect.succeed([]),
+          extensionExists: () => Effect.succeed(false),
+          copyToCsv: () => Effect.succeed(new Uint8Array()),
+          queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+        };
+        return session;
       }),
   });
-  return { layer, calls, provisionCalls, removedContainers };
+  // The shadow's own PG15+ one-shot platform-baseline job(s) — Go's `initSchema15`.
+  const docker = Layer.succeed(LegacyDockerRun, {
+    run: () => Effect.die("run unused"),
+    runCapture: () => Effect.die("runCapture unused"),
+    runStream: () => Effect.succeed({ exitCode: 0, stderr: "" }),
+  });
+  const layer = Layer.mergeAll(
+    spawner.layer,
+    dbConnection,
+    docker,
+    mockRuntimeInfo(),
+    Layer.succeed(LegacyNetworkIdFlag, Option.none()),
+    Layer.succeed(LegacyDebugFlag, false),
+    Layer.succeed(LegacyExperimentalFlag, false),
+    Layer.succeed(CliArgs, { args: [] }),
+    alwaysReadyHttpClientLayer,
+  );
+  return { layer, spawned: spawner.spawned, connectedDatabases };
 }
 
 function mockEdge(stdout: string) {
@@ -111,7 +149,13 @@ const probe = Layer.succeed(LegacyPgDeltaSslProbe, {
 });
 
 const ctx = (cwd: string, declarativeDir: string): LegacyDeclarativeRunContext => ({
-  pgDelta: { projectId: "cferry", cwd, npmVersion: undefined, denoVersion: 2 },
+  pgDelta: {
+    projectId: "cferry",
+    cwd,
+    npmVersion: undefined,
+    denoVersion: 2,
+    projectEnv: {},
+  },
   formatOptions: "",
   declarativeDir,
   schema: [],
@@ -125,9 +169,10 @@ const engineLayer = (
   seam: Layer.Layer<LegacyDeclarativeSeam>,
   edge: Layer.Layer<LegacyEdgeRuntimeScript>,
   output: ReturnType<typeof mockOutput>["layer"],
+  runtime: ReturnType<typeof mockShadowInfra>["layer"],
 ) =>
   legacyPgDeltaLegacyEngineLayer.pipe(
-    Layer.provide(Layer.mergeAll(seam, edge, probe, output, BunServices.layer)),
+    Layer.provide(Layer.mergeAll(seam, edge, probe, output, BunServices.layer, runtime)),
   );
 
 describe("legacyDiffDeclarativeToMigrations", () => {
@@ -170,6 +215,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
     );
     return legacyDiffDeclarativeToMigrations(
       { ...ctx(dir, declDir), debug: true, noCache: true, strictCoverage: true },
+      toml,
       setupInputs,
     ).pipe(
       Effect.tap((result) =>
@@ -209,6 +255,45 @@ const setupInputs: LegacySetupInputs = {
   rolesSql: "",
 };
 
+// A minimal, valid `LegacyDbTomlValues` — threaded into `legacyGetMigrationsCatalogRef`
+// for the migrations-catalog shadow's own container spec (CLI-1956). Matches
+// `legacy-db-config.toml-read.ts`'s own unconfigured defaults so this fixture
+// doesn't silently drift from what `legacyReadDbToml` would resolve for these
+// tests' bare temp dirs (none of them write a `config.toml`).
+const toml: LegacyDbTomlValues = {
+  projectEnv: {},
+  envLookup: () => undefined,
+  apiSchemas: ["public", "graphql_public"],
+  port: 54322,
+  shadowPort: 54320,
+  password: "postgres",
+  poolerConnectionString: Option.none(),
+  projectId: Option.none(),
+  majorVersion: 17,
+  orioledbVersion: Option.none(),
+  denoVersion: 2,
+  pgDelta: {
+    enabled: false,
+    declarativeSchemaPath: Option.none(),
+    formatOptions: Option.none(),
+    npmVersion: Option.none(),
+  },
+  baseline: {
+    authEnabled: true,
+    storageEnabled: true,
+    realtimeEnabled: true,
+    apiAutoExposeNewTables: Option.none(),
+    vaultNames: [],
+  },
+  migrationsEnabled: true,
+  schemaPaths: [],
+  schemaPathPatterns: [],
+  seed: { enabled: true, sqlPaths: [] },
+  vault: [],
+  appliedRemote: undefined,
+  remoteOverrideKeys: new Set(),
+};
+
 describe("legacyDiffDeclarativeToMigrations", () => {
   it.effect(
     "resolves the migrations catalog natively and diffs it against the seam-provisioned declarative catalog",
@@ -222,14 +307,16 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       });
       const edge = mockEdge("ALTER TABLE x ADD COLUMN y int;\nDROP TABLE z;\n");
       const out = mockOutput();
-      return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), setupInputs).pipe(
+      const shadow = mockShadowInfra();
+      return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), toml, setupInputs).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
             // "declarative" still resolves via the seam; "migrations" no longer does
-            // (it resolves natively, provisioning through `provisionShadow` instead).
+            // (it resolves natively, provisioning its shadow the same way `db diff`/
+            // `db pull` do — CLI-1956).
             expect(seam.calls.map((c) => c.mode)).toEqual(["declarative"]);
-            expect(seam.provisionCalls).toEqual([{ mode: "diff", projectRef: undefined }]);
-            expect(seam.removedContainers).toEqual(["shadow-1"]);
+            expect(shadow.spawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+            expect(shadow.spawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
             // No local migrations in the fresh temp dir → the zero-migrations branch
             // writes (and returns) the platform-baseline catalog, workdir-relative.
             expect(result.sourceRef).toMatch(
@@ -253,8 +340,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             edge.layer,
             probe,
             out.layer,
-            engineLayer(seam.layer, edge.layer, out.layer),
+            engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
             BunServices.layer,
+            shadow.layer,
           ),
         ),
       );
@@ -283,10 +371,11 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       });
       const edge = mockEdge("ALTER TABLE x;\n");
       const out = mockOutput();
-      return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), setupInputs).pipe(
+      const shadow = mockShadowInfra();
+      return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), toml, setupInputs).pipe(
         Effect.tap((result) =>
           Effect.sync(() => {
-            expect(seam.provisionCalls).toEqual([]);
+            expect(shadow.spawned).toEqual([]);
             expect(result.sourceRef).toBe(
               join("supabase", ".temp", "pgdelta", `catalog-baseline-${baselineKey}.json`),
             );
@@ -300,8 +389,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             edge.layer,
             probe,
             out.layer,
-            engineLayer(seam.layer, edge.layer, out.layer),
+            engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
             BunServices.layer,
+            shadow.layer,
           ),
         ),
       );
@@ -327,6 +417,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       });
       const edge = mockEdge("ALTER TABLE x ADD COLUMN y int;\n");
       const out = mockOutput();
+      const shadow = mockShadowInfra();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -335,7 +426,11 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           legacySetupInputsToken(setupInputs),
           migrationsHash,
         );
-        const result = yield* legacyDiffDeclarativeToMigrations(ctx(dir, declDir), setupInputs);
+        const result = yield* legacyDiffDeclarativeToMigrations(
+          ctx(dir, declDir),
+          toml,
+          setupInputs,
+        );
         expect(result.sourceRef).toMatch(
           new RegExp(
             `^supabase[/\\\\]\\.temp[/\\\\]pgdelta[/\\\\]catalog-local-migrations-${key}-\\d+\\.json$`,
@@ -343,8 +438,8 @@ describe("legacyDiffDeclarativeToMigrations", () => {
         );
         expect(readFileSync(join(dir, result.sourceRef), "utf8")).toBe('{"schemas":[]}');
         expect(out.stderrText).toContain("Creating shadow database...\n");
-        expect(seam.provisionCalls).toEqual([{ mode: "diff", projectRef: undefined }]);
-        expect(seam.removedContainers).toEqual(["shadow-1"]);
+        expect(shadow.spawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
+        expect(shadow.spawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         rmSync(dir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(
@@ -353,8 +448,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             edge.layer,
             probe,
             out.layer,
-            engineLayer(seam.layer, edge.layer, out.layer),
+            engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
             BunServices.layer,
+            shadow.layer,
           ),
         ),
       );
@@ -378,6 +474,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       });
       const edge = mockEdge("ALTER TABLE x;\n");
       const out = mockOutput();
+      const shadow = mockShadowInfra();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -391,10 +488,14 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           legacyMigrationCatalogFileName("local", key, 1_700_000_000_000),
         );
         writeFileSync(cachedPath, '{"cached":true}');
-        const result = yield* legacyDiffDeclarativeToMigrations(ctx(dir, declDir), setupInputs);
+        const result = yield* legacyDiffDeclarativeToMigrations(
+          ctx(dir, declDir),
+          toml,
+          setupInputs,
+        );
         expect(result.sourceRef).toBe(path.relative(dir, cachedPath));
         expect(readFileSync(cachedPath, "utf8")).toBe('{"cached":true}');
-        expect(seam.provisionCalls).toEqual([]);
+        expect(shadow.spawned).toEqual([]);
         rmSync(dir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(
@@ -403,8 +504,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             edge.layer,
             probe,
             out.layer,
-            engineLayer(seam.layer, edge.layer, out.layer),
+            engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
             BunServices.layer,
+            shadow.layer,
           ),
         ),
       );
@@ -428,6 +530,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       });
       const edge = mockEdge("ALTER TABLE x;\n");
       const out = mockOutput();
+      const shadow = mockShadowInfra();
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
@@ -446,13 +549,14 @@ describe("legacyDiffDeclarativeToMigrations", () => {
         writeFileSync(cachedPath, '{"cached":true}');
         const result = yield* legacyDiffDeclarativeToMigrations(
           { ...ctx(dir, declDir), noCache: true },
+          toml,
           setupInputs,
         );
         expect(result.sourceRef).toBe(
           join("supabase", ".temp", "pgdelta", "catalog-nocache-migrations.json"),
         );
         expect(readFileSync(join(dir, result.sourceRef), "utf8")).toBe('{"schemas":[]}');
-        expect(seam.provisionCalls).toEqual([{ mode: "diff", projectRef: undefined }]);
+        expect(shadow.spawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         rmSync(dir, { recursive: true, force: true });
       }).pipe(
         Effect.provide(
@@ -461,8 +565,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             edge.layer,
             probe,
             out.layer,
-            engineLayer(seam.layer, edge.layer, out.layer),
+            engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
             BunServices.layer,
+            shadow.layer,
           ),
         ),
       );
@@ -473,7 +578,12 @@ describe("legacyDiffDeclarativeToMigrations", () => {
     const seam = mockSeam({ declarative: "d", baseline: "b" });
     const edge = mockEdge("");
     const out = mockOutput();
-    return legacyDiffDeclarativeToMigrations(ctx(dir, join(dir, "missing")), setupInputs).pipe(
+    const shadow = mockShadowInfra();
+    return legacyDiffDeclarativeToMigrations(
+      ctx(dir, join(dir, "missing")),
+      toml,
+      setupInputs,
+    ).pipe(
       Effect.exit,
       Effect.tap((exit) =>
         Effect.sync(() => {
@@ -485,7 +595,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
             );
           }
           expect(seam.calls).toEqual([]);
-          expect(seam.provisionCalls).toEqual([]);
+          expect(shadow.spawned).toEqual([]);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -495,8 +605,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           edge.layer,
           probe,
           out.layer,
-          engineLayer(seam.layer, edge.layer, out.layer),
+          engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
           BunServices.layer,
+          shadow.layer,
         ),
       ),
     );
@@ -508,6 +619,7 @@ describe("legacyGenerateDeclarativeOutput", () => {
     const calls: Array<{
       readonly debug: boolean;
       readonly noCache: boolean;
+      readonly sourceRef: string | undefined;
       readonly strictCoverage: boolean;
     }> = [];
     const engine = Layer.succeed(
@@ -520,6 +632,7 @@ describe("legacyGenerateDeclarativeOutput", () => {
           calls.push({
             debug: input.debug,
             noCache: input.noCache,
+            sourceRef: input.source?.ref,
             strictCoverage: input.strictCoverage,
           });
           return Effect.succeed({ files: [] });
@@ -527,13 +640,17 @@ describe("legacyGenerateDeclarativeOutput", () => {
         planDeclarativeSchema: () => Effect.die("planDeclarativeSchema not used"),
       }),
     );
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-export-"));
+    const shadow = mockShadowInfra();
+    const out = mockOutput();
     return legacyGenerateDeclarativeOutput(
       {
-        ...ctx("/proj", "/proj/supabase/database"),
+        ...ctx(dir, join(dir, "supabase", "database")),
         debug: true,
         noCache: true,
         strictCoverage: true,
       },
+      toml,
       {
         kind: "database",
         ref: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",
@@ -541,15 +658,25 @@ describe("legacyGenerateDeclarativeOutput", () => {
       },
     ).pipe(
       Effect.tap(() =>
-        Effect.sync(() =>
-          expect(calls).toEqual([{ debug: true, noCache: true, strictCoverage: true }]),
-        ),
+        Effect.sync(() => {
+          expect(calls).toEqual([
+            {
+              debug: true,
+              noCache: true,
+              sourceRef: undefined,
+              strictCoverage: true,
+            },
+          ]);
+          expect(shadow.spawned).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
       ),
-      Effect.provide(engine),
+      Effect.provide(Layer.mergeAll(engine, out.layer, BunServices.layer, shadow.layer)),
     );
   });
 
-  it.effect("diffs the baseline catalog against the live DB and returns files", () => {
+  it.effect("diffs a native raw shadow against the live DB and returns files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-export-"));
     const seam = mockSeam({
       declarative: "d",
       baseline: "supabase/.temp/pgdelta/base.json",
@@ -561,20 +688,25 @@ describe("legacyGenerateDeclarativeOutput", () => {
     };
     const edge = mockEdge(JSON.stringify(payload));
     const out = mockOutput();
-    return legacyGenerateDeclarativeOutput(ctx("/proj", "/proj/supabase/database"), {
+    const shadow = mockShadowInfra();
+    return legacyGenerateDeclarativeOutput(ctx(dir, join(dir, "supabase", "database")), toml, {
       kind: "database",
       ref: "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10",
       connectOptions: { isLocal: true, dnsResolver: "native" },
     }).pipe(
       Effect.tap((output) =>
         Effect.sync(() => {
-          expect(seam.calls).toEqual([{ mode: "baseline", noCache: false }]);
+          expect(seam.calls).toEqual([]);
           expect(output.files[0]?.name).toBe("public.sql");
-          // SOURCE = baseline catalog (mapped to /workspace); TARGET = live URL (passthrough).
-          expect(edge.calls[0]!.env["SOURCE"]).toBe("/workspace/supabase/.temp/pgdelta/base.json");
+          expect(edge.calls[0]!.env["SOURCE"]).toBe(
+            "postgresql://postgres:postgres@127.0.0.1:54320/postgres?connect_timeout=10",
+          );
           expect(edge.calls[0]!.env["TARGET"]).toBe(
             "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10",
           );
+          expect(shadow.spawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
+          expect(shadow.spawned.filter((call) => call.args[0] === "rm")).toHaveLength(1);
+          rmSync(dir, { recursive: true, force: true });
         }),
       ),
       Effect.provide(
@@ -583,8 +715,9 @@ describe("legacyGenerateDeclarativeOutput", () => {
           edge.layer,
           probe,
           out.layer,
-          engineLayer(seam.layer, edge.layer, out.layer),
+          engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
           BunServices.layer,
+          shadow.layer,
         ),
       ),
     );

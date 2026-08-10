@@ -1,6 +1,7 @@
 import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
@@ -18,11 +19,15 @@ import { legacyPgDeltaNextAdapterLayer } from "../shared/legacy-pgdelta-next-ada
 import { legacyPgDeltaNextShadowLayer } from "../shared/legacy-pgdelta-next-shadow.layer.ts";
 
 /**
- * Runtime layer for `supabase db pull`. Same composition as `db diff`: the
- * db-config resolver, both pg-delta implementations, migra, the SSL probe, and
- * the Go shadow seam. The default pg-delta runs in-process; edge-runtime remains
- * for migra and the explicit legacy opt-out. `LegacyDbConnection` (remote connect + `schema_migrations`
- * reconciliation / history update), and `LegacyDockerRun` for the migra fallback.
+ * Runtime layer for `supabase db pull`. The db-config resolver, the native pg-delta / migra
+ * stack (edge-runtime, SSL probe, `HttpClient` for the native shadow's health-check wait —
+ * shadow provisioning itself is native, see `commands/db/shared/legacy-shadow-source.ts` /
+ * `shared/db-bootstrap/shadow-database.ts`), `LegacyDbConnection` (remote connect +
+ * `schema_migrations` reconciliation / history update), and `LegacyDockerRun` for the migra
+ * fallback. No `LegacyDeclarativeSeam` — neither `db pull` nor `db diff` has a Go-delegate
+ * branch that needs it any more (native shadow provisioning replaced the Go seam entirely,
+ * CLI-1956/CLI-1959); `--use-pgadmin`/`--use-pg-schema` delegate through `LegacyGoProxy`
+ * instead, not this seam.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
@@ -38,8 +43,13 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(cliConfig),
 );
 
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
-const nextShadow = legacyPgDeltaNextShadowLayer.pipe(Layer.provide(seam));
+const nextShadow = legacyPgDeltaNextShadowLayer.pipe(
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(httpClient),
+);
 const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyPgDeltaNextAdapterLayer),
@@ -47,6 +57,9 @@ const pgDeltaEngine = legacyPgDeltaEngineLayer.pipe(
   Layer.provide(edgeRuntime),
   Layer.provide(legacyPgDeltaSslProbeLayer),
   Layer.provide(seam),
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(httpClient),
   Layer.provide(legacyDebugLoggerLayer),
 );
 
@@ -56,8 +69,8 @@ export const legacyDbPullRuntimeLayer = Layer.mergeAll(
   legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
-  seam,
   pgDeltaEngine,
+  httpClient,
   cliConfig,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,

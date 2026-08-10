@@ -20,6 +20,7 @@ import type { LegacyPgDeltaDatabaseEndpoint } from "../../shared/legacy-pgdelta-
 import {
   LegacyDeclarativeApplyError,
   LegacyDeclarativeInvalidDbUrlError,
+  legacyReadErrorSuggestion,
 } from "./declarative.errors.ts";
 import type { LegacyDeclarativeShadowDbError } from "../../shared/legacy-pgdelta.errors.ts";
 import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
@@ -205,7 +206,10 @@ export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
     yield* legacyResetLocalDatabase().pipe(
       Effect.mapError(
         (error) =>
-          new LegacyDeclarativeApplyError({ message: `database reset failed: ${error.message}` }),
+          new LegacyDeclarativeApplyError({
+            message: `database reset failed: ${error.message}`,
+            suggestion: legacyReadErrorSuggestion(error),
+          }),
       ),
     );
   }

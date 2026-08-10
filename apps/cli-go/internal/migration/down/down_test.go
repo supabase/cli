@@ -85,21 +85,13 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.DropObjects).
-			Reply("INSERT 0").
-			Query("COMMIT").
-			Reply("COMMIT")
+		conn.Query(migration.DropObjects).
+			Reply("INSERT 0")
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		// Run test
 		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
 		// Check error
@@ -117,21 +109,13 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.DropObjects).
-			Reply("INSERT 0").
-			Query("COMMIT").
-			Reply("COMMIT")
+		conn.Query(migration.DropObjects).
+			Reply("INSERT 0")
 		helper.MockMigrationHistory(conn).
 			Query("RESET ALL").
 			Reply("RESET").
-			Query("BEGIN").
-			Reply("BEGIN").
 			Query(migration.INSERT_MIGRATION_VERSION, "0", "schema", nil).
-			Reply("INSERT 0 1").
-			Query("COMMIT").
-			Reply("COMMIT")
+			Reply("INSERT 0 1")
 		utils.Config.Db.Seed.Enabled = false
 		// Run test
 		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
@@ -145,12 +129,8 @@ func TestResetRemote(t *testing.T) {
 		// Setup mock postgres
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		conn.Query("BEGIN").
-			Reply("BEGIN").
-			Query(migration.DropObjects).
-			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations").
-			Query("ROLLBACK").
-			Reply("ROLLBACK")
+		conn.Query(migration.DropObjects).
+			ReplyError(pgerrcode.InsufficientPrivilege, "permission denied for relation supabase_migrations")
 		// Run test
 		err := ResetAll(context.Background(), "", conn.MockClient(t), fsys)
 		// Check error

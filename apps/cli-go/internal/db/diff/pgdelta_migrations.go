@@ -36,14 +36,6 @@ type WrittenMigration struct {
 // before pre-existing migrations. The resulting ≤N−1s future-dating is inherent to
 // second-granularity versions and acceptable once uniqueness is enforced.
 func WritePgDeltaMigrations(files []PgDeltaPlanFile, base time.Time, name string, fsys afero.Fs) (_ []WrittenMigration, err error) {
-	// Validate the complete plan before touching the filesystem. The CLI supports
-	// exactly the two pg-delta execution modes; silently treating a future or
-	// misspelled mode as transactional would write a migration with wrong semantics.
-	for _, file := range files {
-		if err := file.TransactionMode.validate(); err != nil {
-			return nil, err
-		}
-	}
 	single := len(files) == 1
 	buildSet := func(b time.Time) []WrittenMigration {
 		set := make([]WrittenMigration, len(files))

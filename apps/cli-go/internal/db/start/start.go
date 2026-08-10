@@ -380,49 +380,9 @@ func SetupLocalDatabase(ctx context.Context, version string, fsys afero.Fs, w io
 	return nil
 }
 
-type setupDatabaseOptions struct {
-	activateUserExtensions bool
-	legacyPgNetBaseline    bool
-}
-
-// SetupDatabaseOption customises platform setup for specialised database
-// provisioning paths while keeping the ordinary local setup defaults.
-type SetupDatabaseOption func(*setupDatabaseOptions)
-
-// WithoutUserExtensionActivation keeps platform capabilities such as the
-// webhook helpers and event trigger, but leaves activation of user-managed
-// extensions such as pg_net to migrations or declarative SQL.
-func WithoutUserExtensionActivation() SetupDatabaseOption {
-	return func(options *setupDatabaseOptions) {
-		options.activateUserExtensions = false
-	}
-}
-
-// WithLegacyPgNetBaseline preserves the historical shadow-database baseline,
-// where pg_net was installed independently of the Database Webhooks setting.
-// New provisioning paths should use the config-gated default instead.
-func WithLegacyPgNetBaseline() SetupDatabaseOption {
-	return func(options *setupDatabaseOptions) {
-		options.legacyPgNetBaseline = true
-	}
-}
-
-func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs, opts ...SetupDatabaseOption) error {
-	options := setupDatabaseOptions{activateUserExtensions: true}
-	for _, option := range opts {
-		option(&options)
-	}
+func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer, fsys afero.Fs) error {
 	if err := initSchema(ctx, conn, host, w); err != nil {
 		return err
-	}
-	if options.legacyPgNetBaseline {
-		if err := enablePgNet(ctx, conn); err != nil {
-			return err
-		}
-	} else if options.activateUserExtensions {
-		if err := ApplyDatabaseWebhooks(ctx, conn); err != nil {
-			return err
-		}
 	}
 	if err := ApplyApiPrivileges(ctx, conn); err != nil {
 		return err
@@ -436,27 +396,6 @@ func SetupDatabase(ctx context.Context, conn *pgx.Conn, host string, w io.Writer
 		return nil
 	}
 	return err
-}
-
-const EnableDatabaseWebhooksSql = `create extension if not exists pg_net schema extensions;`
-
-// ApplyDatabaseWebhooks installs pg_net only when the Database Webhooks feature is enabled.
-// The platform webhook helpers and event trigger are part of the baseline regardless, so an
-// explicit CREATE EXTENSION in user migrations/declarative SQL remains supported when disabled.
-func ApplyDatabaseWebhooks(ctx context.Context, conn *pgx.Conn) error {
-	webhooks := utils.Config.Experimental.Webhooks
-	if webhooks == nil || !webhooks.Enabled {
-		return nil
-	}
-	return enablePgNet(ctx, conn)
-}
-
-func enablePgNet(ctx context.Context, conn *pgx.Conn) error {
-	file, err := migration.NewMigrationFromReader(strings.NewReader(EnableDatabaseWebhooksSql))
-	if err != nil {
-		return err
-	}
-	return file.ExecBatch(ctx, conn)
 }
 
 // RevokeDefaultDataApiPrivilegesSql matches the SQL that Studio runs at cloud project creation

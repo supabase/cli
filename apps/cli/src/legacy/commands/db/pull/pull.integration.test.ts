@@ -1,14 +1,18 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
+  LEGACY_VALID_REF,
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
+  mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
@@ -19,6 +23,7 @@ import {
   mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
+  LegacyDebugFlag,
   LegacyDnsResolverFlag,
   LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
@@ -41,9 +46,15 @@ import {
   LegacyPgDeltaEngine,
   LegacyPgDeltaEngineError,
 } from "../shared/legacy-pgdelta-engine.service.ts";
-import { LegacyDeclarativeSeam } from "../shared/legacy-pgdelta.seam.service.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import { legacyDbPull } from "./pull.handler.ts";
+
+const alwaysReadyHttpClientLayer = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make((request) =>
+    Effect.succeed(HttpClientResponse.fromWeb(request, new Response(null, { status: 200 }))),
+  ),
+);
 
 const EXPORT_JSON = JSON.stringify({
   version: 1,
@@ -103,6 +114,10 @@ interface SetupOpts {
   readonly args?: ReadonlyArray<string>;
   // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
   readonly failWriteOnCall?: number;
+  // `LegacyCliConfig.projectId` (Go's `SUPABASE_PROJECT_ID` env-only reader). Defaults to
+  // `Option.some("test")`; pass `Option.none()` to exercise the config.toml/workdir-basename
+  // fallback `legacyResolveLocalProjectId` provides for the pg-delta edge-runtime cache bind.
+  readonly projectId?: Option.Option<string>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -113,34 +128,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
 
-  const provisionCalls: Array<{
-    mode: string;
-    projectRef?: string;
-  }> = [];
-  const removedContainers: string[] = [];
-  const seam = Layer.succeed(LegacyDeclarativeSeam, {
-    exportCatalog: () => Effect.succeed("supabase/.temp/pgdelta/x.json"),
-    ensureLocalDatabaseStarted: () => Effect.void,
-    ensureLocalPostgresImageCurrent: () => Effect.void,
-    provisionShadow: ({ mode, projectRef }) => {
-      provisionCalls.push({ mode, projectRef });
-      return Effect.succeed({
-        container: "shadow-1",
-        sourceUrl: "postgres://postgres:postgres@127.0.0.1:54320/postgres",
-      });
-    },
-    provisionNextMigrationsShadow: () => Effect.die("next migrations shadow not used"),
-    provisionNextPlanShadows: () => Effect.die("next plan shadows not used"),
-    removeShadowContainer: (container) =>
-      Effect.sync(() => {
-        removedContainers.push(container);
-      }),
-  });
+  // Shadow provisioning is native (CLI-1956): a real docker-spawner fake backs
+  // container create/start/health-inspect/cleanup.
+  const shadowSpawner = mockLegacyShadowContainerCliSpawner();
 
   const engineCalls: Array<{
     operation: "diff" | "export";
     targetRef: string;
     projectRef?: string;
+    projectId: string;
     strictCoverage: boolean;
   }> = [];
   let engineDiffCount = 0;
@@ -154,6 +150,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           operation: "diff",
           targetRef: input.target.ref,
           projectRef: input.projectRef,
+          projectId: input.context.projectId,
           strictCoverage: input.strictCoverage,
         });
         engineDiffCount += 1;
@@ -228,6 +225,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           operation: "export",
           targetRef: input.target.ref,
           projectRef: input.projectRef,
+          projectId: input.context.projectId,
           strictCoverage: input.strictCoverage,
         });
         if (opts.edgeFailFirstWith !== undefined && engineCalls.length === 1) {
@@ -252,9 +250,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   );
 
   let edgeRunCount = 0;
+  const edgeCalls: LegacyEdgeRuntimeRunOpts[] = [];
   const edge = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
       edgeRunCount += 1;
+      edgeCalls.push(runOpts);
       if (opts.edgeFailFirstWith !== undefined && edgeRunCount === 1) {
         return Effect.fail(new LegacyEdgeRuntimeScriptError({ message: opts.edgeFailFirstWith }));
       }
@@ -278,6 +278,15 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     runCapture: () => Effect.die("runCapture unused"),
     runStream: (runOpts, streamOpts) =>
       Effect.gen(function* () {
+        // The native shadow's PG15+ one-shot platform-baseline jobs
+        // (`legacyRunStartMigrateJob`) go through this same `runStream`, always
+        // `skipImageResolve: true` (the real `pg_dump` `runStream` call never sets
+        // it) — succeed unconditionally so shadow setup itself never fails; this
+        // suite has no assertions over the one-shot jobs' own output, and they must
+        // not be counted alongside the real `dumpCalls` this suite DOES assert on.
+        if (runOpts.skipImageResolve === true) {
+          return { exitCode: 0, stderr: "" };
+        }
         dumpRunCount += 1;
         dumpCalls.push({ env: runOpts.env, image: runOpts.image });
         if (opts.dumpFailFirstWith !== undefined && dumpRunCount === 1) {
@@ -295,27 +304,46 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   const execLog: string[] = [];
   const historyUpserts: ReadonlyArray<unknown>[] = [];
-  const session = {
+  const connectedDatabases: Array<string> = [];
+  // The resolver mock's own target connection always dials port 5432; the native
+  // shadow (platform baseline, `CREATE_TEMPLATE`, migrations, and — on the
+  // declarative branch — the `contrib_regression` override) always dials the
+  // schema-default shadow port (54320) instead — a reliable way to tell "the
+  // REAL remote/local target's own history upsert" (which `historyUpserts` is
+  // meant to count) apart from the shadow's OWN internal migration replay (which
+  // ALSO issues a parameterized `INSERT_MIGRATION_VERSION` query, into its own
+  // separate in-shadow history table).
+  const TARGET_PORT = 5432;
+  const makeSession = (isShadow: boolean) => ({
     exec: (sql: string) => Effect.sync(() => void execLog.push(sql)),
     query: (sql: string, params?: ReadonlyArray<unknown>) => {
       if (/SELECT version/u.test(sql)) {
         return Effect.succeed((opts.remoteVersions ?? []).map((v) => ({ version: v })));
       }
-      if (params !== undefined) historyUpserts.push(params);
+      if (!isShadow && params !== undefined) historyUpserts.push(params);
       return Effect.succeed([] as ReadonlyArray<Record<string, unknown>>);
     },
     extensionExists: () => Effect.die("extensionExists unused"),
     copyToCsv: () => Effect.die("copyToCsv unused"),
     queryRaw: () => Effect.die("queryRaw unused"),
-  };
+  });
+  const targetSession = makeSession(false);
+  const shadowSession = makeSession(true);
   const dbConnection = Layer.succeed(LegacyDbConnection, {
-    connect: () => Effect.succeed(session),
+    connect: (cfg: { readonly database: string; readonly port: number }) =>
+      Effect.sync(() => {
+        connectedDatabases.push(cfg.database);
+        return cfg.port === TARGET_PORT ? targetSession : shadowSession;
+      }),
   });
 
   const poolerFallbackCalls: unknown[] = [];
+  const resolveCalls: unknown[] = [];
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: ({ connType }) =>
-      Effect.succeed({
+    resolve: (resolveFlags) => {
+      resolveCalls.push(resolveFlags);
+      const { connType } = resolveFlags;
+      return Effect.succeed({
         conn: {
           // A direct `db.<ref>.<projectHost>` host so the pooler-fallback gate
           // (Go's ProjectRefFromDirectDbHost) matches on the linked path.
@@ -327,7 +355,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
         },
         isLocal: connType === "local",
         ref: opts.resolvedRef !== undefined ? Option.some(opts.resolvedRef) : Option.none(),
-      }),
+      });
+    },
     resolvePoolerFallback: (resolveFlags) => {
       poolerFallbackCalls.push(resolveFlags);
       return Effect.succeed(
@@ -359,32 +388,39 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
-  // The linked ref is pre-loaded (for the post-run cache) before `resolve()`,
-  // mirroring Go's `LoadProjectRef`-before-`NewDbConfigWithPassword` order (see the
-  // pre-load block in `pull.handler.ts`, CLI-1879). Default to the same ref the
-  // `LegacyDbConfigResolver` mock above uses for its `db.<ref>.…` host so both stay
-  // consistent unless a test overrides `resolvedRef`.
+  // The linked ref is now pre-loaded (for the config-override print, ahead of
+  // `resolver.resolve()`'s own network work — review: PRRT_kwDOErm0O86XHvYl) via
+  // `LegacyProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
+  // its `db.<ref>.<host>` connection host above, so both stay consistent regardless of
+  // whether a test sets `opts.resolvedRef` (mirrors `reset.integration.test.ts`'s
+  // identical mock).
   const projectRefResolver = Layer.succeed(LegacyProjectRefResolver, {
-    resolve: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
-    resolveForLink: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
-    resolveOptional: () => Effect.succeed(Option.some(opts.resolvedRef ?? "abcdefghijklmnopqrst")),
-    loadProjectRef: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
-    promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? "abcdefghijklmnopqrst"),
+    resolve: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.resolvedRef ?? LEGACY_VALID_REF)),
+    loadProjectRef: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+    promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
   });
 
   const baseLayer = Layer.mergeAll(
+    // `BunServices.layer` is listed FIRST so every fake service layer below (most
+    // importantly `shadowSpawner.layer`'s fake `ChildProcessSpawner`) OVERRIDES its
+    // real implementation — `Layer.mergeAll` is last-wins on a shared service,
+    // matching `start.integration.test.ts`'s own established ordering.
+    BunServices.layer,
     out.layer,
     telemetry.layer,
     cache.layer,
-    seam,
     pgDeltaEngine,
     edge,
     docker,
     dbConnection,
+    shadowSpawner.layer,
+    alwaysReadyHttpClientLayer,
     resolver,
-    proxy,
     projectRefResolver,
-    mockLegacyCliConfig({ workdir, projectId: Option.some("test") }),
+    proxy,
+    mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.some("test") }),
     mockTty({ stdinIsTty: opts.stdinIsTty ?? false, stdoutIsTty: false }),
     mockStdin(
       opts.stdinIsTty ?? false,
@@ -392,6 +428,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
     Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
+    Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyDnsResolverFlag, "native"),
     Layer.succeed(LegacyNetworkIdFlag, Option.none()),
     Layer.succeed(LegacyPgDeltaSslProbe, {
@@ -400,10 +437,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     }),
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     mockRuntimeInfo(),
-    BunServices.layer,
   );
-  // Merged last so its `FileSystem` overrides `BunServices` (last-wins); `Path`
-  // still resolves from `BunServices`.
+  // Merged last so its `FileSystem` overrides everything above (last-wins).
   const layer =
     opts.failWriteOnCall === undefined
       ? baseLayer
@@ -412,19 +447,21 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   return {
     layer,
     out,
-    cache,
-    provisionCalls,
-    removedContainers,
     proxyCalls,
     proxyCaptureCalls,
     historyUpserts,
     execLog,
+    connectedDatabases,
     poolerFallbackCalls,
+    resolveCalls,
     dumpCalls,
     engineCalls,
+    shadowSpawned: shadowSpawner.spawned,
     get edgeRunCount() {
       return edgeRunCount;
     },
+    edgeCalls,
+    cache,
   };
 }
 
@@ -645,7 +682,9 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags());
-      expect(s.provisionCalls[0]?.mode).toBe("diff");
+      // Migra engine selection is proven by `edgeStdout` parsing as raw SQL below
+      // (a pg-delta selection would instead try — and fail — to `JSON.parse` it).
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
       const err = streamText(s.out, "stderr");
       expect(err).toContain("schema_paths no longer changes the migrations baseline");
       // Go's `ConnectByConfig` prints the Connecting line to stderr before dialing
@@ -660,6 +699,40 @@ describe("legacy db pull", () => {
       expect(err).not.toContain(tmp.current);
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "validates the shadow's own local config (api.tls cert file) BEFORE resolving the connection",
+    () => {
+      // `toml` (`legacyReadDbToml`'s "D" pipeline) only tracks `api.tls`'s dotted keys for
+      // remote-override gating, it never reads the cert/key files — that read lives in
+      // `legacyBuildLocalDbContainerInputs`'s own "L" pipeline (see that call's doc comment,
+      // and `diff.handler.ts`'s identical fix). Go validates it as part of `LoadConfig`, in
+      // the root `PersistentPreRunE`, strictly before `NewDbConfigWithPassword`
+      // (`resolver.resolve()`'s parity target) or `pull.Run`'s `ConnectByConfig` ever run
+      // (review: PRRT_kwDOErm0O86XIUK1) — so `resolveCalls` must stay empty here, proving the
+      // shadow's config validation ran first, not just that the command failed.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[api]",
+          "enabled = true",
+          "[api.tls]",
+          "enabled = true",
+          'cert_path = "missing-cert.pem"',
+          'key_path = "missing-key.pem"',
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { remoteVersions: [], edgeStdout: "" });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
+        expect(error.message).toContain("failed to read TLS cert");
+        expect(s.resolveCalls).toHaveLength(0);
+        expect(s.connectedDatabases).toHaveLength(0);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("pull --declarative exports declarative files (no migration)", () => {
     const s = setup(tmp.current, { edgeStdout: EXPORT_JSON });
@@ -692,7 +765,21 @@ describe("legacy db pull", () => {
         scope: "database",
         files: ["schemas/public/t.sql"],
       });
-      expect(s.provisionCalls).toHaveLength(0);
+      // Declarative mode's bare shadow (`legacyPrepareRawShadow`) never connects to set
+      // up a platform baseline or `contrib_regression` template — the only connect is
+      // the top-level target connect (`resolved.conn`, database "postgres").
+      expect(s.connectedDatabases).toEqual(["postgres"]);
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "rm")).toHaveLength(1);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("next declarative export does not provision a baseline shadow", () => {
+    const s = setup(tmp.current, { engineImplementation: "next" });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+      expect(s.engineCalls[0]?.operation).toBe("export");
+      expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -759,6 +846,51 @@ describe("legacy db pull", () => {
     },
   );
 
+  it.effect("passes the config/workdir-resolved project id to the pg-delta engine", () => {
+    // No `SUPABASE_PROJECT_ID` env and no `supabase/config.toml` `project_id` — Go's
+    // `Config.ProjectId` falls back to the workdir basename (`pkg/config/config.go:563-570`)
+    // and `UpdateDockerIds` names the edge-runtime volume from that already-sanitized value
+    // (`internal/utils/config.go:57-76`). Before the fix, `ctx.projectId` came from
+    // `LegacyCliConfig.projectId` alone (env-only) and resolved to `""`, mounting
+    // `supabase_edge_runtime_:/root/.cache/deno:rw` regardless of the real project — reachable
+    // here via the declarative-export path (`legacyDeclarativeExportPgDelta`), which reads
+    // `ctx.projectId` before any local shadow diff even starts.
+    const s = setup(tmp.current, { edgeStdout: EXPORT_JSON, projectId: Option.none() });
+    const expectedProjectId = basename(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ declarative: Option.some(true) }));
+      expect(s.engineCalls[0]?.projectId).toBe(expectedProjectId);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "a linked [remotes.<ref>]'s project_id outranks a conflicting SUPABASE_PROJECT_ID",
+    () => {
+      // `legacyReadDbToml` already gates `toml.projectId` behind `remoteOverrideKeys` so it
+      // reflects the matched remote's OWN `project_id` (review: PRRT_kwDOErm0O86XHGDL) — but
+      // `legacyResolveLocalProjectId` tries `cliConfig.projectId` (raw, ungated env) FIRST, so
+      // an ambient `SUPABASE_PROJECT_ID` that differs from the matched remote must be
+      // suppressed here too, or it silently wins back over the already-gated `toml.projectId`
+      // (mirrors `diff.integration.test.ts`'s identically-named test).
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        ["[remotes.staging]", 'project_id = "abcdefghijklmnopqrst"', ""].join("\n"),
+      );
+      const s = setup(tmp.current, {
+        edgeStdout: EXPORT_JSON,
+        resolvedRef: "abcdefghijklmnopqrst",
+        // Simulates an ambient `SUPABASE_PROJECT_ID` scoped to an unrelated (e.g. local)
+        // project — must NOT win over the matched remote's own `project_id`.
+        projectId: Option.some("unrelated-env-project"),
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ declarative: Option.some(true), linked: Option.some(true) }));
+        expect(s.engineCalls[0]?.projectId).toBe("abcdefghijklmnopqrst");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect(
     "--declarative --use-pg-delta=false stays in migration mode (Go last-occurrence-wins)",
     () => {
@@ -776,7 +908,6 @@ describe("legacy db pull", () => {
         yield* legacyDbPull(
           flags({ declarative: Option.some(true), usePgDelta: Option.some(false) }),
         );
-        expect(s.provisionCalls[0]?.mode).toBe("diff");
         expect(s.historyUpserts.length).toBe(1);
       }).pipe(Effect.provide(s.layer));
     },
@@ -796,7 +927,6 @@ describe("legacy db pull", () => {
         yield* legacyDbPull(
           flags({ declarative: Option.some(false), usePgDelta: Option.some(true) }),
         );
-        expect(s.provisionCalls[0]?.mode).toBe("diff");
         expect(s.historyUpserts.length).toBe(1);
       }).pipe(Effect.provide(s.layer));
     },
@@ -809,8 +939,13 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ declarative: Option.some(true), usePgDelta: Option.some(true) }));
-      expect(s.provisionCalls).toHaveLength(0);
       expect(s.engineCalls[0]?.operation).toBe("export");
+      // Reaching the declarative write (rather than a migration file / history
+      // upsert) proves the declarative export path ran.
+      expect(
+        existsSync(join(tmp.current, "supabase", "database", "schemas", "public", "t.sql")),
+      ).toBe(true);
+      expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -842,8 +977,7 @@ describe("legacy db pull", () => {
         expect(s.dumpCalls).toHaveLength(1);
         expect(s.dumpCalls[0]?.env["EXTRA_SED"]).toBe("/^--/d");
         expect(s.dumpCalls[0]?.env["EXCLUDED_SCHEMAS"]).toContain("auth");
-        // The diff ran against the shadow with the migra engine (no schema filter).
-        expect(s.provisionCalls[0]?.mode).toBe("diff");
+        expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
         // The migration file holds the dump output followed by the appended diff.
         const dir = join(tmp.current, "supabase", "migrations");
         const file = readdirSync(dir).find((f) => f.endsWith("_remote_schema.sql"));
@@ -967,7 +1101,7 @@ describe("legacy db pull", () => {
       const error = yield* legacyDbPull(flags()).pipe(Effect.flip);
       expect(error.message).toContain("error running container: exit 1");
       // The diff pass never ran — the dump failure aborts before provisioning a shadow.
-      expect(s.provisionCalls).toHaveLength(0);
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1652,8 +1786,15 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("db pull --local diffs migrations against the selected local database", () => {
+  it.effect("db pull --local provisions a local-target shadow and uses the target override", () => {
+    // Go derives the shadow targetLocal from utils.IsLocalDatabase and substitutes
+    // the declarative contrib_regression target override (diff.go:190,196-197); a
+    // real declarative schema file makes the native `loadDeclaredSchemas` branch
+    // non-empty, so `legacyPrepareShadowSource` redirects the diff target to the
+    // shadow's own `contrib_regression` override database.
     seedMigration(tmp.current, "20240101000000");
+    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
       edgeStdout: "create table remote ();\n",
@@ -1661,7 +1802,7 @@ describe("legacy db pull", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ local: Option.some(true) }));
-      expect(s.provisionCalls[0]).toEqual({ mode: "diff", projectRef: undefined });
+      expect(s.connectedDatabases).toContain("contrib_regression");
       // A local target prints the local wording (Go's `IsLocalDatabase` branch in
       // `ConnectByConfigStream`, `internal/utils/connect.go:344-346`).
       expect(streamText(s.out, "stderr")).toContain("Connecting to local database...\n");
@@ -1772,17 +1913,98 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ linked: Option.some(true) }));
       expect(s.engineCalls[0]?.operation).toBe("diff");
-      // The resolved ref is forwarded through the strategy so the selected
-      // implementation can build the remote-merged shadow baseline.
-      expect(s.engineCalls[0]?.projectRef).toBe("abcdefghijklmnopqrst");
+      // pg-delta selection is ref-aware (read from the remote-merged `toml.pgDelta`)
+      // and is proven by `edgeStdout`'s envelope shape parsing successfully below.
+      expect(streamText(s.out, "stderr")).toMatch(
+        /Schema written to supabase[/\\]migrations[/\\]\d{14}_remote_schema\.sql\n/u,
+      );
     }).pipe(Effect.provide(s.layer));
   });
+
+  it.effect(
+    "caches the linked ref even when the merged config fails to load afterward (review: PRRT_kwDOErm0O86XLe6s)",
+    () => {
+      // Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the GLOBAL
+      // `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
+      // unconditionally after `rootCmd.ExecuteC()` regardless of whether the command itself
+      // errored — so a ref resolved via `LoadProjectRef` gets cached even when a LATER step
+      // (here, `legacyReadDbToml`'s own config-load) fails. `db.migrations.enabled = "notabool"`
+      // fails `legacyReadDbToml`'s own bool parse AFTER the ref is already known, exercising
+      // exactly that gap (`diff.integration.test.ts`'s identical fix/test).
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        ["[db.migrations]", 'enabled = "notabool"', ""].join("\n"),
+      );
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        yes: true,
+        resolvedRef: "abcdefghijklmnopqrst",
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbPull(flags({ linked: Option.some(true) })).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(s.cache.cached).toBe(true);
+        expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "a linked [remotes.<ref>] db.major_version override reaches the shadow's OWN container spec, not just toml",
+    () => {
+      // Go remote-merges the WHOLE config uniformly on the linked path (`LoadConfig` seeds
+      // `flags.ProjectRef` before every field read) — the shadow's container spec (image, JWT
+      // secret, root key, db.settings, service enabled-for-setup flags) must reflect the
+      // matched `[remotes.<ref>]` override too, not just the `toml` read used for
+      // pg-delta/schema_paths (mirrors `diff.integration.test.ts`'s identically-named test).
+      // `major_version` is a clean, directly-observable probe: PG <= 14 is the ONLY branch
+      // that emits a `--tmpfs` flag on the shadow's `docker create` argv
+      // (`legacyBuildShadowPostgresContainerSpec`) — a base config of 17 (>= 15, no tmpfs)
+      // overridden by a remote block's `major_version = 14` must flip that flag on.
+      seedMigration(tmp.current, "20240101000000");
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, {
+        remoteVersions: ["20240101000000"],
+        edgeStdout: "alter table x;\n",
+        yes: true,
+        resolvedRef: "abcdefghijklmnopqrst",
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags({ linked: Option.some(true) }));
+        const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
+        expect(createArgs).toContain("--tmpfs");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
 
   it.effect("retries the migration-style diff through the IPv4 pooler on an IPv6 error", () => {
     // Go wraps the linked diff with PoolerFallbackConfig and retries against the
     // IPv4 pooler when the direct host is unreachable over IPv6 from the container
     // (internal/db/pull/pull.go, diffRemoteSchema). The first edge run fails with
     // an IPv6 connectivity error; the retry succeeds and the migration is written.
+    //
+    // Go's `diffRemoteSchema` retries the WHOLE `diff.DiffDatabase` call on this
+    // path, not just the diff engine (`internal/db/diff/diff.go:211-217` runs
+    // `PrepareShadowSource` and prints "Creating shadow database..."/"Diffing
+    // schemas..." before ever touching the target connection) — so the pooler
+    // retry re-provisions and tears down a FRESH shadow and re-prints both
+    // banners, rather than reusing the first attempt's shadow. Assert that shape
+    // directly, not just that the migration eventually gets written.
     seedMigration(tmp.current, "20240101000000");
     const s = setup(tmp.current, {
       remoteVersions: ["20240101000000"],
@@ -1795,18 +2017,31 @@ describe("legacy db pull", () => {
       yield* legacyDbPull(
         flags({ linked: Option.some(true), diffEngine: Option.some("pg-delta") }),
       );
-      expect(streamText(s.out, "stderr")).toContain("does not support IPv6");
-      expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
+      const err = streamText(s.out, "stderr");
+      expect(err).toContain("does not support IPv6");
+      expect(err).toContain("Retrying via the IPv4 connection pooler");
       expect(s.engineCalls.filter((call) => call.operation === "diff")).toHaveLength(2);
-      expect(streamText(s.out, "stderr")).toMatch(
+      expect(err).toMatch(
         /Schema written to supabase[/\\]migrations[/\\]\d{14}_remote_schema\.sql\n/u,
       );
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(2);
+      expect(
+        s.shadowSpawned.filter((c) => c.args[0] === "rm" && c.args.includes("-f")),
+      ).toHaveLength(2);
+      expect(err.split("Creating shadow database...")).toHaveLength(3);
+      expect(err.split("Diffing schemas...")).toHaveLength(3);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("retries the declarative export through the IPv4 pooler on an IPv6 error", () => {
     // Go's pullDeclarativePgDelta retries DeclarativeExportPgDelta through the
-    // pooler in the same IPv6 scenario (internal/db/pull/pull.go).
+    // pooler in the same IPv6 scenario (internal/db/pull/pull.go), but unlike
+    // diffRemoteSchema/DiffDatabase it calls `diff.PrepareRawShadow` ONCE before
+    // the retry and only re-runs the export against the same shadow
+    // (`pull.go:92-115`) — a deliberate asymmetry in Go's own code, not a gap to
+    // close. Assert the single-shadow-reuse shape so a future change doesn't
+    // accidentally "fix" this path to double-provision like the migration-style
+    // diff path correctly does.
     const s = setup(tmp.current, {
       edgeFailFirstWith: "error exporting declarative schema:\nnetwork is unreachable",
       edgeStdout: EXPORT_JSON,
@@ -1819,6 +2054,7 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain(
         `Declarative schema written to ${join("supabase", "database")}\n`,
       );
+      expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));
   });
 

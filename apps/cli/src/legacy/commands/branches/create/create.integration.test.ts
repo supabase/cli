@@ -22,6 +22,7 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyBranchesCreateCommand, type LegacyBranchesCreateFlags } from "./create.command.ts";
 import { legacyBranchesCreate } from "./create.handler.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
@@ -72,7 +73,7 @@ const tempRoot = useLegacyTempWorkdir("supabase-branches-create-int-");
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
-  readonly response?: unknown;
+  readonly response?: CreatedBranch;
   readonly status?: number;
   readonly network?: "fail";
   readonly gated?: boolean;
@@ -219,6 +220,33 @@ describe("legacy branches create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("reports a missing name before contacting the API outside a git repository", () => {
+    const previousHead = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* legacyBranchesCreate(baseFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyBranchesBranchNameEmptyError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "user_actionable",
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
+      }
+      expect(api.requests).toHaveLength(0);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousHead === undefined) delete process.env["GITHUB_HEAD_REF"];
+          else process.env["GITHUB_HEAD_REF"] = previousHead;
+        }),
+      ),
+      Effect.provide(layer),
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // Git-branch auto-name confirmation — Go `create.go:17-28` routes it through
   // `PromptYesNo(title, true)` (`console.go:64-82`). `GITHUB_HEAD_REF` drives
@@ -325,37 +353,6 @@ describe("legacy branches create integration", () => {
       const success = out.messages.find((m) => m.type === "success");
       expect(success).toBeDefined();
       expect(success?.data).toMatchObject({ name: "feat-x" });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("accepts branch timestamps with an RFC3339 numeric offset", () => {
-    const { layer, out } = setup({
-      response: {
-        ...CREATED,
-        created_at: "2026-05-27T03:32:03+02:30",
-        updated_at: "2026-05-27T03:32:04+02:30",
-      },
-    });
-    return Effect.gen(function* () {
-      yield* legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") });
-      expect(out.stdoutText).toContain("2026-05-27");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("surfaces malformed successful responses as schema errors, not network errors", () => {
-    const { layer } = setup({
-      response: { ...CREATED, created_at: 42 },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(
-        legacyBranchesCreate({ ...baseFlags, name: Option.some("feat-x") }),
-      );
-      expect(Exit.isFailure(exit)).toBe(true);
-      if (Exit.isFailure(exit)) {
-        const json = JSON.stringify(exit.cause);
-        expect(json).toContain("LegacyApiResponseSchemaError");
-        expect(json).not.toContain("LegacyBranchesCreateNetworkError");
-      }
     }).pipe(Effect.provide(layer));
   });
 

@@ -1,3 +1,10 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Byte-faithful reproductions of the Go CLI's `-o yaml` / `-o toml` output for
  * **struct** payloads (CLI-1975).
@@ -1062,9 +1069,14 @@ function yamlBlockLiteral(s: string, indent: number): string {
  * on `snippets list -o toml`) or a `nil` element inside an inline array.
  */
 export class LegacyGoTomlEncodeError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyGoTomlEncodeError";
   constructor(message = "toml: cannot encode a map with non-string key type") {
     super(message);
     this.name = "LegacyGoTomlEncodeError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
   }
 }
 

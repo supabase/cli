@@ -1,12 +1,31 @@
 import { createHash } from "node:crypto";
 import { Clock, Effect, type FileSystem, Option, type Path } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
 
+import {
+  LegacyNetworkIdFlag,
+  legacyResolveDebugWithProjectEnv,
+} from "../../shared/legacy/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import type { LegacyBaselineTomlConfig } from "./legacy-db-config.toml-read.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import type { LegacyBaselineTomlConfig, LegacyDbTomlValues } from "./legacy-db-config.toml-read.ts";
 import { legacyResolveDbImage } from "./legacy-db-image.ts";
+import {
+  legacyBuildLocalDbContainerInputs,
+  type LegacyLocalDbContainerInputs,
+} from "./db-bootstrap/local-container-inputs.ts";
+import {
+  legacyCreateShadowDatabase,
+  legacyRemoveShadowDatabase,
+} from "./db-bootstrap/shadow-database.ts";
+import { legacyCompareUtf8Bytes } from "./legacy-glob.ts";
 import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "./legacy-pgdelta.ts";
-import { LegacyDeclarativeSeam } from "../commands/db/shared/legacy-pgdelta.seam.service.ts";
+import {
+  legacyPrepareShadowSource,
+  legacyShadowRunInputFromLocalContainerInputs,
+} from "../commands/db/shared/legacy-shadow-source.ts";
 
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported
@@ -18,10 +37,12 @@ import { LegacyDeclarativeSeam } from "../commands/db/shared/legacy-pgdelta.seam
  * Beyond the pure key/path builders, this file also owns the migrations-catalog
  * RESOLUTION path for both `db diff --from/--to migrations` and `db schema
  * declarative sync` ({@link legacyResolveMigrationsCatalogRef},
- * {@link legacyGetMigrationsCatalogRef}) — including shadow-database provisioning/
- * removal via `LegacyDeclarativeSeam` (Docker orchestration, unchanged from the Go
- * seam) and the "Creating shadow database..." stderr side effect the latter prints
- * on a cache miss. It is not a pure module.
+ * {@link legacyGetMigrationsCatalogRef}) — including NATIVE shadow-database
+ * provisioning/removal (CLI-1956, {@link exportViaShadowCatalog}, the same
+ * `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`/
+ * `legacyRemoveShadowDatabase` primitives `db diff`/`db pull` use for their own
+ * shadow — no seam/subprocess involved) and the "Creating shadow database..."
+ * stderr side effect the latter prints on a cache miss. It is not a pure module.
  */
 
 const CATALOG_PREFIX_PATTERN = /[^a-zA-Z0-9._-]+/g;
@@ -195,9 +216,11 @@ export function legacyPgDeltaTempPath(path: Path.Path, workdir: string): string 
 
 /**
  * Lists local migration file paths under `migrationsDir`. Mirrors Go's
- * `migration.ListLocalMigrations` (`pkg/migration/list.go:33`): entries are
- * sorted by name, directories skipped, a deprecated `<14-digit>_init.sql` first
- * migration (pre-2021-12-09) is skipped, and names must match `<digits>_*.sql`.
+ * `migration.ListLocalMigrations` (`pkg/migration/list.go:33`): entries are sorted by name — Go's
+ * `fs.ReadDir` byte-wise UTF-8 order, via {@link legacyCompareUtf8Bytes}, not JS's default
+ * UTF-16-code-unit `Array.prototype.sort()` — directories skipped, a deprecated
+ * `<14-digit>_init.sql` first migration (pre-2021-12-09) is skipped, and names must match
+ * `<digits>_*.sql`.
  *
  * Each skipped file emits a byte-exact stderr warning matching Go's
  * `fmt.Fprintf(os.Stderr, …)` (`list.go:45-53`) — same wording for both the
@@ -228,12 +251,32 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
     ),
   );
   if (names.length === 0) return [] as ReadonlyArray<string>;
-  const sorted = [...names].sort();
+  // Go's `fs.ReadDir` (`pkg/migration/list.go:34`) returns entries sorted byte-wise over each
+  // name's UTF-8 encoding — NOT JS's default `Array.prototype.sort()`, which compares UTF-16 code
+  // units and disagrees with byte/codepoint order for a supplementary-plane filename character
+  // alongside a BMP private-use one (see {@link legacyCompareUtf8Bytes}'s own doc comment,
+  // verified empirically there against both Go's `sort.Strings` and `os.ReadDir`). Left
+  // uncorrected, such a migrations directory would replay in a different order than Go, and a
+  // dependent migration could fail or produce a different shadow schema (review:
+  // PRRT_kwDOErm0O86W3OyD).
+  const sorted = [...names].sort(legacyCompareUtf8Bytes);
   const result: Array<string> = [];
   for (let index = 0; index < sorted.length; index++) {
     const name = sorted[index]!;
-    const stat = yield* fs.stat(path.join(migrationsDir, name)).pipe(Effect.option);
-    if (Option.isSome(stat) && stat.value.type === "Directory") continue;
+    const entryPath = path.join(migrationsDir, name);
+    // Go's `os.ReadDir`/`DirEntry.IsDir()` (`pkg/migration/list.go:34-43`) classifies a
+    // directory entry from its own type without following symlinks (verified empirically:
+    // `DirEntry.IsDir()` reports `false` for a `.sql` symlink whose target is a directory) —
+    // so a symlinked migration is never skipped as a directory in Go, only later, when
+    // `ApplyMigrations` fails to read it as a regular file. `fs.stat` below follows
+    // symlinks, so it would misclassify a symlink-to-directory as a plain directory and
+    // silently skip it here instead. Check `readLink` (which only succeeds for a symlink)
+    // first and skip the directory check entirely for symlinks, matching Go's `IsDir()`.
+    const isSymlink = Option.isSome(yield* fs.readLink(entryPath).pipe(Effect.option));
+    if (!isSymlink) {
+      const stat = yield* fs.stat(entryPath).pipe(Effect.option);
+      if (Option.isSome(stat) && stat.value.type === "Directory") continue;
+    }
     if (index === 0) {
       const init = INIT_SCHEMA_PATTERN.exec(name);
       if (init !== null && Number(init[1]) < INIT_SCHEMA_CUTOFF) {
@@ -251,7 +294,7 @@ export const legacyListLocalMigrations = Effect.fnUntraced(function* (
       );
       continue;
     }
-    result.push(path.join(migrationsDir, name));
+    result.push(entryPath);
   }
   return result as ReadonlyArray<string>;
 });
@@ -332,12 +375,30 @@ const parseCatalogTimestamp = (name: string): Option.Option<number> => {
   return Number.isInteger(ts) ? Option.some(ts) : Option.none();
 };
 
+/**
+ * Mirrors Go's `ensureTempDir` + `ReadDir` pairing (`pgcache/cache.go`,
+ * `declarative.go`): the temp dir's existence is already guaranteed by the
+ * `MkdirAll` that runs before every write into it, so Go's `ReadDir` only ever
+ * needs to tolerate a genuinely missing directory (a cache that was never
+ * written to) — every OTHER read failure (e.g. permission denied) propagates,
+ * same as {@link legacyListLocalMigrations} above. Swallowing every failure
+ * (as an earlier version of this did) let a real read error silently look like
+ * "no cached catalogs", which both bypasses catalog resolution's cache HIT and
+ * — for cleanup's caller — bypasses the retention limit indefinitely, since
+ * the caller's own warning path never fires without a propagated failure.
+ */
 const listJsonEntries = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, tempDir: string) {
-  const exists = yield* fs.exists(tempDir).pipe(Effect.orElseSucceed(() => false));
-  if (!exists) return [] as ReadonlyArray<string>;
-  return yield* fs
-    .readDirectory(tempDir)
-    .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+  return yield* fs.readDirectory(tempDir).pipe(
+    Effect.catchTag("PlatformError", (error) =>
+      error.reason._tag === "NotFound"
+        ? Effect.succeed([] as ReadonlyArray<string>)
+        : Effect.fail(
+            new LegacyMigrationsReadError({
+              message: `failed to read directory: ${error.message}`,
+            }),
+          ),
+    ),
+  );
 });
 
 /**
@@ -511,6 +572,20 @@ export const legacyWriteMigrationCatalogSnapshot = Effect.fnUntraced(function* (
  * `diff/pgdelta.go` `ExportCatalogPgDelta`) rather than porting a second copy,
  * so this can't reintroduce the `/workspace` mount bug `pgcache/cache.go` had
  * (supabase/cli#5921).
+ *
+ * The snapshot's timestamp is read from `Clock` HERE — after `legacyHashMigrations`
+ * and `legacyExportCatalogPgDelta` (the network round-trip) have both resolved,
+ * immediately before the write — never accepted as a caller-supplied parameter.
+ * This mirrors Go's own call order exactly: `TryCacheMigrationsCatalog`
+ * (`pgcache/cache.go:71-91`) resolves `hash` and `snapshot` FIRST, and only THEN
+ * calls `WriteMigrationCatalogSnapshot`, which itself reads `time.Now().UTC()`
+ * (`pgcache/cache.go:151-163`) — i.e. Go's clock read happens LAST, right before
+ * the file write, not before the export. A caller capturing the timestamp before
+ * calling this function (review CLI-1958) would race a concurrent cache write
+ * from another process: Go would order the two snapshots by real write-time, but
+ * the early-captured timestamp could sort the wrong one as "latest" during
+ * catalog resolution/retention (`legacyResolveMigrationCatalogPath`,
+ * `legacyCleanupOldMigrationCatalogs`).
  */
 export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -527,7 +602,6 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
     };
     readonly isLocal: boolean;
     readonly migrationsDir: string;
-    readonly nowMillis: number;
   },
 ) {
   if (!params.enabled) return;
@@ -537,6 +611,7 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
     targetRef: params.targetUrl,
     role: "postgres",
   });
+  const nowMillis = yield* Clock.currentTimeMillis;
   yield* legacyWriteMigrationCatalogSnapshot(
     fs,
     path,
@@ -544,55 +619,147 @@ export const legacyTryCacheMigrationsCatalog = Effect.fnUntraced(function* (
     prefix,
     hash,
     snapshot,
-    params.nowMillis,
+    nowMillis,
   );
+});
+
+/** The spawner + already-built local container inputs {@link exportViaShadowCatalog} needs. */
+interface LegacyShadowCatalogInputs {
+  readonly spawner: ChildProcessSpawnerType["Service"];
+  readonly localInputs: LegacyLocalDbContainerInputs;
+}
+
+/**
+ * Builds the {@link LegacyShadowCatalogInputs} {@link exportViaShadowCatalog} needs — the SAME
+ * second `@supabase/config` load (`legacyBuildLocalDbContainerInputs`) `db diff`/`db pull` run
+ * before their own "Creating shadow database..." banner (`diff.handler.ts`'s `localInputs`
+ * build, see that call site's doc comment). Split out from `exportViaShadowCatalog` itself so
+ * {@link legacyGetMigrationsCatalogRef} can run it BEFORE printing its own banner: this load can
+ * fail on its own (e.g. an enabled API TLS's unreadable cert/key files, which `toml` never
+ * reads), and Go's config loading — ALL of it, including this validation — runs once in the
+ * root `PersistentPreRunE`, strictly before `declarative.go`'s `createShadowContainer` ever
+ * prints "Creating shadow database..." (`declarative.go:490`). Building it as an implicit side
+ * effect of `exportViaShadowCatalog` (called only after the banner already printed) would
+ * surface that failure AFTER the banner instead, unlike Go. {@link legacyResolveMigrationsCatalogRef}
+ * has no such banner, so calling this immediately before `exportViaShadowCatalog` on its own
+ * cache-miss path is harmless there too — it only ever changes when a pre-existing,
+ * unconditional build runs relative to a print that never happens on that path.
+ */
+const legacyBuildShadowCatalogInputs = Effect.fnUntraced(function* (
+  ctx: LegacyPgDeltaContext,
+  toml: LegacyDbTomlValues,
+  provisionParams: { readonly projectRef?: string },
+) {
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const runtimeInfo = yield* RuntimeInfo;
+  const networkIdFlag = yield* LegacyNetworkIdFlag;
+  // Go's equivalent stderr writer for the shadow's one-shot setup jobs is
+  // `utils.GetDebugLogger()` = `viper.GetBool("DEBUG")` (`internal/utils/logger.go:11`),
+  // which also honors `SUPABASE_DEBUG` via `AutomaticEnv` — NOT the bare `--debug` pflag
+  // value. `legacyResolveDebugWithProjectEnv` reproduces that (plus the project `.env`
+  // Go's `loadNestedEnv` has already `os.Setenv`'d into the process by this point).
+  const debug = yield* legacyResolveDebugWithProjectEnv(toml.projectEnv);
+  const localInputs = yield* legacyBuildLocalDbContainerInputs(
+    spawner,
+    ctx.cwd,
+    networkIdFlag,
+    runtimeInfo.platform,
+    debug,
+    provisionParams.projectRef,
+    toml.remoteOverrideKeys,
+  );
+  return { spawner, localInputs } satisfies LegacyShadowCatalogInputs;
 });
 
 /**
  * Shared shadow-provision → pg-delta export → persist → cleanup mechanics behind
  * both {@link legacyResolveMigrationsCatalogRef} and {@link legacyGetMigrationsCatalogRef}
- * on a cache miss: provisions the shadow via the EXISTING
- * `LegacyDeclarativeSeam.provisionShadow` (Go's `db __shadow --mode diff`, unchanged
- * / out of scope for CLI-1959 — `CreateShadowDatabase` + `MigrateShadowDatabase` are
- * the exact same Go primitives both callers' Go counterparts call directly,
- * `internal/db/diff/shadow.go:37-53` with `targetLocal=false` skipping its only
- * extra branch), exports its catalog via the already-native
- * {@link legacyExportCatalogPgDelta} (the same edge-runtime script Go's own
- * `ExportCatalogPgDelta` runs), hands the snapshot to `persist` to decide where it
- * lands on disk, then ALWAYS removes the shadow container (`Effect.ensuring`,
- * success or failure) before returning. The persisted path is made relative to
- * `ctx.cwd` before returning: every caller feeds this ref into pg-delta's
- * edge-runtime scripts as SOURCE/TARGET, which prefix a bare (non-postgres://) ref
- * with `/workspace/` — matching the container bind `${ctx.cwd}:/workspace`
- * (`legacyPgDeltaContainerRef`, `legacy-pgdelta.ts:100-103`). Go's equivalent
- * (`pgcache.WriteMigrationCatalogSnapshot`) is only ever built from `utils.TempDir`,
- * a workdir-RELATIVE constant (Go chdirs into the workdir first), so the ref it
- * returns is relative too; return the same shape here rather than the absolute host
- * path `persist` builds internally. The two public functions differ only in their
- * cache-decision and `persist`'s cache-write logic, not in this mechanics.
+ * on a cache miss. Provisions the shadow via the SAME native primitives `db
+ * diff`/`db pull` use for their own diff-source shadow (CLI-1956,
+ * `legacyCreateShadowDatabase` + `legacyPrepareShadowSource` +
+ * `legacyRemoveShadowDatabase`, `commands/db/shared/legacy-shadow-source.ts`) —
+ * NOT the retired `db __shadow` hidden CLI subcommand, which was only ever a
+ * TS-facing IPC shim over these same Go functions. This is in fact TRUER Go
+ * parity than the shim it replaces: Go's own two callers of this mechanics —
+ * `resolveMigrationsCatalogRef` (`apps/cli-go/internal/db/diff/explicit.go:88-126`)
+ * and `getMigrationsCatalogRef`'s `createShadow`/`createShadowContainer`
+ * (`apps/cli-go/internal/db/declarative/declarative.go:368-430,487-506`) — both
+ * call `diff.CreateShadowDatabase` + `diff.MigrateShadowDatabase` (via
+ * `start.WaitForHealthyService`) DIRECTLY, in-process, never through a CLI
+ * subcommand. `legacyPrepareShadowSource` is called with `targetLocal: false` +
+ * `usePgDelta: false`, which skips its ENTIRE declarative-schema-override branch
+ * (Go's local-target `PrepareShadowSource`/`shadow.go:37-91` branch) — neither Go
+ * function above ever takes that branch either, since neither has a "target" at
+ * all; they only ever provision + migrate + export.
+ *
+ * Exports the shadow's catalog via the already-native {@link legacyExportCatalogPgDelta}
+ * (the same edge-runtime script Go's own `ExportCatalogPgDelta` runs), hands the
+ * snapshot to `persist` to decide where it lands on disk, then removes the shadow
+ * (`Effect.acquireUseRelease`'s release phase, once the `use` phase below has run —
+ * success or failure alike) — matching Go's `defer utils.DockerRemove(shadow)`
+ * immediately after creation, and `diff.handler.ts`/`pull.handler.ts`'s own
+ * `acquire`=create/`use`=prepare+diff/`release`=remove shape for the exact same
+ * interruptibility reason (see `legacyPrepareShadowSource`'s own doc comment:
+ * creation runs inside `acquireUseRelease`'s uninterruptible `acquire`, while the
+ * health-wait/migrate sequence stays in the interruptible `use` phase, so a SIGINT
+ * during either can still land while the shadow is still reliably torn down). This
+ * is NOT an unconditional guarantee, though — see `legacyCreateShadowDatabase`'s own
+ * doc comment (`shadow-database.ts`) for the still-present, deliberate-Go-parity
+ * leak window when `acquire` itself (container creation) fails partway through.
+ *
+ * The persisted path is made relative to `ctx.cwd` before returning: every caller
+ * feeds this ref into pg-delta's edge-runtime scripts as SOURCE/TARGET, which
+ * prefix a bare (non-postgres://) ref with `/workspace/` — matching the container
+ * bind `${ctx.cwd}:/workspace` (`legacyPgDeltaContainerRef`, `legacy-pgdelta.ts:
+ * 100-103`). Go's equivalent (`pgcache.WriteMigrationCatalogSnapshot`) is only
+ * ever built from `utils.TempDir`, a workdir-RELATIVE constant (Go chdirs into the
+ * workdir first), so the ref it returns is relative too; return the same shape
+ * here rather than the absolute host path `persist` builds internally. The two
+ * public functions differ only in their cache-decision and `persist`'s
+ * cache-write logic, not in this mechanics.
+ *
+ * `toml` is the caller's own already-loaded/remote-merged `config.toml` read
+ * (`legacyReadDbToml`'s result) — used, together with the caller-supplied
+ * {@link LegacyShadowCatalogInputs} (built by {@link legacyBuildShadowCatalogInputs}),
+ * to derive the shadow's own container spec (image, JWT secret, root key,
+ * `db.settings`, service enabled-for-setup flags) exactly like `db diff`/`db pull`
+ * do for their own shadow. The build is NOT performed in here — see
+ * {@link legacyBuildShadowCatalogInputs}'s own doc comment for why a caller that
+ * prints a "Creating shadow database..." banner first must build it BEFORE that
+ * print, not have it built implicitly as a side effect of calling this function.
  */
 const exportViaShadowCatalog = <E, R>(
+  fs: FileSystem.FileSystem,
   path: Path.Path,
   ctx: LegacyPgDeltaContext,
-  provisionParams: { readonly projectRef?: string },
+  toml: LegacyDbTomlValues,
+  built: LegacyShadowCatalogInputs,
   persist: (snapshot: string) => Effect.Effect<string, E, R>,
 ) =>
   Effect.gen(function* () {
-    const seam = yield* LegacyDeclarativeSeam;
-    const shadow = yield* seam.provisionShadow({
-      mode: "diff",
-      schema: [],
-      ...(provisionParams.projectRef !== undefined
-        ? { projectRef: provisionParams.projectRef }
-        : {}),
-    });
-    const written = yield* Effect.gen(function* () {
-      const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
-        targetRef: shadow.sourceUrl,
-        role: "postgres",
-      });
-      return yield* persist(snapshot);
-    }).pipe(Effect.ensuring(seam.removeShadowContainer(shadow.container)));
+    const { spawner, localInputs } = built;
+    const resolvedImage = yield* localInputs.resolvePostgresImage;
+    const shadowInput = {
+      ...legacyShadowRunInputFromLocalContainerInputs(localInputs, resolvedImage, toml, fs, path),
+      targetLocal: false,
+      usePgDelta: false,
+      schemaPaths: toml.schemaPathPatterns,
+      pgDelta: toml.pgDelta,
+      ctx,
+    };
+    const written = yield* Effect.acquireUseRelease(
+      legacyCreateShadowDatabase(spawner, shadowInput),
+      (handle) =>
+        Effect.gen(function* () {
+          const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+          const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
+            targetRef: shadow.sourceUrl,
+            role: "postgres",
+          });
+          return yield* persist(snapshot);
+        }),
+      (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+    );
     return path.relative(ctx.cwd, written);
   });
 
@@ -614,12 +781,16 @@ const exportViaShadowCatalog = <E, R>(
  * On a cache miss, the shadow-provision/export/persist/cleanup mechanics are
  * shared with {@link legacyGetMigrationsCatalogRef} via {@link exportViaShadowCatalog}
  * — see its doc comment. The catalog is cached with
- * {@link legacyWriteMigrationCatalogSnapshot}.
+ * {@link legacyWriteMigrationCatalogSnapshot}. `toml` is the caller's own
+ * already-loaded/remote-merged `config.toml` read, threaded through to
+ * {@link exportViaShadowCatalog} for the shadow's own container spec (CLI-1956) —
+ * see that function's doc comment.
  */
 export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   ctx: LegacyPgDeltaContext,
+  toml: LegacyDbTomlValues,
   params: { readonly projectRef?: string },
 ) {
   const tempDir = legacyPgDeltaTempPath(path, ctx.cwd);
@@ -628,7 +799,8 @@ export const legacyResolveMigrationsCatalogRef = Effect.fnUntraced(function* (
   const cached = yield* legacyResolveMigrationCatalogPath(fs, path, tempDir, hash, "local");
   if (Option.isSome(cached)) return path.relative(ctx.cwd, cached.value);
 
-  return yield* exportViaShadowCatalog(path, ctx, params, (snapshot) =>
+  const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
+  return yield* exportViaShadowCatalog(fs, path, ctx, toml, built, (snapshot) =>
     Effect.gen(function* () {
       const timestamp = yield* Clock.currentTimeMillis;
       return yield* legacyWriteMigrationCatalogSnapshot(
@@ -663,12 +835,16 @@ const NO_CACHE_MIGRATIONS_CATALOG_NAME = "catalog-nocache-migrations.json";
  *
  * On a cache miss, the shadow-provision/export/persist/cleanup mechanics are
  * shared with {@link legacyResolveMigrationsCatalogRef} via
- * {@link exportViaShadowCatalog} — see its doc comment.
+ * {@link exportViaShadowCatalog} — see its doc comment. `toml` is the caller's
+ * own already-loaded/remote-merged `config.toml` read, threaded through for the
+ * shadow's own container spec (CLI-1956) — distinct from `setupInputs`, which is
+ * only the cache-key/baseline-setup subset.
  */
 export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   ctx: LegacyPgDeltaContext,
+  toml: LegacyDbTomlValues,
   setupInputs: LegacySetupInputs,
   params: { readonly noCache: boolean; readonly projectRef?: string },
 ) {
@@ -699,8 +875,16 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
     if (Option.isSome(cached)) return path.relative(ctx.cwd, cached.value);
   }
 
+  // Built BEFORE the banner below, not after: this is a SECOND `@supabase/config` load
+  // (`legacyBuildLocalDbContainerInputs`) whose failure (e.g. an enabled API TLS's
+  // unreadable cert/key files) must surface before "Creating shadow database..." prints,
+  // matching Go's config loading (all of it) running once in the root `PersistentPreRunE`,
+  // strictly before `declarative.go`'s `createShadowContainer` ever prints that banner
+  // (`declarative.go:490`) — see `legacyBuildShadowCatalogInputs`'s own doc comment, and
+  // `diff.handler.ts`'s identical `localInputs` build for the same reasoning.
+  const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
   yield* output.raw("Creating shadow database...\n", "stderr");
-  return yield* exportViaShadowCatalog(path, ctx, params, (snapshot) =>
+  return yield* exportViaShadowCatalog(fs, path, ctx, toml, built, (snapshot) =>
     Effect.gen(function* () {
       if (params.noCache) {
         yield* fs.makeDirectory(tempDir, { recursive: true }).pipe(Effect.ignore);

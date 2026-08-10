@@ -53,6 +53,11 @@ import type * as HttpClient from "effect/unstable/http/HttpClient";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import type { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
 import { legacyAqua } from "../legacy-colors.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import type { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
@@ -101,15 +106,19 @@ type Spawner = ChildProcessSpawner["Service"];
  * has) — Go refuses outright rather than guessing which the caller wants. Raised BEFORE any
  * container is created (no `docker create`/`docker start` happens on this path). Only ever
  * reachable via `db start` (the sole caller that ever sets `postgresSpec.fromBackup`).
- * Not exported outside this module — callers only ever observe it through the
- * {@link LegacyStartDatabaseError} union and its `_tag`, never by importing the class.
+ * Exported only so the exhaustive actionability guard can inspect its declaration;
+ * runtime callers observe it through {@link LegacyStartDatabaseError}.
  */
-class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
+export class LegacyStartBackupVolumeExistsError extends Data.TaggedError(
   "LegacyStartBackupVolumeExistsError",
 )<{
   readonly message: string;
   readonly suggestion?: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.stopStack;
+  }
+}
 
 /** Every failure {@link legacyStartDatabase} itself can produce, independent of the caller's own `E`. */
 export type LegacyStartDatabaseError =

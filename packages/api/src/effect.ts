@@ -11,11 +11,15 @@ import {
   versionedEffectOperations,
 } from "./generated/effect-client.ts";
 
-export type { SupabaseApiError, SupabaseApiRetryOptions } from "./internal/client.ts";
+export type {
+  SupabaseApiError,
+  SupabaseApiInputErrorSource,
+  SupabaseApiRetryOptions,
+} from "./internal/client.ts";
 export {
-  isSupabaseApiResponseSchemaError,
+  markSupabaseApiInputErrorAsUserInput,
   SupabaseApiConfigError,
-  SupabaseApiResponseSchemaError,
+  SupabaseApiInputError,
 } from "./internal/client.ts";
 export type { SupabaseApiClientOptions, SupabaseApiConfig } from "./internal/client.ts";
 export { apiConfigLayer, DEFAULT_SUPABASE_API_URL } from "./config/api-config.layer.ts";

@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"testing"
-	stdfs "testing/fstest"
 
 	"github.com/docker/docker/api/types"
 	"github.com/docker/docker/api/types/container"
@@ -21,18 +20,8 @@ import (
 	"github.com/supabase/cli/internal/testing/helper"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/pkg/cast"
-	"github.com/supabase/cli/pkg/config"
 	"github.com/supabase/cli/pkg/pgtest"
 )
-
-func mockTransactionalStatement(conn *pgtest.MockConn, statement, reply string) {
-	conn.Query("BEGIN").
-		Reply("BEGIN").
-		Query(statement).
-		Reply(reply).
-		Query("COMMIT").
-		Reply("COMMIT")
-}
 
 func TestInitBranch(t *testing.T) {
 	t.Run("throws error on permission denied", func(t *testing.T) {
@@ -99,8 +88,9 @@ func TestStartDatabase(t *testing.T) {
 		// the default Data API GRANTs before seeding roles.
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		helper.MockApiPrivilegesRevoke(conn)
-		mockTransactionalStatement(conn, roles, "CREATE ROLE")
+		helper.MockApiPrivilegesRevoke(conn).
+			Query(roles).
+			Reply("CREATE ROLE")
 		// Run test
 		err := StartDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -261,10 +251,13 @@ func TestSetupDatabase(t *testing.T) {
 		// default Data API GRANTs (the May 30 2026 flip) between initial schema and roles.sql
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		mockTransactionalStatement(conn, utils.GlobalsSql, "CREATE SCHEMA")
-		mockTransactionalStatement(conn, utils.InitialSchemaPg14Sql, "CREATE SCHEMA")
-		helper.MockApiPrivilegesRevoke(conn)
-		mockTransactionalStatement(conn, roles, "CREATE ROLE")
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn).
+			Query(roles).
+			Reply("CREATE ROLE")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -290,9 +283,12 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup mock postgres: explicit true opts into the legacy behaviour, so no revoke SQL
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		mockTransactionalStatement(conn, utils.GlobalsSql, "CREATE SCHEMA")
-		mockTransactionalStatement(conn, utils.InitialSchemaPg14Sql, "CREATE SCHEMA")
-		mockTransactionalStatement(conn, roles, "CREATE ROLE")
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA").
+			Query(roles).
+			Reply("CREATE ROLE")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -318,10 +314,13 @@ func TestSetupDatabase(t *testing.T) {
 		// Setup mock postgres: the revoke SQL must execute between the initial schema and roles.sql
 		conn := pgtest.NewConn()
 		defer conn.Close(t)
-		mockTransactionalStatement(conn, utils.GlobalsSql, "CREATE SCHEMA")
-		mockTransactionalStatement(conn, utils.InitialSchemaPg14Sql, "CREATE SCHEMA")
-		helper.MockApiPrivilegesRevoke(conn)
-		mockTransactionalStatement(conn, roles, "CREATE ROLE")
+		conn.Query(utils.GlobalsSql).
+			Reply("CREATE SCHEMA").
+			Query(utils.InitialSchemaPg14Sql).
+			Reply("CREATE SCHEMA")
+		helper.MockApiPrivilegesRevoke(conn).
+			Query(roles).
+			Reply("CREATE ROLE")
 		// Run test
 		err := SetupLocalDatabase(context.Background(), "", fsys, io.Discard, conn.Intercept)
 		// Check error
@@ -380,84 +379,6 @@ func TestSetupDatabase(t *testing.T) {
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 }
-
-func TestApplyDatabaseWebhooks(t *testing.T) {
-	originalConfig := utils.Config
-	t.Cleanup(func() { utils.Config = originalConfig })
-
-	t.Run("does not install pg_net merely because Edge Runtime is enabled", func(t *testing.T) {
-		cfg := config.NewConfig()
-		cfg.EdgeRuntime.Enabled = true
-		utils.Config = cfg
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-
-		require.NoError(t, ApplyDatabaseWebhooks(context.Background(), conn.MockClient(t)))
-	})
-
-	t.Run("installs pg_net when Database Webhooks is enabled even without Edge Runtime", func(t *testing.T) {
-		cfg := config.NewConfig()
-		require.NoError(t, cfg.Load("config.toml", stdfs.MapFS{
-			"config.toml": &stdfs.MapFile{Data: []byte("[experimental.webhooks]\nenabled = true\n")},
-		}))
-		cfg.EdgeRuntime.Enabled = false
-		utils.Config = cfg
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		mockTransactionalStatement(conn, "create extension if not exists pg_net schema extensions", "CREATE EXTENSION")
-
-		require.NoError(t, ApplyDatabaseWebhooks(context.Background(), conn.MockClient(t)))
-	})
-}
-
-func TestSetupDatabaseUserExtensionActivation(t *testing.T) {
-	originalConfig := utils.Config
-	t.Cleanup(func() { utils.Config = originalConfig })
-
-	newWebhookConfig := func(t *testing.T) {
-		t.Helper()
-		cfg := config.NewConfig()
-		require.NoError(t, cfg.Load("config.toml", stdfs.MapFS{
-			"config.toml": &stdfs.MapFile{Data: []byte("[experimental.webhooks]\nenabled = true\n")},
-		}))
-		cfg.Db.MajorVersion = 17
-		cfg.Realtime.Enabled = false
-		cfg.Storage.Enabled = false
-		cfg.Auth.Enabled = false
-		utils.Config = cfg
-	}
-
-	t.Run("installs pg_net by default when Database Webhooks is enabled", func(t *testing.T) {
-		newWebhookConfig(t)
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		mockTransactionalStatement(conn, "create extension if not exists pg_net schema extensions", "CREATE EXTENSION")
-		helper.MockApiPrivilegesRevoke(conn)
-
-		err := SetupDatabase(context.Background(), conn.MockClient(t), "postgres-host", io.Discard, afero.NewMemMapFs())
-
-		require.NoError(t, err)
-	})
-
-	t.Run("can leave user extension activation to declarative SQL", func(t *testing.T) {
-		newWebhookConfig(t)
-		conn := pgtest.NewConn()
-		defer conn.Close(t)
-		helper.MockApiPrivilegesRevoke(conn)
-
-		err := SetupDatabase(
-			context.Background(),
-			conn.MockClient(t),
-			"postgres-host",
-			io.Discard,
-			afero.NewMemMapFs(),
-			WithoutUserExtensionActivation(),
-		)
-
-		require.NoError(t, err)
-	})
-}
-
 func TestStartDatabaseWithCustomSettings(t *testing.T) {
 	t.Run("starts database with custom MaxConnections", func(t *testing.T) {
 		// Setup
