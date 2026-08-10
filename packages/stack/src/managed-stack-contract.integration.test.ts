@@ -23,7 +23,11 @@ describe("managed stack acceptance contract", () => {
     if (scenario === undefined) {
       throw new Error("identity.return-to-branch-reuses-stack fixture is required");
     }
-    if (scenario.expected.selection === undefined || scenario.expected.output.json === undefined) {
+    if (
+      scenario.expected.selection === undefined ||
+      scenario.expected.output.human === undefined ||
+      scenario.expected.output.json === undefined
+    ) {
       throw new Error("identity.return-to-branch-reuses-stack must select and project a stack");
     }
 
@@ -70,6 +74,23 @@ describe("managed stack acceptance contract", () => {
     };
     expect(validateManagedStackContractFixtures([divergentProjection])).toContain(
       `${scenario.id}: projected outcome disagrees with the managed result`,
+    );
+
+    const divergentHumanProjection = {
+      ...scenario,
+      expected: {
+        ...scenario.expected,
+        output: {
+          ...scenario.expected.output,
+          human: {
+            ...scenario.expected.output.human,
+            fields: { ...scenario.expected.output.human.fields, stackId: "stack-other" },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([divergentHumanProjection])).toContain(
+      `${scenario.id}: projected stackId disagrees with the managed result`,
     );
 
     const existingTarget: ManagedStackContractFact = {
@@ -489,6 +510,97 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([runtimeMetadataOnlyDelete])).toContain(
       `${deleteScenario.id}: delete runtime effect requires a matching state write`,
     );
+
+    const deleteWithoutStop = {
+      ...deleteScenario,
+      expected: {
+        ...deleteScenario.expected,
+        runtimeEffects: deleteScenario.expected.runtimeEffects.filter(
+          ({ operation }) => operation !== "stop",
+        ),
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([deleteWithoutStop])).toContain(
+      `${deleteScenario.id}: runtime-state delete requires a matching runtime effect`,
+    );
+
+    const stickyReuseScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "ports.sticky-ports-reuse-on-return",
+    );
+    if (stickyReuseScenario === undefined) {
+      throw new Error("ports.sticky-ports-reuse-on-return fixture is required");
+    }
+    const unboundStickyReuse = {
+      ...stickyReuseScenario,
+      expected: { ...stickyReuseScenario.expected, selection: undefined },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unboundStickyReuse])).toContain(
+      `${stickyReuseScenario.id}: sticky port reuse requires a selected target`,
+    );
+
+    const repositoryContractScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "api-boundary.repository-contract-is-storage-agnostic",
+      );
+    if (
+      repositoryContractScenario === undefined ||
+      repositoryContractScenario.when.interface !== "managed-api"
+    ) {
+      throw new Error("api-boundary.repository-contract-is-storage-agnostic fixture is required");
+    }
+    const repositoryApiOutput = repositoryContractScenario.expected.output.api;
+    if (repositoryApiOutput === undefined) {
+      throw new Error("repository contract API output is required");
+    }
+    const unknownRepositoryReference = {
+      ...repositoryContractScenario,
+      when: {
+        ...repositoryContractScenario.when,
+        input: { ...repositoryContractScenario.when.input, scenarioId: "identity.unknown" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unknownRepositoryReference])).toContain(
+      `${repositoryContractScenario.id}: repository contract must reference a declared scenario`,
+    );
+
+    const staleRepositoryOutcome = {
+      ...repositoryContractScenario,
+      expected: {
+        ...repositoryContractScenario.expected,
+        output: {
+          ...repositoryContractScenario.expected.output,
+          api: {
+            ...repositoryApiOutput,
+            "in-memory": { outcome: "create", stackId: "stack-main-default" },
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([scenario, staleRepositoryOutcome])).toContain(
+      `${repositoryContractScenario.id}: repository in-memory outcome must match ${scenario.id}`,
+    );
+
+    const invalidNameScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.invalid-stack-name-uppercase-underscore-fails",
+      );
+    const invalidNameHumanOutput = invalidNameScenario?.expected.output.human;
+    if (invalidNameScenario === undefined || invalidNameHumanOutput === undefined) {
+      throw new Error("invalid stack name fixture with human recovery is required");
+    }
+    const divergentHumanRecovery = {
+      ...invalidNameScenario,
+      expected: {
+        ...invalidNameScenario.expected,
+        output: {
+          ...invalidNameScenario.expected.output,
+          human: { ...invalidNameHumanOutput, recovery: ["Try again"] },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([divergentHumanRecovery])).toContain(
+      `${invalidNameScenario.id}: human recovery disagrees with the managed result`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
@@ -517,7 +629,9 @@ describe("managed stack acceptance contract", () => {
         "identity.fresh-clone-creates-project-and-checkout",
         "identity.fresh-clone-ignores-tracked-marker",
         "identity.inaccessible-previous-path-fails",
-        "identity.invalid-stack-name-fails",
+        "identity.invalid-stack-name-leading-hyphen-fails",
+        "identity.invalid-stack-name-repeated-dot-fails",
+        "identity.invalid-stack-name-uppercase-underscore-fails",
         "identity.linked-worktrees-share-project-not-checkout",
         "identity.manual-ref-replacement-orphans-context",
         "identity.missing-previous-path-rebinds-checkout",
@@ -536,6 +650,32 @@ describe("managed stack acceptance contract", () => {
         "identity.bare-repository-linked-worktrees-share-project",
       ].sort(),
     );
+  });
+
+  it("executes every invalid stack name through the public CLI action", () => {
+    const invalidNameScenarios = managedStackContractFixtures.filter(({ id }) =>
+      id.startsWith("identity.invalid-stack-name-"),
+    );
+
+    expect(
+      invalidNameScenarios.map((invalidNameScenario) => ({
+        action:
+          invalidNameScenario.when.interface === "cli" ? invalidNameScenario.when.argv : undefined,
+        names: invalidNameScenario.given.flatMap((fact) =>
+          fact.kind === "stack-names" ? fact.names : [],
+        ),
+      })),
+    ).toEqual([
+      {
+        action: ["start", "--experimental", "--stack", "Feature_A"],
+        names: ["Feature_A"],
+      },
+      { action: ["start", "--experimental", "--stack", "-review"], names: ["-review"] },
+      {
+        action: ["start", "--experimental", "--stack", "review..two"],
+        names: ["review..two"],
+      },
+    ]);
   });
 
   it("covers exact declarative ports and sticky automatic allocation", () => {

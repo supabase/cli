@@ -398,6 +398,35 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (
+      scenario.when.interface === "managed-api" &&
+      scenario.when.method === "runRepositoryContract"
+    ) {
+      const referencedId = scenario.when.input.scenarioId;
+      const referencedScenario =
+        typeof referencedId === "string" ? fixturesById.get(referencedId) : undefined;
+      if (referencedScenario === undefined) {
+        errors.push(`${scenario.id}: repository contract must reference a declared scenario`);
+      } else {
+        const adapters = scenario.when.input.adapters;
+        if (!Array.isArray(adapters) || !adapters.every((adapter) => typeof adapter === "string")) {
+          errors.push(`${scenario.id}: repository contract must declare its adapters`);
+        } else {
+          for (const adapter of adapters) {
+            const adapterResult = output.api?.[adapter];
+            if (
+              !isManagedStackContractRecord(adapterResult) ||
+              adapterResult.outcome !== referencedScenario.expected.outcome
+            ) {
+              errors.push(
+                `${scenario.id}: repository ${adapter} outcome must match ${referencedScenario.id}`,
+              );
+            }
+          }
+        }
+      }
+    }
+
     if (scenario.expected.outcome === "error") {
       if (scenario.expected.error === undefined) {
         errors.push(`${scenario.id}: error outcome requires structured error metadata`);
@@ -721,6 +750,18 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
+    if (scenario.expected.output.json?.sticky === true) {
+      if (selection === undefined) {
+        errors.push(`${scenario.id}: sticky port reuse requires a selected target`);
+      } else if (
+        !scenario.given.some(
+          (fact) => fact.kind === "port-assignment" && fact.stackId === selection.stackId,
+        )
+      ) {
+        errors.push(`${scenario.id}: reused sticky port must belong to the selected target`);
+      }
+    }
+
     if (scenario.expected.error?.code === "runtime_conflicts_with_persisted_stack") {
       if (selection === undefined) {
         errors.push(`${scenario.id}: persisted runtime conflict requires a selected target`);
@@ -868,7 +909,8 @@ export const validateManagedStackContractFixtures = (
       const requiredRuntimeOperation =
         write.target === "runtime-state" && write.operation === "start"
           ? "start"
-          : write.target === "runtime-state" && write.operation === "update"
+          : write.target === "runtime-state" &&
+              (write.operation === "delete" || write.operation === "update")
             ? "stop"
             : write.target === "managed-state" && write.operation === "copy"
               ? "copy"
@@ -917,6 +959,33 @@ export const validateManagedStackContractFixtures = (
       checkProjection(scenario.expected.output.api, "contextId", selection.contextId);
       checkProjection(scenario.expected.output.api, "stackId", selection.stackId);
       checkProjection(scenario.expected.output.api, "stackName", selection.stackName);
+      checkProjection(scenario.expected.output.human?.fields, "projectId", selection.projectId);
+      checkProjection(scenario.expected.output.human?.fields, "checkoutId", selection.checkoutId);
+      checkProjection(scenario.expected.output.human?.fields, "contextId", selection.contextId);
+      checkProjection(scenario.expected.output.human?.fields, "stackId", selection.stackId);
+      checkProjection(scenario.expected.output.human?.fields, "stack", selection.stackName);
+      checkProjection(scenario.expected.output.human?.fields, "stackName", selection.stackName);
+
+      const selectedBranch = scenario.given.find(
+        (fact) =>
+          fact.kind === "branch" && fact.checkedOut && fact.contextId === selection.contextId,
+      );
+      if (selectedBranch?.kind === "branch") {
+        checkProjection(scenario.expected.output.human?.fields, "branch", selectedBranch.name);
+      }
+    }
+
+    const expectedRecovery =
+      scenario.expected.error?.recovery ?? scenario.expected.warning?.recovery;
+    const humanOutput = scenario.expected.output.human;
+    if (
+      humanOutput !== undefined &&
+      expectedRecovery !== undefined &&
+      (humanOutput.recovery === undefined ||
+        humanOutput.recovery.length !== expectedRecovery.length ||
+        humanOutput.recovery.some((step, index) => step !== expectedRecovery[index]))
+    ) {
+      errors.push(`${scenario.id}: human recovery disagrees with the managed result`);
     }
   }
 
@@ -959,6 +1028,39 @@ const branchHistoryFixture = (
     writes: [{ target: "runtime-state", operation: "start", id: "stack-feat-default" }],
     runtimeEffects: [{ operation: "start", stackId: "stack-feat-default" }],
     output: { api: { outcome: "reuse", contextId: "context-feat", stackId: "stack-feat-default" } },
+  },
+});
+
+const invalidStackNameFixture = (
+  label: "leading-hyphen" | "repeated-dot" | "uppercase-underscore",
+  stackName: string,
+): ManagedStackContractScenario => ({
+  id: `identity.invalid-stack-name-${label}-fails`,
+  title: `The invalid stack name ${stackName} fails before registration`,
+  area: "identity",
+  given: [{ kind: "stack-names", names: [stackName] }],
+  when: {
+    interface: "cli",
+    argv: ["start", "--experimental", "--stack", stackName],
+    cwd: "checkout-a",
+  },
+  expected: {
+    outcome: "error",
+    error: {
+      code: "invalid_stack_name",
+      message: `${stackName} is not a lowercase DNS-label name`,
+      recovery: ["Use default or a lowercase DNS-label name such as feature-a"],
+    },
+    writes: [],
+    runtimeEffects: [],
+    output: {
+      human: {
+        summary: `Invalid stack name: ${stackName}`,
+        fields: { stack: stackName },
+        recovery: ["Use default or a lowercase DNS-label name such as feature-a"],
+      },
+      json: { outcome: "error", code: "invalid_stack_name", stack_name: stackName },
+    },
   },
 });
 
@@ -1881,35 +1983,9 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       },
     },
   },
-  {
-    id: "identity.invalid-stack-name-fails",
-    title: "Invalid stack names fail before registration",
-    area: "identity",
-    given: [{ kind: "stack-names", names: ["Feature_A", "-review", "review..two"] }],
-    when: {
-      interface: "cli",
-      argv: ["start", "--experimental", "--stack", "Feature_A"],
-      cwd: "checkout-a",
-    },
-    expected: {
-      outcome: "error",
-      error: {
-        code: "invalid_stack_name",
-        message: "Feature_A is not a lowercase DNS-label name",
-        recovery: ["Use default or a lowercase DNS-label name such as feature-a"],
-      },
-      writes: [],
-      runtimeEffects: [],
-      output: {
-        human: {
-          summary: "Invalid stack name: Feature_A",
-          fields: { stack: "Feature_A" },
-          recovery: ["Use default or a lowercase DNS-label name such as feature-a"],
-        },
-        json: { outcome: "error", code: "invalid_stack_name", stack_name: "Feature_A" },
-      },
-    },
-  },
+  invalidStackNameFixture("uppercase-underscore", "Feature_A"),
+  invalidStackNameFixture("leading-hyphen", "-review"),
+  invalidStackNameFixture("repeated-dot", "review..two"),
   {
     id: "identity.valid-stack-names-resolve-deterministically",
     title: "Default and lowercase DNS-label stack names resolve deterministically",
@@ -2577,6 +2653,8 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     title: "Returning to an existing target reuses its sticky automatic ports",
     area: "ports",
     given: [
+      { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
+      { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: true },
       {
         kind: "stack",
         name: "default",
@@ -2596,6 +2674,13 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     when: { interface: "cli", argv: ["start", "--experimental"], cwd: "checkout-a" },
     expected: {
       outcome: "reuse",
+      selection: {
+        projectId: "project-a",
+        checkoutId: "checkout-a",
+        contextId: "context-feat",
+        stackId: "stack-feat-default",
+        stackName: "default",
+      },
       writes: [{ target: "runtime-state", operation: "start", id: "stack-feat-default" }],
       runtimeEffects: [{ operation: "start", stackId: "stack-feat-default" }],
       output: {
