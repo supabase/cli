@@ -1,13 +1,27 @@
 import { Data, Effect, FileSystem } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Raised by {@link legacyValidateWorkdirIsDirectory} when the target path
  * doesn't exist or isn't a directory. Callers map this into their own
- * command-specific error type.
+ * command-specific error type. Only reachable when the user explicitly set
+ * `--workdir`/`SUPABASE_WORKDIR` to a bad path — the default walk-up
+ * resolution can never fail this check (see the doc comment on
+ * {@link legacyValidateWorkdirIsDirectory} below) — so the fix is always
+ * "pass a different `--workdir`/`SUPABASE_WORKDIR`".
  */
 export class LegacyWorkdirValidationError extends Data.TaggedError("LegacyWorkdirValidationError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Validates that `workdir` exists and is a directory, the way Go's

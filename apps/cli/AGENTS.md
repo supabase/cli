@@ -86,7 +86,7 @@ Always check `src/shared/` before writing new infrastructure. Do not duplicate w
 | `shared/output/json-error-handling.ts` | `withJsonErrorHandling` middleware                                              |
 | `shared/output/errors.ts`              | `NonInteractiveError`                                                           |
 | `shared/runtime/`                      | `Browser`, `Stdin`, `Tty`, `ProcessControl`, `RuntimeInfo` services + layers    |
-| `shared/telemetry/`                    | `withCommandInstrumentation`, `Analytics`, tracing                              |
+| `shared/telemetry/`                    | `withCommandInstrumentation`, `Analytics`, tracing, `error-actionability.ts`    |
 
 Also check the following `legacy/` infrastructure before writing equivalent helpers from scratch:
 
@@ -338,6 +338,34 @@ Every legacy command port must include a `SIDE_EFFECTS.md` in its command direct
 - **Exit codes** — including error conditions
 
 Use the template at `src/legacy/SIDE_EFFECTS_TEMPLATE.md`. This document is the compatibility checklist for the port and the primary input to the E2E test suite.
+
+---
+
+## Error Classification
+
+Every error the CLI raises carries a classification used for KPI reporting: is this failure the user's to fix, an external service problem, or a CLI bug? `shared/telemetry/error-actionability.ts` owns the closed vocabulary. Classification is declared on the error class itself and is never inferred later from message text. This applies to both shells.
+
+**When you add an error class anywhere in `apps/cli/src`**, export it and give it an own `[ErrorActionabilityId]` getter:
+
+```ts
+export class LegacyThingMissingError extends Data.TaggedError("LegacyThingMissingError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+```
+
+- **Reuse a preset from `actionability`** rather than assembling fields by hand: `authLogin`, `authToken`, `provideFlags`, `invalidInput`, `invalidConfig`, `dbConnection`, `dbFinding`, `migrationDrift`, `permission`, `accountAccess`, `planLimit`, `projectNotLinked`, `missingProjectRef`, `relinkProject`, `dockerNotRunning`, `startStack`, `stopStack`, `externalNetwork`, `apiStatus`, `cancelled`, `internalPanic`, `impossibleState`, `unknown`. For an error carrying a Management API status, return `statusCodeActionability(this.status)` instead of mapping status codes yourself.
+- **Branch only on typed fields the error already carries** — `this.status`, a closed `reason` union, a boolean the producer set. Never parse `message`.
+- **Nothing user-controlled may appear in a declaration.** The result is sent to PostHog, so no paths, SQL, project refs, hostnames, URLs, tokens, or response bodies — only closed enum values.
+- **Split materially different causes with `fingerprint_suffix`**, choosing a value from `CLI_ERROR_FINGERPRINT_SUFFIXES` (module-private — extend it in place), so unrelated failures sharing one class do not group together as repeats.
+- **An instance-dependent getter must stay valid when its fields are absent** — the drift guard evaluates it against a field-less probe.
+
+**Errors defined outside `apps/cli/src`** (`@supabase/stack`, `@supabase/config`, `@supabase/process-compose`, `@supabase/api`, `effect`) cannot carry a declaration. Add a structural adapter keyed by `_tag` to `externalActionabilityByTag` in that same module, branching on the producer's typed fields.
+
+`error-actionability-coverage.unit.test.ts` enforces this. It scans every `TaggedError("Tag")`, every `*Error("Tag")` factory, and every `class X extends Error` under `apps/cli/src`, and fails when a class is unexported or has no own declaration. A failure there is the guard working: classify the new error rather than loosening the guard, because `unknown` in production telemetry must mean a genuinely unforeseen failure, not one nobody categorized.
 
 ---
 

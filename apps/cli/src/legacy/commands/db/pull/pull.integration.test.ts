@@ -117,7 +117,6 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const removedContainers: string[] = [];
   const seam = Layer.succeed(LegacyDeclarativeSeam, {
     exportCatalog: () => Effect.succeed("supabase/.temp/pgdelta/x.json"),
-    execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
     provisionShadow: ({ mode, usePgDelta, targetLocal, projectRef }) => {

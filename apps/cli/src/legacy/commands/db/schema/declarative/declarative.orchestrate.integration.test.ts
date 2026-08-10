@@ -44,7 +44,6 @@ function mockSeam(paths: Record<LegacyCatalogMode, string>) {
       calls.push({ mode, noCache });
       return Effect.succeed(paths[mode]);
     },
-    execInherit: () => Effect.succeed(0),
     ensureLocalDatabaseStarted: () => Effect.void,
     ensureLocalPostgresImageCurrent: () => Effect.void,
     // The migrations-catalog source now resolves natively (CLI-1959) via

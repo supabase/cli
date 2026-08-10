@@ -33,11 +33,12 @@ describe("parseFirstCname", () => {
     expect(Exit.isFailure(exit)).toBe(true);
   });
 
-  it("fails with a locate error when no CNAME answer is present", () => {
-    const error = Effect.runSync(
+  it("fails with a non-transport locate failure when no CNAME answer is present", () => {
+    const failure = Effect.runSync(
       Effect.flip(parseFirstCname({ Answer: [{ type: 1, data: "1.2.3.4" }] }, "host.example.com")),
     );
-    expect(error.message).toContain(
+    expect(failure.transport).toBe(false);
+    expect(failure.detail).toContain(
       "failed to locate appropriate CNAME record for host.example.com",
     );
   });

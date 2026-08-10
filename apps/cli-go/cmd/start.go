@@ -5,8 +5,10 @@ package cmd
 // talks to Docker directly for `start` and never delegates to this binary
 // for it, and no other still-live TS->Go delegation seam (db test, db
 // branch/remote, db diff --use-pgadmin/--use-pg-schema, db pull
-// --experimental, the hidden db __db-bootstrap/__shadow/__catalog seams,
-// etc.) ever called into internal/start either -- see
+// --experimental, the hidden db __shadow/__catalog seams -- the sibling
+// hidden db __db-bootstrap seam was removed outright by CLI-1955, once
+// native `db reset --local` became its last remaining caller -- etc.) ever
+// called into internal/start either -- see
 // apps/cli/docs/binary-distribution.md § Removed commands for the full
 // rationale. This command's registration and flags are kept only so this
 // binary's cobra tree / `--help` / `__complete` output stays stable for

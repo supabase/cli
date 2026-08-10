@@ -812,17 +812,19 @@ const parseCustomEnvFile = Effect.fnUntraced(function* (
 
   if (Option.isNone(envFileFlag)) {
     const fallbackPath = join(projectRoot, fallbackEnvFilePath);
-    const exists = yield* Effect.tryPromise(() =>
-      readFile(fallbackPath, "utf8").then(
-        (contents) => ({ contents, path: fallbackPath }),
-        (error) => {
-          if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-            return undefined;
-          }
-          throw error;
-        },
-      ),
-    );
+    const exists = yield* Effect.tryPromise({
+      try: () =>
+        readFile(fallbackPath, "utf8").then(
+          (contents) => ({ contents, path: fallbackPath }),
+          (error) => {
+            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+              return undefined;
+            }
+            throw error;
+          },
+        ),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    });
     if (exists === undefined) {
       return yield* toEnvEntries({});
     }
@@ -1031,19 +1033,19 @@ const loadServeProjectEnvironment = Effect.fnUntraced(function* (projectRoot: st
   for (const dir of [paths.supabaseDir, paths.projectRoot]) {
     for (const filename of loadDefaultEnvFilenames(env)) {
       const envPath = join(dir, filename);
-      const contents = yield* Effect.tryPromise(() =>
-        readFile(envPath, "utf8").then(
-          (value) => value,
-          (error) => {
-            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-              return undefined;
-            }
-            throw error;
-          },
-        ),
-      ).pipe(
-        Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
-      );
+      const contents = yield* Effect.tryPromise({
+        try: () =>
+          readFile(envPath, "utf8").then(
+            (value) => value,
+            (error) => {
+              if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+                return undefined;
+              }
+              throw error;
+            },
+          ),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
       if (contents === undefined) {
         continue;
       }
@@ -1611,19 +1613,20 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         try: () => validateDockerMultilineEnvNames(multilineDockerEnv),
         catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
       });
-      const dockerEnvFile = yield* Effect.tryPromise(() =>
-        writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env")),
-      );
+      const dockerEnvFile = yield* Effect.tryPromise({
+        try: () => writeDockerEnvFile(singleLineDockerEnv, join(stagingDir, "env")),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
       const multilineEnvDir = "/root/.supabase/multiline-env";
-      const dockerMultilineEnvScript = yield* Effect.tryPromise(() =>
-        writeDockerMultilineEnvScript(
-          multilineDockerEnv,
-          multilineEnvDir,
-          join(stagingDir, "multiline-env"),
-        ),
-      ).pipe(
-        Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
-      );
+      const dockerMultilineEnvScript = yield* Effect.tryPromise({
+        try: () =>
+          writeDockerMultilineEnvScript(
+            multilineDockerEnv,
+            multilineEnvDir,
+            join(stagingDir, "multiline-env"),
+          ),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
 
       const labels = dockerProjectLabels(projectId);
       const runtimeCommand = [
@@ -1636,11 +1639,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
         ...(input.debug ? ["--verbose"] : []),
       ];
       const serveMainTemplate = yield* Effect.promise(() => getLegacyFunctionsServeMainTemplate());
-      const serveMainTemplateFile = yield* Effect.tryPromise(() =>
-        writeServeMainTemplateFile(serveMainTemplate, join(stagingDir, "main")),
-      ).pipe(
-        Effect.mapError((cause) => (cause instanceof Error ? cause : new Error(String(cause)))),
-      );
+      const serveMainTemplateFile = yield* Effect.tryPromise({
+        try: () => writeServeMainTemplateFile(serveMainTemplate, join(stagingDir, "main")),
+        catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+      });
       const containerProjectRoot = toDockerPath(input.projectRoot);
       const command = [
         "run",

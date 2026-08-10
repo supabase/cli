@@ -105,19 +105,37 @@ function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
     run: (runOpts) => {
       lastOpts = runOpts;
       return opts.runFails === true
-        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
+        ? Effect.fail(
+            new LegacyDockerRunError({
+              message: "failed to run docker: not found",
+              reason: "spawn",
+              daemonDown: false,
+            }),
+          )
         : Effect.succeed(opts.exitCode ?? 0);
     },
     runCapture: (runOpts) => {
       lastOpts = runOpts;
       return opts.runFails === true
-        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
+        ? Effect.fail(
+            new LegacyDockerRunError({
+              message: "failed to run docker: not found",
+              reason: "spawn",
+              daemonDown: false,
+            }),
+          )
         : Effect.succeed({ exitCode: opts.exitCode ?? 0, stdout: new Uint8Array(0), stderr: "" });
     },
     runStream: (runOpts) => {
       lastOpts = runOpts;
       return opts.runFails === true
-        ? Effect.fail(new LegacyDockerRunError({ message: "failed to run docker: not found" }))
+        ? Effect.fail(
+            new LegacyDockerRunError({
+              message: "failed to run docker: not found",
+              reason: "spawn",
+              daemonDown: false,
+            }),
+          )
         : Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
     },
   });

@@ -1,9 +1,18 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /** `--last 0`. Byte-matches Go's `--last must be greater than 0` (`down.go:21`). */
 export class LegacyMigrationLastZeroError extends Data.TaggedError("LegacyMigrationLastZeroError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `--last` >= the number of applied migrations. Byte-matches Go's
@@ -15,4 +24,8 @@ export class LegacyMigrationLastTooLargeError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}

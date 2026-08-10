@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BinaryResolver } from "./BinaryResolver.ts";
-import { nativeReleaseForService } from "./ServiceArtifacts.ts";
+import { nativeReleaseForService } from "./ServiceCatalog.ts";
 import { DEFAULT_VERSIONS } from "./versions.ts";
 
 const postgresVersion = DEFAULT_VERSIONS.postgres;

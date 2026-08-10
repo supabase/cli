@@ -11,7 +11,7 @@ import {
 const scriptDir = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(scriptDir, "../../..");
 const dockerfilePath = path.join(repoRoot, "apps/cli-go/pkg/config/templates/Dockerfile");
-const versionsPath = path.join(repoRoot, "packages/stack/src/versions.ts");
+const catalogPath = path.join(repoRoot, "packages/stack/src/ServiceCatalog.ts");
 
 const fromLinePattern = /^FROM\s+(.+):([^:\s]+)\s+AS\s+([^\s#]+)/i;
 
@@ -76,43 +76,40 @@ export function readVersionManifestFromDockerfile(dockerfile: string): VersionMa
   return versions;
 }
 
-function renderManifestKey(service: ServiceName): string {
-  return /^[a-zA-Z_$][\w$]*$/.test(service) ? service : JSON.stringify(service);
-}
-
-export function renderDefaultVersions(versions: VersionManifest): string {
-  const lines = SERVICE_NAMES.map(
-    (service) => `  ${renderManifestKey(service)}: ${JSON.stringify(versions[service])},`,
-  );
-  return ["export const DEFAULT_VERSIONS: VersionManifest = {", ...lines, "} as const;"].join("\n");
-}
-
 export function syncDefaultVersionsSource(source: string, versions: VersionManifest): string {
-  const startMarker = "export const DEFAULT_VERSIONS: VersionManifest = {";
-  const endMarker = "\n} as const;";
-  const start = source.indexOf(startMarker);
-  if (start === -1) {
-    throw new Error("Could not find DEFAULT_VERSIONS declaration.");
-  }
+  let updated = source;
+  for (const service of SERVICE_NAMES) {
+    const nameMarker = `    name: ${JSON.stringify(service)},`;
+    const entryStart = updated.indexOf(nameMarker);
+    if (entryStart === -1) {
+      throw new Error(`Could not find catalog entry for '${service}'.`);
+    }
 
-  const end = source.indexOf(endMarker, start);
-  if (end === -1) {
-    throw new Error("Could not find DEFAULT_VERSIONS declaration end.");
-  }
+    const versionMarker = "    defaultVersion: ";
+    const versionStart = updated.indexOf(versionMarker, entryStart + nameMarker.length);
+    if (versionStart === -1 || versionStart - entryStart > 300) {
+      throw new Error(`Could not find defaultVersion for '${service}'.`);
+    }
+    const versionEnd = updated.indexOf("\n", versionStart);
+    if (versionEnd === -1) {
+      throw new Error(`Could not find defaultVersion line end for '${service}'.`);
+    }
 
-  return `${source.slice(0, start)}${renderDefaultVersions(versions)}${source.slice(
-    end + endMarker.length,
-  )}`;
+    updated = `${updated.slice(0, versionStart)}${versionMarker}${JSON.stringify(
+      versions[service],
+    )},${updated.slice(versionEnd)}`;
+  }
+  return updated;
 }
 
 async function main() {
   const checkOnly = process.argv.includes("--check");
   const dockerfile = await readFile(dockerfilePath, "utf8");
-  const versionsSource = await readFile(versionsPath, "utf8");
+  const catalogSource = await readFile(catalogPath, "utf8");
   const versions = readVersionManifestFromDockerfile(dockerfile);
-  const syncedSource = syncDefaultVersionsSource(versionsSource, versions);
+  const syncedSource = syncDefaultVersionsSource(catalogSource, versions);
 
-  if (syncedSource === versionsSource) {
+  if (syncedSource === catalogSource) {
     console.log("DEFAULT_VERSIONS is already synced with the Dockerfile manifest.");
     return;
   }
@@ -123,7 +120,7 @@ async function main() {
     return;
   }
 
-  await Bun.write(versionsPath, syncedSource);
+  await Bun.write(catalogPath, syncedSource);
   console.log("Synced DEFAULT_VERSIONS with the Dockerfile manifest.");
 }
 

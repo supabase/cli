@@ -28,6 +28,8 @@ export const legacyDockerRunLayer: Layer.Layer<
       // credential-free message that still points at the likely cause.
       new LegacyDockerRunError({
         message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+        reason: "spawn",
+        daemonDown: false,
       });
 
     const concat = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
@@ -181,6 +183,8 @@ export const legacyDockerRunLayer: Layer.Layer<
                 () =>
                   new LegacyDockerRunError({
                     message: `failed to run docker. ${LEGACY_SUGGEST_DOCKER_INSTALL}`,
+                    reason: "spawn",
+                    daemonDown: false,
                   }),
               ),
             );

@@ -200,12 +200,17 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         return { status: response.status, body: text };
       }).pipe(
         Effect.mapError(
-          (cause) => new LegacyDbQueryExecError({ message: `failed to execute query: ${cause}` }),
+          (cause) =>
+            new LegacyDbQueryExecError({
+              message: `failed to execute query: ${cause}`,
+              transport: true,
+            }),
         ),
       );
       if (status !== 201) {
         return yield* Effect.fail(
           new LegacyDbQueryUnexpectedStatusError({
+            status,
             message: `unexpected status ${status}: ${body}`,
           }),
         );

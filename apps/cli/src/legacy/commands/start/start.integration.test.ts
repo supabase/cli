@@ -24,6 +24,7 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
   LegacyDebugFlag,
   LegacyExperimentalFlag,
@@ -209,7 +210,7 @@ function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArr
 
 /**
  * Wraps `base` to also intercept every `docker cp <hostPath> <containerId>:<containerPath>` call
- * `legacyStartContainer`'s `secretFiles` delivery issues (`legacyCopyStartSecretFileIntoContainer`,
+ * `legacyCreateContainer`'s `secretFiles` delivery issues (`legacyCopyStartSecretFileIntoContainer`,
  * `container-lifecycle.ts` — supabase/cli#6022): synchronously reads the host-side temp file's
  * content while it's still on disk (its own cleanup only runs once THIS spawn's effect resolves)
  * and records it against the destination `containerPath`, so a test can assert on delivered secret
@@ -242,6 +243,7 @@ function defaultRoute(opts: { readonly neverHealthy?: ReadonlySet<string> } = {}
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
+    if (args[0] === "network" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "context" && args[1] === "inspect") return { exitCode: 1 };
@@ -284,7 +286,7 @@ function freshVolumeRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
 ): (args: ReadonlyArray<string>) => RouteResult {
   return (args) => {
-    // `legacyStartVolumeExists` now distinguishes a confirmed "not found" from
+    // `legacyVolumeExists` now distinguishes a confirmed "not found" from
     // any other inspect error (matching Go's `errdefs.IsNotFound` gate) — the
     // stderr text is what makes this simulate a genuinely fresh/non-existent
     // volume rather than an ambiguous inspect failure.
@@ -1289,6 +1291,11 @@ describe("legacy start integration", () => {
             const serialized = JSON.stringify(exit.cause);
             expect(serialized).toContain("LegacyDockerLifecycleInspectError");
             expect(serialized).toContain("docker: command not found (podman also not found)");
+            expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+              error_kind: "user_actionable",
+              error_category: "docker_not_running",
+              error_fingerprint: "tag:LegacyDockerLifecycleInspectError:docker_not_running",
+            });
           }
         }).pipe(Effect.provide(layer));
       },
@@ -3135,7 +3142,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartNetworkCreateError");
+          expect(serialized).toContain("LegacyNetworkCreateError");
           expect(serialized).toContain("failed to create docker network");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -3160,7 +3167,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartContainerCreateError");
+          expect(serialized).toContain("LegacyContainerCreateError");
           expect(serialized).toContain("failed to create docker container");
         }
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
@@ -3186,7 +3193,7 @@ content_path = "./templates/custom_notice.html"
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartContainerStartError");
+            expect(serialized).toContain("LegacyContainerStartError");
             expect(serialized).toContain("port is already allocated");
             expect(serialized).toContain(
               "Try stopping the project or container already using 0.0.0.0:54322",
@@ -3629,6 +3636,29 @@ content_path = "./templates/custom_notice.html"
         );
         const networkFlagIndex = kongCreate?.args.indexOf("--network") ?? -1;
         expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("never spawns a create for a pre-created --network-id network", () => {
+      const base = defaultRoute();
+      const route = (args: ReadonlyArray<string>): RouteResult => {
+        if (args[0] === "network" && args[1] === "inspect") return { exitCode: 0 };
+        if (args[0] === "network" && args[1] === "create") {
+          return { exitCode: 1, stderr: ["error during connect: write: broken pipe"] };
+        }
+        return base(args);
+      };
+      const { layer, child } = setup({ networkId: Option.some("custom-net"), route });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        expect(child.spawned.some((s) => s.args[0] === "network" && s.args[1] === "create")).toBe(
+          false,
+        );
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "network" && s.args[1] === "inspect" && s.args[2] === "custom-net",
+          ),
+        ).toBe(true);
       }).pipe(Effect.provide(layer));
     });
 

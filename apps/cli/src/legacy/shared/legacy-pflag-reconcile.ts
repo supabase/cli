@@ -7,6 +7,11 @@ import {
 } from "../../shared/cli/cobra-flag-groups.ts";
 import { LegacyProfileFlag, LegacyWorkdirFlag } from "../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyProfileFilePath } from "../config/legacy-profile-file.ts";
 import { legacyLoadProfile, type LegacyLoadedProfile } from "./legacy-profile-load.ts";
 import { legacyParseStringSliceFlag } from "./legacy-string-slice-flag.ts";
@@ -37,7 +42,11 @@ import { legacyValidateWorkdirIsDirectory } from "./legacy-workdir-validation.ts
  */
 export class LegacyPflagWorkdirError extends Data.TaggedError("LegacyPflagWorkdirError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * Reconciles an Effect-parsed option flag with pflag semantics

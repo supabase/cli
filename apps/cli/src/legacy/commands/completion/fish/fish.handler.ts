@@ -1,12 +1,13 @@
 import { Effect } from "effect";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { Output } from "../../../../shared/output/output.service.ts";
+import { legacyGenerateCompletionScript } from "../legacy-completion-scripts.ts";
 import type { LegacyCompletionFishFlags } from "./fish.command.ts";
 
 export const legacyCompletionFish = Effect.fn("legacy.completion.fish")(function* (
   flags: LegacyCompletionFishFlags,
 ) {
-  const proxy = yield* LegacyGoProxy;
-  const args: string[] = ["completion", "fish"];
-  if (flags.noDescriptions) args.push("--no-descriptions");
-  yield* proxy.exec(args);
+  const output = yield* Output;
+  yield* output.raw(
+    legacyGenerateCompletionScript("fish", { noDescriptions: flags.noDescriptions }),
+  );
 });

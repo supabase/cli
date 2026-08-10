@@ -37,6 +37,7 @@ export {
   type ProjectEnvironment,
   type ResolvedProjectValue,
   type ResolveProjectOptions,
+  loadDotEnvFile,
   loadProjectEnvironment,
   resolveProjectSubtree,
   resolveProjectValue,

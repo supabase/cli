@@ -13,7 +13,7 @@
  * ```
  *
  * Unlike its 12 siblings in this directory, this module does NOT build a
- * `LegacyStartContainerSpec` for `legacyStartContainer`
+ * `LegacyStartContainerSpec` for `legacyCreateContainer`
  * (`../../../shared/db-bootstrap/container-lifecycle.ts`) to create+start uniformly. That
  * unification (`docker create`/`docker start`, `-e KEY`-only env with values
  * supplied via the spawned process's own environment) was evaluated against
@@ -40,7 +40,7 @@
  * exactly as `functions serve` already spawns it (see that module's own doc
  * comment), and exposes {@link legacyStartEdgeRuntimeContainer} as a direct
  * bring-up `Effect` for `start.handler.ts` to call from its own bring-up loop
- * — NOT a spec for `legacyStartContainer` to create. `start.handler.ts`'s
+ * — NOT a spec for `legacyCreateContainer` to create. `start.handler.ts`'s
  * wiring must special-case Edge Runtime's bring-up call, the same way it
  * already special-cases Postgres's (also called directly, not through the
  * generic `buildSpecForService` switch, since it needs its own health-wait
@@ -138,7 +138,7 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * `startEdgeRuntimeContainer` (already ported for `functions serve`) with
  * `start`'s own already-resolved config/secrets in place of that command's
  * independent config-loading pipeline. `start.handler.ts`'s bring-up loop
- * should call this directly (NOT `legacyStartContainer`) for the Edge Runtime
+ * should call this directly (NOT `legacyCreateContainer`) for the Edge Runtime
  * entry in its service list, gated the same way as every other service on
  * `config.edge_runtime.enabled && !isContainerExcluded(...)`.
  *
@@ -152,7 +152,7 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * `cleanup` (removing the temp env-file/multiline-env-script/serve-main-
  * template files this call writes to the host) is intentionally left to the
  * caller, and the caller must NOT invoke it on a successful bring-up. Unlike
- * every other `start` service (`legacyStartContainer`'s `restartPolicy:
+ * every other `start` service (`legacyCreateContainer`'s `restartPolicy:
  * "unless-stopped"`), Go's own Edge Runtime bring-up (`serve.ServeFunctions`,
  * `internal/functions/serve/serve.go:218-241`) sets NO Docker restart policy
  * at all — its lifecycle is deliberately reconciled at the CLI level
@@ -162,7 +162,7 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * still exist for as long as the container itself can be reattached to
  * (e.g. a plain `docker start` by the user, or discovery by a later CLI
  * invocation) — unlike Kong/Postgres/Supavisor's `secretFiles`, which
- * `container-lifecycle.ts`'s `legacyStartContainer` now `docker cp`s straight
+ * `container-lifecycle.ts`'s `legacyCreateContainer` now `docker cp`s straight
  * into the container instead of staging on host disk (see
  * `legacyCopyStartSecretFileIntoContainer`'s doc comment), Edge Runtime's own
  * bind-mounted env-file/multiline-env-script/serve-main-template artifacts

@@ -7,14 +7,20 @@ import { makeAuthServiceNative, makeAuthServiceDocker } from "./auth.ts";
 import { makeEdgeRuntimeServiceDocker, makeEdgeRuntimeServiceNative } from "./edge-runtime.ts";
 import { makeImgproxyServiceDocker } from "./imgproxy.ts";
 import { makeMailpitServiceDocker } from "./mailpit.ts";
+import { makePgmetaServiceDocker } from "./pgmeta.ts";
 import {
   makePostgresInitService,
   REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL,
 } from "./postgres-init.ts";
 import { makePostgresService, makePostgresServiceDocker } from "./postgres.ts";
-import { makePostgrestService } from "./postgrest.ts";
+import { makePostgrestService, makePostgrestServiceDocker } from "./postgrest.ts";
+import { makeRealtimeServiceDocker } from "./realtime.ts";
 import { makePoolerServiceDocker, poolerContainerPorts } from "./pooler.ts";
-import { LOCAL_S3_PROTOCOL_ACCESS_KEY_ID, LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET } from "./storage.ts";
+import {
+  LOCAL_S3_PROTOCOL_ACCESS_KEY_ID,
+  LOCAL_S3_PROTOCOL_ACCESS_KEY_SECRET,
+  makeStorageServiceDocker,
+} from "./storage.ts";
 import { makeStudioServiceDocker } from "./studio.ts";
 import { makeVectorServiceDocker } from "./vector.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
@@ -26,14 +32,13 @@ const POSTGRES_BIN_PATH = `/cache/postgres/${DEFAULT_VERSIONS.postgres}/darwin-a
 const POSTGREST_BIN_PATH = `/cache/postgrest/${DEFAULT_VERSIONS.postgrest}/macos-aarch64`;
 const AUTH_BIN_PATH = `/cache/auth/${DEFAULT_VERSIONS.auth}/arm64`;
 const EDGE_RUNTIME_BIN_PATH = `/cache/edge-runtime/${DEFAULT_VERSIONS["edge-runtime"]}/aarch64-darwin`;
-const LINUX_HOST_GATEWAY_ARGS = ["--add-host", "host.docker.internal:host-gateway"];
-
 describe("makePostgresService", () => {
   it("creates a postgres ServiceDef with correct defaults", () => {
     const def = makePostgresService({
       binPath: POSTGRES_BIN_PATH,
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
+      dependencies: [],
     });
 
     expect(def.name).toBe("postgres");
@@ -61,7 +66,7 @@ describe("makePostgresService", () => {
         LD_LIBRARY_PATH: `${POSTGRES_BIN_PATH}/lib`,
       },
     });
-    expect(def.dependencies).toBeUndefined();
+    expect(def.dependencies).toEqual([]);
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toBeDefined();
   });
@@ -101,7 +106,7 @@ describe("makeStudioServiceDocker", () => {
       analyticsBackend: "postgres",
       analyticsUrl: "http://host.docker.internal:54327",
       analyticsApiKey: "test-api-key",
-      networkArgs: ["-p", "54323:54323"],
+      platformOs: "darwin",
       dependencies: [{ service: "pgmeta", condition: "healthy" }],
     });
 
@@ -125,6 +130,7 @@ describe("makePostgresService (dockerAccessible)", () => {
       port: DB_PORT,
       dockerAccessible: true,
       cleanupDataDirOnExit: true,
+      dependencies: [],
     });
     const customHbaPath = `${path.join(tempDir, "data")}_pg_hba_docker.conf`;
 
@@ -166,10 +172,11 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
-      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
+      platformOs: "linux",
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
       apiPort: API_PORT,
+      dependencies: [],
     });
 
     expect(def.name).toBe("postgres");
@@ -197,10 +204,17 @@ describe("makePostgresServiceDocker", () => {
         "postgres",
       ],
     });
-    expect(def.dependencies).toBeUndefined();
+    expect(def.dependencies).toEqual([]);
     expect(def.restart).toBe("unless-stopped");
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-postgres-${API_PORT}` }],
+      orphanCleanup: [
+        {
+          _tag: "RunCommand",
+          executable: "docker",
+          args: ["rm", "-f", `supabase-postgres-${API_PORT}`],
+          timeoutMs: 5_000,
+        },
+      ],
     });
   });
 
@@ -209,10 +223,11 @@ describe("makePostgresServiceDocker", () => {
       image: dockerImageForService("postgres", DEFAULT_VERSIONS.postgres),
       dataDir: "/tmp/supabase/data",
       port: DB_PORT,
-      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", `${DB_PORT}:${DB_PORT}`],
+      platformOs: "linux",
       jwtSecret: "test-jwt-secret-with-at-least-32-characters",
       jwtExpiry: 3600,
       apiPort: API_PORT,
+      dependencies: [],
     });
 
     const script = def.args?.[def.args.length - 1] as string;
@@ -236,6 +251,7 @@ describe("makePostgrestService", () => {
       extraSearchPath: ["public", "extensions"],
       maxRows: 1000,
       jwtSecret: JWT_SECRET,
+      dependencies: [{ service: "postgres-init", condition: "completed" }],
     });
 
     expect(def.name).toBe("postgrest");
@@ -255,6 +271,38 @@ describe("makePostgrestService", () => {
       scheme: "http",
     });
     expect(def.supervision).toBeDefined();
+  });
+
+  it("creates a docker definition with caller-supplied topology and derived identity", () => {
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const def = makePostgrestServiceDocker({
+      image: dockerImageForService("postgrest", DEFAULT_VERSIONS.postgrest),
+      apiPort: API_PORT,
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      port: 54323,
+      adminPort: 54324,
+      schemas: ["public", "storage"],
+      extraSearchPath: ["public", "extensions"],
+      maxRows: 1000,
+      jwtSecret: JWT_SECRET,
+      platformOs: "linux",
+      dependencies,
+    });
+
+    expect(def.command).toBe("docker");
+    expect(def.args).toContain(`supabase-postgrest-${API_PORT}`);
+    expect(def.args).toContain("host.docker.internal:host-gateway");
+    expect(def.args).toContain("54323:54323");
+    expect(def.args).toContain("54324:54324");
+    expect(def.args).toContain("PGRST_ADMIN_SERVER_PORT=54324");
+    expect(def.dependencies).toEqual(dependencies);
+    expect(def.supervision?.orphanCleanup).toContainEqual({
+      _tag: "RunCommand",
+      executable: "docker",
+      args: ["rm", "-f", `supabase-postgrest-${API_PORT}`],
+      timeoutMs: 5_000,
+    });
   });
 });
 
@@ -299,7 +347,7 @@ describe("makeAuthServiceDocker", () => {
       jwtExpiry: 3600,
       externalUrl: `http://127.0.0.1:${API_PORT}`,
       dbHost: "127.0.0.1",
-      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "9999:9999"],
+      platformOs: "linux",
       apiPort: API_PORT,
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
@@ -313,7 +361,14 @@ describe("makeAuthServiceDocker", () => {
     expect(def.args).toContain("9999:9999");
     expect(def.dependencies).toEqual([{ service: "postgres", condition: "healthy" }]);
     expect(def.supervision).toEqual({
-      orphanCleanup: [{ _tag: "DockerRemove", containerName: `supabase-auth-${API_PORT}` }],
+      orphanCleanup: [
+        {
+          _tag: "RunCommand",
+          executable: "docker",
+          args: ["rm", "-f", `supabase-auth-${API_PORT}`],
+          timeoutMs: 5_000,
+        },
+      ],
     });
   });
 });
@@ -331,7 +386,7 @@ describe("makeEdgeRuntimeServiceDocker", () => {
         inspectorPort: 54341,
         policy: "per_worker",
         env: { SUPABASE_INTERNAL_DEBUG: "true" },
-        networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54340:54340", "-p", "54341:54341"],
+        platformOs: "linux",
         dependencies: [{ service: "postgres", condition: "healthy" }],
       });
 
@@ -409,6 +464,7 @@ describe("makePostgresInitService", () => {
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
       autoExposeNewTables: true,
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
     expect(def.name).toBe("postgres-init");
@@ -427,6 +483,7 @@ describe("makePostgresInitService", () => {
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
       autoExposeNewTables: true,
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
     const script = def.args?.[1] as string;
     expect(script).not.toContain("set -e");
@@ -437,6 +494,7 @@ describe("makePostgresInitService", () => {
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
       autoExposeNewTables: true,
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
     const script = def.args?.[1] as string;
     expect(script).toContain("authenticator");
@@ -448,6 +506,7 @@ describe("makePostgresInitService", () => {
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
       autoExposeNewTables: true,
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
     const script = def.args?.[1] as string;
 
@@ -463,6 +522,7 @@ describe("makePostgresInitService", () => {
       postgresDir: "/cache/postgres/17/darwin-arm64",
       dbPort: DB_PORT,
       autoExposeNewTables: true,
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
     const script = def.args?.[1] as string;
     expect(script).not.toMatch(/sh .+migrate\.sh/);
@@ -476,6 +536,7 @@ describe("makePostgresInitService", () => {
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
       autoExposeNewTables: true,
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
     const script = def.args?.[1] as string;
     expect(script).not.toContain("alter default privileges");
@@ -487,6 +548,7 @@ describe("makePostgresInitService", () => {
       postgresDir: POSTGRES_BIN_PATH,
       dbPort: DB_PORT,
       autoExposeNewTables: false,
+      dependencies: [{ service: "postgres", condition: "healthy" }],
     });
     const script = def.args?.[1] as string;
     expect(script).toContain(REVOKE_DEFAULT_DATA_API_PRIVILEGES_SQL);
@@ -501,6 +563,90 @@ describe("makePostgresInitService", () => {
 });
 
 describe("docker-backed auxiliary services", () => {
+  it("defines realtime command, topology, environment, and readiness locally", () => {
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const def = makeRealtimeServiceDocker({
+      image: dockerImageForService("realtime", DEFAULT_VERSIONS.realtime),
+      apiPort: API_PORT,
+      port: 54330,
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "test-jwks",
+      tenantId: "realtime-dev",
+      encryptionKey: "supabaserealtime",
+      secretKeyBase: "test-secret-key-base",
+      maxHeaderLength: 4096,
+      platformOs: "linux",
+      dependencies,
+    });
+
+    expect(def.args).toContain(`supabase-realtime-${API_PORT}`);
+    expect(def.args).toContain("54330:54330");
+    expect(def.args).toContain("DB_HOST=host.docker.internal");
+    expect(def.dependencies).toEqual(dependencies);
+    expect(def.healthCheck?.probe).toEqual(
+      expect.objectContaining({ _tag: "Exec", command: "curl" }),
+    );
+  });
+
+  it("defines storage mounts, cleanup, topology, and readiness locally", () => {
+    const dependencies = [{ service: "postgres-init", condition: "completed" }] as const;
+    const def = makeStorageServiceDocker({
+      image: dockerImageForService("storage", DEFAULT_VERSIONS.storage),
+      apiPort: API_PORT,
+      port: 54331,
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      dataDir: "/tmp/supabase/storage",
+      anonKey: "anon-key",
+      serviceKey: "service-key",
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "test-jwks",
+      fileSizeLimit: "50MiB",
+      enableImageTransformation: true,
+      imgproxyUrl: "http://host.docker.internal:54332",
+      s3ProtocolEnabled: true,
+      cleanupDataDirOnExit: true,
+      platformOs: "linux",
+      dependencies,
+    });
+
+    expect(def.args).toContain(`supabase-storage-${API_PORT}`);
+    expect(def.args).toContain("/tmp/supabase/storage:/var/lib/storage");
+    expect(def.args).toContain("54331:54331");
+    expect(def.dependencies).toEqual(dependencies);
+    expect(def.healthCheck?.probe).toEqual(
+      expect.objectContaining({ _tag: "Http", port: 54331, path: "/status" }),
+    );
+    expect(def.supervision?.orphanCleanup).toContainEqual({
+      _tag: "RemovePath",
+      path: "/tmp/supabase/storage",
+      recursive: true,
+    });
+  });
+
+  it("defines postgres metadata command, topology, environment, and readiness locally", () => {
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const def = makePgmetaServiceDocker({
+      image: dockerImageForService("pgmeta", DEFAULT_VERSIONS.pgmeta),
+      apiPort: API_PORT,
+      port: 54336,
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      platformOs: "linux",
+      dependencies,
+    });
+
+    expect(def.args).toContain(`supabase-pgmeta-${API_PORT}`);
+    expect(def.args).toContain("54336:54336");
+    expect(def.args).toContain("PG_META_DB_HOST=host.docker.internal");
+    expect(def.dependencies).toEqual(dependencies);
+    expect(def.healthCheck?.probe).toEqual(
+      expect.objectContaining({ _tag: "Http", port: 54336, path: "/health" }),
+    );
+  });
+
   it("uses a host HTTP readiness probe for mailpit", () => {
     const def = makeMailpitServiceDocker({
       image: dockerImageForService("mailpit", DEFAULT_VERSIONS.mailpit),
@@ -508,15 +654,8 @@ describe("docker-backed auxiliary services", () => {
       webPort: 54323,
       smtpPort: 54324,
       pop3Port: 54325,
-      networkArgs: [
-        ...LINUX_HOST_GATEWAY_ARGS,
-        "-p",
-        "54323:54323",
-        "-p",
-        "54324:54324",
-        "-p",
-        "54325:54325",
-      ],
+      platformOs: "linux",
+      dependencies: [],
     });
 
     expect(def.healthCheck?.probe).toEqual({
@@ -534,7 +673,7 @@ describe("docker-backed auxiliary services", () => {
       apiPort: API_PORT,
       port: 54326,
       dataDir: "/tmp/supabase/storage",
-      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54326:54326"],
+      platformOs: "linux",
       dependencies: [{ service: "storage", condition: "healthy" }],
     });
 
@@ -555,7 +694,7 @@ describe("docker-backed auxiliary services", () => {
       serviceHost: "127.0.0.1",
       analyticsPort: 54327,
       analyticsApiKey: "test-api-key",
-      networkArgs: [],
+      platformOs: "darwin",
       dependencies: [{ service: "analytics", condition: "healthy" }],
     });
 
@@ -577,13 +716,11 @@ describe("docker-backed auxiliary services", () => {
       image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
       apiPort: API_PORT,
       hostPort: 54328,
-      listenPort: 4000,
-      nodeHost: "0.0.0.0",
+      platformOs: "darwin",
       dbHost: "127.0.0.1",
       dbPort: DB_PORT,
       apiKey: "test-api-key",
       backend: "postgres",
-      networkArgs: ["-p", "54328:4000"],
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
@@ -610,13 +747,11 @@ describe("docker-backed auxiliary services", () => {
       image: dockerImageForService("analytics", DEFAULT_VERSIONS.analytics),
       apiPort: API_PORT,
       hostPort: 54328,
-      listenPort: 4000,
-      nodeHost: "0.0.0.0",
+      platformOs: "linux",
       dbHost: "host.docker.internal",
       dbPort: DB_PORT,
       apiKey: "test-api-key",
       backend: "postgres",
-      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54328:4000"],
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 
@@ -632,6 +767,8 @@ describe("docker-backed auxiliary services", () => {
       image: dockerImageForService("pooler", DEFAULT_VERSIONS.pooler),
       apiPort: API_PORT,
       hostAdminPort: 54329,
+      hostPort: 54330,
+      platformOs: "linux",
       dbHost: "127.0.0.1",
       dbPort: DB_PORT,
       poolMode: "transaction",
@@ -641,12 +778,6 @@ describe("docker-backed auxiliary services", () => {
       tenantId: "pooler-dev",
       encryptionKey: "12345678901234567890123456789012",
       secretKeyBase: "1234567890123456789012345678901234567890123456789012345678901234",
-      networkArgs: [
-        "-p",
-        `54329:${poolerContainerPorts.admin}`,
-        "-p",
-        `54330:${poolerContainerPorts.transaction}`,
-      ],
       dependencies: [{ service: "postgres", condition: "healthy" }],
     });
 

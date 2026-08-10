@@ -8,15 +8,19 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach } from "vitest";
 
 import {
-  LegacyStartContainerCreateError,
-  LegacyStartContainerStartError,
-  LegacyStartNetworkCreateError,
-  LegacyStartVolumeCreateError,
-  LegacyStartVolumeInspectError,
-  legacyEnsureStartNetwork,
-  legacyEnsureStartVolume,
-  legacyStartContainer,
-  legacyStartVolumeExists,
+  LegacyContainerCreateError,
+  LegacyContainerRemoveError,
+  LegacyContainerStartError,
+  LegacyNetworkCreateError,
+  LegacyVolumeCreateError,
+  LegacyVolumeInspectError,
+  LegacyVolumeRemoveError,
+  legacyEnsureNetwork,
+  legacyEnsureVolume,
+  legacyRemoveContainer,
+  legacyRemoveVolume,
+  legacyCreateContainer,
+  legacyVolumeExists,
 } from "./container-lifecycle.ts";
 import type { LegacyStartContainerSpec } from "./docker-create-args.ts";
 
@@ -107,12 +111,12 @@ function alwaysSucceed(stdout = "container-id-123\n") {
   });
 }
 
-describe("legacyStartContainer", () => {
+describe("legacyCreateContainer", () => {
   it.live(
     "merges project + compose labels, provisions named volumes, then creates and starts",
     () => {
       const mock = alwaysSucceed();
-      return legacyStartContainer(mock.spawner, baseSpec, {
+      return legacyCreateContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -165,7 +169,7 @@ describe("legacyStartContainer", () => {
       // `toEqual`, so a regression that leaked the workdir label onto volumes too would fail that
       // test's exact-match assertion.
       const mock = alwaysSucceed();
-      return legacyStartContainer(mock.spawner, baseSpec, {
+      return legacyCreateContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -192,7 +196,7 @@ describe("legacyStartContainer", () => {
         ...baseSpec,
         env: { POSTGRES_PASSWORD: "s3cret", JWT_SECRET: "super-secret-value" },
       };
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -224,7 +228,7 @@ describe("legacyStartContainer", () => {
         ...baseSpec,
         env: { DOCKER_HOST: "http://host.docker.internal:2375", API_KEY: "s3cret" },
       };
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -243,7 +247,7 @@ describe("legacyStartContainer", () => {
     "skips volume creation and drops the named-volume bind + security-opt under Bitbucket Pipelines",
     () => {
       const mock = alwaysSucceed();
-      return legacyStartContainer(mock.spawner, baseSpec, {
+      return legacyCreateContainer(mock.spawner, baseSpec, {
         projectId: "proj",
         isBitbucketPipeline: true,
         workdir,
@@ -261,12 +265,12 @@ describe("legacyStartContainer", () => {
     },
   );
 
-  it.live("fails with LegacyStartVolumeCreateError before ever creating the container", () => {
+  it.live("fails with LegacyVolumeCreateError before ever creating the container", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "volume") return { exitCode: 1, stderr: "no space left on device\n" };
       return { exitCode: 0, stdout: "should-not-be-created\n" };
     });
-    return legacyStartContainer(mock.spawner, baseSpec, {
+    return legacyCreateContainer(mock.spawner, baseSpec, {
       projectId: "proj",
       isBitbucketPipeline: false,
       workdir,
@@ -274,20 +278,20 @@ describe("legacyStartContainer", () => {
     }).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartVolumeCreateError);
+        expect(error).toBeInstanceOf(LegacyVolumeCreateError);
         expect(error.message).toBe("failed to create volume: no space left on device");
         expect(mock.spawned.some((args) => args[0] === "create")).toBe(false);
       }),
     );
   });
 
-  it.live("fails with LegacyStartContainerCreateError on a `docker create` non-zero exit", () => {
+  it.live("fails with LegacyContainerCreateError on a `docker create` non-zero exit", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "create") return { exitCode: 1, stderr: "no such image\n" };
       return { exitCode: 0 };
     });
     const spec: LegacyStartContainerSpec = { ...baseSpec, binds: [] };
-    return legacyStartContainer(mock.spawner, spec, {
+    return legacyCreateContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
       workdir,
@@ -295,21 +299,21 @@ describe("legacyStartContainer", () => {
     }).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
+        expect(error).toBeInstanceOf(LegacyContainerCreateError);
         expect(error.message).toBe("failed to create docker container: no such image");
         expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
       }),
     );
   });
 
-  it.live("fails with LegacyStartContainerStartError, unmodified, on a plain start failure", () => {
+  it.live("fails with LegacyContainerStartError, unmodified, on a plain start failure", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "create") return { exitCode: 0, stdout: "abc\n" };
       if (args[0] === "start") return { exitCode: 1, stderr: "container is already stopped\n" };
       return { exitCode: 0 };
     });
     const spec: LegacyStartContainerSpec = { ...baseSpec, binds: [] };
-    return legacyStartContainer(mock.spawner, spec, {
+    return legacyCreateContainer(mock.spawner, spec, {
       projectId: "proj",
       isBitbucketPipeline: false,
       workdir,
@@ -317,7 +321,7 @@ describe("legacyStartContainer", () => {
     }).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartContainerStartError);
+        expect(error).toBeInstanceOf(LegacyContainerStartError);
         expect(error.message).toBe(
           'failed to start docker container "supabase_db_proj": container is already stopped',
         );
@@ -340,7 +344,7 @@ describe("legacyStartContainer", () => {
         return { exitCode: 0 };
       });
       const spec: LegacyStartContainerSpec = { ...baseSpec, binds: [] };
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -348,7 +352,7 @@ describe("legacyStartContainer", () => {
       }).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyStartContainerStartError);
+          expect(error).toBeInstanceOf(LegacyContainerStartError);
           expect(error.message).toContain('failed to start docker container "supabase_db_proj"');
           expect(error.message).toContain("0.0.0.0:5432");
           expect(error.message).toContain("db port in supabase/config.toml");
@@ -358,7 +362,7 @@ describe("legacyStartContainer", () => {
   );
 });
 
-describe("legacyStartContainer secretFiles", () => {
+describe("legacyCreateContainer secretFiles", () => {
   it.live(
     "docker cp's a secretFile into the created (not yet started) container, strictly between `docker create` and `docker start`, keeping its content out of every spawned process's own argv, then removes the local temp file",
     () => {
@@ -379,7 +383,7 @@ describe("legacyStartContainer secretFiles", () => {
         secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
       };
 
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -433,7 +437,7 @@ describe("legacyStartContainer secretFiles", () => {
       // after this effect actually completes, on success, failure, or defect alike.
       return Effect.sync(() => process.umask(0o077)).pipe(
         Effect.flatMap((originalUmask) =>
-          legacyStartContainer(mock.spawner, spec, {
+          legacyCreateContainer(mock.spawner, spec, {
             projectId: "proj",
             isBitbucketPipeline: false,
             workdir,
@@ -472,7 +476,7 @@ describe("legacyStartContainer secretFiles", () => {
         secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
       };
 
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -480,7 +484,7 @@ describe("legacyStartContainer secretFiles", () => {
       }).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyStartContainerStartError);
+          expect(error).toBeInstanceOf(LegacyContainerStartError);
           expect(hostPath).toBeDefined();
           // Already removed right after its own successful `docker cp` — long before `docker
           // start` even ran, let alone failed.
@@ -491,7 +495,7 @@ describe("legacyStartContainer secretFiles", () => {
   );
 
   it.live(
-    "fails with LegacyStartContainerCreateError when `docker cp` exits non-zero, removes the local temp file, and never invokes `docker start`",
+    "fails with LegacyContainerCreateError when `docker cp` exits non-zero, removes the local temp file, and never invokes `docker start`",
     () => {
       let hostPath: string | undefined;
       const mock = mockSpawner((args) => {
@@ -509,7 +513,7 @@ describe("legacyStartContainer secretFiles", () => {
         secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
       };
 
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -517,7 +521,7 @@ describe("legacyStartContainer secretFiles", () => {
       }).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
+          expect(error).toBeInstanceOf(LegacyContainerCreateError);
           expect(error.message).toBe(
             "failed to create docker container: failed to copy secret file into container: Error: No such container: container-id-def",
           );
@@ -543,7 +547,7 @@ describe("legacyStartContainer secretFiles", () => {
         secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
       };
 
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -551,7 +555,7 @@ describe("legacyStartContainer secretFiles", () => {
       }).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
+          expect(error).toBeInstanceOf(LegacyContainerCreateError);
           expect(mock.spawned.some((args) => args[0] === "cp")).toBe(false);
           expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
         }),
@@ -629,7 +633,7 @@ describe("legacyStartContainer secretFiles", () => {
       };
 
       return Effect.gen(function* () {
-        const fiber = yield* legacyStartContainer(spawner, spec, {
+        const fiber = yield* legacyCreateContainer(spawner, spec, {
           projectId: "proj",
           isBitbucketPipeline: false,
           workdir,
@@ -645,7 +649,7 @@ describe("legacyStartContainer secretFiles", () => {
   );
 
   it.live(
-    "maps a local temp-file creation failure to LegacyStartContainerCreateError, without ever invoking `docker cp` or `docker start`",
+    "maps a local temp-file creation failure to LegacyContainerCreateError, without ever invoking `docker cp` or `docker start`",
     () => {
       const previousTmpdir = process.env["TMPDIR"];
       // Points `os.tmpdir()` at a path whose PARENT doesn't exist, forcing `fs.mkdtemp` to fail
@@ -663,7 +667,7 @@ describe("legacyStartContainer secretFiles", () => {
         secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
       };
 
-      return legacyStartContainer(mock.spawner, spec, {
+      return legacyCreateContainer(mock.spawner, spec, {
         projectId: "proj",
         isBitbucketPipeline: false,
         workdir,
@@ -671,7 +675,7 @@ describe("legacyStartContainer secretFiles", () => {
       }).pipe(
         Effect.flip,
         Effect.map((error) => {
-          expect(error).toBeInstanceOf(LegacyStartContainerCreateError);
+          expect(error).toBeInstanceOf(LegacyContainerCreateError);
           expect(error.message).toMatch(
             /^failed to create docker container: failed to stage container secret file: /,
           );
@@ -689,15 +693,20 @@ describe("legacyStartContainer secretFiles", () => {
   );
 });
 
-describe("legacyEnsureStartNetwork", () => {
-  it.live("creates the network with labels", () => {
-    const mock = mockSpawner(() => ({ exitCode: 0 }));
-    return legacyEnsureStartNetwork(mock.spawner, "supabase_network_proj", {
+describe("legacyEnsureNetwork", () => {
+  it.live("creates the network with labels when it does not exist yet", () => {
+    const mock = mockSpawner((args) =>
+      args[1] === "inspect"
+        ? { exitCode: 1, stderr: "Error: No such network: supabase_network_proj\n" }
+        : { exitCode: 0 },
+    );
+    return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {
       "com.supabase.cli.project": "proj",
       "com.docker.compose.project": "proj",
     }).pipe(
       Effect.map(() => {
         expect(mock.spawned).toEqual([
+          ["network", "inspect", "supabase_network_proj"],
           [
             "network",
             "create",
@@ -712,25 +721,40 @@ describe("legacyEnsureStartNetwork", () => {
     );
   });
 
+  it.live("never spawns a create for an already-existing network", () => {
+    const mock = mockSpawner((args) =>
+      args[1] === "inspect"
+        ? { exitCode: 0 }
+        : { exitCode: 1, stderr: "error during connect: write: broken pipe\n" },
+    );
+    return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {
+      "com.supabase.cli.project": "proj",
+    }).pipe(
+      Effect.map(() => {
+        expect(mock.spawned).toEqual([["network", "inspect", "supabase_network_proj"]]);
+      }),
+    );
+  });
+
   it.live("treats an already-exists failure as success", () => {
     const mock = mockSpawner(() => ({
       exitCode: 1,
       stderr:
         "Error response from daemon: network with name supabase_network_proj already exists\n",
     }));
-    return legacyEnsureStartNetwork(mock.spawner, "supabase_network_proj", {}).pipe(
+    return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {}).pipe(
       Effect.map(() => {
         // Just needs to not fail — no return value to assert on.
       }),
     );
   });
 
-  it.live("fails with LegacyStartNetworkCreateError on any other failure", () => {
+  it.live("fails with LegacyNetworkCreateError on any other failure", () => {
     const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-    return legacyEnsureStartNetwork(mock.spawner, "supabase_network_proj", {}).pipe(
+    return legacyEnsureNetwork(mock.spawner, "supabase_network_proj", {}).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartNetworkCreateError);
+        expect(error).toBeInstanceOf(LegacyNetworkCreateError);
         expect(error.message).toBe("failed to create docker network: permission denied");
       }),
     );
@@ -743,7 +767,7 @@ describe("legacyEnsureStartNetwork", () => {
         exitCode: 1,
         stderr: "operation is not permitted on predefined host network",
       }));
-      return legacyEnsureStartNetwork(mock.spawner, networkId, {}).pipe(
+      return legacyEnsureNetwork(mock.spawner, networkId, {}).pipe(
         Effect.map(() => {
           expect(mock.spawned).toEqual([]);
         }),
@@ -752,10 +776,10 @@ describe("legacyEnsureStartNetwork", () => {
   );
 });
 
-describe("legacyEnsureStartVolume", () => {
+describe("legacyEnsureVolume", () => {
   it.live("creates the named volume with labels", () => {
     const mock = mockSpawner(() => ({ exitCode: 0 }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {
       "com.supabase.cli.project": "proj",
     }).pipe(
       Effect.map(() => {
@@ -771,7 +795,7 @@ describe("legacyEnsureStartVolume", () => {
       exitCode: 125,
       stderr: "Error: volume with name supabase_db_proj already exists: volume already exists\n",
     }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
       Effect.map(() => {
         // Just needs to not fail — no return value to assert on.
       }),
@@ -783,19 +807,19 @@ describe("legacyEnsureStartVolume", () => {
       exitCode: 125,
       stderr: "volume with name supabase_db_proj already exists\n",
     }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
       Effect.map(() => {
         // Just needs to not fail — no return value to assert on.
       }),
     );
   });
 
-  it.live("fails with LegacyStartVolumeCreateError on any other failure", () => {
+  it.live("fails with LegacyVolumeCreateError on any other failure", () => {
     const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartVolumeCreateError);
+        expect(error).toBeInstanceOf(LegacyVolumeCreateError);
         expect(error.message).toBe("failed to create volume: permission denied");
       }),
     );
@@ -807,10 +831,10 @@ describe("legacyEnsureStartVolume", () => {
       stderr:
         "a volume named supabase_db_proj already exists but was not created for the current specification\n",
     }));
-    return legacyEnsureStartVolume(mock.spawner, "supabase_db_proj", {}).pipe(
+    return legacyEnsureVolume(mock.spawner, "supabase_db_proj", {}).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartVolumeCreateError);
+        expect(error).toBeInstanceOf(LegacyVolumeCreateError);
         expect(error.message).toBe(
           "failed to create volume: a volume named supabase_db_proj already exists but was not created for the current specification",
         );
@@ -819,10 +843,10 @@ describe("legacyEnsureStartVolume", () => {
   });
 });
 
-describe("legacyStartVolumeExists", () => {
+describe("legacyVolumeExists", () => {
   it.live("resolves true when `docker volume inspect` exits 0", () => {
     const mock = mockSpawner(() => ({ exitCode: 0, stdout: "[]\n" }));
-    return legacyStartVolumeExists(mock.spawner, "supabase_db_proj").pipe(
+    return legacyVolumeExists(mock.spawner, "supabase_db_proj").pipe(
       Effect.map((exists) => {
         expect(exists).toBe(true);
         expect(mock.spawned).toEqual([["volume", "inspect", "supabase_db_proj"]]);
@@ -835,7 +859,7 @@ describe("legacyStartVolumeExists", () => {
       exitCode: 1,
       stderr: "Error: No such volume: supabase_db_proj\n",
     }));
-    return legacyStartVolumeExists(mock.spawner, "supabase_db_proj").pipe(
+    return legacyVolumeExists(mock.spawner, "supabase_db_proj").pipe(
       Effect.map((exists) => {
         expect(exists).toBe(false);
       }),
@@ -846,7 +870,7 @@ describe("legacyStartVolumeExists", () => {
     "resolves true (protected, not fresh) on an ambiguous inspect failure, matching Go's IsNotFound gate",
     () => {
       const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
-      return legacyStartVolumeExists(mock.spawner, "supabase_db_proj").pipe(
+      return legacyVolumeExists(mock.spawner, "supabase_db_proj").pipe(
         Effect.map((exists) => {
           expect(exists).toBe(true);
         }),
@@ -854,7 +878,7 @@ describe("legacyStartVolumeExists", () => {
     },
   );
 
-  it.live("fails with LegacyStartVolumeInspectError when no runtime can be spawned", () => {
+  it.live("fails with LegacyVolumeInspectError when no runtime can be spawned", () => {
     const spawner = ChildProcessSpawner.make(() =>
       Effect.fail(
         PlatformError.systemError({
@@ -865,10 +889,80 @@ describe("legacyStartVolumeExists", () => {
         }),
       ),
     );
-    return legacyStartVolumeExists(spawner, "supabase_db_proj").pipe(
+    return legacyVolumeExists(spawner, "supabase_db_proj").pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(error).toBeInstanceOf(LegacyStartVolumeInspectError);
+        expect(error).toBeInstanceOf(LegacyVolumeInspectError);
+      }),
+    );
+  });
+});
+
+describe("legacyRemoveContainer", () => {
+  it.live("spawns `docker container rm -f <id>` and succeeds on exit 0", () => {
+    const mock = mockSpawner(() => ({ exitCode: 0 }));
+    return legacyRemoveContainer(mock.spawner, "supabase_db_proj").pipe(
+      Effect.map(() => {
+        expect(mock.spawned).toEqual([["container", "rm", "-f", "supabase_db_proj"]]);
+      }),
+    );
+  });
+
+  it.live(
+    'fails with LegacyContainerRemoveError on ANY non-zero exit — not tolerant of "not found"',
+    () => {
+      const mock = mockSpawner(() => ({
+        exitCode: 1,
+        stderr: "Error: No such container: supabase_db_proj\n",
+      }));
+      return legacyRemoveContainer(mock.spawner, "supabase_db_proj").pipe(
+        Effect.flip,
+        Effect.map((error) => {
+          expect(error).toBeInstanceOf(LegacyContainerRemoveError);
+          expect(error.message).toContain("failed to remove container");
+          expect(error.message).toContain("No such container");
+        }),
+      );
+    },
+  );
+
+  it.live("fails with LegacyContainerRemoveError when no runtime can be spawned", () => {
+    const spawner = ChildProcessSpawner.make(() =>
+      Effect.fail(
+        PlatformError.systemError({
+          _tag: "NotFound",
+          module: "ChildProcess",
+          method: "spawn",
+          description: "spawn ENOENT",
+        }),
+      ),
+    );
+    return legacyRemoveContainer(spawner, "supabase_db_proj").pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(LegacyContainerRemoveError);
+      }),
+    );
+  });
+});
+
+describe("legacyRemoveVolume", () => {
+  it.live("spawns `docker volume rm -f <name>` and succeeds on exit 0", () => {
+    const mock = mockSpawner(() => ({ exitCode: 0 }));
+    return legacyRemoveVolume(mock.spawner, "supabase_db_proj").pipe(
+      Effect.map(() => {
+        expect(mock.spawned).toEqual([["volume", "rm", "-f", "supabase_db_proj"]]);
+      }),
+    );
+  });
+
+  it.live("fails with LegacyVolumeRemoveError on a genuine non-zero exit", () => {
+    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "permission denied\n" }));
+    return legacyRemoveVolume(mock.spawner, "supabase_db_proj").pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(LegacyVolumeRemoveError);
+        expect(error.message).toContain("failed to remove volume");
       }),
     );
   });

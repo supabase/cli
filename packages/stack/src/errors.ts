@@ -20,15 +20,57 @@ export class DockerPullError extends Data.TaggedError("DockerPullError")<{
   readonly image: string;
   readonly detail: string;
   readonly cause: unknown;
+  /**
+   * Whether the pull failed because the container runtime itself is unusable
+   * locally — the daemon is unreachable (detected from the runtime's output
+   * at the boundary where it is produced) or the docker binary could not be
+   * spawned at all. Consumers must branch on this instead of sniffing
+   * `detail` text.
+   */
+  readonly daemonDown: boolean;
 }> {}
+
+/**
+ * Whether a container runtime's output indicates the daemon itself is not
+ * running. This is the boundary vocabulary for `DockerPullError.daemonDown`
+ * and shared with the CLI's legacy docker-run layer so both paths agree on
+ * what "daemon down" looks like.
+ */
+export const isDockerDaemonDownMessage = (message: string): boolean => {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("cannot connect to the docker daemon") ||
+    normalized.includes("docker daemon is not running") ||
+    normalized.includes("docker desktop is not running") ||
+    normalized.includes("is the docker daemon running") ||
+    // Spawn succeeds but the socket is not accessible (e.g. a Linux user
+    // missing docker group membership) — a local setup problem, not a
+    // registry failure.
+    normalized.includes("permission denied while trying to connect to the docker daemon")
+  );
+};
 
 export class StackBuildError extends Data.TaggedError("StackBuildError")<{
   readonly detail: string;
   readonly cause?: unknown;
+  /**
+   * Structured discriminant for consumers that need to distinguish failure
+   * classes without parsing `detail`: `invalid_config` for user-fixable
+   * configuration problems, `docker_not_running` for an unavailable local
+   * runtime, and `asset_preparation` for other download/registry failures.
+   * Absent for internal invariant violations.
+   */
+  readonly reason?: "invalid_config" | "docker_not_running" | "asset_preparation";
 }> {}
 
 export class StackNotRunningError extends Data.TaggedError("StackNotRunningError")<{
   readonly phase: string;
+}> {}
+
+export class StackReadinessError extends Data.TaggedError("StackReadinessError")<{
+  readonly target: string;
+  readonly timeoutMs: number;
+  readonly detail: string;
 }> {}
 
 export class PortConflictError extends Data.TaggedError("PortConflictError")<{
@@ -58,6 +100,7 @@ export function toStackError(err: unknown): StackError {
         return new StackError({
           code: "SERVICE_NOT_FOUND",
           message: taggedMessage,
+          cause: err,
         });
       case "StackBuildError":
         return new StackError({
@@ -68,6 +111,12 @@ export function toStackError(err: unknown): StackError {
       case "StackNotRunningError":
         return new StackError({
           code: "STACK_NOT_RUNNING",
+          message: taggedMessage,
+          cause: err,
+        });
+      case "StackReadinessError":
+        return new StackError({
+          code: "STACK_READINESS_TIMEOUT",
           message: taggedMessage,
           cause: err,
         });

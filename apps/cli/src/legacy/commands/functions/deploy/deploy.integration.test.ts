@@ -15,7 +15,10 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
 import { mockChildProcessSpawner } from "../../../../../../../packages/process-compose/tests/helpers/mocks.ts";
-import { deployFunctions } from "../../../../shared/functions/deploy.ts";
+import {
+  deployFunctions,
+  shouldChmodBundleOutputDirectory,
+} from "../../../../shared/functions/deploy.ts";
 import {
   ConflictingFunctionDeployFlagsError,
   NoFunctionsToDeployError,
@@ -1123,6 +1126,16 @@ describe("legacy functions deploy", () => {
         ),
       );
     });
+  });
+
+  describe("Docker bundle output permissions", () => {
+    it.live("skips the POSIX chmod on Windows only", () =>
+      Effect.sync(() => {
+        expect(shouldChmodBundleOutputDirectory("win32")).toBe(false);
+        expect(shouldChmodBundleOutputDirectory("darwin")).toBe(true);
+        expect(shouldChmodBundleOutputDirectory("linux")).toBe(true);
+      }),
+    );
   });
 
   describe("no-functions error styling (Go parity: deploy.go:35; structured output stays plain)", () => {

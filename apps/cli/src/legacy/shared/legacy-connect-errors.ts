@@ -175,6 +175,29 @@ const LEGACY_DIAL_ERROR_CODES = new Set([
   "EHOSTUNREACH",
   "EADDRNOTAVAIL",
 ]);
+// Connect-timeout failures that carry no errno `code`, matched by their exact
+// driver text: node-postgres' client connect timeout (`pg/lib/client.js`), its
+// pool acquire timeout (`pg/lib/pool.js`), and this layer's own probe timeout
+// (`legacyAcquireProbedPool`). All three are the port of Go's `connect_timeout`
+// firing — a `context.DeadlineExceeded`, which satisfies `net.Error`.
+const LEGACY_CONNECT_TIMEOUT_MESSAGES = new Set([
+  "Connection timed out",
+  "timeout expired",
+  "timeout exceeded when trying to connect",
+]);
+
+/**
+ * Whether a connect failure is a dial-level error — refused, timed out, or
+ * unreachable — rather than a server, auth, TLS, or config error. Sets
+ * `LegacyDbConnectError.retryable`, which the fresh-db bootstrap's connect
+ * retry keys off (`db-setup.ts`, #6136).
+ */
+export function legacyIsDialFailure(error: unknown): boolean {
+  const cause = legacyDeepestConnectCause(error);
+  if (hasStringCode(cause) && LEGACY_DIAL_ERROR_CODES.has(cause.code)) return true;
+  const message = typeof cause === "object" && cause !== null ? Reflect.get(cause, "message") : "";
+  return typeof message === "string" && LEGACY_CONNECT_TIMEOUT_MESSAGES.has(message);
+}
 // The complete documented Node/OpenSSL X509 certificate-verification code
 // family (Node tls docs "X509 certificate error codes", OpenSSL's
 // `X509_verify_cert_error` set), complemented by node's ERR_TLS_*/ERR_SSL_*

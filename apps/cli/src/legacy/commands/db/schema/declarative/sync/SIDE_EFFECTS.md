@@ -30,7 +30,7 @@ as a new timestamped migration.
 | `supabase-go db __shadow --mode diff` (seam, unchanged) — shadow Postgres + `SetupDatabase` + apply migrations; the catalog itself is exported natively via edge-runtime (CLI-1959 — no longer the hidden `db schema declarative __catalog --mode migrations` subprocess) | migrations-catalog cache miss only                                |
 | `supabase-go db schema declarative __catalog --mode declarative --experimental` (seam) — shadow Postgres + `SetupDatabase` + apply declarative → catalog                                                                                                                  | always                                                            |
 | Edge-runtime container running the pg-delta diff Deno script, and (on a migrations-catalog cache miss) the pg-delta catalog-export Deno script                                                                                                                            | always / cache miss                                               |
-| `supabase-go db reset --local [--network-id <id>]` (seam) — only on the failed-apply recovery path; `db reset` is still Go-proxied (`wrapped`), so the reset itself shells out to the bundled binary                                                                      | TTY only, apply failed, and the user confirms "reset and reapply" |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase` (CLI-2062: in-process, no `supabase-go` child) — only on the failed-apply recovery path       | TTY only, apply failed, and the user confirms "reset and reapply" |
 
 ## Environment Variables
 
@@ -79,8 +79,9 @@ are mutually exclusive.
 - The migration apply is native (connects to the local DB and records migration
   history). On apply failure a debug bundle is written under
   `supabase/.temp/pgdelta/debug/` and, in a TTY, a reset-and-reapply is offered
-  (the reset itself runs the bundled `supabase-go db reset --local`, since
-  `db reset` is still `wrapped`).
+  (the reset itself is native too — `legacyResetLocalDatabase`, CLI-2062 — run
+  in-process, sharing this command's own telemetry/linked-project-cache finalizer
+  cycle rather than firing a second one from a `supabase-go` child).
 - **Architecture:** the migrations-catalog diff source resolves natively (CLI-1959):
   the setup-inputs-folded cache key, the zero-local-migrations → platform-baseline
   reuse, and the pg-delta catalog export are all native TS; only the shadow-database

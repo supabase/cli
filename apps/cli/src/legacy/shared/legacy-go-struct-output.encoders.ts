@@ -1,3 +1,9 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Byte-faithful reproductions of the Go CLI's `-o yaml` / `-o toml` output for
  * **struct** payloads (CLI-1975).
@@ -504,8 +510,18 @@ function yamlMapEntries(
  * `keyList.Less` compares runes — both equal Unicode code-point order, which
  * differs from JS `<` (UTF-16 code-unit order) when an astral character meets
  * a high-BMP one (e.g. Go sorts U+E000 before U+1F600, UTF-16 the reverse).
+ *
+ * Exported for `legacy-go-output.encoders.ts`'s `sortKeysDeep` -
+ * `encoding/json`'s map-key sort is the exact same Go byte/code-point
+ * order, so `gen bearer-jwt`'s `--payload` custom-claims object (and every
+ * other `encodeGoJson`/`encodeGoStructJsonBody` caller) needs this same
+ * comparator instead of a second, divergent copy (CLI-1961 Codex review
+ * finding: verified against the real binary that `json.Marshal` of a map
+ * with a U+E000 key and a U+10000 key emits the U+E000 key FIRST, while
+ * plain JS `Object.keys(...).sort()` on the same two keys yields the
+ * reverse order).
  */
-function goStringCompare(a: string, b: string): number {
+export function goStringCompare(a: string, b: string): number {
   let i = 0;
   while (i < a.length && i < b.length) {
     const ac = a.codePointAt(i) as number;
@@ -1055,6 +1071,10 @@ export class LegacyGoTomlEncodeError extends Error {
   constructor(message = "toml: cannot encode a map with non-string key type") {
     super(message);
     this.name = "LegacyGoTomlEncodeError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.internalPanic;
   }
 }
 

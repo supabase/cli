@@ -110,8 +110,9 @@ than a pending port because:
 The decision record is Linear issue CLI-1960 and the pull request that introduced
 this deprecation notice; re-open only if a TS/WASM binding for
 `stripe/pg-schema-diff` ships. It will become the CLI's sole remaining Go delegation
-once `--use-pgadmin`'s delegation, the `db __shadow`/`db __db-bootstrap` seams, and
-the rest of the M9 milestone's in-flight issues are done — it is not there yet.
+once `--use-pgadmin`'s delegation, the `db __shadow` seam (the sibling `db
+__db-bootstrap` seam was already removed outright by CLI-1955), and the rest of
+the M9 milestone's in-flight issues are done — it is not there yet.
 
 Given that, the flag is now deprecated rather than ported:
 

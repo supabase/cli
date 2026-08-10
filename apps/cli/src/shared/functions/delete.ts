@@ -1,4 +1,9 @@
-import { operationDefinitions, type ApiClient } from "@supabase/api/effect";
+import {
+  markSupabaseApiInputErrorAsUserInput,
+  operationDefinitions,
+  SupabaseApiInputError,
+  type ApiClient,
+} from "@supabase/api/effect";
 import { Effect, type Option } from "effect";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import { Output } from "../output/output.service.ts";
@@ -54,6 +59,11 @@ export function deleteFunction<ResolveError, ResolveRequirements>(
       })
       .pipe(
         Effect.mapError((error) => {
+          if (error instanceof SupabaseApiInputError) {
+            // This operation's complete input is the resolved ref and the
+            // prevalidated slug, so a schema rejection is user-derived.
+            return markSupabaseApiInputErrorAsUserInput(error);
+          }
           if (HttpClientError.isHttpClientError(error)) {
             const description = error.reason.description ?? error.reason._tag;
             return new DeleteFunctionNetworkError({
@@ -79,6 +89,7 @@ export function deleteFunction<ResolveError, ResolveRequirements>(
         const body = yield* response.text.pipe(Effect.orElseSucceed(() => ""));
         return yield* Effect.fail(
           new DeleteFunctionUnexpectedStatusError({
+            status: response.status,
             message: `unexpected delete function status ${response.status}: ${body}`,
           }),
         );

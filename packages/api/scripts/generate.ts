@@ -290,6 +290,15 @@ export function sanitizeOpenApiSchema(
     sanitized.pattern = UUID_PATTERN;
   }
 
+  // The spec's `date-time` patterns reject timestamps the Management API
+  // itself emits: most are Z-anchored, and even the most permissive variant
+  // rejects offset-less values and the lowercase `t`/`z` RFC 3339 §5.6 allows
+  // (supabase/cli#6115). Keeping any of them means owning a guess about every
+  // shape the API may serialize, so keep `format` and drop the pattern.
+  if (sanitized.type === "string" && sanitized.format === "date-time") {
+    delete sanitized.pattern;
+  }
+
   return sanitized;
 }
 

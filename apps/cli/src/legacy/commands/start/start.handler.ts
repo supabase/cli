@@ -142,8 +142,8 @@ import { legacyResolveDbBootstrapConfig } from "../../shared/db-bootstrap/bootst
 import { legacyStartDatabase } from "../../shared/db-bootstrap/start-database.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
-  legacyStartContainer,
-  type LegacyStartContainerOpts,
+  legacyCreateContainer,
+  type LegacyContainerOpts,
 } from "../../shared/db-bootstrap/container-lifecycle.ts";
 import { legacyEnsureImagesCached } from "../../shared/db-bootstrap/image-prepull.ts";
 import {
@@ -939,7 +939,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // (`legacy-edge-runtime-script.layer.ts`).
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    const startOpts: LegacyStartContainerOpts = {
+    const startOpts: LegacyContainerOpts = {
       projectId,
       isBitbucketPipeline,
       workdir: cliConfig.workdir,
@@ -1804,7 +1804,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           const runtime: StartedRuntime = yield* legacyStartEdgeRuntimeContainer(edgeRuntimeInput);
           // Deliberately NOT calling `runtime.cleanup` here — see
           // `edge-runtime.service.ts`'s header for why. Unlike every other
-          // service built here (`legacyStartContainer`'s `restartPolicy:
+          // service built here (`legacyCreateContainer`'s `restartPolicy:
           // "unless-stopped"`), Go's own Edge Runtime bring-up sets no Docker
           // restart policy at all, so this container's `docker run` matches
           // that — but its bind-mounted host temp files must still exist for
@@ -1848,7 +1848,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             ),
           ),
         );
-        yield* legacyStartContainer(spawner, spec, startOpts);
+        yield* legacyCreateContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
           started.set(spec.containerName, spec.image);
         }

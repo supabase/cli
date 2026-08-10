@@ -60,7 +60,7 @@ import { legacyEnsureImagesCached } from "../../../shared/db-bootstrap/image-pre
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
 import { legacyRollbackStart } from "../../../shared/db-bootstrap/rollback.ts";
 import { legacyStartDatabase } from "../../../shared/db-bootstrap/start-database.ts";
-import type { LegacyStartContainerOpts } from "../../../shared/db-bootstrap/container-lifecycle.ts";
+import type { LegacyContainerOpts } from "../../../shared/db-bootstrap/container-lifecycle.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -1002,7 +1002,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
     const isBitbucketPipeline = legacyIsBitbucketPipeline();
-    const startOpts: LegacyStartContainerOpts = {
+    const startOpts: LegacyContainerOpts = {
       projectId,
       isBitbucketPipeline,
       workdir: cliConfig.workdir,

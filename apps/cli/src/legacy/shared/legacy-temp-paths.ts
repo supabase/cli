@@ -1,4 +1,9 @@
 import { Data, Effect, FileSystem, Option, type Path } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * A real failure reading `<workdir>/supabase/.temp/project-ref` (e.g. the path is a
@@ -9,7 +14,11 @@ import { Data, Effect, FileSystem, Option, type Path } from "effect";
  */
 export class LegacyProjectRefReadError extends Data.TaggedError("LegacyProjectRefReadError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * Absolute paths to the files the Go CLI writes under `<workdir>/supabase/.temp/`.

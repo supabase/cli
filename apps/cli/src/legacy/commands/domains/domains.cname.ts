@@ -12,6 +12,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
+ * Internal discriminated failure for the CNAME verification pipeline:
+ * `transport: true` for resolver failures (fetch error, non-200, timeout),
+ * `transport: false` for a genuine finding about the user's DNS records
+ * (no CNAME answer). Consumed exclusively by {@link verifyLegacyCname}, which
+ * folds it into `LegacyDomainsCnameError` so telemetry can tell a Cloudflare
+ * DoH outage apart from a misconfigured record.
+ */
+export interface LegacyCnameFailure {
+  readonly transport: boolean;
+  readonly detail: string;
+}
+
+/**
  * Extract the first CNAME answer's `data` from a Cloudflare DNS-over-HTTPS JSON
  * response. Mirrors Go's `utils.ResolveCNAME`
  * (`apps/cli-go/internal/utils/api.go:60-79`): scan `Answer` for the first entry
@@ -20,7 +33,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * answers instead of Go's actual (uncapped, `%+v`-on-`[]byte`) dump — see the
  * NOTE at the failure site below for why those don't byte-match.
  */
-export function parseFirstCname(payload: unknown, host: string): Effect.Effect<string, Error> {
+export function parseFirstCname(
+  payload: unknown,
+  host: string,
+): Effect.Effect<string, LegacyCnameFailure> {
   const answers = isRecord(payload) && Array.isArray(payload["Answer"]) ? payload["Answer"] : [];
   for (const answer of answers) {
     if (isRecord(answer) && answer["type"] === CNAME_TYPE && typeof answer["data"] === "string") {
@@ -38,21 +54,27 @@ export function parseFirstCname(payload: unknown, host: string): Effect.Effect<s
   // array, not the JSON text itself; empirically verified by compiling Go).
   const dump = JSON.stringify(answers, null, 4);
   const capped = dump.length > 1024 ? `${dump.slice(0, 1024)}…` : dump;
-  return Effect.fail(
-    new Error(`failed to locate appropriate CNAME record for ${host}; resolves to ${capped}`),
-  );
+  return Effect.fail({
+    transport: false,
+    detail: `failed to locate appropriate CNAME record for ${host}; resolves to ${capped}`,
+  });
 }
 
 /**
  * Render the `%w`-wrapped cause string for the "failed to resolve" CNAME error.
- * Transport / timeout / parse failures and the locate error all flow through
- * here so the outer message stays Go-shaped without leaking object internals.
+ * Transport / timeout / parse failures all flow through here so the outer
+ * message stays Go-shaped without leaking object internals.
  */
 export function formatCnameCause(cause: unknown): string {
   if (cause instanceof Error) return cause.message;
   if (isRecord(cause) && typeof cause["message"] === "string") return cause["message"];
   return String(cause);
 }
+
+const transportFailure = (cause: unknown): LegacyCnameFailure => ({
+  transport: true,
+  detail: formatCnameCause(cause),
+});
 
 /**
  * Verify that `customHostname` has a CNAME record pointing at the project's
@@ -77,20 +99,29 @@ export const verifyLegacyCname = Effect.fnUntraced(function* (args: {
   );
 
   const resolved = yield* Effect.gen(function* () {
-    const response = yield* args.httpClient.execute(request);
+    const response = yield* args.httpClient
+      .execute(request)
+      .pipe(Effect.mapError(transportFailure));
     if (response.status !== 200) {
-      return yield* Effect.fail(new Error(`unexpected DNS query status ${response.status}`));
+      return yield* Effect.fail<LegacyCnameFailure>({
+        transport: true,
+        detail: `unexpected DNS query status ${response.status}`,
+      });
     }
-    const payload = yield* response.json;
+    const payload = yield* response.json.pipe(Effect.mapError(transportFailure));
     return yield* parseFirstCname(payload, args.customHostname);
   }).pipe(
     Effect.timeout("10 seconds"),
-    Effect.mapError(
-      (cause) =>
-        new LegacyDomainsCnameError({
-          message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it failed to resolve: ${formatCnameCause(cause)}`,
-        }),
-    ),
+    Effect.mapError((cause) => {
+      const failure: LegacyCnameFailure =
+        typeof cause === "object" && cause !== null && "transport" in cause
+          ? cause
+          : transportFailure(cause);
+      return new LegacyDomainsCnameError({
+        message: `expected custom hostname '${args.customHostname}' to have a CNAME record pointing to your project at '${expected}', but it failed to resolve: ${failure.detail}`,
+        transport: failure.transport,
+      });
+    }),
   );
 
   if (resolved !== expected) {

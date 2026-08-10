@@ -9,7 +9,7 @@ export const legacyCompletionCommand = Command.make("completion").pipe(
     "Generate the autocompletion script for supabase for the specified shell.\n" +
       "See each sub-command's help for details on how to use the generated script.",
   ),
-  Command.withShortDescription("Generate autocompletion scripts"),
+  Command.withShortDescription("Generate the autocompletion script for the specified shell"),
   Command.withSubcommands([
     legacyCompletionBashCommand,
     legacyCompletionFishCommand,

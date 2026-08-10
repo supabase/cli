@@ -14,7 +14,7 @@ import {
   type StackMetadata,
   type StackState,
 } from "@supabase/stack/effect";
-import { UnixHttpClient } from "@supabase/stack";
+import { UnixHttpClient } from "@supabase/stack/testing";
 import { Api } from "../../src/next/auth/api.service.ts";
 import type { LoginSessionResponse, ProfileResponse } from "../../src/next/auth/api.service.ts";
 import { Credentials } from "../../src/next/auth/credentials.service.ts";

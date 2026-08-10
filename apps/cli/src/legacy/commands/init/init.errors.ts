@@ -1,5 +1,11 @@
 import { Data } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../shared/telemetry/error-actionability.ts";
+
 /**
  * `supabase/config.toml` already exists and `--force` was not set. Reproduces
  * Go's wrapped `O_EXCL` open error from `utils.InitConfig`
@@ -16,7 +22,11 @@ import { Data } from "effect";
 export class LegacyInitConfigExistsError extends Data.TaggedError("LegacyInitConfigExistsError")<{
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 /**
  * `--use-orioledb` without `--experimental`. Reproduces cobra's
@@ -30,4 +40,8 @@ export class LegacyInitExperimentalRequiredError extends Data.TaggedError(
   "LegacyInitExperimentalRequiredError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
