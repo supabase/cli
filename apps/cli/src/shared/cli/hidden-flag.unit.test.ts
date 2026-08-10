@@ -138,9 +138,13 @@ describe("native hidden flags", () => {
           ]).pipe(Effect.exit);
           expect(JSON.stringify(stopExit)).not.toContain("UnrecognizedFlag");
           // `functions download --use-docker` now runs the native Docker-unbundle
-          // path (CLI-1963) instead of forwarding to `LegacyGoProxy` — it can fail
-          // for Docker-related reasons in this proxy-only test layer, same as
-          // `start`/`stop` above, so this only proves the hidden flag still parses.
+          // path (CLI-1963) instead of forwarding to `LegacyGoProxy` — the
+          // deliberately-invalid slug makes it fail at `validateSlug`
+          // (`download.ts`, checked BEFORE `isDockerRunning`/any image pull),
+          // so the invocation stays fast and side-effect-free even on a CI
+          // runner with a live Docker daemon (a valid slug here triggered a
+          // real multi-second `docker pull` and timed this test out), while
+          // still proving the hidden flag parses by exact name.
           // `--legacy-bundle` is the one remaining case that still forwards to the
           // proxy, asserted below.
           const downloadUseDockerExit = yield* Command.runWith(legacyTestRoot, {
@@ -148,7 +152,7 @@ describe("native hidden flags", () => {
           })([
             "functions",
             "download",
-            "hello",
+            "Not_A_Valid-Slug!",
             "--project-ref",
             "abcdefghijklmnopqrst",
             "--use-docker",

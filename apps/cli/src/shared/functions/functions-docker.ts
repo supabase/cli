@@ -1,6 +1,6 @@
 // Docker orchestration primitives shared by `deploy.ts` and `download.ts`
 // (the `functions` command family root, `src/shared/functions/`) — plus
-// `serve.ts` (same family) and `legacy/commands/start/lib/container-lifecycle.ts`
+// `serve.ts` (same family) and `legacy/shared/db-bootstrap/container-lifecycle.ts`
 // (a different family, reaching in for the generic `isUserDefinedDockerNetwork`
 // predicate), both of which already imported these primitives from `deploy.ts`
 // before this file existed.
@@ -12,7 +12,10 @@ import { legacyMakeDockerImageResolver } from "../../legacy/shared/legacy-docker
 
 const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
 const MAX_PROJECT_ID_LENGTH = 40;
-const DENO1_EDGE_RUNTIME_VERSION = "1.68.4";
+// Go's `deno1` image tag (`pkg/config/constants.go:15`,
+// `supabase/edge-runtime:v1.68.4`) — a full tag, since tags flow verbatim
+// into `edgeRuntimeImage` (`functions.shared.ts`) with no `v` synthesis.
+const DENO1_EDGE_RUNTIME_VERSION = "v1.68.4";
 
 export function toSlash(pathname: string) {
   return pathname.replaceAll("\\", "/");
@@ -46,7 +49,7 @@ export function localDockerId(name: string, projectId: string) {
  * (flag explicitly cleared) skips straight to the generated default, same
  * as a non-empty `explicit` skips it by using the flag's own value. Callers
  * MUST pass a flag reader that preserves this 3-way distinction — see
- * `explicitStringFlag`.
+ * `lastExplicitLongFlagValue` (`shared/cli/cobra-flag-groups.ts`).
  * `envOverride` is `undefined` in `next` (no Go-viper env-binding claim
  * there) — see `resolveDockerNetworkMode`'s callers.
  */
@@ -88,6 +91,12 @@ export interface FunctionsDockerRunSpec {
   readonly binds: ReadonlyArray<string>;
   /** `KEY=VALUE` entries, each emitted as `-e KEY=VALUE`. */
   readonly env?: ReadonlyArray<string>;
+  /**
+   * Emitted as `-w <dir>` — Go's bundler sets `WorkingDir:
+   * utils.ToDockerPath(cwd)` (`bundle.go:79`); the unbundler sets none
+   * (`download.go:268-281`), so this is optional.
+   */
+  readonly workingDir?: string;
   /** argv after the image, e.g. `["bundle", "--entrypoint", …]`. */
   readonly containerArgs: ReadonlyArray<string>;
   readonly platform?: NodeJS.Platform;
@@ -112,6 +121,9 @@ export function buildFunctionsDockerRunArgs(spec: FunctionsDockerRunSpec): Array
   }
   for (const env of spec.env ?? []) {
     command.push("-e", env);
+  }
+  if (spec.workingDir !== undefined) {
+    command.push("-w", spec.workingDir);
   }
   const labels = dockerProjectLabels(spec.projectId);
   command.push(
@@ -154,6 +166,11 @@ function collectByteStream(
 // `docker`, so the spawn goes through `spawnContainerCli` to fall back to
 // `podman` on Docker-less hosts. `command` is retained for the extendEnv
 // default and the `functions serve` dependency-injection seam.
+// `Effect.scoped` closes the spawn's own acquireRelease scope as soon as the
+// process has exited and both streams are drained — without it, every call
+// parks a release finalizer in the CALLER's scope, and `functions serve`'s
+// session-long restart loop (one `Effect.scoped` around an infinite loop)
+// would accumulate one per docker invocation per file-change restart.
 export const runChildProcess = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
@@ -168,28 +185,32 @@ export const runChildProcess = Effect.fnUntraced(function* (
     readonly onStderr?: (chunk: string) => Effect.Effect<void>;
   } = {},
 ) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawnContainerCli(spawner, [...args], {
-    stdin: "ignore",
-    stdout: opts.stdout ?? "pipe",
-    stderr: opts.stderr ?? "pipe",
-    env: opts.env,
-    extendEnv: opts.extendEnv ?? command === "docker",
-  });
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const child = yield* spawnContainerCli(spawner, [...args], {
+        stdin: "ignore",
+        stdout: opts.stdout ?? "pipe",
+        stderr: opts.stderr ?? "pipe",
+        env: opts.env,
+        extendEnv: opts.extendEnv ?? command === "docker",
+      });
 
-  const [stdout, stderr, exitCode] = yield* Effect.all(
-    [
-      opts.stdout === "ignore"
-        ? Effect.succeed("")
-        : collectByteStream(child.stdout, opts.onStdout),
-      opts.stderr === "ignore"
-        ? Effect.succeed("")
-        : collectByteStream(child.stderr, opts.onStderr),
-      child.exitCode.pipe(Effect.map(Number)),
-    ],
-    { concurrency: "unbounded" },
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          opts.stdout === "ignore"
+            ? Effect.succeed("")
+            : collectByteStream(child.stdout, opts.onStdout),
+          opts.stderr === "ignore"
+            ? Effect.succeed("")
+            : collectByteStream(child.stderr, opts.onStderr),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      );
+      return { exitCode, stdout, stderr };
+    }),
   );
-  return { exitCode, stdout, stderr };
 });
 
 // Go: `container.NetworkMode.IsContainer()` (`docker/api/types/container/hostconfig.go:152-155`,
@@ -294,6 +315,15 @@ export const isDockerRunning = Effect.fnUntraced(function* () {
   return result.exitCode === 0;
 });
 
+/**
+ * Resolves the edge-runtime image TAG (fed verbatim into
+ * `edgeRuntimeImage`, `functions.shared.ts` — Go's `replaceImageTag`
+ * semantics, no `v` synthesis). `defaultVersion` is the
+ * `supabase/.temp/edge-runtime-version` pin when present, else the
+ * Dockerfile default tag (`resolveEdgeRuntimeVersionPin`); `deno_version = 1`
+ * overrides EITHER with Go's `deno1` image tag, matching `Config.Validate`
+ * running after the pin was applied (`pkg/config/config.go:847-849,1164-1169`).
+ */
 export function resolveEdgeRuntimeVersion(
   denoVersion: number | undefined,
   defaultVersion: string,
@@ -307,24 +337,6 @@ export function resolveEdgeRuntimeVersion(
   return Effect.fail(
     new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
   );
-}
-
-/**
- * Formats a resolved edge-runtime version as a Docker tag, tolerating a
- * pin that's already `v`-prefixed. `resolveEdgeRuntimeVersion`'s own
- * defaults are bare (`"1.74.2"`, `DENO1_EDGE_RUNTIME_VERSION`), but a value
- * sourced from `supabase/.temp/edge-runtime-version` can legitimately be
- * either form — Go's `replaceImageTag` (`pkg/config/utils.go:81-84`) appends
- * the pin file's raw content verbatim after the image's `:`, and both forms
- * are exercised elsewhere in this codebase (`legacy-edge-runtime-image.ts`'s
- * own `replaceImageTag` port, and its and `services.integration.test.ts`'s
- * `"v9.9.9"` fixtures alongside `deploy.integration.test.ts`'s bare
- * `"9.9.9"`). Blindly prepending `v` — as every caller below did before this
- * helper existed — double-prefixes an already-`v`-prefixed pin
- * (`supabase/edge-runtime:vv9.9.9`), which docker then simply fails to pull.
- */
-export function edgeRuntimeImageTag(version: string): string {
-  return version.startsWith("v") ? version : `v${version}`;
 }
 
 /**

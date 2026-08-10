@@ -11,14 +11,13 @@ import { Output } from "../output/output.service.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
   explicitBooleanLongFlag,
-  explicitStringFlag,
+  lastExplicitLongFlagValue,
   hasExplicitLongFlag,
 } from "../cli/cobra-flag-groups.ts";
 import { legacyDescribeContainerCliFailure } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import {
   buildFunctionsDockerRunArgs,
-  edgeRuntimeImageTag,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
@@ -30,6 +29,7 @@ import {
 } from "./functions-docker.ts";
 import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import {
+  edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
@@ -956,12 +956,12 @@ const resolveEdgeRuntimeImage = Effect.fnUntraced(function* (
   return {
     projectId: context.projectId,
     denoVersion: context.denoVersion,
-    // `edgeRuntimeImageTag` (not a bare `v${edgeRuntimeVersion}` prepend) —
-    // `dependencies.edgeRuntimeVersion` comes from a `.temp/edge-runtime-version`
-    // pin that may already carry its own `v` prefix (see the helper's doc).
-    // Registry mapping + pull-with-retry happens per-container, right before
+    // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`) —
+    // a `.temp/edge-runtime-version` pin flows through unmodified, `v` prefix
+    // or not (see the helper's doc in `functions.shared.ts`). Registry
+    // mapping + pull-with-retry happens per-container, right before
     // `ensureDockerNetwork`, matching Go's `DockerStart` (see the caller).
-    rawImage: `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+    rawImage: edgeRuntimeImage(edgeRuntimeVersion),
     projectEnvValues: context.projectEnvValues,
   };
 });
@@ -1045,7 +1045,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
   // occurrence's boolean value instead (`explicitBooleanLongFlag`), falling
   // back to `false` (cleanup runs) when `--debug` never appears. `SUPABASE_DEBUG`
   // env-var fallback is a separate, pre-existing gap shared with every other
-  // `hasGlobalLongFlag(rawArgs, "debug")` call site in this file family
+  // presence-only `--debug` read this file family used to have
   // (e.g. `deploy.ts`) and the legacy debug logger itself, none of which
   // currently honor it either — left open rather than fixed piecemeal here.
   const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
@@ -1064,14 +1064,14 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
 
   // Go: `viper.GetString("network-id")` else `NetId` (`docker.go:379-383`) —
   // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-  // registered on `functions download` itself. `explicitStringFlag`
+  // registered on `functions download` itself. `lastExplicitLongFlagValue`
   // preserves the "explicitly cleared" vs "never touched" distinction
   // `resolveDockerNetworkMode` needs to decide whether `SUPABASE_NETWORK_ID`
   // applies — see that function's own doc comment. `SUPABASE_NETWORK_ID`
   // (env or project dotenv) is legacy-shell-only — same Go-viper-parity gate
   // as `projectEnvValues` itself (`undefined` in `next`).
   const networkMode = resolveDockerNetworkMode({
-    explicit: explicitStringFlag(dependencies.rawArgs, "network-id"),
+    explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
     envOverride:
       projectEnvValues === undefined
         ? undefined

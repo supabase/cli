@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { FunctionResponse, makeApiClient } from "@supabase/api/effect";
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -2002,7 +2002,7 @@ describe("functions download", () => {
             (spawned) => spawned.command === "docker" && spawned.args[0] === "run",
           );
           expect(runCommand?.args).toContain(
-            `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+            `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`,
           );
         }).pipe(
           Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),

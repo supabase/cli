@@ -501,7 +501,10 @@ describe("legacy functions serve integration", () => {
         expect(dockerRun.args).toContain("supabase_network_test-project");
         expect(dockerRun.args).toContain("--add-host");
         expect(dockerRun.args).toContain("host.docker.internal:host-gateway");
-        expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.73.13");
+        // The pin's content is applied VERBATIM as the tag (Go's
+        // `replaceImageTag`, `pkg/config/utils.go:81-84`) — a bare pin stays
+        // bare, no `v` synthesized.
+        expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:1.73.13");
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
             value.endsWith(":/root/index.ts:ro,Z"),

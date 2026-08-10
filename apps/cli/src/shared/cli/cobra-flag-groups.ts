@@ -28,41 +28,6 @@ export function hasExplicitLongFlag(
   return false;
 }
 
-/**
- * Raw value of `--<flagName>`/`--<flagName>=value` anywhere in argv
- * (unscoped — no command-path anchoring), or `undefined` if absent.
- * pflag string flags are shared-variable, last-`Set()`-wins (same rule
- * {@link explicitBooleanLongFlag} and `legacyPflagStringValue` already
- * follow) — a repeated `--<flagName> old --<flagName> new` must resolve to
- * `new`, so this keeps scanning after a match instead of returning early
- * (review round on CLI-1963's `functions download` port). Preserves the
- * 3-way distinction `undefined` (flag never passed) / `""` (explicit
- * `--<flagName>=`) / non-empty value — callers that need to distinguish
- * "flag explicitly cleared" from "flag never touched" (e.g.
- * `resolveDockerNetworkMode`'s env-fallback precedence — see its doc
- * comment) need this rather than collapsing both to `undefined`.
- */
-export function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
-  let result: string | undefined;
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const token = rawArgs[index];
-    if (token === `--${flagName}`) {
-      result = rawArgs[index + 1];
-    } else if (token?.startsWith(`--${flagName}=`)) {
-      result = token.slice(flagName.length + 3);
-    }
-  }
-  return result;
-}
-
-/**
- * Whether `--<flagName>` (or `--<flagName>=`) appears anywhere in argv,
- * unscoped.
- */
-export function hasGlobalLongFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
-  return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
-}
-
 const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
   "0",
   "f",
@@ -80,7 +45,7 @@ const PFLAG_BOOLEAN_FALSE_VALUES: ReadonlySet<string> = new Set([
  * `--<flagName>` records pflag's bool `NoOptDefVal` (`true`); an inline value
  * is parsed through pflag's `strconv.ParseBool` false set — anything else
  * (including garbage) is truthy, same as `cast.ToBool`'s permissive default.
- * Unlike {@link hasGlobalLongFlag}, this distinguishes `--<flagName>=false`
+ * Unlike a bare presence scan, this distinguishes `--<flagName>=false`
  * from presence alone, which matters for Go call sites gated on
  * `viper.GetBool` rather than "was the flag passed at all".
  */

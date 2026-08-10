@@ -1,10 +1,49 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "@effect/vitest";
+import { Deferred, Effect, Layer, Sink, Stream } from "effect";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   buildFunctionsDockerRunArgs,
   localDockerId,
   resolveDockerNetworkMode,
+  runChildProcess,
 } from "./functions-docker.ts";
+
+/**
+ * A `ChildProcessSpawner` layer whose handle emits exactly the given raw
+ * `Uint8Array` chunks on stdout/stderr — unlike the shared
+ * `mockChildProcessSpawner` (`packages/process-compose/tests/helpers/mocks.ts`),
+ * which encodes one full line per chunk, this lets a test place an arbitrary
+ * byte boundary mid-codepoint to exercise `collectByteStream`'s per-stream
+ * `TextDecoder` buffering.
+ */
+function mockStreamingChildProcessLayer(
+  opts: {
+    readonly stdout?: ReadonlyArray<Uint8Array>;
+    readonly stderr?: ReadonlyArray<Uint8Array>;
+  } = {},
+) {
+  const spawner = ChildProcessSpawner.make(() =>
+    Effect.gen(function* () {
+      const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
+      return ChildProcessSpawner.makeHandle({
+        pid: ChildProcessSpawner.ProcessId(1),
+        stdout: Stream.fromIterable(opts.stdout ?? []),
+        stderr: Stream.fromIterable(opts.stderr ?? []),
+        all: Stream.empty,
+        exitCode: Deferred.await(exitDeferred),
+        isRunning: Effect.succeed(false),
+        stdin: Sink.drain,
+        kill: () => Effect.void,
+        unref: Effect.succeed(Effect.void),
+        getInputFd: () => Sink.drain,
+        getOutputFd: () => Stream.empty,
+      });
+    }),
+  );
+  return Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner);
+}
 
 describe("buildFunctionsDockerRunArgs", () => {
   it("assembles run/--rm, binds, network, env, labels, image, and container args in order", () => {
@@ -196,4 +235,62 @@ describe("resolveDockerNetworkMode", () => {
     expect(result).toBe(localDockerId("network", "my-project"));
     expect(result).toBe("supabase_network_my-project");
   });
+});
+
+describe("runChildProcess", () => {
+  it.effect(
+    "tees a multi-byte UTF-8 character split across a chunk boundary, decoding it correctly in both the live tee and the accumulated stdout, and never tees an empty string",
+    () =>
+      Effect.gen(function* () {
+        // "café"'s bytes are [c, a, f, 0xC3, 0xA9] — "é" is the 2-byte sequence
+        // 0xC3 0xA9. Chunk 1 ends right after the leading byte (incomplete on
+        // its own); chunk 2 is a genuinely empty chunk (decodes to "", must
+        // never be teed); chunk 3 carries only the trailing byte, completing
+        // "é" once joined with the decoder's buffered leading byte.
+        const full = new TextEncoder().encode("café");
+        const chunk1 = full.slice(0, 4);
+        const chunk2 = new Uint8Array(0);
+        const chunk3 = full.slice(4);
+
+        const stdoutTee: Array<string> = [];
+        const result = yield* runChildProcess("docker", ["logs"], {
+          onStdout: (chunk) => Effect.sync(() => stdoutTee.push(chunk)),
+        }).pipe(
+          Effect.provide(mockStreamingChildProcessLayer({ stdout: [chunk1, chunk2, chunk3] })),
+        );
+
+        expect(result.stdout).toBe("café");
+        // The teed chunks, concatenated, must equal the returned stdout exactly.
+        expect(stdoutTee.join("")).toBe(result.stdout);
+        expect(stdoutTee).not.toContain("");
+        expect(stdoutTee.every((chunk) => chunk.length > 0)).toBe(true);
+      }),
+  );
+
+  it.effect("tees stderr independently of stdout, both live and in the returned strings", () =>
+    Effect.gen(function* () {
+      const encoder = new TextEncoder();
+      const stdoutChunks = [encoder.encode("stdout-"), encoder.encode("chunk")];
+      const stderrChunks = [encoder.encode("stderr-"), encoder.encode("chunk")];
+
+      const stdoutTee: Array<string> = [];
+      const stderrTee: Array<string> = [];
+      const result = yield* runChildProcess("docker", ["logs"], {
+        onStdout: (chunk) => Effect.sync(() => stdoutTee.push(chunk)),
+        onStderr: (chunk) => Effect.sync(() => stderrTee.push(chunk)),
+      }).pipe(
+        Effect.provide(
+          mockStreamingChildProcessLayer({ stdout: stdoutChunks, stderr: stderrChunks }),
+        ),
+      );
+
+      expect(result.stdout).toBe("stdout-chunk");
+      expect(result.stderr).toBe("stderr-chunk");
+      expect(stdoutTee.join("")).toBe(result.stdout);
+      expect(stderrTee.join("")).toBe(result.stderr);
+      // Neither stream's tee ever observes so much as a fragment of the other.
+      expect(stdoutTee.some((chunk) => chunk.includes("stderr"))).toBe(false);
+      expect(stderrTee.some((chunk) => chunk.includes("stdout"))).toBe(false);
+    }),
+  );
 });

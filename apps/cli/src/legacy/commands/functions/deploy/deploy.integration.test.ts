@@ -20,6 +20,7 @@ import {
   deployFunctions,
   shouldChmodBundleOutputDirectory,
 } from "../../../../shared/functions/deploy.ts";
+import { toDockerPath } from "../../../../shared/functions/functions-docker.ts";
 import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
@@ -1640,6 +1641,25 @@ describe("legacy functions deploy", () => {
               "com.docker.compose.project=test-project",
             ]),
           );
+          // Adjacent pairs, not merely present anywhere in argv —
+          // `buildFunctionsDockerRunArgs` emits the two `--label KEY=VALUE`
+          // pairs back-to-back, immediately before the image.
+          const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
+          expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+            "--label",
+            "com.supabase.cli.project=test-project",
+            "--label",
+            "com.docker.compose.project=test-project",
+          ]);
+          // `-w <toDockerPath(projectRoot)>` — Go's bundler sets WorkingDir to
+          // the post-ChangeWorkDir cwd (`bundle.go:79`), which
+          // `deploy.ts`/`deploy.handler.ts` resolve to `cliConfig.workdir`,
+          // i.e. `tempRoot.current` in this test.
+          const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
+          expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
+            "-w",
+            toDockerPath(tempRoot.current),
+          ]);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(

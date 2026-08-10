@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
@@ -616,7 +616,7 @@ describe("legacy functions download", () => {
       // The unbundle tail is always the LAST 6 args regardless of whether
       // `--add-host` (Linux-only) was inserted before it.
       expect(runCommand?.args.slice(-6)).toEqual([
-        `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+        `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`,
         "unbundle",
         "--eszip",
         "/root/eszips/output_hello-world.eszip",
@@ -760,7 +760,7 @@ describe("legacy functions download", () => {
 
     return Effect.gen(function* () {
       // `--network-id` is a persistent root flag (`cmd/root.go:328`), not
-      // registered on `functions download` itself — `explicitStringFlag`
+      // registered on `functions download` itself — `lastExplicitLongFlagValue`
       // scans the whole argv unscoped.
       yield* legacyFunctionsDownload({ ...baseFlags, useDocker: true });
 
@@ -824,7 +824,7 @@ describe("legacy functions download", () => {
     // pflag/viper string flags are shared-variable, last-`Set()`-wins
     // (confirmed empirically: `pflag.FlagSet.Parse` on
     // `--network-id old --network-id custom-network` resolves to
-    // `custom-network`) — `explicitStringFlag` must keep scanning past the
+    // `custom-network`) — `lastExplicitLongFlagValue` must keep scanning past the
     // first match instead of returning early (review round on CLI-1963's
     // `functions download` port).
     const out = mockOutput({ format: "text" });
@@ -2129,7 +2129,7 @@ describe("legacy functions download", () => {
 
           const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
           expect(runCommand?.args.slice(-6)[0]).toBe(
-            `ghcr.io/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+            `ghcr.io/${dockerfileServiceImage("edgeruntime")}`,
           );
           expect(
             child.spawned.filter(
@@ -2203,7 +2203,7 @@ describe("legacy functions download", () => {
         ).toHaveLength(2);
         const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
         expect(runCommand?.args.slice(-6)[0]).toBe(
-          `ghcr.io/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
+          `ghcr.io/${dockerfileServiceImage("edgeruntime")}`,
         );
       }).pipe(Effect.provide(layer));
     });

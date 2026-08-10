@@ -23,11 +23,12 @@ import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
-  explicitStringFlag,
+  explicitBooleanLongFlag,
   hasExplicitLongFlag,
-  hasGlobalLongFlag,
+  lastExplicitLongFlagValue,
 } from "../cli/cobra-flag-groups.ts";
 import {
+  edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
@@ -40,7 +41,6 @@ import {
 } from "./deploy.errors.ts";
 import {
   buildFunctionsDockerRunArgs,
-  edgeRuntimeImageTag,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   isDockerRunning,
@@ -1328,13 +1328,16 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     );
     // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
     // — resolves ECR->GHCR->Docker-Hub candidates and pulls with retry, per
-    // container, before ever touching the network/volume.
+    // container, before ever touching the network/volume. Deliberately NOT
+    // hoisted out of the per-function loop the way `download.ts`'s
+    // `PulledEdgeRuntimeImage` is: per-slug matches Go's per-container
+    // `DockerStart` exactly, and the first resolve failure aborts the loop,
+    // so the only cost is one cached `docker image inspect` per function.
     const image = yield* resolveFunctionsDockerImage(
-      // `edgeRuntimeImageTag`, not a bare `v${edgeRuntimeVersion}` prepend —
-      // `edgeRuntimeVersion` can come from a `.temp/edge-runtime-version` pin
-      // that's already `v`-prefixed (see the helper's doc in
-      // `functions-docker.ts`); blindly prepending `v` double-prefixes it.
-      `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+      // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
+      // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
+      // prefix or not (see the helper's doc in `functions.shared.ts`).
+      edgeRuntimeImage(edgeRuntimeVersion),
       projectEnvValues,
     );
     yield* ensureDockerNetwork(networkMode, projectId);
@@ -1376,6 +1379,11 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
       networkMode,
       binds,
       env,
+      // Go: `WorkingDir: utils.ToDockerPath(cwd)` (`bundle.go:79`), where
+      // `cwd` is the post-`ChangeWorkDir` workdir — `functionsDir` is
+      // `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
+      // own `projectRoot`.
+      workingDir: toDockerPath(resolve(functionsDir, "..", "..")),
       containerArgs,
     });
 
@@ -2251,7 +2259,12 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       "no-verify-jwt",
       flags.noVerifyJwt,
     );
-    const debugEnabled = hasGlobalLongFlag(dependencies.rawArgs, "debug");
+    // Go gates the bundler's `--verbose` on `viper.GetBool("DEBUG")`
+    // (`bundle.go:59`), so `--debug=false` must resolve to `false` — a plain
+    // presence check would get that backwards (same rule as `download.ts`'s
+    // own `--debug` read; the `SUPABASE_DEBUG` env fallback is deferred
+    // there too).
+    const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
     const deployConfig = context.loaded?.config;
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
       context.denoVersion,
@@ -2330,14 +2343,14 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
             return yield* deployWithApi;
           }
 
-          // `explicitStringFlag` preserves the "explicitly cleared" vs
+          // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs
           // "never touched" distinction `resolveDockerNetworkMode` needs to
           // decide whether `SUPABASE_NETWORK_ID` applies — see that
           // function's own doc comment. `SUPABASE_NETWORK_ID` (env or
           // project dotenv) is legacy-shell-only — same Go-viper-parity gate
           // as `context.projectEnvValues` itself (`undefined` in `next`).
           const networkMode = resolveDockerNetworkMode({
-            explicit: explicitStringFlag(dependencies.rawArgs, "network-id"),
+            explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
             envOverride:
               context.projectEnvValues === undefined
                 ? undefined

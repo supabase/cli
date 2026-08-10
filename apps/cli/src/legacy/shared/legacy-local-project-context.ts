@@ -169,7 +169,6 @@ export const legacyLoadLocalProjectContext = <E>(
     // via the workdir basename default. Only a malformed file (`loadProjectConfig` failing rather
     // than returning `null`) is a hard error.
     const loaded = yield* loadProjectConfig(workdir, {
-      ...(projectRef === undefined ? {} : { projectRef }),
       projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
       search: false,
       // Go's `NewPathBuilder`/`Config.Load` (`pkg/config/utils.go:43-48`) only ever resolves

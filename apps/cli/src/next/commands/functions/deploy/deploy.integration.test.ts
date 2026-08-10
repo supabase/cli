@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, FunctionResponse } from "@supabase/api/effect";
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { BunServices } from "@effect/platform-bun";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -2136,7 +2136,10 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v9.9.9");
+      // The pin's content is applied VERBATIM as the tag (Go's
+      // `replaceImageTag`, `pkg/config/utils.go:81-84`) — a bare `9.9.9` pin
+      // stays bare, with no `v` synthesized.
+      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:9.9.9");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -2672,11 +2675,7 @@ describe("functions deploy", () => {
           // candidate (a cache hit here) is spawned[1].
           expect(child.spawned[1]).toEqual({
             command: "docker",
-            args: [
-              "image",
-              "inspect",
-              `public.ecr.aws/supabase/edge-runtime:v${DEFAULT_VERSIONS["edge-runtime"]}`,
-            ],
+            args: ["image", "inspect", `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`],
           });
         }).pipe(
           Effect.ensuring(cleanupTempDir(tempDir)),

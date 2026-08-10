@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { Effect, type FileSystem, type Path } from "effect";
 import { loadProjectConfig, type LoadedProjectConfig } from "@supabase/config";
+import { normalizeProjectId } from "./functions-docker.ts";
 
 /**
  * Everything the native `functions` Docker paths (`deploy`/`download`/`serve`)
@@ -73,7 +74,15 @@ export const loadFunctionsProjectConfig = Effect.fnUntraced(function* (input: {
       // `undefined` and no `project_id` in the file — matching Go's `Eject`
       // basename default (`pkg/config/config.go:561-570`) and the legacy
       // branch's own `legacyResolveLocalProjectId` fallback below.
-      projectId: loaded?.config.project_id ?? input.projectRef ?? basename(input.projectRoot),
+      // Sanitized like the legacy branch's (`legacySanitizeProjectId`, run
+      // inside its validate pipeline): this id feeds `dockerProjectLabels`'
+      // raw label values as well as `localDockerId`'s (self-sanitizing)
+      // resource names, and an unsanitized `project_id = "My Project"` would
+      // label the container `My Project` while its network/volume are named
+      // `..._My_Project` — breaking label-based cleanup filters.
+      projectId: normalizeProjectId(
+        loaded?.config.project_id ?? input.projectRef ?? basename(input.projectRoot),
+      ),
       denoVersion: loaded?.config.edge_runtime.deno_version,
     } satisfies FunctionsProjectConfigContext;
   }

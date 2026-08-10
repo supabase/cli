@@ -58,7 +58,6 @@ import {
 } from "./deploy.ts";
 import {
   dockerProjectLabels,
-  edgeRuntimeImageTag,
   ensureDockerNamedVolume,
   ensureDockerNetwork,
   localDockerId,
@@ -70,7 +69,7 @@ import {
   toDockerPath,
 } from "./functions-docker.ts";
 import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
-import { resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
+import { edgeRuntimeImage, resolveEdgeRuntimeVersionPin } from "./functions.shared.ts";
 const decodeProjectConfig = Schema.decodeUnknownSync(ProjectConfigSchema);
 const defaultProjectConfig = decodeProjectConfig({});
 
@@ -782,12 +781,16 @@ const resolveServeConfig = Effect.fnUntraced(function* (
   // env lookups, this file's own caller) and the env-overridden
   // `deno_version` are consumed from it; `auth`/`apiPort`/functions above
   // keep their existing derivation. `projectId` also keeps its existing
-  // derivation — a known, narrow gap: unlike `deploy`/`download` (which use
-  // `context.projectId` outright), `rawProjectId` below only ever sees
-  // `SUPABASE_PROJECT_ID` from the *ambient* shell (`projectIdOverride`, from
-  // `LegacyCliConfig`), not from project dotenv, so a project that sets it
-  // only in `supabase/.env` gets a different container/network/volume name
-  // than `deploy`/`download` would resolve for the same project. Folding
+  // derivation — a known gap, narrow to trigger but NOT cosmetic when hit:
+  // unlike `deploy`/`download` (which use `context.projectId` outright),
+  // `rawProjectId` below only ever sees `SUPABASE_PROJECT_ID` from the
+  // *ambient* shell (`projectIdOverride`, from `LegacyCliConfig`), not from
+  // project dotenv. A project that sets it only in `supabase/.env` therefore
+  // gets a different `supabase_edge_runtime_<id>`/`supabase_network_<id>`
+  // here than `deploy`/`download`/`start` resolve for the SAME project — so
+  // `serve` creates a second network and a container `reloadKong(projectId)`'s
+  // Kong (named off the other id) can't route to: a silently non-functional
+  // `serve`, where Go reads one `Config.ProjectId` for everything. Folding
   // `goContext.projectEnvValues` in here would also require reconciling this
   // function's `projectIdOverride`-wins-unconditionally precedence with
   // `legacyResolveLocalProjectId`'s config-file-wins-over-`projectRef`
@@ -1874,7 +1877,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
     // just later) rather than a hasty change to shared, `start`-critical
     // code (review round on CLI-1963).
     const image = yield* resolveFunctionsDockerImage(
-      `supabase/edge-runtime:${edgeRuntimeImageTag(edgeRuntimeVersion)}`,
+      edgeRuntimeImage(edgeRuntimeVersion),
       resolved.projectEnvValues,
     );
 
