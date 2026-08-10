@@ -23,7 +23,8 @@ of the M1 managed-stack behavior. Each scenario records:
 - a public CLI, Git, direct-stack API, or managed-stack API action;
 - the resolved opaque identities and outcome;
 - the complete set of permitted managed-state writes and runtime side effects; and
-- human, JSON, or programmatic output, including deterministic recovery guidance for errors.
+- human, JSON, or programmatic output, including structured warnings and deterministic recovery
+  guidance.
 
 Opaque symbolic IDs make the same scenario reusable across an in-memory repository, a persistent
 adapter, the managed package, and CLI integration tests. Linear records the decision history and
@@ -41,6 +42,11 @@ links to implementation work; it is not a second source of executable truth.
 The CLI is a consumer and presentation layer. It translates arguments into managed operations and
 projects managed results into human and JSON output. It must not implement a second identity,
 selection, port, runtime, or lifecycle decision path.
+
+Read-only status remains a successful `report` when it can identify a running stack but finds
+unapplied port, credential, or runtime configuration. The report includes a structured warning and
+recovery guidance. Conditions that prevent safe identity selection, such as ambiguous ownership,
+remain errors.
 
 Persistence sits behind the managed package's repository boundary. Contract fixtures must run
 against a storage-independent test repository and then against each selected persistent adapter.
@@ -67,6 +73,27 @@ CLI-2102 checks in the fixture data and public consumer seams before the managed
 persistent adapter exist. The implementation issues it unblocks must attach real drivers to these
 fixtures. A fixture-presence test is not evidence that an unimplemented command already satisfies
 the behavior.
+
+The fixture validator therefore checks more than catalog shape: selected, written, and effected
+identities must be declared, runtime effects must agree with permitted state writes, and
+human/API/JSON projections cannot contradict the managed result. We deliberately do not introduce
+a parallel test-only identity resolver; it would duplicate product policy before the real managed
+surface exists and could pass while the production implementation drifts.
+
+## Implementation Handoff
+
+The downstream implementation issues own the executable drivers, while this ADR and fixture data
+own the expected behavior:
+
+- CLI-2106, CLI-2107, and CLI-2108 attach the repository and identity resolver to the identity
+  fixtures, including ordinary folders, worktrees, branches, and orphan handling.
+- CLI-2109 attaches automatic legacy bootstrap and rollback-safe publication.
+- CLI-2110 attaches exact and automatic port intent, allocation, stickiness, drift, and collisions.
+- CLI-2124 attaches runtime selection, persistence, and strict conflict handling.
+- CLI-2114 attaches the experimental CLI handlers and verifies that their human and JSON output is
+  projected from managed results.
+- The selected persistent adapter must run the same repository contract as the isolated test
+  repository before its implementation issue is complete.
 
 ## Rationale
 

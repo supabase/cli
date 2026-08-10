@@ -1,4 +1,7 @@
-import { managedStackContractFixtures } from "@supabase/stack/testing";
+import {
+  managedStackContractFixtures,
+  type ManagedStackContractScenario,
+} from "@supabase/stack/testing";
 import { describe, expect, it } from "vitest";
 
 describe("experimental managed stack command contract", () => {
@@ -58,5 +61,37 @@ describe("experimental managed stack command contract", () => {
     });
     expect(scenario?.expected.writes).toEqual([]);
     expect(scenario?.expected.runtimeEffects).toEqual([]);
+  });
+
+  it("projects running configuration drift as status data instead of command failure", () => {
+    for (const id of [
+      "ports.config-change-on-running-stack-reports-drift",
+      "runtime.status-reports-one-stack-wide-runtime",
+      "credentials.running-change-reports-drift",
+    ]) {
+      const scenario: ManagedStackContractScenario | undefined = managedStackContractFixtures.find(
+        (fixture) => fixture.id === id,
+      );
+
+      expect(scenario?.when).toMatchObject({
+        interface: "cli",
+        argv: ["status", "--experimental", "--output", "json"],
+      });
+      expect(scenario?.expected).toMatchObject({
+        outcome: "report",
+        warning: {
+          code: expect.stringMatching(/^running_stack_/),
+        },
+        writes: [],
+        runtimeEffects: [],
+        output: {
+          json: {
+            outcome: "report",
+            drift: true,
+          },
+        },
+      });
+      expect(scenario?.expected.warning?.recovery.length).toBeGreaterThan(0);
+    }
   });
 });

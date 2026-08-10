@@ -6,12 +6,70 @@ import { createStack } from "./node.ts";
 import {
   managedNativeServiceMatrix,
   managedStackContractFixtures,
+  type ManagedStackContractScenario,
   validateManagedStackContractFixtures,
 } from "./testing.ts";
 
 describe("managed stack acceptance contract", () => {
   it("keeps every shared scenario readable and executable through a public interface", () => {
     expect(validateManagedStackContractFixtures(managedStackContractFixtures)).toEqual([]);
+  });
+
+  it("rejects contract edits that make IDs, effects, and projections disagree", () => {
+    const scenario: ManagedStackContractScenario | undefined = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.return-to-branch-reuses-stack",
+    );
+    if (scenario === undefined) {
+      throw new Error("identity.return-to-branch-reuses-stack fixture is required");
+    }
+    if (scenario.expected.selection === undefined || scenario.expected.output.json === undefined) {
+      throw new Error("identity.return-to-branch-reuses-stack must select and project a stack");
+    }
+
+    const missingStartWrite = {
+      ...scenario,
+      expected: { ...scenario.expected, writes: [] },
+    };
+    expect(validateManagedStackContractFixtures([missingStartWrite])).toContain(
+      `${scenario.id}: start runtime effect requires a matching state write`,
+    );
+
+    const undeclaredSelection = {
+      ...scenario,
+      expected: {
+        ...scenario.expected,
+        selection: { ...scenario.expected.selection, stackId: "stack-undeclared" },
+      },
+    };
+    expect(validateManagedStackContractFixtures([undeclaredSelection])).toContain(
+      `${scenario.id}: selection references undeclared ID stack-undeclared`,
+    );
+
+    const undeclaredWrite = {
+      ...scenario,
+      expected: {
+        ...scenario.expected,
+        writes: [{ target: "runtime-state", operation: "start", id: "stack-undeclared" }],
+        runtimeEffects: [{ operation: "start", stackId: "stack-undeclared" }],
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([undeclaredWrite])).toContain(
+      `${scenario.id}: runtime-state start references undeclared ID stack-undeclared`,
+    );
+
+    const divergentProjection = {
+      ...scenario,
+      expected: {
+        ...scenario.expected,
+        output: {
+          ...scenario.expected.output,
+          json: { ...scenario.expected.output.json, outcome: "create" },
+        },
+      },
+    };
+    expect(validateManagedStackContractFixtures([divergentProjection])).toContain(
+      `${scenario.id}: projected outcome disagrees with the managed result`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {
@@ -75,6 +133,7 @@ describe("managed stack acceptance contract", () => {
         "ports.exact-default-value-differs-from-omitted-default",
         "ports.explicit-free-port-is-used",
         "ports.explicit-port-conflict-fails",
+        "ports.explicit-port-conflict-with-sibling-fails",
         "ports.later-sticky-port-collision-fails",
         "ports.new-target-allocates-and-persists-omitted-ports",
         "ports.removing-exact-key-keeps-current-port-sticky",
@@ -454,7 +513,7 @@ describe("managed stack acceptance contract", () => {
 
     expect(scenario).toMatchObject({
       area: "bootstrap",
-      given: [
+      given: expect.arrayContaining([
         {
           kind: "managed-target",
           stackId: "stack-main-default",
@@ -467,7 +526,7 @@ describe("managed stack acceptance contract", () => {
           storage: "compatible",
           credentials: "compatible",
         },
-      ],
+      ]),
       when: {
         interface: "cli",
         argv: ["start", "--experimental"],
