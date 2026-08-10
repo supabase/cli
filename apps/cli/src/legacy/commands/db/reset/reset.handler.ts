@@ -256,13 +256,20 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       Effect.gen(function* () {
         const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
         if (output.format === "text") {
-          yield* proxy.exec(buildResetArgs(flags, connType, yes), { env });
+          yield* proxy.exec(buildResetArgs(flags, connType, yes), {
+            env,
+            suppressChildTelemetry: true,
+          });
         } else {
           // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
           // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
           // destructive reset prompt — it takes the default `false`, matching the
           // native reset path which suppresses prompts under json/stream-json.
-          yield* proxy.execCapture(buildResetArgs(flags, connType, yes), { env, stdin: "ignore" });
+          yield* proxy.execCapture(buildResetArgs(flags, connType, yes), {
+            env,
+            stdin: "ignore",
+            suppressChildTelemetry: true,
+          });
           yield* output.success("Reset remote database.", {
             target: "remote",
             version: resolvedVersion,

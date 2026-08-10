@@ -15,6 +15,7 @@ import {
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 import { legacyResolveApiExternalUrl } from "./legacy-api-url.ts";
@@ -171,6 +172,7 @@ function apiUrlWithPath(apiExternalUrl: string, path: string): string {
  * short secret.
  */
 export class LegacyInvalidJwtSecretError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyInvalidJwtSecretError";
   constructor() {
     super("Invalid config for auth.jwt_secret. Must be at least 16 characters");
     this.name = "LegacyInvalidJwtSecretError";
@@ -196,6 +198,7 @@ const MIN_JWT_SECRET_LENGTH = 16;
  * string), but the parity-relevant part — hard-fail, same field name — is.
  */
 export class LegacyInvalidPortEnvOverrideError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyInvalidPortEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a port`);
     this.name = "LegacyInvalidPortEnvOverrideError";
@@ -296,6 +299,7 @@ export function legacyEnvOverride(
  * `stop` with a malformed bool override.
  */
 export class LegacyInvalidBoolEnvOverrideError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyInvalidBoolEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(`Invalid config for ${dottedFieldPath}: cannot parse "${value}" as a bool`);
     this.name = "LegacyInvalidBoolEnvOverrideError";
@@ -352,6 +356,8 @@ export function legacyEnvOverrideBool(
  * {@link LegacyInvalidBoolEnvOverrideError}.
  */
 export class LegacyInvalidAnalyticsBackendEnvOverrideError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] =
+    "LegacyInvalidAnalyticsBackendEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "postgres", "bigquery"`,
@@ -398,6 +404,8 @@ function envOverrideAnalyticsBackend(
  * {@link LegacyInvalidAnalyticsBackendEnvOverrideError}.
  */
 export class LegacyInvalidRealtimeIpVersionEnvOverrideError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] =
+    "LegacyInvalidRealtimeIpVersionEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "IPv4", "IPv6"`,
@@ -461,6 +469,7 @@ export function legacyEnvOverrideApiMaxRows(
  * {@link LegacyInvalidRealtimeIpVersionEnvOverrideError}.
  */
 export class LegacyInvalidPoolModeEnvOverrideError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyInvalidPoolModeEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "transaction", "session"`,
@@ -499,6 +508,8 @@ export function legacyEnvOverridePoolMode(
  * {@link LegacyInvalidPoolModeEnvOverrideError}.
  */
 export class LegacyInvalidEdgeRuntimePolicyEnvOverrideError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] =
+    "LegacyInvalidEdgeRuntimePolicyEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "per_worker", "oneshot"`,
@@ -1300,6 +1311,8 @@ function legacyEnvOverrideOptionalBool(
  * {@link LegacyInvalidRealtimeIpVersionEnvOverrideError}.
  */
 export class LegacyInvalidSessionReplicationRoleEnvOverrideError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] =
+    "LegacyInvalidSessionReplicationRoleEnvOverrideError";
   constructor(dottedFieldPath: string, value: string) {
     super(
       `Invalid config for ${dottedFieldPath}: cannot parse "${value}" as one of "origin", "replica", "local"`,

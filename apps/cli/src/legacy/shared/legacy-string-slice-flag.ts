@@ -1,6 +1,7 @@
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
 
@@ -38,6 +39,7 @@ const lengthNL = (b: Uint8Array): number => (b.length > 0 && b[b.length - 1] ===
  *    `readAsCSV` propagates `csv.Reader.Read`'s `io.EOF` unchanged).
  */
 export class LegacyStringSliceFlagParseError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyStringSliceFlagParseError";
   readonly value: string;
   private constructor(value: string, message: string) {
     super(message);

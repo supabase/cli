@@ -1,4 +1,5 @@
 import { Cause, Data } from "effect";
+import { CliError } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 import { markSupabaseApiInputErrorAsUserInput, SupabaseApiInputError } from "@supabase/api/effect";
 import { LegacyBootstrapHealthError } from "../../legacy/commands/bootstrap/bootstrap.errors.ts";
@@ -8,6 +9,7 @@ import {
   classifyCliCauseActionability,
   classifyCliErrorActionability,
   CliErrorActionabilityMetricDefinitions,
+  ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
   statusCodeActionability,
 } from "./error-actionability.ts";
@@ -47,6 +49,8 @@ class DeclaredNoSuggestionError extends Data.TaggedError("DeclaredNoSuggestionEr
 }
 
 class PlainDeclaredError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "PlainDeclaredError";
+
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;
   }
@@ -89,6 +93,57 @@ describe("classifyCliErrorActionability", () => {
     const result = classifyCliErrorActionability(new PlainDeclaredError("private path"));
     expect(result.error_category).toBe("invalid_config");
     expect(result.error_fingerprint).toBe("error:PlainDeclaredError");
+  });
+
+  it("prefers the declared static identifier over a native ancestor's prototype name", () => {
+    // TypeError.prototype carries an own `name` data property ("TypeError");
+    // without the static-identifier precedence, every declared class extending
+    // a native Error subtype would collide on the native name.
+    class NativeSubtypeDeclaredError extends TypeError {
+      static readonly [ErrorActionabilityFingerprintId] = "NativeSubtypeDeclaredError";
+
+      get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+        return actionability.invalidConfig;
+      }
+    }
+    const result = classifyCliErrorActionability(new NativeSubtypeDeclaredError("boom"));
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.error_fingerprint).toBe("error:NativeSubtypeDeclaredError");
+  });
+
+  it("classifies Effect's runtime unknown-subcommand tag without fingerprinting user input", () => {
+    const secret = "customerProjectRef123";
+    const result = classifyCliErrorActionability(
+      new CliError.UnknownSubcommand({
+        subcommand: secret,
+        suggestions: [],
+      }),
+    );
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_input",
+      error_fingerprint: "tag:UnknownSubcommand",
+      has_suggestion: false,
+      suggestion_type: "none",
+    });
+    expect(JSON.stringify(result)).not.toContain(secret);
+  });
+
+  it("classifies Effect's unexpected positional arguments without fingerprinting their values", () => {
+    const secret = "/Users/alice/private.sql";
+    const result = classifyCliErrorActionability(
+      new CliError.UnexpectedArgument({ arguments: [secret] }),
+    );
+
+    expect(result).toEqual({
+      error_kind: "user_actionable",
+      error_category: "invalid_input",
+      error_fingerprint: "tag:UnexpectedArgument",
+      has_suggestion: false,
+      suggestion_type: "none",
+    });
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 
   it("does not claim a generic remediation for local permission failures", () => {
@@ -359,8 +414,19 @@ describe("classifyCliErrorActionability", () => {
     const errorResult = classifyCliErrorActionability(
       declarationCarrier(secret, actionability.invalidInput),
     );
-    expect(errorResult.error_fingerprint).toBe("error:DeclarationCarrierError");
+    expect(errorResult.error_fingerprint).toBe("error:DeclaredError");
     expect(JSON.stringify([plainResult, errorResult])).not.toContain(secret);
+  });
+
+  it("does not trust mutable instance tags or names over the tagged prototype", () => {
+    const secret = "CustomerProjectRef123";
+    const error = new DeclaredError({ message: "failed" });
+    Reflect.set(error, "_tag", secret);
+    Reflect.set(error, "name", secret);
+
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_fingerprint).toBe("error:DeclaredError");
+    expect(JSON.stringify(result)).not.toContain(secret);
   });
 
   it("does not accept declarations through the global symbol registry", () => {
@@ -804,6 +870,18 @@ describe("metric definitions", () => {
     expect(CliErrorActionabilityMetricDefinitions.internalUnknownBugRate.id).toBe(
       "failed_commands_internal_bug_or_unknown",
     );
+    expect(CliErrorActionabilityMetricDefinitions.internalUnknownBugRate.denominator).toBe(
+      "count where exit_code != 0 AND error_kind IS NOT NULL",
+    );
+    expect(CliErrorActionabilityMetricDefinitions.classificationCoverage.id).toBe(
+      "failed_commands_with_classification",
+    );
+    expect(CliErrorActionabilityMetricDefinitions.classificationCoverage.numerator).toBe(
+      "count where exit_code != 0 AND error_kind IS NOT NULL",
+    );
+    expect(CliErrorActionabilityMetricDefinitions.classificationCoverage.denominator).toBe(
+      "count where exit_code != 0",
+    );
     expect(CliErrorActionabilityMetricDefinitions.strictRecovery.partition_by).toEqual([
       "device_id",
       "$session_id",
@@ -821,7 +899,7 @@ describe("metric definitions", () => {
       "command",
     ]);
     expect(CliErrorActionabilityMetricDefinitions.repeatError.eligible_failure).toBe(
-      "exit_code != 0 AND error_fingerprint IS NOT NULL",
+      "exit_code != 0 AND error_kind = 'user_actionable' AND error_fingerprint IS NOT NULL",
     );
     expect(CliErrorActionabilityMetricDefinitions.repeatError.repeated_when).toContain(
       "P.error_fingerprint = F.error_fingerprint",

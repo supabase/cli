@@ -1,6 +1,7 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { CliError } from "effect/unstable/cli";
 
 // Vitest (via Vite) provides `import.meta.glob` at runtime; the workspace
 // tsconfig does not load `vite/client`, so declare the one member we use.
@@ -13,6 +14,7 @@ import {
   CliErrorCategory,
   CliErrorKind,
   CliSuggestionType,
+  ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
   isClassifiedExternalErrorTag,
 } from "./error-actionability.ts";
@@ -61,7 +63,9 @@ const categoryValues = new Set<string>(Object.values(CliErrorCategory));
 const suggestionValues = new Set<string>(Object.values(CliSuggestionType));
 
 interface DeclaredErrorClass {
+  readonly constructor: object;
   readonly exportName: string;
+  readonly isTagged: boolean;
   readonly tag: string;
   readonly prototype: object;
 }
@@ -81,7 +85,13 @@ function collectErrorClasses(module: Record<string, unknown>): Array<DeclaredErr
     } catch {
       tag = undefined;
     }
-    classes.push({ exportName, tag: typeof tag === "string" ? tag : exportName, prototype });
+    classes.push({
+      constructor: value,
+      exportName,
+      isTagged: typeof tag === "string",
+      tag: typeof tag === "string" ? tag : exportName,
+      prototype,
+    });
   }
   return classes;
 }
@@ -122,7 +132,7 @@ describe("apps/cli error classes declare their actionability", () => {
         ).toBe(true);
       }
 
-      for (const { exportName, tag, prototype } of classes) {
+      for (const { constructor, exportName, isTagged, tag, prototype } of classes) {
         const descriptor = Object.getOwnPropertyDescriptor(prototype, ErrorActionabilityId);
         expect(
           typeof descriptor?.get,
@@ -143,6 +153,19 @@ describe("apps/cli error classes declare their actionability", () => {
         expect(categoryValues.has(String(record["error_category"]))).toBe(true);
         expect(typeof record["has_suggestion"]).toBe("boolean");
         expect(suggestionValues.has(String(record["suggestion_type"]))).toBe(true);
+
+        if (!isTagged) {
+          const fingerprintDescriptor = Object.getOwnPropertyDescriptor(
+            constructor,
+            ErrorActionabilityFingerprintId,
+          );
+          expect(
+            fingerprintDescriptor !== undefined &&
+              "value" in fingerprintDescriptor &&
+              fingerprintDescriptor.value === exportName,
+            `${exportName} is an untagged Error and must declare its stable source identifier as an own static [ErrorActionabilityFingerprintId] value`,
+          ).toBe(true);
+        }
       }
     });
   }
@@ -170,4 +193,50 @@ describe("workspace package error tags have external adapters", () => {
       }
     });
   }
+});
+
+describe("Effect CLI parser errors have exhaustive handling", () => {
+  it("covers every exported parser error class", () => {
+    const tags = new Set<string>();
+    const probe = {
+      option: "--probe",
+      command: [],
+      suggestions: [],
+      parentCommand: "parent",
+      childCommand: "child",
+      argument: "argument",
+      arguments: [],
+      value: "value",
+      expected: "expected",
+      kind: "flag",
+      subcommand: "subcommand",
+      parent: [],
+      cause: new Error("probe"),
+      commandPath: [],
+      errors: [],
+    };
+
+    for (const value of Object.values(CliError)) {
+      if (typeof value !== "function") continue;
+      const prototype: unknown = value.prototype;
+      if (typeof prototype !== "object" || prototype === null) continue;
+      if (!(prototype instanceof Error)) continue;
+
+      try {
+        const tag = Reflect.get(Reflect.construct(value, [probe]), "_tag");
+        if (typeof tag === "string") tags.add(tag);
+      } catch {
+        // Non-error exports and constructors that require runtime setup are
+        // outside the parser error union checked at compile time by the map.
+      }
+    }
+
+    expect(tags.size).toBeGreaterThan(5);
+    for (const tag of tags) {
+      expect(
+        tag === "ShowHelp" || tag === "UserError" || isClassifiedExternalErrorTag(tag),
+        `Effect CLI parser error "${tag}" has no actionability handling`,
+      ).toBe(true);
+    }
+  });
 });

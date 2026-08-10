@@ -1,4 +1,5 @@
 import { Cause, Option } from "effect";
+import type { CliError as EffectCliError } from "effect/unstable/cli";
 
 /**
  * CLI error actionability taxonomy for KPI reporting (CLI-1560).
@@ -13,7 +14,7 @@ import { Cause, Option } from "effect";
  * exhaustiveness-checked against those packages' sources.
  *
  * Everything emitted from here is sanitized by construction: kinds, categories,
- * suggestion types, and fingerprints are closed enums or `tag:`-prefixed safe
+ * suggestion types, and fingerprints use closed enums and source-owned
  * identifiers — never raw error text or user-specific data.
  */
 
@@ -212,21 +213,30 @@ export const CliErrorActionabilityMetricDefinitions = {
     command_identity:
       "Exact equality of the command property, which is the normalized command path emitted by CLI instrumentation without argument values.",
     order_by: "event timestamp ascending",
-    eligible_failure: "exit_code != 0 AND error_fingerprint IS NOT NULL",
+    eligible_failure:
+      "exit_code != 0 AND error_kind = 'user_actionable' AND error_fingerprint IS NOT NULL",
     repeated_when:
       "Failed event F is a repeat when an earlier failed event P in the same partition has P.error_fingerprint = F.error_fingerprint and no event S in that partition has P.timestamp < S.timestamp < F.timestamp and S.exit_code = 0.",
     reset_when:
       "Any exit_code = 0 event in the partition clears every prior fingerprint for that command. A different $session_id starts a new partition; successes for other commands do not reset it.",
     description:
-      "The second and each later occurrence of the same error_fingerprint is a repeat until that normalized command succeeds or the session changes.",
+      "The second and each later occurrence of the same user-actionable error_fingerprint is a repeat until that normalized command succeeds or the session changes.",
   },
   internalUnknownBugRate: {
     id: "failed_commands_internal_bug_or_unknown",
     event: "cli_command_executed",
-    denominator: "count where exit_code != 0",
+    denominator: "count where exit_code != 0 AND error_kind IS NOT NULL",
     numerator: "count where exit_code != 0 AND error_kind IN ('internal_bug', 'unknown')",
     description:
-      "Internal/unknown bug failure rate is the share of failed commands classified as internal_bug or unknown.",
+      "Internal/unknown bug failure rate is the share of classified failed commands reported as internal_bug or unknown. Failures without error_kind (pure Go-proxy commands, CLI versions predating the classification) are excluded from both sides; classificationCoverage reports their share.",
+  },
+  classificationCoverage: {
+    id: "failed_commands_with_classification",
+    event: "cli_command_executed",
+    denominator: "count where exit_code != 0",
+    numerator: "count where exit_code != 0 AND error_kind IS NOT NULL",
+    description:
+      "Share of failed commands carrying the error classification. Pure Go-proxy commands report through the Go binary without these fields, and older CLI versions never send them, so the recovery, repeat, and bug-rate metrics cover exactly this fraction of the failure volume.",
   },
 } as const;
 
@@ -248,6 +258,11 @@ export const CliErrorActionabilityMetricDefinitions = {
  */
 export const ErrorActionabilityId: unique symbol = Symbol(
   "@supabase/cli/telemetry/ErrorActionability",
+);
+
+/** Stable source identifier for CLI-owned plain `Error` subclasses. */
+export const ErrorActionabilityFingerprintId: unique symbol = Symbol(
+  "@supabase/cli/telemetry/ErrorActionabilityFingerprint",
 );
 
 /**
@@ -637,7 +652,9 @@ function readDeclaration(error: unknown): CliErrorActionabilityDeclaration | und
 
 function safeIdentifier(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
-  return /^[A-Za-z][A-Za-z0-9_]*$/.test(value) ? value : undefined;
+  // The length cap is defense-in-depth: every legitimate identifier is a
+  // class/tag name, so an oversized value is never a real CLI error source.
+  return /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(value) ? value : undefined;
 }
 
 function readErrorTag(error: unknown): string | undefined {
@@ -651,14 +668,44 @@ function readErrorName(error: unknown): string | undefined {
   return safeIdentifier(readString(error, "name"));
 }
 
-function readDeclaredErrorConstructorName(error: unknown): string | undefined {
+function readDeclaredErrorFingerprintId(error: unknown): string | undefined {
   if (!(error instanceof Error)) return undefined;
   const prototype = Object.getPrototypeOf(error);
   if (!isErrorRecord(prototype)) return undefined;
-  const constructor = prototype["constructor"];
+  const constructorDescriptor = Object.getOwnPropertyDescriptor(prototype, "constructor");
+  if (constructorDescriptor === undefined || !("value" in constructorDescriptor)) return undefined;
+  const constructor = constructorDescriptor.value;
   if (typeof constructor !== "function") return undefined;
-  const name = safeIdentifier(constructor.name);
-  return name === "Error" ? undefined : name;
+  const identifierDescriptor = Object.getOwnPropertyDescriptor(
+    constructor,
+    ErrorActionabilityFingerprintId,
+  );
+  if (identifierDescriptor === undefined || !("value" in identifierDescriptor)) return undefined;
+  return typeof identifierDescriptor.value === "string"
+    ? safeIdentifier(identifierDescriptor.value)
+    : undefined;
+}
+
+/**
+ * `Data.TaggedError` stores its literal tag as an own data property named
+ * `name` on a base prototype. Unlike `constructor.name`, that value survives
+ * identifier minification. Never invoke prototype getters here: only the
+ * static data property created by Effect is a safe fingerprint authority.
+ */
+function readStableTaggedPrototypeName(error: unknown): string | undefined {
+  if (!(error instanceof Error)) return undefined;
+  let prototype: unknown = Object.getPrototypeOf(error);
+  while (prototype !== Error.prototype) {
+    if (!isErrorRecord(prototype)) return undefined;
+    const descriptor = Object.getOwnPropertyDescriptor(prototype, "name");
+    if (descriptor !== undefined && "value" in descriptor) {
+      const name =
+        typeof descriptor.value === "string" ? safeIdentifier(descriptor.value) : undefined;
+      if (name !== undefined && name !== "Error") return name;
+    }
+    prototype = Object.getPrototypeOf(prototype);
+  }
+  return undefined;
 }
 
 function fingerprint(
@@ -689,18 +736,27 @@ function toActionability(
  * `apps/cli` must declare {@link ErrorActionabilityId} instead of being
  * added here.
  */
-const externalActionabilityByTag: Record<
-  string,
-  (error: ErrorRecord) => CliErrorActionabilityDeclaration
-> = {
-  // effect/unstable/cli parser failures (ShowHelp and UserError recurse in
-  // classifyCliErrorActionability instead of mapping here)
+type ErrorActionabilityAdapter = (error: ErrorRecord) => CliErrorActionabilityDeclaration;
+
+type EffectCliAdapterTag = Exclude<EffectCliError.CliError["_tag"], "ShowHelp" | "UserError">;
+
+// ShowHelp and UserError recurse in classifyCliErrorActionability. This map is
+// typed against Effect's complete parser-error union so dependency upgrades
+// cannot silently add an unclassified parser failure.
+const effectCliActionabilityByTag = {
   MissingOption: () => actionability.invalidInput,
   MissingArgument: () => actionability.invalidInput,
   DuplicateOption: () => actionability.invalidInput,
+  UnexpectedArgument: () => actionability.invalidInput,
   InvalidValue: () => actionability.invalidInput,
-  UnknownSubcommand: () => actionability.invalidInput,
+  // Effect 4.0.0-beta.103 has this typo in the runtime tag. Keep the adapter
+  // keyed to reality; the emitted fingerprint is normalized below.
+  UnknownSubcomand: () => actionability.invalidInput,
   UnrecognizedOption: () => actionability.invalidInput,
+} satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
+
+const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
+  ...effectCliActionabilityByTag,
 
   // effect PlatformError — OS/filesystem operations. `reason` is
   // `BadArgument | SystemError`; BadArgument means the CLI itself passed a
@@ -918,12 +974,19 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   }
   const declared = readDeclaration(error);
   if (declared !== undefined) {
-    const constructorName = readDeclaredErrorConstructorName(error);
+    const stableTaggedName = readStableTaggedPrototypeName(error);
     const tag = readErrorTag(error);
-    if (tag !== undefined && tag === constructorName) {
+    if (stableTaggedName !== undefined && tag === stableTaggedName) {
       return toActionability(declared, "tag", tag);
     }
-    return toActionability(declared, "error", constructorName);
+    // The declared static identifier outranks the prototype walk: a class
+    // extending a native Error subtype (e.g. `extends TypeError`) would
+    // otherwise pick up the native prototype's own `name` and collide on it.
+    return toActionability(
+      declared,
+      "error",
+      readDeclaredErrorFingerprintId(error) ?? stableTaggedName ?? "DeclaredError",
+    );
   }
 
   const tag = readErrorTag(error);
@@ -973,7 +1036,8 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     if (Object.hasOwn(externalActionabilityByTag, tag)) {
       const external = externalActionabilityByTag[tag];
       if (external !== undefined) {
-        return toActionability(external(error), "tag", tag);
+        const fingerprintTag = tag === "UnknownSubcomand" ? "UnknownSubcommand" : tag;
+        return toActionability(external(error), "tag", fingerprintTag);
       }
     }
     return toActionability(actionability.unknown, "tag", undefined);
@@ -1029,3 +1093,15 @@ export function classifyCliCauseActionability(cause: Cause.Cause<unknown>): CliE
   const error = Option.getOrElse(Cause.findErrorOption(cause), () => Cause.squash(cause));
   return classifyCliErrorActionability(error);
 }
+
+/**
+ * Fallback for a command that deliberately signalled failure through
+ * ProcessControl without failing its Effect, when no typed error is available
+ * to derive a classification from (see `withLegacyCommandInstrumentation`,
+ * which classifies the command's own fail-on error class where one exists).
+ */
+export const unknownProcessControlledFailureActionability: CliErrorActionability = toActionability(
+  actionability.unknown,
+  "error",
+  "ProcessControlledFailure",
+);

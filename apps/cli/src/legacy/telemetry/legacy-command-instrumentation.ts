@@ -1,4 +1,4 @@
-import { Clock, Effect, Exit, Option, Stdio } from "effect";
+import { Cause, Clock, Effect, Exit, Option, Stdio } from "effect";
 import { Param } from "effect/unstable/cli";
 import {
   CommandRuntime,
@@ -15,11 +15,22 @@ import { ProcessControl } from "../../shared/runtime/process-control.service.ts"
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
+  type CliErrorActionability,
+  classifyCliErrorActionability,
+  unknownProcessControlledFailureActionability,
+} from "../../shared/telemetry/error-actionability.ts";
+import { LegacyDbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.ts";
+import { LegacyDbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
+import {
   EventCommandExecuted,
   PropDurationMs,
   PropExitCode,
   PropOutputFormat,
 } from "../../shared/telemetry/event-catalog.ts";
+import {
+  failureTelemetryPropertiesForCause,
+  toFailureTelemetryProperties,
+} from "../../shared/telemetry/failure-metadata.ts";
 import {
   LEGACY_RESOURCE_OUTPUT_FORMATS,
   LegacyInvalidOutputFormatError,
@@ -32,6 +43,23 @@ import {
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "../shared/legacy-db-target-flags.ts";
 import { legacyUnwrapToSingleParam } from "../shared/legacy-param-introspection.ts";
+
+/**
+ * Classifies a command that succeeded its Effect but recorded a nonzero exit
+ * code through ProcessControl. `db lint`/`db advisors` do this deliberately in
+ * machine mode after a `--fail-on` trigger (to keep the JSON payload on stdout
+ * intact), so their telemetry derives from the same typed error their text
+ * mode raises — the classification stays declared on the error class itself.
+ */
+function processControlledFailureActionability(command: string): CliErrorActionability {
+  if (command === "db lint") {
+    return classifyCliErrorActionability(new LegacyDbLintFailOnError({ message: "" }));
+  }
+  if (command === "db advisors") {
+    return classifyCliErrorActionability(new LegacyDbAdvisorsFailOnError({ message: "" }));
+  }
+  return unknownProcessControlledFailureActionability;
+}
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -441,6 +469,11 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
           onNone: () => analyticsContext,
           onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
         });
+        const failureMetadata = Exit.isFailure(exit)
+          ? failureTelemetryPropertiesForCause(exit.cause)
+          : recordedExitCode === 1
+            ? toFailureTelemetryProperties(processControlledFailureActionability(command))
+            : {};
 
         yield* analytics
           .capture(EventCommandExecuted, {
@@ -449,8 +482,17 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
             [PropOutputFormat]: Option.isSome(resolvedOutputFormat)
               ? resolvedOutputFormat.value
               : resolveOutputFormatForTelemetry(args, output.format),
+            ...failureMetadata,
           })
-          .pipe(withAnalyticsContext(captureContext));
+          .pipe(
+            withAnalyticsContext(captureContext),
+            // Best-effort: a capture failure or defect must never replace the
+            // command's own result, but fiber interruption (Ctrl+C landing
+            // during this trailing capture) must still propagate.
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+            ),
+          );
 
         if (Exit.isFailure(exit)) {
           return yield* Effect.failCause(exit.cause);
