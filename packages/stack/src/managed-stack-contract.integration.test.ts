@@ -107,6 +107,23 @@ describe("managed stack acceptance contract", () => {
       `${trackedMarkerScenario.id}: a tracked identity marker must remain untouched`,
     );
 
+    const gitWorkspaceScenario = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.fresh-clone-creates-project-and-checkout",
+    );
+    if (gitWorkspaceScenario === undefined) {
+      throw new Error("identity.fresh-clone-creates-project-and-checkout fixture is required");
+    }
+    const gitWorkspaceMarkerMutation = {
+      ...gitWorkspaceScenario,
+      expected: {
+        ...gitWorkspaceScenario.expected,
+        writes: [...gitWorkspaceScenario.expected.writes, identityMarkerWrite],
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([gitWorkspaceMarkerMutation])).toContain(
+      `${gitWorkspaceScenario.id}: Git workspace identity must use Git-local metadata`,
+    );
+
     const absentLegacyScenario = managedStackContractFixtures.find(
       ({ id }) => id === "bootstrap.absent-legacy-starts-fresh",
     );

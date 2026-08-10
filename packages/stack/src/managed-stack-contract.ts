@@ -387,13 +387,21 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (
-      scenario.given.some(
-        (fact) => fact.kind === "git-state" && fact.trackedIdentityMarker === true,
-      ) &&
-      scenario.expected.writes.some((write) => write.target === "identity-marker")
-    ) {
-      errors.push(`${scenario.id}: a tracked identity marker must remain untouched`);
+    const writesIdentityMarker = scenario.expected.writes.some(
+      (write) => write.target === "identity-marker",
+    );
+    if (writesIdentityMarker) {
+      if (
+        scenario.given.some(
+          (fact) => fact.kind === "git-state" && fact.trackedIdentityMarker === true,
+        )
+      ) {
+        errors.push(`${scenario.id}: a tracked identity marker must remain untouched`);
+      } else if (
+        scenario.given.some((fact) => fact.kind === "workspace" && fact.mode !== "ordinary-folder")
+      ) {
+        errors.push(`${scenario.id}: Git workspace identity must use Git-local metadata`);
+      }
     }
 
     if (scenario.expected.outcome !== "create") {
@@ -1278,7 +1286,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         message: "Two live paths claim checkout-a",
         recovery: [
           "Use the original checkout at /work/project-a",
-          "Remove .supabase/identity.json from the copy and run supabase start --experimental",
+          "Recreate the copy with git clone and run supabase start --experimental",
         ],
       },
       writes: [],
@@ -1291,7 +1299,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           paths: ["/copy/project-a", "/work/project-a"],
           recovery: [
             "Use the original checkout at /work/project-a",
-            "Remove .supabase/identity.json from the copy and run supabase start --experimental",
+            "Recreate the copy with git clone and run supabase start --experimental",
           ],
         },
       },
@@ -1964,8 +1972,8 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-b-main-default" }],
       details: {
-        project_marker_location: "repo.git",
-        checkout_marker_location: "repo.git/worktrees/worktree-b",
+        project_identity_location: "repo.git",
+        checkout_identity_location: "repo.git/worktrees/worktree-b",
       },
       output: {
         api: {
@@ -3573,6 +3581,15 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
     title: "The managed API accepts an injected repository without CLI ownership",
     area: "api-boundary",
     given: [
+      { kind: "workspace", mode: "git", path: "checkout-a" },
+      {
+        kind: "git-state",
+        commonDirectory: "repo/.git",
+        gitDirectory: "repo/.git",
+        head: "branch",
+        branch: "main",
+        commit: "commit-a",
+      },
       {
         kind: "managed-api-options",
         stateRoot: "isolated",
@@ -3626,14 +3643,18 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
         stackName: "default",
       },
       writes: [
-        { target: "identity-marker", operation: "create", id: "project-a" },
+        { target: "git-config", operation: "create", id: "project-a" },
         { target: "git-config", operation: "create", id: "checkout-a" },
         { target: "git-config", operation: "create", id: "context-main" },
         { target: "registry", operation: "publish", id: "stack-main-default" },
         { target: "managed-state", operation: "create", id: "stack-main-default" },
       ],
       runtimeEffects: [],
-      details: { state_root: "/tmp/managed-contract", default_system_state_mutated: false },
+      details: {
+        state_root: "/tmp/managed-contract",
+        project_identity_storage: "git-local",
+        default_system_state_mutated: false,
+      },
       output: {
         api: { projectId: "project-a", checkoutId: "checkout-a", stackId: "stack-main-default" },
       },
