@@ -381,7 +381,7 @@ export function legacyWaitForHealthyServices(
                 onSuccess: (): LegacyHealthCheckFailure | undefined => undefined,
               }),
             ),
-          { concurrency: "unbounded" },
+          { concurrency: 1 },
         );
         const failures = outcomes.filter(
           (outcome): outcome is LegacyHealthCheckFailure => outcome !== undefined,
