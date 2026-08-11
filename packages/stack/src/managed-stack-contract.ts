@@ -1311,7 +1311,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "/alias/project-a",
     },
     expected: {
@@ -1352,7 +1352,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "/copy/project-a",
     },
     expected: {
@@ -1656,7 +1656,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-new",
     },
     expected: {
@@ -1755,7 +1755,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-a",
     },
     expected: {
@@ -2580,7 +2580,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-a",
     },
     expected: {
@@ -3133,7 +3133,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-a",
     },
     expected: {
@@ -3808,7 +3808,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-a",
     },
     expected: {
@@ -4300,7 +4300,7 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-a",
     },
     expected: {
@@ -4494,7 +4494,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     ],
     when: {
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-a",
     },
     expected: {

@@ -30,7 +30,7 @@ const factPrimaryId = (fact: ManagedStackContractFact): string | undefined => {
   }
 };
 
-const containsNonFiniteNumber = (value: ManagedStackContractJson | undefined): boolean => {
+const containsNonFiniteNumber = (value: unknown): boolean => {
   if (value === undefined) {
     return false;
   }
@@ -71,6 +71,9 @@ export const validateManagedStackContractFixtures = (
     if (scenario.given.length === 0) {
       errors.push(`${scenario.id}: at least one given fact is required`);
     }
+    if (containsNonFiniteNumber(scenario.given)) {
+      errors.push(`${scenario.id}: given facts contain a non-finite number`);
+    }
 
     if (scenario.when.interface === "cli" || scenario.when.interface === "git") {
       if (scenario.when.argv.length === 0 || scenario.when.argv[0]?.trim().length === 0) {
@@ -108,8 +111,8 @@ export const validateManagedStackContractFixtures = (
       const cliArgv = scenario.when.argv;
       const jsonRequested = cliArgv.some(
         (argument, index) =>
-          argument === "--output=json" ||
-          ((argument === "--output" || argument === "-o") && cliArgv[index + 1] === "json"),
+          argument === "--output-format=json" ||
+          (argument === "--output-format" && cliArgv[index + 1] === "json"),
       );
       if (jsonRequested && output.json === undefined) {
         errors.push(`${scenario.id}: JSON CLI invocation requires a JSON projection`);

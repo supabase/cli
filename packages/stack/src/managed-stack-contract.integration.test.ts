@@ -93,6 +93,7 @@ describe("managed stack acceptance contract", () => {
       portConflict.expected.output.json === undefined ||
       freshBootstrap.expected.details === undefined ||
       freshBootstrap.expected.output.json === undefined ||
+      jsonOutputCli.when.interface !== "cli" ||
       repositoryAction.interface !== "managed-api"
     ) {
       throw new Error("lint examples require selected and structured fixture outputs");
@@ -393,6 +394,23 @@ describe("managed stack acceptance contract", () => {
         fixtures: [
           {
             ...freshBootstrap,
+            given: [
+              ...freshBootstrap.given,
+              {
+                kind: "concurrent-operation",
+                operation: "create-stack",
+                target: "stack-main-default",
+                contenders: Number.POSITIVE_INFINITY,
+              },
+            ],
+          },
+        ],
+        expectedError: `${freshBootstrap.id}: given facts contain a non-finite number`,
+      },
+      {
+        fixtures: [
+          {
+            ...freshBootstrap,
             expected: {
               ...freshBootstrap.expected,
               details: { ...freshBootstrap.expected.details, invalid_number: Number.NaN },
@@ -417,6 +435,22 @@ describe("managed stack acceptance contract", () => {
         fixtures: [
           {
             ...jsonOutputCli,
+            expected: {
+              ...jsonOutputCli.expected,
+              output: { ...jsonOutputCli.expected.output, json: undefined },
+            },
+          },
+        ],
+        expectedError: `${jsonOutputCli.id}: JSON CLI invocation requires a JSON projection`,
+      },
+      {
+        fixtures: [
+          {
+            ...jsonOutputCli,
+            when: {
+              ...jsonOutputCli.when,
+              argv: ["status", "--experimental", "--output-format=json"],
+            },
             expected: {
               ...jsonOutputCli.expected,
               output: { ...jsonOutputCli.expected.output, json: undefined },
@@ -1046,7 +1080,7 @@ describe("managed stack acceptance contract", () => {
 
     expect(scenario?.when).toEqual({
       interface: "cli",
-      argv: ["status", "--experimental", "--output", "json"],
+      argv: ["status", "--experimental", "--output-format", "json"],
       cwd: "checkout-a",
     });
     expect(scenario?.given).toEqual(
