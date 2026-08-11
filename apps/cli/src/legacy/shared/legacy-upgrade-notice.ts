@@ -234,9 +234,7 @@ async function fetchLatestReleaseTag(): Promise<string> {
   }
   const body: unknown = await response.json();
   const tag =
-    typeof body === "object" && body !== null
-      ? (body as { readonly tag_name?: unknown }).tag_name
-      : undefined;
+    typeof body === "object" && body !== null && "tag_name" in body ? body.tag_name : undefined;
   return typeof tag === "string" ? tag : "";
 }
 
