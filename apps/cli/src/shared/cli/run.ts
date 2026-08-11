@@ -127,11 +127,31 @@ function* rootFlagTokens(
   }
 }
 
-/** Whether argv sets the ROOT `--version`/`-v` flag — not a subcommand's flag of the same name, an operand after `--`, or a token consumed as another flag's value. */
+/** `strconv.ParseBool`'s true spellings — what pflag accepts as a true `--flag=<value>` boolean value. */
+const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+
+/**
+ * `undefined` when `token` is not an occurrence of the boolean flag `name`;
+ * otherwise the value that occurrence sets: bare `--help` is true, and a
+ * valued `--help=<v>` spelling parses per pflag (an invalid value reads false
+ * here — Go fails the whole parse for it, so a run never reaches the notice).
+ */
+function booleanFlagTokenValue(token: string, name: string): boolean | undefined {
+  if (token === name) return true;
+  if (!token.startsWith(`${name}=`)) return undefined;
+  return PFLAG_BOOL_TRUE.has(token.slice(name.length + 1));
+}
+
+/** Whether argv sets the ROOT `--version`/`-v` flag in any spelling (pflag marks `--version=false` as changed too) — not a subcommand's flag of the same name, an operand after `--`, or a token consumed as another flag's value. */
 export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
   if (extractCommandPath(args).length > 0) return false;
   for (const { token } of rootFlagTokens(args)) {
-    if (token === "--version" || token === "-v") return true;
+    if (
+      booleanFlagTokenValue(token, "--version") !== undefined ||
+      booleanFlagTokenValue(token, "-v") !== undefined
+    ) {
+      return true;
+    }
   }
   return false;
 }

@@ -505,6 +505,9 @@ describe("hasRootVersionFlag", () => {
   it.each([
     [["--version"], true],
     [["-v"], true],
+    [["--version=true"], true],
+    [["--version=false"], true],
+    [["-v=1"], true],
     [["--debug", "-v"], true],
     [["--profile", "-v"], false],
     [["--profile=x", "-v"], true],
