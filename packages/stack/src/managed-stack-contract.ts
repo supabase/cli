@@ -241,8 +241,13 @@ type ManagedStackContractWrite =
       readonly target: "git-config";
       readonly operation: "create" | "update";
       readonly id: string;
-      readonly scope: "common" | "worktree";
+      readonly scope: "common";
       readonly owner?: string;
+    }
+  | {
+      readonly target: "git-checkout-id";
+      readonly operation: "create" | "update";
+      readonly id: string;
     }
   | {
       readonly target: "identity-marker";
@@ -348,6 +353,20 @@ export interface ManagedNativeServiceMatrix {
   readonly unsupportedPlatforms: ReadonlyArray<string>;
   readonly services: ReadonlyArray<readonly [service: ServiceName, version: string]>;
 }
+
+export const managedNativePlatformByNodeTarget: Readonly<Record<string, string>> = {
+  "darwin-arm64": "darwin-arm64",
+  "darwin-x64": "darwin-x64",
+  "linux-arm64": "linux-arm64",
+  "linux-x64": "linux-amd64",
+  "win32-arm64": "windows-arm64",
+  "win32-x64": "windows-amd64",
+};
+
+export const managedNativePlatformFromNode = (
+  os: string,
+  architecture: string,
+): string | undefined => managedNativePlatformByNodeTarget[`${os}-${architecture}`];
 
 export const managedNativeServiceMatrix: ManagedNativeServiceMatrix = {
   targetPlatforms: ["darwin-arm64", "linux-amd64", "linux-arm64"],
@@ -590,7 +609,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           target: "git-config",
           operation: "create",
           id: "context-feat-a",
-          scope: "worktree",
+          scope: "common",
           owner: "feat-a",
         },
         { target: "registry", operation: "publish", id: "stack-feat-a-default" },
@@ -641,16 +660,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         stackId: "stack-feat-default",
         stackName: "default",
       },
-      writes: [
-        {
-          target: "git-config",
-          operation: "update",
-          id: "context-feat",
-          scope: "worktree",
-          owner: "feat-a",
-        },
-        { target: "runtime-state", operation: "start", id: "stack-feat-default" },
-      ],
+      writes: [{ target: "runtime-state", operation: "start", id: "stack-feat-default" }],
       runtimeEffects: [{ operation: "start", stackId: "stack-feat-default" }],
       output: {
         api: { outcome: "reuse", contextId: "context-feat", stackId: "stack-feat-default" },
@@ -702,7 +712,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           target: "git-config",
           operation: "create",
           id: "context-new",
-          scope: "worktree",
+          scope: "common",
           owner: "feat-a",
         },
         { target: "registry", operation: "publish", id: "stack-new-default" },
@@ -712,6 +722,10 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-new-default" }],
       details: { orphaned_context_id: "context-old" },
       output: {
+        human: {
+          summary: "Created default stack with a new branch context",
+          fields: { contextId: "context-new", stackId: "stack-new-default", stack: "default" },
+        },
         json: {
           outcome: "create",
           context_id: "context-new",
@@ -822,7 +836,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           target: "git-config",
           operation: "create",
           id: "context-new",
-          scope: "worktree",
+          scope: "common",
           owner: "feat-a",
         },
         { target: "registry", operation: "publish", id: "stack-new-default" },
@@ -832,6 +846,10 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-new-default" }],
       details: { orphaned_context_id: "context-old", adoption_required: true },
       output: {
+        human: {
+          summary: "Created default stack after manual ref replacement",
+          fields: { contextId: "context-new", stackId: "stack-new-default", stack: "default" },
+        },
         json: {
           outcome: "create",
           context_id: "context-new",
@@ -931,6 +949,16 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-workspace-default" }],
       details: { identity_marker_tracked: false },
       output: {
+        human: {
+          summary: "Created workspace/default",
+          fields: {
+            projectId: "project-a",
+            checkoutId: "checkout-a",
+            contextId: "context-workspace",
+            stackId: "stack-workspace-default",
+            stack: "default",
+          },
+        },
         json: {
           outcome: "create",
           project_id: "project-a",
@@ -981,6 +1009,14 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       writes: [{ target: "runtime-state", operation: "start", id: "stack-workspace-default" }],
       runtimeEffects: [{ operation: "start", stackId: "stack-workspace-default" }],
       output: {
+        human: {
+          summary: "Started workspace/default",
+          fields: {
+            contextId: "context-workspace",
+            stackId: "stack-workspace-default",
+            stack: "default",
+          },
+        },
         json: {
           outcome: "reuse",
           context_id: "context-workspace",
@@ -1008,7 +1044,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       },
       { kind: "checkout", path: "worktree-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "checkout", path: "worktree-b", projectId: "project-a", checkoutId: "checkout-b" },
-      { kind: "identity-claim", scope: "context", id: "context-b-main", status: "absent" },
+      { kind: "identity-claim", scope: "context", id: "context-main", status: "absent" },
     ],
     when: {
       interface: "managed-api",
@@ -1020,7 +1056,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       selection: {
         projectId: "project-a",
         checkoutId: "checkout-b",
-        contextId: "context-b-main",
+        contextId: "context-main",
         stackId: "stack-b-main-default",
         stackName: "default",
       },
@@ -1028,8 +1064,8 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         {
           target: "git-config",
           operation: "create",
-          id: "context-b-main",
-          scope: "worktree",
+          id: "context-main",
+          scope: "common",
           owner: "main",
         },
         { target: "registry", operation: "publish", id: "stack-b-main-default" },
@@ -1038,7 +1074,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-b-main-default" }],
       output: {
-        api: { projectId: "project-a", checkoutId: "checkout-b", stackId: "stack-b-main-default" },
+        api: {
+          projectId: "project-a",
+          checkoutId: "checkout-b",
+          contextId: "context-main",
+          stackId: "stack-b-main-default",
+        },
       },
     },
   },
@@ -1048,16 +1089,20 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     area: "identity",
     given: [
       ...freshManagedStartFacts("stack-b-main-default"),
+      { kind: "workspace", mode: "linked-worktree", path: "worktree-a" },
+      { kind: "workspace", mode: "linked-worktree", path: "worktree-b" },
+      {
+        kind: "git-state",
+        workspacePath: "worktree-b",
+        commonDirectory: "repo/.git",
+        gitDirectory: "repo/.git/worktrees/worktree-b",
+        head: "branch",
+        branch: "main",
+        commit: "commit-a",
+      },
       { kind: "checkout", path: "worktree-a", projectId: "project-a", checkoutId: "checkout-a" },
       { kind: "checkout", path: "worktree-b", projectId: "project-a", checkoutId: "checkout-b" },
-      { kind: "branch", name: "main", contextId: "context-a-main", checkedOut: true },
-      {
-        kind: "identity-claim",
-        scope: "context",
-        id: "context-b-main",
-        owner: "checkout-b/main",
-        status: "exact",
-      },
+      { kind: "branch", name: "main", contextId: "context-main", checkedOut: true },
     ],
     when: {
       interface: "managed-api",
@@ -1069,7 +1114,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       selection: {
         projectId: "project-a",
         checkoutId: "checkout-b",
-        contextId: "context-b-main",
+        contextId: "context-main",
         stackId: "stack-b-main-default",
         stackName: "default",
       },
@@ -1082,7 +1127,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       output: {
         api: {
           checkoutId: "checkout-b",
-          contextId: "context-b-main",
+          contextId: "context-main",
           stackId: "stack-b-main-default",
         },
       },
@@ -1194,6 +1239,10 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       ],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       output: {
+        human: {
+          summary: "Started main/default after moving the checkout",
+          fields: { checkoutId: "checkout-a", stackId: "stack-main-default", stack: "default" },
+        },
         json: { outcome: "reuse", checkout_id: "checkout-a", rebound_from: "/old/project-a" },
       },
     },
@@ -1345,12 +1394,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       },
       writes: [
         { target: "git-config", operation: "create", id: "project-clone", scope: "common" },
-        { target: "git-config", operation: "create", id: "checkout-clone", scope: "worktree" },
+        { target: "git-checkout-id", operation: "create", id: "checkout-clone" },
         {
           target: "git-config",
           operation: "create",
           id: "context-clone-main",
-          scope: "worktree",
+          scope: "common",
           owner: "main",
         },
         { target: "registry", operation: "publish", id: "stack-clone-main-default" },
@@ -1360,6 +1409,16 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-clone-main-default" }],
       details: { project_identity_storage: "git-local", git_index_mutated: false },
       output: {
+        human: {
+          summary: "Created main/default for the fresh clone",
+          fields: {
+            projectId: "project-clone",
+            checkoutId: "checkout-clone",
+            contextId: "context-clone-main",
+            stackId: "stack-clone-main-default",
+            stack: "default",
+          },
+        },
         json: {
           outcome: "create",
           project_id: "project-clone",
@@ -1624,7 +1683,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           target: "git-config",
           operation: "create",
           id: "context-copy",
-          scope: "worktree",
+          scope: "common",
           owner: "feat-copy",
         },
         { target: "registry", operation: "publish", id: "stack-copy-default" },
@@ -1634,6 +1693,10 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-copy-default" }],
       details: { original_context_id: "context-main", original_owner: "main" },
       output: {
+        human: {
+          summary: "Created feat-copy/default with a new branch context",
+          fields: { contextId: "context-copy", stackId: "stack-copy-default", stack: "default" },
+        },
         json: {
           outcome: "create",
           branch: "feat-copy",
@@ -1735,18 +1798,13 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         stackId: "stack-main-default",
         stackName: "default",
       },
-      writes: [
-        {
-          target: "git-config",
-          operation: "update",
-          id: "context-main",
-          scope: "worktree",
-          owner: "renamed",
-        },
-        { target: "runtime-state", operation: "start", id: "stack-main-default" },
-      ],
+      writes: [{ target: "runtime-state", operation: "start", id: "stack-main-default" }],
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       output: {
+        human: {
+          summary: "Started renamed/default with its preserved context",
+          fields: { contextId: "context-main", stackId: "stack-main-default", stack: "default" },
+        },
         json: {
           outcome: "reuse",
           branch: "renamed",
@@ -1787,12 +1845,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       },
       writes: [
         { target: "git-config", operation: "create", id: "project-clone", scope: "common" },
-        { target: "git-config", operation: "create", id: "checkout-clone", scope: "worktree" },
+        { target: "git-checkout-id", operation: "create", id: "checkout-clone" },
         {
           target: "git-config",
           operation: "create",
           id: "context-clone-main",
-          scope: "worktree",
+          scope: "common",
           owner: "main",
         },
         { target: "registry", operation: "publish", id: "stack-clone-main-default" },
@@ -1807,6 +1865,16 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         git_index_mutated: false,
       },
       output: {
+        human: {
+          summary: "Created main/default without inheriting the tracked marker",
+          fields: {
+            projectId: "project-clone",
+            checkoutId: "checkout-clone",
+            contextId: "context-clone-main",
+            stackId: "stack-clone-main-default",
+            stack: "default",
+          },
+        },
         json: {
           outcome: "create",
           project_id: "project-clone",
@@ -1870,12 +1938,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       },
       writes: [
         { target: "git-config", operation: "create", id: "project-a", scope: "common" },
-        { target: "git-config", operation: "create", id: "checkout-a", scope: "worktree" },
+        { target: "git-checkout-id", operation: "create", id: "checkout-a" },
         {
           target: "git-config",
           operation: "create",
           id: "context-main",
-          scope: "worktree",
+          scope: "common",
           owner: "main",
         },
         { target: "runtime-state", operation: "start", id: "stack-main-default" },
@@ -1883,6 +1951,16 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       details: { git_index_mutated: false },
       output: {
+        human: {
+          summary: "Started main/default after converting the folder to Git",
+          fields: {
+            projectId: "project-a",
+            checkoutId: "checkout-a",
+            contextId: "context-main",
+            stackId: "stack-main-default",
+            stack: "default",
+          },
+        },
         json: {
           outcome: "reuse",
           project_id: "project-a",
@@ -1933,12 +2011,12 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       },
       writes: [
         { target: "git-config", operation: "create", id: "project-git", scope: "common" },
-        { target: "git-config", operation: "create", id: "checkout-git", scope: "worktree" },
+        { target: "git-checkout-id", operation: "create", id: "checkout-git" },
         {
           target: "git-config",
           operation: "create",
           id: "context-git-main",
-          scope: "worktree",
+          scope: "common",
           owner: "main",
         },
         { target: "registry", operation: "publish", id: "stack-git-default" },
@@ -1948,6 +2026,16 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-git-default" }],
       details: { project_identity_storage: "git-local", git_index_mutated: false },
       output: {
+        human: {
+          summary: "Created main/default with fresh Git identity",
+          fields: {
+            projectId: "project-git",
+            checkoutId: "checkout-git",
+            contextId: "context-git-main",
+            stackId: "stack-git-default",
+            stack: "default",
+          },
+        },
         json: {
           outcome: "create",
           project_id: "project-git",
@@ -1996,6 +2084,13 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [],
       details: { git_index_mutated: false },
       output: {
+        human: {
+          summary: "Cannot choose a folder identity for the Git repository",
+          fields: { code: "AMBIGUOUS_FOLDER_TO_GIT_IDENTITY" },
+          recovery: [
+            "Inspect the claims and explicitly adopt one identity or create a fresh Git identity",
+          ],
+        },
         json: {
           outcome: "error",
           code: "AMBIGUOUS_FOLDER_TO_GIT_IDENTITY",
@@ -2025,7 +2120,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       },
       { kind: "checkout", path: "worktree-a", projectId: "project-bare", checkoutId: "checkout-a" },
       { kind: "checkout", path: "worktree-b", projectId: "project-bare", checkoutId: "checkout-b" },
-      { kind: "identity-claim", scope: "context", id: "context-b-main", status: "absent" },
+      { kind: "identity-claim", scope: "context", id: "context-main", status: "absent" },
     ],
     when: {
       interface: "managed-api",
@@ -2037,7 +2132,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       selection: {
         projectId: "project-bare",
         checkoutId: "checkout-b",
-        contextId: "context-b-main",
+        contextId: "context-main",
         stackId: "stack-b-main-default",
         stackName: "default",
       },
@@ -2045,8 +2140,8 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         {
           target: "git-config",
           operation: "create",
-          id: "context-b-main",
-          scope: "worktree",
+          id: "context-main",
+          scope: "common",
           owner: "main",
         },
         { target: "registry", operation: "publish", id: "stack-b-main-default" },
@@ -2062,6 +2157,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         api: {
           projectId: "project-bare",
           checkoutId: "checkout-b",
+          contextId: "context-main",
           primaryWorktreeRequired: false,
         },
       },
@@ -2349,6 +2445,14 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       writes: [],
       runtimeEffects: [],
       output: {
+        human: {
+          summary: "Cannot start default because its sticky port is occupied",
+          fields: { code: "STICKY_PORT_OCCUPIED", stackId: "stack-feat-default", port: "55421" },
+          recovery: [
+            "Stop the process using port 55421",
+            "Delete and recreate the stack to allocate new automatic ports",
+          ],
+        },
         json: {
           outcome: "error",
           code: "STICKY_PORT_OCCUPIED",
@@ -2565,6 +2669,11 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
         partial_state: false,
       },
       output: {
+        human: {
+          summary: "Cannot start while the matching legacy stack is running",
+          fields: { code: "LEGACY_SOURCE_RUNNING", port: "54321" },
+          recovery: ["Stop the legacy stack, then retry supabase start --experimental"],
+        },
         json: {
           outcome: "error",
           code: "LEGACY_SOURCE_RUNNING",
@@ -2671,6 +2780,15 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       writes: [],
       runtimeEffects: [],
       output: {
+        human: {
+          summary: "Conflicting runtime selections",
+          fields: {
+            code: "RUNTIME_SELECTION_CONFLICT",
+            cliRuntime: "docker",
+            configRuntime: "native",
+          },
+          recovery: ["Remove one runtime override", "Make the CLI and config runtime values agree"],
+        },
         json: {
           outcome: "error",
           code: "RUNTIME_SELECTION_CONFLICT",
@@ -2842,6 +2960,11 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [],
       details: { fallback_attempted: false },
       output: {
+        human: {
+          summary: "Docker is unavailable",
+          fields: { code: "DOCKER_UNAVAILABLE", requestedRuntime: "docker" },
+          recovery: ["Start Docker", "Remove --runtime docker to use automatic selection"],
+        },
         json: {
           outcome: "error",
           code: "DOCKER_UNAVAILABLE",
@@ -2879,6 +3002,10 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       details: { runtime: "native", auto_re_evaluated: false },
       output: {
+        human: {
+          summary: "Started main/default with its persisted runtime",
+          fields: { stackId: "stack-main-default", stack: "default", runtime: "native" },
+        },
         json: {
           outcome: "reuse",
           stack_id: "stack-main-default",
@@ -2928,6 +3055,15 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [],
       details: { switched_to_docker: false },
       output: {
+        human: {
+          summary: "The persisted native runtime is unavailable",
+          fields: { code: "PERSISTED_RUNTIME_UNAVAILABLE", stackId: "stack-main-default" },
+          recovery: [
+            "Restore the native prerequisite",
+            "Create a new Docker named stack",
+            "Delete and recreate this stack",
+          ],
+        },
         json: {
           outcome: "error",
           code: "PERSISTED_RUNTIME_UNAVAILABLE",
@@ -3106,6 +3242,11 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       writes: [],
       runtimeEffects: [],
       output: {
+        human: {
+          summary: "Native mode is unsupported on darwin-x64",
+          fields: { code: "NATIVE_PLATFORM_UNSUPPORTED", platform: "darwin-x64" },
+          recovery: ["Use Docker", "Use darwin-arm64, linux-amd64, or linux-arm64"],
+        },
         json: {
           outcome: "error",
           code: "NATIVE_PLATFORM_UNSUPPORTED",
@@ -3303,6 +3444,11 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         partial_state: false,
       },
       output: {
+        human: {
+          summary: "The legacy stack must be stopped before bootstrap",
+          fields: { code: "LEGACY_SOURCE_RUNNING" },
+          recovery: ["Stop the legacy stack", "Retry supabase start --experimental"],
+        },
         json: {
           outcome: "error",
           code: "LEGACY_SOURCE_RUNNING",
@@ -3437,6 +3583,10 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       details: { legacy_state_read: false, legacy_state_mutated: false, timelines_diverged: true },
       output: {
+        human: {
+          summary: "Started main/default from independent managed state",
+          fields: { stackId: "stack-main-default", stack: "default" },
+        },
         json: {
           outcome: "reuse",
           stack_id: "stack-main-default",
@@ -3507,6 +3657,10 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         plaintext_secrets_in_global_state: false,
       },
       output: {
+        human: {
+          summary: "Created main/default with stable local credentials",
+          fields: { stackId: "stack-main-default", stack: "default" },
+        },
         json: {
           outcome: "create",
           stack_id: "stack-main-default",
@@ -3539,6 +3693,10 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       details: { credential_values_id: "stable-local-defaults-v1", credentials_rotated: false },
       output: {
+        human: {
+          summary: "Started main/default with unchanged credentials",
+          fields: { stackId: "stack-main-default", stack: "default" },
+        },
         json: { outcome: "reuse", stack_id: "stack-main-default", credentials_unchanged: true },
       },
     },
@@ -3574,6 +3732,10 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       details: { plaintext_secrets_in_global_state: false },
       output: {
+        human: {
+          summary: "Updated credentials and started main/default",
+          fields: { stackId: "stack-main-default", stack: "default" },
+        },
         json: {
           outcome: "update",
           stack_id: "stack-main-default",
@@ -3754,6 +3916,10 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [],
       details: { tombstoned: true, idempotent: true },
       output: {
+        human: {
+          summary: "Stack stack-orphan was already deleted",
+          fields: { stackId: "stack-orphan" },
+        },
         json: {
           outcome: "no-op",
           stack_id: "stack-orphan",
@@ -3987,12 +4153,12 @@ const additionalApiBoundaryContractFixtures = defineManagedStackContractFixtures
       },
       writes: [
         { target: "git-config", operation: "create", id: "project-a", scope: "common" },
-        { target: "git-config", operation: "create", id: "checkout-a", scope: "worktree" },
+        { target: "git-checkout-id", operation: "create", id: "checkout-a" },
         {
           target: "git-config",
           operation: "create",
           id: "context-main",
-          scope: "worktree",
+          scope: "common",
           owner: "main",
         },
         { target: "registry", operation: "publish", id: "stack-main-default" },

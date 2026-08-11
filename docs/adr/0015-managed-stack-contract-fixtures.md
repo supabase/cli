@@ -52,13 +52,12 @@ The CLI is a consumer and presentation layer. It translates arguments into manag
 projects managed results into human and JSON output. It must not implement a second identity,
 selection, port, runtime, or lifecycle decision path.
 
-Git workspaces store project, checkout, and context identities in Git-local metadata, using common
-or worktree scope as appropriate. Contract effects record that scope explicitly: project identity
-uses common Git config, while checkout and context identities use worktree-local config. Context
-writes also declare their owning branch so storage adapters cannot persist an unbound context. A
-tracked working-tree identity marker is inert: discovery never trusts or rewrites it. Ordinary
-non-Git folders persist a project-local, untracked identity marker on first start and recover that
-same project, checkout, and context identity on later starts.
+Git workspaces store project and branch-context identities in common local Git configuration, which
+is shared by linked worktrees. Checkout identity is stored separately under each checkout's Git
+directory. Context writes declare their owning branch so storage adapters cannot persist an unbound
+context. A tracked working-tree identity marker is inert: discovery never trusts or rewrites it.
+Ordinary non-Git folders persist a project-local, untracked identity marker on first start and
+recover that same project, checkout, and context identity on later starts.
 
 Read-only status remains a successful `report` when it can identify a running stack but finds
 unapplied port, credential, or runtime configuration. The report includes a structured warning and
@@ -118,6 +117,9 @@ own the expected behavior:
 
 - CLI-2106, CLI-2107, and CLI-2108 attach the repository and identity resolver to the identity
   fixtures, including ordinary folders, worktrees, branches, and orphan handling.
+- CLI-2106 and CLI-2108 must store checkout identity beneath the checkout-specific Git directory
+  without implicitly enabling `extensions.worktreeConfig`; branch contexts remain in common local
+  Git configuration.
 - CLI-2109 attaches automatic legacy bootstrap and rollback-safe publication.
 - CLI-2110 attaches exact and automatic port intent, allocation, stickiness, drift, and collisions.
 - CLI-2124 attaches runtime selection, persistence, and strict conflict handling.

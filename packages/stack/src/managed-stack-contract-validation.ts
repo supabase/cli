@@ -104,6 +104,19 @@ export const validateManagedStackContractFixtures = (
     }
 
     const { output } = scenario.expected;
+    if (scenario.when.interface === "cli") {
+      const cliArgv = scenario.when.argv;
+      const jsonRequested = cliArgv.some(
+        (argument, index) =>
+          argument === "--output=json" ||
+          ((argument === "--output" || argument === "-o") && cliArgv[index + 1] === "json"),
+      );
+      if (jsonRequested && output.json === undefined) {
+        errors.push(`${scenario.id}: JSON CLI invocation requires a JSON projection`);
+      } else if (!jsonRequested && output.human === undefined) {
+        errors.push(`${scenario.id}: default CLI invocation requires a human projection`);
+      }
+    }
     if (output.human === undefined && output.json === undefined && output.api === undefined) {
       errors.push(`${scenario.id}: at least one observable output is required`);
     }
@@ -309,6 +322,14 @@ export const validateManagedStackContractFixtures = (
       if (selectedStackFact?.kind === "stack" && selectedStackFact.name !== selection.stackName) {
         errors.push(
           `${scenario.id}: selected stack name ${selection.stackName} disagrees with stack ${selection.stackId}`,
+        );
+      }
+      if (
+        selectedStackFact?.kind === "stack" &&
+        selectedStackFact.contextId !== selection.contextId
+      ) {
+        errors.push(
+          `${scenario.id}: selected context ${selection.contextId} disagrees with stack ${selection.stackId}`,
         );
       }
     }

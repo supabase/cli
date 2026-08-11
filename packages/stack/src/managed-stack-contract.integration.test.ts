@@ -12,6 +12,8 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createStack } from "./node.ts";
 import {
+  managedNativePlatformByNodeTarget,
+  managedNativePlatformFromNode,
   managedNativeServiceMatrix,
   managedStackContractFixtures,
   type ManagedStackContractScenario,
@@ -57,6 +59,8 @@ describe("managed stack acceptance contract", () => {
     const directDispose = findScenario("api-boundary.direct-dispose-removes-temporary-roots");
     const repositoryContract = findScenario("api-boundary.repository-contract-is-storage-agnostic");
     const persistedRuntime = findScenario("runtime.persisted-runtime-reused-for-auto");
+    const defaultOutputCli = findScenario("identity.non-git-folder-first-start-persists-identity");
+    const jsonOutputCli = findScenario("identity.read-only-unregistered-checkout-does-not-write");
     const repositoryAction = repositoryContract.when;
     const reusedStack = reuse.given.find((fact) => fact.kind === "stack");
     if (
@@ -375,6 +379,54 @@ describe("managed stack acceptance contract", () => {
         ],
         expectedError: `${freshBootstrap.id}: managed detail data contains a non-finite number`,
       },
+      {
+        fixtures: [
+          {
+            ...defaultOutputCli,
+            expected: {
+              ...defaultOutputCli.expected,
+              output: { ...defaultOutputCli.expected.output, human: undefined },
+            },
+          },
+        ],
+        expectedError: `${defaultOutputCli.id}: default CLI invocation requires a human projection`,
+      },
+      {
+        fixtures: [
+          {
+            ...jsonOutputCli,
+            expected: {
+              ...jsonOutputCli.expected,
+              output: { ...jsonOutputCli.expected.output, json: undefined },
+            },
+          },
+        ],
+        expectedError: `${jsonOutputCli.id}: JSON CLI invocation requires a JSON projection`,
+      },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            given: [
+              ...reuse.given,
+              { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: false },
+            ],
+            expected: {
+              ...reuse.expected,
+              selection: { ...reuse.expected.selection, contextId: "context-feat" },
+              output: {
+                ...reuse.expected.output,
+                human: {
+                  ...reuse.expected.output.human,
+                  fields: { ...reuse.expected.output.human.fields, contextId: "context-feat" },
+                },
+                json: { ...reuse.expected.output.json, context_id: "context-feat" },
+              },
+            },
+          },
+        ],
+        expectedError: `${reuse.id}: selected context context-feat disagrees with stack stack-main-default`,
+      },
     ];
 
     for (const testCase of cases) {
@@ -440,6 +492,79 @@ describe("managed stack acceptance contract", () => {
         "identity.bare-repository-linked-worktrees-share-project",
       ].sort(),
     );
+  });
+
+  it("shares branch contexts across worktrees while checkout identity keeps stacks isolated", () => {
+    const findIdentityScenario = (id: string): ManagedStackContractScenario => {
+      const scenario = managedStackContractFixtures.find((candidate) => candidate.id === id);
+      if (scenario === undefined) {
+        throw new Error(`${id} fixture is required`);
+      }
+      return scenario;
+    };
+    const linkedWorktrees = findIdentityScenario(
+      "identity.linked-worktrees-share-project-not-checkout",
+    );
+    const forcedBranch = findIdentityScenario("identity.same-branch-in-two-worktrees-is-isolated");
+    const bareWorktrees = findIdentityScenario(
+      "identity.bare-repository-linked-worktrees-share-project",
+    );
+
+    expect(linkedWorktrees).toMatchObject({
+      expected: {
+        selection: { checkoutId: "checkout-b", contextId: "context-main" },
+        writes: expect.arrayContaining([
+          {
+            target: "git-config",
+            operation: "create",
+            id: "context-main",
+            scope: "common",
+            owner: "main",
+          },
+        ]),
+      },
+    });
+    expect(forcedBranch).toMatchObject({
+      given: expect.arrayContaining([
+        expect.objectContaining({ kind: "branch", name: "main", contextId: "context-main" }),
+      ]),
+      expected: {
+        selection: {
+          checkoutId: "checkout-b",
+          contextId: "context-main",
+          stackId: "stack-b-main-default",
+        },
+      },
+    });
+    expect(forcedBranch.expected.writes.filter((write) => write.target === "git-config")).toEqual(
+      [],
+    );
+    expect(bareWorktrees).toMatchObject({
+      expected: {
+        selection: { checkoutId: "checkout-b", contextId: "context-main" },
+        writes: expect.arrayContaining([
+          {
+            target: "git-config",
+            operation: "create",
+            id: "context-main",
+            scope: "common",
+            owner: "main",
+          },
+        ]),
+      },
+    });
+  });
+
+  it("does not rewrite branch context after Git has preserved a rename", () => {
+    for (const id of [
+      "identity.branch-rename-preserves-context",
+      "identity.original-gone-turns-copy-into-rename",
+    ]) {
+      const scenario = managedStackContractFixtures.find((candidate) => candidate.id === id);
+      expect(scenario?.expected.writes.filter((write) => write.target === "git-config")).toEqual(
+        [],
+      );
+    }
   });
 
   it("persists and recovers ordinary-folder identity across starts", () => {
@@ -566,6 +691,19 @@ describe("managed stack acceptance contract", () => {
   });
 
   it("freezes runtime selection and the atomic native service graph", () => {
+    expect(managedNativePlatformByNodeTarget).toEqual({
+      "darwin-arm64": "darwin-arm64",
+      "darwin-x64": "darwin-x64",
+      "linux-arm64": "linux-arm64",
+      "linux-x64": "linux-amd64",
+      "win32-arm64": "windows-arm64",
+      "win32-x64": "windows-amd64",
+    });
+    expect(managedNativePlatformFromNode("linux", "x64")).toBe("linux-amd64");
+    expect(managedNativePlatformFromNode("linux", "arm64")).toBe("linux-arm64");
+    expect(managedNativePlatformFromNode("win32", "x64")).toBe("windows-amd64");
+    expect(managedNativePlatformByNodeTarget).toHaveProperty(`${process.platform}-${process.arch}`);
+
     expect(managedNativeServiceMatrix).toEqual({
       targetPlatforms: ["darwin-arm64", "linux-amd64", "linux-arm64"],
       unsupportedPlatforms: ["darwin-x64", "windows-amd64", "windows-arm64"],

@@ -74,6 +74,8 @@ describe("@supabase/stack entrypoints", () => {
     expect(Object.keys(testing).sort()).toEqual([
       "DaemonServer",
       "UnixHttpClient",
+      "managedNativePlatformByNodeTarget",
+      "managedNativePlatformFromNode",
       "managedNativeServiceMatrix",
       "managedStackContractFixtures",
       "validateManagedStackContractFixtures",

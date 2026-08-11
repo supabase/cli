@@ -12,6 +12,8 @@ export type {
   ManagedNativeServiceMatrix,
 } from "./managed-stack-contract.ts";
 export {
+  managedNativePlatformByNodeTarget,
+  managedNativePlatformFromNode,
   managedNativeServiceMatrix,
   managedStackContractFixtures,
 } from "./managed-stack-contract.ts";
