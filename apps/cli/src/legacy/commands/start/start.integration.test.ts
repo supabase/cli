@@ -69,6 +69,7 @@ import {
  * containers.
  */
 const legacyResolveLocalConfigValuesCalls = vi.hoisted(() => ({ count: 0 }));
+const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 
 vi.mock("../../shared/legacy-local-config-values.ts", async () => {
   const actual = await vi.importActual<typeof import("../../shared/legacy-local-config-values.ts")>(
@@ -2602,6 +2603,21 @@ content_path = "./templates/custom_notice.html"
         }).pipe(Effect.provide(layer));
       },
     );
+
+    it.live("installs pg_net when restarting an existing Webhooks-enabled database", () => {
+      const { layer, out, dbSession } = setup({
+        configContents: 'project_id = "demo"\n[experimental.webhooks]\nenabled = true\n',
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+        expect(out.stderrText).not.toContain("Initialising schema...");
+        expect(
+          dbSession.calls.filter(
+            (call) => call.kind === "exec" && call.sql.includes(PG_NET_CREATE_FINGERPRINT),
+          ),
+        ).toHaveLength(1);
+      }).pipe(Effect.provide(layer));
+    });
 
     it.live(
       "still writes supabase/.branches/_current_branch on a restart, even though the fresh-volume DB setup is skipped",

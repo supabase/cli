@@ -1030,6 +1030,7 @@ export const legacyDbStart = Effect.fn("legacy.db.start")(function* (flags: Lega
       // (`DockerResolveImageIfNotCached`, `internal/utils/docker.go:363-365`).
       resolvePostgresImage,
       dbHealthTimeoutSeconds: bootstrapConfig.dbHealthTimeoutSeconds,
+      webhooksEnabled: dbTomlValues.webhooksEnabled,
       // Go's `initSchema15`'s realtime job resolves JWKS itself, LOCALLY, gated on
       // `Realtime.Enabled` (`internal/db/start/start.go:337-341`) — unlike `supabase
       // start`'s OWN unconditional, up-front `ResolveJWKS` call (which also feeds the

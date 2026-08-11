@@ -361,6 +361,8 @@ export interface LegacySetupDatabaseInput {
   readonly workdir: string;
   /** The caller's already-resolved, effective config (env overrides already applied). */
   readonly config: ProjectConfig;
+  /** Effective `[experimental.webhooks].enabled`, including supported environment overrides. */
+  readonly webhooksEnabled: boolean;
   /** `db.major_version` (13-17) — Go's `utils.Config.Db.MajorVersion`, resolved by the caller once, ahead of the `db` container's own image tag selection. */
   readonly majorVersion: number;
   /**
@@ -459,7 +461,7 @@ export interface LegacySetupDatabaseOptions {
 /** Input to {@link legacyStartSetupLocalDatabase}. */
 export interface LegacyStartSetupLocalDatabaseInput extends Omit<
   LegacySetupDatabaseInput,
-  "apiAutoExposeNewTables" | "vault"
+  "apiAutoExposeNewTables" | "vault" | "webhooksEnabled"
 > {
   /**
    * `--experimental`/`SUPABASE_EXPERIMENTAL`, resolved by the caller (Go's
@@ -1022,8 +1024,7 @@ export const legacySetupDatabase = (
         yield* legacyStartInitSchema(spawner, input, tmpDir);
         const activateUserExtensions = options.activateUserExtensions ?? true;
         const legacyPgNetBaseline = options.legacyPgNetBaseline ?? false;
-        const userEnabled =
-          activateUserExtensions && input.config.experimental.webhooks?.enabled === true;
+        const userEnabled = activateUserExtensions && input.webhooksEnabled;
         yield* legacyApplyDatabaseWebhooks(
           session,
           fs,
@@ -1121,6 +1122,7 @@ export const legacyStartSetupLocalDatabase = (
     // `apply.MigrateAndSeed` below.
     yield* legacySetupDatabase(spawner, {
       ...input,
+      webhooksEnabled: toml.webhooksEnabled,
       apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
       vault: toml.vault,
     });
@@ -1261,6 +1263,65 @@ export interface LegacyFreshDbSetupInput<E> {
   readonly debug: boolean;
 }
 
+const legacyConnectLocalPostgres = (input: {
+  readonly hostname: string;
+  readonly dbPort: number;
+  readonly password: string;
+}) =>
+  Effect.gen(function* () {
+    const dbConnection = yield* LegacyDbConnection;
+    return yield* dbConnection
+      .connect(
+        {
+          host: input.hostname,
+          port: input.dbPort,
+          user: "postgres",
+          password: input.password,
+          database: "postgres",
+        },
+        { isLocal: true, dnsResolver: "native" },
+      )
+      .pipe(
+        Effect.retry({
+          schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
+          while: (error) => error.retryable === true,
+        }),
+      );
+  });
+
+/** Idempotently converges Database Webhooks on a healthy, existing local database. */
+export const legacyRunDatabaseWebhooksSetup = (input: {
+  readonly fs: FileSystem.FileSystem;
+  readonly path: Path.Path;
+  readonly hostname: string;
+  readonly dbPort: number;
+  readonly dbUrl: string;
+  readonly enabled: boolean;
+}) => {
+  if (!input.enabled) return Effect.void;
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const session = yield* legacyConnectLocalPostgres({
+        hostname: input.hostname,
+        dbPort: input.dbPort,
+        password: legacyStartInternalDbPassword(input.dbUrl),
+      });
+      const tmpDir = yield* input.fs
+        .makeTempDirectoryScoped({ prefix: "supabase-start-db-webhooks-" })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new LegacyDbSetupError({
+                message: `failed to create temp directory: ${errMessage(error)}`,
+                reason: "filesystem",
+              }),
+          ),
+        );
+      yield* legacyApplyDatabaseWebhooks(session, input.fs, input.path, tmpDir, input.enabled);
+    }),
+  );
+};
+
 /**
  * Runs {@link legacyStartSetupLocalDatabase} against a freshly-provisioned local
  * Postgres — the exact sequence BOTH real Go callers run once Postgres's own
@@ -1304,7 +1365,6 @@ export const legacyRunFreshDbSetup = <E>(
 > =>
   Effect.scoped(
     Effect.gen(function* () {
-      const dbConnection = yield* LegacyDbConnection;
       const { setup } = input;
       const dbPassword = legacyStartInternalDbPassword(setup.dbUrl);
       // Go's `SetupLocalDatabase` dials this first host-facing connect exactly
@@ -1312,23 +1372,11 @@ export const legacyRunFreshDbSetup = <E>(
       // failures: the container's internal health check says nothing about the
       // HOST side, where Docker Desktop (Windows/WSL2) can publish the port a
       // few seconds late (#6136).
-      const session = yield* dbConnection
-        .connect(
-          {
-            host: input.hostname,
-            port: input.dbPort,
-            user: "postgres",
-            password: dbPassword,
-            database: "postgres",
-          },
-          { isLocal: true, dnsResolver: "native" },
-        )
-        .pipe(
-          Effect.retry({
-            schedule: Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(10)]),
-            while: (error) => error.retryable === true,
-          }),
-        );
+      const session = yield* legacyConnectLocalPostgres({
+        hostname: input.hostname,
+        dbPort: input.dbPort,
+        password: dbPassword,
+      });
 
       const { jwks, images: dbSetupImages } = yield* legacyResolveDbSetupPrelude(setup);
 

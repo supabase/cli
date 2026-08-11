@@ -607,15 +607,19 @@ describe("legacyStartSetupLocalDatabase", () => {
       );
     });
 
-    it.effect("installs pg_net when Database Webhooks is enabled without Edge Runtime", () => {
+    it.effect("installs pg_net from the effective Database Webhooks environment override", () => {
       const workdir = makeWorkdir();
-      writeConfigToml(workdir, "[experimental.webhooks]\nenabled = true\n");
+      writeConfigToml(workdir, "[experimental.webhooks]\nenabled = false\n");
+      writeFileSync(
+        join(workdir, "supabase", ".env"),
+        "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED=true\n",
+      );
       const { session, calls } = fakeSession();
       const out = mockOutput();
       const docker = mockDockerRun();
       const config = decodeConfig({
         edge_runtime: { enabled: false },
-        experimental: { webhooks: { enabled: true } },
+        experimental: { webhooks: { enabled: false } },
       });
       return run(baseInput(workdir, session, { majorVersion: 14, config }), out, docker).pipe(
         Effect.map(() => {

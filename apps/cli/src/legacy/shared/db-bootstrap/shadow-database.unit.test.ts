@@ -363,6 +363,7 @@ function baseSetupDatabaseInput(
     path,
     workdir,
     config: defaultConfig,
+    webhooksEnabled: false,
     majorVersion: 17,
     dbHost: "abcdef012345",
     projectId: "proj",
@@ -419,7 +420,7 @@ describe("legacySetupShadowConn", () => {
         mock.spawner,
         {
           ...input,
-          config: decodeConfig({ experimental: { webhooks: { enabled: true } } }),
+          webhooksEnabled: true,
         },
         { activateUserExtensions: false },
       );
@@ -438,6 +439,7 @@ function baseShadowSetup<E = never>(
   return {
     majorVersion: 17,
     config: defaultConfig,
+    webhooksEnabled: false,
     dbUrl: "postgresql://postgres:postgrespassword@127.0.0.1:54322/postgres",
     jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
     jwks: Effect.succeed('{"keys":[]}') as Effect.Effect<string, E>,
@@ -635,6 +637,47 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
       ),
     );
   });
+
+  it.effect(
+    "next migrated shadows install pg_net when effective Webhooks config is enabled",
+    () => {
+      const { session, calls } = fakeSession();
+      const workdir = tempRoot.current;
+      const mock = mockSpawner();
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.join(workdir, "supabase", "migrations"), { recursive: true });
+        yield* legacyMigrateNextShadowDatabase(mock.spawner, {
+          fs,
+          path,
+          workdir,
+          projectId: "proj",
+          container: "shadow-container-id-0123456789abcdef",
+          networkId: "supabase_network_proj",
+          connConfig: {
+            host: "127.0.0.1",
+            port: 54320,
+            user: "postgres",
+            password: "postgres",
+            database: "postgres",
+          },
+          setup: baseShadowSetup({ webhooksEnabled: true }),
+        });
+        expect(calls.some((call) => call.sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(true);
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            mockOutput().layer,
+            mockDockerRun(),
+            mockRuntimeInfo(),
+            mockDbConnection(session),
+          ),
+        ),
+      );
+    },
+  );
 
   it.effect(
     "supports the extension-free declarative baseline on PG14 without resolving JWKS",

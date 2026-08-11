@@ -446,6 +446,7 @@ export const legacySetupShadowConn = (
  * (`apiAutoExposeNewTables`/`vault`), threaded straight through here rather than re-read.
  */
 export type LegacyShadowDbSetupInput<E> = Omit<LegacyFreshDbSetupInput<E>, "experimental"> & {
+  readonly webhooksEnabled: LegacySetupDatabaseInput["webhooksEnabled"];
   readonly apiAutoExposeNewTables: LegacySetupDatabaseInput["apiAutoExposeNewTables"];
   readonly vault: LegacySetupDatabaseInput["vault"];
 };
@@ -482,6 +483,7 @@ export const legacyBuildShadowSetupDatabaseInput = <E>(
   path: input.path,
   workdir: input.workdir,
   config: input.setup.config,
+  webhooksEnabled: input.setup.webhooksEnabled,
   majorVersion: input.setup.majorVersion,
   // Go's `container[:12]` — see this module's own header for why this resolves as a
   // hostname at all despite the shadow container having no name/alias.

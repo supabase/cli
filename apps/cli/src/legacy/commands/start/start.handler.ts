@@ -620,11 +620,12 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // ran this inside `legacyStartSetupLocalDatabase`, which is itself gated on the DB container's
     // healthcheck passing AND a fresh volume (Go's `NoBackupVolume` gate) — so a malformed
     // `SUPABASE_DB_SEED_ENABLED`/an undecryptable `[db.vault]` secret went completely unvalidated
-    // whenever `start` reused an existing volume. Called here purely for its validation side
-    // effect and discarded — `legacyStartSetupLocalDatabase`'s own internal call (an already-
-    // accepted duplicate config-load pass, matching `db start`'s own independent resolution — see
-    // `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves the real value for its own use when it runs.
-    yield* legacyCheckDbToml(fs, path, cliConfig.workdir).pipe(Effect.asVoid);
+    // whenever `start` reused an existing volume. The resolved Webhooks flag is also retained so
+    // existing volumes can converge `pg_net`; `legacyStartSetupLocalDatabase`'s own internal call
+    // (an already-accepted duplicate config-load pass, matching `db start`'s own independent
+    // resolution — see `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves fresh-setup
+    // values for its own use when it runs.
+    const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
 
     const dbContainerId = localDbContainerId(projectId);
     const filterValue = legacyCliProjectFilterValue(projectId);
@@ -1634,6 +1635,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // `db start` (see `legacyStartDatabase`'s header for why this is caller-supplied).
         resolvePostgresImage: Effect.succeed(resolveImage(postgresImage)),
         dbHealthTimeoutSeconds,
+        webhooksEnabled: dbTomlValues.webhooksEnabled,
         setup: {
           majorVersion,
           experimental,

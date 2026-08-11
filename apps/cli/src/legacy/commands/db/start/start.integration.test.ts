@@ -42,6 +42,7 @@ import { legacyDbStart } from "./start.handler.ts";
 import type { LegacyDbStartFlags } from "./start.command.ts";
 
 const DEFAULT_FLAGS: LegacyDbStartFlags = { fromBackup: Option.none() };
+const PG_NET_CREATE_FINGERPRINT = "create extension if not exists pg_net schema extensions";
 
 function flags(fromBackup?: string): LegacyDbStartFlags {
   return { fromBackup: fromBackup === undefined ? Option.none() : Option.some(fromBackup) };
@@ -589,16 +590,34 @@ describe("legacy db start", () => {
   it.live(
     "restarts against an existing volume: skips the SetupLocalDatabase-equivalent pipeline but still writes _current_branch",
     () => {
-      const { layer, out, child } = setup();
+      const { layer, out, child, dbSession } = setup();
       return Effect.gen(function* () {
         yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Starting database from backup...\n");
         expect(out.stderrText).not.toContain("Initialising schema...");
         expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+        expect(dbSession.calls).toHaveLength(0);
         expect(readFileSync(currentBranchPath(tempRoot.current), "utf8")).toBe("main");
       });
     },
   );
+
+  it.live("installs pg_net on an existing volume from effective Webhooks config", () => {
+    const { layer, out, child, dbSession } = setup({
+      configContents: 'project_id = "test"\n[experimental.webhooks]\nenabled = false\n',
+      projectEnvContents: "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED=true\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("Initialising schema...");
+      expect(dbSetupJobCalls(child.spawned)).toHaveLength(0);
+      expect(
+        dbSession.calls.filter(
+          (call) => call.kind === "exec" && call.sql.includes(PG_NET_CREATE_FINGERPRINT),
+        ),
+      ).toHaveLength(1);
+    });
+  });
 
   it.live(
     "--from-backup on a fresh volume: uses the restore entrypoint, binds the backup file, and skips the SetupLocalDatabase-equivalent pipeline entirely",

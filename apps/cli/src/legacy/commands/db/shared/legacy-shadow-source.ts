@@ -99,6 +99,7 @@ export function legacyShadowRunInputFromLocalContainerInputs(
   toml: {
     readonly shadowPort: number;
     readonly password: string;
+    readonly webhooksEnabled: boolean;
     readonly baseline: { readonly apiAutoExposeNewTables: Option.Option<boolean> };
     readonly vault: ReadonlyArray<LegacyVaultSecret>;
   },
@@ -134,6 +135,7 @@ export function legacyShadowRunInputFromLocalContainerInputs(
     setup: {
       majorVersion: localInputs.setup.majorVersion,
       config: localInputs.setup.config,
+      webhooksEnabled: toml.webhooksEnabled,
       // NOT `localInputs.setup.dbUrl` — that carries the REGULAR local container's own
       // hardcoded-"postgres" password (`legacy-local-config-values.ts`'s `DEFAULT_DB_PASSWORD`),
       // for a DIFFERENT container. The shadow's own one-shot setup jobs
