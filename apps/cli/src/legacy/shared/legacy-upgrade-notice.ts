@@ -177,22 +177,33 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
 
   let latestTag: string;
   if (forceFetch || !cacheFresh) {
+    let notifyError: unknown;
     latestTag = (
       await deps.fetchLatestTag().catch((error: unknown) => {
-        if (debugEnabled(deps)) {
-          deps.writeStderr(
-            `failed to fetch latest release: ${stripVTControlCharacters(String(error))}\n`,
-          );
-        }
+        notifyError = error;
         return "";
       })
     ).trim();
+    // Go's `checkUpgrade` (`cmd/root.go:254-258`) overwrites the fetch error
+    // with the offline-backoff write's result when inside a project, so a
+    // successful write silences the diagnostic — only a missing project (no
+    // backoff) or a failing write leaves an error to log.
     if (cachePathIsSafe && existsSync(supabaseDir)) {
       const tempFile = join(tempDir, `cli-latest.tmp.${crypto.randomUUID()}`);
-      await mkdir(tempDir, { recursive: true })
+      notifyError = await mkdir(tempDir, { recursive: true })
         .then(() => writeFile(tempFile, latestTag))
         .then(() => rename(tempFile, cacheFile))
-        .catch(() => rm(tempFile, { force: true }).catch(() => undefined));
+        .then(() => undefined)
+        .catch((error: unknown) =>
+          rm(tempFile, { force: true })
+            .catch(() => undefined)
+            .then(() => error),
+        );
+    }
+    if (notifyError !== undefined && debugEnabled(deps)) {
+      deps.writeStderr(
+        `failed to fetch latest release: ${stripVTControlCharacters(String(notifyError))}\n`,
+      );
     }
   } else {
     latestTag = (

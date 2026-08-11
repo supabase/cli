@@ -174,14 +174,14 @@ describe("legacyRunUpgradeNotice", () => {
   });
 
   it("SUPABASE_DEBUG surfaces fetch failures without the --debug flag, like viper's AutomaticEnv", async () => {
-    const ctx = setup({ fetchFails: true, env: { SUPABASE_DEBUG: "1" } });
+    const ctx = setup({ fetchFails: true, project: false, env: { SUPABASE_DEBUG: "1" } });
     await legacyRunUpgradeNotice(ctx.deps);
     expect(ctx.stderr).toContain("failed to fetch latest release");
     ctx.cleanup();
   });
 
   it("--debug=true surfaces fetch failures and --debug=false silences them, like pflag", async () => {
-    const on = setup({ fetchFails: true, args: ["db", "start", "--debug=true"] });
+    const on = setup({ fetchFails: true, project: false, args: ["db", "start", "--debug=true"] });
     await legacyRunUpgradeNotice(on.deps);
     expect(on.stderr).toContain("failed to fetch latest release");
     on.cleanup();
@@ -189,6 +189,7 @@ describe("legacyRunUpgradeNotice", () => {
     // A set flag (`--debug=false`) beats SUPABASE_DEBUG, like viper.
     const off = setup({
       fetchFails: true,
+      project: false,
       args: ["db", "start", "--debug=false"],
       env: { SUPABASE_DEBUG: "1" },
     });
@@ -205,11 +206,20 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
-  it("a failed fetch surfaces its error under --debug, matching Go's debug logger", async () => {
-    const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });
+  it("a failed fetch surfaces its error under --debug when there is no project to back off in", async () => {
+    const ctx = setup({ fetchFails: true, project: false, args: ["db", "start", "--debug"] });
     await legacyRunUpgradeNotice(ctx.deps);
     expect(ctx.stderr).toContain("failed to fetch latest release");
     expect(ctx.stderr).not.toContain("A new version of Supabase CLI is available");
+    ctx.cleanup();
+  });
+
+  it("a failed fetch inside a project stays silent under --debug, matching Go's backoff", async () => {
+    const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });
+    await legacyRunUpgradeNotice(ctx.deps);
+    // The empty-cache backoff write succeeds, so Go emits no debug line.
+    expect(ctx.stderr).toBe("");
+    expect(readFileSync(ctx.cachePath, "utf8")).toBe("");
     ctx.cleanup();
   });
 
