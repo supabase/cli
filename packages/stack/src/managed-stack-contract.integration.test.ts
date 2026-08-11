@@ -54,6 +54,10 @@ describe("managed stack acceptance contract", () => {
     const readOnly = findScenario("identity.branch-copy-read-only-does-not-write");
     const noOp = findScenario("reclamation.delete-repeat-is-idempotent");
     const freshBootstrap = findScenario("bootstrap.absent-legacy-starts-fresh");
+    const directDispose = findScenario("api-boundary.direct-dispose-removes-temporary-roots");
+    const repositoryContract = findScenario("api-boundary.repository-contract-is-storage-agnostic");
+    const persistedRuntime = findScenario("runtime.persisted-runtime-reused-for-auto");
+    const repositoryAction = repositoryContract.when;
     const reusedStack = reuse.given.find((fact) => fact.kind === "stack");
     if (
       reuse.expected.selection === undefined ||
@@ -64,7 +68,9 @@ describe("managed stack acceptance contract", () => {
       portConflict.expected.error === undefined ||
       portConflict.expected.output.json === undefined ||
       freshBootstrap.expected.details === undefined ||
-      freshBootstrap.expected.output.json === undefined
+      freshBootstrap.expected.output.json === undefined ||
+      directDispose.expected.output.api === undefined ||
+      repositoryAction.interface !== "managed-api"
     ) {
       throw new Error("lint examples require selected and structured fixture outputs");
     }
@@ -301,6 +307,73 @@ describe("managed stack acceptance contract", () => {
       {
         fixtures: [{ ...reuse, when: { ...reuse.when, cwd: "another-checkout" } }],
         expectedError: `${reuse.id}: cwd another-checkout does not match a given workspace or checkout path`,
+      },
+      {
+        fixtures: [
+          {
+            ...directDispose,
+            expected: {
+              ...directDispose.expected,
+              output: {
+                ...directDispose.expected.output,
+                api: {
+                  ...directDispose.expected.output.api,
+                  temporaryRootsRemoved: false,
+                },
+              },
+            },
+          },
+        ],
+        expectedError: `${directDispose.id}: projected temporaryRootsRemoved disagrees with the managed result`,
+      },
+      {
+        fixtures: managedStackContractFixtures.map((scenario) =>
+          scenario.id === repositoryContract.id
+            ? {
+                ...repositoryContract,
+                when: {
+                  ...repositoryAction,
+                  input: {
+                    ...repositoryAction.input,
+                    scenarioId: "identity.missing-contract-scenario",
+                  },
+                },
+              }
+            : scenario,
+        ),
+        expectedError: `${repositoryContract.id}: references unknown scenario ID identity.missing-contract-scenario`,
+      },
+      {
+        fixtures: [{ ...reuse, when: { ...reuse.when, argv: [" "] } }],
+        expectedError: `${reuse.id}: argv must start with a public command`,
+      },
+      {
+        fixtures: [
+          {
+            ...persistedRuntime,
+            given: [
+              ...persistedRuntime.given,
+              {
+                kind: "persisted-runtime",
+                stackId: "stack-main-default",
+                runtime: "docker",
+              },
+            ],
+          },
+        ],
+        expectedError: `${persistedRuntime.id}: conflicting persisted-runtime facts for ID stack-main-default`,
+      },
+      {
+        fixtures: [
+          {
+            ...freshBootstrap,
+            expected: {
+              ...freshBootstrap.expected,
+              details: { ...freshBootstrap.expected.details, invalid_number: Number.NaN },
+            },
+          },
+        ],
+        expectedError: `${freshBootstrap.id}: managed detail data contains a non-finite number`,
       },
     ];
 

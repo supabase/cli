@@ -5,10 +5,55 @@ import type {
   ManagedStackContractScenario,
 } from "./managed-stack-contract.ts";
 
+const factPrimaryId = (fact: ManagedStackContractFact): string | undefined => {
+  switch (fact.kind) {
+    case "checkout":
+      return fact.checkoutId;
+    case "credential-state":
+      return fact.valuesId;
+    case "direct-stack-state":
+      return fact.handle;
+    case "identity-claim":
+      return `${fact.scope}:${fact.id}`;
+    case "identity-marker":
+      return fact.markerId;
+    case "managed-record":
+    case "managed-target":
+    case "operation-result":
+    case "persisted-runtime":
+    case "stack":
+      return fact.stackId;
+    case "port-assignment":
+      return `${fact.stackId}:${fact.key}`;
+    default:
+      return undefined;
+  }
+};
+
+const containsNonFiniteNumber = (value: ManagedStackContractJson | undefined): boolean => {
+  if (value === undefined) {
+    return false;
+  }
+  if (typeof value === "number") {
+    return !Number.isFinite(value);
+  }
+  if (Array.isArray(value)) {
+    return value.some(containsNonFiniteNumber);
+  }
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some(containsNonFiniteNumber);
+  }
+  return false;
+};
+
+const snakeToCamel = (key: string): string =>
+  key.replace(/_([a-z0-9])/g, (_match, character: string) => character.toUpperCase());
+
 export const validateManagedStackContractFixtures = (
   fixtures: ReadonlyArray<ManagedStackContractScenario>,
 ): ReadonlyArray<string> => {
   const errors: Array<string> = [];
+  const knownScenarioIds = new Set(fixtures.map((scenario) => scenario.id));
   const scenarioIds = new Set<string>();
 
   for (const scenario of fixtures) {
@@ -28,8 +73,8 @@ export const validateManagedStackContractFixtures = (
     }
 
     if (scenario.when.interface === "cli" || scenario.when.interface === "git") {
-      if (scenario.when.argv.length === 0) {
-        errors.push(`${scenario.id}: argv must contain a public command`);
+      if (scenario.when.argv.length === 0 || scenario.when.argv[0]?.trim().length === 0) {
+        errors.push(`${scenario.id}: argv must start with a public command`);
       }
       if (scenario.when.cwd.trim().length === 0) {
         errors.push(`${scenario.id}: cwd is required for command scenarios`);
@@ -42,8 +87,20 @@ export const validateManagedStackContractFixtures = (
           `${scenario.id}: cwd ${scenario.when.cwd} does not match a given workspace or checkout path`,
         );
       }
-    } else if (scenario.when.method.trim().length === 0) {
-      errors.push(`${scenario.id}: public API method is required`);
+    } else {
+      if (scenario.when.method.trim().length === 0) {
+        errors.push(`${scenario.id}: public API method is required`);
+      }
+      const referencedScenarioId = scenario.when.input.scenarioId;
+      if (
+        referencedScenarioId !== undefined &&
+        (typeof referencedScenarioId !== "string" || !knownScenarioIds.has(referencedScenarioId))
+      ) {
+        errors.push(`${scenario.id}: references unknown scenario ID ${referencedScenarioId}`);
+      }
+      if (containsNonFiniteNumber(scenario.when.input)) {
+        errors.push(`${scenario.id}: public API input contains a non-finite number`);
+      }
     }
 
     const { output } = scenario.expected;
@@ -61,6 +118,18 @@ export const validateManagedStackContractFixtures = (
     for (const key of Object.keys(output.api ?? {})) {
       if (key.includes("_")) {
         errors.push(`${scenario.id}: API projection key ${key} must not use snake_case`);
+      }
+    }
+    const jsonValues: ReadonlyArray<
+      readonly [label: string, value: ManagedStackContractJson | undefined]
+    > = [
+      ["managed detail data", scenario.expected.details],
+      ["JSON projection", output.json],
+      ["API projection", output.api],
+    ];
+    for (const [label, value] of jsonValues) {
+      if (containsNonFiniteNumber(value)) {
+        errors.push(`${scenario.id}: ${label} contains a non-finite number`);
       }
     }
 
@@ -120,7 +189,7 @@ export const validateManagedStackContractFixtures = (
     }
 
     const declaredIds = new Set<string>();
-    const stackFactsById = new Map<string, ManagedStackContractFact>();
+    const factsByPrimaryId = new Map<string, ManagedStackContractFact>();
     const declareId = (id: string): void => {
       if (id.trim().length === 0) {
         errors.push(`${scenario.id}: declared ID is required`);
@@ -129,6 +198,17 @@ export const validateManagedStackContractFixtures = (
       }
     };
     for (const fact of scenario.given) {
+      const primaryId = factPrimaryId(fact);
+      if (primaryId !== undefined) {
+        const factKey = `${fact.kind}:${primaryId}`;
+        const previousFact = factsByPrimaryId.get(factKey);
+        if (previousFact !== undefined && !isDeepStrictEqual(previousFact, fact)) {
+          errors.push(`${scenario.id}: conflicting ${fact.kind} facts for ID ${primaryId}`);
+        } else if (previousFact === undefined) {
+          factsByPrimaryId.set(factKey, fact);
+        }
+      }
+
       switch (fact.kind) {
         case "branch":
           declareId(fact.contextId);
@@ -175,12 +255,6 @@ export const validateManagedStackContractFixtures = (
         case "stack":
           declareId(fact.contextId);
           declareId(fact.stackId);
-          const previousStackFact = stackFactsById.get(fact.stackId);
-          if (previousStackFact !== undefined && !isDeepStrictEqual(previousStackFact, fact)) {
-            errors.push(`${scenario.id}: conflicting stack facts for ID ${fact.stackId}`);
-          } else if (previousStackFact === undefined) {
-            stackFactsById.set(fact.stackId, fact);
-          }
           break;
         default:
           break;
@@ -231,7 +305,7 @@ export const validateManagedStackContractFixtures = (
           errors.push(`${scenario.id}: selection references undeclared ID ${id}`);
         }
       }
-      const selectedStackFact = stackFactsById.get(selection.stackId);
+      const selectedStackFact = factsByPrimaryId.get(`stack:${selection.stackId}`);
       if (selectedStackFact?.kind === "stack" && selectedStackFact.name !== selection.stackName) {
         errors.push(
           `${scenario.id}: selected stack name ${selection.stackName} disagrees with stack ${selection.stackId}`,
@@ -325,8 +399,11 @@ export const validateManagedStackContractFixtures = (
       }
     }
     for (const [key, value] of Object.entries(scenario.expected.details ?? {})) {
-      for (const projection of [output.json, output.api]) {
-        checkProjection(projection, key, value);
+      checkProjection(output.json, key, value);
+      checkProjection(output.api, key, value);
+      const apiKey = snakeToCamel(key);
+      if (apiKey !== key) {
+        checkProjection(output.api, apiKey, value);
       }
     }
 
