@@ -30,7 +30,11 @@ import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
-import { flagAliasesFor, isValueTakingFlagTokenFor } from "./subcommand-flag-suggestions.ts";
+import {
+  flagAliasesFor,
+  isValueTakingFlagTokenFor,
+  resolvedCommandPathForArgv,
+} from "./subcommand-flag-suggestions.ts";
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
@@ -114,6 +118,7 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
  */
 export function* rootFlagTokens(
   args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
 ): Generator<{ readonly token: string; readonly index: number }> {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
@@ -121,12 +126,31 @@ export function* rootFlagTokens(
     if (!arg.startsWith("-")) continue;
     yield { token: arg, index };
     const [flag] = arg.split("=", 1);
-    if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+    if (!arg.includes("=") && flag !== undefined && isValueTakingToken(flag)) {
       index += 1;
     } else if (shortClusterConsumesNextToken(arg)) {
       index += 1;
     }
   }
+}
+
+const isGlobalValueFlagToken = (token: string): boolean => globalFlagsWithValues.has(token);
+
+/**
+ * The full value-taking-token predicate for a real invocation: the global
+ * flags plus the resolved leaf command's own value flags — pflag parses with
+ * the resolved command's complete flagset, so `login --name --debug` hands
+ * `--debug` to `--name` and never sets the debug flag.
+ */
+export function valueTakingFlagTokenPredicateForArgv(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+): (token: string) => boolean {
+  const leafPredicate = isValueTakingFlagTokenFor(
+    rootCommand,
+    resolvedCommandPathForArgv(rootCommand, extractCommandPath(args)),
+  );
+  return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
 }
 
 /** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
@@ -167,13 +191,16 @@ function shortClusterConsumesNextToken(token: string): boolean {
  * consumed values skipped and everything from a bare `--` on positional —
  * or `args.length` when there is none.
  */
-function firstPositionalIndex(args: ReadonlyArray<string>): number {
+function firstPositionalIndex(
+  args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean,
+): number {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
     if (arg === "--") return index + 1;
     if (!arg.startsWith("-")) return index;
     const [flag] = arg.split("=", 1);
-    if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+    if (!arg.includes("=") && flag !== undefined && isValueTakingToken(flag)) {
       index += 1;
     } else if (shortClusterConsumesNextToken(arg)) {
       index += 1;
@@ -192,9 +219,12 @@ function firstPositionalIndex(args: ReadonlyArray<string>): number {
  * it. Operands after `--` and tokens consumed as another flag's value never
  * count.
  */
-export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
-  const positional = firstPositionalIndex(args);
-  for (const { token, index } of rootFlagTokens(args)) {
+export function hasRootVersionFlag(
+  args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
+): boolean {
+  const positional = firstPositionalIndex(args, isValueTakingToken);
+  for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (index >= positional) continue;
     if (isFlagOccurrence(token, "--version")) return true;
     for (const short of shortClusterFlagNames(token)) {
@@ -213,9 +243,12 @@ export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
  * (a runnable leaf under `--help=false`) is a spelling the vendored effect
  * CLI serves help for anyway.
  */
-export function hasRootHelpOrVersionFlag(args: ReadonlyArray<string>): boolean {
-  const positional = firstPositionalIndex(args);
-  for (const { token, index } of rootFlagTokens(args)) {
+export function hasRootHelpOrVersionFlag(
+  args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
+): boolean {
+  const positional = firstPositionalIndex(args, isValueTakingToken);
+  for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (isFlagOccurrence(token, "--help") || isFlagOccurrence(token, "-h")) return true;
     if (index < positional) {
       if (isFlagOccurrence(token, "--version")) return true;
@@ -228,9 +261,13 @@ export function hasRootHelpOrVersionFlag(args: ReadonlyArray<string>): boolean {
 }
 
 /** The last value a root-level `--<name>`/`--<name>=<value>` occurrence sets. `name` must be a value-taking global flag, whose space-form value the token walk already skips. */
-export function lastGlobalFlagValue(args: ReadonlyArray<string>, name: string): string | undefined {
+export function lastGlobalFlagValue(
+  args: ReadonlyArray<string>,
+  name: string,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
+): string | undefined {
   let value: string | undefined;
-  for (const { token, index } of rootFlagTokens(args)) {
+  for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (token === name) value = args[index + 1];
     else if (token.startsWith(`${name}=`)) value = token.slice(name.length + 1);
   }
@@ -626,7 +663,11 @@ export interface RunCliOptions {
    */
   readonly afterSuccess?: (
     args: ReadonlyArray<string>,
-    info: { readonly cleanShowHelp: boolean },
+    info: {
+      readonly cleanShowHelp: boolean;
+      /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
+      readonly isValueTakingFlagToken: (token: string) => boolean;
+    },
   ) => Effect.Effect<void>;
 }
 
@@ -755,9 +796,14 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const afterSuccess = (code: number, cleanShowHelp: boolean) =>
         code === 0 && options.afterSuccess !== undefined
           ? Effect.scoped(
-              processControl
-                .holdSignals(["SIGINT", "SIGTERM", "SIGHUP"])
-                .pipe(Effect.andThen(options.afterSuccess(args, { cleanShowHelp }))),
+              processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(
+                Effect.andThen(
+                  options.afterSuccess(args, {
+                    cleanShowHelp,
+                    isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(rootCommand, args),
+                  }),
+                ),
+              ),
             )
           : Effect.void;
       if (Exit.isFailure(exit)) {

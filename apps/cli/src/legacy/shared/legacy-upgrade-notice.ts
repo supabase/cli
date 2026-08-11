@@ -49,7 +49,7 @@ export function legacyUpdateNotifierDisabled(value: string | undefined): boolean
  */
 function debugEnabled(deps: LegacyUpgradeNoticeDeps, builtin: boolean): boolean {
   let flag: boolean | undefined;
-  for (const { token } of rootFlagTokens(deps.args)) {
+  for (const { token } of rootFlagTokens(deps.args, deps.isValueTakingFlagToken)) {
     if (token === "--debug") flag = true;
     else if (token.startsWith("--debug=")) {
       flag = PARSE_BOOL_TRUE.has(token.slice("--debug=".length));
@@ -145,10 +145,11 @@ function resolveNoticeBaseDir(
   cwd: string,
   args: ReadonlyArray<string>,
   env: Readonly<Record<string, string | undefined>>,
+  isValueTakingFlagToken?: (token: string) => boolean,
 ): string {
   // Viper: a set flag beats the env even when empty, and an empty effective
   // value falls through to the ancestor walk (`ChangeWorkDir`'s own rule).
-  const flagValue = lastGlobalFlagValue(args, "--workdir");
+  const flagValue = lastGlobalFlagValue(args, "--workdir", isValueTakingFlagToken);
   const explicit = flagValue !== undefined ? flagValue : env["SUPABASE_WORKDIR"];
   if (explicit !== undefined && explicit !== "") {
     return resolve(cwd, explicit);
@@ -212,6 +213,8 @@ export interface LegacyUpgradeNoticeDeps {
   readonly args: ReadonlyArray<string>;
   /** The exit-0 ShowHelp branch (bare group command) — served without Go's `ChangeWorkDir`. */
   readonly cleanShowHelp?: boolean;
+  /** Value-taking-token predicate for this argv (global + resolved leaf flags), so a token a local flag consumed (`login --name --debug`) is never read as a flag. */
+  readonly isValueTakingFlagToken?: (token: string) => boolean;
   readonly cwd: string;
   readonly currentVersion: string;
   readonly now: () => number;
@@ -227,8 +230,12 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
   // resolves against the bare cwd, with `--workdir`/`SUPABASE_WORKDIR` and the
   // ancestor walk all ignored — and never reaches a config load that could
   // pull the opt-out from a project dotenv.
-  const builtin = deps.cleanShowHelp === true || hasRootHelpOrVersionFlag(deps.args);
-  const base = builtin ? deps.cwd : resolveNoticeBaseDir(deps.cwd, deps.args, deps.env);
+  const builtin =
+    deps.cleanShowHelp === true ||
+    hasRootHelpOrVersionFlag(deps.args, deps.isValueTakingFlagToken);
+  const base = builtin
+    ? deps.cwd
+    : resolveNoticeBaseDir(deps.cwd, deps.args, deps.env, deps.isValueTakingFlagToken);
   if (!builtin && legacyUpdateNotifierDisabled(await projectDotenvNotifierOptOut(base, deps.env))) {
     return;
   }
@@ -247,7 +254,7 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
     (await isRealDirOrAbsent(tempDir));
 
   // Go's `rootCmd.Flag("version").Changed` — a subcommand's own `--version` must not bypass the cache.
-  const forceFetch = hasRootVersionFlag(deps.args);
+  const forceFetch = hasRootVersionFlag(deps.args, deps.isValueTakingFlagToken);
   const cacheFresh =
     cachePathIsSafe &&
     cacheLstat !== undefined &&
@@ -337,13 +344,17 @@ async function fetchLatestReleaseTag(): Promise<string> {
 /** The `runCli` post-success hook. A rejected `Effect.promise` is a defect, so `Effect.ignoreCause` (not `ignore`) keeps this unable to fail. */
 export const legacyUpgradeNoticeHook = (
   args: ReadonlyArray<string>,
-  info: { readonly cleanShowHelp: boolean },
+  info: {
+    readonly cleanShowHelp: boolean;
+    readonly isValueTakingFlagToken: (token: string) => boolean;
+  },
 ): Effect.Effect<void> =>
   Effect.promise(() =>
     legacyRunUpgradeNotice({
       env: process.env,
       args,
       cleanShowHelp: info.cleanShowHelp,
+      isValueTakingFlagToken: info.isValueTakingFlagToken,
       cwd: process.cwd(),
       currentVersion: CLI_VERSION,
       now: Date.now,

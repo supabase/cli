@@ -271,6 +271,18 @@ describe("legacyRunUpgradeNotice", () => {
     },
   );
 
+  it("a --debug consumed by the leaf command's own value flag is not the debug flag, like pflag", async () => {
+    // `login --name --debug`: pflag hands `--debug` to `--name`. The real CLI
+    // passes the resolved leaf's value-flag predicate into the hook.
+    const ctx = setup({ fetchFails: true, project: false, args: ["login", "--name", "--debug"] });
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      isValueTakingFlagToken: (token) => token === "--name",
+    });
+    expect(ctx.stderr).toBe("");
+    ctx.cleanup();
+  });
+
   it("a failed fetch inside a project stays silent under --debug, matching Go's backoff", async () => {
     const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });
     await legacyRunUpgradeNotice(ctx.deps);
