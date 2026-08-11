@@ -10,6 +10,8 @@ import {
   classifyParseErrorConsoleOutput,
   exitCodeForFailure,
   extractCommandPath,
+  hasRootHelpOrVersionFlag,
+  rootFlagTokens,
   shouldReportFailure,
   shouldUseGlobalSignalInterrupt,
   hasRootVersionFlag,
@@ -41,6 +43,24 @@ describe("extractCommandPath", () => {
     expect(extractCommandPath(["--output-format=json", "functions", "serve"])).toEqual([
       "functions",
       "serve",
+    ]);
+  });
+});
+
+describe("local shorthand clusters", () => {
+  const localValues = (token: string) => token === "-p";
+
+  it("does not read an attached local shorthand value as help", () => {
+    expect(hasRootHelpOrVersionFlag(["link", "-ph"], localValues)).toBe(false);
+  });
+
+  it("recognizes help after boolean shorthand flags at subcommand depth", () => {
+    expect(hasRootHelpOrVersionFlag(["link", "-xh"], localValues)).toBe(true);
+  });
+
+  it("skips a following token consumed by a local shorthand value flag", () => {
+    expect([...rootFlagTokens(["link", "-p", "--debug"], localValues)]).toEqual([
+      { token: "-p", index: 1 },
     ]);
   });
 });

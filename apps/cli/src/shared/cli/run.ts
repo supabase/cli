@@ -128,7 +128,7 @@ export function* rootFlagTokens(
     const [flag] = arg.split("=", 1);
     if (!arg.includes("=") && flag !== undefined && isValueTakingToken(flag)) {
       index += 1;
-    } else if (shortClusterConsumesNextToken(arg)) {
+    } else if (shortClusterConsumesNextToken(arg, isValueTakingToken)) {
       index += 1;
     }
   }
@@ -164,18 +164,16 @@ const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 /**
  * pflag reads a single-dash token as a cluster of shorthand flags: `-hv` sets
  * `h` then `v`, `-hv=true` gives `v` an inline value, and a value-taking
- * shorthand consumes the rest of the cluster as its value. Only meaningful in
- * the root flag zone (before the first positional), where the shorthand
- * namespace is the global one — past it a subcommand's own value-taking short
- * may consume the letters.
+ * shorthand consumes the rest of the cluster as its value.
  */
 function* shortClusterFlagValues(
   token: string,
+  isValueTakingToken: (token: string) => boolean,
 ): Generator<{ readonly name: string; readonly value: boolean }> {
   if (!token.startsWith("-") || token.startsWith("--")) return;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
     const short = `-${rest[0]!}`;
-    if (globalFlagsWithValues.has(short)) return;
+    if (isValueTakingToken(short)) return;
     if (rest[1] === "=") {
       yield { name: short, value: PFLAG_BOOL_TRUE.has(rest.slice(2)) };
       return;
@@ -185,10 +183,13 @@ function* shortClusterFlagValues(
 }
 
 /** Whether a short cluster ends in a value-taking shorthand with no inline value, which pflag satisfies with the NEXT argv token (`-ho json`). */
-function shortClusterConsumesNextToken(token: string): boolean {
+function shortClusterConsumesNextToken(
+  token: string,
+  isValueTakingToken: (token: string) => boolean,
+): boolean {
   if (!token.startsWith("-") || token.startsWith("--")) return false;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
-    if (globalFlagsWithValues.has(`-${rest[0]!}`)) return rest.length === 1;
+    if (isValueTakingToken(`-${rest[0]!}`)) return rest.length === 1;
     if (rest[1] === "=") return false;
   }
   return false;
@@ -210,7 +211,7 @@ function firstPositionalIndex(
     const [flag] = arg.split("=", 1);
     if (!arg.includes("=") && flag !== undefined && isValueTakingToken(flag)) {
       index += 1;
-    } else if (shortClusterConsumesNextToken(arg)) {
+    } else if (shortClusterConsumesNextToken(arg, isValueTakingToken)) {
       index += 1;
     }
   }
@@ -235,7 +236,7 @@ export function hasRootVersionFlag(
   for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (index >= positional) continue;
     if (isFlagOccurrence(token, "--version")) return true;
-    for (const { name } of shortClusterFlagValues(token)) {
+    for (const { name } of shortClusterFlagValues(token, isValueTakingToken)) {
       if (name === "-v") return true;
     }
   }
@@ -262,13 +263,14 @@ export function hasRootHelpOrVersionFlag(
   let version: boolean | undefined;
   for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (isFlagOccurrence(token, "--help") || isFlagOccurrence(token, "-h")) return true;
+    const shortFlags = [...shortClusterFlagValues(token, isValueTakingToken)];
+    if (shortFlags.some(({ name }) => name === "-h")) return true;
     if (index < positional) {
       if (token === "--version") version = true;
       else if (token.startsWith("--version=")) {
         version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
       }
-      for (const entry of shortClusterFlagValues(token)) {
-        if (entry.name === "-h") return true;
+      for (const entry of shortFlags) {
         if (entry.name === "-v") version = entry.value;
       }
     }
