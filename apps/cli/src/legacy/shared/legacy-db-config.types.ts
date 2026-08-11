@@ -41,7 +41,22 @@ export interface LegacyDbConfigFlags {
    * Optional explicit linked project ref override. Commands such as
    * `gen types --project-id <ref>` need the linked DB resolver's temp-role and
    * pooler fallback behavior without requiring the current workdir to be linked.
-   * Absent for the normal `--linked` path, which still reads `.temp/project-ref`.
+   * The eight `db` commands that resolve a project ref (`push`, `pull`, `diff`,
+   * `dump`, `reset`, `lint`, `advisors`, `query`) also thread their own
+   * `--project-ref` flag value through here, taking effect only on the linked
+   * path (it does NOT imply `--linked` — those handlers reject the flag
+   * outright on a non-linked target instead of silently discarding it, unlike
+   * the env var below). `None` when the flag is unset, which preserves the
+   * normal `--linked` path's fallback to `.temp/project-ref`.
+   *
+   * This shares ONLY the `SUPABASE_PROJECT_ID` env var's linked-ref-resolution
+   * precedence (flag > env > `.temp/project-ref` file, via
+   * `LegacyProjectRefResolver.loadProjectRef`) — it is NOT a full substitute for
+   * that env var. `SUPABASE_PROJECT_ID` also drives the LOCAL container id and
+   * the pg-delta project id (`legacyResolvePgDeltaProjectId`, read from
+   * `cliConfig.projectId` in `db diff`/`db pull`/`db reset`), which this flag
+   * deliberately does NOT touch — the `db` commands' `--project-ref` only ever
+   * feeds the resolver above, never the local-side id derivation.
    */
   readonly linkedProjectRef?: Option.Option<string>;
   /**
@@ -58,6 +73,20 @@ export interface LegacyDbConfigFlags {
    *     "run supabase link" suggestion.
    * Absent / false for the normal `--linked` path, which is the workdir's own
    * project and may legitimately reuse those env vars and saved files.
+   *
+   * The eight `db` commands' `--project-ref` deliberately leave this unset:
+   * unlike `gen types --project-id`'s genuinely ad-hoc target, `db`'s
+   * `--project-ref` is meant to have identical workdir credential semantics to
+   * `SUPABASE_PROJECT_ID` — it may still reuse the ambient `SUPABASE_DB_PASSWORD`
+   * / `--password`, since forcing ad-hoc would silently break existing
+   * password-based workflows that already set `--project-ref` expecting
+   * `SUPABASE_PROJECT_ID`-equivalent behavior. The mismatched-pooler-url risk
+   * `adHocProjectRef` guards against for a genuinely different project is
+   * already rejected independently: `legacyPoolerConfigFromConnectionString`
+   * (`legacy-db-config.parse.ts`) verifies the saved `.temp/pooler-url`'s
+   * tenant ref matches the resolved ref before reusing it, so a stale pooler
+   * URL for a DIFFERENT project than the one `--project-ref` now selects fails
+   * loudly instead of silently connecting to the wrong project.
    */
   readonly adHocProjectRef?: boolean;
 }

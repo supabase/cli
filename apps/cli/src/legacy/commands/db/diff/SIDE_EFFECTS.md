@@ -16,7 +16,7 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 | `<workdir>/supabase/roles.sql`                                                                                                       | SQL        | shadow provisioning, PG14 and PG15 alike (unlike `db reset`'s PG15-only local path); missing file tolerated |
 | `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` (pg-delta declarative dir) / `<workdir>/supabase/schemas/**` | SQL        | local target: 3-source declarative-schema fallback ladder, first non-empty source wins                      |
 | `~/.supabase/access-token`                                                                                                           | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                                     |
-| `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | `--linked` ref resolution                                                                                   |
+| `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                  |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                                                                                            | JSON       | explicit `--from/--to migrations` catalog (cache)                                                           |
 
 ## Files Written
@@ -56,25 +56,26 @@ the native pg-delta or migra engine (both run inside Docker via edge-runtime). T
 
 ## Environment Variables
 
-| Variable                                                                              | Purpose                                                                                                | Required? |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------- |
-| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                    | no        |
-| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                            | no        |
-| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads | no        |
-| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                       | no        |
-| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`)       | no        |
-| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                    | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                  | no        |
-| `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                 | no        |
-| `PGDELTA_NPM_REGISTRY`                                                                | scoped `@supabase` npm registry for edge-runtime                                                       | no        |
-| `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                | no        |
+| Variable                                                                              | Purpose                                                                                                                                                                                                             | Required? |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                                                                                                                                 | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                                                                                                                                         | no        |
+| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                                                              | no        |
+| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                    | no        |
+| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
+| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                               | no        |
+| `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
+| `PGDELTA_NPM_REGISTRY`                                                                | scoped `@supabase` npm registry for edge-runtime                                                                                                                                                                    | no        |
+| `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                          |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success; empty diff ("No schema changes found")                                                                                    |
-| `1`  | `--from` without `--to`; engine-flag mutex; target mutex; unknown explicit target; connection/shadow/engine failure; file IO error |
+| Code | Condition                                                                                                                                |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success; empty diff ("No schema changes found")                                                                                          |
+| `1`  | `--from` without `--to`; engine-flag mutex; target mutex; unknown explicit target; connection/shadow/engine failure; file IO error       |
+| `1`  | `--project-ref` set with a resolved target other than linked, and (in explicit mode) neither `--from` nor `--to` is `linked` (see Notes) |
 
 ## Output
 
@@ -95,6 +96,19 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 - `--use-migra` (default), `--use-pgadmin`, `--use-pg-schema`, `--use-pg-delta` are a
   mutually-exclusive engine group; `--db-url` / `--linked` / `--local` are a
   mutually-exclusive target group (default `--local`).
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
+  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  performs (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`) — unlike
+  `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
+  id/labels. It never implies `--linked`: passing it with a resolved
+  `--local`/`--db-url` target (native mode) is a hard error, as is a plain
+  `--project-ref` with no `--from`/`--to` (defaults to `--local`). The one
+  exception is explicit mode with `--from linked` / `--to linked` — that
+  resolves a linked ref without any target flag at all, so the guard does not
+  fire there; it still fires for e.g. `--from local --to migrations
+--project-ref X`, where the flag would otherwise go silently unused
+  (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent env
+  var simply leaves unused on a non-linked target).
 - `--use-pgadmin` and `--use-pg-schema` rebuild the argv and exec the bundled Go
   binary (their side effects are Go's); the Go child's telemetry is disabled so the
   single `cli_command_executed` event comes from this TS command.

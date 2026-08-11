@@ -63,10 +63,19 @@ function mockResolver(opts: {
           new LegacyDbConfigConnectTempRoleError({ message: "failed to create temp role" }),
         );
       }
+      // A threaded `--project-ref` flag wins over the fixed `opts.ref` test
+      // fixture, same top precedence a real resolver would give it — lets a
+      // test prove the flag (not just `opts.ref`) drives the resolved (and
+      // later cached) ref.
+      const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
+      const ref =
+        Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
+          ? linkedProjectRef.value
+          : opts.ref;
       return Effect.succeed({
         conn: opts.conn ?? LOCAL_CONN,
         isLocal: opts.isLocal ?? true,
-        ref: opts.ref === undefined ? undefined : Option.some(opts.ref),
+        ref: ref === undefined ? undefined : Option.some(ref),
       });
     },
     resolvePoolerFallback: (flags) => {
@@ -231,6 +240,7 @@ const flags = (over: Partial<LegacyDbDumpFlags> = {}): LegacyDbDumpFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? Option.none(),
   local: over.local ?? Option.none(),
+  projectRef: over.projectRef ?? Option.none(),
   password: over.password ?? Option.none(),
   schema: over.schema ?? [],
 });
@@ -552,6 +562,32 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "caches the flag ref, not the workdir's own config ref, when resolution fails (regression)",
+    () => {
+      // The pre-connect `linkedRefForCache` chain must check `flags.projectRef`
+      // FIRST — before config.toml's `project_id` and the `.temp/project-ref`
+      // file — so a `--project-ref` override still wins even when `resolve()`
+      // fails before ever returning its own `ref`. `opts.projectId` here stands
+      // in for the workdir's own linked ref (e.g. config.toml `project_id`);
+      // it must lose to the flag.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, cache } = setup({
+        projectId: Option.some("abcdefghijklmnopqrst"),
+        resolveFails: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbDump(
+          flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(cache.cached).toBe(true);
+        expect(cache.cachedRef).toBe(FLAG_REF);
+        expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("does not cache when the linked ref is unknown and resolution fails", () => {
     // No config project_id and no .temp/project-ref file (workdir is a throwaway
     // path), so the ref is never loaded; Go gates ensureProjectGroupsCached on
@@ -574,6 +610,58 @@ describe("legacy db dump integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ linked: Option.some(true) }));
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("dumps the project given via --project-ref without a linked workdir", () => {
+    // No fixed `opts.ref` fixture — only the flag can resolve a ref for the
+    // resolver call and the linked-project cache.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, cache, resolver } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      stdout: "CREATE SCHEMA public;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    // The workdir already resolves to a fixed ref (e.g. via .temp/project-ref) —
+    // the flag must win over it.
+    const { layer, cache } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      ref: "abcdefghijklmnopqrst",
+      stdout: "CREATE SCHEMA public;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+      expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver, cache } = setup({ isLocal: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(
+        flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      );
+      // The guard fires before any connection resolution or cache write.
+      expect(resolver.calls).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

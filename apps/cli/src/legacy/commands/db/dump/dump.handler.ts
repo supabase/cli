@@ -152,17 +152,31 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       : useLocal
         ? "local"
         : "linked";
+    // `--project-ref` never implies `--linked` and must not be silently discarded
+    // on a non-linked target — one-liner: see push.handler.ts's identical guard
+    // for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbDumpMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
     // Go's `LoadProjectRef` sets `flags.ProjectRef` BEFORE `NewDbConfigWithPassword`
     // (`flags/db_url.go:88` vs `:95`), and `ensureProjectGroupsCached` runs on failure
     // too (`cmd/root.go:176`), so a connection-resolution failure (IPv6 / pooler /
     // login-role) still refreshes the linked-project cache. The resolver only returns
-    // the ref on success, so capture it up-front for the linked path. `db dump` has no
-    // `--project-ref` flag, so the ref comes from config.toml `project_id` then the
-    // `.temp/project-ref` file — the same chain `resolveOptional`/smart generate use.
+    // the ref on success, so capture it up-front for the linked path, mirroring the
+    // resolver's own `loadProjectRef` precedence: `--project-ref` flag > config.toml
+    // `project_id` (env `SUPABASE_PROJECT_ID` included) > the `.temp/project-ref` file.
     if (connType === "linked") {
-      const refOpt = Option.isSome(cliConfig.projectId)
-        ? cliConfig.projectId
-        : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
+      const refOpt =
+        Option.isSome(flags.projectRef) && flags.projectRef.value.length > 0
+          ? flags.projectRef
+          : Option.isSome(cliConfig.projectId)
+            ? cliConfig.projectId
+            : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
       if (Option.isSome(refOpt)) {
         linkedRefForCache = refOpt.value;
       }
@@ -176,6 +190,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       connType,
       dnsResolver,
       password: flags.password,
+      linkedProjectRef: flags.projectRef,
     });
     const db = isLocal ? "local" : "remote";
     // On the linked path, re-read config with the resolved ref so a matching
@@ -344,6 +359,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
             connType: "linked",
             dnsResolver,
             password: flags.password,
+            linkedProjectRef: flags.projectRef,
           })
           .pipe(Effect.orElseSucceed(() => Option.none())),
       runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),

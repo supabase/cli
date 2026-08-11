@@ -37,7 +37,7 @@ removed `LegacyDeclarativeSeam.execInherit` seam — see those commands' own
 | `<workdir>/supabase/config.toml`                                                          | TOML       | always, parsed up front before any destructive work (embedded defaults when absent); re-read for local bucket seeding |
 | `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file | dotenv     | always, resolved before the local prelude (config values, bootstrap config)                                           |
 | `<workdir>/.git/HEAD` (walked upward)                                                     | plain text | local path, for the `Finished … on branch <branch>.` line                                                             |
-| `~/.supabase/<hash>/project-ref`                                                          | plain text | `--linked`, to resolve the ref                                                                                        |
+| `~/.supabase/<hash>/project-ref`                                                          | plain text | `--linked`, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                       |
 | `~/.supabase/access-token`                                                                | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                              |
 | seed files from `--sql-paths` or `[db.seed].sql_paths`                                    | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                             |
 | schema files from `[db.migrations].schema_paths`                                          | SQL        | when the `--experimental` schema-files branch is taken, either target (see Notes)                                     |
@@ -136,7 +136,7 @@ the whole reset** (not just "skip buckets").
 | `SUPABASE_EXPERIMENTAL`                                                                                    | selects the schema-files apply branch on either target                                                                                                                                                                                                                    | no (also `--experimental`)                              |
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                    | overrides `[experimental.pgdelta].enabled`; a truthy value flips the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) back to timestamped migrations even with `--experimental` set — switches between two different destructive code paths | no                                                      |
 | `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                      | overrides `[db.migrations].schema_paths` (viper `AutomaticEnv`, beats the config-file value) for the schema-files apply branch — genuinely effective on both targets now                                                                                                  | no (no dedicated flag — config-file-only otherwise)     |
-| `SUPABASE_PROJECT_ID`                                                                                      | overrides the local container id (`utils.DbId`)                                                                                                                                                                                                                           | no                                                      |
+| `SUPABASE_PROJECT_ID`                                                                                      | overrides the local container id (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                                                                                                        | no                                                      |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                           | enables the post-reset migrations-catalog cache (see Files Written) when `[experimental.pgdelta].enabled` is unset — distinct from `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` above, which switches the reset's own apply branch instead                                     | no (project `.env` or shell)                            |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                         | overrides the pg-delta edge-runtime image registry for the migrations-catalog cache export (scoped for the whole run via `legacyApplyProjectEnv`, matching `db push`)                                                                                                     | no (project `.env` or shell)                            |
 | `PGDELTA_NPM_REGISTRY`                                                                                     | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the migrations-catalog cache export (scoped for the whole run via `legacyApplyProjectEnv`, matching `db push`)                                                            | no (project `.env` or shell)                            |
@@ -158,6 +158,7 @@ the whole reset** (not just "skip buckets").
 | `1`  | drop / migrate / seed / vault apply failure, or connection error                                                                           |
 | `1`  | no `[db.migrations].schema_paths` pattern matched anything on the `--experimental` branch, either target                                   |
 | `1`  | local: container/volume remove, network/volume/container create, health-check timeout, PG14 SQL, satellite-restart, or Kong-reload failure |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                   |
 
 There is no remaining Go child on either target (CLI-1955 removed it for local,
 CLI-1958 for remote) — every failure is a native, typed TS error surfaced as `1`.
@@ -196,6 +197,14 @@ path has no confirmation prompt.
 
 - **Target/local split** follows Go's `IsLocalDatabase(resolved config)`, not the
   flag name: a `--db-url` pointing at the local stack is treated as a local reset.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
+  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
+  unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
+  never implies `--linked`: passing it with a resolved `--local`/`--db-url`
+  target is a hard error rather than a silently discarded flag (deliberately
+  stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply
+  leaves unused on a non-linked target).
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
