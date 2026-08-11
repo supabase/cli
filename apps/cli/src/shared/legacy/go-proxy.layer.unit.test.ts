@@ -278,6 +278,30 @@ describe("makeGoProxyLayer", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.effect("leaves captured success tails to the parent when configured", () => {
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = Layer.mergeAll(
+      makeGoProxyLayer({
+        binary: TEST_BINARY,
+        env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+        parentOwnsCapturedSuccessTail: true,
+      }).pipe(Layer.provide(Layer.mergeAll(spawner.layer, pc.layer))),
+      goProxyInvocationLayer,
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      const invocation = yield* GoProxyInvocation;
+
+      yield* proxy.execCapture(["db", "diff"], {
+        env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+      });
+
+      expect(spawner.spawned[0]?.options.env?.SUPABASE_NO_UPDATE_NOTIFIER).toBe("1");
+      expect(yield* invocation.wasDelegated).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("passes detached:false and inherited stdio to the spawner", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();

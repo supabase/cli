@@ -156,7 +156,10 @@ export const legacyRoot = Command.make("supabase").pipe(
           ? legacyQuietProgressTextOutputLayer
           : outputLayerFor(outputFormat);
 
-        return Layer.mergeAll(outputLayer, makeGoProxyLayer({ globalArgs }));
+        return Layer.mergeAll(
+          outputLayer,
+          makeGoProxyLayer({ globalArgs, parentOwnsCapturedSuccessTail: true }),
+        );
       }),
     ),
   ),

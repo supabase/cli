@@ -147,6 +147,10 @@ export function makeGoProxyLayer(opts?: {
   env?: Record<string, string>;
   globalArgs?: ReadonlyArray<string>;
   /**
+   * Let the parent emit its success tail after re-emitting captured stdout.
+   */
+  parentOwnsCapturedSuccessTail?: boolean;
+  /**
    * Override binary resolution. Primarily a test seam so specs don't have to
    * mutate `process.env.SUPABASE_GO_BINARY` or stub the filesystem:
    *  - `string`              — treat as the resolved Go binary path.
@@ -268,6 +272,9 @@ export function makeGoProxyLayer(opts?: {
                 ...(execOpts?.suppressChildTelemetry === true
                   ? { SUPABASE_TELEMETRY_DISABLED: "1" }
                   : {}),
+                ...(opts?.parentOwnsCapturedSuccessTail === true
+                  ? { SUPABASE_NO_UPDATE_NOTIFIER: "1" }
+                  : {}),
               };
               // Capture stdout (pipe) while keeping stderr inherited, so the child's
               // progress still reaches the user but its stdout is collected for
@@ -299,7 +306,9 @@ export function makeGoProxyLayer(opts?: {
                   }),
                 );
               }
-              yield* markDelegated;
+              if (opts?.parentOwnsCapturedSuccessTail !== true) {
+                yield* markDelegated;
+              }
               return captured;
             }),
           ),
