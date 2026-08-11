@@ -163,6 +163,7 @@ interface SetupOpts {
   gotrueVersion?: string;
   storageVersion?: string;
   projectId?: Option.Option<string>;
+  analytics?: ReturnType<typeof mockAnalytics>;
 }
 
 const tempRoot = useLegacyTempWorkdir("supabase-link-int-");
@@ -213,7 +214,7 @@ function tenantHttpLayer(opts: SetupOpts): Layer.Layer<HttpClient.HttpClient> {
 
 function setup(opts: SetupOpts = {}) {
   const out = mockOutput({ format: opts.format ?? "text" });
-  const analytics = mockAnalytics();
+  const analytics = opts.analytics ?? mockAnalytics();
   const telemetry = mockLegacyTelemetryStateTracked();
   const linkedCache = mockLegacyLinkedProjectCacheTracked();
   const apiMock = mockLegacyPlatformApiService({
@@ -291,9 +292,20 @@ function legacyTransportFailureForMock() {
 // `CurrentAnalyticsContext`, not the direct `capture()` call args — mirrors the
 // identical local helper in `functions/download/download.integration.test.ts`
 // and `legacy-command-instrumentation.unit.test.ts`. The shared `mockAnalytics()`
-// deliberately doesn't merge this context (most callers don't need it).
-function mockContextualAnalytics() {
+// deliberately doesn't merge this context (most callers don't need it), but
+// `legacyLink`'s own `withAnalyticsContext({ groups: { project: ref } })` call
+// (CLI-2167 branch-link telemetry) needs it merged to assert on `groups`.
+// Shape-compatible with `mockAnalytics()`'s return (adds `identified`/`aliased`/
+// `groupIdentified` tracking) so it's a drop-in `SetupOpts.analytics` override.
+function mockContextualAnalytics(): ReturnType<typeof mockAnalytics> {
   const captured: Array<{ event: string; properties: Record<string, unknown> }> = [];
+  const identified: Array<{ distinctId: string; properties: Record<string, unknown> }> = [];
+  const aliased: Array<{ distinctId: string; alias: string }> = [];
+  const groupIdentified: Array<{
+    groupType: string;
+    groupKey: string;
+    properties: Record<string, unknown>;
+  }> = [];
   const layer = Layer.succeed(
     Analytics,
     Analytics.of({
@@ -302,12 +314,25 @@ function mockContextualAnalytics() {
           const context = yield* CurrentAnalyticsContext;
           captured.push({ event, properties: { ...context, ...properties } });
         }),
-      identify: () => Effect.void,
-      alias: () => Effect.void,
-      groupIdentify: () => Effect.void,
+      identify: (distinctId: string, properties: Record<string, unknown> = {}) =>
+        Effect.sync(() => {
+          identified.push({ distinctId, properties });
+        }),
+      alias: (distinctId: string, alias: string) =>
+        Effect.sync(() => {
+          aliased.push({ distinctId, alias });
+        }),
+      groupIdentify: (
+        groupType: string,
+        groupKey: string,
+        properties: Record<string, unknown> = {},
+      ) =>
+        Effect.sync(() => {
+          groupIdentified.push({ groupType, groupKey, properties });
+        }),
     }),
   );
-  return { layer, captured };
+  return { layer, captured, identified, aliased, groupIdentified };
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +390,11 @@ describe("legacy link integration", () => {
             properties: { name: "My Project", organization_slug: "acme" },
           },
         ]);
+        // A plain (non-branch) ref link never carries the CLI-2167 branch-link
+        // telemetry extension.
+        const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
+        expect(capture?.properties).not.toHaveProperty("linked_via");
+        expect(capture?.properties).not.toHaveProperty("parent_project_ref");
       }).pipe(Effect.provide(layer));
     });
 
@@ -423,6 +453,11 @@ describe("legacy link integration", () => {
         // No postgres-version / linked-project.json and no telemetry for a 404.
         expect(existsSync(tempFile(workdir, "postgres-version"))).toBe(false);
         expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
+        // This is a plain ref link that happens to 404 (assumed to be a branch),
+        // with NO name/UUID resolution — `branchResolution` never fired, so the
+        // CLI-2167 branch-link telemetry extension doesn't fire either. Emits
+        // nothing at all for `cli_project_linked`, unlike the resolved-branch
+        // case (see "branch-name resolution: telemetry" below).
         expect(analytics.captured.map((c) => c.event)).not.toContain("cli_project_linked");
         expect(analytics.groupIdentified).toHaveLength(0);
       }).pipe(Effect.provide(layer));
@@ -1234,6 +1269,41 @@ describe("legacy link integration", () => {
         });
       }).pipe(Effect.provide(layer));
     });
+  });
+
+  describe("branch-name resolution: telemetry", () => {
+    it.live(
+      "fires cli_project_linked with linked_via/parent_project_ref and a project group, no groupIdentify, and never the branch name",
+      () => {
+        const analytics = mockContextualAnalytics();
+        const { layer, workdir } = setup({
+          branches: { ok: [LINK_BRANCH] },
+          analytics,
+          // A branch's own project ref always 404s on `getProject` (it isn't a
+          // real top-level project) — this is what routes telemetry into the
+          // CLI-2167 `else if (branchResolution)` branch instead of the plain
+          // `if (project)` branch.
+          project: { fail: legacyStatusCodeFailure(404) },
+        });
+        writeLinkedParentRef(workdir, PARENT_REF);
+        return Effect.gen(function* () {
+          yield* legacyLink(
+            flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
+          );
+          const capture = analytics.captured.find((c) => c.event === "cli_project_linked");
+          const properties = capture?.properties as { groups?: unknown } | undefined;
+          expect(properties).toMatchObject({
+            linked_via: "branch",
+            parent_project_ref: PARENT_REF,
+          });
+          expect(properties?.groups).toEqual({ project: BRANCH_PROJECT_REF });
+          expect(analytics.groupIdentified).toHaveLength(0);
+          // The branch NAME is user-created content and must never leave the
+          // machine in any captured analytics payload.
+          expect(JSON.stringify(analytics.captured)).not.toContain("feature-branch");
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("telemetry: --project-ref redaction (CLI-2167)", () => {

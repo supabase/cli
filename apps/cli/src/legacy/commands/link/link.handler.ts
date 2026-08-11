@@ -18,6 +18,8 @@ import {
   EventProjectLinked,
   GroupOrganization,
   GroupProject,
+  PropLinkedVia,
+  PropParentProjectRef,
 } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
@@ -436,6 +438,22 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         });
       }
       yield* analytics.capture(EventProjectLinked, {}).pipe(withAnalyticsContext({ groups }));
+    } else if (Option.isSome(branchResolution)) {
+      // TS-only event extension (CLI-2167): a branch name/UUID was resolved to
+      // `ref` above, so we know definitively this is a branch link — fire the
+      // same event with `linked_via`/`parent_project_ref` so branch links are
+      // no longer telemetry-invisible. Only refs go out (never the branch
+      // name, which is user-created content); no `groupIdentify` here since we
+      // have no org/name metadata for the branch, just the group association
+      // on the capture itself. The plain 404-ref path (no name resolution)
+      // intentionally still emits nothing — a 404 is only *assumed* to be a
+      // branch, never confirmed.
+      yield* analytics
+        .capture(EventProjectLinked, {
+          [PropLinkedVia]: "branch",
+          [PropParentProjectRef]: branchResolution.value.parentRef,
+        })
+        .pipe(withAnalyticsContext({ groups: { project: ref } }));
     }
 
     // 6. PostRun: `Finished supabase link.` to stdout (text), structured success
