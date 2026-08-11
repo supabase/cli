@@ -158,6 +158,9 @@ function isFlagOccurrence(token: string, name: string): boolean {
   return token === name || token.startsWith(`${name}=`);
 }
 
+/** `strconv.ParseBool`'s true spellings — how pflag reads a boolean flag's `=<value>`. An invalid value fails Go's whole parse, so a run never reaches the notice and reading it as false here is harmless. */
+const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+
 /**
  * pflag reads a single-dash token as a cluster of shorthand flags: `-hv` sets
  * `h` then `v`, `-hv=true` gives `v` an inline value, and a value-taking
@@ -166,13 +169,18 @@ function isFlagOccurrence(token: string, name: string): boolean {
  * namespace is the global one — past it a subcommand's own value-taking short
  * may consume the letters.
  */
-function* shortClusterFlagNames(token: string): Generator<string> {
+function* shortClusterFlagValues(
+  token: string,
+): Generator<{ readonly name: string; readonly value: boolean }> {
   if (!token.startsWith("-") || token.startsWith("--")) return;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
     const short = `-${rest[0]!}`;
     if (globalFlagsWithValues.has(short)) return;
-    yield short;
-    if (rest[1] === "=") return;
+    if (rest[1] === "=") {
+      yield { name: short, value: PFLAG_BOOL_TRUE.has(rest.slice(2)) };
+      return;
+    }
+    yield { name: short, value: true };
   }
 }
 
@@ -227,8 +235,8 @@ export function hasRootVersionFlag(
   for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (index >= positional) continue;
     if (isFlagOccurrence(token, "--version")) return true;
-    for (const short of shortClusterFlagNames(token)) {
-      if (short === "-v") return true;
+    for (const { name } of shortClusterFlagValues(token)) {
+      if (name === "-v") return true;
     }
   }
   return false;
@@ -236,28 +244,37 @@ export function hasRootVersionFlag(
 
 /**
  * Whether cobra serves this argv as a built-in — help at any depth, or root
- * version — without ever running `PersistentPreRunE`. Presence is what
- * counts, not the parsed value: a false value on the root or a group still
- * lands on cobra's non-`Runnable()` help (execute() serves help/version and
- * the Runnable check before `preRun`), and the one input Go would instead run
- * (a runnable leaf under `--help=false`) is a spelling the vendored effect
- * CLI serves help for anyway.
+ * version — without ever running `PersistentPreRunE`. Help counts on
+ * presence: a false value on the root or a group still lands on cobra's
+ * non-`Runnable()` help (execute() serves the built-ins and the Runnable
+ * check before `preRun`), and the one input Go would instead run (a runnable
+ * leaf under `--help=false`) is a spelling the vendored effect CLI serves
+ * help for anyway. The version flag resolves pflag-style, last value wins: a
+ * true value serves the version built-in, while `--version=false <leaf>` runs
+ * the leaf normally — `ChangeWorkDir` included — and only a bare invocation
+ * falls back to the non-runnable root's help.
  */
 export function hasRootHelpOrVersionFlag(
   args: ReadonlyArray<string>,
   isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
 ): boolean {
   const positional = firstPositionalIndex(args, isValueTakingToken);
+  let version: boolean | undefined;
   for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (isFlagOccurrence(token, "--help") || isFlagOccurrence(token, "-h")) return true;
     if (index < positional) {
-      if (isFlagOccurrence(token, "--version")) return true;
-      for (const short of shortClusterFlagNames(token)) {
-        if (short === "-h" || short === "-v") return true;
+      if (token === "--version") version = true;
+      else if (token.startsWith("--version=")) {
+        version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
+      }
+      for (const entry of shortClusterFlagValues(token)) {
+        if (entry.name === "-h") return true;
+        if (entry.name === "-v") version = entry.value;
       }
     }
   }
-  return false;
+  if (version === undefined) return false;
+  return version || positional >= args.length;
 }
 
 /** The last value a root-level `--<name>`/`--<name>=<value>` occurrence sets. `name` must be a value-taking global flag, whose space-form value the token walk already skips. */
