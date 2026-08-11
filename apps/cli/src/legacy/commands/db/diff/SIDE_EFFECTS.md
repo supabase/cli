@@ -239,9 +239,14 @@ it resolves to the differ's OWN loopback — so both the hardcoded shadow `targe
 `source` (`GetHostname()` → `127.0.0.1`) are unreachable from inside the differ container, in
 BOTH implementations: identical argv, identical network, and identical hosts produce an
 identical (unreachable) outcome on either binary, so this needs no live spot-check to settle.
-Under `--network-id host` (or any network where the mapped/reachable host resolves to the
-real Postgres instances), both `source` and `target` DO reach their databases — and that is
-exactly where the `DiffStream` divergence above becomes user-visible: the real Go CLI still
+`--network-id host` alone does NOT rescue the golden path either (see
+`diff.live.test.ts`): the network override applies to every container the command starts,
+including the shadow, whose `54320→5432` port publication is discarded under host
+networking — so the hardcoded `target` at `127.0.0.1:<shadow_port>` stays unreachable
+while only the host-published `source` becomes reachable. Reaching both databases requires
+`--network-id host` **plus** a `[db] shadow_port = 5432` config override — a contrived
+setup no default user runs (identically contrived on the Go binary). That configuration is
+where the `DiffStream` divergence above becomes user-visible: the real Go CLI still
 reports "No schema changes found" no matter what the (now reachable) differ actually finds,
 while this port reports the real diff.
 
