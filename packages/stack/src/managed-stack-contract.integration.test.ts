@@ -40,6 +40,22 @@ const projectDirectStackHandle = (stack: { readonly url: string; readonly dbUrl:
   dbUrl: stack.dbUrl.replace(/:\d+\//, ":<db-port>/"),
 });
 
+const snapshotDirectoryTree = (root: string): ReadonlyArray<string> => {
+  const paths: Array<string> = [];
+  const visit = (directory: string, relativeDirectory: string): void => {
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const relativePath = join(relativeDirectory, entry.name);
+      paths.push(entry.isDirectory() ? `${relativePath}/` : relativePath);
+      if (entry.isDirectory()) {
+        visit(join(directory, entry.name), relativePath);
+      }
+    }
+  };
+
+  visit(root, "");
+  return paths.sort();
+};
+
 describe("managed stack acceptance contract", () => {
   it("keeps every shared scenario readable and executable through a public interface", () => {
     expect(validateManagedStackContractFixtures(managedStackContractFixtures)).toEqual([]);
@@ -866,16 +882,23 @@ describe("managed stack acceptance contract", () => {
     writeFileSync(gitConfig, "[core]\n\trepositoryformatversion = 0\n");
     writeFileSync(identityMarker, '{"sentinel":true}\n');
     writeFileSync(registrySentinel, '{"sentinel":true}\n');
+    const gitTreeBefore = snapshotDirectoryTree(join(projectDir, ".git"));
 
     try {
+      const createdRootIndex = createdTempRoots.length;
       const stack = await createStack({ cacheRoot, projectDir, startupMode: "lazy" });
+      const generatedRoots = createdTempRoots.slice(createdRootIndex);
       try {
         expect(projectDirectStackHandle(stack)).toEqual(scenario.expected.output.api);
+        expect(generatedRoots).toHaveLength(2);
+        expect(generatedRoots.every(existsSync)).toBe(true);
       } finally {
         expect(await stack.dispose()).toBeUndefined();
       }
 
+      expect(generatedRoots.every((root) => !existsSync(root))).toBe(true);
       expect(readFileSync(gitConfig, "utf8")).toBe("[core]\n\trepositoryformatversion = 0\n");
+      expect(snapshotDirectoryTree(join(projectDir, ".git"))).toEqual(gitTreeBefore);
       expect(readFileSync(identityMarker, "utf8")).toBe('{"sentinel":true}\n');
       expect(readFileSync(registrySentinel, "utf8")).toBe('{"sentinel":true}\n');
       expect(existsSync(join(cacheRoot, "projects"))).toBe(false);
