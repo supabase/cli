@@ -632,7 +632,15 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       );
 
       if (outcome._tag === "signal") {
-        yield* Fiber.interrupt(cliFiber);
+        // The first signal starts cleanup; any further delivery (a terminal
+        // double Ctrl-C, or the npm shim forwarding the group signal it also
+        // received) must not default-kill the process mid-rollback now that
+        // the once-listeners above are consumed.
+        yield* Effect.scoped(
+          processControl
+            .holdSignals(["SIGINT", "SIGTERM", "SIGHUP"])
+            .pipe(Effect.andThen(Fiber.interrupt(cliFiber))),
+        );
         return yield* Effect.interrupt;
       }
 
