@@ -3463,6 +3463,199 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([folderConversionLosesTransition])).toContain(
       `${folderConversionScenario.id}: folder-to-Git result must bind the workspace transition`,
     );
+
+    const replacedRefOrphanScenario = findScenario(
+      "identity.manual-ref-replacement-orphans-context",
+    );
+    const replacedRefOrphansUnrelatedContext = {
+      ...replacedRefOrphanScenario,
+      expected: {
+        ...replacedRefOrphanScenario.expected,
+        details: {
+          ...replacedRefOrphanScenario.expected.details,
+          orphaned_context_id: "context-unrelated",
+        },
+        output: {
+          ...replacedRefOrphanScenario.expected.output,
+          json: {
+            ...replacedRefOrphanScenario.expected.output.json,
+            orphaned_context_id: "context-unrelated",
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([replacedRefOrphansUnrelatedContext])).toContain(
+      `${replacedRefOrphanScenario.id}: ref replacement must orphan the displaced branch context`,
+    );
+
+    const managedReuseLegacyScenario = findScenario(
+      "bootstrap.managed-and-legacy-diverge-after-copy",
+    );
+    const managedReuseMutatesLegacy = {
+      ...managedReuseLegacyScenario,
+      expected: {
+        ...managedReuseLegacyScenario.expected,
+        details: {
+          ...managedReuseLegacyScenario.expected.details,
+          legacy_state_mutated: true,
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([managedReuseMutatesLegacy])).toContain(
+      `${managedReuseLegacyScenario.id}: managed target reuse must not mutate legacy state`,
+    );
+
+    const readOnlyUnregisteredScenario = findScenario(
+      "identity.read-only-unregistered-checkout-does-not-write",
+    );
+    const readOnlyDiscoveryReportsRegistration = {
+      ...readOnlyUnregisteredScenario,
+      expected: {
+        ...readOnlyUnregisteredScenario.expected,
+        details: {
+          ...readOnlyUnregisteredScenario.expected.details,
+          registered: true,
+          identity_marker_created: true,
+        },
+        output: {
+          ...readOnlyUnregisteredScenario.expected.output,
+          json: { ...readOnlyUnregisteredScenario.expected.output.json, registered: true },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([readOnlyDiscoveryReportsRegistration])).toContain(
+      `${readOnlyUnregisteredScenario.id}: read-only unregistered status must not create identity state`,
+    );
+
+    const stickyReturnScenario = findScenario("ports.sticky-ports-reuse-on-return");
+    const stickyReturnHidesPersistence = {
+      ...stickyReturnScenario,
+      expected: {
+        ...stickyReturnScenario.expected,
+        output: {
+          ...stickyReturnScenario.expected.output,
+          json: { ...stickyReturnScenario.expected.output.json, sticky: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([stickyReturnHidesPersistence])).toContain(
+      `${stickyReturnScenario.id}: sticky port reuse must bind automatic config, assignment, and projections`,
+    );
+
+    const unavailablePersistedRuntimeScenario = findScenario(
+      "runtime.missing-persisted-prerequisite-fails",
+    );
+    const unavailablePersistedRuntimeReportsSwitch = {
+      ...unavailablePersistedRuntimeScenario,
+      expected: {
+        ...unavailablePersistedRuntimeScenario.expected,
+        details: {
+          ...unavailablePersistedRuntimeScenario.expected.details,
+          switched_to_docker: true,
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(
+      validateManagedStackContractFixtures([unavailablePersistedRuntimeReportsSwitch]),
+    ).toContain(
+      `${unavailablePersistedRuntimeScenario.id}: unavailable persisted runtime must not report a switch`,
+    );
+
+    const unnamedFreshCloneScenario = findScenario(
+      "identity.fresh-clone-creates-project-and-checkout",
+    );
+    if (unnamedFreshCloneScenario.expected.selection === undefined) {
+      throw new Error("fresh clone selection is required");
+    }
+    const unnamedFreshCloneSelectsReview = {
+      ...unnamedFreshCloneScenario,
+      expected: {
+        ...unnamedFreshCloneScenario.expected,
+        selection: { ...unnamedFreshCloneScenario.expected.selection, stackName: "review" },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([unnamedFreshCloneSelectsReview])).toContain(
+      `${unnamedFreshCloneScenario.id}: unnamed CLI start must select the default stack`,
+    );
+
+    const freshCloneMutatesIndex = {
+      ...unnamedFreshCloneScenario,
+      expected: {
+        ...unnamedFreshCloneScenario.expected,
+        details: { ...unnamedFreshCloneScenario.expected.details, git_index_mutated: true },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([freshCloneMutatesIndex])).toContain(
+      `${unnamedFreshCloneScenario.id}: fresh clone identity creation must not mutate the Git index`,
+    );
+
+    const exactPortProjectionScenario = findScenario("ports.explicit-free-port-is-used");
+    const exactPortProjectsAutomaticIntent = {
+      ...exactPortProjectionScenario,
+      expected: {
+        ...exactPortProjectionScenario.expected,
+        output: {
+          ...exactPortProjectionScenario.expected.output,
+          api: { ...exactPortProjectionScenario.expected.output.api, intent: "automatic" },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([exactPortProjectsAutomaticIntent])).toContain(
+      `${exactPortProjectionScenario.id}: exact port request api.port must project exact intent`,
+    );
+
+    const metadataPruneScenario = findScenario("reclamation.prune-removes-metadata-only");
+    const metadataPruneReportsNoRemoval = {
+      ...metadataPruneScenario,
+      expected: {
+        ...metadataPruneScenario.expected,
+        details: { ...metadataPruneScenario.expected.details, metadata_removed: false },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([metadataPruneReportsNoRemoval])).toContain(
+      `${metadataPruneScenario.id}: registry deletion must report removed metadata`,
+    );
+
+    const checkoutIndependentDeletionScenario = findScenario(
+      "reclamation.delete-orphan-by-stack-id",
+    );
+    const globalDeletionRequiresCheckout = {
+      ...checkoutIndependentDeletionScenario,
+      expected: {
+        ...checkoutIndependentDeletionScenario.expected,
+        details: {
+          ...checkoutIndependentDeletionScenario.expected.details,
+          checkout_required: true,
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([globalDeletionRequiresCheckout])).toContain(
+      `${checkoutIndependentDeletionScenario.id}: global orphan deletion requires an orphaned target`,
+    );
+
+    const branchHistoryEvidenceScenario = findScenario("identity.branch-commit-preserves-context");
+    const branchHistoryLosesEvidence = {
+      ...branchHistoryEvidenceScenario,
+      given: branchHistoryEvidenceScenario.given.filter(
+        (fact) => fact.kind !== "branch" && fact.kind !== "identity-transition",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([branchHistoryLosesEvidence])).toContain(
+      `${branchHistoryEvidenceScenario.id}: branch history preservation requires matching branch evidence`,
+    );
+
+    const configuredCredentialUpdateScenario = findScenario(
+      "credentials.explicit-change-applies-after-stop",
+    );
+    const configuredCredentialUpdateLosesState = {
+      ...configuredCredentialUpdateScenario,
+      given: configuredCredentialUpdateScenario.given.filter(
+        (fact) => fact.kind !== "credential-state",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([configuredCredentialUpdateLosesState])).toContain(
+      `${configuredCredentialUpdateScenario.id}: credential change requires configured old and new values`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {

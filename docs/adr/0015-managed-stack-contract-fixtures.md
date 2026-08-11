@@ -108,8 +108,10 @@ bind their output to a selected target; Git identity writes must use the correct
 scope, context writes must name the active branch as owner, and adapters cannot recreate an identity
 already declared by a checkout; new Git-derived contexts, manual ref replacement, branch deletion
 and recreation, detached-commit reuse, and selected linked worktrees must declare the relevant Git
-state or transition; comparisons between branch contexts at one commit must declare both branch
-refs at that commit; selected contexts must agree with the active Git branch or an explicit
+state or transition; branch commit, rebase, and reset preservation must bind an explicit history
+fact to the checked-out branch and matching transition; comparisons between branch contexts at one
+commit must declare both branch refs at that commit; selected contexts must agree with the active
+Git branch or an explicit
 checkout-scoped claim; ordinary folders must write their full untracked identity marker to the
 action workspace on creation and resolve it on reuse, while Git workspaces cannot trust that local
 marker; copied-branch evidence must agree with whether the original branch still exists, read-only
@@ -136,7 +138,8 @@ runtime, and every service projection;
 native preflight results must agree with the action platform and complete qualified and failed
 service partitions;
 credential create, update, and copy operations must prove that global state contains references
-instead of plaintext, credential changes must bind distinct old and new references, and local,
+instead of plaintext, configured credential changes must bind configured state with distinct old and
+new references in both directions, and local,
 persisted, and copied-legacy credentials must retain their declared reference and source;
 data-preserving prune must begin with mutable data and delete metadata only for an orphaned record
 with matching orphaned stack state; tracked identity markers

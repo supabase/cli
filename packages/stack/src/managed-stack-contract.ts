@@ -106,6 +106,13 @@ export type ManagedStackContractFact =
       readonly commit: string;
     }
   | {
+      readonly kind: "branch-history";
+      readonly branch: string;
+      readonly operation: "commit" | "rebase" | "reset";
+      readonly fromCommit: string;
+      readonly toCommit: string;
+    }
+  | {
       readonly kind: "stack";
       readonly name: string;
       readonly stackId: string;
@@ -216,6 +223,11 @@ export type ManagedStackContractFact =
       readonly repositoryId?: string;
       readonly runtime: "bun" | "node";
     };
+
+type ManagedStackContractPortAssignmentFact = Extract<
+  ManagedStackContractFact,
+  { readonly kind: "port-assignment" }
+>;
 
 export interface ManagedStackContractOutput {
   readonly human?: {
@@ -882,6 +894,15 @@ export const validateManagedStackContractFixtures = (
       errors.push(
         `${scenario.id}: explicit stack name ${explicitActionStackName} disagrees with selected stack ${scenario.expected.selection.stackName}`,
       );
+    }
+    if (
+      scenario.when.interface === "cli" &&
+      scenario.when.argv[0] === "start" &&
+      cliStackNameIndex < 0 &&
+      scenario.expected.selection !== undefined &&
+      scenario.expected.selection.stackName !== "default"
+    ) {
+      errors.push(`${scenario.id}: unnamed CLI start must select the default stack`);
     }
     if (scenario.expected.error?.code === "invalid_stack_name") {
       const declaredNames = scenario.given.find((fact) => fact.kind === "stack-names");
@@ -1674,13 +1695,24 @@ export const validateManagedStackContractFixtures = (
         errors.push(`${scenario.id}: folder-to-Git result must bind the workspace transition`);
       }
     }
+    const absentCheckoutClaim = scenario.given.find(
+      (fact) =>
+        fact.kind === "identity-claim" && fact.scope === "checkout" && fact.status === "absent",
+    );
+    if (
+      isStatusOperation &&
+      absentCheckoutClaim?.kind === "identity-claim" &&
+      scenario.expected.writes.length === 0 &&
+      (scenario.expected.details?.registered !== false ||
+        scenario.expected.details.identity_marker_created !== false ||
+        output.json?.registered !== false)
+    ) {
+      errors.push(`${scenario.id}: read-only unregistered status must not create identity state`);
+    }
     if (
       isStatusOperation &&
       (scenario.expected.details?.registered === false || output.json?.registered === false) &&
-      !scenario.given.some(
-        (fact) =>
-          fact.kind === "identity-claim" && fact.scope === "checkout" && fact.status === "absent",
-      )
+      absentCheckoutClaim?.kind !== "identity-claim"
     ) {
       errors.push(`${scenario.id}: unregistered status requires an absent checkout claim`);
     }
@@ -1834,6 +1866,23 @@ export const validateManagedStackContractFixtures = (
     ) {
       errors.push(`${scenario.id}: ref replacement target must match the action workspace commit`);
     }
+    if (refReplacement?.kind === "identity-transition") {
+      const displacedContext = scenario.given.find(
+        (fact) =>
+          fact.kind === "identity-claim" &&
+          fact.scope === "context" &&
+          fact.status === "absent" &&
+          actionGitState?.kind === "git-state" &&
+          fact.owner === actionGitState.branch,
+      );
+      if (
+        displacedContext?.kind !== "identity-claim" ||
+        scenario.expected.details?.orphaned_context_id !== displacedContext.id ||
+        output.json?.orphaned_context_id !== displacedContext.id
+      ) {
+        errors.push(`${scenario.id}: ref replacement must orphan the displaced branch context`);
+      }
+    }
     const branchRefs = scenario.given.filter((fact) => fact.kind === "branch-ref");
     if (branchRefs.length > 0) {
       const comparedBranches = scenario.given.filter(
@@ -1865,6 +1914,34 @@ export const validateManagedStackContractFixtures = (
       ) {
         errors.push(
           `${scenario.id}: branch comparison must prove both refs share the checked-out commit`,
+        );
+      }
+    }
+    const branchHistory = scenario.given.find((fact) => fact.kind === "branch-history");
+    if (branchHistory?.kind === "branch-history") {
+      const expectedTransitionOperation =
+        branchHistory.operation === "commit"
+          ? "branch-commit"
+          : branchHistory.operation === "rebase"
+            ? "branch-rebase"
+            : "branch-reset";
+      const historyTransition = scenario.given.find(
+        (fact) =>
+          fact.kind === "identity-transition" && fact.operation === expectedTransitionOperation,
+      );
+      const historyBranch = scenario.given.find(
+        (fact) => fact.kind === "branch" && fact.name === branchHistory.branch && fact.checkedOut,
+      );
+      if (
+        historyTransition?.kind !== "identity-transition" ||
+        historyTransition.from !== branchHistory.fromCommit ||
+        historyTransition.to !== branchHistory.toCommit ||
+        historyBranch?.kind !== "branch" ||
+        scenario.expected.selection?.contextId !== historyBranch.contextId ||
+        scenario.expected.outcome !== "reuse"
+      ) {
+        errors.push(
+          `${scenario.id}: branch history preservation requires matching branch evidence`,
         );
       }
     }
@@ -2258,6 +2335,18 @@ export const validateManagedStackContractFixtures = (
     const writesIdentityMarker = scenario.expected.writes.some(
       (write) => write.target === "identity-marker",
     );
+    const clonedWorkspace = scenario.given.find(
+      (fact) =>
+        fact.kind === "workspace" && fact.path === actionCwd && fact.clonedFrom !== undefined,
+    );
+    if (
+      clonedWorkspace?.kind === "workspace" &&
+      scenario.expected.outcome === "create" &&
+      scenario.expected.writes.some((write) => write.target === "git-config") &&
+      (scenario.expected.details?.git_index_mutated !== false || writesIdentityMarker)
+    ) {
+      errors.push(`${scenario.id}: fresh clone identity creation must not mutate the Git index`);
+    }
     const trackedIdentityMarker = scenario.given.find(
       (fact) => fact.kind === "git-state" && fact.trackedIdentityMarker === true,
     );
@@ -2337,6 +2426,15 @@ export const validateManagedStackContractFixtures = (
         errors.push(`${scenario.id}: existing managed target must not report legacy bootstrap`);
       }
       const legacyState = scenario.given.find((fact) => fact.kind === "legacy-state");
+      if (
+        existingStartedTarget?.kind === "managed-target" &&
+        legacyState?.kind === "legacy-state" &&
+        (scenario.expected.details?.legacy_state_mutated !== false ||
+          (output.json?.legacy_state_mutated !== undefined &&
+            output.json.legacy_state_mutated !== false))
+      ) {
+        errors.push(`${scenario.id}: managed target reuse must not mutate legacy state`);
+      }
       if (
         existingStartedTarget?.kind === "managed-target" &&
         legacyState?.kind === "legacy-state" &&
@@ -2461,6 +2559,9 @@ export const validateManagedStackContractFixtures = (
     }
 
     if (scenario.expected.error?.code === "persisted_runtime_unavailable") {
+      if (scenario.expected.details?.switched_to_docker !== false) {
+        errors.push(`${scenario.id}: unavailable persisted runtime must not report a switch`);
+      }
       for (const fact of scenario.given) {
         if (fact.kind !== "persisted-runtime") {
           continue;
@@ -2996,41 +3097,45 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.output.json?.sticky === true) {
-      const projectedPorts = scenario.expected.output.json.ports;
+    const stickyAssignments =
+      scenario.expected.outcome === "reuse" && selection !== undefined
+        ? scenario.given.filter(
+            (fact): fact is ManagedStackContractPortAssignmentFact =>
+              fact.kind === "port-assignment" &&
+              fact.stackId === selection.stackId &&
+              fact.intent === "automatic" &&
+              scenario.given.some(
+                (config) =>
+                  config.kind === "config-port" &&
+                  config.key === fact.key &&
+                  config.intent === "automatic" &&
+                  config.source === "omitted",
+              ),
+          )
+        : [];
+    if (output.json?.sticky === true || stickyAssignments.length > 0) {
+      const projectedPorts = scenario.expected.output.json?.ports;
       if (selection === undefined) {
         errors.push(`${scenario.id}: sticky port reuse requires a selected target`);
-      } else if (!isManagedStackContractRecord(projectedPorts)) {
-        errors.push(`${scenario.id}: sticky port reuse must project its assigned ports`);
-      } else {
-        for (const [service, port] of Object.entries(projectedPorts)) {
-          const key = `${service}.port`;
-          if (
-            typeof port !== "number" ||
-            !scenario.given.some(
-              (fact) =>
-                fact.kind === "config-port" &&
-                fact.key === key &&
-                fact.intent === "automatic" &&
-                fact.source === "omitted",
-            ) ||
-            !scenario.given.some(
-              (fact) =>
-                fact.kind === "port-assignment" &&
-                fact.stackId === selection.stackId &&
-                fact.key === key &&
-                fact.port === port &&
-                fact.intent === "automatic",
-            ) ||
+      } else if (
+        stickyAssignments.length === 0 ||
+        output.json?.sticky !== true ||
+        !isManagedStackContractRecord(projectedPorts) ||
+        stickyAssignments.some((assignment) => {
+          const service = assignment.key.endsWith(".port")
+            ? assignment.key.slice(0, -".port".length)
+            : assignment.key;
+          return (
+            projectedPorts?.[service] !== assignment.port ||
             (service === "api" &&
               output.human !== undefined &&
-              output.human.fields.apiUrl !== `http://127.0.0.1:${port}`)
-          ) {
-            errors.push(
-              `${scenario.id}: sticky port reuse must bind automatic config, assignment, and projections`,
-            );
-          }
-        }
+              output.human.fields.apiUrl !== `http://127.0.0.1:${assignment.port}`)
+          );
+        })
+      ) {
+        errors.push(
+          `${scenario.id}: sticky port reuse must bind automatic config, assignment, and projections`,
+        );
       }
     }
 
@@ -3186,6 +3291,15 @@ export const validateManagedStackContractFixtures = (
           errors.push(
             `${scenario.id}: projected exact port ${key} must match request ${requestedPort}`,
           );
+        }
+        const projectedExactIntent =
+          requestedEntries.length === 1
+            ? output.api?.intent
+            : isManagedStackContractRecord(projectedIntents)
+              ? projectedIntents[service]
+              : undefined;
+        if (projectedExactIntent !== "exact") {
+          errors.push(`${scenario.id}: exact port request ${key} must project exact intent`);
         }
       }
     }
@@ -3557,21 +3671,20 @@ export const validateManagedStackContractFixtures = (
     const globallyTargetedStack = scenario.given.find(
       (fact) => fact.kind === "stack" && fact.stackId === explicitActionStackId,
     );
-    if (
+    const isCheckoutIndependentStackDeletion =
       scenario.when.interface === "cli" &&
       scenario.when.argv[0] === "stop" &&
       scenario.when.argv.includes("--stack-id") &&
       scenario.expected.outcome === "delete" &&
-      globallyTargetedStack?.kind === "stack" &&
-      (globallyTargetedStack.orphaned !== undefined ||
-        output.json?.orphaned !== undefined ||
-        output.human?.fields.orphaned !== undefined)
-    ) {
+      !scenario.given.some((fact) => fact.kind === "checkout" && fact.path === actionCwd);
+    if (isCheckoutIndependentStackDeletion) {
       if (
         typeof explicitActionStackId !== "string" ||
+        globallyTargetedStack?.kind !== "stack" ||
         globallyTargetedStack.orphaned !== true ||
         output.json?.orphaned !== true ||
-        output.human?.fields.orphaned !== "true"
+        output.human?.fields.orphaned !== "true" ||
+        scenario.expected.details?.checkout_required !== false
       ) {
         errors.push(`${scenario.id}: global orphan deletion requires an orphaned target`);
       }
@@ -3650,11 +3763,33 @@ export const validateManagedStackContractFixtures = (
     ) {
       errors.push(`${scenario.id}: credential change requires different old and new values`);
     }
-    if (
-      changedCredentials?.kind === "credential-state" &&
+    const configuredCredentialChange =
+      changedCredentials?.kind === "credential-state" && changedCredentials.source === "configured"
+        ? changedCredentials
+        : undefined;
+    const selectedStoppedStack = scenario.given.find(
+      (fact) =>
+        fact.kind === "stack" &&
+        fact.stackId === selection?.stackId &&
+        fact.lifecycle === "stopped",
+    );
+    const projectsCredentialUpdate =
       scenario.expected.outcome === "update" &&
-      (output.json?.previous_credentials_values_id !== changedCredentials.previousValuesId ||
-        output.json?.credentials_values_id !== changedCredentials.valuesId ||
+      (output.json?.previous_credentials_values_id !== undefined ||
+        output.json?.credentials_values_id !== undefined);
+    const appliesConfiguredCredentialChange =
+      configuredCredentialChange !== undefined && selectedStoppedStack?.kind === "stack";
+    if (projectsCredentialUpdate && configuredCredentialChange === undefined) {
+      errors.push(`${scenario.id}: credential change requires configured old and new values`);
+    }
+    if (
+      (projectsCredentialUpdate || appliesConfiguredCredentialChange) &&
+      configuredCredentialChange !== undefined &&
+      (selectedStoppedStack?.kind !== "stack" ||
+        scenario.expected.outcome !== "update" ||
+        output.json?.previous_credentials_values_id !==
+          configuredCredentialChange.previousValuesId ||
+        output.json?.credentials_values_id !== configuredCredentialChange.valuesId ||
         !scenario.expected.writes.some(
           (write) => write.target === "managed-state" && write.operation === "update",
         ))
@@ -3925,6 +4060,13 @@ export const validateManagedStackContractFixtures = (
       ) {
         errors.push(`${scenario.id}: registry tombstone must be reported by every projection`);
       }
+      if (
+        write.target === "registry" &&
+        write.operation === "delete" &&
+        scenario.expected.details?.metadata_removed !== true
+      ) {
+        errors.push(`${scenario.id}: registry deletion must report removed metadata`);
+      }
 
       const requiredRuntimeOperation =
         write.target === "runtime-state" && write.operation === "start"
@@ -4047,6 +4189,13 @@ const branchHistoryFixture = (
   given: [
     { kind: "checkout", path: "checkout-a", projectId: "project-a", checkoutId: "checkout-a" },
     { kind: "branch", name: "feat-a", contextId: "context-feat", checkedOut: true },
+    {
+      kind: "branch-history",
+      branch: "feat-a",
+      operation: label,
+      fromCommit: "commit-a",
+      toCommit: "commit-b",
+    },
     { kind: "identity-transition", operation, from: "commit-a", to: "commit-b" },
     {
       kind: "stack",
