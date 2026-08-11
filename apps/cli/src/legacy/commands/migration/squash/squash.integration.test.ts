@@ -747,6 +747,72 @@ describe("legacy migration squash", () => {
       },
     );
 
+    it.effect(
+      "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
+      () => {
+        // Go's `loadNestedEnv` `os.Setenv`s the project `.env` (config.go:789) before any of
+        // squash's three pg_dump containers start; each one resolves its image through
+        // `DockerStart` -> `GetRegistryImageUrl`/`GetRegistryImageUrls` (docker.go:221-246,
+        // 326-348,363-371) — so a registry mirror set only in `supabase/.env` reaches all
+        // three. The handler mirrors that with `legacyApplyProjectEnv`, scoped to the run
+        // and reverted when it completes.
+        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+        const s = setupHappyPath();
+        writeFileSync(
+          join(tmp.current, "supabase", ".env"),
+          "SUPABASE_INTERNAL_IMAGE_REGISTRY=my-mirror.example.com\n",
+        );
+        return Effect.gen(function* () {
+          yield* legacyMigrationSquash(flags());
+          expect(s.dumpCalls).toHaveLength(3);
+          for (const call of s.dumpCalls) {
+            expect(call.image).toMatch(/^my-mirror\.example\.com\/supabase\//u);
+          }
+          // Reverted once the command's own scope closes (`Effect.scoped` on `runSquash`'s
+          // terminal pipe) — never leaks into a later command in the same process.
+          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+            }),
+          ),
+          Effect.provide(s.layer),
+        );
+      },
+    );
+
+    it.effect(
+      "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
+      () => {
+        // Go's `dockerExec` sets host networking by default (dump.go:91-93), but
+        // `DockerStart` overrides it with `viper.GetString("network-id")` whenever that
+        // resolves non-empty (docker.go:379-380) — a value sourced only from
+        // `supabase/.env` (after `loadNestedEnv`'s `os.Setenv`) still wins over host.
+        const prev = process.env["SUPABASE_NETWORK_ID"];
+        delete process.env["SUPABASE_NETWORK_ID"];
+        const s = setupHappyPath();
+        writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
+        return Effect.gen(function* () {
+          yield* legacyMigrationSquash(flags());
+          expect(s.dumpCalls).toHaveLength(3);
+          for (const call of s.dumpCalls) {
+            expect(call.network).toEqual({ _tag: "named", name: "dotenv-net" });
+          }
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+              else process.env["SUPABASE_NETWORK_ID"] = prev;
+            }),
+          ),
+          Effect.provide(s.layer),
+        );
+      },
+    );
+
     it.effect("squashes only the migrations up to --version, leaving newer ones untouched", () => {
       seedMigration(tmp.current, "0_init.sql", "create table a (id int);\n");
       seedMigration(tmp.current, "1_target.sql", "create table b (id int);\n");

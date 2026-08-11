@@ -27,6 +27,8 @@ export interface LegacySquashDumpParams<E> {
   readonly schema: ReadonlyArray<string>;
   /** Receives each stdout chunk in arrival order; its failure aborts the run as `E`. */
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
+  /** Loaded project `supabase/.env` map — forwarded to {@link legacyStreamPgDump}'s own `SUPABASE_NETWORK_ID` fallback. */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -51,6 +53,7 @@ export const legacySquashDumpSchema = Effect.fnUntraced(function* <E>(
     script: legacyDumpSchemaScript,
     env: legacyBuildSchemaDumpEnv(params.conn, opt),
     onStdout: params.onStdout,
+    projectEnvValues: params.projectEnvValues,
   });
   if (result.exitCode !== 0) {
     return yield* Effect.fail(
@@ -85,6 +88,7 @@ export const legacySquashDumpSchemaToString = Effect.fnUntraced(function* (param
   readonly image: string;
   readonly conn: LegacyPgConnInput;
   readonly schema: ReadonlyArray<string>;
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }) {
   const chunks: Array<Uint8Array> = [];
   yield* legacySquashDumpSchema({
@@ -92,6 +96,7 @@ export const legacySquashDumpSchemaToString = Effect.fnUntraced(function* (param
     conn: params.conn,
     schema: params.schema,
     onStdout: (chunk) => Effect.sync(() => chunks.push(chunk)),
+    projectEnvValues: params.projectEnvValues,
   });
   return new TextDecoder().decode(concatChunks(chunks));
 });

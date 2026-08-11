@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
+import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
 import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
@@ -10,8 +11,9 @@ import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
  * stdout chunk-by-chunk to `onStdout` and teeing stderr live, returning the exit
  * code + captured stderr for failure classification. Mirrors Go's `dockerExec`
  * (`apps/cli-go/internal/db/dump/dump.go`): host networking by default (overridden
- * by the global `--network-id`), no security-opt, and the Linux-only
- * `host.docker.internal:host-gateway` extra host.
+ * by the global `--network-id` flag, the ambient `SUPABASE_NETWORK_ID` env var, or
+ * a project `supabase/.env` value, in that precedence), no security-opt, and the
+ * Linux-only `host.docker.internal:host-gateway` extra host.
  *
  * Shared by `db dump` (streams to `--file`/stdout), `db pull`'s initial-migra
  * schema dump (streams to the migration file), and (CLI-1969) `migration
@@ -30,16 +32,36 @@ export const legacyStreamPgDump = Effect.fnUntraced(function* <E>(params: {
   readonly env: Readonly<Record<string, string>>;
   /** Receives each stdout chunk in arrival order; its failure aborts the run as `E`. */
   readonly onStdout: (chunk: Uint8Array) => Effect.Effect<void, E>;
+  /**
+   * Loaded project `supabase/.env` map, consulted for a `SUPABASE_NETWORK_ID`
+   * value when neither `--network-id` nor the ambient shell env set one. Omitted
+   * (or `{}`) by callers that haven't loaded a project env map.
+   */
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
 }) {
   const docker = yield* LegacyDockerRun;
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
 
+  // Go's `dockerExec` sets `NetworkMode` to host (`dump.go:91-93`), but
+  // `DockerStart` then overrides it with `viper.GetString("network-id")` whenever
+  // that resolves non-empty (`docker.go:379-380`) — a bound flag/env value wins,
+  // flag > ambient env > project-`.env` (`legacyViperEnvStringWithProjectFallback`
+  // precedence). Only when NEITHER the flag nor the env resolves does Go fall back
+  // to `NetId` (`docker.go:381-382`) — but that branch only fires when the caller
+  // left `NetworkMode` empty, which the dump path never does, so the effective
+  // pg_dump fallback is host networking, not the generated `supabase_network_*`.
   const networkId = Option.getOrUndefined(networkIdFlag);
+  const envNetworkId = legacyViperEnvStringWithProjectFallback(
+    "SUPABASE_NETWORK_ID",
+    params.projectEnvValues ?? {},
+  );
   const network =
     networkId !== undefined && networkId.length > 0
       ? { _tag: "named" as const, name: networkId }
-      : { _tag: "host" as const };
+      : envNetworkId.length > 0
+        ? { _tag: "named" as const, name: envNetworkId }
+        : { _tag: "host" as const };
   const extraHosts = runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
   return yield* docker.runStream<E>(

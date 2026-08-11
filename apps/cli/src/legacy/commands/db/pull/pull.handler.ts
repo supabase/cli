@@ -691,6 +691,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                         image,
                         script: legacyDumpSchemaScript,
                         env: legacyBuildSchemaDumpEnv(target, dumpEnvOpt),
+                        projectEnvValues: projectEnv,
                         onStdout: (chunk) => {
                           if (chunk.length > 0) seedWroteBytes = true;
                           return file.writeAll(chunk).pipe(

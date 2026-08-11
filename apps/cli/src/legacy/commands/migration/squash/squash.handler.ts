@@ -33,6 +33,7 @@ import {
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
+  legacyApplyProjectEnv,
   legacyLoadProjectEnv,
   legacyReadDbToml,
   type LegacyDbTomlValues,
@@ -153,6 +154,7 @@ const squashMigrations = Effect.fnUntraced(function* (
             image,
             conn: connConfig,
             schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
           });
           yield* legacyApplyMigrations(
             session,
@@ -165,6 +167,7 @@ const squashMigrations = Effect.fnUntraced(function* (
             image,
             conn: connConfig,
             schema: ["auth", "storage"],
+            projectEnvValues: localInputs.context.projectEnvValues,
           });
 
           const targetPath = migrations[migrations.length - 1]!;
@@ -194,6 +197,7 @@ const squashMigrations = Effect.fnUntraced(function* (
                 image,
                 conn: connConfig,
                 schema: [],
+                projectEnvValues: localInputs.context.projectEnvValues,
                 onStdout: (chunk) =>
                   file.writeAll(chunk).pipe(
                     Effect.mapError(
@@ -491,6 +495,14 @@ const runSquash = Effect.fnUntraced(function* (
     // flag-group validation above — so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
     // the remote-baseline prompt, but a flag conflict still surfaces before any `.env` read.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    // Make an allowlisted `supabase/.env` registry override visible to the
+    // synchronous `process.env` reader in `legacyGetRegistryImageUrl`, reverted
+    // when this scope closes. Go's `loadNestedEnv` `os.Setenv`s the project `.env`
+    // (config.go:789) before any container starts, and each of squash's three
+    // pg_dump containers resolves its image through `DockerStart` ->
+    // `GetRegistryImageUrl`/`GetRegistryImageUrls` (docker.go:221-246,326-348,
+    // 363-371) — so a dotenv-only mirror override reaches all three dumps below.
+    yield* legacyApplyProjectEnv(projectEnv);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
     // 7. `--version` validation — inside Go's `squash.Run`, i.e. AFTER db-config resolution.
@@ -583,6 +595,9 @@ const runSquash = Effect.fnUntraced(function* (
         linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,
       ),
     ),
+    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
+    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    Effect.scoped,
   );
 });
 
