@@ -28,19 +28,21 @@ standard.
 
 `apps/cli-go/` remains authoritative, and must be consulted, for exactly two situations:
 
-1. **Finishing a Phase 0 → Phase 1 port** — replacing one of the remaining wrapped commands (the
-   `wrapped` rows in the Legacy Shell Command Status table) with a native implementation.
+1. **Working on one of the remaining wrapped commands** — either maintaining its command/flag
+   definition and proxy handler (these gate which invocations reach the Go binary and must still
+   match it exactly) or replacing the wrapper with a native implementation (Phase 0 → Phase 1).
 2. **A change that touches an already-ported command's established parity surface** — command or
-   flag names, stdout/stderr text, exit codes, filesystem/API side effects, or telemetry payload
-   shape. Here, Go source is a regression check ("does this still match what we already shipped"),
-   not a design source.
+   flag names, stdout/stderr text, exit codes, all documented side effects (filesystem, database,
+   Docker/subprocess, API requests — see each command's `SIDE_EFFECTS.md`), or telemetry semantics
+   (which events fire, when, and their payload shape). Here, Go source is a regression check ("does
+   this still match what we already shipped"), not a design source.
 
 For everything else in `src/legacy/` — internal refactors, bug fixes that don't change the surface
-above, hoisting shared helpers, adding a documented TS-only flag/feature (the pattern already
-established by `--skip-vault`, `--reveal`, `--high-availability`), tests, tooling, telemetry
-internals — `apps/cli-go/` is not required reading and Go behavior is not the deciding standard.
-Normal engineering judgment (correctness, tests, maintainability, DX) applies, the same as it does
-in `src/next/` or `src/shared/`.
+above, hoisting shared helpers, adding a documented TS-only flag/feature on an already-ported
+command (the pattern already established by `--skip-vault`, `--reveal`, `--high-availability`),
+tests, tooling — `apps/cli-go/` is not required reading and Go behavior is not the deciding
+standard. Normal engineering judgment (correctness, tests, maintainability, DX) applies, the same as
+it does in `src/next/` or `src/shared/`.
 
 `apps/cli/AGENTS.md` is updated to lead with this scope instead of assuming every reader is mid-port.
 
@@ -62,17 +64,21 @@ surface from a parity check it never needed.
   auditing `apps/cli-go/` or justifying themselves against Go behavior that isn't in scope.
 - Review feedback on such changes is judged on normal engineering merit instead of being forced
   through a parity lens that doesn't apply.
-- The two cases where Go really is authoritative (finishing the last 8 ports; not regressing the 95
-  already-ported commands) are named explicitly instead of being implied by a blanket rule.
+- The two cases where Go really is authoritative (the 8 still-wrapped commands, including finishing
+  their ports; not regressing the 95 already-ported commands) are named explicitly instead of being
+  implied by a blanket rule.
 
 ### Negative
 
 - Contributors now have to briefly classify a change (does it touch the parity surface?) rather than
-  defaulting to "always check Go." Misclassification risk is mitigated by
-  [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md) staying
-  the source of truth for which commands are still `wrapped`, and by CI's `testParity` /
-  `*.e2e.test.ts` suites catching accidental output/behavior drift on already-ported commands
-  regardless of whether a human or agent consulted Go first.
+  defaulting to "always check Go." Misclassification risk is partly, not fully, mitigated:
+  [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md) stays the
+  source of truth for which commands are still `wrapped`, and CI's `testParity` /
+  `*.e2e.test.ts` suites catch output/behavior drift on the already-ported commands and code paths
+  they cover — but that coverage is deliberately partial (e.g. `db pull --local` and `db lint
+  --local` skip `testParity` today, see `apps/cli-e2e/src/tests/database-core.e2e.test.ts`), so a
+  misclassified change on an uncovered path can still land without a human or agent ever consulting
+  Go.
 
 ## Alternatives Considered
 
