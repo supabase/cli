@@ -32,6 +32,7 @@ import {
   ManagedStackPublicationTimeoutError,
   UnsafeManagedStackPathError,
   UnsupportedManagedRegistryVersionError,
+  type ManagedStackConfiguration,
 } from "./managed/model.ts";
 import {
   createInMemoryManagedStackRepository,
@@ -137,6 +138,7 @@ const prepareAbandonedStack = async (
   service: ManagedStackService,
   workspace: string,
   ownerPid?: number,
+  configuration: ManagedStackConfiguration = {},
 ) => {
   const identity = (await ensureOrdinaryWorkspaceIdentity(workspace)).identity;
   const stackId = crypto.randomUUID();
@@ -150,7 +152,7 @@ const prepareAbandonedStack = async (
     operationToken: crypto.randomUUID(),
     ownerPid,
     now: "2026-08-11T00:00:00.000Z",
-    configuration: {},
+    configuration,
   });
   if (prepared.outcome !== "create") {
     throw new Error("Expected an abandoned pending stack");
@@ -679,12 +681,81 @@ describe("managed repository and lifecycle", () => {
     expect(retained.retained).toEqual([{ operation: pending.operation, reason: "owner-alive" }]);
 
     const forced = await service.reconcileAbandonedOperations({
-      force: true,
+      force: {
+        stackId: pending.stack.id,
+        operationToken: pending.operation.token,
+      },
       inspectRuntime: async () => "stopped",
     });
     expect(forced.abortedStackIds).toEqual([pending.stack.id]);
     expect(forced.retained).toEqual([]);
     expect(service.listStacks()).toEqual([]);
+  });
+
+  it("scopes forced recovery to one exact operation", async () => {
+    const root = makeRoot();
+    const service = makeInMemoryService(root, { isProcessAlive: () => true });
+    const pending = await Promise.all(
+      ["first", "target", "third"].map((name, index) =>
+        prepareAbandonedStack(service, makeWorkspace(root, name), 987_660 + index),
+      ),
+    );
+    const target = pending[1];
+    if (target === undefined) {
+      throw new Error("Expected a target operation");
+    }
+    const inspected: Array<string> = [];
+
+    const staleTarget = await service.reconcileAbandonedOperations({
+      force: {
+        stackId: target.stack.id,
+        operationToken: crypto.randomUUID(),
+      },
+      inspectRuntime: async (stack) => {
+        inspected.push(stack.id);
+        return "stopped";
+      },
+    });
+
+    expect(staleTarget.abortedStackIds).toEqual([]);
+    expect(inspected).toEqual([]);
+    expect(service.repository.listActiveOperations()).toHaveLength(3);
+
+    const forced = await service.reconcileAbandonedOperations({
+      force: {
+        stackId: target.stack.id,
+        operationToken: target.operation.token,
+      },
+      inspectRuntime: async (stack) => {
+        inspected.push(stack.id);
+        return "stopped";
+      },
+    });
+
+    expect(inspected).toEqual([target.stack.id]);
+    expect(forced.abortedStackIds).toEqual([target.stack.id]);
+    expect(
+      service.repository
+        .listActiveOperations()
+        .map(({ token }) => token)
+        .sort(),
+    ).toEqual(
+      pending
+        .filter(({ stack }) => stack.id !== target.stack.id)
+        .map(({ operation }) => operation.token)
+        .sort(),
+    );
+    expect(
+      service
+        .listStacks()
+        .map(({ id }) => id)
+        .sort(),
+    ).toEqual(
+      pending
+        .filter(({ stack }) => stack.id !== target.stack.id)
+        .map(({ stack }) => stack.id)
+        .sort(),
+    );
   });
 
   it("reconciles repository operations that have no owner PID", async () => {
@@ -728,6 +799,144 @@ describe("managed repository and lifecycle", () => {
     });
     expect(readFileSync(dataFile, "utf8")).toBe("live data");
     service.close();
+  });
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`keeps provisioned data when recovery adopts the stack first with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? makeInMemoryService(root, { isProcessAlive: () => false })
+          : makePersistentService(root, { isProcessAlive: () => false });
+      let stackRoot: string | undefined;
+      let dataFile: string | undefined;
+
+      await expect(
+        service.provisionOrdinaryStack({
+          workspacePath: makeWorkspace(root),
+          initialize: async (stack) => {
+            stackRoot = stack.paths.root;
+            dataFile = join(stack.paths.data, "database");
+            writeFileSync(dataFile, "live data");
+            const operation = service.repository
+              .listActiveOperations()
+              .find((candidate) => candidate.stackId === stack.id);
+            if (operation === undefined) {
+              throw new Error("Expected the provision operation to remain active");
+            }
+            service.repository.reconcileOperation(
+              stack.id,
+              operation.token,
+              "running",
+              "2026-08-11T00:00:01.000Z",
+            );
+          },
+        }),
+      ).rejects.toMatchObject({
+        cleanupErrors: [expect.any(ManagedOperationOwnershipError)],
+      });
+
+      expect(stackRoot).toBeDefined();
+      expect(dataFile).toBeDefined();
+      expect(existsSync(stackRoot ?? "")).toBe(true);
+      expect(readFileSync(dataFile ?? "", "utf8")).toBe("live data");
+      expect(service.listStacks()).toEqual([
+        expect.objectContaining({ status: "active", lifecycle: "running" }),
+      ]);
+      service.close();
+    });
+  }
+
+  it("retains an operation when owner liveness cannot be determined", async () => {
+    const root = makeRoot();
+    const livenessError = new Error("liveness unavailable");
+    const service = makeInMemoryService(root, {
+      isProcessAlive: () => {
+        throw livenessError;
+      },
+    });
+    const pending = await prepareAbandonedStack(service, makeWorkspace(root), 987_670);
+
+    const reconciled = await service.reconcileAbandonedOperations({
+      inspectRuntime: async () => "stopped",
+    });
+
+    expect(reconciled.retained).toEqual([
+      {
+        operation: pending.operation,
+        reason: "owner-liveness-unknown",
+        error: livenessError,
+      },
+    ]);
+  });
+
+  it("retains an operation when runtime inspection fails", async () => {
+    const root = makeRoot();
+    const inspectionError = new Error("runtime unavailable");
+    const service = makeInMemoryService(root, { isProcessAlive: () => false });
+    const pending = await prepareAbandonedStack(service, makeWorkspace(root), 987_671);
+
+    const reconciled = await service.reconcileAbandonedOperations({
+      inspectRuntime: async () => {
+        throw inspectionError;
+      },
+    });
+
+    expect(reconciled.retained).toEqual([
+      {
+        operation: pending.operation,
+        reason: "runtime-inspection-failed",
+        error: inspectionError,
+      },
+    ]);
+    expect(service.repository.listActiveOperations()).toEqual([pending.operation]);
+  });
+
+  it("reports a failed post-abort state reclamation", async () => {
+    const root = makeRoot();
+    const repository = createInMemoryManagedStackRepository();
+    let returnUnsafePath = false;
+    const unsafeRoot = join(root, "outside");
+    const guardedRepository: ManagedStackRepository = {
+      ...repository,
+      getStack(stackId) {
+        const stack = repository.getStack(stackId);
+        if (stack === undefined || !returnUnsafePath) {
+          return stack;
+        }
+        return {
+          ...stack,
+          paths: {
+            root: unsafeRoot,
+            data: join(unsafeRoot, "data"),
+            logs: join(unsafeRoot, "logs"),
+            runtime: join(unsafeRoot, "runtime"),
+          },
+        };
+      },
+    };
+    const service = makeManagedStackService({
+      repository: guardedRepository,
+      stateRoot: join(root, "managed"),
+      isProcessAlive: () => false,
+    });
+    const pending = await prepareAbandonedStack(service, makeWorkspace(root), 987_672);
+    returnUnsafePath = true;
+
+    const reconciled = await service.reconcileAbandonedOperations({
+      inspectRuntime: async () => "stopped",
+    });
+
+    expect(reconciled.abortedStackIds).toEqual([pending.stack.id]);
+    expect(reconciled.failures).toEqual([
+      {
+        operation: pending.operation,
+        phase: "state-reclamation",
+        operationReleased: true,
+        error: expect.any(UnsafeManagedStackPathError),
+      },
+    ]);
+    expect(service.listStacks()).toEqual([]);
   });
 
   it("continues recovery when an owner finishes one operation during inspection", async () => {
@@ -775,6 +984,64 @@ describe("managed repository and lifecycle", () => {
     expect(reconciled.recovered.map((stack) => stack.id)).toEqual([second.stack.id]);
     expect(reconciled.skippedOperationIds).toEqual([firstOperation.operation.token]);
   });
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`keeps a failed pending adoption retryable with ${adapter}`, async () => {
+      const root = makeRoot();
+      const overrides = { isProcessAlive: () => false };
+      const service =
+        adapter === "in-memory"
+          ? makeInMemoryService(root, overrides)
+          : makePersistentService(root, overrides);
+      const owner = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root, "owner"),
+        configuration: {
+          lifecycle: "running",
+          ports: [{ key: "api.port", port: 55_409, intent: "exact" }],
+        },
+      });
+      const pending = await prepareAbandonedStack(
+        service,
+        makeWorkspace(root, "pending"),
+        987_673,
+        { ports: [{ key: "api.port", port: 55_409, intent: "exact" }] },
+      );
+
+      const blocked = await service.reconcileAbandonedOperations({
+        inspectRuntime: async () => "running",
+      });
+
+      expect(blocked.failures).toEqual([
+        {
+          operation: pending.operation,
+          phase: "reconciliation",
+          operationReleased: false,
+          error: expect.any(ManagedPortReservationError),
+        },
+      ]);
+      expect(service.inspectStack(pending.stack.id)).toMatchObject({
+        status: "pending",
+        lifecycle: "stopped",
+      });
+      expect(service.repository.listActiveOperations()).toEqual([pending.operation]);
+
+      await service.updateStack(owner.stack.id, { lifecycle: "stopped" });
+      const retried = await service.reconcileAbandonedOperations({
+        inspectRuntime: async () => "running",
+      });
+
+      expect(retried.recovered).toEqual([
+        expect.objectContaining({
+          id: pending.stack.id,
+          status: "active",
+          lifecycle: "running",
+        }),
+      ]);
+      expect(retried.failures).toEqual([]);
+      expect(service.repository.listActiveOperations()).toEqual([]);
+      service.close();
+    });
+  }
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
     it(`releases a failed runtime adoption operation with ${adapter}`, async () => {
@@ -1250,6 +1517,25 @@ describe("managed repository and lifecycle", () => {
       assert.equal(first.outcome, "create");
       assert.equal(second.outcome, "reuse");
       assert.equal(second.stack.id, first.stack.id);
+      const conflicting = secondRepository.claimOperation({
+        token: randomUUID(),
+        stackId: second.stack.id,
+        kind: "update",
+        ownerPid: process.pid,
+        now: new Date().toISOString(),
+      });
+      assert.equal(conflicting.acquired, true);
+      await assert.rejects(
+        secondService.updateStack(second.stack.id, { lifecycle: "running" }),
+        { name: "ManagedOperationInProgressError" },
+      );
+      if (!conflicting.acquired) throw new Error("Expected operation ownership");
+      secondRepository.finishOperation(
+        second.stack.id,
+        conflicting.operation.token,
+        "completed",
+        new Date().toISOString(),
+      );
       const deleted = await secondService.deleteStack(second.stack.id);
       const repeated = await secondService.deleteStack(second.stack.id);
       assert.equal(deleted.outcome, "delete");

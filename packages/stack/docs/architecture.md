@@ -318,6 +318,10 @@ stack UUID:
     runtime/
 ```
 
+Schema v2 intentionally has no migration path for this unreleased POC. Before first use of v2,
+developers with `registry-v1.sqlite3` must remove the old managed state root, including its shared
+`stacks/` directory; v1 and v2 state must not be kept side by side.
+
 Stack publication and operation claims are transactional. A new stack remains `pending` while its
 directories and caller-supplied initialization are validated, then becomes `active` atomically.
 Concurrent callers resolve the published record rather than creating aliases. Recovery first
@@ -327,11 +331,13 @@ Ownership races are isolated per operation so one completed claim does not stop 
 PID liveness is deliberately conservative and assumes the managed root stays within one host PID
 namespace. Because a PID is not a permanent process identity, callers can request forced recovery
 after trustworthy runtime inspection; this is also the required integration path for a state root
-shared across PID namespaces. Forced recovery bypasses only the PID gate, never runtime inspection.
-Recovery results distinguish live/unknown owners, concurrent skips, reconciliation failures, and
-post-abort data-reclamation failures. A reconciliation failure marks the stack lifecycle `failed`
-before best-effort release of the abandoned claim, preserving the requirement for an explicit stop
-path before deletion.
+shared across PID namespaces. Forced recovery requires an exact stack ID and operation token,
+processes only that claim, and bypasses only its PID gate—never runtime inspection. Recovery results
+distinguish live owners, unknown or failed liveness/runtime inspection, concurrent skips,
+reconciliation failures, and post-abort data-reclamation failures. A failed reconciliation of an
+active stack marks its lifecycle `failed` before best-effort claim release, preserving the
+requirement for an explicit stop path before deletion. A failed pending-stack adoption retains its
+claim so a later pass can retry without losing potentially live unpublished data.
 
 Port assignments are sticky metadata, while port ownership is a lifecycle lease. Stopped stacks
 retain their assigned numbers without blocking other stopped stacks. Entering `starting`,
@@ -346,9 +352,12 @@ Explicit deletion re-reads lifecycle after claiming the operation, safely stops 
 tombstones, and removes only the UUID-derived selected stack root. Repeating deletion retries any
 leftover tombstoned data reclamation. Once tombstoned, unsafe or failed filesystem cleanup is
 reported as retained data rather than making future deletion non-idempotent. Prune removes checkout
-location metadata only. Runtime
-qualification, legacy bootstrap selection, and credential resolution remain callers of this
-persistence boundary and are composed by later CLI slices.
+location metadata only. The delete outcome describes the registry tombstone, not guaranteed disk
+reclamation: callers must inspect `dataReclamation`, surface retained errors, and arrange a later
+retry. Lifecycle transitions likewise trust the caller to stop the real runtime before declaring a
+port-occupying stack stopped and releasing its lease. Runtime qualification, legacy bootstrap
+selection, and credential resolution remain outside this persistence boundary and are composed by
+later CLI slices.
 
 ## Legacy daemon paths
 

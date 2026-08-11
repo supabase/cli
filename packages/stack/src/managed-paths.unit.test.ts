@@ -10,6 +10,7 @@ import {
 describe("managed paths", () => {
   it.each([
     ["empty", ""],
+    ["wrong-length", "018f8b4e-8e5c-7e32-a956-6f297fd05a2"],
     ["non-hex", "018f8b4g-8e5c-7e32-a956-6f297fd05a2d"],
     ["unsupported version", "018f8b4e-8e5c-0e32-a956-6f297fd05a2d"],
     ["invalid variant", "018f8b4e-8e5c-7e32-7956-6f297fd05a2d"],

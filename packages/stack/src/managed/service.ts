@@ -22,7 +22,7 @@ import {
   ensureOrdinaryWorkspaceIdentity,
   readOrdinaryWorkspaceIdentity,
 } from "./identity.ts";
-import { createManagedUuid } from "./ids.ts";
+import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { assertManagedStackRoot, managedStackPaths } from "./paths.ts";
 import type { ManagedStackRepository } from "./repository.ts";
 
@@ -68,7 +68,10 @@ export interface DeleteManagedStackResult {
 
 export interface ReconcileAbandonedOperationsOptions {
   readonly startedBefore?: string;
-  readonly force?: boolean;
+  readonly force?: {
+    readonly stackId: string;
+    readonly operationToken: string;
+  };
   readonly inspectRuntime: (
     stack: ManagedStackRecord,
     operation: ManagedOperationRecord,
@@ -197,7 +200,14 @@ export const makeManagedStackService = (
     }
   };
 
-  const failRecoveryBestEffort = (operation: ManagedOperationRecord, error: unknown): boolean => {
+  const failRecoveryBestEffort = (
+    stack: ManagedStackRecord | undefined,
+    operation: ManagedOperationRecord,
+    error: unknown,
+  ): boolean => {
+    if (stack === undefined || stack.status === "pending") {
+      return false;
+    }
     try {
       options.repository.updateStack({
         stackId: operation.stackId,
@@ -344,15 +354,19 @@ export const makeManagedStackService = (
         };
       } catch (cause: unknown) {
         const cleanupErrors: Array<unknown> = [];
+        let aborted = false;
         try {
-          await removeStackState(prepared.stack);
+          options.repository.abortPendingStack(prepared.stack.id, prepared.operation.token);
+          aborted = true;
         } catch (error: unknown) {
           cleanupErrors.push(error);
         }
-        try {
-          options.repository.abortPendingStack(prepared.stack.id, prepared.operation.token);
-        } catch (error: unknown) {
-          cleanupErrors.push(error);
+        if (aborted) {
+          try {
+            await removeStackState(prepared.stack);
+          } catch (error: unknown) {
+            cleanupErrors.push(error);
+          }
         }
         throw new ManagedStackInitializationError(prepared.stack.id, cause, cleanupErrors);
       }
@@ -433,10 +447,23 @@ export const makeManagedStackService = (
       const retained: Array<RetainedManagedOperation> = [];
       const skippedOperationIds: Array<string> = [];
       const failures: Array<ManagedOperationRecoveryFailure> = [];
-      for (const operation of options.repository.listActiveOperations(
-        reconcileOptions.startedBefore,
-      )) {
-        if (reconcileOptions.force !== true && operation.ownerPid !== undefined) {
+      const forcedOperation = reconcileOptions.force;
+      if (forcedOperation !== undefined) {
+        assertManagedUuid(forcedOperation.stackId, "forced recovery stackId");
+        assertManagedUuid(forcedOperation.operationToken, "forced recovery operation token");
+      }
+      const operations = options.repository
+        .listActiveOperations(
+          forcedOperation === undefined ? reconcileOptions.startedBefore : undefined,
+        )
+        .filter(
+          (operation) =>
+            forcedOperation === undefined ||
+            (operation.stackId === forcedOperation.stackId &&
+              operation.token === forcedOperation.operationToken),
+        );
+      for (const operation of operations) {
+        if (forcedOperation === undefined && operation.ownerPid !== undefined) {
           try {
             if (await isProcessAlive(operation.ownerPid)) {
               retained.push({ operation, reason: "owner-alive" });
@@ -447,8 +474,9 @@ export const makeManagedStackService = (
             continue;
           }
         }
+        let stack: ManagedStackRecord | undefined;
         try {
-          const stack = options.repository.getStack(operation.stackId);
+          stack = options.repository.getStack(operation.stackId);
           if (stack === undefined) {
             skippedOperationIds.push(operation.token);
             continue;
@@ -497,7 +525,7 @@ export const makeManagedStackService = (
           failures.push({
             operation,
             phase: "reconciliation",
-            operationReleased: failRecoveryBestEffort(operation, error),
+            operationReleased: failRecoveryBestEffort(stack, operation, error),
             error,
           });
         }
