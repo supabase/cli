@@ -2,6 +2,7 @@ import {
   DuplicateManagedIdentityError,
   ManagedOperationOwnershipError,
   ManagedPortReservationError,
+  ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
   type ManagedCheckoutLocation,
   type ManagedOperationKind,
@@ -85,7 +86,7 @@ export interface ManagedStackRepository {
     operationToken: string,
     lifecycle: ManagedStackLifecycle,
     now: string,
-  ): ManagedStackRecord;
+  ): ManagedStackRecord | undefined;
   tombstoneStack(stackId: string, operationToken: string, now: string): ManagedStackRecord;
   listCheckoutLocations(): ReadonlyArray<ManagedCheckoutLocation>;
   pruneCheckoutLocations(locationIds: ReadonlyArray<string>): number;
@@ -107,6 +108,68 @@ const stackIdentityKey = (checkoutId: string, contextId: string, stackName: stri
 
 const copy = <A>(value: A): A => structuredClone(value);
 
+const portsEqual = (
+  left: ReadonlyArray<ManagedPortAssignment>,
+  right: ReadonlyArray<ManagedPortAssignment>,
+): boolean => {
+  if (left.length !== right.length) {
+    return false;
+  }
+  const byKey = new Map(right.map((assignment) => [assignment.key, assignment]));
+  return left.every((assignment) => {
+    const candidate = byKey.get(assignment.key);
+    return (
+      candidate !== undefined &&
+      assignment.port === candidate.port &&
+      assignment.intent === candidate.intent
+    );
+  });
+};
+
+export const validateManagedPortAssignments = (
+  stackId: string,
+  ports: ReadonlyArray<ManagedPortAssignment>,
+): void => {
+  const keys = new Set<string>();
+  const numbers = new Set<number>();
+  for (const assignment of ports) {
+    if (!Number.isInteger(assignment.port) || assignment.port < 1 || assignment.port > 65_535) {
+      throw new Error(`Invalid managed port ${assignment.port} for ${assignment.key}`);
+    }
+    if (keys.has(assignment.key)) {
+      throw new Error(`Duplicate managed port key ${assignment.key}`);
+    }
+    if (numbers.has(assignment.port)) {
+      throw new ManagedPortReservationError(assignment.port, stackId);
+    }
+    keys.add(assignment.key);
+    numbers.add(assignment.port);
+  }
+};
+
+export const reconcileManagedPortAssignments = (
+  stack: ManagedStackRecord,
+  requested: ReadonlyArray<ManagedPortAssignment> | undefined,
+): ReadonlyArray<ManagedPortAssignment> => {
+  if (requested === undefined) {
+    return stack.ports;
+  }
+  validateManagedPortAssignments(stack.id, requested);
+  if (stack.lifecycle !== "stopped") {
+    if (!portsEqual(stack.ports, requested)) {
+      throw new ManagedRunningStackPortChangeError(stack.id);
+    }
+    return stack.ports;
+  }
+  const persisted = new Map(stack.ports.map((assignment) => [assignment.key, assignment]));
+  return requested.map((assignment) => {
+    const current = persisted.get(assignment.key);
+    return assignment.intent === "automatic" && current !== undefined
+      ? { ...assignment, port: current.port }
+      : assignment;
+  });
+};
+
 const applyConfiguration = (
   stack: ManagedStackRecord,
   configuration: ManagedStackConfiguration,
@@ -116,7 +179,7 @@ const applyConfiguration = (
   lifecycle: configuration.lifecycle ?? stack.lifecycle,
   runtimeRequest: configuration.runtimeRequest ?? stack.runtimeRequest,
   runtime: configuration.runtime ?? stack.runtime,
-  ports: configuration.ports ?? stack.ports,
+  ports: reconcileManagedPortAssignments(stack, configuration.ports),
   serviceVersions: configuration.serviceVersions ?? stack.serviceVersions,
   runtimeMetadata: configuration.runtimeMetadata ?? stack.runtimeMetadata,
   configFingerprint: configuration.configFingerprint ?? stack.configFingerprint,
@@ -204,24 +267,37 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
     return operation;
   };
 
-  const reservePorts = (
-    stackId: string,
-    current: ReadonlyArray<ManagedPortAssignment>,
-    next: ReadonlyArray<ManagedPortAssignment>,
+  const occupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
+    lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping";
+
+  const transitionPortOwnership = (
+    current: ManagedStackRecord | undefined,
+    next: ManagedStackRecord,
   ): void => {
-    for (const assignment of next) {
-      const owner = portOwners.get(assignment.port);
-      if (owner !== undefined && owner !== stackId) {
-        throw new ManagedPortReservationError(assignment.port, owner);
+    validateManagedPortAssignments(next.id, next.ports);
+    if (occupiesPorts(next.lifecycle)) {
+      for (const assignment of next.ports) {
+        const owner = portOwners.get(assignment.port);
+        if (owner !== undefined && owner !== next.id) {
+          throw new ManagedPortReservationError(assignment.port, owner);
+        }
       }
     }
-    for (const assignment of current) {
-      if (portOwners.get(assignment.port) === stackId) {
-        portOwners.delete(assignment.port);
+    if (current !== undefined && occupiesPorts(current.lifecycle)) {
+      for (const assignment of current.ports) {
+        if (portOwners.get(assignment.port) === current.id) {
+          portOwners.delete(assignment.port);
+        }
       }
     }
-    for (const assignment of next) {
-      portOwners.set(assignment.port, stackId);
+    if (occupiesPorts(next.lifecycle)) {
+      for (const assignment of next.ports) {
+        const owner = portOwners.get(assignment.port);
+        if (owner !== undefined && owner !== next.id) {
+          throw new ManagedPortReservationError(assignment.port, owner);
+        }
+        portOwners.set(assignment.port, next.id);
+      }
     }
   };
 
@@ -269,9 +345,9 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
         const context = contexts.get(input.identity.contextId);
         if (context !== undefined && context.checkoutId !== input.identity.checkoutId) {
           throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            context.checkoutId,
             input.identity.contextId,
+            context.checkoutId,
+            input.identity.checkoutId,
           );
         }
         contexts.set(input.identity.contextId, {
@@ -297,9 +373,9 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
         );
         if (pathOwner !== undefined && pathOwner.checkoutId !== input.identity.checkoutId) {
           throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            pathOwner.canonicalPath,
             input.canonicalPath,
+            pathOwner.checkoutId,
+            input.identity.checkoutId,
           );
         }
         locations.set(existingLocation?.id ?? input.locationId, {
@@ -344,7 +420,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
           updatedAt: input.now,
         };
         const stack = applyConfiguration(baseStack, input.configuration, input.now);
-        reservePorts(stack.id, [], stack.ports);
+        transitionPortOwnership(undefined, stack);
         stacks.set(stack.id, stack);
         stackIdentities.set(identityKey, stack.id);
         const claimed = claimOperation({
@@ -386,7 +462,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
       if (stack.status !== "pending") {
         throw new ManagedOperationOwnershipError(stackId);
       }
-      reservePorts(stack.id, stack.ports, []);
+      transitionPortOwnership(stack, { ...stack, lifecycle: "stopped", ports: [] });
       stacks.delete(stackId);
       stackIdentities.delete(stackIdentityKey(stack.checkoutId, stack.contextId, stack.name));
       operations.delete(operationToken);
@@ -425,7 +501,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
       requireOwnedOperation(input.stackId, input.operationToken);
       const current = requireStack(input.stackId);
       const next = applyConfiguration(current, input, input.now);
-      reservePorts(current.id, current.ports, next.ports);
+      transitionPortOwnership(current, next);
       stacks.set(current.id, next);
       return copy(next);
     },
@@ -442,7 +518,23 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
     reconcileOperation(stackId, operationToken, lifecycle, now) {
       const operation = requireOwnedOperation(stackId, operationToken);
       const current = requireStack(stackId);
-      const next: ManagedStackRecord = { ...current, lifecycle, updatedAt: now };
+      if (current.status === "pending" && lifecycle === "stopped") {
+        transitionPortOwnership(current, { ...current, lifecycle: "stopped", ports: [] });
+        stacks.delete(stackId);
+        stackIdentities.delete(
+          stackIdentityKey(current.checkoutId, current.contextId, current.name),
+        );
+        operations.delete(operationToken);
+        activeOperationByStack.delete(stackId);
+        return undefined;
+      }
+      const next: ManagedStackRecord = {
+        ...current,
+        status: current.status === "pending" ? "active" : current.status,
+        lifecycle,
+        updatedAt: now,
+      };
+      transitionPortOwnership(current, next);
       stacks.set(stackId, next);
       operations.set(operationToken, {
         ...operation,
@@ -456,7 +548,6 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
     tombstoneStack(stackId, operationToken, now) {
       requireOwnedOperation(stackId, operationToken);
       const current = requireStack(stackId);
-      reservePorts(current.id, current.ports, []);
       const next: ManagedStackRecord = {
         ...current,
         status: "tombstoned",
@@ -466,6 +557,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
         updatedAt: now,
         tombstonedAt: now,
       };
+      transitionPortOwnership(current, next);
       stacks.set(stackId, next);
       stackIdentities.delete(stackIdentityKey(current.checkoutId, current.contextId, current.name));
       return copy(next);

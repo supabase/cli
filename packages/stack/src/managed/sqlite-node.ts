@@ -19,7 +19,7 @@ export const openNodeSqliteManagedStackRepository = (path: string) => {
           statement.run(...parameters);
         },
         get(parameters = []) {
-          return statement.get(...parameters);
+          return statement.get(...parameters) ?? undefined;
         },
         all(parameters = []) {
           return statement.all(...parameters);

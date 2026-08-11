@@ -6,9 +6,8 @@ import {
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
+import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
-
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 const errorCode = (error: unknown): string | undefined => {
   if (typeof error !== "object" || error === null) {
@@ -23,10 +22,10 @@ const identityField = (value: unknown, field: string): string => {
     throw new InvalidManagedIdentityError("The ordinary workspace identity must be an object");
   }
   const fieldValue = Reflect.get(value, field);
-  if (typeof fieldValue !== "string" || !UUID_PATTERN.test(fieldValue)) {
+  if (typeof fieldValue !== "string") {
     throw new InvalidManagedIdentityError(`${field} must be an opaque UUID`);
   }
-  return fieldValue;
+  return assertManagedUuid(fieldValue, field);
 };
 
 const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
@@ -93,18 +92,13 @@ export const ensureOrdinaryWorkspaceIdentity = async (
 
   const identity: OrdinaryWorkspaceIdentity = {
     version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
-    projectId: idFactory(),
-    checkoutId: idFactory(),
-    contextId: idFactory(),
+    projectId: createManagedUuid(idFactory, "projectId"),
+    checkoutId: createManagedUuid(idFactory, "checkoutId"),
+    contextId: createManagedUuid(idFactory, "contextId"),
   };
-  for (const id of [identity.projectId, identity.checkoutId, identity.contextId]) {
-    if (!UUID_PATTERN.test(id)) {
-      throw new InvalidManagedIdentityError(`Identity factory returned a non-UUID value: ${id}`);
-    }
-  }
 
   await mkdir(dirname(markerPath), { recursive: true });
-  const temporaryPath = `${markerPath}.tmp.${idFactory()}`;
+  const temporaryPath = `${markerPath}.tmp.${createManagedUuid(idFactory, "identity temporary id")}`;
   await writeFile(temporaryPath, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o600 });
   try {
     await link(temporaryPath, markerPath);

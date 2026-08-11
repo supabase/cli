@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
-import type { ManagedStackPaths } from "./model.ts";
+import { join, resolve } from "node:path";
+import { assertManagedUuid } from "./ids.ts";
+import { UnsafeManagedStackPathError, type ManagedStackPaths } from "./model.ts";
 
 export interface ManagedStateRootOptions {
   readonly stateRoot?: string;
@@ -9,14 +10,17 @@ export interface ManagedStateRootOptions {
   readonly platform?: NodeJS.Platform;
 }
 
+const nonEmpty = (value: string | undefined): string | undefined =>
+  value === undefined || value.length === 0 ? undefined : value;
+
 export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): string => {
   if (options.stateRoot !== undefined) {
     return options.stateRoot;
   }
 
   const env = options.env ?? process.env;
-  const configuredHome = env["SUPABASE_HOME"];
-  if (configuredHome !== undefined && configuredHome.length > 0) {
+  const configuredHome = nonEmpty(env["SUPABASE_HOME"]);
+  if (configuredHome !== undefined) {
     return join(configuredHome, "managed");
   }
 
@@ -26,11 +30,11 @@ export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): 
     return join(userHome, "Library", "Application Support", "supabase", "managed");
   }
   if (platform === "win32") {
-    const localAppData = env["LOCALAPPDATA"];
+    const localAppData = nonEmpty(env["LOCALAPPDATA"]);
     return join(localAppData ?? join(userHome, "AppData", "Local"), "Supabase", "managed");
   }
 
-  const stateHome = env["XDG_STATE_HOME"];
+  const stateHome = nonEmpty(env["XDG_STATE_HOME"]);
   return join(stateHome ?? join(userHome, ".local", "state"), "supabase", "managed");
 };
 
@@ -38,6 +42,7 @@ export const managedRegistryPath = (stateRoot: string): string =>
   join(stateRoot, "registry-v1.sqlite3");
 
 export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
+  assertManagedUuid(stackId, "stackId");
   const root = join(stateRoot, "stacks", stackId);
   return {
     root,
@@ -45,6 +50,19 @@ export const managedStackPaths = (stateRoot: string, stackId: string): ManagedSt
     logs: join(root, "logs"),
     runtime: join(root, "runtime"),
   };
+};
+
+export const assertManagedStackRoot = (
+  stateRoot: string,
+  stackId: string,
+  stackRoot: string,
+): string => {
+  const expected = resolve(managedStackPaths(stateRoot, stackId).root);
+  const actual = resolve(stackRoot);
+  if (actual !== expected) {
+    throw new UnsafeManagedStackPathError(stackRoot);
+  }
+  return actual;
 };
 
 export const ordinaryWorkspaceIdentityPath = (workspacePath: string): string =>

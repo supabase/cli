@@ -4,6 +4,7 @@ import {
   DEFAULT_MANAGED_STACK_NAME,
   ManagedAbandonedOperationError,
   ManagedOperationInProgressError,
+  ManagedOperationOwnershipError,
   ManagedStackInitializationError,
   ManagedStackNotFoundError,
   ManagedStackPublicationTimeoutError,
@@ -21,7 +22,8 @@ import {
   ensureOrdinaryWorkspaceIdentity,
   readOrdinaryWorkspaceIdentity,
 } from "./identity.ts";
-import { managedStackPaths } from "./paths.ts";
+import { createManagedUuid } from "./ids.ts";
+import { assertManagedStackRoot, managedStackPaths } from "./paths.ts";
 import type { ManagedStackRepository } from "./repository.ts";
 
 export interface ManagedStackServiceOptions {
@@ -32,6 +34,7 @@ export interface ManagedStackServiceOptions {
   readonly ownerPid?: number;
   readonly publicationTimeoutMs?: number;
   readonly publicationPollMs?: number;
+  readonly isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
 }
 
 export interface ProvisionOrdinaryStackOptions {
@@ -70,6 +73,7 @@ export interface ReconcileAbandonedOperationsOptions {
 
 export interface ReconcileAbandonedOperationsResult {
   readonly recovered: ReadonlyArray<ManagedStackRecord>;
+  readonly abortedStackIds: ReadonlyArray<string>;
   readonly retained: ReadonlyArray<ManagedOperationRecord>;
 }
 
@@ -112,6 +116,23 @@ const wait = (milliseconds: number): Promise<void> =>
 
 const stackNamePattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
+const errorCode = (error: unknown): string | undefined => {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
+  }
+  const code = Reflect.get(error, "code");
+  return typeof code === "string" ? code : undefined;
+};
+
+const processIsAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error: unknown) {
+    return errorCode(error) !== "ESRCH";
+  }
+};
+
 export const makeManagedStackService = (
   options: ManagedStackServiceOptions,
 ): ManagedStackService => {
@@ -120,14 +141,32 @@ export const makeManagedStackService = (
   const ownerPid = options.ownerPid ?? process.pid;
   const publicationTimeoutMs = options.publicationTimeoutMs ?? 10_000;
   const publicationPollMs = options.publicationPollMs ?? 10;
+  const isProcessAlive = options.isProcessAlive ?? processIsAlive;
   const now = (): string => clock().toISOString();
+
+  const removeStackState = async (stack: ManagedStackRecord): Promise<void> => {
+    const root = assertManagedStackRoot(options.stateRoot, stack.id, stack.paths.root);
+    await rm(root, { force: true, recursive: true });
+  };
+
+  const finishOperationBestEffort = (
+    stackId: string,
+    operationToken: string,
+    error: unknown,
+  ): void => {
+    try {
+      options.repository.finishOperation(stackId, operationToken, "failed", now(), String(error));
+    } catch {
+      // Preserve the operation's original failure when ownership changed concurrently.
+    }
+  };
 
   const requireOperation = (
     stackId: string,
     kind: ManagedOperationKind,
   ): ManagedOperationRecord => {
     const claimed = options.repository.claimOperation({
-      token: idFactory(),
+      token: createManagedUuid(idFactory, "operation token"),
       stackId,
       kind,
       ownerPid,
@@ -140,8 +179,8 @@ export const makeManagedStackService = (
   };
 
   const awaitPublication = async (pending: ManagedStackRecord): Promise<ManagedStackRecord> => {
-    const deadline = Date.now() + publicationTimeoutMs;
-    while (Date.now() <= deadline) {
+    const deadline = performance.now() + publicationTimeoutMs;
+    while (performance.now() <= deadline) {
       const current = options.repository.getStack(pending.id);
       if (current === undefined) {
         throw new ManagedAbandonedOperationError(pending.id);
@@ -157,6 +196,26 @@ export const makeManagedStackService = (
     throw new ManagedStackPublicationTimeoutError(pending.id);
   };
 
+  const updateStackRecord = async (
+    stackId: string,
+    configuration: ManagedStackConfiguration,
+  ): Promise<ManagedStackRecord> => {
+    const operation = requireOperation(stackId, "update");
+    try {
+      const stack = options.repository.updateStack({
+        stackId,
+        operationToken: operation.token,
+        now: now(),
+        ...configuration,
+      });
+      options.repository.finishOperation(stackId, operation.token, "completed", now());
+      return stack;
+    } catch (error: unknown) {
+      finishOperationBestEffort(stackId, operation.token, error);
+      throw error;
+    }
+  };
+
   return {
     stateRoot: options.stateRoot,
     repository: options.repository,
@@ -167,15 +226,15 @@ export const makeManagedStackService = (
       }
       const canonicalPath = await canonicalizeOrdinaryWorkspacePath(provisionOptions.workspacePath);
       const marker = await ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
-      const stackId = idFactory();
+      const stackId = createManagedUuid(idFactory, "stackId");
       const prepared = options.repository.prepareOrdinaryStack({
         identity: marker.identity,
         canonicalPath,
-        locationId: idFactory(),
+        locationId: createManagedUuid(idFactory, "checkout location id"),
         stackId,
         stackName,
         paths: managedStackPaths(options.stateRoot, stackId),
-        operationToken: idFactory(),
+        operationToken: createManagedUuid(idFactory, "operation token"),
         ownerPid,
         now: now(),
         configuration: provisionOptions.configuration ?? {},
@@ -183,10 +242,18 @@ export const makeManagedStackService = (
 
       if (prepared.outcome === "existing") {
         if (prepared.stack.status === "active") {
+          if (prepared.operation !== undefined) {
+            throw new ManagedOperationInProgressError(prepared.stack.id, prepared.operation);
+          }
+          const stack =
+            provisionOptions.configuration === undefined ||
+            Object.keys(provisionOptions.configuration).length === 0
+              ? prepared.stack
+              : await updateStackRecord(prepared.stack.id, provisionOptions.configuration);
           return {
             outcome: "reuse",
-            selection: selectionForStack(prepared.stack),
-            stack: prepared.stack,
+            selection: selectionForStack(stack),
+            stack,
             identityMarkerCreated: marker.created,
           };
         }
@@ -220,11 +287,18 @@ export const makeManagedStackService = (
           identityMarkerCreated: marker.created,
         };
       } catch (cause: unknown) {
-        await rm(prepared.stack.paths.root, { force: true, recursive: true }).catch(
-          () => undefined,
-        );
-        options.repository.abortPendingStack(prepared.stack.id, prepared.operation.token);
-        throw new ManagedStackInitializationError(prepared.stack.id, cause);
+        const cleanupErrors: Array<unknown> = [];
+        try {
+          await removeStackState(prepared.stack);
+        } catch (error: unknown) {
+          cleanupErrors.push(error);
+        }
+        try {
+          options.repository.abortPendingStack(prepared.stack.id, prepared.operation.token);
+        } catch (error: unknown) {
+          cleanupErrors.push(error);
+        }
+        throw new ManagedStackInitializationError(prepared.stack.id, cause, cleanupErrors);
       }
     },
     async inspectOrdinaryWorkspace(workspacePath) {
@@ -237,7 +311,9 @@ export const makeManagedStackService = (
         .listStacks()
         .filter(
           (stack) =>
-            stack.projectId === identity.projectId && stack.checkoutId === identity.checkoutId,
+            stack.projectId === identity.projectId &&
+            stack.checkoutId === identity.checkoutId &&
+            stack.contextId === identity.contextId,
         );
       return { registered: stacks.length > 0, identity, stacks };
     },
@@ -248,26 +324,7 @@ export const makeManagedStackService = (
       return options.repository.listStacks(listOptions);
     },
     async updateStack(stackId, configuration) {
-      const operation = requireOperation(stackId, "update");
-      try {
-        const stack = options.repository.updateStack({
-          stackId,
-          operationToken: operation.token,
-          now: now(),
-          ...configuration,
-        });
-        options.repository.finishOperation(stackId, operation.token, "completed", now());
-        return stack;
-      } catch (error: unknown) {
-        options.repository.finishOperation(
-          stackId,
-          operation.token,
-          "failed",
-          now(),
-          String(error),
-        );
-        throw error;
-      }
+      return updateStackRecord(stackId, configuration);
     },
     async deleteStack(stackId, deleteOptions) {
       const existing = options.repository.getStack(stackId);
@@ -275,15 +332,25 @@ export const makeManagedStackService = (
         throw new ManagedStackNotFoundError(stackId);
       }
       if (existing.status === "tombstoned") {
+        await removeStackState(existing);
         return { outcome: "no-op", stack: existing };
       }
       const operation = requireOperation(stackId, "delete");
       try {
-        if (existing.lifecycle !== "stopped") {
+        const current = options.repository.getStack(stackId);
+        if (current === undefined) {
+          throw new ManagedStackNotFoundError(stackId);
+        }
+        if (current.status === "tombstoned") {
+          await removeStackState(current);
+          options.repository.finishOperation(stackId, operation.token, "completed", now());
+          return { outcome: "no-op", stack: current };
+        }
+        if (current.lifecycle !== "stopped") {
           if (deleteOptions?.stop === undefined) {
             throw new Error(`Managed stack ${stackId} must be safely stopped before deletion`);
           }
-          await deleteOptions.stop(existing);
+          await deleteOptions.stop(current);
           options.repository.updateStack({
             stackId,
             operationToken: operation.token,
@@ -293,42 +360,61 @@ export const makeManagedStackService = (
           });
         }
         const tombstoned = options.repository.tombstoneStack(stackId, operation.token, now());
-        await rm(tombstoned.paths.root, { force: true, recursive: true });
+        await removeStackState(tombstoned);
         options.repository.finishOperation(stackId, operation.token, "completed", now());
         return { outcome: "delete", stack: tombstoned };
       } catch (error: unknown) {
-        options.repository.finishOperation(
-          stackId,
-          operation.token,
-          "failed",
-          now(),
-          String(error),
-        );
+        finishOperationBestEffort(stackId, operation.token, error);
         throw error;
       }
     },
     async reconcileAbandonedOperations(reconcileOptions) {
       const recovered: Array<ManagedStackRecord> = [];
+      const abortedStackIds: Array<string> = [];
       const retained: Array<ManagedOperationRecord> = [];
       for (const operation of options.repository.listActiveOperations(
         reconcileOptions.startedBefore,
       )) {
-        const stack = options.repository.getStack(operation.stackId);
-        if (stack === undefined) {
+        if (operation.ownerPid === undefined || (await isProcessAlive(operation.ownerPid))) {
           retained.push(operation);
           continue;
         }
-        const actual = await reconcileOptions.inspectRuntime(stack, operation);
-        if (actual === "unknown") {
+        try {
+          const stack = options.repository.getStack(operation.stackId);
+          if (stack === undefined) {
+            continue;
+          }
+          const actual = await reconcileOptions.inspectRuntime(stack, operation);
+          if (actual === "unknown") {
+            retained.push(operation);
+            continue;
+          }
+          const lifecycle: ManagedStackLifecycle = actual === "running" ? "running" : "stopped";
+          if (stack.status === "pending" && lifecycle === "stopped") {
+            await removeStackState(stack);
+          }
+          const reconciled = options.repository.reconcileOperation(
+            stack.id,
+            operation.token,
+            lifecycle,
+            now(),
+          );
+          if (reconciled === undefined) {
+            abortedStackIds.push(stack.id);
+          } else {
+            recovered.push(reconciled);
+          }
+        } catch (error: unknown) {
+          if (
+            error instanceof ManagedOperationOwnershipError ||
+            error instanceof ManagedStackNotFoundError
+          ) {
+            continue;
+          }
           retained.push(operation);
-          continue;
         }
-        const lifecycle: ManagedStackLifecycle = actual === "running" ? "running" : "stopped";
-        recovered.push(
-          options.repository.reconcileOperation(stack.id, operation.token, lifecycle, now()),
-        );
       }
-      return { recovered, retained };
+      return { recovered, abortedStackIds, retained };
     },
     async pruneCheckoutLocations(shouldPrune) {
       const stale: Array<string> = [];

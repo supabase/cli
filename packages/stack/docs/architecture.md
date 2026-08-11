@@ -276,6 +276,12 @@ See [detach mode](./detach-mode.md) for paths, process startup, and compiled exe
 
 ## Managed identity and state
 
+Here, **managed state** means the centralized registry API exposed from
+`@supabase/stack/managed`. It is distinct from the older `ManagedStack` daemon-discovery record in
+`managed-stack.ts`, which remains part of the legacy Effect daemon surface. The registry API uses
+Promises because its consumers perform short filesystem and SQLite coordination around the
+Promise-oriented `createStack()` boundary; the runtime lifecycle beneath it remains Effect-based.
+
 The managed surface owns a versioned SQLite registry with separate records for projects,
 checkouts, checkout locations, development contexts, stacks, port reservations, and operations.
 The public repository contract contains no SQLite types, so the same service runs with the
@@ -310,10 +316,23 @@ stack UUID:
 
 Stack publication and operation claims are transactional. A new stack remains `pending` while its
 directories and caller-supplied initialization are validated, then becomes `active` atomically.
-Concurrent callers resolve the published record rather than creating aliases. Recovery retains an
-abandoned claim until a runtime inspector reports the actual running or stopped state. Explicit
-deletion safely stops, tombstones, and removes only the selected stack root; prune removes checkout
-location metadata only.
+Concurrent callers resolve the published record rather than creating aliases. Recovery first
+retains claims whose owner process is still alive. Once an owner is gone, runtime inspection either
+publishes a running pending stack or aborts a stopped pending stack so the same identity can retry.
+Ownership races are isolated per operation so one completed claim does not stop the recovery pass.
+
+Port assignments are sticky metadata, while port ownership is a lifecycle lease. Stopped stacks
+retain their assigned numbers without blocking other stopped stacks. Entering `starting`,
+`running`, or `stopping` claims those ports host-wide; a collision fails without relocating a
+sticky automatic assignment. On a stopped stack, exact configuration replaces persisted automatic
+state, while an automatic request reuses the current number and changes only its intent. Running
+port changes are reported as drift instead of overwriting the active assignment.
+
+Explicit deletion re-reads lifecycle after claiming the operation, safely stops when needed,
+tombstones, and removes only the UUID-derived selected stack root. Repeating deletion retries any
+leftover tombstoned data reclamation. Prune removes checkout location metadata only. Runtime
+qualification, legacy bootstrap selection, and credential resolution remain callers of this
+persistence boundary and are composed by later CLI slices.
 
 ## Legacy daemon paths
 

@@ -28,6 +28,7 @@ import type {
   PrepareOrdinaryStackResult,
   UpdateManagedStackInput,
 } from "./repository.ts";
+import { reconcileManagedPortAssignments, validateManagedPortAssignments } from "./repository.ts";
 
 type SqliteValue = null | number | string;
 
@@ -156,21 +157,63 @@ const managedPortIntent = (value: string): ManagedPortIntent => {
   throw new Error(`Unknown managed port intent ${value}`);
 };
 
-const initializeSchema = (database: ManagedSqliteDatabase): void => {
-  database.exec("PRAGMA foreign_keys = ON");
-  database.exec("PRAGMA journal_mode = WAL");
-  database.exec("PRAGMA busy_timeout = 5000");
-  const versionRow = database.prepare("PRAGMA user_version").get();
-  const version = getNumber(versionRow, "user_version");
-  if (version > MANAGED_REGISTRY_SCHEMA_VERSION) {
-    throw new UnsupportedManagedRegistryVersionError(version, MANAGED_REGISTRY_SCHEMA_VERSION);
+const sqliteErrorCode = (error: unknown): string | undefined => {
+  if (typeof error !== "object" || error === null) {
+    return undefined;
   }
-  if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
-    return;
-  }
+  const code = Reflect.get(error, "code");
+  return typeof code === "string" ? code : undefined;
+};
 
+const isSqliteBusy = (error: unknown): boolean => {
+  const code = sqliteErrorCode(error);
+  if (code === "SQLITE_BUSY" || code === "SQLITE_LOCKED") {
+    return true;
+  }
+  return error instanceof Error && /database is (?:busy|locked)/i.test(error.message);
+};
+
+const synchronousWait = (milliseconds: number): void => {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
+};
+
+const enableWriteAheadLogging = (database: ManagedSqliteDatabase): void => {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      database.exec("PRAGMA journal_mode = WAL");
+      return;
+    } catch (error: unknown) {
+      if (!isSqliteBusy(error) || attempt >= 49) {
+        throw error;
+      }
+      synchronousWait(Math.min(10 + attempt * 5, 100));
+    }
+  }
+};
+
+const rollbackPreservingCause = (database: ManagedSqliteDatabase): void => {
+  try {
+    database.exec("ROLLBACK");
+  } catch {
+    // The original transaction error is more useful than a secondary rollback failure.
+  }
+};
+
+const initializeSchema = (database: ManagedSqliteDatabase): void => {
+  database.exec("PRAGMA busy_timeout = 5000");
+  database.exec("PRAGMA foreign_keys = ON");
+  enableWriteAheadLogging(database);
   database.exec("BEGIN IMMEDIATE");
   try {
+    const versionRow = database.prepare("PRAGMA user_version").get();
+    const version = getNumber(versionRow, "user_version");
+    if (version > MANAGED_REGISTRY_SCHEMA_VERSION) {
+      throw new UnsupportedManagedRegistryVersionError(version, MANAGED_REGISTRY_SCHEMA_VERSION);
+    }
+    if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
+      database.exec("COMMIT");
+      return;
+    }
     database.exec(`
       CREATE TABLE projects (
         id TEXT PRIMARY KEY,
@@ -230,10 +273,11 @@ const initializeSchema = (database: ManagedSqliteDatabase): void => {
       CREATE TABLE ports (
         stack_id TEXT NOT NULL REFERENCES stacks(id) ON DELETE CASCADE,
         key TEXT NOT NULL,
-        port INTEGER NOT NULL UNIQUE,
+        port INTEGER NOT NULL,
         intent TEXT NOT NULL CHECK (intent IN ('automatic', 'exact')),
         PRIMARY KEY (stack_id, key)
       );
+      CREATE INDEX port_assignments_by_port ON ports(port);
 
       CREATE TABLE operations (
         token TEXT PRIMARY KEY,
@@ -253,7 +297,7 @@ const initializeSchema = (database: ManagedSqliteDatabase): void => {
     `);
     database.exec("COMMIT");
   } catch (error: unknown) {
-    database.exec("ROLLBACK");
+    rollbackPreservingCause(database);
     throw error;
   }
 };
@@ -265,7 +309,19 @@ const transaction = <A>(database: ManagedSqliteDatabase, run: () => A): A => {
     database.exec("COMMIT");
     return result;
   } catch (error: unknown) {
-    database.exec("ROLLBACK");
+    rollbackPreservingCause(database);
+    throw error;
+  }
+};
+
+const readTransaction = <A>(database: ManagedSqliteDatabase, run: () => A): A => {
+  database.exec("BEGIN");
+  try {
+    const result = run();
+    database.exec("COMMIT");
+    return result;
+  } catch (error: unknown) {
+    rollbackPreservingCause(database);
     throw error;
   }
 };
@@ -366,13 +422,24 @@ const replacePorts = (
   database: ManagedSqliteDatabase,
   stackId: string,
   ports: ReadonlyArray<ManagedPortAssignment>,
+  lifecycle: ManagedStackLifecycle,
 ): void => {
-  for (const assignment of ports) {
-    const owner = database
-      .prepare("SELECT stack_id FROM ports WHERE port = ? AND stack_id != ?")
-      .get([assignment.port, stackId]);
-    if (owner !== undefined) {
-      throw new ManagedPortReservationError(assignment.port, getString(owner, "stack_id"));
+  validateManagedPortAssignments(stackId, ports);
+  if (lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping") {
+    for (const assignment of ports) {
+      const owner = database
+        .prepare(
+          `SELECT ports.stack_id
+           FROM ports
+           JOIN stacks ON stacks.id = ports.stack_id
+           WHERE ports.port = ? AND ports.stack_id != ?
+             AND stacks.status != 'tombstoned'
+             AND stacks.lifecycle IN ('starting', 'running', 'stopping')`,
+        )
+        .get([assignment.port, stackId]);
+      if (owner !== undefined) {
+        throw new ManagedPortReservationError(assignment.port, getString(owner, "stack_id"));
+      }
     }
   }
   database.prepare("DELETE FROM ports WHERE stack_id = ?").run([stackId]);
@@ -445,7 +512,12 @@ const insertConfiguration = (
       input.now,
       input.now,
     ]);
-  replacePorts(database, input.stackId, input.configuration.ports ?? []);
+  replacePorts(
+    database,
+    input.stackId,
+    input.configuration.ports ?? [],
+    input.configuration.lifecycle ?? "stopped",
+  );
 };
 
 export const createSqliteManagedStackRepository = (
@@ -486,9 +558,9 @@ export const createSqliteManagedStackRepository = (
           getString(contextRow, "checkout_id") !== input.identity.checkoutId
         ) {
           throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            getString(contextRow, "checkout_id"),
             input.identity.contextId,
+            getString(contextRow, "checkout_id"),
+            input.identity.checkoutId,
           );
         }
         database
@@ -520,9 +592,9 @@ export const createSqliteManagedStackRepository = (
           getString(pathLocation, "checkout_id") !== input.identity.checkoutId
         ) {
           throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            getString(pathLocation, "canonical_path"),
             input.canonicalPath,
+            getString(pathLocation, "checkout_id"),
+            input.identity.checkoutId,
           );
         }
         if (checkoutLocation === undefined) {
@@ -594,25 +666,31 @@ export const createSqliteManagedStackRepository = (
       });
     },
     getStack(stackId) {
-      return getStack(database, stackId);
+      return readTransaction(database, () => getStack(database, stackId));
     },
     getStackByIdentity(checkoutId, contextId, stackName) {
-      const row = database
-        .prepare(
-          `SELECT * FROM stacks
-           WHERE checkout_id = ? AND context_id = ? AND name = ? AND status != 'tombstoned'`,
-        )
-        .get([checkoutId, contextId, stackName]);
-      return row === undefined ? undefined : decodeStack(database, row);
+      return readTransaction(database, () => {
+        const row = database
+          .prepare(
+            `SELECT * FROM stacks
+             WHERE checkout_id = ? AND context_id = ? AND name = ? AND status != 'tombstoned'`,
+          )
+          .get([checkoutId, contextId, stackName]);
+        return row === undefined ? undefined : decodeStack(database, row);
+      });
     },
     listStacks(options) {
-      const rows =
-        options?.includeTombstoned === true
-          ? database.prepare("SELECT * FROM stacks ORDER BY created_at, id").all()
-          : database
-              .prepare("SELECT * FROM stacks WHERE status != 'tombstoned' ORDER BY created_at, id")
-              .all();
-      return rows.map((row) => decodeStack(database, row));
+      return readTransaction(database, () => {
+        const rows =
+          options?.includeTombstoned === true
+            ? database.prepare("SELECT * FROM stacks ORDER BY created_at, id").all()
+            : database
+                .prepare(
+                  "SELECT * FROM stacks WHERE status != 'tombstoned' ORDER BY created_at, id",
+                )
+                .all();
+        return rows.map((row) => decodeStack(database, row));
+      });
     },
     claimOperation(input) {
       return claimOperation(database, input);
@@ -640,6 +718,7 @@ export const createSqliteManagedStackRepository = (
         const runtimeMetadata = input.runtimeMetadata ?? current.runtimeMetadata;
         const configFingerprint = input.configFingerprint ?? current.configFingerprint;
         const credentialsReference = input.credentialsReference ?? current.credentialsReference;
+        const ports = reconcileManagedPortAssignments(current, input.ports);
         database
           .prepare(
             `UPDATE stacks SET
@@ -659,7 +738,7 @@ export const createSqliteManagedStackRepository = (
             input.now,
             input.stackId,
           ]);
-        replacePorts(database, input.stackId, input.ports ?? current.ports);
+        replacePorts(database, input.stackId, ports, lifecycle);
         return requireStack(database, input.stackId);
       });
     },
@@ -680,8 +759,19 @@ export const createSqliteManagedStackRepository = (
     reconcileOperation(stackId, operationToken, lifecycle, now) {
       return transaction(database, () => {
         requireOwnedOperation(database, stackId, operationToken);
+        const current = requireStack(database, stackId);
+        if (current.status === "pending" && lifecycle === "stopped") {
+          database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
+          return undefined;
+        }
+        replacePorts(database, stackId, current.ports, lifecycle);
         database
-          .prepare("UPDATE stacks SET lifecycle = ?, updated_at = ? WHERE id = ?")
+          .prepare(
+            `UPDATE stacks SET
+              status = CASE WHEN status = 'pending' THEN 'active' ELSE status END,
+              lifecycle = ?, updated_at = ?
+             WHERE id = ?`,
+          )
           .run([lifecycle, now, stackId]);
         database
           .prepare(

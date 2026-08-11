@@ -122,12 +122,12 @@ export class DuplicateManagedIdentityError extends ManagedStackError {
   readonly code = "DUPLICATE_MANAGED_IDENTITY";
 
   constructor(
-    readonly checkoutId: string,
-    readonly existingPath: string,
-    readonly requestedPath: string,
+    readonly identityId: string,
+    readonly existingClaim: string,
+    readonly requestedClaim: string,
   ) {
     super(
-      `Checkout ${checkoutId} is already registered at ${existingPath}; refusing a second claim from ${requestedPath}`,
+      `Managed identity ${identityId} is already claimed by ${existingClaim}; refusing a second claim from ${requestedClaim}`,
     );
     this.name = "DuplicateManagedIdentityError";
   }
@@ -175,12 +175,31 @@ export class ManagedPortReservationError extends ManagedStackError {
   }
 }
 
+export class ManagedRunningStackPortChangeError extends ManagedStackError {
+  readonly code = "MANAGED_RUNNING_STACK_PORT_CHANGE";
+
+  constructor(readonly stackId: string) {
+    super(`Managed stack ${stackId} must be stopped before changing its persisted ports`);
+    this.name = "ManagedRunningStackPortChangeError";
+  }
+}
+
+export class UnsafeManagedStackPathError extends ManagedStackError {
+  readonly code = "UNSAFE_MANAGED_STACK_PATH";
+
+  constructor(readonly path: string) {
+    super(`Refusing to remove an unsafe managed stack path: ${path}`);
+    this.name = "UnsafeManagedStackPathError";
+  }
+}
+
 export class ManagedStackInitializationError extends ManagedStackError {
   readonly code = "MANAGED_STACK_INITIALIZATION_FAILED";
 
   constructor(
     readonly stackId: string,
     override readonly cause: unknown,
+    readonly cleanupErrors: ReadonlyArray<unknown> = [],
   ) {
     super(`Managed stack ${stackId} could not be initialized`);
     this.name = "ManagedStackInitializationError";

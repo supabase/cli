@@ -17,6 +17,7 @@ export interface CreateManagedStackServiceOptions {
   readonly ownerPid?: number;
   readonly publicationTimeoutMs?: number;
   readonly publicationPollMs?: number;
+  readonly isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
 }
 
 export const createManagedStackService = (options: CreateManagedStackServiceOptions = {}) => {
@@ -31,5 +32,6 @@ export const createManagedStackService = (options: CreateManagedStackServiceOpti
     ownerPid: options.ownerPid,
     publicationTimeoutMs: options.publicationTimeoutMs,
     publicationPollMs: options.publicationPollMs,
+    isProcessAlive: options.isProcessAlive,
   });
 };

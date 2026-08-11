@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { managedStackPaths, resolveManagedStateRoot } from "./managed/paths.ts";
+import { InvalidManagedIdentityError, UnsafeManagedStackPathError } from "./managed/model.ts";
+import {
+  assertManagedStackRoot,
+  managedStackPaths,
+  resolveManagedStateRoot,
+} from "./managed/paths.ts";
 
 describe("managed paths", () => {
   it("isolates managed records beneath SUPABASE_HOME", () => {
@@ -19,6 +24,20 @@ describe("managed paths", () => {
     expect(resolveManagedStateRoot({ env: {}, homeDir: "/Users/user", platform: "darwin" })).toBe(
       "/Users/user/Library/Application Support/supabase/managed",
     );
+    expect(
+      resolveManagedStateRoot({
+        env: { XDG_STATE_HOME: "" },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe("/home/user/.local/state/supabase/managed");
+    expect(
+      resolveManagedStateRoot({
+        env: { LOCALAPPDATA: "" },
+        homeDir: "C:\\Users\\user",
+        platform: "win32",
+      }),
+    ).toBe("C:\\Users\\user/AppData/Local/Supabase/managed");
   });
 
   it("keys every mutable stack path by opaque stack ID", () => {
@@ -28,5 +47,14 @@ describe("managed paths", () => {
       logs: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d/logs",
       runtime: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d/runtime",
     });
+  });
+
+  it("rejects non-UUID IDs and registry paths that do not match the derived root", () => {
+    expect(() => managedStackPaths("/state", "../../tmp/escaped")).toThrow(
+      InvalidManagedIdentityError,
+    );
+    expect(() =>
+      assertManagedStackRoot("/state", "018f8b4e-8e5c-7e32-a956-6f297fd05a2d", "/tmp/escaped"),
+    ).toThrow(UnsafeManagedStackPathError);
   });
 });
