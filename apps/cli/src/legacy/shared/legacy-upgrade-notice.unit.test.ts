@@ -176,14 +176,14 @@ describe("legacyRunUpgradeNotice", () => {
   it("SUPABASE_DEBUG surfaces fetch failures without the --debug flag, like viper's AutomaticEnv", async () => {
     const ctx = setup({ fetchFails: true, project: false, env: { SUPABASE_DEBUG: "1" } });
     await legacyRunUpgradeNotice(ctx.deps);
-    expect(ctx.stderr).toContain("failed to fetch latest release");
+    expect(ctx.stderr).toContain("Failed to fetch latest release");
     ctx.cleanup();
   });
 
   it("--debug=true surfaces fetch failures and --debug=false silences them, like pflag", async () => {
     const on = setup({ fetchFails: true, project: false, args: ["db", "start", "--debug=true"] });
     await legacyRunUpgradeNotice(on.deps);
-    expect(on.stderr).toContain("failed to fetch latest release");
+    expect(on.stderr).toContain("Failed to fetch latest release");
     on.cleanup();
 
     // A set flag (`--debug=false`) beats SUPABASE_DEBUG, like viper.
@@ -198,6 +198,25 @@ describe("legacyRunUpgradeNotice", () => {
     off.cleanup();
   });
 
+  it("a built-in ignores SUPABASE_DEBUG but still honors the --debug flag, like cobra's init order", async () => {
+    // AutomaticEnv binds inside cobra.OnInitialize, which --help/--version
+    // never reach; BindPFlags runs at package init, so the flag still reads.
+    const viaEnv = setup({
+      fetchFails: true,
+      project: false,
+      env: { SUPABASE_DEBUG: "1" },
+      args: ["--version"],
+    });
+    await legacyRunUpgradeNotice(viaEnv.deps);
+    expect(viaEnv.stderr).toBe("");
+    viaEnv.cleanup();
+
+    const viaFlag = setup({ fetchFails: true, project: false, args: ["--version", "--debug"] });
+    await legacyRunUpgradeNotice(viaFlag.deps);
+    expect(viaFlag.stderr).toContain("Failed to fetch latest release: offline");
+    viaFlag.cleanup();
+  });
+
   it("a failed fetch stays silent and writes an empty cache to back off", async () => {
     const ctx = setup({ fetchFails: true });
     await legacyRunUpgradeNotice(ctx.deps);
@@ -209,7 +228,7 @@ describe("legacyRunUpgradeNotice", () => {
   it("a failed fetch surfaces its error under --debug when there is no project to back off in", async () => {
     const ctx = setup({ fetchFails: true, project: false, args: ["db", "start", "--debug"] });
     await legacyRunUpgradeNotice(ctx.deps);
-    expect(ctx.stderr).toContain("failed to fetch latest release");
+    expect(ctx.stderr).toContain("Failed to fetch latest release");
     expect(ctx.stderr).not.toContain("A new version of Supabase CLI is available");
     ctx.cleanup();
   });

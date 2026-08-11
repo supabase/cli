@@ -37,8 +37,17 @@ export function legacyUpdateNotifierDisabled(value: string | undefined): boolean
   return value !== undefined && PARSE_BOOL_TRUE.has(value);
 }
 
-/** Go's `viper.GetBool("DEBUG")`: the `--debug`/`--debug=<bool>` flag when set (last wins), else `SUPABASE_DEBUG`. The token walk skips operands after `--` and values consumed by value-taking global flags, which pflag never reads as flags. */
-function debugEnabled(deps: LegacyUpgradeNoticeDeps): boolean {
+/**
+ * Go's `viper.GetBool("DEBUG")`: the `--debug`/`--debug=<bool>` flag when set
+ * (last wins; `viper.BindPFlags` runs at package init, so the flag reads even
+ * for the built-ins), else `SUPABASE_DEBUG` — but the env only when a real
+ * command ran: `viper.AutomaticEnv` binds inside `cobra.OnInitialize`, which
+ * `--help`/`--version`/a bare group's help never reach (Go says so itself at
+ * `updateNotifierEnabled`, `cmd/root.go:246-247`). The token walk skips
+ * operands after `--` and values consumed by value-taking global flags, which
+ * pflag never reads as flags.
+ */
+function debugEnabled(deps: LegacyUpgradeNoticeDeps, builtin: boolean): boolean {
   let flag: boolean | undefined;
   for (const { token } of rootFlagTokens(deps.args)) {
     if (token === "--debug") flag = true;
@@ -47,9 +56,13 @@ function debugEnabled(deps: LegacyUpgradeNoticeDeps): boolean {
     }
   }
   if (flag !== undefined) return flag;
+  if (builtin) return false;
   const env = deps.env["SUPABASE_DEBUG"];
   return env !== undefined && PARSE_BOOL_TRUE.has(env);
 }
+
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
 
 interface ParsedSemver {
   readonly nums: readonly [number, number, number];
@@ -161,7 +174,11 @@ async function projectDotenvNotifierOptOut(
   env: Readonly<Record<string, string | undefined>>,
 ): Promise<string | undefined> {
   if (env["SUPABASE_NO_UPDATE_NOTIFIER"] !== undefined) return undefined;
-  for (const dir of [join(base, "supabase"), base]) {
+  // Go's walk loads `<base>/supabase` then `<base>` — except at the filesystem
+  // root, where `loadNestedEnv`'s `cwd != filepath.Dir(repoDir)` bound
+  // degenerates (`Dir("/") == "/"`) and only `/supabase` is read.
+  const dirs = dirname(base) === base ? [join(base, "supabase")] : [join(base, "supabase"), base];
+  for (const dir of dirs) {
     for (const filename of legacyCandidateDotenvFilenames(env["SUPABASE_ENV"] || "development")) {
       const contents = await readFile(join(dir, filename), "utf8").catch(() => undefined);
       if (contents === undefined) continue;
@@ -233,40 +250,44 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
 
   let latestTag: string;
   if (forceFetch || !cacheFresh) {
-    let notifyError: unknown;
+    let notifyError: Error | undefined;
     latestTag = (
       await deps.fetchLatestTag().catch((error: unknown) => {
-        notifyError = error;
+        // Go's `GetLatestRelease` wrap (`internal/utils/release.go:42`) —
+        // capital F and all.
+        notifyError = new Error(`Failed to fetch latest release: ${errorMessage(error)}`);
         return "";
       })
     ).trim();
     // Go's `checkUpgrade` (`cmd/root.go:254-258`) overwrites the fetch error
     // with the offline-backoff write's result when inside a project, so a
     // successful write silences the diagnostic — only a missing project (no
-    // backoff) or a failing write leaves an error to log.
+    // backoff) or a failing write leaves an error to log, carrying the write
+    // path's own wraps (`failed to mkdir`/`failed to write file`, misc.go).
     if (cachePathIsSafe && existsSync(supabaseDir)) {
       const tempFile = join(tempDir, `cli-latest.tmp.${crypto.randomUUID()}`);
-      notifyError = await mkdir(tempDir, { recursive: true })
-        .then(() => writeFile(tempFile, latestTag))
-        .then(() => rename(tempFile, cacheFile))
-        .then(() => undefined)
-        .catch((error: unknown) =>
-          rm(tempFile, { force: true })
-            .catch(() => undefined)
-            .then(() => error),
-        );
-    }
-    if (notifyError !== undefined && debugEnabled(deps)) {
-      deps.writeStderr(
-        `failed to fetch latest release: ${stripVTControlCharacters(String(notifyError))}\n`,
+      notifyError = await mkdir(tempDir, { recursive: true }).then(
+        () =>
+          writeFile(tempFile, latestTag)
+            .then(() => rename(tempFile, cacheFile))
+            .then(() => undefined)
+            .catch((error: unknown) =>
+              rm(tempFile, { force: true })
+                .catch(() => undefined)
+                .then(() => new Error(`failed to write file: ${errorMessage(error)}`)),
+            ),
+        (error: unknown) => new Error(`failed to mkdir: ${errorMessage(error)}`),
       );
+    }
+    if (notifyError !== undefined && debugEnabled(deps, builtin)) {
+      deps.writeStderr(`${stripVTControlCharacters(notifyError.message)}\n`);
     }
   } else {
     latestTag = (
       await readFile(cacheFile, "utf8").catch((error: unknown) => {
-        if (debugEnabled(deps)) {
+        if (debugEnabled(deps, builtin)) {
           deps.writeStderr(
-            `failed to read cli version: ${stripVTControlCharacters(String(error))}\n`,
+            `failed to read cli version: ${stripVTControlCharacters(errorMessage(error))}\n`,
           );
         }
         return "";
