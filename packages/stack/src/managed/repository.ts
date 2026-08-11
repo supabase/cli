@@ -108,7 +108,10 @@ const stackIdentityKey = (checkoutId: string, contextId: string, stackName: stri
 
 const copy = <A>(value: A): A => structuredClone(value);
 
-const portsEqual = (
+export const managedStackOccupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
+  lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping";
+
+const portNumbersEqual = (
   left: ReadonlyArray<ManagedPortAssignment>,
   right: ReadonlyArray<ManagedPortAssignment>,
 ): boolean => {
@@ -118,11 +121,7 @@ const portsEqual = (
   const byKey = new Map(right.map((assignment) => [assignment.key, assignment]));
   return left.every((assignment) => {
     const candidate = byKey.get(assignment.key);
-    return (
-      candidate !== undefined &&
-      assignment.port === candidate.port &&
-      assignment.intent === candidate.intent
-    );
+    return candidate !== undefined && assignment.port === candidate.port;
   });
 };
 
@@ -150,42 +149,48 @@ export const validateManagedPortAssignments = (
 export const reconcileManagedPortAssignments = (
   stack: ManagedStackRecord,
   requested: ReadonlyArray<ManagedPortAssignment> | undefined,
+  targetLifecycle: ManagedStackLifecycle = stack.lifecycle,
 ): ReadonlyArray<ManagedPortAssignment> => {
   if (requested === undefined) {
     return stack.ports;
   }
   validateManagedPortAssignments(stack.id, requested);
-  if (stack.lifecycle !== "stopped") {
-    if (!portsEqual(stack.ports, requested)) {
-      throw new ManagedRunningStackPortChangeError(stack.id);
-    }
-    return stack.ports;
-  }
   const persisted = new Map(stack.ports.map((assignment) => [assignment.key, assignment]));
-  return requested.map((assignment) => {
+  const reconciled = requested.map((assignment) => {
     const current = persisted.get(assignment.key);
     return assignment.intent === "automatic" && current !== undefined
       ? { ...assignment, port: current.port }
       : assignment;
   });
+  if (
+    managedStackOccupiesPorts(stack.lifecycle) &&
+    managedStackOccupiesPorts(targetLifecycle) &&
+    !portNumbersEqual(stack.ports, reconciled)
+  ) {
+    throw new ManagedRunningStackPortChangeError(stack.id);
+  }
+  return reconciled;
 };
 
 const applyConfiguration = (
   stack: ManagedStackRecord,
   configuration: ManagedStackConfiguration,
   now: string,
-): ManagedStackRecord => ({
-  ...stack,
-  lifecycle: configuration.lifecycle ?? stack.lifecycle,
-  runtimeRequest: configuration.runtimeRequest ?? stack.runtimeRequest,
-  runtime: configuration.runtime ?? stack.runtime,
-  ports: reconcileManagedPortAssignments(stack, configuration.ports),
-  serviceVersions: configuration.serviceVersions ?? stack.serviceVersions,
-  runtimeMetadata: configuration.runtimeMetadata ?? stack.runtimeMetadata,
-  configFingerprint: configuration.configFingerprint ?? stack.configFingerprint,
-  credentialsReference: configuration.credentialsReference ?? stack.credentialsReference,
-  updatedAt: now,
-});
+): ManagedStackRecord => {
+  const lifecycle = configuration.lifecycle ?? stack.lifecycle;
+  return {
+    ...stack,
+    lifecycle,
+    runtimeRequest: configuration.runtimeRequest ?? stack.runtimeRequest,
+    runtime: configuration.runtime ?? stack.runtime,
+    ports: reconcileManagedPortAssignments(stack, configuration.ports, lifecycle),
+    serviceVersions: configuration.serviceVersions ?? stack.serviceVersions,
+    runtimeMetadata: configuration.runtimeMetadata ?? stack.runtimeMetadata,
+    configFingerprint: configuration.configFingerprint ?? stack.configFingerprint,
+    credentialsReference: configuration.credentialsReference ?? stack.credentialsReference,
+    updatedAt: now,
+  };
+};
 
 const emptyRuntimeMetadata = (): ManagedRuntimeMetadata => ({
   processIds: {},
@@ -267,15 +272,12 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
     return operation;
   };
 
-  const occupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
-    lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping";
-
   const transitionPortOwnership = (
     current: ManagedStackRecord | undefined,
     next: ManagedStackRecord,
   ): void => {
     validateManagedPortAssignments(next.id, next.ports);
-    if (occupiesPorts(next.lifecycle)) {
+    if (managedStackOccupiesPorts(next.lifecycle)) {
       for (const assignment of next.ports) {
         const owner = portOwners.get(assignment.port);
         if (owner !== undefined && owner !== next.id) {
@@ -283,14 +285,14 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
         }
       }
     }
-    if (current !== undefined && occupiesPorts(current.lifecycle)) {
+    if (current !== undefined && managedStackOccupiesPorts(current.lifecycle)) {
       for (const assignment of current.ports) {
         if (portOwners.get(assignment.port) === current.id) {
           portOwners.delete(assignment.port);
         }
       }
     }
-    if (occupiesPorts(next.lifecycle)) {
+    if (managedStackOccupiesPorts(next.lifecycle)) {
       for (const assignment of next.ports) {
         const owner = portOwners.get(assignment.port);
         if (owner !== undefined && owner !== next.id) {

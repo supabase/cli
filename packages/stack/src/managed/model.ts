@@ -1,4 +1,4 @@
-export const MANAGED_REGISTRY_SCHEMA_VERSION = 1;
+export const MANAGED_REGISTRY_SCHEMA_VERSION = 2;
 export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
 export const DEFAULT_MANAGED_STACK_NAME = "default";
 
@@ -113,7 +113,7 @@ export class UnsupportedManagedRegistryVersionError extends ManagedStackError {
     readonly found: number,
     readonly supported: number,
   ) {
-    super(`Managed registry version ${found} is newer than supported version ${supported}`);
+    super(`Managed registry version ${found} is unsupported; expected version ${supported}`);
     this.name = "UnsupportedManagedRegistryVersionError";
   }
 }
@@ -179,7 +179,7 @@ export class ManagedRunningStackPortChangeError extends ManagedStackError {
   readonly code = "MANAGED_RUNNING_STACK_PORT_CHANGE";
 
   constructor(readonly stackId: string) {
-    super(`Managed stack ${stackId} must be stopped before changing its persisted ports`);
+    super(`Managed stack ${stackId} cannot change ports while it continues to occupy them`);
     this.name = "ManagedRunningStackPortChangeError";
   }
 }

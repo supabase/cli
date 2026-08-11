@@ -28,7 +28,11 @@ import type {
   PrepareOrdinaryStackResult,
   UpdateManagedStackInput,
 } from "./repository.ts";
-import { reconcileManagedPortAssignments, validateManagedPortAssignments } from "./repository.ts";
+import {
+  managedStackOccupiesPorts,
+  reconcileManagedPortAssignments,
+  validateManagedPortAssignments,
+} from "./repository.ts";
 
 type SqliteValue = null | number | string;
 
@@ -207,7 +211,7 @@ const initializeSchema = (database: ManagedSqliteDatabase): void => {
   try {
     const versionRow = database.prepare("PRAGMA user_version").get();
     const version = getNumber(versionRow, "user_version");
-    if (version > MANAGED_REGISTRY_SCHEMA_VERSION) {
+    if (version !== 0 && version !== MANAGED_REGISTRY_SCHEMA_VERSION) {
       throw new UnsupportedManagedRegistryVersionError(version, MANAGED_REGISTRY_SCHEMA_VERSION);
     }
     if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
@@ -425,7 +429,7 @@ const replacePorts = (
   lifecycle: ManagedStackLifecycle,
 ): void => {
   validateManagedPortAssignments(stackId, ports);
-  if (lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping") {
+  if (managedStackOccupiesPorts(lifecycle)) {
     for (const assignment of ports) {
       const owner = database
         .prepare(
@@ -718,7 +722,7 @@ export const createSqliteManagedStackRepository = (
         const runtimeMetadata = input.runtimeMetadata ?? current.runtimeMetadata;
         const configFingerprint = input.configFingerprint ?? current.configFingerprint;
         const credentialsReference = input.credentialsReference ?? current.credentialsReference;
-        const ports = reconcileManagedPortAssignments(current, input.ports);
+        const ports = reconcileManagedPortAssignments(current, input.ports, lifecycle);
         database
           .prepare(
             `UPDATE stacks SET

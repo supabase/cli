@@ -281,6 +281,8 @@ Here, **managed state** means the centralized registry API exposed from
 `managed-stack.ts`, which remains part of the legacy Effect daemon surface. The registry API uses
 Promises because its consumers perform short filesystem and SQLite coordination around the
 Promise-oriented `createStack()` boundary; the runtime lifecycle beneath it remains Effect-based.
+Its errors are ordinary `Error` subclasses with stable `code` fields so Node and Bun callers can
+branch on failures without requiring an Effect runtime at this persistence boundary.
 
 The managed surface owns a versioned SQLite registry with separate records for projects,
 checkouts, checkout locations, development contexts, stacks, port reservations, and operations.
@@ -299,7 +301,9 @@ For an ordinary non-Git folder, the first mutating managed operation atomically 
 
 No mutable runtime state or credential value is stored in that marker. Read-only discovery does
 not create it. The registry stores only an opaque credential reference, never resolved plaintext
-credentials.
+credentials. Discovery returns the marker identity even when it has no stack records, but reports
+`registered: false` until at least one stack exists for the marker's complete project, checkout,
+and context identity.
 
 The managed state root is explicitly injectable. Otherwise it resolves from `SUPABASE_HOME` or
 the platform application-state directory. Every physical stack path is keyed only by its opaque
@@ -307,7 +311,7 @@ stack UUID:
 
 ```text
 <managedStateRoot>/
-  registry-v1.sqlite3
+  registry-v2.sqlite3
   stacks/<stackId>/
     data/
     logs/
@@ -320,17 +324,29 @@ Concurrent callers resolve the published record rather than creating aliases. Re
 retains claims whose owner process is still alive. Once an owner is gone, runtime inspection either
 publishes a running pending stack or aborts a stopped pending stack so the same identity can retry.
 Ownership races are isolated per operation so one completed claim does not stop the recovery pass.
+PID liveness is deliberately conservative and assumes the managed root stays within one host PID
+namespace. Because a PID is not a permanent process identity, callers can request forced recovery
+after trustworthy runtime inspection; this is also the required integration path for a state root
+shared across PID namespaces. Forced recovery bypasses only the PID gate, never runtime inspection.
+Recovery results distinguish live/unknown owners, concurrent skips, reconciliation failures, and
+post-abort data-reclamation failures. A reconciliation failure marks the stack lifecycle `failed`
+before best-effort release of the abandoned claim, preserving the requirement for an explicit stop
+path before deletion.
 
 Port assignments are sticky metadata, while port ownership is a lifecycle lease. Stopped stacks
 retain their assigned numbers without blocking other stopped stacks. Entering `starting`,
 `running`, or `stopping` claims those ports host-wide; a collision fails without relocating a
 sticky automatic assignment. On a stopped stack, exact configuration replaces persisted automatic
-state, while an automatic request reuses the current number and changes only its intent. Running
-port changes are reported as drift instead of overwriting the active assignment.
+state, while an automatic request reuses the current number and changes only its intent. Failed
+stacks follow the same non-occupying rules. Intent-only changes are accepted, and a lifecycle update
+can release a lease and change ports atomically; port-number drift is rejected only while a stack
+continues to occupy its ports.
 
 Explicit deletion re-reads lifecycle after claiming the operation, safely stops when needed,
 tombstones, and removes only the UUID-derived selected stack root. Repeating deletion retries any
-leftover tombstoned data reclamation. Prune removes checkout location metadata only. Runtime
+leftover tombstoned data reclamation. Once tombstoned, unsafe or failed filesystem cleanup is
+reported as retained data rather than making future deletion non-idempotent. Prune removes checkout
+location metadata only. Runtime
 qualification, legacy bootstrap selection, and credential resolution remain callers of this
 persistence boundary and are composed by later CLI slices.
 

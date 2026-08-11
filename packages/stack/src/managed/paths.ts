@@ -39,7 +39,7 @@ export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): 
 };
 
 export const managedRegistryPath = (stateRoot: string): string =>
-  join(stateRoot, "registry-v1.sqlite3");
+  join(stateRoot, "registry-v2.sqlite3");
 
 export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
   assertManagedUuid(stackId, "stackId");
