@@ -761,13 +761,32 @@ const LEGACY_SHADOW_STARTING_STATE =
  * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
  * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
  * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
+ *
+ * `dbNotRunning`/`dbInspectFailsWith` (CLI-1968) fake the SEPARATE `docker container inspect
+ * supabase_db_<projectId>` probe `legacyIsLocalDbRunning` issues before `--use-pgadmin`
+ * provisions anything — distinguished from the shadow's own `container inspect <64-hex-id>`
+ * health probe by the target id's `supabase_db_` prefix, so both options leave the shadow's
+ * own health check on its normal (healthy/never-healthy) path. `dbNotRunning` reports the
+ * Go/Docker "container doesn't exist" shape (`legacyIsContainerNotFoundMessage`); mutually
+ * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
+ * (`legacyIsDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
+ * that sets both throws immediately, rather than one option silently winning).
  */
 export function mockLegacyShadowContainerCliSpawner(
-  opts: { readonly neverHealthy?: boolean } = {},
+  opts: {
+    readonly neverHealthy?: boolean;
+    readonly dbNotRunning?: boolean;
+    readonly dbInspectFailsWith?: string;
+  } = {},
 ): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly spawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
 } {
+  if (opts.dbNotRunning === true && opts.dbInspectFailsWith !== undefined) {
+    throw new Error(
+      "mockLegacyShadowContainerCliSpawner: dbNotRunning and dbInspectFailsWith are mutually exclusive",
+    );
+  }
   const neverHealthy = opts.neverHealthy ?? false;
   const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
   const encoder = new TextEncoder();
@@ -789,6 +808,30 @@ export function mockLegacyShadowContainerCliSpawner(
               }),
             ),
           );
+        }
+        const isLocalDbInspect =
+          args[0] === "container" &&
+          args[1] === "inspect" &&
+          (args[2] ?? "").startsWith("supabase_db_");
+        if (
+          isLocalDbInspect &&
+          (opts.dbNotRunning === true || opts.dbInspectFailsWith !== undefined)
+        ) {
+          const stderrText =
+            opts.dbInspectFailsWith ?? `Error response from daemon: No such container: ${args[2]}`;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+            stdout: Stream.empty,
+            stderr: Stream.fromIterable([encoder.encode(stderrText)]),
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
         }
         let stdoutLines: ReadonlyArray<string> = [];
         if (args[0] === "create") {

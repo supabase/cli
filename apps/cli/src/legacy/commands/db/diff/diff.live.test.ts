@@ -1,10 +1,14 @@
+import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { afterEach, expect, test } from "vitest";
 
 import { describeLive, runSupabaseLive } from "../../../../../tests/helpers/live.ts";
+
+const execFileAsync = promisify(execFile);
 
 const START_TIMEOUT_MS = 280_000;
 
@@ -98,6 +102,70 @@ revoke execute on function public.probe_fn() from public;
       expect(sql).toMatch(
         /REVOKE\s+(?:ALL|EXECUTE)\s+ON\s+FUNCTION\s+public\.probe_fn\(\)\s+FROM\s+[^;]*PUBLIC[^;]*;/i,
       );
+    },
+  );
+});
+
+// CLI-1968: `--use-pgadmin` is a native `docker run` of the differ container, no
+// edge-runtime and no Go delegation involved. Golden-path smoke coverage only — the
+// pure filtering/progress logic and the docker-run argv are covered exhaustively by
+// `legacy-pgadmin-diff.unit.test.ts` and `diff.integration.test.ts`; this just proves
+// the real container actually runs against a real local stack and cleans up after
+// itself. See `SIDE_EFFECTS.md`'s "Deliberate divergence" entry: the real Go binary's
+// `DiffStream` value-receiver bug means the Go CLI would always report "No schema
+// changes found" here regardless of the differ's actual output — that divergence is
+// exactly why this suite exists, not something this test itself asserts on.
+describeLive("supabase db diff (live, --use-pgadmin native differ container)", () => {
+  let projectDir: string | undefined;
+
+  afterEach(async () => {
+    if (projectDir === undefined) return;
+    // Best-effort cleanup even if an assertion above failed mid-lifecycle — a
+    // leaked local stack would otherwise pollute the CI runner for later jobs.
+    await runSupabaseLive(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
+    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
+    projectDir = undefined;
+  });
+
+  test(
+    "golden path: diffs the local db with the native pgAdmin differ container and leaves no differ container behind",
+    { timeout: START_TIMEOUT_MS },
+    async () => {
+      projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-pgadmin-live-"));
+
+      const init = await runSupabaseLive(["init"], { cwd: projectDir });
+      expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
+
+      // Exclude the heaviest, least relevant services — `db diff --use-pgadmin` only
+      // needs the local Postgres container reachable, same rationale as stop/status.
+      const start = await runSupabaseLive(
+        ["start", "--exclude", "studio", "--exclude", "analytics", "--exclude", "vector"],
+        { cwd: projectDir, exitTimeoutMs: START_TIMEOUT_MS },
+      );
+      expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).toBe(0);
+
+      const diff = await runSupabaseLive(["db", "diff", "--use-pgadmin"], {
+        cwd: projectDir,
+        exitTimeoutMs: START_TIMEOUT_MS,
+      });
+      // A freshly-`init`'d project has no drift against its own (empty) migration
+      // history — "No schema changes found" on stderr, exit 0, same golden-path
+      // semantics as the migra/pg-delta engines.
+      expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(0);
+      expect(diff.stderr).toContain("No schema changes found");
+
+      // The differ is a one-shot `docker run --rm` — real Docker must agree that no
+      // container survives it, the same "the daemon must agree" check
+      // `stop.live.test.ts` runs against `com.supabase.cli.project`.
+      const { stdout: remaining } = await execFileAsync("docker", [
+        "ps",
+        "-a",
+        "--filter",
+        "ancestor=supabase/pgadmin-schema-diff:cli-0.0.5",
+        "--format",
+        "{{.ID}}",
+      ]);
+      expect(remaining.trim()).toBe("");
     },
   );
 });
