@@ -390,6 +390,37 @@ function hasParentPathSegment(relativePath: string) {
     .some((segment) => segment === "..");
 }
 
+/**
+ * Widens containment roots with the real paths of function source
+ * directories. A symlinked functions dir (or function dir) resolves outside
+ * the git-root boundary (`resolveFunctionsSourceRoot`) even though its
+ * unresolved paths — and therefore the uploaded file names and the
+ * server-recorded metadata paths — stay anchored inside the workdir. Go
+ * follows symlinks unconditionally (`apps/cli-go/pkg/function/deno.go:125`,
+ * "Assume no file is symlinked"), so skipping those files was a TS-only
+ * regression: the deploy request went out without its entrypoint file and the
+ * API rejected it with 400 "Entrypoint path does not exist" (INC-699
+ * follow-up). Mirrors `resolveImportMapAllowedRoots`, which already admits an
+ * out-of-root import map's real directory.
+ */
+async function withRealSourceDirs(
+  roots: ReadonlyArray<string>,
+  dirs: ReadonlyArray<string>,
+): Promise<ReadonlyArray<string>> {
+  const widened = [...roots];
+  for (const dir of dirs) {
+    try {
+      const real = await realpath(dir);
+      if (!isContainedInAnyPath(widened, real)) {
+        widened.push(real);
+      }
+    } catch {
+      // Missing directory — the walker's ENOENT handling covers it (Go-parity warn).
+    }
+  }
+  return widened;
+}
+
 async function realpathIfExists(pathname: string) {
   try {
     return await realpath(resolve(pathname));
@@ -976,6 +1007,10 @@ async function writeSourceDeployForm(
   const form = new FormData();
   form.append("metadata", JSON.stringify(metadata));
   const realSourceRoot = await realpath(sourceRoot);
+  const assetAllowedRoots = await withRealSourceDirs(
+    [realSourceRoot],
+    [join(workdir, SUPABASE_FUNCTIONS_DIR), dirname(config.entrypoint)],
+  );
   const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
   const uploadedAssets = new Set<string>();
 
@@ -997,7 +1032,7 @@ async function writeSourceDeployForm(
 
   const uploadAsset = async (pathname: string, contents: Uint8Array) => {
     const realPathname = await realpath(pathname);
-    if (!isContainedPath(realSourceRoot, realPathname)) {
+    if (!isContainedInAnyPath(assetAllowedRoots, realPathname)) {
       throw new Error(`refusing to upload asset outside source root: ${pathname}`);
     }
     await appendAsset(pathname, contents, realPathname);
@@ -1090,7 +1125,7 @@ async function writeSourceDeployForm(
   await walkImportPaths(
     importMap,
     config.entrypoint,
-    [realSourceRoot],
+    assetAllowedRoots,
     workdir,
     uploadAsset,
     async (message) => {
@@ -1193,20 +1228,23 @@ export async function buildDockerBinds(
   const projectRoot = resolve(functionsDir, "..", "..");
   const sourceRoot = await resolveFunctionsSourceRoot(projectRoot);
   const realSourceRoot = await realpath(sourceRoot);
-  const moduleRoots = [
-    realSourceRoot,
-    ...(
-      await Promise.all(
-        (options.additionalModuleRoots ?? []).map(async (root) => {
-          try {
-            return await realpath(root);
-          } catch {
-            return undefined;
-          }
-        }),
-      )
-    ).flatMap((root) => (root === undefined ? [] : [root])),
-  ];
+  const moduleRoots = await withRealSourceDirs(
+    [
+      realSourceRoot,
+      ...(
+        await Promise.all(
+          (options.additionalModuleRoots ?? []).map(async (root) => {
+            try {
+              return await realpath(root);
+            } catch {
+              return undefined;
+            }
+          }),
+        )
+      ).flatMap((root) => (root === undefined ? [] : [root])),
+    ],
+    [hostFunctionsDir, dirname(resolve(config.entrypoint))],
+  );
   const importMapAllowedRoots = await resolveImportMapAllowedRoots(sourceRoot, config.importMap);
   const binds = [`${hostFunctionsDir}:${toDockerPath(hostFunctionsDir)}:ro`];
   if (process.env["BITBUCKET_CLONE_DIR"] === undefined) {

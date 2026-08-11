@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
@@ -499,6 +499,103 @@ describe("legacy functions deploy", () => {
         );
       }
       expect(multiparts).toHaveLength(0);
+    }).pipe(
+      Effect.provide(layer),
+      Effect.ensuring(
+        Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+      ),
+    );
+  });
+
+  it.live("uploads sources through a functions dir symlinked outside the git root", () => {
+    // INC-699 follow-up (Slack 2026-08-05): when `supabase/functions` (or a
+    // single function dir) is a symlink whose target lies outside the git
+    // root, the realpath containment boundary silently skipped the entrypoint
+    // ("WARN: Skipping import path outside source root") and the deploy went
+    // out with metadata only — no file parts — which the API rejects with
+    // 400 "Entrypoint path does not exist - .../source/supabase/functions/
+    // <slug>/index.ts". Go follows symlinks unconditionally
+    // (`pkg/function/deno.go:125`), so the sources must upload, named at the
+    // workdir like any other deploy.
+    const repoRoot = join(tempRoot.current, "repo");
+    const externalFunctionsDir = join(tempRoot.current, "external", "functions");
+    const multiparts: Array<{ metadata?: string; fileNames: ReadonlyArray<string> }> = [];
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      handler: (request) => {
+        if (request.body._tag === "FormData") {
+          const metadata = request.body.formData.get("metadata");
+          multiparts.push({
+            metadata: typeof metadata === "string" ? metadata : undefined,
+            fileNames: request.body.formData
+              .getAll("file")
+              .flatMap((part) => (part instanceof File ? [part.name] : [])),
+          });
+        }
+        if (request.method === "GET") {
+          return Effect.succeed(legacyJsonResponse(request, 200, []));
+        }
+        return Effect.succeed(
+          legacyJsonResponse(request, 201, {
+            id: "function-id",
+            slug: "hello-world",
+            name: "hello-world",
+            status: "ACTIVE",
+            version: 2,
+            created_at: 1_687_423_025_152,
+            updated_at: 1_687_423_025_152,
+            verify_jwt: true,
+            import_map: true,
+            entrypoint_path: "supabase/functions/hello-world/index.ts",
+            import_map_path: "supabase/functions/hello-world/deno.json",
+          }),
+        );
+      },
+    });
+    const layer = Layer.mergeAll(
+      buildLegacyTestRuntime({
+        out,
+        api,
+        cliConfig: mockLegacyCliConfig({ workdir: repoRoot }),
+        runtimeInfo: mockRuntimeInfo({ cwd: repoRoot }),
+      }),
+      Layer.succeed(LegacyYesFlag, false),
+      Stdio.layerTest({
+        args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api"]),
+      }),
+    );
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+      yield* Effect.tryPromise(() => writeProjectConfig(repoRoot));
+      yield* Effect.tryPromise(async () => {
+        await mkdir(join(externalFunctionsDir, "hello-world"), { recursive: true });
+        await mkdir(join(externalFunctionsDir, "_shared"), { recursive: true });
+        await writeFile(
+          join(externalFunctionsDir, "hello-world", "index.ts"),
+          'import { shared } from "../_shared/mod.ts"\nDeno.serve(() => new Response(shared))\n',
+        );
+        await writeFile(
+          join(externalFunctionsDir, "_shared", "mod.ts"),
+          'export const shared = "ok"\n',
+        );
+        await symlink(externalFunctionsDir, join(repoRoot, "supabase", "functions"));
+      });
+
+      yield* legacyFunctionsDeploy(baseFlags);
+
+      expect(out.stderrText).not.toContain("Skipping import path outside source root");
+      expect(multiparts).toHaveLength(1);
+      expect(multiparts[0]?.fileNames).toEqual([
+        "supabase/functions/hello-world/index.ts",
+        "supabase/functions/_shared/mod.ts",
+      ]);
+      expect(JSON.parse(multiparts[0]?.metadata ?? "{}")).toMatchObject({
+        entrypoint_path: "supabase/functions/hello-world/index.ts",
+      });
+      expect(stripSgr(out.stdoutText)).toContain(
+        "Deployed Functions on project abcdefghijklmnopqrst: hello-world\n",
+      );
     }).pipe(
       Effect.provide(layer),
       Effect.ensuring(
