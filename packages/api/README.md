@@ -98,7 +98,15 @@ The spec is built from two upstream OpenAPI documents, `{baseUrl}/api/v1-json` a
 `components.schemas` are unioned, and `info.title` is normalized to `Supabase API`), then
 overrides from `scripts/openapi-overrides.json` are applied to the merged document. The result is
 validated — operation ids must be unique, and version-prefixed operation ids must match the
-path's leading segment — before being written to `src/generated/openapi.json`.
+path's leading segment — before being written to `src/generated/openapi.json`. The merged
+document keeps only the keys the generator consumes (`openapi`, `info`, `paths`,
+`components.schemas`); upstream extras such as `servers`, `tags`, and `components.securitySchemes`
+are dropped so the snapshot never contains keys a regeneration would remove.
+
+The committed snapshot and the generated modules are also checked against each other offline in
+ordinary test runs: `scripts/generated-output-sync.unit.test.ts` re-renders every generated file
+from the committed snapshot and requires byte equality, and `src/generated-contract-sync.unit.test.ts`
+asserts the operation-level bijection. Hand edits to `src/generated` fail both.
 
 The base URL is resolved in this order:
 

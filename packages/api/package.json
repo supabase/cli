@@ -14,7 +14,7 @@
   "scripts": {
     "generate:spec": "bun run scripts/download-openapi.ts",
     "generate": "bun run generate:spec && bun run scripts/generate.ts",
-    "generate:check": "bun run generate && pnpm exec nx run @supabase/api:fmt:fix && git diff --exit-code -- src/generated scripts/openapi-source.json",
+    "generate:check": "pnpm generate && pnpm exec nx run @supabase/api:fmt:fix && git diff --exit-code -- src/generated scripts/openapi-source.json",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
     "test:core": "nx run-many -t test:unit test:integration --projects=$npm_package_name",
     "check:all": "nx run-many -t types:check lint:check fmt:check knip:check --projects=$npm_package_name",
@@ -46,7 +46,8 @@
       "scripts/download-openapi.ts",
       "scripts/download-openapi.unit.test.ts",
       "scripts/generate.ts",
-      "scripts/generate.unit.test.ts"
+      "scripts/generate.unit.test.ts",
+      "scripts/generated-output-sync.unit.test.ts"
     ],
     "ignoreDependencies": [
       "undici",

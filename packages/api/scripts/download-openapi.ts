@@ -246,8 +246,19 @@ function assertOpenApiSource(value: unknown): asserts value is OpenApiSource {
   }
 }
 
-async function loadPinnedBaseUrl(): Promise<string> {
-  const parsed = JSON.parse(await readFile(OPENAPI_SOURCE_PATH, "utf8"));
+async function loadPinnedBaseUrl(): Promise<string | undefined> {
+  let raw: string;
+  try {
+    raw = await readFile(OPENAPI_SOURCE_PATH, "utf8");
+  } catch (error) {
+    // A missing pin falls through to the default base URL; only a present
+    // but malformed pin is an error worth stopping for.
+    if (isRecord(error) && error.code === "ENOENT") {
+      return undefined;
+    }
+    throw error;
+  }
+  const parsed = JSON.parse(raw);
   assertOpenApiSource(parsed);
   return parsed.baseUrl;
 }
@@ -379,12 +390,17 @@ export function mergeOpenApiDocuments(
     }
   }
 
+  // The merged document carries only the keys the generator consumes.
+  // Upstream extras (`servers`, `tags`, `components.securitySchemes`, …)
+  // must not reach the snapshot even transiently: generate.ts rewrites the
+  // file without them, so if they were written here a crash between the two
+  // steps would leave a plausible-looking openapi.json that disagrees with
+  // every healthy regeneration.
   return {
-    ...firstEntry.document,
     openapi: openapiVersion,
     info: { title: "Supabase API", version: infoVersion },
     paths,
-    components: { ...firstEntry.document.components, schemas },
+    components: { schemas },
   };
 }
 
@@ -444,11 +460,12 @@ export function assertMergedOpenApiDocument(document: OpenApiDocument): void {
 }
 
 export async function downloadOpenApiSpec(): Promise<void> {
-  const pinnedBaseUrl = await loadPinnedBaseUrl();
-  const baseUrl = resolveOpenApiBaseUrl({
-    envBaseUrl: process.env.SUPABASE_API_URL,
-    pinnedBaseUrl,
-  });
+  const envBaseUrl = process.env.SUPABASE_API_URL;
+  // The sidecar is consulted only when the environment does not override it,
+  // so an explicit SUPABASE_API_URL works even when the pin is absent or
+  // malformed.
+  const pinnedBaseUrl = envBaseUrl === undefined ? await loadPinnedBaseUrl() : undefined;
+  const baseUrl = resolveOpenApiBaseUrl({ envBaseUrl, pinnedBaseUrl });
   console.log(`Resolved OpenAPI base URL: ${baseUrl}`);
 
   const documents: Array<{
