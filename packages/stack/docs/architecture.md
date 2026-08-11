@@ -320,7 +320,10 @@ stack UUID:
 
 Schema v2 intentionally has no migration path for this unreleased POC. Before first use of v2,
 developers with `registry-v1.sqlite3` must remove the old managed state root, including its shared
-`stacks/` directory; v1 and v2 state must not be kept side by side.
+`stacks/` directory; v1 and v2 state must not be kept side by side. Recovery can also leave an
+unregistered UUID stack root when a provisioner writes after its pending row was concurrently
+aborted. The provision error reports the failed ownership cleanup, but there is no automatic orphan
+garbage collection; remove that root only after independently confirming its runtime is stopped.
 
 Stack publication and operation claims are transactional. A new stack remains `pending` while its
 directories and caller-supplied initialization are validated, then becomes `active` atomically.
@@ -332,12 +335,16 @@ PID liveness is deliberately conservative and assumes the managed root stays wit
 namespace. Because a PID is not a permanent process identity, callers can request forced recovery
 after trustworthy runtime inspection; this is also the required integration path for a state root
 shared across PID namespaces. Forced recovery requires an exact stack ID and operation token,
-processes only that claim, and bypasses only its PID gate—never runtime inspection. Recovery results
-distinguish live owners, unknown or failed liveness/runtime inspection, concurrent skips,
-reconciliation failures, and post-abort data-reclamation failures. A failed reconciliation of an
-active stack marks its lifecycle `failed` before best-effort claim release, preserving the
-requirement for an explicit stop path before deletion. A failed pending-stack adoption retains its
-claim so a later pass can retry without losing potentially live unpublished data.
+processes only that claim, and bypasses only its PID gate—never runtime inspection. Forced recovery
+and the `startedBefore` age filter are mutually exclusive. Recovery results distinguish live owners,
+unknown or failed liveness/runtime inspection, concurrent skips, reconciliation failures, and
+post-abort data-reclamation failures. A failed reconciliation of an active stack marks its lifecycle
+`failed` before best-effort claim release, preserving the requirement for an explicit stop path
+before deletion. A failed pending-stack adoption retains its claim so a later pass can retry without
+losing potentially live unpublished data. That claim blocks other mutations, including deletion,
+until normal reconciliation succeeds or the caller obtains its stack ID and token from
+`repository.listActiveOperations()` and performs a scoped forced recovery after trustworthy runtime
+inspection.
 
 Port assignments are sticky metadata, while port ownership is a lifecycle lease. Stopped stacks
 retain their assigned numbers without blocking other stopped stacks. Entering `starting`,

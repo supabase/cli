@@ -66,17 +66,27 @@ export interface DeleteManagedStackResult {
     | { readonly outcome: "retained"; readonly error: unknown };
 }
 
-export interface ReconcileAbandonedOperationsOptions {
-  readonly startedBefore?: string;
-  readonly force?: {
-    readonly stackId: string;
-    readonly operationToken: string;
-  };
+interface ReconcileAbandonedOperationsBaseOptions {
   readonly inspectRuntime: (
     stack: ManagedStackRecord,
     operation: ManagedOperationRecord,
   ) => Promise<"running" | "stopped" | "unknown">;
 }
+
+export type ReconcileAbandonedOperationsOptions = ReconcileAbandonedOperationsBaseOptions &
+  (
+    | {
+        readonly startedBefore?: string;
+        readonly force?: never;
+      }
+    | {
+        readonly startedBefore?: never;
+        readonly force: {
+          readonly stackId: string;
+          readonly operationToken: string;
+        };
+      }
+  );
 
 export interface RetainedManagedOperation {
   readonly operation: ManagedOperationRecord;

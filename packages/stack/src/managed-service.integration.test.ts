@@ -692,6 +692,26 @@ describe("managed repository and lifecycle", () => {
     expect(service.listStacks()).toEqual([]);
   });
 
+  it.each([
+    ["stack ID", { stackId: "not-a-uuid", operationToken: crypto.randomUUID() }],
+    ["operation token", { stackId: crypto.randomUUID(), operationToken: "not-a-uuid" }],
+  ])("rejects a forced recovery with an invalid %s", async (_label, force) => {
+    const root = makeRoot();
+    const service = makeInMemoryService(root);
+    let inspected = false;
+
+    await expect(
+      service.reconcileAbandonedOperations({
+        force,
+        inspectRuntime: async () => {
+          inspected = true;
+          return "stopped";
+        },
+      }),
+    ).rejects.toBeInstanceOf(InvalidManagedIdentityError);
+    expect(inspected).toBe(false);
+  });
+
   it("scopes forced recovery to one exact operation", async () => {
     const root = makeRoot();
     const service = makeInMemoryService(root, { isProcessAlive: () => true });
