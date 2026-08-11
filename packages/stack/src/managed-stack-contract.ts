@@ -3244,8 +3244,10 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
         api: {
           platform: "linux-amd64",
           qualified: false,
+          code: "NATIVE_PLATFORM_NOT_QUALIFIED",
           failedServices: ["imgproxy"],
           availableServices: [],
+          recovery: ["Use Docker", "Complete imgproxy qualification for linux-amd64"],
         },
       },
     },
@@ -3536,6 +3538,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
           activeTargetExists: false,
           registryRecordPublished: false,
           retryable: true,
+          recovery: ["Retry the same start command after correcting the copy failure"],
         },
       },
     },

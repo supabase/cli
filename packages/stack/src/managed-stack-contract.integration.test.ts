@@ -77,6 +77,7 @@ describe("managed stack acceptance contract", () => {
     const readOnly = findScenario("identity.branch-copy-read-only-does-not-write");
     const noOp = findScenario("reclamation.delete-repeat-is-idempotent");
     const freshBootstrap = findScenario("bootstrap.absent-legacy-starts-fresh");
+    const failedBootstrap = findScenario("bootstrap.failed-copy-rolls-back");
     const repositoryContract = findScenario("api-boundary.repository-contract-is-storage-agnostic");
     const persistedRuntime = findScenario("runtime.persisted-runtime-reused-for-auto");
     const defaultOutputCli = findScenario("identity.non-git-folder-first-start-persists-identity");
@@ -93,6 +94,8 @@ describe("managed stack acceptance contract", () => {
       portConflict.expected.output.json === undefined ||
       freshBootstrap.expected.details === undefined ||
       freshBootstrap.expected.output.json === undefined ||
+      failedBootstrap.expected.error === undefined ||
+      failedBootstrap.expected.output.api === undefined ||
       jsonOutputCli.when.interface !== "cli" ||
       repositoryAction.interface !== "managed-api"
     ) {
@@ -154,6 +157,24 @@ describe("managed stack acceptance contract", () => {
           },
         ],
         expectedError: `${portConflict.id}: diagnostic code exact_port_occupied must use SCREAMING_SNAKE_CASE`,
+      },
+      {
+        fixtures: [
+          {
+            ...failedBootstrap,
+            expected: {
+              ...failedBootstrap.expected,
+              output: {
+                ...failedBootstrap.expected.output,
+                api: { outcome: "error" },
+              },
+            },
+          },
+        ],
+        expectedError: [
+          `${failedBootstrap.id}: API projection requires a code`,
+          `${failedBootstrap.id}: API recovery disagrees with the managed result`,
+        ],
       },
       {
         fixtures: [

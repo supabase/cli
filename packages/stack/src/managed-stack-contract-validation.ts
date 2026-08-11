@@ -432,6 +432,9 @@ export const validateManagedStackContractFixtures = (
     ) {
       errors.push(`${scenario.id}: JSON projection requires a code`);
     }
+    if (output.api !== undefined && diagnosticCode !== undefined && output.api.code === undefined) {
+      errors.push(`${scenario.id}: API projection requires a code`);
+    }
     for (const projection of [output.json, output.api]) {
       checkProjection(projection, "outcome", scenario.expected.outcome);
       if (diagnosticCode !== undefined) {
@@ -486,6 +489,16 @@ export const validateManagedStackContractFixtures = (
         jsonRecovery.some((step, index) => step !== expectedRecovery[index]))
     ) {
       errors.push(`${scenario.id}: JSON recovery disagrees with the managed result`);
+    }
+    const apiRecovery = output.api?.recovery;
+    if (
+      output.api !== undefined &&
+      expectedRecovery !== undefined &&
+      (!Array.isArray(apiRecovery) ||
+        apiRecovery.length !== expectedRecovery.length ||
+        apiRecovery.some((step, index) => step !== expectedRecovery[index]))
+    ) {
+      errors.push(`${scenario.id}: API recovery disagrees with the managed result`);
     }
   }
 
