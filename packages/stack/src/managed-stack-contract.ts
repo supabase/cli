@@ -447,6 +447,14 @@ const managedStackContractStringSetEquals = (
 
 const managedStackNamePattern = /^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
+const requiredBranchHistoryByScenarioId: Readonly<
+  Partial<Record<string, "commit" | "rebase" | "reset">>
+> = {
+  "identity.branch-commit-preserves-context": "commit",
+  "identity.branch-rebase-preserves-context": "rebase",
+  "identity.branch-reset-preserves-context": "reset",
+};
+
 const isManagedStartAction = (action: ManagedStackContractAction): boolean =>
   (action.interface === "cli" && action.argv[0] === "start") ||
   (action.interface === "managed-api" &&
@@ -526,7 +534,8 @@ export const validateManagedStackContractFixtures = (
             isManagedStackContractRecord(input.effectiveConfig))) ||
         (method === "resolveStack" &&
           typeof input.cwd === "string" &&
-          typeof input.stackName === "string") ||
+          typeof input.stackName === "string" &&
+          (input.stateRoot === undefined || typeof input.stateRoot === "string")) ||
         (method === "resolveStackNames" &&
           typeof input.cwd === "string" &&
           Array.isArray(input.stackNames)) ||
@@ -1045,6 +1054,15 @@ export const validateManagedStackContractFixtures = (
       ) {
         errors.push(
           `${scenario.id}: persisted automatic runtime requires matching availability evidence`,
+        );
+      }
+      if (
+        persistedRuntime === undefined &&
+        (dockerAvailability?.kind !== "runtime-availability" ||
+          nativeAvailability?.kind !== "runtime-availability")
+      ) {
+        errors.push(
+          `${scenario.id}: fresh automatic runtime selection requires Docker and native availability evidence`,
         );
       }
       const resolvedRuntime =
@@ -1917,12 +1935,14 @@ export const validateManagedStackContractFixtures = (
         );
       }
     }
+    const requiredBranchHistory = requiredBranchHistoryByScenarioId[scenario.id];
     const branchHistory = scenario.given.find((fact) => fact.kind === "branch-history");
-    if (branchHistory?.kind === "branch-history") {
+    const branchHistoryOperation = requiredBranchHistory ?? branchHistory?.operation;
+    if (branchHistoryOperation !== undefined) {
       const expectedTransitionOperation =
-        branchHistory.operation === "commit"
+        branchHistoryOperation === "commit"
           ? "branch-commit"
-          : branchHistory.operation === "rebase"
+          : branchHistoryOperation === "rebase"
             ? "branch-rebase"
             : "branch-reset";
       const historyTransition = scenario.given.find(
@@ -1930,9 +1950,16 @@ export const validateManagedStackContractFixtures = (
           fact.kind === "identity-transition" && fact.operation === expectedTransitionOperation,
       );
       const historyBranch = scenario.given.find(
-        (fact) => fact.kind === "branch" && fact.name === branchHistory.branch && fact.checkedOut,
+        (fact) =>
+          fact.kind === "branch" &&
+          branchHistory?.kind === "branch-history" &&
+          fact.name === branchHistory.branch &&
+          fact.checkedOut,
       );
       if (
+        branchHistory?.kind !== "branch-history" ||
+        (requiredBranchHistory !== undefined &&
+          branchHistory.operation !== requiredBranchHistory) ||
         historyTransition?.kind !== "identity-transition" ||
         historyTransition.from !== branchHistory.fromCommit ||
         historyTransition.to !== branchHistory.toCommit ||
@@ -2480,6 +2507,21 @@ export const validateManagedStackContractFixtures = (
         errors.push(
           `${scenario.id}: managed creation must declare legacy state absent or incompatible`,
         );
+      }
+      const legacyIsFullyAbsent =
+        legacyState?.kind === "legacy-state" &&
+        legacyState.lifecycle === "absent" &&
+        legacyState.database === "absent" &&
+        legacyState.storage === "absent" &&
+        legacyState.credentials === "absent";
+      if (
+        legacyIsFullyAbsent &&
+        ((scenario.expected.details?.legacy_state_mutated !== undefined &&
+          scenario.expected.details.legacy_state_mutated !== false) ||
+          (output.json?.legacy_state_mutated !== undefined &&
+            output.json.legacy_state_mutated !== false))
+      ) {
+        errors.push(`${scenario.id}: absent legacy bootstrap must not report mutation`);
       }
       if (
         legacyState?.kind === "legacy-state" &&
@@ -3061,9 +3103,11 @@ export const validateManagedStackContractFixtures = (
             output.json?.config_key === changedExactPort.key &&
             output.json?.running_port === changedExactPort.previousValue &&
             output.json?.requested_port === changedExactPort.value &&
+            output.json?.drift === true &&
             output.human?.fields.configKey === changedExactPort.key &&
             output.human?.fields.runningPort === String(changedExactPort.previousValue) &&
-            output.human?.fields.configuredPort === String(changedExactPort.value));
+            output.human?.fields.configuredPort === String(changedExactPort.value) &&
+            output.human?.fields.drift === "true");
         exactPortChangeMatches =
           previousAssignment?.kind === "port-assignment" &&
           previousAssignment.intent === "exact" &&
@@ -3232,6 +3276,29 @@ export const validateManagedStackContractFixtures = (
       const projectedIntents = scenario.expected.output.api?.intents;
       const requestedEntries = Object.entries(scenario.when.input.portIntents);
       const configPorts = scenario.given.filter((fact) => fact.kind === "config-port");
+      const actionStackId = scenario.when.input.stackId;
+      const createsManagedTarget =
+        typeof actionStackId === "string" &&
+        scenario.expected.writes.some(
+          (write) =>
+            write.target === "managed-state" &&
+            write.operation === "create" &&
+            write.id === actionStackId,
+        );
+      const requestsOmittedAutomaticPort = requestedEntries.some(
+        ([key, intent]) =>
+          intent === "automatic" &&
+          configPorts.some(
+            (fact) => fact.key === key && fact.intent === "automatic" && fact.source === "omitted",
+          ),
+      );
+      if (
+        createsManagedTarget &&
+        requestsOmittedAutomaticPort &&
+        (scenario.expected.details?.host_wide !== true || scenario.expected.details.sticky !== true)
+      ) {
+        errors.push(`${scenario.id}: fresh automatic ports must be host-wide sticky assignments`);
+      }
       if (isManagedStackContractRecord(projectedPorts)) {
         const allocatedPorts = new Set<number>();
         for (const port of Object.values(projectedPorts)) {
@@ -3737,9 +3804,14 @@ export const validateManagedStackContractFixtures = (
     const stableLocalCredentials = scenario.given.find(
       (fact) => fact.kind === "credential-state" && fact.source === "local-default",
     );
+    const projectsStableLocalCredentials =
+      scenario.expected.details?.generated_per_start !== undefined ||
+      output.json?.credentials_source === "local-default" ||
+      output.json?.credentials_stable !== undefined;
     if (
-      stableLocalCredentials?.kind === "credential-state" &&
-      (scenario.expected.details?.credential_values_id !== stableLocalCredentials.valuesId ||
+      (stableLocalCredentials?.kind === "credential-state" || projectsStableLocalCredentials) &&
+      (stableLocalCredentials?.kind !== "credential-state" ||
+        scenario.expected.details?.credential_values_id !== stableLocalCredentials.valuesId ||
         scenario.expected.details.generated_per_start !== false ||
         output.json?.credentials_source !== "local-default" ||
         output.json?.credentials_stable !== true)

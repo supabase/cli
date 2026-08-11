@@ -3656,6 +3656,117 @@ describe("managed stack acceptance contract", () => {
     expect(validateManagedStackContractFixtures([configuredCredentialUpdateLosesState])).toContain(
       `${configuredCredentialUpdateScenario.id}: credential change requires configured old and new values`,
     );
+
+    const branchHistoryLosesIntent = {
+      ...branchHistoryEvidenceScenario,
+      given: branchHistoryEvidenceScenario.given.filter((fact) => fact.kind !== "branch-history"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([branchHistoryLosesIntent])).toContain(
+      `${branchHistoryEvidenceScenario.id}: branch history preservation requires matching branch evidence`,
+    );
+
+    const freshAutomaticPortsScenario = findScenario(
+      "ports.new-target-allocates-and-persists-omitted-ports",
+    );
+    const freshAutomaticPortsHidePersistence = {
+      ...freshAutomaticPortsScenario,
+      expected: {
+        ...freshAutomaticPortsScenario.expected,
+        details: {
+          ...freshAutomaticPortsScenario.expected.details,
+          host_wide: false,
+          sticky: false,
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([freshAutomaticPortsHidePersistence])).toContain(
+      `${freshAutomaticPortsScenario.id}: fresh automatic ports must be host-wide sticky assignments`,
+    );
+
+    const absentLegacyScenario = findScenario("bootstrap.absent-legacy-starts-fresh");
+    const absentLegacyReportsMutation = {
+      ...absentLegacyScenario,
+      expected: {
+        ...absentLegacyScenario.expected,
+        details: { ...absentLegacyScenario.expected.details, legacy_state_mutated: true },
+        output: {
+          ...absentLegacyScenario.expected.output,
+          json: {
+            ...absentLegacyScenario.expected.output.json,
+            legacy_state_mutated: true,
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([absentLegacyReportsMutation])).toContain(
+      `${absentLegacyScenario.id}: absent legacy bootstrap must not report mutation`,
+    );
+
+    const stableDefaultCredentialsScenario = findScenario(
+      "credentials.omitted-values-use-stable-defaults",
+    );
+    const stableDefaultCredentialsLoseEvidence = {
+      ...stableDefaultCredentialsScenario,
+      given: stableDefaultCredentialsScenario.given.filter(
+        (fact) => fact.kind !== "credential-state",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([stableDefaultCredentialsLoseEvidence])).toContain(
+      `${stableDefaultCredentialsScenario.id}: omitted credentials must reuse stable local defaults`,
+    );
+
+    const dockerPrecedenceScenario = findScenario("runtime.auto-prefers-docker");
+    const dockerPrecedenceLosesNativeCandidate = {
+      ...dockerPrecedenceScenario,
+      given: dockerPrecedenceScenario.given.filter(
+        (fact) => fact.kind !== "runtime-availability" || fact.runtime !== "native",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([dockerPrecedenceLosesNativeCandidate])).toContain(
+      `${dockerPrecedenceScenario.id}: fresh automatic runtime selection requires Docker and native availability evidence`,
+    );
+
+    const resolveStackScenario = findScenario(
+      "identity.same-checkout-branch-and-name-reuses-stack",
+    );
+    if (resolveStackScenario.when.interface !== "managed-api") {
+      throw new Error("same-checkout reuse must use the managed API");
+    }
+    const resolveStackUsesMalformedStateRoot = {
+      ...resolveStackScenario,
+      when: {
+        ...resolveStackScenario.when,
+        input: { ...resolveStackScenario.when.input, stateRoot: 42 },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([resolveStackUsesMalformedStateRoot])).toContain(
+      `${resolveStackScenario.id}: managed action must use a declared public method`,
+    );
+
+    const runningPortDriftScenario = findScenario(
+      "ports.config-change-on-running-stack-reports-drift",
+    );
+    const runningPortDriftHuman = runningPortDriftScenario.expected.output.human;
+    if (runningPortDriftHuman === undefined) {
+      throw new Error("running port drift human output is required");
+    }
+    const runningPortDriftReportsFalse = {
+      ...runningPortDriftScenario,
+      expected: {
+        ...runningPortDriftScenario.expected,
+        output: {
+          ...runningPortDriftScenario.expected.output,
+          human: {
+            ...runningPortDriftHuman,
+            fields: { ...runningPortDriftHuman.fields, drift: "false" },
+          },
+          json: { ...runningPortDriftScenario.expected.output.json, drift: false },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([runningPortDriftReportsFalse])).toContain(
+      `${runningPortDriftScenario.id}: exact port change must bind previous assignment and requested value`,
+    );
   });
 
   it("covers the approved identity journeys through public commands and APIs", () => {

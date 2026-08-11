@@ -96,6 +96,7 @@ declare a stopped lifecycle, every managed creation must declare an absent targe
 must declare legacy state that is explicitly absent or incompatible, and every bootstrap copy must
 declare an absent target plus fully compatible stopped legacy state; managed state creation and
 registry publication must imply each other, as must managed-state deletion and registry tombstoning;
+projections of fully absent legacy state must remain non-mutating;
 reuse must begin from an existing target, runtime stop effects must begin from a running stack, and
 target-existence facts cannot contradict stack facts;
 running-source and credential-drift reports must begin from running sources, idempotent deletion
@@ -123,14 +124,17 @@ identify their actual target; managed port ownership requires an owner stack ID 
 every projection; exact-port conflicts must bind the same configured, occupied, and projected port;
 sticky reuse and collision must bind automatic config intent, assignment key, assignment port, and
 the selected target, while an exact-port change must bind the previous assignment and newly
-configured value, including the transition from a removed exact key to sticky automatic state; a
+configured value and affirmative drift projections, including the transition from a removed exact
+key to sticky automatic state; fresh omitted automatic allocations must report host-wide sticky
+state, and a
 sibling automatic port allocation fixture must use unique service ports through the public managed
 start action without reusing sibling-owned ports; concurrent creation must bind its action target,
 contender count, result cardinality, and single-publication outcome to the declared race; persisted-runtime preflight
 failures must identify a stopped stack; a successful bootstrap retry must follow an explicit failed
 attempt that was rolled back; failed-copy rollback requires explicit failure injection against an
 absent target and a compatible stopped legacy source; automatic runtime selection must reuse
-persisted state owned by the selected stack or follow Docker-then-qualified-native availability,
+persisted state owned by the selected stack or evaluate both fresh candidates before following
+Docker-then-qualified-native availability,
 and total automatic failure must project both declared unavailability reasons; successful explicit
 or configured runtime requests must match availability and every runtime/source projection, while
 runtime-drift reports must bind a running stack, its persisted runtime, the distinct configured
@@ -139,11 +143,13 @@ native preflight results must agree with the action platform and complete qualif
 service partitions;
 credential create, update, and copy operations must prove that global state contains references
 instead of plaintext, configured credential changes must bind configured state with distinct old and
-new references in both directions, and local,
+new references in both directions, stable-default projections require matching local-default state,
+and local,
 persisted, and copied-legacy credentials must retain their declared reference and source;
 data-preserving prune must begin with mutable data and delete metadata only for an orphaned record
 with matching orphaned stack state; tracked identity markers
-must remain untouched; caller-provided state roots must agree with isolated managed options and the
+must remain untouched; optional state-root inputs must be strings, and caller-provided state roots
+must agree with isolated managed options and the
 observed no-default-state boundary, and a CLI-projected managed status must begin from an active
 record, running stack, and matching persisted runtime; native qualification facts must partition the
 service matrix, use a declared platform, and match the platform passed to preflight; status
