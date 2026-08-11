@@ -7,6 +7,8 @@ Reference:
 - Old Go CLI help dump: [`go-cli-reference.md`](./go-cli-reference.md)
 - Current TS root command: [`../src/next/cli/root.ts`](../src/next/cli/root.ts)
 
+The legacy shell's port is largely complete (see [Legacy Shell Command Status](#legacy-shell-command-status) below). This tracker records what's still `wrapped`; it does not mean every legacy-shell change requires consulting the Go CLI — see [ADR 0016](../../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md) and [`AGENTS.md`](../AGENTS.md#legacy-port-status-and-go-cli-authority) for the scope of when Go is actually authoritative.
+
 ## Legend
 
 - `ported`: TS command exists and the flag/parameter surface is materially aligned with the old Go CLI
