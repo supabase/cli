@@ -20,6 +20,8 @@ import {
 } from "../../shared/cli/run.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
+import { parseDotEnv } from "./legacy-dotenv.ts";
+import { legacyCandidateDotenvFilenames } from "./legacy-project-environment.ts";
 
 const LATEST_RELEASE_URL = "https://api.github.com/repos/supabase/cli/releases/latest";
 const UPGRADE_GUIDE_URL =
@@ -125,13 +127,7 @@ function resolveNoticeBaseDir(
   cwd: string,
   args: ReadonlyArray<string>,
   env: Readonly<Record<string, string | undefined>>,
-  cleanShowHelp: boolean,
 ): string {
-  // `--help`/`--version` and a bare group's clean ShowHelp all skip cobra's
-  // `PersistentPreRunE`, so Go never runs `ChangeWorkDir` for them: the cache
-  // resolves against the bare cwd, with `--workdir`/`SUPABASE_WORKDIR` and
-  // the ancestor walk all ignored.
-  if (cleanShowHelp || hasRootHelpOrVersionFlag(args)) return cwd;
   // Viper: a set flag beats the env even when empty, and an empty effective
   // value falls through to the ancestor walk (`ChangeWorkDir`'s own rule).
   const flagValue = lastGlobalFlagValue(args, "--workdir");
@@ -146,6 +142,41 @@ function resolveNoticeBaseDir(
     if (parent === current) return cwd;
     current = parent;
   }
+}
+
+/**
+ * The project dotenv chain's `SUPABASE_NO_UPDATE_NOTIFIER`, or `undefined`.
+ * Go's `godotenv.Load` writes the chain into the real environment before
+ * `updateNotifierEnabled` reads it (`pkg/config/config.go:1220-1241`), so a
+ * project-level opt-out suppresses the notice whenever the command loaded its
+ * config. This hook cannot see whether the run's command did, so it honors the
+ * opt-out for every real command — the only divergence from Go is a
+ * suppressed notice for a user who opted out anyway. Same chain and
+ * precedence as `legacyResolveProjectEnvironmentValues`: `<base>/supabase`
+ * then `<base>`, first file to define the key wins, and a shell env that
+ * defines the key at all (godotenv never overrides) skips the walk entirely.
+ */
+async function projectDotenvNotifierOptOut(
+  base: string,
+  env: Readonly<Record<string, string | undefined>>,
+): Promise<string | undefined> {
+  if (env["SUPABASE_NO_UPDATE_NOTIFIER"] !== undefined) return undefined;
+  for (const dir of [join(base, "supabase"), base]) {
+    for (const filename of legacyCandidateDotenvFilenames(env["SUPABASE_ENV"] || "development")) {
+      const contents = await readFile(join(dir, filename), "utf8").catch(() => undefined);
+      if (contents === undefined) continue;
+      try {
+        const value = parseDotEnv(contents)["SUPABASE_NO_UPDATE_NOTIFIER"];
+        if (value !== undefined) return value;
+      } catch {
+        // A malformed file is only reachable here when the command never
+        // loaded config (a load would have failed the run before this hook),
+        // and then Go never reads the file either.
+        return undefined;
+      }
+    }
+  }
+  return undefined;
 }
 
 /** Absent (we may create it) or a real directory — never a symlink to follow. */
@@ -169,7 +200,16 @@ export interface LegacyUpgradeNoticeDeps {
 export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Promise<void> {
   if (legacyUpdateNotifierDisabled(deps.env["SUPABASE_NO_UPDATE_NOTIFIER"])) return;
 
-  const base = resolveNoticeBaseDir(deps.cwd, deps.args, deps.env, deps.cleanShowHelp === true);
+  // `--help`/`--version` and a bare group's clean ShowHelp all skip cobra's
+  // `PersistentPreRunE`, so Go never runs `ChangeWorkDir` for them — the cache
+  // resolves against the bare cwd, with `--workdir`/`SUPABASE_WORKDIR` and the
+  // ancestor walk all ignored — and never reaches a config load that could
+  // pull the opt-out from a project dotenv.
+  const builtin = deps.cleanShowHelp === true || hasRootHelpOrVersionFlag(deps.args);
+  const base = builtin ? deps.cwd : resolveNoticeBaseDir(deps.cwd, deps.args, deps.env);
+  if (!builtin && legacyUpdateNotifierDisabled(await projectDotenvNotifierOptOut(base, deps.env))) {
+    return;
+  }
   const supabaseDir = join(base, "supabase");
   const tempDir = join(supabaseDir, ".temp");
   const cacheFile = join(tempDir, "cli-latest");

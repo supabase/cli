@@ -290,6 +290,33 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("a project dotenv SUPABASE_NO_UPDATE_NOTIFIER opt-out suppresses the notice, like godotenv", async () => {
+    const ctx = setup({});
+    writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_NO_UPDATE_NOTIFIER=1\n");
+    await legacyRunUpgradeNotice(ctx.deps);
+    expect(ctx.fetchCalls).toBe(0);
+    expect(ctx.stderr).toBe("");
+    ctx.cleanup();
+  });
+
+  it("a shell env that defines the key beats the project dotenv, like godotenv's no-override", async () => {
+    // Defined-but-unparseable in the shell env: Go's os.Environ presence stops
+    // godotenv from overriding, and ParseBool("") keeps the notifier on.
+    const ctx = setup({ env: { SUPABASE_NO_UPDATE_NOTIFIER: "" } });
+    writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_NO_UPDATE_NOTIFIER=1\n");
+    await legacyRunUpgradeNotice(ctx.deps);
+    expect(ctx.stderr).toContain("A new version of Supabase CLI is available");
+    ctx.cleanup();
+  });
+
+  it("--help ignores the project dotenv opt-out — Go never loads config for the built-ins", async () => {
+    const ctx = setup({ args: ["--help"] });
+    writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_NO_UPDATE_NOTIFIER=1\n");
+    await legacyRunUpgradeNotice(ctx.deps);
+    expect(ctx.stderr).toContain("A new version of Supabase CLI is available");
+    ctx.cleanup();
+  });
+
   it("resolves --help and --version against the bare cwd, ignoring --workdir, like Go", async () => {
     // Go serves the built-ins without `ChangeWorkDir`, so the flagged project
     // must not gain a cache entry; the caller's cwd (no supabase/) writes none.
