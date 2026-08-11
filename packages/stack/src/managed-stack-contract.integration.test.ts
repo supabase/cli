@@ -17,6 +17,7 @@ import {
   type ManagedStackContractScenario,
   validateManagedStackContractFixtures,
 } from "./testing.ts";
+import { shortTempPrefixRoot } from "./paths.ts";
 import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
 
 describe("managed stack acceptance contract", () => {
@@ -38,18 +39,22 @@ describe("managed stack acceptance contract", () => {
     const reuse = findScenario("identity.return-to-branch-reuses-stack");
     const portConflict = findScenario("ports.explicit-port-conflict-fails");
     const readOnly = findScenario("identity.branch-copy-read-only-does-not-write");
+    const noOp = findScenario("reclamation.delete-repeat-is-idempotent");
+    const freshBootstrap = findScenario("bootstrap.absent-legacy-starts-fresh");
     if (
       reuse.expected.selection === undefined ||
       reuse.expected.output.json === undefined ||
       portConflict.expected.error === undefined ||
-      portConflict.expected.output.json === undefined
+      portConflict.expected.output.json === undefined ||
+      freshBootstrap.expected.details === undefined ||
+      freshBootstrap.expected.output.json === undefined
     ) {
       throw new Error("lint examples require selected and structured fixture outputs");
     }
 
     const cases: ReadonlyArray<{
       readonly fixtures: ReadonlyArray<ManagedStackContractScenario>;
-      readonly expectedError: string;
+      readonly expectedError: string | ReadonlyArray<string>;
     }> = [
       {
         fixtures: [
@@ -149,12 +154,84 @@ describe("managed stack acceptance contract", () => {
         ],
         expectedError: `${reuse.id}: runtime effect stack ID is required`,
       },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            given: reuse.given.map((fact) =>
+              fact.kind === "checkout" ? { ...fact, projectId: "" } : fact,
+            ),
+            expected: {
+              ...reuse.expected,
+              selection: { ...reuse.expected.selection, projectId: "" },
+              output: {
+                ...reuse.expected.output,
+                json: { ...reuse.expected.output.json, project_id: "" },
+              },
+            },
+          },
+        ],
+        expectedError: `${reuse.id}: declared ID is required`,
+      },
+      {
+        fixtures: [
+          {
+            ...freshBootstrap,
+            expected: {
+              ...freshBootstrap.expected,
+              output: {
+                ...freshBootstrap.expected.output,
+                json: {
+                  ...freshBootstrap.expected.output.json,
+                  legacy_state_mutated: true,
+                },
+              },
+            },
+          },
+        ],
+        expectedError: `${freshBootstrap.id}: projected legacy_state_mutated disagrees with the managed result`,
+      },
+      {
+        fixtures: [
+          {
+            ...portConflict,
+            expected: {
+              ...portConflict.expected,
+              error: {
+                ...portConflict.expected.error,
+                message: " ",
+                recovery: [" "],
+              },
+            },
+          },
+        ],
+        expectedError: [
+          `${portConflict.id}: diagnostic message is required`,
+          `${portConflict.id}: diagnostic recovery steps must not be blank`,
+        ],
+      },
+      {
+        fixtures: [
+          {
+            ...noOp,
+            expected: {
+              ...noOp.expected,
+              writes: [{ target: "registry", operation: "update", id: "stack-orphan" }],
+            },
+          },
+        ],
+        expectedError: `${noOp.id}: no-op outcome must not mutate state`,
+      },
     ];
 
     for (const testCase of cases) {
-      expect(validateManagedStackContractFixtures(testCase.fixtures)).toContain(
-        testCase.expectedError,
-      );
+      const expectedErrors =
+        typeof testCase.expectedError === "string"
+          ? [testCase.expectedError]
+          : testCase.expectedError;
+      for (const expectedError of expectedErrors) {
+        expect(validateManagedStackContractFixtures(testCase.fixtures)).toContain(expectedError);
+      }
     }
   });
 
@@ -186,6 +263,8 @@ describe("managed stack acceptance contract", () => {
         "identity.inaccessible-previous-path-fails",
         "identity.invalid-stack-name-leading-hyphen-fails",
         "identity.invalid-stack-name-repeated-dot-fails",
+        "identity.invalid-stack-name-too-long-fails",
+        "identity.invalid-stack-name-trailing-hyphen-fails",
         "identity.invalid-stack-name-uppercase-underscore-fails",
         "identity.linked-worktrees-share-project-not-checkout",
         "identity.manual-ref-replacement-orphans-context",
@@ -286,6 +365,14 @@ describe("managed stack acceptance contract", () => {
       {
         action: ["start", "--experimental", "--stack", "review..two"],
         names: ["review..two"],
+      },
+      {
+        action: ["start", "--experimental", "--stack", "review-"],
+        names: ["review-"],
+      },
+      {
+        action: ["start", "--experimental", "--stack", "a".repeat(64)],
+        names: ["a".repeat(64)],
       },
     ]);
   });
@@ -475,6 +562,61 @@ describe("managed stack acceptance contract", () => {
       expect(readdirSync(join(projectDir, ".supabase")).sort()).toEqual(["identity.json"]);
     } finally {
       rmSync(testRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps explicitly supplied state roots while disposing each omitted root independently", async () => {
+    const explicitRootKinds: ReadonlyArray<"runtime" | "stack"> = ["stack", "runtime"];
+
+    for (const explicitRootKind of explicitRootKinds) {
+      const testRoot = mkdtempSync(join(tmpdir(), "supabase-partial-root-contract-"));
+      const projectDir = join(testRoot, "project");
+      const cacheRoot = join(testRoot, "cache");
+      const explicitRoot = join(testRoot, `${explicitRootKind}-root`);
+      const sentinel = join(explicitRoot, "caller-owned");
+      const generatedPrefix = explicitRootKind === "stack" ? "sb-run-" : "sb-stack-";
+      const temporaryRoots = (): ReadonlySet<string> =>
+        new Set(
+          readdirSync(shortTempPrefixRoot())
+            .filter((name) => name.startsWith(generatedPrefix))
+            .map((name) => join(shortTempPrefixRoot(), name)),
+        );
+
+      mkdirSync(projectDir, { recursive: true });
+      mkdirSync(cacheRoot, { recursive: true });
+      mkdirSync(explicitRoot, { recursive: true });
+      writeFileSync(sentinel, "caller-owned\n");
+
+      try {
+        const before = temporaryRoots();
+        const explicitConfig =
+          explicitRootKind === "stack"
+            ? { stackRoot: explicitRoot }
+            : { runtimeRoot: explicitRoot };
+        const stack = await createStack({
+          cacheRoot,
+          projectDir,
+          startupMode: "lazy",
+          ...explicitConfig,
+        });
+        let stableCandidates: ReadonlyArray<string> = [];
+
+        try {
+          const candidates = [...temporaryRoots()].filter((root) => !before.has(root));
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+          stableCandidates = candidates.filter((root) => existsSync(root));
+          expect(stableCandidates.length).toBeGreaterThanOrEqual(1);
+        } finally {
+          await stack.dispose();
+        }
+
+        const removedRoots = stableCandidates.filter((root) => !existsSync(root));
+        expect(removedRoots).toHaveLength(1);
+        expect(readFileSync(sentinel, "utf8")).toBe("caller-owned\n");
+        expect(existsSync(explicitRoot)).toBe(true);
+      } finally {
+        rmSync(testRoot, { recursive: true, force: true });
+      }
     }
   });
 

@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import type {
   ManagedStackContractJson,
   ManagedStackContractScenario,
@@ -61,17 +62,29 @@ export const validateManagedStackContractFixtures = (
     }
 
     for (const diagnostic of [scenario.expected.error, scenario.expected.warning]) {
-      if (diagnostic !== undefined && !/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/.test(diagnostic.code)) {
+      if (diagnostic === undefined) {
+        continue;
+      }
+      if (!/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/.test(diagnostic.code)) {
         errors.push(
           `${scenario.id}: diagnostic code ${diagnostic.code} must use SCREAMING_SNAKE_CASE`,
         );
+      }
+      if (diagnostic.message.trim().length === 0) {
+        errors.push(`${scenario.id}: diagnostic message is required`);
+      }
+      if (diagnostic.recovery.some((step) => step.trim().length === 0)) {
+        errors.push(`${scenario.id}: diagnostic recovery steps must not be blank`);
       }
     }
 
     const hasMutation =
       scenario.expected.writes.length > 0 || scenario.expected.runtimeEffects.length > 0;
-    if (scenario.expected.outcome === "report" && hasMutation) {
-      errors.push(`${scenario.id}: report outcome must not mutate state`);
+    if (
+      (scenario.expected.outcome === "report" || scenario.expected.outcome === "no-op") &&
+      hasMutation
+    ) {
+      errors.push(`${scenario.id}: ${scenario.expected.outcome} outcome must not mutate state`);
     }
     if (scenario.expected.outcome === "error" && hasMutation) {
       const isBootstrapRollback = scenario.expected.error?.code === "LEGACY_BOOTSTRAP_FAILED";
@@ -85,53 +98,60 @@ export const validateManagedStackContractFixtures = (
     }
 
     const declaredIds = new Set<string>();
+    const declareId = (id: string): void => {
+      if (id.trim().length === 0) {
+        errors.push(`${scenario.id}: declared ID is required`);
+      } else {
+        declaredIds.add(id);
+      }
+    };
     for (const fact of scenario.given) {
       switch (fact.kind) {
         case "branch":
-          declaredIds.add(fact.contextId);
+          declareId(fact.contextId);
           break;
         case "checkout":
-          declaredIds.add(fact.projectId);
-          declaredIds.add(fact.checkoutId);
+          declareId(fact.projectId);
+          declareId(fact.checkoutId);
           break;
         case "credential-state":
-          declaredIds.add(fact.valuesId);
+          declareId(fact.valuesId);
           if (fact.previousValuesId !== undefined) {
-            declaredIds.add(fact.previousValuesId);
+            declareId(fact.previousValuesId);
           }
           break;
         case "direct-stack-state":
-          declaredIds.add(fact.handle);
+          declareId(fact.handle);
           for (const root of fact.temporaryRoots) {
-            declaredIds.add(root.stateId);
+            declareId(root.stateId);
           }
           break;
         case "identity-claim":
-          declaredIds.add(fact.id);
+          declareId(fact.id);
           break;
         case "identity-marker":
-          declaredIds.add(fact.markerId);
-          declaredIds.add(fact.projectId);
-          declaredIds.add(fact.checkoutId);
-          declaredIds.add(fact.contextId);
+          declareId(fact.markerId);
+          declareId(fact.projectId);
+          declareId(fact.checkoutId);
+          declareId(fact.contextId);
           break;
         case "managed-record":
         case "managed-target":
         case "operation-result":
         case "persisted-runtime":
-          declaredIds.add(fact.stackId);
+          declareId(fact.stackId);
           break;
         case "occupied-port":
           if (fact.ownerId !== undefined) {
-            declaredIds.add(fact.ownerId);
+            declareId(fact.ownerId);
           }
           break;
         case "port-assignment":
-          declaredIds.add(fact.stackId);
+          declareId(fact.stackId);
           break;
         case "stack":
-          declaredIds.add(fact.contextId);
-          declaredIds.add(fact.stackId);
+          declareId(fact.contextId);
+          declareId(fact.stackId);
           break;
         default:
           break;
@@ -148,13 +168,13 @@ export const validateManagedStackContractFixtures = (
         write.operation === "create" ||
         write.operation === "publish"
       ) {
-        declaredIds.add(write.id);
+        declareId(write.id);
       }
 
       if (write.target === "identity-marker") {
-        declaredIds.add(write.projectId);
-        declaredIds.add(write.checkoutId);
-        declaredIds.add(write.contextId);
+        declareId(write.projectId);
+        declareId(write.checkoutId);
+        declareId(write.contextId);
       }
     }
     for (const write of scenario.expected.writes) {
@@ -246,7 +266,7 @@ export const validateManagedStackContractFixtures = (
       key: string,
       expected: ManagedStackContractJson,
     ): void => {
-      if (projection?.[key] !== undefined && projection[key] !== expected) {
+      if (projection?.[key] !== undefined && !isDeepStrictEqual(projection[key], expected)) {
         errors.push(`${scenario.id}: projected ${key} disagrees with the managed result`);
       }
     };
@@ -266,6 +286,16 @@ export const validateManagedStackContractFixtures = (
       checkProjection(projection, "outcome", scenario.expected.outcome);
       if (diagnosticCode !== undefined) {
         checkProjection(projection, "code", diagnosticCode);
+      }
+    }
+    const jsonShape = (value: ManagedStackContractJson): string =>
+      value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
+    for (const [key, value] of Object.entries(scenario.expected.details ?? {})) {
+      for (const projection of [output.json, output.api]) {
+        const projectedValue = projection?.[key];
+        if (projectedValue !== undefined && jsonShape(projectedValue) === jsonShape(value)) {
+          checkProjection(projection, key, value);
+        }
       }
     }
 

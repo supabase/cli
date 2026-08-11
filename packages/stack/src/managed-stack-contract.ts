@@ -411,7 +411,12 @@ const branchHistoryFixture = (
 });
 
 const invalidStackNameFixture = (
-  label: "leading-hyphen" | "repeated-dot" | "uppercase-underscore",
+  label:
+    | "leading-hyphen"
+    | "repeated-dot"
+    | "too-long"
+    | "trailing-hyphen"
+    | "uppercase-underscore",
   stackName: string,
 ): ManagedStackContractScenario => ({
   id: `identity.invalid-stack-name-${label}-fails`,
@@ -1524,6 +1529,8 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
   invalidStackNameFixture("uppercase-underscore", "Feature_A"),
   invalidStackNameFixture("leading-hyphen", "-review"),
   invalidStackNameFixture("repeated-dot", "review..two"),
+  invalidStackNameFixture("trailing-hyphen", "review-"),
+  invalidStackNameFixture("too-long", "a".repeat(64)),
   {
     id: "identity.valid-stack-names-resolve-deterministically",
     title: "Default and lowercase DNS-label stack names resolve deterministically",
