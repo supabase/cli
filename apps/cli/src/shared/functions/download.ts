@@ -207,14 +207,18 @@ function validateSlug(slug: string): Effect.Effect<void, InvalidFunctionSlugErro
  * name>` argument), which fails with a plain `InvalidFunctionSlugError` and no
  * "failed to download function" prefix or suggestion.
  */
-function validateRemoteSlug(slug: string): Effect.Effect<void, Error> {
+function validateRemoteSlug(
+  slug: string,
+  styleAqua: (text: string) => string = (text) => text,
+): Effect.Effect<void, Error> {
   if (validateFunctionSlugMessage(slug) === undefined) {
     return Effect.void;
   }
 
   return Effect.fail(
     Object.assign(new Error(`failed to download function ${slug}: ${invalidFunctionSlugDetail}`), {
-      suggestion: `The Supabase API returned an unexpected function slug (${slug}). Retry the command, and if this keeps happening, verify your network connection is not being intercepted before contacting Supabase support.`,
+      // Go: `utils.Aqua(f.Slug)` (`download.go:185`).
+      suggestion: `The Supabase API returned an unexpected function slug (${styleAqua(slug)}). Retry the command, and if this keeps happening, verify your network connection is not being intercepted before contacting Supabase support.`,
     }),
   );
 }
@@ -892,10 +896,12 @@ function suggestLegacyBundle(
   return `\nIf your function is deployed using CLI < 1.120.0, trying running ${styleAqua(`supabase functions download --legacy-bundle ${slug}`)} instead.`;
 }
 
-function suggestDenoV2(): string {
+function suggestDenoV2(styleEmphasis: (text: string) => string = (text) => text): string {
   // Go: `suggestDenoV2` (`download.go:306-312`), verbatim including its
-  // trailing newline.
-  return "Please use deno v2 in supabase/config.toml to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n";
+  // trailing newline. Go bolds `utils.ConfigPath` via `utils.Bold` — the
+  // same hook `styleEmphasis` already covers for the slug above
+  // (`downloadOne`, `download.go:219`).
+  return `Please use deno v2 in ${styleEmphasis("supabase/config.toml")} to download this Function:\n\n[edge_runtime]\ndeno_version = 2\n`;
 }
 
 /**
@@ -1146,7 +1152,7 @@ const downloadWithDockerUnbundle = Effect.fnUntraced(function* (
           .split(/\r?\n/)
           .some((line) => line.trim().toLowerCase() === "invalid eszip v2");
       const suggestion =
-        (invalidEszipV2 ? suggestDenoV2() : "") + suggestLegacyBundle(slug, styleAqua);
+        (invalidEszipV2 ? suggestDenoV2(styleEmphasis) : "") + suggestLegacyBundle(slug, styleAqua);
       return yield* Effect.fail(
         Object.assign(new Error(`error running container: exit ${result.exitCode}`), {
           suggestion,
@@ -1392,7 +1398,7 @@ export function downloadFunctions<ResolveError, ResolveRequirements, ProxyError,
       // this threat model treats as untrusted (a malicious/compromised
       // response, or a MITM).
       if (Option.isNone(flags.functionName)) {
-        yield* validateRemoteSlug(slug);
+        yield* validateRemoteSlug(slug, styleAqua);
       }
       if (pulledEdgeRuntimeImage !== undefined) {
         downloaded.push(
