@@ -2,7 +2,7 @@ import { Data, Effect, type FileSystem, type Path } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
 import { legacyBold } from "./legacy-colors.ts";
-import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
+import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import {
   actionability,
   type CliErrorActionabilityDeclaration,
@@ -24,16 +24,19 @@ import { legacySplitSqlTokens } from "./legacy-sql-split.ts";
  * Used by `migration up` and `migration down`'s migrate-and-seed step. The
  * declarative sync handler maps its own error type instead.
  *
- * `suggestion` carries Go's `utils.CmdSuggestion` when a caller sets one — currently
- * only `legacyApplySchemaFiles`'s "See schema file: <fp>" (`apply.go:57`); every other
- * caller leaves it unset, matching Go leaving `CmdSuggestion` empty on those paths.
+ * `suggestion` carries caller remediation. This includes Go's `utils.CmdSuggestion`
+ * for `legacyApplySchemaFiles` and the local-only pg_net/webhooks remediation added
+ * when start/reset replay has enough structured context to identify that failure.
  */
 export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigrationApplyError")<{
   readonly message: string;
   readonly suggestion?: string;
+  readonly reason?: "local_pg_net_unavailable";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return this.reason === "local_pg_net_unavailable"
+      ? actionability.invalidConfig
+      : actionability.dbFinding;
   }
 }
 
@@ -481,7 +484,24 @@ export const legacyFormatExecBatchError = (
     msg.push("      Learn more: supabase migration new --help");
   }
   msg.push(`At statement: ${index}`, marked);
-  return new Error(`${legacyErrorMessage(e)}\n${msg.join("\n")}`);
+  return formattedExecBatchFailure(`${legacyErrorMessage(e)}\n${msg.join("\n")}`, e);
+};
+
+/** Retains the server ErrorResponse after adding Go-compatible statement context. */
+const FormattedExecBatchDbErrorId: unique symbol = Symbol("FormattedExecBatchDbError");
+type FormattedExecBatchFailure = Error & {
+  readonly [FormattedExecBatchDbErrorId]: LegacyDbExecError;
+};
+const formattedExecBatchFailure = (
+  message: string,
+  dbError: LegacyDbExecError,
+): FormattedExecBatchFailure =>
+  Object.assign(new Error(message), { [FormattedExecBatchDbErrorId]: dbError });
+
+const formattedExecBatchDbError = (error: unknown): LegacyDbExecError | undefined => {
+  if (typeof error !== "object" || error === null) return undefined;
+  const dbError: unknown = Reflect.get(error, FormattedExecBatchDbErrorId);
+  return dbError instanceof LegacyDbExecError ? dbError : undefined;
 };
 
 /**
@@ -513,7 +533,7 @@ const execMigrationBatch = <E>(
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationPath: string,
-  mapError: (message: string, phase: "read" | "exec") => E,
+  mapError: (message: string, phase: "read" | "exec", dbError?: LegacyDbExecError) => E,
   forceNoVersion: boolean,
   displayPath: string = migrationPath,
   projectEnv: Readonly<Record<string, string>> = {},
@@ -694,7 +714,11 @@ const execMigrationBatch = <E>(
         pending = [...pending, { kind: "version" }];
       }
       yield* flushBatch;
-    }).pipe(Effect.mapError((error) => mapError(legacyErrorMessage(error), "exec")));
+    }).pipe(
+      Effect.mapError((error) =>
+        mapError(legacyErrorMessage(error), "exec", formattedExecBatchDbError(error)),
+      ),
+    );
   });
 
 /**
@@ -719,20 +743,29 @@ const resetConnectionState = <E>(
  * the history table, then run the file's statements + the history insert.
  *
  * `mapError` lets the caller tag the failure (e.g. `LegacyPgDeltaDeclarativeApplyError`).
+ * Statement failures also expose their structured PostgreSQL error so local replay
+ * can classify precise SQLSTATE/object combinations without parsing formatted context.
  */
 export const legacyApplyMigrationFile = <E>(
   session: LegacyDbSession,
   fs: FileSystem.FileSystem,
   path: Path.Path,
   migrationPath: string,
-  mapError: (message: string) => E,
+  mapError: (message: string, dbError?: LegacyDbExecError) => E,
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
     yield* resetConnectionState(session, mapError);
     yield* legacyCreateMigrationTable(session).pipe(
       Effect.mapError((e) => mapError(legacyErrorMessage(e))),
     );
-    yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
+    yield* execMigrationBatch(
+      session,
+      fs,
+      path,
+      migrationPath,
+      (message, _phase, dbError) => mapError(message, dbError),
+      false,
+    );
   });
 
 /**

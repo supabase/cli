@@ -915,20 +915,19 @@ export const legacyApplyApiPrivileges = Effect.fnUntraced(function* (
   );
 });
 
-const legacyApplyDatabaseWebhooks = Effect.fnUntraced(function* (
-  input: LegacySetupDatabaseInput,
+/** Installs pg_net for the local Database Webhooks feature when enabled. */
+export const legacyApplyDatabaseWebhooks = Effect.fnUntraced(function* (
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
   tmpDir: string,
-  options: LegacySetupDatabaseOptions,
+  enabled: boolean,
 ) {
-  const activateUserExtensions = options.activateUserExtensions ?? true;
-  const legacyPgNetBaseline = options.legacyPgNetBaseline ?? false;
-  const userEnabled =
-    activateUserExtensions && input.config.experimental.webhooks?.enabled === true;
-  if (!legacyPgNetBaseline && !userEnabled) return;
+  if (!enabled) return;
   yield* legacyExecSqlConstant(
-    input.session,
-    input.fs,
-    input.path,
+    session,
+    fs,
+    path,
     tmpDir,
     "enable-database-webhooks.sql",
     LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL,
@@ -1021,7 +1020,17 @@ export const legacySetupDatabase = (
             ),
           );
         yield* legacyStartInitSchema(spawner, input, tmpDir);
-        yield* legacyApplyDatabaseWebhooks(input, tmpDir, options);
+        const activateUserExtensions = options.activateUserExtensions ?? true;
+        const legacyPgNetBaseline = options.legacyPgNetBaseline ?? false;
+        const userEnabled =
+          activateUserExtensions && input.config.experimental.webhooks?.enabled === true;
+        yield* legacyApplyDatabaseWebhooks(
+          session,
+          fs,
+          path,
+          tmpDir,
+          legacyPgNetBaseline || userEnabled,
+        );
         yield* legacyApplyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),
     );
@@ -1135,6 +1144,7 @@ export const legacyStartSetupLocalDatabase = (
       experimental: input.experimental,
       pgDeltaEnabled: toml.pgDelta.enabled,
       schemaPaths: toml.schemaPaths,
+      localDatabaseWebhooksEnabled: toml.webhooksEnabled,
     });
 
     const output = yield* Output;

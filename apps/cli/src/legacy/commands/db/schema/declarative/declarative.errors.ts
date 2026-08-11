@@ -108,7 +108,7 @@ export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
   readonly message: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    return actionability.dbFinding;
+    return actionability.invalidConfig;
   }
 }
 

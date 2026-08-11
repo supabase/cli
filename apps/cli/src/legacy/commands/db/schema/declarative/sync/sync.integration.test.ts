@@ -1006,20 +1006,42 @@ describe("legacy db schema declarative sync integration", () => {
     },
   );
 
-  it.effect("adds detected legacy extension declarations and re-plans before writing", () => {
+  it.effect("directs pg_net users to enable Database Webhooks before writing", () => {
     seedDeclarative(tmp.current);
     const s = setup(tmp.current, {
       engineImplementation: "next",
       stdinIsTty: true,
       diffSql: 'DROP EXTENSION "pg_net";\n',
-      replannedDiffSql: "",
       removals: { extensions: ["pg_net"], extensionIntents: [] },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
+        Effect.exit,
+      );
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeCompatibilityError",
+        message: expect.stringContaining("[experimental.webhooks]\nenabled = true"),
+      });
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
+      expect(s.out.promptSelectCalls).toHaveLength(0);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("keeps explicit extension repair for non-config-managed extensions", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      diffSql: 'DROP EXTENSION "pgcrypto";\n',
+      replannedDiffSql: "",
+      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
       promptSelectResponses: ["repair"],
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(readFileSync(join(tmp.current, "supabase", "database", "extension.sql"), "utf8")).toBe(
-        'CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";\n',
+        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";\n',
       );
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
       expect(stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""))).toContain(

@@ -52,7 +52,7 @@
  *    ONLY, deliberately WITHOUT globals.sql — see `legacyInitSchema14`'s
  *    own doc comment for why this is NOT the same as `db start`'s PG<=14 path)
  *    + `ApplyApiPrivileges` (the exact same exported function `SetupDatabase`
- *    also calls).
+ *    also calls), then pg_net activation when Database Webhooks is enabled.
  * 3. `RestartDatabase` (`reset.go:214-225`) — `Restarting containers...\n`
  *    FIRST, then a REAL `docker restart` of the `db` container itself (NOT
  *    tolerant of "not found" — pg_cron must restart after
@@ -120,6 +120,7 @@ import {
   legacyRunFreshDbSetup,
   legacyResolveResetSeedConfig,
   legacyApplyApiPrivileges,
+  legacyApplyDatabaseWebhooks,
   legacyInitSchema14,
   LegacyDbSetupError,
   type LegacyFreshDbSetupInput,
@@ -481,6 +482,7 @@ const legacyRecreateLocalDatabase14 = <E>(
           tmpDir,
           toml.baseline.apiAutoExposeNewTables,
         );
+        yield* legacyApplyDatabaseWebhooks(session, fs, path, tmpDir, toml.webhooksEnabled);
       }),
     );
 
@@ -504,6 +506,7 @@ const legacyRecreateLocalDatabase14 = <E>(
           experimental: setup.experimental,
           pgDeltaEnabled: toml.pgDelta.enabled,
           schemaPaths: toml.schemaPaths,
+          localDatabaseWebhooksEnabled: toml.webhooksEnabled,
         });
       }),
     );

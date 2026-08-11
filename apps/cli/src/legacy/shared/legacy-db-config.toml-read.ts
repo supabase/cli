@@ -89,6 +89,8 @@ export interface LegacyDbTomlValues {
    * (`apps/cli-go/pkg/config/config.go:228-234`).
    */
   readonly pgDelta: LegacyPgDeltaTomlConfig;
+  /** Effective `[experimental.webhooks].enabled`; false when the section is absent. */
+  readonly webhooksEnabled: boolean;
   /**
    * The subset of config that shapes the shadow-database platform baseline and
    * therefore the declarative catalog-cache key (Go's `setupInputsToken`,
@@ -2748,6 +2750,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       formatOptions,
       npmVersion: pgDeltaNpmVersion,
     },
+    webhooksEnabled,
     baseline: {
       authEnabled,
       storageEnabled: yield* resolveBoolOrFail(

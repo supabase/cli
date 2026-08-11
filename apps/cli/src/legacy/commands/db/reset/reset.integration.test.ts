@@ -1115,6 +1115,27 @@ describe("legacy db reset", () => {
       });
     });
 
+    it.live("installs pg_net before replay when Database Webhooks is enabled (PG14)", () => {
+      const { layer, conn } = setup(tmp.current, {
+        toml: `${PG14_TOML}[experimental.webhooks]\nenabled = true\n`,
+        files: migrationFile(
+          "20240101000000",
+          "select net.http_post(url := 'https://example.com');",
+        ),
+        args: ["db", "reset", "--local"],
+        isLocal: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        const pgNetIndex = conn.execs.findIndex((sql) =>
+          sql.includes("create extension if not exists pg_net schema extensions"),
+        );
+        const migrationIndex = conn.execs.findIndex((sql) => sql.includes("https://example.com"));
+        expect(pgNetIndex).toBeGreaterThanOrEqual(0);
+        expect(migrationIndex).toBeGreaterThan(pgNetIndex);
+      });
+    });
+
     it.live(
       "passes the resolved --version cutoff through to the final MigrateAndSeed step (PG14)",
       () => {

@@ -7,6 +7,7 @@ import { Effect, Exit, FileSystem, Layer, Path } from "effect";
 
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
 import { mockOutput } from "../../../tests/helpers/mocks.ts";
+import { actionability, ErrorActionabilityId } from "../../shared/telemetry/error-actionability.ts";
 import { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import { LegacyMigrationApplyError } from "./legacy-migration-apply.ts";
@@ -14,6 +15,10 @@ import {
   legacyMigrateAndSeed,
   type LegacyMigrateAndSeedConfig,
 } from "./legacy-migrate-and-seed.ts";
+import {
+  LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+  legacyIsPgNetUnavailableError,
+} from "./legacy-pg-net-guidance.ts";
 
 // Root bypasses POSIX permission bits, so chmod 000 wouldn't block readdir() there.
 const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
@@ -50,6 +55,23 @@ function failingExecSession(): { session: LegacyDbSession; execs: Array<string> 
     queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
   };
   return { session, execs };
+}
+
+function pgNetFailureSession(error: LegacyDbExecError): LegacyDbSession {
+  return {
+    exec: (sql) => (sql.includes("net.http_post") ? Effect.fail(error) : Effect.void),
+    query: () => Effect.succeed([]),
+    extensionExists: () => Effect.succeed(false),
+    copyToCsv: () => Effect.succeed(new Uint8Array()),
+    queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+  };
+}
+
+function assertMigrationApplyError(error: unknown): asserts error is LegacyMigrationApplyError {
+  expect(error).toBeInstanceOf(LegacyMigrationApplyError);
+  if (!(error instanceof LegacyMigrationApplyError)) {
+    throw new Error("expected LegacyMigrationApplyError");
+  }
 }
 
 function makeWorkdir(): string {
@@ -431,4 +453,124 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
       );
     },
   );
+});
+
+describe("legacyMigrateAndSeed local pg_net remediation", () => {
+  const missingNetSchema = new LegacyDbExecError({
+    message: 'ERROR: schema "net" does not exist (SQLSTATE 3F000)',
+    code: "3F000",
+  });
+
+  const setupMigration = (workdir: string) =>
+    writeFile(
+      workdir,
+      "supabase/migrations/20240101000000_webhook.sql",
+      "select net.http_post(url := 'https://example.com');",
+    );
+
+  it("classifies only pg_net schema/function errors with their matching SQLSTATE", () => {
+    expect(legacyIsPgNetUnavailableError(missingNetSchema)).toBe(true);
+    expect(
+      legacyIsPgNetUnavailableError({
+        message: "ERROR: function net.http_post(unknown, jsonb) does not exist (SQLSTATE 42883)",
+        code: "42883",
+      }),
+    ).toBe(true);
+    expect(
+      legacyIsPgNetUnavailableError({
+        message: "ERROR: function public.http_post(unknown) does not exist (SQLSTATE 42883)",
+        code: "42883",
+      }),
+    ).toBe(false);
+  });
+
+  it.effect("suggests enabling Database Webhooks when local replay cannot find pg_net", () => {
+    const workdir = makeWorkdir();
+    setupMigration(workdir);
+    const out = mockOutput();
+    return run(
+      workdir,
+      "",
+      { ...baseConfig, localDatabaseWebhooksEnabled: false },
+      pgNetFailureSession(missingNetSchema),
+      out,
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          assertMigrationApplyError(error);
+          expect(error.suggestion).toBe(LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION);
+          expect(error[ErrorActionabilityId]).toEqual(actionability.invalidConfig);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not add the local hint when webhooks are enabled", () => {
+    const workdir = makeWorkdir();
+    setupMigration(workdir);
+    const out = mockOutput();
+    return run(
+      workdir,
+      "",
+      { ...baseConfig, localDatabaseWebhooksEnabled: true },
+      pgNetFailureSession(missingNetSchema),
+      out,
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          assertMigrationApplyError(error);
+          expect(error.suggestion).toBeUndefined();
+          expect(error[ErrorActionabilityId]).toEqual(actionability.dbFinding);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not add the local hint for migration commands without local context", () => {
+    const workdir = makeWorkdir();
+    setupMigration(workdir);
+    const out = mockOutput();
+    return run(workdir, "", baseConfig, pgNetFailureSession(missingNetSchema), out).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          assertMigrationApplyError(error);
+          expect(error.suggestion).toBeUndefined();
+          expect(error[ErrorActionabilityId]).toEqual(actionability.dbFinding);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("requires the matching SQLSTATE instead of classifying by message alone", () => {
+    const workdir = makeWorkdir();
+    setupMigration(workdir);
+    const out = mockOutput();
+    const wrongSqlState = new LegacyDbExecError({
+      message: 'ERROR: schema "net" does not exist (SQLSTATE 42P01)',
+      code: "42P01",
+    });
+    return run(
+      workdir,
+      "",
+      { ...baseConfig, localDatabaseWebhooksEnabled: false },
+      pgNetFailureSession(wrongSqlState),
+      out,
+    ).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          assertMigrationApplyError(error);
+          expect(error.suggestion).toBeUndefined();
+          expect(error[ErrorActionabilityId]).toEqual(actionability.dbFinding);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });

@@ -278,6 +278,7 @@ const toml: LegacyDbTomlValues = {
     formatOptions: Option.none(),
     npmVersion: Option.none(),
   },
+  webhooksEnabled: false,
   baseline: {
     authEnabled: true,
     storageEnabled: true,

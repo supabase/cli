@@ -20,6 +20,7 @@ import {
 } from "../../../../../shared/legacy-db-config.toml-read.ts";
 import { legacyMakeDir } from "../../../../../shared/legacy-make-dir.ts";
 import { legacyApplyMigrationFile } from "../../../../../shared/legacy-migration-apply.ts";
+import { LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "../../../../../shared/legacy-pg-net-guidance.ts";
 import { legacyReadProjectRefFile } from "../../../../../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "../../../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../../../telemetry/legacy-telemetry-state.service.ts";
@@ -321,6 +322,22 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
 
       // Resolve manifest-less legacy compatibility before printing or writing a
       // migration. A repair is always explicit, even when global --yes is set.
+      if (
+        engine.implementation === "next" &&
+        !result.manifestPresent &&
+        !toml.webhooksEnabled &&
+        result.removals.extensions.includes("pg_net")
+      ) {
+        return yield* Effect.fail(
+          new LegacyDeclarativeCompatibilityError({
+            message: [
+              "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
+              "",
+              LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+            ].join("\n"),
+          }),
+        );
+      }
       const compatibility = legacyClassifyDeclarativeCompatibilityGap({
         implementation: engine.implementation,
         manifestPresent: result.manifestPresent,
