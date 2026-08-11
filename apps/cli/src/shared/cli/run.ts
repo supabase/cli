@@ -680,6 +680,7 @@ export interface RunCliOptions {
     info: {
       readonly cleanShowHelp: boolean;
       readonly delegatedToGo: boolean;
+      readonly workingDirectory?: string;
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
     },
@@ -823,9 +824,11 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
                       Effect.gen(function* () {
                         if (afterSuccessHook !== undefined) {
                           const delegatedToGo = yield* goProxyInvocation.wasDelegated;
+                          const workingDirectory = yield* successTrailer.workingDirectory;
                           yield* afterSuccessHook(args, {
                             cleanShowHelp,
                             delegatedToGo,
+                            workingDirectory,
                             isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
                               rootCommand,
                               args,

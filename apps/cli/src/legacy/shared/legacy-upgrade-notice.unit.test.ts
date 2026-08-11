@@ -433,6 +433,20 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("uses the successful command's resolved working directory without re-resolving flags", async () => {
+    const ctx = setup({ project: false, args: ["bootstrap", "--workdir", "prompted"] });
+    const prompted = join(workdir, "prompted");
+    mkdirSync(join(prompted, "supabase"), { recursive: true });
+
+    await legacyRunUpgradeNotice({ ...ctx.deps, resolvedCwd: prompted });
+
+    expect(readFileSync(join(prompted, "supabase", ".temp", "cli-latest"), "utf8")).toBe(
+      "v2.114.0",
+    );
+    expect(() => readFileSync(ctx.cachePath, "utf8")).toThrow();
+    ctx.cleanup();
+  });
+
   it("an explicit empty --workdir beats SUPABASE_WORKDIR and falls back to the walk, like viper", async () => {
     const ctx = setup({});
     const envDir = join(workdir, "env-project");

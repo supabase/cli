@@ -232,6 +232,7 @@ export interface LegacyUpgradeNoticeDeps {
   /** Value-taking-token predicate for this argv (global + resolved leaf flags), so a token a local flag consumed (`login --name --debug`) is never read as a flag. */
   readonly isValueTakingFlagToken?: (token: string) => boolean;
   readonly cwd: string;
+  readonly resolvedCwd?: string;
   readonly currentVersion: string;
   readonly now: () => number;
   readonly fetchLatestTag: () => Promise<string>;
@@ -250,7 +251,8 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
     deps.cleanShowHelp === true || hasRootHelpOrVersionFlag(deps.args, deps.isValueTakingFlagToken);
   const base = builtin
     ? deps.cwd
-    : resolveNoticeBaseDir(deps.cwd, deps.args, deps.env, deps.isValueTakingFlagToken);
+    : (deps.resolvedCwd ??
+      resolveNoticeBaseDir(deps.cwd, deps.args, deps.env, deps.isValueTakingFlagToken));
   const projectEnv = builtin ? {} : await projectDotenvValues(base, deps.env);
   // godotenv never overrides: a shell env that defines a key at all beats the
   // project dotenv chain, even when set to an empty or unparseable value.
@@ -350,6 +352,7 @@ export const legacyUpgradeNoticeHook = (
   info: {
     readonly cleanShowHelp: boolean;
     readonly delegatedToGo: boolean;
+    readonly workingDirectory?: string;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
 ): Effect.Effect<void> =>
@@ -362,6 +365,7 @@ export const legacyUpgradeNoticeHook = (
           cleanShowHelp: info.cleanShowHelp,
           isValueTakingFlagToken: info.isValueTakingFlagToken,
           cwd: process.cwd(),
+          resolvedCwd: info.workingDirectory,
           currentVersion: CLI_VERSION,
           now: Date.now,
           fetchLatestTag: fetchLatestReleaseTag,

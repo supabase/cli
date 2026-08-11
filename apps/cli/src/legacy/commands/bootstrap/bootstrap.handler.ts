@@ -11,7 +11,10 @@ import {
   legacyResolveYes,
   legacyResolveYesWithProjectEnv,
 } from "../../../shared/legacy/global-flags.ts";
-import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
+import {
+  emitSuccessTrailer,
+  setSuccessWorkingDirectory,
+} from "../../../shared/cli/success-trailer.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -397,6 +400,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         env_file: envFileWritten ? envFilePath : null,
       });
     }
+    yield* setSuccessWorkingDirectory(workdir);
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
