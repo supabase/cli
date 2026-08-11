@@ -5,16 +5,7 @@
  * Go's own offline backoff.
  */
 
-import {
-  access,
-  constants as fsConstants,
-  lstat,
-  mkdir,
-  readFile,
-  rename,
-  rm,
-  writeFile,
-} from "node:fs/promises";
+import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -77,23 +68,36 @@ const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
 interface ParsedSemver {
-  readonly nums: readonly [number, number, number];
+  readonly nums: readonly [string, string, string];
   readonly prerelease: string;
 }
 
-/**
- * `x/mod/semver` requires the leading `v` — a bare `2.114.0` is invalid to Go
- * and must stay invalid here. Go additionally rejects leading zeros in numeric
- * prerelease identifiers and accepts shortened `v2`/`v2.1` forms; both are
- * unreachable for real release tags, so neither is reproduced.
- */
 function parseSemver(version: string): ParsedSemver | undefined {
-  const match = /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
+  const match =
+    /^v(0|[1-9]\d*)(?:\.(0|[1-9]\d*))?(?:\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?)?(?![\s\S])/.exec(
+      version,
+    );
   if (match === null) return undefined;
+  const prerelease = match[4] ?? "";
+  if (
+    prerelease
+      .split(".")
+      .some(
+        (identifier) => /^\d+$/.test(identifier) && identifier.length > 1 && identifier[0] === "0",
+      )
+  ) {
+    return undefined;
+  }
   return {
-    nums: [Number(match[1]), Number(match[2]), Number(match[3])],
-    prerelease: match[4] ?? "",
+    nums: [match[1]!, match[2] ?? "0", match[3] ?? "0"],
+    prerelease,
   };
+}
+
+function compareNumericIdentifier(left: string, right: string): number {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
 }
 
 /**
@@ -107,9 +111,8 @@ export function legacyIsNewerCliVersion(latestTag: string, currentVersion: strin
   const current = parseSemver(`v${currentVersion}`);
   if (current === undefined) return true;
   for (let index = 0; index < 3; index++) {
-    const left = latest.nums[index] ?? 0;
-    const right = current.nums[index] ?? 0;
-    if (left !== right) return left > right;
+    const comparison = compareNumericIdentifier(latest.nums[index]!, current.nums[index]!);
+    if (comparison !== 0) return comparison > 0;
   }
   if (latest.prerelease === current.prerelease) return false;
   if (latest.prerelease === "") return true;
@@ -127,7 +130,7 @@ function comparePrerelease(left: string, right: string): number {
     if (a === b) continue;
     const aNum = /^\d+$/.test(a);
     const bNum = /^\d+$/.test(b);
-    if (aNum && bNum) return Number(a) - Number(b);
+    if (aNum && bNum) return compareNumericIdentifier(a, b);
     if (aNum !== bNum) return aNum ? -1 : 1;
     return a < b ? -1 : 1;
   }
@@ -274,46 +277,29 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
   const cacheFresh =
     cachePathIsSafe &&
     cacheLstat !== undefined &&
-    deps.now() < cacheLstat.mtime.getTime() + CACHE_TTL_MS;
+    deps.now() <= cacheLstat.mtime.getTime() + CACHE_TTL_MS;
 
   let latestTag: string;
   if (forceFetch || !cacheFresh) {
     let notifyError: Error | undefined;
-    latestTag = (
-      await deps.fetchLatestTag().catch((error: unknown) => {
-        // Go's `GetLatestRelease` wrap (`internal/utils/release.go:42`) —
-        // capital F and all.
-        notifyError = new Error(`Failed to fetch latest release: ${errorMessage(error)}`);
-        return "";
-      })
-    ).trim();
+    latestTag = await deps.fetchLatestTag().catch((error: unknown) => {
+      // Go's `GetLatestRelease` wrap (`internal/utils/release.go:42`) —
+      // capital F and all.
+      notifyError = new Error(`Failed to fetch latest release: ${errorMessage(error)}`);
+      return "";
+    });
     // Go's `checkUpgrade` (`cmd/root.go:254-258`) overwrites the fetch error
     // with the offline-backoff write's result when inside a project, so a
     // successful write silences the diagnostic — only a missing project (no
     // backoff) or a failing write leaves an error to log, carrying the write
     // path's own wraps (`failed to mkdir`/`failed to write file`, misc.go).
     if (cachePathIsSafe && existsSync(supabaseDir)) {
-      const tempFile = join(tempDir, `cli-latest.tmp.${crypto.randomUUID()}`);
-      notifyError = await mkdir(tempDir, { recursive: true }).then(
+      notifyError = await mkdir(tempDir, { recursive: true, mode: 0o755 }).then(
         () =>
-          // Go opens `cli-latest` itself, so an existing read-only file fails
-          // its write and stays untouched — rename would replace it silently.
-          (cacheLstat === undefined ? Promise.resolve() : access(cacheFile, fsConstants.W_OK))
-            .then(() => writeFile(tempFile, latestTag))
-            .then(() => rename(tempFile, cacheFile))
-            .then(() => undefined)
-            .catch((error: unknown) =>
-              rm(tempFile, { force: true })
-                .catch(() => undefined)
-                // Go writes `cli-latest` directly, so its diagnostic names the
-                // stable path — the deleted temp file must not leak.
-                .then(
-                  () =>
-                    new Error(
-                      `failed to write file: ${errorMessage(error).replaceAll(tempFile, cacheFile)}`,
-                    ),
-                ),
-            ),
+          writeFile(cacheFile, latestTag, { mode: 0o644 }).then(
+            () => undefined,
+            (error: unknown) => new Error(`failed to write file: ${errorMessage(error)}`),
+          ),
         (error: unknown) => new Error(`failed to mkdir: ${errorMessage(error)}`),
       );
     }
@@ -321,16 +307,14 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
       deps.writeStderr(`${stripVTControlCharacters(notifyError.message)}\n`);
     }
   } else {
-    latestTag = (
-      await readFile(cacheFile, "utf8").catch((error: unknown) => {
-        if (debug) {
-          deps.writeStderr(
-            `failed to read cli version: ${stripVTControlCharacters(errorMessage(error))}\n`,
-          );
-        }
-        return "";
-      })
-    ).trim();
+    latestTag = await readFile(cacheFile, "utf8").catch((error: unknown) => {
+      if (debug) {
+        deps.writeStderr(
+          `failed to read cli version: ${stripVTControlCharacters(errorMessage(error))}\n`,
+        );
+      }
+      return "";
+    });
   }
 
   // Gated on the anchored semver match: no escape bytes can reach the terminal.

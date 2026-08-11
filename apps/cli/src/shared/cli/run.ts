@@ -798,6 +798,14 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     Effect.provide(BunServices.layer),
   );
 
+  const selfManagedSignalProgram = Effect.scoped(
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
+      return yield* cliProgram;
+    }),
+  ).pipe(Effect.provide(processControlLayer));
+
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
 
   const handledProgram = <A, E, R>(
@@ -856,6 +864,6 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
   if (useGlobalSignalInterrupt) {
     await Effect.runPromise(handledProgram(signalAwareProgram));
   } else {
-    await Effect.runPromise(handledProgram(cliProgram));
+    await Effect.runPromise(handledProgram(selfManagedSignalProgram));
   }
 }

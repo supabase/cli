@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   utimesSync,
   writeFileSync,
@@ -56,6 +57,14 @@ describe("legacyIsNewerCliVersion", () => {
     ["v2.114.0-beta.9", "2.114.0-beta.10", false],
     ["v2.114.0-rc.1", "2.114.0-beta.2", true],
     ["v2.114.0-beta.2", "2.114.0-beta.11", false],
+    ["v3", "2.999.999", true],
+    ["v2.114", "2.113.999", true],
+    ["v2.114.0+new", "2.114.0+old", false],
+    ["v999999999999999999999999.0.0", "999999999999999999999998.0.0", true],
+    ["v02.114.0", "2.113.0", false],
+    ["v2.114.00", "2.113.0", false],
+    ["v2.114.0-01", "2.113.0", false],
+    ["v2.114.0-alpha..1", "2.113.0", false],
   ])("latest %j vs current %j -> %s", (latest, current, expected) => {
     expect(legacyIsNewerCliVersion(latest, current)).toBe(expected);
   });
@@ -161,6 +170,17 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("keeps a cache fresh at the exact ten-hour boundary", async () => {
+    const ctx = setup({ cacheContent: "v2.115.0", cacheAgeMs: 60_000 });
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      now: () => statSync(ctx.cachePath).mtime.getTime() + 10 * 60 * 60 * 1000,
+    });
+    expect(ctx.fetchCalls).toBe(0);
+    expect(ctx.stderr).toContain("v2.115.0");
+    ctx.cleanup();
+  });
+
   it("refetches when the cache is older than ten hours", async () => {
     const ctx = setup({ cacheContent: "v2.115.0", cacheAgeMs: 11 * 60 * 60 * 1000 });
     await legacyRunUpgradeNotice(ctx.deps);
@@ -257,7 +277,7 @@ describe("legacyRunUpgradeNotice", () => {
   });
 
   it.skipIf(process.getuid?.() === 0)(
-    "a cache write failure reports the stable cli-latest path, never the temp file",
+    "a cache write failure reports the stable cli-latest path",
     async () => {
       const ctx = setup({ args: ["db", "start", "--debug"] });
       mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
@@ -266,7 +286,42 @@ describe("legacyRunUpgradeNotice", () => {
       chmodSync(join(workdir, "supabase", ".temp"), 0o755);
       expect(ctx.stderr).toContain("failed to write file");
       expect(ctx.stderr).toContain("cli-latest");
-      expect(ctx.stderr).not.toContain("cli-latest.tmp");
+      ctx.cleanup();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "creates the cache directory and file with Go-compatible modes",
+    async () => {
+      const ctx = setup({});
+      const previousUmask = process.umask(0);
+      try {
+        await legacyRunUpgradeNotice(ctx.deps);
+      } finally {
+        process.umask(previousUmask);
+      }
+      expect(statSync(join(workdir, "supabase", ".temp")).mode & 0o777).toBe(0o755);
+      expect(statSync(ctx.cachePath).mode & 0o777).toBe(0o644);
+      ctx.cleanup();
+    },
+  );
+
+  it.skipIf(process.platform === "win32")(
+    "updates a writable cache without requiring write access to its directory",
+    async () => {
+      const ctx = setup({
+        cacheContent: "v2.115.0",
+        cacheAgeMs: 11 * 60 * 60 * 1000,
+      });
+      const tempDir = join(workdir, "supabase", ".temp");
+      chmodSync(tempDir, 0o555);
+      try {
+        await legacyRunUpgradeNotice(ctx.deps);
+      } finally {
+        chmodSync(tempDir, 0o755);
+      }
+      expect(ctx.stderr).not.toContain("failed to write file");
+      expect(readFileSync(ctx.cachePath, "utf8")).toBe("v2.114.0");
       ctx.cleanup();
     },
   );
@@ -310,7 +365,6 @@ describe("legacyRunUpgradeNotice", () => {
       await legacyRunUpgradeNotice(ctx.deps);
       chmodSync(ctx.cachePath, 0o644);
       expect(ctx.stderr).toContain("failed to write file");
-      expect(ctx.stderr).not.toContain("cli-latest.tmp");
       // The stale cache survives, exactly like Go's failed open.
       expect(readFileSync(ctx.cachePath, "utf8")).toBe("v2.115.0");
       ctx.cleanup();
@@ -515,15 +569,12 @@ describe("legacyRunUpgradeNotice", () => {
     },
   );
 
-  it("prints only the trimmed, validated tag and rejects embedded escape bytes", async () => {
-    const trailing = setup({ cacheContent: "v2.115.0\r\n", cacheAgeMs: 60_000 });
-    await legacyRunUpgradeNotice(trailing.deps);
-    expect(trailing.stderr).toContain("available: v2.115.0 (currently installed");
-    trailing.cleanup();
-
-    const embedded = setup({ cacheContent: "v2.115.0\u001b[31mboo", cacheAgeMs: 60_000 });
-    await legacyRunUpgradeNotice(embedded.deps);
-    expect(embedded.stderr).toBe("");
-    embedded.cleanup();
+  it("validates exact cache bytes and rejects embedded escape bytes", async () => {
+    for (const cacheContent of ["v2.115.0\n", "v2.115.0\r\n", "v2.115.0\u001b[31mboo"]) {
+      const ctx = setup({ cacheContent, cacheAgeMs: 60_000 });
+      await legacyRunUpgradeNotice(ctx.deps);
+      expect(ctx.stderr).toBe("");
+      ctx.cleanup();
+    }
   });
 });
