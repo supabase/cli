@@ -136,6 +136,16 @@ export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
   return false;
 }
 
+/** Whether argv is a `--help`/`-h` (any depth) or root `--version`/`-v` invocation — the built-ins cobra serves without running `PersistentPreRunE`. A subcommand's own value-taking `--version` (`db reset --version x`) does not count. */
+export function hasRootHelpOrVersionFlag(args: ReadonlyArray<string>): boolean {
+  const bareInvocation = extractCommandPath(args).length === 0;
+  for (const { token } of rootFlagTokens(args)) {
+    if (token === "--help" || token === "-h") return true;
+    if (bareInvocation && (token === "--version" || token === "-v")) return true;
+  }
+  return false;
+}
+
 /** The last value a root-level `--<name>`/`--<name>=<value>` occurrence sets. `name` must be a value-taking global flag, whose space-form value the token walk already skips. */
 export function lastGlobalFlagValue(args: ReadonlyArray<string>, name: string): string | undefined {
   let value: string | undefined;

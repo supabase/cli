@@ -12,7 +12,11 @@ import { stripVTControlCharacters } from "node:util";
 
 import { Effect } from "effect";
 
-import { hasRootVersionFlag, lastGlobalFlagValue } from "../../shared/cli/run.ts";
+import {
+  hasRootHelpOrVersionFlag,
+  hasRootVersionFlag,
+  lastGlobalFlagValue,
+} from "../../shared/cli/run.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 
@@ -119,6 +123,10 @@ function resolveNoticeBaseDir(
   args: ReadonlyArray<string>,
   env: Readonly<Record<string, string | undefined>>,
 ): string {
+  // `--help`/`--version` skip cobra's `PersistentPreRunE`, so Go never runs
+  // `ChangeWorkDir` for them: the cache resolves against the bare cwd, with
+  // `--workdir`/`SUPABASE_WORKDIR` and the ancestor walk all ignored.
+  if (hasRootHelpOrVersionFlag(args)) return cwd;
   const flagValue = lastGlobalFlagValue(args, "--workdir");
   const explicit =
     flagValue !== undefined && flagValue !== "" ? flagValue : env["SUPABASE_WORKDIR"];

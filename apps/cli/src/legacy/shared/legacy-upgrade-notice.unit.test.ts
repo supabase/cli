@@ -255,6 +255,28 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("resolves --help and --version against the bare cwd, ignoring --workdir, like Go", async () => {
+    // Go serves the built-ins without `ChangeWorkDir`, so the flagged project
+    // must not gain a cache entry; the caller's cwd (no supabase/) writes none.
+    const ctx = setup({ project: false });
+    const flagged = join(workdir, "flagged");
+    mkdirSync(join(flagged, "supabase"), { recursive: true });
+    for (const args of [
+      ["--workdir", flagged, "--help"],
+      ["--workdir", flagged, "--version"],
+    ]) {
+      await legacyRunUpgradeNotice({ ...ctx.deps, args });
+    }
+    expect(() => readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toThrow();
+    // A subcommand's own value-taking --version still resolves the project.
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      args: ["db", "reset", "--workdir", flagged, "--version", "20240101000000"],
+    });
+    expect(readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toBe("v2.114.0");
+    ctx.cleanup();
+  });
+
   it("ignores a --workdir operand after the -- terminator, like cobra", async () => {
     const ctx = setup({});
     const elsewhere = join(workdir, "elsewhere");
