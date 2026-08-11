@@ -803,7 +803,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
   const selfManagedSignalProgram = Effect.scoped(
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
-      yield* processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]);
+      yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
       return yield* cliProgram;
     }),
   ).pipe(Effect.provide(processControlLayer));
