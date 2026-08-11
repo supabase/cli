@@ -11,6 +11,11 @@ import { describeLive, runSupabaseLive } from "../../../../../tests/helpers/live
 const execFileAsync = promisify(execFile);
 
 const START_TIMEOUT_MS = 280_000;
+// Lifecycle allowance for scenarios that run TWO full-budget subprocesses (`start`
+// then the command under test) plus init/inspection overhead — same shape as
+// `start.live.test.ts`. A single shared `START_TIMEOUT_MS` test budget would let a
+// slow-but-valid `start` starve the command under test before it ever runs.
+const LIFECYCLE_OVERHEAD_MS = 90_000;
 
 // CLI-1947 regression: pg-delta's `filterPublicBuiltInDefaults()` unconditionally
 // treated PUBLIC's implicit built-in privilege as a no-op on both sides of a diff,
@@ -150,7 +155,7 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
 
   test(
     "runs the native differ container against the real stack, surfaces Go's error running container failure, and leaves no differ container behind",
-    { timeout: START_TIMEOUT_MS },
+    { timeout: START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-pgadmin-live-"));
       // No `project_id` override, so the cli resolves it from the workdir basename —
