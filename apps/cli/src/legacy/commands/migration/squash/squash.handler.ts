@@ -53,8 +53,8 @@ import {
   LegacyMigrationApplyError,
 } from "../../../shared/legacy-migration-apply.ts";
 import {
-  DELETE_MIGRATION_BEFORE,
   INSERT_MIGRATION_VERSION,
+  LEGACY_DELETE_MIGRATION_BEFORE,
   legacyCreateMigrationTable,
   legacyLoadLocalVersions,
   legacyLoadPartialMigrations,
@@ -336,7 +336,7 @@ const baselineMigrations = Effect.fnUntraced(function* (
     // and leaves `version` empty; it never aborts the baseline.
     const local = yield* legacyLoadLocalVersions(fs, path, migrationsDir).pipe(
       Effect.catch((cause) =>
-        debugLogger.debug(cause.message).pipe(Effect.as([] as ReadonlyArray<string>)),
+        debugLogger.debug(cause.message).pipe(Effect.as<ReadonlyArray<string>>([])),
       ),
     );
     if (local.length > 0) resolvedVersion = local[0]!;
@@ -377,7 +377,7 @@ const baselineMigrations = Effect.fnUntraced(function* (
       // transaction for atomicity between the DELETE and the INSERT.
       const txn = Effect.gen(function* () {
         yield* session.exec("BEGIN");
-        yield* session.query(DELETE_MIGRATION_BEFORE, [m.version]);
+        yield* session.query(LEGACY_DELETE_MIGRATION_BEFORE, [m.version]);
         yield* session.query(INSERT_MIGRATION_VERSION, [m.version, m.name, m.statements]);
         yield* session.exec("COMMIT");
       });

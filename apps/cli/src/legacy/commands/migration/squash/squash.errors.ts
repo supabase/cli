@@ -53,7 +53,7 @@ export class LegacyMigrationSquashWriteError extends Data.TaggedError(
 }
 
 /**
- * `baselineMigrations`'s history-table batch (`DELETE_MIGRATION_BEFORE` +
+ * `baselineMigrations`'s history-table batch (`LEGACY_DELETE_MIGRATION_BEFORE` +
  * `INSERT_MIGRATION_VERSION`) failed to send/commit. Byte-matches Go's `"failed to
  * update migration history: " + err` (`squash.go:187`). Classified `dbConnection`,
  * matching `migration repair`'s `LegacyMigrationRepairUpdateError`
