@@ -111,12 +111,32 @@ revoke execute on function public.probe_fn() from public;
 // pure filtering/progress logic and the docker-run argv are covered exhaustively by
 // `legacy-pgadmin-diff.unit.test.ts` and `diff.integration.test.ts`; this just proves
 // the real container actually runs against a real local stack and cleans up after
-// itself. See `SIDE_EFFECTS.md`'s "Deliberate divergence" entry: the real Go binary's
-// `DiffStream` value-receiver bug means the Go CLI would always report "No schema
-// changes found" here regardless of the differ's actual output — that divergence is
-// exactly why this suite exists, not something this test itself asserts on.
+// itself either way.
+//
+// The real, reachable outcome here is a FAILURE, not a golden diff, and by design in
+// BOTH CLIs: the differ container joins the project's own bridge network
+// (`supabase_network_<projectId>`, `docker.go:378-382`), and Go hardcodes both diff
+// endpoints as loopback URLs from that container's own point of view — `source`
+// (`utils.ToPostgresURL`, resolving `GetHostname()` to `127.0.0.1` for a local target)
+// and `target` (`postgresql://postgres:postgres@127.0.0.1:<shadowPort>/postgres`,
+// `pgadmin.go:85-86`). Inside a bridge-attached container, `127.0.0.1` is the
+// container's OWN loopback, not the host's — so neither the local db nor the shadow is
+// reachable from inside the differ, and the container exits non-zero. This holds
+// identically for the real Go CLI (identical argv, identical network, identical
+// hardcoded hosts), so there is no live A/B needed to establish it — see
+// `SIDE_EFFECTS.md`'s "Network reachability" entry for the full static ruling. (The
+// `DiffStream` value-receiver divergence documented there — the real Go CLI always
+// reporting "No schema changes found" regardless of the differ's actual output — only
+// ever engages when the differ container exits 0; it plays no role in this failure
+// path.) Note that a plain `--network-id host` does NOT rescue a golden run here: it
+// also rewires the SHADOW container onto host networking, discarding its own
+// `54320->5432` port publish that `target` depends on — so `source` would become
+// reachable but `target` would not, still failing the diff. This suite therefore
+// verifies the real, always-reachable failure mode end-to-end, plus that both the
+// differ AND the shadow container it provisions are still cleaned up.
 describeLive("supabase db diff (live, --use-pgadmin native differ container)", () => {
   let projectDir: string | undefined;
+  let projectId: string | undefined;
 
   afterEach(async () => {
     if (projectDir === undefined) return;
@@ -125,13 +145,18 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
     await runSupabaseLive(["stop", "--no-backup"], { cwd: projectDir }).catch(() => undefined);
     await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
     projectDir = undefined;
+    projectId = undefined;
   });
 
   test(
-    "golden path: diffs the local db with the native pgAdmin differ container and leaves no differ container behind",
+    "runs the native differ container against the real stack, surfaces Go's error running container failure, and leaves no differ container behind",
     { timeout: START_TIMEOUT_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-pgadmin-live-"));
+      // No `project_id` override, so the cli resolves it from the workdir basename —
+      // matching Go's precedence exactly (see legacy-docker-ids.ts), same as
+      // `stop.live.test.ts`.
+      projectId = path.basename(projectDir);
 
       const init = await runSupabaseLive(["init"], { cwd: projectDir });
       expect(init.exitCode, `stdout:\n${init.stdout}\nstderr:\n${init.stderr}`).toBe(0);
@@ -148,16 +173,18 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
         cwd: projectDir,
         exitTimeoutMs: START_TIMEOUT_MS,
       });
-      // A freshly-`init`'d project has no drift against its own (empty) migration
-      // history — "No schema changes found" on stderr, exit 0, same golden-path
-      // semantics as the migra/pg-delta engines.
-      expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(0);
-      expect(diff.stderr).toContain("No schema changes found");
+      // Both hardcoded loopback endpoints are unreachable from inside the
+      // bridge-attached differ container (see this suite's own header comment for the
+      // full, static ruling) — the differ exits non-zero and the CLI surfaces Go's own
+      // wrapper message. The differ's own exit code isn't pinned: only that the differ
+      // ran and failed, not the shadow/connection machinery around it.
+      expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(1);
+      expect(diff.stderr).toContain("error running container: exit ");
 
       // The differ is a one-shot `docker run --rm` — real Docker must agree that no
       // container survives it, the same "the daemon must agree" check
       // `stop.live.test.ts` runs against `com.supabase.cli.project`.
-      const { stdout: remaining } = await execFileAsync("docker", [
+      const { stdout: remainingDiffer } = await execFileAsync("docker", [
         "ps",
         "-a",
         "--filter",
@@ -165,7 +192,28 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
         "--format",
         "{{.ID}}",
       ]);
-      expect(remaining.trim()).toBe("");
+      expect(remainingDiffer.trim()).toBe("");
+
+      // This failure path exercises the shadow's `acquireUseRelease` teardown for
+      // real (the differ error propagates out of the `use` phase after the shadow was
+      // already created) — the shadow itself is created with no `--name` (Docker
+      // auto-generates one), unlike every real stack container, which is always named
+      // `supabase_<service>_<projectId>`. So a leaked shadow shows up as a
+      // project-labeled container whose name does NOT carry that fixed prefix.
+      const { stdout: projectContainers } = await execFileAsync("docker", [
+        "ps",
+        "-a",
+        "--filter",
+        `label=com.supabase.cli.project=${projectId}`,
+        "--format",
+        "{{.Names}}",
+      ]);
+      const names = projectContainers
+        .trim()
+        .split("\n")
+        .filter((name) => name.length > 0);
+      expect(names.length).toBeGreaterThan(0);
+      expect(names.every((name) => name.startsWith("supabase_"))).toBe(true);
     },
   );
 });

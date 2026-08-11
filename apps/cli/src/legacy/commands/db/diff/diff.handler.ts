@@ -13,7 +13,10 @@ import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts"
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
-import { legacyReadDbToml } from "../../../shared/legacy-db-config.toml-read.ts";
+import {
+  legacyApplyProjectEnv,
+  legacyReadDbToml,
+} from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConnType } from "../../../shared/legacy-db-target-flags.ts";
 import { legacyGetHostname } from "../../../shared/legacy-hostname.ts";
@@ -422,6 +425,15 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       linkedRefForCache = linkedRef;
     }
     const cfg = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
+    // Make an allowlisted `supabase/.env` registry override visible to the
+    // synchronous `process.env` reader the pgAdmin differ's (and the migra/pg-delta
+    // shadow's) own image resolver falls back to, reverted when this scope closes.
+    // Go's `loadNestedEnv` `os.Setenv`s the project `.env` during config load
+    // (`pkg/config/config.go:788-791`), before `GetRegistry()`
+    // (`internal/utils/docker.go:221-231,244-246`) ever reads it — unlike every
+    // other native engine on this command, `db diff` never applied project env
+    // until now.
+    yield* legacyApplyProjectEnv(cfg.projectEnv);
     if (cfg.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${cfg.appliedRemote}]\n`, "stderr");
     }
@@ -539,13 +551,18 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     if (usePgAdmin) {
       // Go's `RunPgAdmin` (`pgadmin.go:49-63`): `AssertSupabaseDbIsRunning` runs AFTER the
       // config load + target resolve above, and — unlike every other engine on this command —
-      // runs for `--linked`/`--db-url` too, not just the local target.
+      // runs for `--linked`/`--db-url` too, not just the local target. `ctx.projectId`
+      // (already remote-merge-resolved, see its own doc comment above), not the raw
+      // `cliConfig.projectId` env reader: Go's `UpdateDockerIds` runs AFTER the linked
+      // remote merge, so `DbId` derives from the resolved `Config.ProjectId` singleton,
+      // not the ungated `SUPABASE_PROJECT_ID` env var (`config_path.go:10-15`,
+      // `pkg/config/config.go:604-610`, `internal/utils/config.go:57-65`).
       const running = yield* legacyIsLocalDbRunning(
         spawner,
         fs,
         path,
         cliConfig.workdir,
-        Option.getOrUndefined(cliConfig.projectId),
+        ctx.projectId,
       ).pipe(
         Effect.mapError(
           (cause) =>
@@ -800,5 +817,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
+    // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
+    Effect.scoped,
   );
 });

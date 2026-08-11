@@ -139,8 +139,11 @@ export class LegacyDbDiffPgAdminError extends Data.TaggedError("LegacyDbDiffPgAd
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
       case "registry_pull":
         return { ...actionability.externalNetwork, fingerprint_suffix: "registry_pull" };
+      // Malformed pinned-differ wire output is an internal contract violation, not a
+      // user input mistake — same precedent as pg-delta's own malformed-subprocess-
+      // output branch (`legacy-pgdelta.apply.ts`'s `"output_parse"` case).
       case "invalid_output":
-        return { ...actionability.invalidInput, fingerprint_suffix: "invalid_content" };
+        return { ...actionability.impossibleState, fingerprint_suffix: "invalid_content" };
       case "image_inspect":
         return { ...actionability.invalidConfig, fingerprint_suffix: "image_inspect" };
       // "differ": a failing container is the user's own schema/connection, matching

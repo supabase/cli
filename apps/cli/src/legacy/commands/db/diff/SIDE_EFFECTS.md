@@ -75,18 +75,19 @@ natively as part of this command's own target resolve, ahead of the differ conta
 
 ## Environment Variables
 
-| Variable                                                                              | Purpose                                                                                                | Required? |
-| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | --------- |
-| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                    | no        |
-| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                            | no        |
-| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads | no        |
-| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                       | no        |
-| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`)       | no        |
-| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                    | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                  | no        |
-| `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                 | no        |
-| `PGDELTA_NPM_REGISTRY`                                                                | scoped `@supabase` npm registry for edge-runtime                                                       | no        |
-| `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                | no        |
+| Variable                                                                              | Purpose                                                                                                                                                                 | Required? |
+| ------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_ACCESS_TOKEN`                                                               | auth for `--linked`                                                                                                                                                     | no        |
+| `SUPABASE_DB_PASSWORD`                                                                | remote DB password (linked)                                                                                                                                             | no        |
+| `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads                                                                  | no        |
+| `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                        | no        |
+| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`)                                                                        | no        |
+| `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                     | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                   | no        |
+| `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                  | no        |
+| `PGDELTA_NPM_REGISTRY`                                                                | scoped `@supabase` npm registry for edge-runtime                                                                                                                        | no        |
+| `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                 | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, applied for the run via `legacyApplyProjectEnv`, matching `db push`/`db pull`/`db dump`) | no        |
 
 `SUPABASE_DB_SHADOW_PORT`/`SUPABASE_NETWORK_ID`/`--network-id`/`SUPABASE_PROJECT_ID`/
 `SUPABASE_DB_HEALTH_TIMEOUT` all apply to `--use-pgadmin` too — its shadow is provisioned
@@ -97,11 +98,15 @@ engine-selection lookup (`legacyShouldUsePgDelta`) runs unconditionally, before 
 `--use-pgadmin` branch, but the pgadmin branch is chosen first and never consults the
 resulting `useDelta` value.
 
-`SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too, but only
-as an **ambient shell env var**: the docker-run layer's resolver (`legacy-docker-run.layer.ts`)
-is built once, statically, with no `projectEnvValues` in scope, so a value set only in
-`supabase/.env`/project-root dotenv (not exported to the ambient process env) never reaches
-the differ — unlike `start`'s own image resolution, which threads `projectEnvValues` through.
+`SUPABASE_INTERNAL_IMAGE_REGISTRY` applies to the differ's own image resolution too. The
+docker-run layer's resolver (`legacy-docker-run.layer.ts`) is built once, statically, with
+no `projectEnvValues` in scope, so it falls back to reading `process.env` directly at
+`runCapture` call time — the handler's own `legacyApplyProjectEnv(cfg.projectEnv)` call
+(right after the config load) is what makes a registry override set only in
+`supabase/.env`/project-root dotenv (not the ambient shell) visible to it by then, mirroring
+Go's `loadNestedEnv` `os.Setenv`ing the project `.env` during config load
+(`pkg/config/config.go:788-791`) before `GetRegistry()`
+(`internal/utils/docker.go:221-231,244-246`) ever reads it.
 
 Explicitly **not** read by `--use-pgadmin`: `PGDELTA_*`, `SUPABASE_SSL_DEBUG` (both
 migra/pg-delta-engine-specific).

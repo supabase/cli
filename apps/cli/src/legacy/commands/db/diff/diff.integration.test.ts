@@ -216,6 +216,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // `differCalls` — pinned `undefined` below, since Go never tees the differ's raw
   // stderr to the parent terminal (see `legacy-pgadmin-diff.ts`'s own doc comment).
   const differCaptureOpts: Array<{ readonly teeStderr?: boolean } | undefined> = [];
+  // Snapshots `process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]` at the moment each
+  // differ `runCapture` call is made — the real `legacyDockerRunLayer`'s own image
+  // resolver reads that key straight off `process.env` at call time (no
+  // `projectEnvValues` threaded through), so this stands in for it here.
+  const differRegistryEnvAtCall: Array<string | undefined> = [];
   const shadowSetupJobCalls: Array<{ readonly env: Readonly<Record<string, string>> }> = [];
   const docker = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.die("run unused"),
@@ -223,6 +228,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       if (dockerOpts.image.includes("pgadmin-schema-diff")) {
         differCalls.push(dockerOpts);
         differCaptureOpts.push(captureOpts);
+        differRegistryEnvAtCall.push(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]);
         if (opts.pgadminDockerFail !== undefined) {
           return Effect.fail(
             new LegacyDockerRunError({
@@ -350,6 +356,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dockerCalls,
     differCalls,
     differCaptureOpts,
+    differRegistryEnvAtCall,
     shadowSetupJobCalls,
     shadowSpawned: shadowSpawner.spawned,
     shadowConnectedDatabases: shadowDbConnection.connectedDatabases,
@@ -820,6 +827,44 @@ describe("legacy db diff", () => {
         expect(stderr(s.out)).toContain("Loading config override: [remotes.staging]");
         expect(s.proxyCalls).toEqual([]);
         expect(s.differCalls).toHaveLength(1);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "--use-pgadmin --linked's preflight probe targets the resolved LINKED project id, not the base config's",
+    () => {
+      // Go's `UpdateDockerIds` runs AFTER the linked remote merge, so `DbId` derives
+      // from the resolved `Config.ProjectId` singleton (`config_path.go:10-15`,
+      // `pkg/config/config.go:604-610`, `internal/utils/config.go:57-65`), NOT the
+      // base config's own `project_id` — the matched `[remotes.<ref>]` block's own
+      // `project_id` must suppress it.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          'project_id = "test"',
+          "",
+          "[remotes.staging]",
+          'project_id = "abcdefghijklmnopqrst"',
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, {
+        isLocal: false,
+        linkedRef: "abcdefghijklmnopqrst",
+        pgadminStdout: [JSON.stringify([pgadminEntry()])],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), linked: Option.some(true) }));
+        // `mockLegacyShadowContainerCliSpawner` distinguishes this SEPARATE
+        // `legacyIsLocalDbRunning` preflight probe from the shadow's own (64-hex-id)
+        // health-check inspect by the `supabase_db_` container-name prefix.
+        const inspectTargets = s.shadowSpawned
+          .filter((c) => c.args[0] === "container" && c.args[1] === "inspect")
+          .map((c) => c.args[2]);
+        expect(inspectTargets).toContain("supabase_db_abcdefghijklmnopqrst");
+        expect(inspectTargets).not.toContain("supabase_db_test");
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1804,6 +1849,44 @@ describe("legacy db diff", () => {
           expect(call.cmd.at(-1)).toBe(PGADMIN_TARGET_URL);
           expect(call.cmd.join(" ")).not.toContain("distinctive-pw");
         }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect(
+      "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver during the run, and reverts after",
+      () => {
+        // TS `db diff` never applied project env at all before this fix (unlike `db
+        // push`/`pull`/`dump`/`reset`/`bootstrap`) — Go's `loadNestedEnv` `os.Setenv`s
+        // the project `.env` during config load (`pkg/config/config.go:788-791`),
+        // before `GetRegistry()` (`internal/utils/docker.go:221-231,244-246`) ever
+        // reads it. `legacyDockerRunLayer`'s own image resolver has no
+        // `projectEnvValues` in scope, so it falls back to reading `process.env`
+        // directly at `runCapture` call time; this mock docker layer records that
+        // same read (`differRegistryEnvAtCall`) since it replaces the real resolver
+        // wholesale and can't observe an already-rewritten image.
+        const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+        delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+        mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+        writeFileSync(
+          join(tmp.current, "supabase", ".env"),
+          "SUPABASE_INTERNAL_IMAGE_REGISTRY=registry.example.com\n",
+        );
+        const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
+        return Effect.gen(function* () {
+          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
+          expect(s.differRegistryEnvAtCall).toEqual(["registry.example.com"]);
+          // Reverted once the handler's scope closes — no leak into a later command
+          // (or a later test) sharing this process.
+          expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+        }).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
+              else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+            }),
+          ),
+          Effect.provide(s.layer),
+        );
       },
     );
 

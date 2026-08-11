@@ -320,7 +320,12 @@ export interface LegacyDiffSchemaPgAdminParams {
  * `teeStderr` stays off regardless (Go never tees the differ's raw stderr to the parent
  * terminal). The image is passed raw (not pre-resolved via `legacyGetRegistryImageUrl`, unlike
  * `diffMigraBash`): `legacyDockerRunLayer`'s own resolver builds the ECR→GHCR→docker.io
- * candidate ladder from it.
+ * candidate ladder from it — reading `SUPABASE_INTERNAL_IMAGE_REGISTRY` straight off
+ * `process.env` at call time (no `projectEnvValues` passed through). It is the caller's
+ * (`diff.handler.ts`) own `legacyApplyProjectEnv` scope, applied right after the config
+ * load, that makes a registry override set only in the project's `supabase/.env` (not
+ * the ambient shell) visible to that resolver by the time this function's `runCapture`
+ * call reaches it.
  */
 export const legacyDiffSchemaPgAdmin = (
   params: LegacyDiffSchemaPgAdminParams,
