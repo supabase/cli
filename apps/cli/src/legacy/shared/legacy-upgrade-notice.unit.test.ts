@@ -299,10 +299,22 @@ describe("legacyRunUpgradeNotice", () => {
     for (const args of [
       ["--workdir", flagged, "--help"],
       ["--workdir", flagged, "--version"],
+      // pflag's valued boolean spellings request the same built-ins.
+      ["--workdir", flagged, "--help=true"],
+      ["branches", "--workdir", flagged, "-h=1"],
+      ["--workdir", flagged, "--version=true"],
     ]) {
       await legacyRunUpgradeNotice({ ...ctx.deps, args });
     }
     expect(() => readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toThrow();
+    // `--help=false` runs the command normally, `ChangeWorkDir` included —
+    // pflag's last occurrence wins.
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      args: ["branches", "--workdir", flagged, "--help=true", "--help=false"],
+    });
+    expect(readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toBe("v2.114.0");
+    rmSync(join(flagged, "supabase", ".temp"), { recursive: true, force: true });
     // A subcommand's own value-taking --version still resolves the project.
     await legacyRunUpgradeNotice({
       ...ctx.deps,

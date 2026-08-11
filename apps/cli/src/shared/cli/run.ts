@@ -156,14 +156,17 @@ export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
   return false;
 }
 
-/** Whether argv is a `--help`/`-h` (any depth) or root `--version`/`-v` invocation — the built-ins cobra serves without running `PersistentPreRunE`. A subcommand's own value-taking `--version` (`db reset --version x`) does not count. */
+/** Whether argv is a `--help`/`-h` (any depth) or root `--version`/`-v` invocation — the built-ins cobra serves without running `PersistentPreRunE`. Valued spellings resolve pflag-style, last one wins: `--help=false` runs the command normally, and a subcommand's own value-taking `--version` (`db reset --version x`) does not count. */
 export function hasRootHelpOrVersionFlag(args: ReadonlyArray<string>): boolean {
   const bareInvocation = extractCommandPath(args).length === 0;
+  let help: boolean | undefined;
+  let version: boolean | undefined;
   for (const { token } of rootFlagTokens(args)) {
-    if (token === "--help" || token === "-h") return true;
-    if (bareInvocation && (token === "--version" || token === "-v")) return true;
+    help = booleanFlagTokenValue(token, "--help") ?? booleanFlagTokenValue(token, "-h") ?? help;
+    version =
+      booleanFlagTokenValue(token, "--version") ?? booleanFlagTokenValue(token, "-v") ?? version;
   }
-  return false;
+  return help === true || (bareInvocation && version === true);
 }
 
 /** The last value a root-level `--<name>`/`--<name>=<value>` occurrence sets. `name` must be a value-taking global flag, whose space-form value the token walk already skips. */
