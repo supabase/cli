@@ -214,6 +214,26 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("a --debug operand after -- or consumed by a value flag is not the debug flag, like pflag", async () => {
+    const afterTerminator = setup({
+      fetchFails: true,
+      project: false,
+      args: ["db", "start", "--", "--debug"],
+    });
+    await legacyRunUpgradeNotice(afterTerminator.deps);
+    expect(afterTerminator.stderr).toBe("");
+    afterTerminator.cleanup();
+
+    const consumedValue = setup({
+      fetchFails: true,
+      project: false,
+      args: ["--profile", "--debug", "db", "start"],
+    });
+    await legacyRunUpgradeNotice(consumedValue.deps);
+    expect(consumedValue.stderr).toBe("");
+    consumedValue.cleanup();
+  });
+
   it("a failed fetch inside a project stays silent under --debug, matching Go's backoff", async () => {
     const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });
     await legacyRunUpgradeNotice(ctx.deps);

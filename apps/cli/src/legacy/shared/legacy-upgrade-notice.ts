@@ -16,6 +16,7 @@ import {
   hasRootHelpOrVersionFlag,
   hasRootVersionFlag,
   lastGlobalFlagValue,
+  rootFlagTokens,
 } from "../../shared/cli/run.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
@@ -34,12 +35,14 @@ export function legacyUpdateNotifierDisabled(value: string | undefined): boolean
   return value !== undefined && PARSE_BOOL_TRUE.has(value);
 }
 
-/** Go's `viper.GetBool("DEBUG")`: the `--debug`/`--debug=<bool>` flag when set (last wins), else `SUPABASE_DEBUG`. */
+/** Go's `viper.GetBool("DEBUG")`: the `--debug`/`--debug=<bool>` flag when set (last wins), else `SUPABASE_DEBUG`. The token walk skips operands after `--` and values consumed by value-taking global flags, which pflag never reads as flags. */
 function debugEnabled(deps: LegacyUpgradeNoticeDeps): boolean {
   let flag: boolean | undefined;
-  for (const arg of deps.args) {
-    if (arg === "--debug") flag = true;
-    else if (arg.startsWith("--debug=")) flag = PARSE_BOOL_TRUE.has(arg.slice("--debug=".length));
+  for (const { token } of rootFlagTokens(deps.args)) {
+    if (token === "--debug") flag = true;
+    else if (token.startsWith("--debug=")) {
+      flag = PARSE_BOOL_TRUE.has(token.slice("--debug=".length));
+    }
   }
   if (flag !== undefined) return flag;
   const env = deps.env["SUPABASE_DEBUG"];

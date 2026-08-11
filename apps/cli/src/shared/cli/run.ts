@@ -112,7 +112,7 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
  * and a token consumed as a value-taking global flag's value (`--profile -v`)
  * is not a flag.
  */
-function* rootFlagTokens(
+export function* rootFlagTokens(
   args: ReadonlyArray<string>,
 ): Generator<{ readonly token: string; readonly index: number }> {
   for (let index = 0; index < args.length; index += 1) {
