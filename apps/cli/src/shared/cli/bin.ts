@@ -53,13 +53,14 @@ if (!binPath) {
 // Either way the shim just waits and mirrors the child's exit.
 const child = spawn(binPath, process.argv.slice(2), { stdio: "inherit" });
 const forwardedSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
-const forwarders = forwardedSignals.map((signal) => {
+const forwarders = new Map<NodeJS.Signals, () => void>();
+for (const signal of forwardedSignals) {
   const forward = () => {
     if (child.exitCode === null && child.signalCode === null) child.kill(signal);
   };
   process.on(signal, forward);
-  return [signal, forward] as const;
-});
+  forwarders.set(signal, forward);
+}
 child.on("error", (error) => {
   for (const [signal, forward] of forwarders) process.removeListener(signal, forward);
   throw error;
