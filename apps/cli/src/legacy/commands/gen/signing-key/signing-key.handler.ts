@@ -4,6 +4,7 @@ import { Effect, FileSystem, Option, Path } from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { findGitRootPath } from "../../../../shared/git/git-root.ts";
 import { legacyLoadProjectEnv } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
@@ -240,9 +241,8 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
     if (Option.isNone(configured)) {
       yield* output.raw(`${JSON.stringify(key)}\n`, "stdout");
       const defaultPath = path.join("supabase", "signing_keys.json");
-      yield* output.raw(
+      yield* emitSuccessTrailer(
         `\nTo enable JWT signing keys in your local project:\n1. Save the generated key to ${emphasize(defaultPath)}\n2. Update your ${emphasize(signingKeysConfig.configDisplayPath)} with the new keys path\n\n[auth]\nsigning_keys_path = "./signing_keys.json"\n\n`,
-        "stderr",
       );
       return;
     }

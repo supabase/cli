@@ -30,6 +30,7 @@ import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
+import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
 import {
   flagAliasesFor,
@@ -808,31 +809,39 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       const processControl = yield* ProcessControl;
       const goProxyInvocation = yield* GoProxyInvocation;
       const output = yield* Output;
+      const successTrailer = yield* SuccessTrailer;
       const exit = yield* program.pipe(Effect.exit);
-      // Runs on every exit-0 invocation (`--help` included), like Go's
-      // `Execute()` tail. Signals stay held so a Ctrl-C during the ≤3s-bounded
-      // hook cannot turn an already-successful command into exit 130.
       const afterSuccessHook = options.afterSuccess;
       const afterSuccess = (code: number, cleanShowHelp: boolean) =>
-        code === 0 && afterSuccessHook !== undefined
-          ? goProxyInvocation.wasDelegated.pipe(
-              Effect.flatMap((delegatedToGo) =>
-                Effect.scoped(
+        code === 0
+          ? Effect.gen(function* () {
+              const trailers = yield* successTrailer.takeAll;
+              if (afterSuccessHook !== undefined || trailers.length > 0) {
+                yield* Effect.scoped(
                   processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(
                     Effect.andThen(
-                      afterSuccessHook(args, {
-                        cleanShowHelp,
-                        delegatedToGo,
-                        isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
-                          rootCommand,
-                          args,
-                        ),
+                      Effect.gen(function* () {
+                        if (afterSuccessHook !== undefined) {
+                          const delegatedToGo = yield* goProxyInvocation.wasDelegated;
+                          yield* afterSuccessHook(args, {
+                            cleanShowHelp,
+                            delegatedToGo,
+                            isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
+                              rootCommand,
+                              args,
+                            ),
+                          });
+                        }
+
+                        yield* Effect.forEach(trailers, (text) => output.raw(text, "stderr"), {
+                          discard: true,
+                        });
                       }),
                     ),
                   ),
-                ),
-              ),
-            )
+                );
+              }
+            })
           : Effect.void;
       if (Exit.isFailure(exit)) {
         const exitCode = exitCodeForFailure(exit.cause);
@@ -863,6 +872,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       Effect.provide(unixHttpClientLayer),
       Effect.provide(BunServices.layer),
       Effect.provide(goProxyInvocationLayer),
+      Effect.provide(successTrailerLayer),
     );
 
   if (useGlobalSignalInterrupt) {

@@ -147,4 +147,31 @@ process.stderr.write("child command suggestion\\n");
     expect(exitCode).toBe(0);
     expect(stderr).toBe("child upgrade notice\nchild command suggestion\n");
   });
+
+  test("keeps the Go upgrade notice before a native command suggestion", async () => {
+    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
+    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
+    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+
+    const { exitCode, stderr } = await runSupabase(["gen", "signing-key"], {
+      entrypoint: "legacy",
+      cwd: workdir,
+      env: { SUPABASE_NO_UPDATE_NOTIFIER: "0" },
+    });
+
+    expect(exitCode).toBe(0);
+    const noticeIndex = stderr.indexOf("A new version of Supabase CLI is available");
+    const suggestionIndex = stderr.indexOf("To enable JWT signing keys in your local project:");
+    expect(noticeIndex).toBeGreaterThanOrEqual(0);
+    expect(suggestionIndex).toBeGreaterThan(noticeIndex);
+
+    const suppressed = await runSupabase(["gen", "signing-key"], {
+      entrypoint: "legacy",
+      cwd: workdir,
+    });
+    expect(suppressed.exitCode).toBe(0);
+    expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
+    expect(suppressed.stderr).toContain("To enable JWT signing keys in your local project:");
+  });
 });
