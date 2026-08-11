@@ -1,3 +1,5 @@
 dist/
 coverage/
 supabase/
+# re-include the CLI reference overlays despite the generated-project ignore above
+!docs/supabase/
