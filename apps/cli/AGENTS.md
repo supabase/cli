@@ -34,6 +34,28 @@ Both call `runCli(root)` from `shared/cli/run.ts`.
 
 ---
 
+## Legacy Port Status and Go CLI Authority
+
+`src/legacy/` started as a from-scratch 1:1 port of the Go CLI (`apps/cli-go/`) and is now largely
+there: see [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+for the live per-command tracker. As of writing, 95 of 103 legacy leaf commands are natively ported;
+only a small residual set is still a Phase 0 proxy to the Go binary.
+
+This changes what "Go CLI is authoritative" means day to day. `apps/cli-go/` is required reading
+only when:
+
+- Replacing one of the remaining Phase 0 wrapped commands with a native implementation, or
+- Changing something on an already-ported command's established parity surface — command/flag
+  names, stdout/stderr text, exit codes, filesystem/API side effects, telemetry payload shape.
+
+For everything else in `src/legacy/` — bug fixes that don't touch that surface, internal refactors,
+hoisting shared helpers, adding a documented TS-only flag/feature, tests, tooling — treat it like any
+other TypeScript workspace. Go behavior is not the deciding standard, and there's no need to consult
+`apps/cli-go/`. See [ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md)
+for the full rationale.
+
+---
+
 ## Learning more about the "effect" library
 
 This project uses **Effect V4**. The full source code for the `effect` library is in `.repos/effect/`.
@@ -103,7 +125,11 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 ## Phase 0: Go Binary Wrapper
 
-Before any command is natively implemented in TypeScript, the first step for each command is to **wrap** it: define the command in the TS command tree and proxy all invocations to the bundled Go binary via subprocess.
+This phase is now the exception, not the default: only the commands listed as `wrapped` in the
+[Legacy Shell Command Status table](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+still need it. A genuinely new command with no existing TS or Go surface is rare at this point in
+the port; when one does show up, the first step is to **wrap** it: define the command in the TS
+command tree and proxy all invocations to the bundled Go binary via subprocess.
 
 ### Proxy handler pattern
 
@@ -255,6 +281,12 @@ The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility 
 - Same exit codes
 
 When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `apps/cli-go/` and match it exactly.
+
+This contract governs behavior a command has already established — it does not mean every change in
+`src/legacy/` requires consulting Go. It applies when finishing one of the remaining Phase 0 ports,
+or changing an already-ported command in a way that could affect the surface above. It does not
+apply to internal refactors, TS-only additions, or bug fixes that leave that surface unchanged — see
+[Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority).
 
 ---
 
@@ -512,4 +544,12 @@ bun run --parallel "*:check"
 
 ### `apps/cli-go/`
 
-The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly. Exception: `internal/start` (Go's `supabase start`) was deleted outright as unreachable once ported (CLI-1966) — for that command, the last commit with the source intact (`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative reference instead.
+The [old Supabase CLI](https://github.com/supabase/cli) written in Go. Use this as the authoritative
+source, matched exactly, when porting one of the remaining wrapped commands to native TS, or when
+changing an already-ported legacy command's established output/flags/behavior. It is not required
+reading for other legacy-shell work — see
+[Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority) and
+[ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md). Exception:
+`internal/start` (Go's `supabase start`) was deleted outright as unreachable once ported (CLI-1966)
+— for that command, the last commit with the source intact
+(`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative reference instead.
