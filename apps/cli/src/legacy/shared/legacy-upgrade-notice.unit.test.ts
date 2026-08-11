@@ -1,4 +1,5 @@
 import {
+  chmodSync,
   lstatSync,
   mkdirSync,
   readdirSync,
@@ -254,6 +255,21 @@ describe("legacyRunUpgradeNotice", () => {
     expect(consumedValue.stderr).toBe("");
     consumedValue.cleanup();
   });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "a cache write failure reports the stable cli-latest path, never the temp file",
+    async () => {
+      const ctx = setup({ args: ["db", "start", "--debug"] });
+      mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+      chmodSync(join(workdir, "supabase", ".temp"), 0o555);
+      await legacyRunUpgradeNotice(ctx.deps);
+      chmodSync(join(workdir, "supabase", ".temp"), 0o755);
+      expect(ctx.stderr).toContain("failed to write file");
+      expect(ctx.stderr).toContain("cli-latest");
+      expect(ctx.stderr).not.toContain("cli-latest.tmp");
+      ctx.cleanup();
+    },
+  );
 
   it("a failed fetch inside a project stays silent under --debug, matching Go's backoff", async () => {
     const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });

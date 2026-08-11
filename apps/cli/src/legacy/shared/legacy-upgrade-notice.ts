@@ -279,7 +279,14 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
             .catch((error: unknown) =>
               rm(tempFile, { force: true })
                 .catch(() => undefined)
-                .then(() => new Error(`failed to write file: ${errorMessage(error)}`)),
+                // Go writes `cli-latest` directly, so its diagnostic names the
+                // stable path — the deleted temp file must not leak.
+                .then(
+                  () =>
+                    new Error(
+                      `failed to write file: ${errorMessage(error).replaceAll(tempFile, cacheFile)}`,
+                    ),
+                ),
             ),
         (error: unknown) => new Error(`failed to mkdir: ${errorMessage(error)}`),
       );
