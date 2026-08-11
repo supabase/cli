@@ -2733,12 +2733,16 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [{ operation: "start", stackId: "stack-main-default" }],
       details: {
         resolved_runtime: "native",
-        qualified_service_count: 13,
+        qualified_service_count: nativeServiceNames.length,
         mixed_runtime: false,
         persisted: true,
       },
       output: {
-        api: { stackId: "stack-main-default", runtime: "native", qualifiedServiceCount: 13 },
+        api: {
+          stackId: "stack-main-default",
+          runtime: "native",
+          qualifiedServiceCount: nativeServiceNames.length,
+        },
       },
     },
   },
@@ -2992,7 +2996,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
   },
   {
     id: "native-qualification.all-services-qualify-platform",
-    title: "A platform is native-supported only when all 13 services qualify",
+    title: `A platform is native-supported only when all ${nativeServiceNames.length} services qualify`,
     area: "native-qualification",
     given: [
       {
@@ -3011,7 +3015,11 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       outcome: "report",
       writes: [],
       runtimeEffects: [],
-      details: { qualified: true, qualified_service_count: 13, failed_service_count: 0 },
+      details: {
+        qualified: true,
+        qualified_service_count: nativeServiceNames.length,
+        failed_service_count: 0,
+      },
       output: { api: { platform: "darwin-arm64", qualified: true, services: nativeServiceNames } },
     },
   },
@@ -3043,7 +3051,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       runtimeEffects: [],
       details: {
         qualified: false,
-        qualified_service_count: 12,
+        qualified_service_count: nativeServiceNames.length - 1,
         failed_service_count: 1,
         reduced_graph: false,
         docker_fallback_per_service: false,

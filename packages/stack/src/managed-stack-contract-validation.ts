@@ -139,6 +139,10 @@ export const validateManagedStackContractFixtures = (
     }
 
     for (const write of scenario.expected.writes) {
+      if (write.id.trim().length === 0) {
+        errors.push(`${scenario.id}: write ID is required`);
+        continue;
+      }
       if (
         write.operation === "copy" ||
         write.operation === "create" ||
@@ -180,6 +184,10 @@ export const validateManagedStackContractFixtures = (
     }
 
     for (const effect of scenario.expected.runtimeEffects) {
+      if (effect.stackId.trim().length === 0) {
+        errors.push(`${scenario.id}: runtime effect stack ID is required`);
+        continue;
+      }
       if (!declaredIds.has(effect.stackId)) {
         errors.push(`${scenario.id}: runtime effect references undeclared ID ${effect.stackId}`);
       }

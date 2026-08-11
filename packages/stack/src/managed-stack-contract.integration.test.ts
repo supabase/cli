@@ -119,6 +119,36 @@ describe("managed stack acceptance contract", () => {
         fixtures: [reuse, reuse],
         expectedError: `${reuse.id}: duplicate scenario ID`,
       },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            expected: {
+              ...reuse.expected,
+              writes: [
+                ...reuse.expected.writes,
+                { target: "registry", operation: "publish", id: "" },
+              ],
+            },
+          },
+        ],
+        expectedError: `${reuse.id}: write ID is required`,
+      },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            expected: {
+              ...reuse.expected,
+              runtimeEffects: [
+                ...reuse.expected.runtimeEffects,
+                { operation: "start", stackId: "" },
+              ],
+            },
+          },
+        ],
+        expectedError: `${reuse.id}: runtime effect stack ID is required`,
+      },
     ];
 
     for (const testCase of cases) {
