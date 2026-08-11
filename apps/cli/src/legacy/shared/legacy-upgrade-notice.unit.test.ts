@@ -255,6 +255,21 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("an explicit empty --workdir beats SUPABASE_WORKDIR and falls back to the walk, like viper", async () => {
+    const ctx = setup({});
+    const envDir = join(workdir, "env-project");
+    mkdirSync(join(envDir, "supabase"), { recursive: true });
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      args: ["db", "start", "--workdir="],
+      env: { SUPABASE_WORKDIR: envDir },
+    });
+    // The set-but-empty flag suppresses the env, so the walk finds the real project.
+    expect(readFileSync(ctx.cachePath, "utf8")).toBe("v2.114.0");
+    expect(() => readFileSync(join(envDir, "supabase", ".temp", "cli-latest"), "utf8")).toThrow();
+    ctx.cleanup();
+  });
+
   it("resolves --help and --version against the bare cwd, ignoring --workdir, like Go", async () => {
     // Go serves the built-ins without `ChangeWorkDir`, so the flagged project
     // must not gain a cache entry; the caller's cwd (no supabase/) writes none.

@@ -127,9 +127,10 @@ function resolveNoticeBaseDir(
   // `ChangeWorkDir` for them: the cache resolves against the bare cwd, with
   // `--workdir`/`SUPABASE_WORKDIR` and the ancestor walk all ignored.
   if (hasRootHelpOrVersionFlag(args)) return cwd;
+  // Viper: a set flag beats the env even when empty, and an empty effective
+  // value falls through to the ancestor walk (`ChangeWorkDir`'s own rule).
   const flagValue = lastGlobalFlagValue(args, "--workdir");
-  const explicit =
-    flagValue !== undefined && flagValue !== "" ? flagValue : env["SUPABASE_WORKDIR"];
+  const explicit = flagValue !== undefined ? flagValue : env["SUPABASE_WORKDIR"];
   if (explicit !== undefined && explicit !== "") {
     return resolve(cwd, explicit);
   }
