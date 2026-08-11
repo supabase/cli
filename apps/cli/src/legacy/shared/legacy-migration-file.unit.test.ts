@@ -9,12 +9,24 @@ import {
 
 describe("legacyParseMigrationContent", () => {
   it.each([
-    ["LF", "-- pg-delta: transaction=false\nSET check_function_bodies = off;"],
-    ["CRLF", "-- pg-delta: transaction=false\r\nSET check_function_bodies = off;"],
-    ["a UTF-8 BOM", "\uFEFF-- pg-delta: transaction=false\nSET check_function_bodies = off;"],
-  ])("recognizes the anchored no-transaction directive with %s", (_name, content) => {
+    [
+      "LF",
+      "-- pg-delta: transaction=false\nSET check_function_bodies = off;",
+      "-- pg-delta: transaction=false\nSET check_function_bodies = off",
+    ],
+    [
+      "CRLF",
+      "-- pg-delta: transaction=false\r\nSET check_function_bodies = off;",
+      "-- pg-delta: transaction=false\r\nSET check_function_bodies = off",
+    ],
+    [
+      "a UTF-8 BOM",
+      "\uFEFF-- pg-delta: transaction=false\nSET check_function_bodies = off;",
+      "-- pg-delta: transaction=false\nSET check_function_bodies = off",
+    ],
+  ])("recognizes the anchored no-transaction directive with %s", (_name, content, statement) => {
     expect(legacyParseMigrationContent(content)).toEqual({
-      statements: ["SET check_function_bodies = off"],
+      statements: [statement],
       transactionMode: "none",
     });
   });

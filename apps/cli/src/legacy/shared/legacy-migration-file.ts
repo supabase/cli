@@ -26,9 +26,8 @@ export function legacyParseMigrationContent(content: string): LegacyParsedMigrat
   const firstLine = rawFirstLine.endsWith("\r") ? rawFirstLine.slice(0, -1) : rawFirstLine;
 
   if (firstLine === PG_DELTA_NO_TRANSACTION_DIRECTIVE) {
-    const sql = firstNewline < 0 ? "" : withoutBom.slice(firstNewline + 1);
     return {
-      statements: legacySplitAndTrim(sql),
+      statements: legacySplitAndTrim(withoutBom),
       transactionMode: "none",
     };
   }

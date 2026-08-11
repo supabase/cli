@@ -224,7 +224,8 @@ describe("legacyApplyMigrationFile", () => {
         Effect.sync(() => {
           const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
           const setupCommit = execs.indexOf("COMMIT");
-          const set = execs.indexOf("SET check_function_bodies = off");
+          const firstStatement = "-- pg-delta: transaction=false\nSET check_function_bodies = off";
+          const set = execs.indexOf(firstStatement);
           const action = execs.indexOf("DROP SUBSCRIPTION app_events");
           const cleanup = execs.lastIndexOf("RESET ALL");
 
@@ -241,7 +242,7 @@ describe("legacyApplyMigrationFile", () => {
           expect(history[0]?.params).toEqual([
             "20240101120000",
             "drop_subscription",
-            ["SET check_function_bodies = off", "DROP SUBSCRIPTION app_events", "RESET ALL"],
+            [firstStatement, "DROP SUBSCRIPTION app_events", "RESET ALL"],
           ]);
           rmSync(dir, { recursive: true, force: true });
         }),

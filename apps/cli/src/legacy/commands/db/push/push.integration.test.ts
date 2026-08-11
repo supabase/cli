@@ -365,7 +365,7 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       const setupCommit = conn.execs.indexOf("COMMIT");
-      const setIndex = conn.execs.indexOf(set);
+      const setIndex = conn.execs.indexOf(`-- pg-delta: transaction=false\n${set}`);
       const actionIndex = conn.execs.indexOf(action);
       const cleanupIndex = conn.execs.lastIndexOf("RESET ALL");
 
