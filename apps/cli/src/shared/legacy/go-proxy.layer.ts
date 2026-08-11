@@ -3,13 +3,20 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { CLI_VERSION } from "../cli/version.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
+import { GoProxyInvocation } from "./go-proxy-invocation.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
+
+const markDelegated = Effect.serviceOption(GoProxyInvocation).pipe(
+  Effect.flatMap((invocation) =>
+    Option.isSome(invocation) ? invocation.value.markDelegated : Effect.void,
+  ),
+);
 
 // ---------------------------------------------------------------------------
 // Binary resolution
@@ -135,10 +142,7 @@ export function formatGoBinaryNotFoundError(tried: ReadonlyArray<string>): strin
 export function makeGoProxyLayer(opts?: {
   cwd?: string;
   /**
-   * Extra env for every spawned child. A shell that prints the upgrade notice
-   * itself must pass `SUPABASE_NO_UPDATE_NOTIFIER: "1"` here so its children
-   * stay quiet (see `legacy/cli/root.ts`); a shell that prints none must not,
-   * or its delegated commands lose the notice entirely.
+   * Extra env for every spawned child.
    */
   env?: Record<string, string>;
   globalArgs?: ReadonlyArray<string>;
@@ -237,6 +241,7 @@ export function makeGoProxyLayer(opts?: {
                   }),
                 );
               }
+              yield* markDelegated;
             }),
           ),
         execCapture: (args, execOpts) =>
@@ -294,6 +299,7 @@ export function makeGoProxyLayer(opts?: {
                   }),
                 );
               }
+              yield* markDelegated;
               return captured;
             }),
           ),

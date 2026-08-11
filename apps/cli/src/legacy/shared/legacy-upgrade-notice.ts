@@ -349,21 +349,24 @@ export const legacyUpgradeNoticeHook = (
   args: ReadonlyArray<string>,
   info: {
     readonly cleanShowHelp: boolean;
+    readonly delegatedToGo: boolean;
     readonly isValueTakingFlagToken: (token: string) => boolean;
   },
 ): Effect.Effect<void> =>
-  Effect.promise(() =>
-    legacyRunUpgradeNotice({
-      env: process.env,
-      args,
-      cleanShowHelp: info.cleanShowHelp,
-      isValueTakingFlagToken: info.isValueTakingFlagToken,
-      cwd: process.cwd(),
-      currentVersion: CLI_VERSION,
-      now: Date.now,
-      fetchLatestTag: fetchLatestReleaseTag,
-      writeStderr: (text) => {
-        process.stderr.write(text);
-      },
-    }),
-  ).pipe(Effect.ignoreCause);
+  info.delegatedToGo
+    ? Effect.void
+    : Effect.promise(() =>
+        legacyRunUpgradeNotice({
+          env: process.env,
+          args,
+          cleanShowHelp: info.cleanShowHelp,
+          isValueTakingFlagToken: info.isValueTakingFlagToken,
+          cwd: process.cwd(),
+          currentVersion: CLI_VERSION,
+          now: Date.now,
+          fetchLatestTag: fetchLatestReleaseTag,
+          writeStderr: (text) => {
+            process.stderr.write(text);
+          },
+        }),
+      ).pipe(Effect.ignoreCause);

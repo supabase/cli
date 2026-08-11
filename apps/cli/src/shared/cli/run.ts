@@ -12,6 +12,7 @@ import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
+import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
 import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
 import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
 import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
@@ -677,6 +678,7 @@ export interface RunCliOptions {
     args: ReadonlyArray<string>,
     info: {
       readonly cleanShowHelp: boolean;
+      readonly delegatedToGo: boolean;
       /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
       readonly isValueTakingFlagToken: (token: string) => boolean;
     },
@@ -804,20 +806,30 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
   ): Effect.Effect<never, unknown, never> =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
+      const goProxyInvocation = yield* GoProxyInvocation;
       const output = yield* Output;
       const exit = yield* program.pipe(Effect.exit);
       // Runs on every exit-0 invocation (`--help` included), like Go's
       // `Execute()` tail. Signals stay held so a Ctrl-C during the ≤3s-bounded
       // hook cannot turn an already-successful command into exit 130.
+      const afterSuccessHook = options.afterSuccess;
       const afterSuccess = (code: number, cleanShowHelp: boolean) =>
-        code === 0 && options.afterSuccess !== undefined
-          ? Effect.scoped(
-              processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(
-                Effect.andThen(
-                  options.afterSuccess(args, {
-                    cleanShowHelp,
-                    isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(rootCommand, args),
-                  }),
+        code === 0 && afterSuccessHook !== undefined
+          ? goProxyInvocation.wasDelegated.pipe(
+              Effect.flatMap((delegatedToGo) =>
+                Effect.scoped(
+                  processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(
+                    Effect.andThen(
+                      afterSuccessHook(args, {
+                        cleanShowHelp,
+                        delegatedToGo,
+                        isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
+                          rootCommand,
+                          args,
+                        ),
+                      }),
+                    ),
+                  ),
                 ),
               ),
             )
@@ -850,6 +862,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       Effect.provide(ttyLayer),
       Effect.provide(unixHttpClientLayer),
       Effect.provide(BunServices.layer),
+      Effect.provide(goProxyInvocationLayer),
     );
 
   if (useGlobalSignalInterrupt) {

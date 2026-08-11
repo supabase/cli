@@ -3,6 +3,7 @@ import { Cause, Deferred, Effect, Exit, Fiber, Layer, Sink, Stream } from "effec
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { type CliProcessSignal, ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
+import { GoProxyInvocation, goProxyInvocationLayer } from "./go-proxy-invocation.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
 import { formatGoBinaryNotFoundError, makeGoProxyLayer } from "./go-proxy.layer.ts";
 
@@ -258,6 +259,25 @@ describe("formatGoBinaryNotFoundError - pinned snippet", () => {
 });
 
 describe("makeGoProxyLayer", () => {
+  it.effect("records delegated execution for the parent success trailer", () => {
+    const spawner = mockSpawner({ kind: "success", code: 0 });
+    const pc = mockProcessControl();
+    const layer = Layer.mergeAll(
+      makeGoProxyLayer({ binary: TEST_BINARY }).pipe(
+        Layer.provide(Layer.mergeAll(spawner.layer, pc.layer)),
+      ),
+      goProxyInvocationLayer,
+    );
+    return Effect.gen(function* () {
+      const proxy = yield* LegacyGoProxy;
+      const invocation = yield* GoProxyInvocation;
+
+      expect(yield* invocation.wasDelegated).toBe(false);
+      yield* proxy.exec(["migration", "squash", "--local"]);
+      expect(yield* invocation.wasDelegated).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("passes detached:false and inherited stdio to the spawner", () => {
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
@@ -329,7 +349,6 @@ describe("makeGoProxyLayer", () => {
   });
 
   it.effect("passes the layer's env to children, letting per-call env win", () => {
-    // The legacy root suppresses its Go children's notifier through this env.
     const spawner = mockSpawner({ kind: "success", code: 0 });
     const pc = mockProcessControl();
     const layer = makeGoProxyLayer({
