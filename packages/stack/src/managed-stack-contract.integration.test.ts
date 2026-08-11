@@ -41,9 +41,13 @@ describe("managed stack acceptance contract", () => {
     const readOnly = findScenario("identity.branch-copy-read-only-does-not-write");
     const noOp = findScenario("reclamation.delete-repeat-is-idempotent");
     const freshBootstrap = findScenario("bootstrap.absent-legacy-starts-fresh");
+    const reusedStack = reuse.given.find((fact) => fact.kind === "stack");
     if (
       reuse.expected.selection === undefined ||
+      reuse.when.interface !== "cli" ||
       reuse.expected.output.json === undefined ||
+      reuse.expected.output.human === undefined ||
+      reusedStack === undefined ||
       portConflict.expected.error === undefined ||
       portConflict.expected.output.json === undefined ||
       freshBootstrap.expected.details === undefined ||
@@ -183,7 +187,7 @@ describe("managed stack acceptance contract", () => {
                 ...freshBootstrap.expected.output,
                 json: {
                   ...freshBootstrap.expected.output.json,
-                  legacy_state_mutated: true,
+                  legacy_state_mutated: { value: true },
                 },
               },
             },
@@ -221,6 +225,69 @@ describe("managed stack acceptance contract", () => {
           },
         ],
         expectedError: `${noOp.id}: no-op outcome must not mutate state`,
+      },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            expected: {
+              ...reuse.expected,
+              selection: { ...reuse.expected.selection, stackName: "review" },
+              output: {
+                ...reuse.expected.output,
+                json: { ...reuse.expected.output.json, stack_name: "review" },
+              },
+            },
+          },
+        ],
+        expectedError: `${reuse.id}: selected stack name review disagrees with stack stack-main-default`,
+      },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            given: [...reuse.given, { ...reusedStack, lifecycle: "running" }],
+          },
+        ],
+        expectedError: `${reuse.id}: conflicting stack facts for ID stack-main-default`,
+      },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            expected: {
+              ...reuse.expected,
+              output: {
+                ...reuse.expected.output,
+                human: { ...reuse.expected.output.human, summary: " " },
+              },
+            },
+          },
+        ],
+        expectedError: `${reuse.id}: human summary is required`,
+      },
+      {
+        fixtures: [
+          {
+            ...reuse,
+            expected: {
+              ...reuse.expected,
+              output: {
+                ...reuse.expected.output,
+                json: { ...reuse.expected.output.json, stackName: "default" },
+                api: { stack_id: "stack-main-default" },
+              },
+            },
+          },
+        ],
+        expectedError: [
+          `${reuse.id}: JSON projection key stackName must use snake_case`,
+          `${reuse.id}: API projection key stack_id must not use snake_case`,
+        ],
+      },
+      {
+        fixtures: [{ ...reuse, when: { ...reuse.when, cwd: "another-checkout" } }],
+        expectedError: `${reuse.id}: cwd another-checkout does not match a given workspace or checkout path`,
       },
     ];
 

@@ -1,5 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type {
+  ManagedStackContractFact,
   ManagedStackContractJson,
   ManagedStackContractScenario,
 } from "./managed-stack-contract.ts";
@@ -33,6 +34,14 @@ export const validateManagedStackContractFixtures = (
       if (scenario.when.cwd.trim().length === 0) {
         errors.push(`${scenario.id}: cwd is required for command scenarios`);
       }
+      const givenPaths = scenario.given.flatMap((fact) =>
+        fact.kind === "workspace" || fact.kind === "checkout" ? [fact.path] : [],
+      );
+      if (givenPaths.length > 0 && !givenPaths.includes(scenario.when.cwd)) {
+        errors.push(
+          `${scenario.id}: cwd ${scenario.when.cwd} does not match a given workspace or checkout path`,
+        );
+      }
     } else if (scenario.when.method.trim().length === 0) {
       errors.push(`${scenario.id}: public API method is required`);
     }
@@ -40,6 +49,19 @@ export const validateManagedStackContractFixtures = (
     const { output } = scenario.expected;
     if (output.human === undefined && output.json === undefined && output.api === undefined) {
       errors.push(`${scenario.id}: at least one observable output is required`);
+    }
+    if (output.human !== undefined && output.human.summary.trim().length === 0) {
+      errors.push(`${scenario.id}: human summary is required`);
+    }
+    for (const key of Object.keys(output.json ?? {})) {
+      if (!/^[a-z0-9]+(?:_[a-z0-9]+)*$/.test(key)) {
+        errors.push(`${scenario.id}: JSON projection key ${key} must use snake_case`);
+      }
+    }
+    for (const key of Object.keys(output.api ?? {})) {
+      if (key.includes("_")) {
+        errors.push(`${scenario.id}: API projection key ${key} must not use snake_case`);
+      }
     }
 
     if (scenario.expected.outcome === "error") {
@@ -98,6 +120,7 @@ export const validateManagedStackContractFixtures = (
     }
 
     const declaredIds = new Set<string>();
+    const stackFactsById = new Map<string, ManagedStackContractFact>();
     const declareId = (id: string): void => {
       if (id.trim().length === 0) {
         errors.push(`${scenario.id}: declared ID is required`);
@@ -152,6 +175,12 @@ export const validateManagedStackContractFixtures = (
         case "stack":
           declareId(fact.contextId);
           declareId(fact.stackId);
+          const previousStackFact = stackFactsById.get(fact.stackId);
+          if (previousStackFact !== undefined && !isDeepStrictEqual(previousStackFact, fact)) {
+            errors.push(`${scenario.id}: conflicting stack facts for ID ${fact.stackId}`);
+          } else if (previousStackFact === undefined) {
+            stackFactsById.set(fact.stackId, fact);
+          }
           break;
         default:
           break;
@@ -190,16 +219,23 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.selection !== undefined) {
+    const selection = scenario.expected.selection;
+    if (selection !== undefined) {
       for (const id of [
-        scenario.expected.selection.projectId,
-        scenario.expected.selection.checkoutId,
-        scenario.expected.selection.contextId,
-        scenario.expected.selection.stackId,
+        selection.projectId,
+        selection.checkoutId,
+        selection.contextId,
+        selection.stackId,
       ]) {
         if (!declaredIds.has(id)) {
           errors.push(`${scenario.id}: selection references undeclared ID ${id}`);
         }
+      }
+      const selectedStackFact = stackFactsById.get(selection.stackId);
+      if (selectedStackFact?.kind === "stack" && selectedStackFact.name !== selection.stackName) {
+        errors.push(
+          `${scenario.id}: selected stack name ${selection.stackName} disagrees with stack ${selection.stackId}`,
+        );
       }
     }
 
@@ -288,18 +324,12 @@ export const validateManagedStackContractFixtures = (
         checkProjection(projection, "code", diagnosticCode);
       }
     }
-    const jsonShape = (value: ManagedStackContractJson): string =>
-      value === null ? "null" : Array.isArray(value) ? "array" : typeof value;
     for (const [key, value] of Object.entries(scenario.expected.details ?? {})) {
       for (const projection of [output.json, output.api]) {
-        const projectedValue = projection?.[key];
-        if (projectedValue !== undefined && jsonShape(projectedValue) === jsonShape(value)) {
-          checkProjection(projection, key, value);
-        }
+        checkProjection(projection, key, value);
       }
     }
 
-    const selection = scenario.expected.selection;
     if (selection !== undefined) {
       checkProjection(output.json, "project_id", selection.projectId);
       checkProjection(output.json, "checkout_id", selection.checkoutId);

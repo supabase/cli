@@ -898,8 +898,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       {
         kind: "workspace",
         mode: "ordinary-folder",
-        path: "project-a",
-        canonicalPath: "/work/project-a",
+        path: "/work/project-a",
       },
     ],
     when: { interface: "cli", argv: ["start", "--experimental"], cwd: "/work/project-a" },
@@ -948,8 +947,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       {
         kind: "workspace",
         mode: "ordinary-folder",
-        path: "project-a",
-        canonicalPath: "/work/project-a",
+        path: "/work/project-a",
       },
       {
         kind: "identity-marker",
@@ -1549,7 +1547,10 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       outcome: "report",
       writes: [],
       runtimeEffects: [],
-      details: { default: "stack-feat-default", "review-42": "stack-feat-review-42" },
+      details: {
+        default_stack_id: "stack-feat-default",
+        review_42_stack_id: "stack-feat-review-42",
+      },
       output: {
         api: {
           default: { contextId: "context-feat", stackId: "stack-feat-default" },
