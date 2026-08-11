@@ -61,7 +61,7 @@ try {
   if (e && typeof e === "object" && "signal" in e && typeof e.signal === "string") {
     // Mirror a signal death so the parent shell sees the conventional 128+n.
     for (const signal of heldSignals) process.removeListener(signal, holdSignal);
-    process.kill(process.pid, e.signal as NodeJS.Signals);
+    process.kill(process.pid, e.signal);
     setInterval(() => {}, 1_000); // keep the loop alive until it lands
   } else {
     throw e;
