@@ -1054,7 +1054,6 @@ describe("makeSupabaseApiClient", () => {
     expect(seenRequest?.headers.authorization).toBe("Bearer test-token");
   });
 
-  // NOTE(CLI-2157): v2GetProjectConfig is staging-only until the endpoint ships to prod; delete or re-point this test if the snapshot is regenerated from prod before then.
   test("decodes a nested v2GetProjectConfig payload through the unified execute path", async () => {
     const result = await Effect.runPromise(
       makeSupabaseApiClient(config).pipe(

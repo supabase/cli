@@ -2,13 +2,6 @@
 
 Generated Supabase Management API SDK built directly from the Supabase OpenAPI spec.
 
-> **Temporary (CLI-2157):** the committed snapshot on this branch is generated from staging
-> (`api.supabase.green`) because `GET /v2/projects/{ref}/config` (`api.v2.getProjectConfig`,
-> schema `V2ProjectConfigResponse`) has not shipped to production yet. Develop's hourly prod sync
-> (`api-package-sync.yml`) would remove exactly that endpoint once this merges. Before merging,
-> either the endpoint must ship to production or the snapshot must be regenerated from production
-> by re-pointing `scripts/openapi-source.json`.
-
 The package exposes:
 
 - `@supabase/api` for the runtime-specific Promise client helpers plus generated contracts
