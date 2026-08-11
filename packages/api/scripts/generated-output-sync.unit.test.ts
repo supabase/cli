@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, test } from "vitest";
@@ -21,16 +21,20 @@ const generatedDir = path.join(packageDir, "src", "generated");
 const oxfmtBin = path.join(packageDir, "node_modules", ".bin", "oxfmt");
 
 function formatWithOxfmt(source: string, fileName: string): string {
-  const formatted = execFileSync(oxfmtBin, [`--stdin-filepath=${fileName}`], {
-    input: source,
-    cwd: packageDir,
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
-  // oxfmt's file mode (what the pipeline runs) trims trailing blank lines to
-  // a single newline; its stdin mode preserves them. Normalize so the two
-  // modes agree.
-  return formatted.replace(/\n+$/, "\n");
+  // oxfmt runs in file mode (also what the pipeline's fmt:fix runs) rather
+  // than through stdin/stdout: Bun on Linux truncates a child's piped stdout
+  // at ~219 KB, and these renders are 600+ KB. The temp directory lives
+  // inside the package so oxfmt resolves the same configuration, but not
+  // under node_modules, which oxfmt skips by default.
+  const tempDir = mkdtempSync(path.join(packageDir, ".generated-output-sync-"));
+  try {
+    const tempFile = path.join(tempDir, fileName);
+    writeFileSync(tempFile, source);
+    execFileSync(oxfmtBin, [tempFile], { cwd: packageDir });
+    return readFileSync(tempFile, "utf8");
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
+  }
 }
 
 function committedFile(fileName: string): string {
