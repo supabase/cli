@@ -175,7 +175,7 @@ export interface LegacyPrepareShadowSourceInput<E> extends LegacyShadowConnectio
   readonly targetLocal: boolean;
   /** Selects the declarative-apply engine for the local-declared branch, matching `DiffDatabase`. */
   readonly usePgDelta: boolean;
-  /** Selects the historical shadow baseline or pg-delta next's config-gated baseline. */
+  /** Selects the shadow baseline and whether a local target may use the legacy declarative override. */
   readonly migrationMode?: "legacy" | "pgdelta-next";
   /** `db.migrations.schema_paths`, RAW (unresolved) — Go's `Config.Db.Migrations.SchemaPaths` pre-`config.go:976-979`-resolution form. */
   readonly schemaPaths: ReadonlyArray<string>;
@@ -197,8 +197,9 @@ export type LegacyPrepareShadowSourceError =
  * Port of Go's `PrepareShadowSource` (`apps/cli-go/internal/db/diff/shadow.go:37-91`):
  * health-wait against an already-`legacyCreateShadowDatabase`-created shadow ->
  * `MigrateShadowDatabase` (platform baseline + local migrations + the `contrib_regression`
- * template database) -> build the diff-source config -> when `targetLocal`, the
- * declarative-schema override branch.
+ * template database) -> build the diff-source config -> for legacy local targets, the
+ * declarative-schema override branch. Pg-delta next always compares that migrations shadow
+ * directly to the live target.
  *
  * Deliberately does NOT call `legacyCreateShadowDatabase` (`shadow-database.ts`) itself, and
  * no longer wraps its own body in `Effect.onError` cleanup — the caller does both, structuring
@@ -273,7 +274,7 @@ export const legacyPrepareShadowSource = <E>(
     const sourceUrl = legacyToPostgresURL(connConfig);
 
     let targetUrlOverride: string | undefined;
-    if (input.targetLocal) {
+    if (input.targetLocal && input.migrationMode !== "pgdelta-next") {
       const declared = yield* legacyLoadDeclaredSchemas(
         input.fs,
         input.path,

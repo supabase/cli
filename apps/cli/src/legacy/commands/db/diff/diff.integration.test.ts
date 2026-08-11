@@ -487,6 +487,18 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeFiles");
       expect(s.databaseDiffCalls[0]).not.toHaveProperty("declarativeManifest");
+      expect(s.shadowConnectedDatabases).not.toContain("contrib_regression");
+      expect(s.databaseDiffCalls[0]?.target.ref).toContain("@127.0.0.1:54322/postgres");
+      expect(s.databaseDiffCalls[0]?.target).toMatchObject({
+        connection: {
+          host: "127.0.0.1",
+          port: 54322,
+          user: "postgres",
+          password: "postgres",
+          database: "postgres",
+        },
+        connectOptions: { isLocal: true, dnsResolver: "native" },
+      });
       expect(stderr(s.out)).toContain("schema_paths no longer changes the migrations baseline");
       expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
       expect(stdout(s.out)).toBe("create table result ();\n\n");
@@ -672,7 +684,7 @@ describe("legacy db diff", () => {
   );
 
   it.effect(
-    "provisions a local-target declarative shadow and diffs against the override database",
+    "migra provisions a local-target declarative shadow and diffs against the override database",
     () => {
       // A declarative schema file under supabase/schemas makes `loadDeclaredSchemas`
       // non-empty, so the native `--target-local` branch redirects the diff target to

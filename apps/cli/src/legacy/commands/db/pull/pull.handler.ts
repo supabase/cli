@@ -818,10 +818,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // NOT do — it also resolves after its own banner), would both print nothing on an
             // image-resolution failure before the banner and skip re-resolving it on retry.
             const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
-            // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
-            // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a
-            // local target with declarative schema files gets a second
-            // `contrib_regression` shadow returned as the target override.
+            // Legacy engines mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
+            // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a local
+            // target with declarative schema files gets a second `contrib_regression` shadow
+            // returned as the target override. Pg-delta next compares the migrations shadow
+            // directly to the live target instead.
             const migrationMode: "legacy" | "pgdelta-next" =
               usePgDeltaDiff && pgDeltaEngine.implementation === "next" ? "pgdelta-next" : "legacy";
             const shadowInput = {

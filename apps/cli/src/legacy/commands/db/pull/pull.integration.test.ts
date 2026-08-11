@@ -1786,7 +1786,24 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("db pull --local provisions a local-target shadow and uses the target override", () => {
+  it.effect("db pull --local with pg-delta-next diffs against the live local database", () => {
+    seedMigration(tmp.current, "20240101000000");
+    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "schemas", "public.sql"), "select 1;\n");
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags({ local: Option.some(true), diffEngine: Option.some("pg-delta") }));
+      expect(s.connectedDatabases).not.toContain("contrib_regression");
+      expect(s.engineCalls[0]?.targetRef).toContain("@127.0.0.1:5432/postgres");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("db pull --local with migra uses the declarative target override", () => {
     // Go derives the shadow targetLocal from utils.IsLocalDatabase and substitutes
     // the declarative contrib_regression target override (diff.go:190,196-197); a
     // real declarative schema file makes the native `loadDeclaredSchemas` branch
