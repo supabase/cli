@@ -198,13 +198,6 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
 
     const provisionDeclarative = (input: NativeShadowInput) =>
       Effect.gen(function* () {
-        if (input.localInputs.setup.majorVersion !== 17) {
-          return yield* Effect.fail(
-            new LegacyDeclarativeShadowDbError({
-              message: `pg-delta declarative shadow baseline requires Postgres 17 (got major ${input.localInputs.setup.majorVersion}, image ${JSON.stringify(input.base.image)})`,
-            }),
-          );
-        }
         const handle = yield* acquireShadow(input);
         yield* legacyWaitForHealthyServices(input.spawner, [handle.containerId], {
           timeoutSeconds: input.base.healthTimeoutSeconds,

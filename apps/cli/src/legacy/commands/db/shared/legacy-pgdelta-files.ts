@@ -1,5 +1,10 @@
 import { Data, Effect, type FileSystem, type Path } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import type {
   LegacyPgDeltaExportManifest,
   LegacyPgDeltaSqlFile,
@@ -7,9 +12,13 @@ import type {
 
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
 
-class LegacyPgDeltaFilesError extends Data.TaggedError("LegacyPgDeltaFilesError")<{
+export class LegacyPgDeltaFilesError extends Data.TaggedError("LegacyPgDeltaFilesError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 const filesError = (message: string) => new LegacyPgDeltaFilesError({ message });
 

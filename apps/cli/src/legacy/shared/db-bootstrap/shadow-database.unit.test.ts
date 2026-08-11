@@ -637,7 +637,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
   });
 
   it.effect(
-    "does not resolve JWKS on PG14 even when realtime is enabled (Go's initSchema never reaches ResolveJWKS for MajorVersion <= 14)",
+    "supports the extension-free declarative baseline on PG14 without resolving JWKS",
     () => {
       const { session } = fakeSession();
       const workdir = tempRoot.current;
@@ -646,29 +646,33 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        yield* legacySetupShadowDatabase(mock.spawner, {
-          fs,
-          path,
-          workdir,
-          projectId: "proj",
-          container: "shadow-container-id-0123456789abcdef",
-          networkId: "supabase_network_proj",
-          connConfig: {
-            host: "127.0.0.1",
-            port: 54320,
-            user: "postgres",
-            password: "postgres",
-            database: "postgres",
-          },
-          setup: baseShadowSetup({
-            majorVersion: 14,
-            realtimeEnabledForSetup: true,
-            jwks: Effect.sync(() => {
-              jwksEvaluated = true;
-              return '{"keys":[]}';
+        yield* legacySetupShadowDatabase(
+          mock.spawner,
+          {
+            fs,
+            path,
+            workdir,
+            projectId: "proj",
+            container: "shadow-container-id-0123456789abcdef",
+            networkId: "supabase_network_proj",
+            connConfig: {
+              host: "127.0.0.1",
+              port: 54320,
+              user: "postgres",
+              password: "postgres",
+              database: "postgres",
+            },
+            setup: baseShadowSetup({
+              majorVersion: 14,
+              realtimeEnabledForSetup: true,
+              jwks: Effect.sync(() => {
+                jwksEvaluated = true;
+                return '{"keys":[]}';
+              }),
             }),
-          }),
-        });
+          },
+          { activateUserExtensions: false },
+        );
         expect(jwksEvaluated).toBe(false);
       }).pipe(
         Effect.provide(

@@ -106,7 +106,11 @@ export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
   "LegacyDeclarativeCompatibilityError",
 )<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /**
  * Applying the generated migration to the local database failed. Wraps Go's

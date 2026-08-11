@@ -1066,10 +1066,10 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("bumps the version set when a target migration file already exists", () => {
-    // The full generated set is collision-checked before writing; if any target
-    // exists the base advances one second so the new files stay strictly ascending
-    // AND never overwrite the pre-existing migration.
+  it.effect("bumps the version set when another migration uses the same version", () => {
+    // Migration identity is the timestamp, not the full filename. If another name
+    // already uses a generated version, the whole set advances so every new version
+    // stays strictly ascending and unique.
     const s = setup(tmp.current, {
       format: "json",
       diffFiles: [
@@ -1081,12 +1081,12 @@ describe("legacy db diff", () => {
       const dir = join(tmp.current, "supabase", "migrations");
       mkdirSync(dir, { recursive: true });
       // TestClock starts at epoch 0, so the first version the writer tries is
-      // 19700101000000; pre-seed a colliding file at that version.
-      const clashing = join(dir, "19700101000000_my_diff_schema_changes.sql");
+      // 19700101000000; pre-seed a differently named migration at that version.
+      const clashing = join(dir, "19700101000000_different_name.sql");
       writeFileSync(clashing, "-- pre-existing\n");
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
       expect(readdirSync(dir).sort()).toEqual([
-        "19700101000000_my_diff_schema_changes.sql",
+        "19700101000000_different_name.sql",
         "19700101000001_my_diff_schema_changes.sql",
         "19700101000002_my_diff_after_enum_values.sql",
       ]);

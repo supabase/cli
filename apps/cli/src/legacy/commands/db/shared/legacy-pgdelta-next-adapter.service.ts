@@ -1,6 +1,11 @@
 import type { Pool } from "pg";
 import { Context, Data, type Effect } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import type {
   LegacyPgDeltaRemovalSummary,
   LegacyPgDeltaTransactionMode,
@@ -174,7 +179,11 @@ export class LegacyPgDeltaNextError extends Data.TaggedError("LegacyPgDeltaNextE
   readonly operation: LegacyPgDeltaNextOperation;
   readonly message: string;
   readonly cause: unknown;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 export interface LegacyPgDeltaNextAdapterShape {
   readonly diff: (

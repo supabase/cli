@@ -47,13 +47,14 @@ const MAX_VERSION_COLLISION_ATTEMPTS = 60;
  * arithmetic on the base millis, never string increment) so their execution order
  * and migration-history order stay stable.
  *
- * Before writing anything the FULL set of generated filenames is collision-checked
- * against the filesystem: if any target path already exists the base is advanced by
- * one second and every version recomputed, so the set stays strictly ascending AND
- * unique against pre-existing migrations. The base only ever moves forward — never
- * backdated below the caller's wall clock, since backdating could sort a new file
- * before pre-existing migrations. The resulting ≤N−1s future-dating is inherent to
- * second-granularity versions and acceptable once uniqueness is enforced.
+ * Before writing anything the FULL set of generated versions is collision-checked
+ * against the migrations directory: if any version is already used, the base is
+ * advanced by one second and every version recomputed, so the set stays strictly
+ * ascending AND unique against pre-existing migrations regardless of their names.
+ * The base only ever moves forward — never backdated below the caller's wall clock,
+ * since backdating could sort a new file before pre-existing migrations. The
+ * resulting ≤N−1s future-dating is inherent to second-granularity versions and
+ * acceptable once uniqueness is enforced.
  *
  * Each file is written with the exclusive `"wx"` flag so a race between the
  * collision check and the write can still never silently overwrite an existing
@@ -88,6 +89,40 @@ export const legacyWritePgDeltaMigrations = (
       }
     }
     const single = files.length === 1;
+    const migrationsDir = pathSvc.join(workdir, "supabase", "migrations");
+    const migrationEntries = yield* fs.readDirectory(migrationsDir).pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed([] as ReadonlyArray<string>)
+          : Effect.fail(
+              new LegacyPgDeltaMigrationWriteError({
+                message: `failed to read migration directory: ${error.message}`,
+              }),
+            ),
+      ),
+    );
+    const usedVersions = new Set<string>();
+    for (const entry of migrationEntries) {
+      const match = /^([0-9]+)_(.+)$/u.exec(entry);
+      if (match?.[1] === undefined) continue;
+      if (entry.endsWith(".sql")) {
+        usedVersions.add(match[1]);
+        continue;
+      }
+      const stat = yield* fs.stat(pathSvc.join(migrationsDir, entry)).pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyPgDeltaMigrationWriteError({
+              message: `failed to inspect migration directory entry: ${cause.message}`,
+            }),
+        ),
+      );
+      if (stat.type === "Directory") {
+        // Nested names such as `snapshots/remote` are stored under a
+        // `<version>_snapshots/` directory, whose prefix still owns the version.
+        usedVersions.add(match[1]);
+      }
+    }
     const buildSet = (baseMillis: number): Array<LegacyWrittenMigration> =>
       files.map((file, i) => {
         const version = legacyFormatMigrationTimestamp(baseMillis + i * 1000);
@@ -102,19 +137,21 @@ export const legacyWritePgDeltaMigrations = (
     let baseMillis = opts.baseMillis;
     let set = buildSet(baseMillis);
     for (let attempt = 0; ; attempt++) {
-      let collision = false;
-      for (const w of set) {
-        const exists = yield* fs.exists(w.path).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LegacyPgDeltaMigrationWriteError({
-                message: `failed to check migration file: ${cause.message}`,
-              }),
-          ),
-        );
-        if (exists) {
-          collision = true;
-          break;
+      let collision = set.some((w) => usedVersions.has(w.version));
+      if (!collision) {
+        for (const w of set) {
+          const exists = yield* fs.exists(w.path).pipe(
+            Effect.mapError(
+              (cause) =>
+                new LegacyPgDeltaMigrationWriteError({
+                  message: `failed to check migration file: ${cause.message}`,
+                }),
+            ),
+          );
+          if (exists) {
+            collision = true;
+            break;
+          }
         }
       }
       if (!collision) break;
