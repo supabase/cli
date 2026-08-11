@@ -142,7 +142,7 @@ const isGlobalValueFlagToken = (token: string): boolean => globalFlagsWithValues
  * the resolved command's complete flagset, so `login --name --debug` hands
  * `--debug` to `--name` and never sets the debug flag.
  */
-export function valueTakingFlagTokenPredicateForArgv(
+function valueTakingFlagTokenPredicateForArgv(
   rootCommand: Command.Command.Any,
   args: ReadonlyArray<string>,
 ): (token: string) => boolean {

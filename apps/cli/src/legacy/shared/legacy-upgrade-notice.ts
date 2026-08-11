@@ -47,7 +47,11 @@ export function legacyUpdateNotifierDisabled(value: string | undefined): boolean
  * operands after `--` and values consumed by value-taking global flags, which
  * pflag never reads as flags.
  */
-function debugEnabled(deps: LegacyUpgradeNoticeDeps, builtin: boolean): boolean {
+function debugEnabled(
+  deps: LegacyUpgradeNoticeDeps,
+  builtin: boolean,
+  effectiveDebugEnv: string | undefined,
+): boolean {
   let flag: boolean | undefined;
   for (const { token } of rootFlagTokens(deps.args, deps.isValueTakingFlagToken)) {
     if (token === "--debug") flag = true;
@@ -57,8 +61,7 @@ function debugEnabled(deps: LegacyUpgradeNoticeDeps, builtin: boolean): boolean 
   }
   if (flag !== undefined) return flag;
   if (builtin) return false;
-  const env = deps.env["SUPABASE_DEBUG"];
-  return env !== undefined && PARSE_BOOL_TRUE.has(env);
+  return effectiveDebugEnv !== undefined && PARSE_BOOL_TRUE.has(effectiveDebugEnv);
 }
 
 const errorMessage = (error: unknown): string =>
@@ -164,22 +167,22 @@ function resolveNoticeBaseDir(
 }
 
 /**
- * The project dotenv chain's `SUPABASE_NO_UPDATE_NOTIFIER`, or `undefined`.
- * Go's `godotenv.Load` writes the chain into the real environment before
- * `updateNotifierEnabled` reads it (`pkg/config/config.go:1220-1241`), so a
- * project-level opt-out suppresses the notice whenever the command loaded its
- * config. This hook cannot see whether the run's command did, so it honors the
- * opt-out for every real command — the only divergence from Go is a
- * suppressed notice for a user who opted out anyway. Same chain and
- * precedence as `legacyResolveProjectEnvironmentValues`: `<base>/supabase`
- * then `<base>`, first file to define the key wins, and a shell env that
- * defines the key at all (godotenv never overrides) skips the walk entirely.
+ * The project dotenv chain as a merged map, mirroring what Go's
+ * `godotenv.Load` writes into the real environment before the `Execute()`
+ * tail reads `SUPABASE_NO_UPDATE_NOTIFIER` and `viper` reads `SUPABASE_DEBUG`
+ * (`pkg/config/config.go:1220-1241`) — but only when the command loaded its
+ * config. This hook cannot see whether the run's command did, so it reads the
+ * chain for every real command; the only divergences from Go are a suppressed
+ * notice, or an extra debug diagnostic, for a project that configured exactly
+ * that. Same chain and precedence as `legacyResolveProjectEnvironmentValues`:
+ * `<base>/supabase` then `<base>`, first file to define a key wins, and the
+ * shell env always beats a chain value (godotenv never overrides).
  */
-async function projectDotenvNotifierOptOut(
+async function projectDotenvValues(
   base: string,
   env: Readonly<Record<string, string | undefined>>,
-): Promise<string | undefined> {
-  if (env["SUPABASE_NO_UPDATE_NOTIFIER"] !== undefined) return undefined;
+): Promise<Record<string, string>> {
+  const merged: Record<string, string> = {};
   // Go's walk loads `<base>/supabase` then `<base>` — except at the filesystem
   // root, where `loadNestedEnv`'s `cwd != filepath.Dir(repoDir)` bound
   // degenerates (`Dir("/") == "/"`) and only `/supabase` is read.
@@ -189,17 +192,18 @@ async function projectDotenvNotifierOptOut(
       const contents = await readFile(join(dir, filename), "utf8").catch(() => undefined);
       if (contents === undefined) continue;
       try {
-        const value = parseDotEnv(contents)["SUPABASE_NO_UPDATE_NOTIFIER"];
-        if (value !== undefined) return value;
+        for (const [key, value] of Object.entries(parseDotEnv(contents))) {
+          if (!(key in merged)) merged[key] = value;
+        }
       } catch {
         // A malformed file is only reachable here when the command never
         // loaded config (a load would have failed the run before this hook),
-        // and then Go never reads the file either.
-        return undefined;
+        // and then Go never read any of the chain either.
+        return {};
       }
     }
   }
-  return undefined;
+  return merged;
 }
 
 /** Absent (we may create it) or a real directory — never a symlink to follow. */
@@ -231,14 +235,17 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
   // ancestor walk all ignored — and never reaches a config load that could
   // pull the opt-out from a project dotenv.
   const builtin =
-    deps.cleanShowHelp === true ||
-    hasRootHelpOrVersionFlag(deps.args, deps.isValueTakingFlagToken);
+    deps.cleanShowHelp === true || hasRootHelpOrVersionFlag(deps.args, deps.isValueTakingFlagToken);
   const base = builtin
     ? deps.cwd
     : resolveNoticeBaseDir(deps.cwd, deps.args, deps.env, deps.isValueTakingFlagToken);
-  if (!builtin && legacyUpdateNotifierDisabled(await projectDotenvNotifierOptOut(base, deps.env))) {
-    return;
-  }
+  const projectEnv = builtin ? {} : await projectDotenvValues(base, deps.env);
+  // godotenv never overrides: a shell env that defines a key at all beats the
+  // project dotenv chain, even when set to an empty or unparseable value.
+  const effectiveEnv = (key: string): string | undefined =>
+    deps.env[key] !== undefined ? deps.env[key] : projectEnv[key];
+  if (legacyUpdateNotifierDisabled(effectiveEnv("SUPABASE_NO_UPDATE_NOTIFIER"))) return;
+  const debug = debugEnabled(deps, builtin, effectiveEnv("SUPABASE_DEBUG"));
   const supabaseDir = join(base, "supabase");
   const tempDir = join(supabaseDir, ".temp");
   const cacheFile = join(tempDir, "cli-latest");
@@ -298,13 +305,13 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
         (error: unknown) => new Error(`failed to mkdir: ${errorMessage(error)}`),
       );
     }
-    if (notifyError !== undefined && debugEnabled(deps, builtin)) {
+    if (notifyError !== undefined && debug) {
       deps.writeStderr(`${stripVTControlCharacters(notifyError.message)}\n`);
     }
   } else {
     latestTag = (
       await readFile(cacheFile, "utf8").catch((error: unknown) => {
-        if (debugEnabled(deps, builtin)) {
+        if (debug) {
           deps.writeStderr(
             `failed to read cli version: ${stripVTControlCharacters(errorMessage(error))}\n`,
           );

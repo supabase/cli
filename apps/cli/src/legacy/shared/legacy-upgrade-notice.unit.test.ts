@@ -283,6 +283,27 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("project dotenv SUPABASE_DEBUG surfaces diagnostics, like godotenv before the Execute tail", async () => {
+    // A symlinked .temp disables the backoff write, so the fetch error is what
+    // remains to log — and the debug gate resolves through the project chain.
+    const ctx = setup({ fetchFails: true });
+    writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_DEBUG=1\n");
+    mkdirSync(join(workdir, "elsewhere"), { recursive: true });
+    symlinkSync(join(workdir, "elsewhere"), join(workdir, "supabase", ".temp"));
+    await legacyRunUpgradeNotice(ctx.deps);
+    expect(ctx.stderr).toContain("Failed to fetch latest release");
+    ctx.cleanup();
+
+    // A shell env that defines the key blocks the chain, like os.Environ.
+    const blocked = setup({ fetchFails: true, env: { SUPABASE_DEBUG: "" } });
+    writeFileSync(join(workdir, "supabase", ".env"), "SUPABASE_DEBUG=1\n");
+    mkdirSync(join(workdir, "elsewhere"), { recursive: true });
+    symlinkSync(join(workdir, "elsewhere"), join(workdir, "supabase", ".temp"));
+    await legacyRunUpgradeNotice(blocked.deps);
+    expect(blocked.stderr).toBe("");
+    blocked.cleanup();
+  });
+
   it("a failed fetch inside a project stays silent under --debug, matching Go's backoff", async () => {
     const ctx = setup({ fetchFails: true, args: ["db", "start", "--debug"] });
     await legacyRunUpgradeNotice(ctx.deps);
