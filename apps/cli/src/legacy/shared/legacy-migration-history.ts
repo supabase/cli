@@ -48,6 +48,10 @@ export const UPSERT_MIGRATION_VERSION =
 export const DELETE_MIGRATION_VERSION =
   "DELETE FROM supabase_migrations.schema_migrations WHERE version = ANY($1)";
 
+/** `DELETE ... WHERE version <= $1` — Go's `DELETE_MIGRATION_BEFORE` (squash baseline). */
+export const DELETE_MIGRATION_BEFORE =
+  "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1";
+
 /** `TRUNCATE supabase_migrations.schema_migrations` — Go's repair-all reset. */
 export const TRUNCATE_VERSION_TABLE = "TRUNCATE supabase_migrations.schema_migrations";
 

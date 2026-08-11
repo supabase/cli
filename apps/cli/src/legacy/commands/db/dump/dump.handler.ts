@@ -32,14 +32,14 @@ import {
   legacyBuildRoleDumpEnv,
   legacyBuildSchemaDumpEnv,
   legacyExpandScript,
-} from "../shared/legacy-pg-dump.env.ts";
-import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
+} from "../../../shared/legacy-pg-dump.env.ts";
+import { legacyStreamPgDump } from "../../../shared/legacy-pg-dump.run.ts";
 import { legacyRunWithPoolerFallback } from "../shared/legacy-pooler-fallback.ts";
 import {
   legacyDumpDataScript,
   legacyDumpRoleScript,
   legacyDumpSchemaScript,
-} from "../shared/legacy-pg-dump.scripts.ts";
+} from "../../../shared/legacy-pg-dump.scripts.ts";
 
 /**
  * Mutually-exclusive flag groups, in cobra's check order (it sorts the joined

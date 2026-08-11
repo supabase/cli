@@ -14,7 +14,7 @@
  * is nothing to port.
  */
 
-import { Effect, Option, Result, type FileSystem, type Path } from "effect";
+import { Effect, Result, type FileSystem, type Path } from "effect";
 import type { GlobalFlag } from "effect/unstable/cli";
 import type * as HttpClient from "effect/unstable/http/HttpClient";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -33,7 +33,6 @@ import {
   legacyResolveSeedSqlPath,
   type LegacyPgDeltaTomlConfig,
 } from "../../../shared/legacy-db-config.toml-read.ts";
-import type { LegacyDbConfigLoadError } from "../../../shared/legacy-db-config.errors.ts";
 import {
   legacyResolveUnderWorkdir,
   legacyGlobPattern,
@@ -47,14 +46,11 @@ import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/healt
 import { legacySeedGlobals } from "../../../shared/legacy-migration-apply.ts";
 import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
-import type { LegacyLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
-import type { LegacyVaultSecret } from "../../../shared/legacy-vault.ts";
 import {
   legacyMigrateShadowDatabase,
   LegacyShadowDbError,
-  type LegacyShadowConnectionInput,
   type LegacyShadowDatabaseHandle,
-  type LegacyShadowDbSetupInput,
+  type LegacyShadowSetupInput,
   type LegacyShadowSourceResult,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import type { LegacyStartSetupLocalDatabaseError } from "../../../shared/db-bootstrap/db-setup.ts";
@@ -69,107 +65,12 @@ type Spawner = ChildProcessSpawner["Service"];
 
 export type { LegacyShadowSourceResult };
 
-/**
- * Adapts {@link LegacyLocalDbContainerInputs} (`local-container-inputs.ts`, the SAME
- * config/image/JWKS resolution prelude `db start`/`db reset` share) plus the caller's own
- * already-loaded `config.toml` slice into {@link LegacyShadowConnectionInput}
- * (`shadow-database.ts`) — every field {@link legacyPrepareShadowSource}/
- * `legacyPrepareRawShadow` (`shadow-database.ts`) need EXCEPT the diff/pull-specific ones
- * (`targetLocal`/`usePgDelta`/`schemaPaths`/`pgDelta`/`ctx`/`setup`, left to each call site).
- * Hoisted here so `db diff`/`db pull` don't each declare an identical ~20-field object literal.
- *
- * On `db diff --linked`/`db pull` (linked), the caller passes its own resolved ref straight
- * through to {@link legacyBuildLocalDbContainerInputs} (its own `projectRef` parameter — see
- * that function's doc comment), which threads it into `legacyLoadLocalProjectContext` ->
- * `loadProjectConfig({ projectRef })`. So the shadow's OWN container config (image, JWT
- * secret, root key, `db.settings`, service enabled-for-setup flags, sourced from
- * `localInputs.context.config`/`postgresSpecBase`) reflects the matching `[remotes.<ref>]`
- * override, same as `toml` (the caller's own `legacyReadDbToml(..., linkedRef)` result,
- * which feeds `pgDelta`/vault/`apiAutoExposeNewTables` below) — matching Go's own uniform
- * remote-merge on the linked path (`LoadConfig` seeds `flags.ProjectRef` before every field
- * read). The two config reads still go through independent remote-merge implementations
- * (`@supabase/config`'s `applyRemoteOverride` for `localInputs.context.config`;
- * `legacy-db-config.toml-read.ts`'s own TOML-based merge for `toml`) rather than a single
- * shared decode — unifying those is a larger, out-of-scope refactor, not a per-command gap.
- */
-export function legacyShadowRunInputFromLocalContainerInputs(
-  localInputs: LegacyLocalDbContainerInputs,
-  resolvedImage: string,
-  toml: {
-    readonly shadowPort: number;
-    readonly password: string;
-    readonly baseline: { readonly apiAutoExposeNewTables: Option.Option<boolean> };
-    readonly vault: ReadonlyArray<LegacyVaultSecret>;
-  },
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-): Omit<
-  LegacyPrepareShadowSourceInput<LegacyDbConfigLoadError>,
-  "targetLocal" | "usePgDelta" | "schemaPaths" | "pgDelta" | "ctx"
-> {
-  const { postgresSpecBase } = localInputs;
-  return {
-    db: {
-      major_version: postgresSpecBase.db.major_version,
-      settings: postgresSpecBase.db.settings,
-    },
-    experimental: postgresSpecBase.experimental,
-    jwtSecret: postgresSpecBase.jwtSecret,
-    jwtExpiry: postgresSpecBase.jwtExpiry,
-    networkId: localInputs.networkId,
-    image: resolvedImage,
-    configImage: postgresSpecBase.configImage,
-    rootKey: postgresSpecBase.rootKey,
-    shadowPort: toml.shadowPort,
-    projectId: localInputs.context.projectId,
-    isBitbucketPipeline: localInputs.containerOpts.isBitbucketPipeline,
-    workdir: localInputs.containerOpts.workdir,
-    extraHosts: localInputs.containerOpts.extraHosts,
-    fs,
-    path,
-    hostname: localInputs.context.hostname,
-    password: toml.password,
-    healthTimeoutSeconds: localInputs.dbHealthTimeoutSeconds,
-    setup: {
-      majorVersion: localInputs.setup.majorVersion,
-      config: localInputs.setup.config,
-      // NOT `localInputs.setup.dbUrl` — that carries the REGULAR local container's own
-      // hardcoded-"postgres" password (`legacy-local-config-values.ts`'s `DEFAULT_DB_PASSWORD`),
-      // for a DIFFERENT container. The shadow's own one-shot setup jobs
-      // (`legacyBuildShadowSetupDatabaseInput`) only ever consume this `dbUrl` to extract a
-      // password (`legacyStartInternalDbPassword`) for the SHADOW they actually run against, so
-      // it must carry the SAME resolved `toml.password` the shadow container itself is
-      // initialized with (see `legacyBuildShadowPostgresContainerSpec`) — otherwise a non-default
-      // `[db] password` authenticates against the wrong secret and every setup job fails.
-      dbUrl: legacyToPostgresURL({
-        host: localInputs.context.hostname,
-        port: toml.shadowPort,
-        user: "postgres",
-        password: toml.password,
-        database: "postgres",
-      }),
-      jwtSecret: localInputs.setup.jwtSecret,
-      jwks: localInputs.setup.jwks,
-      apiUrl: localInputs.setup.apiUrl,
-      authExternalUrl: localInputs.setup.authExternalUrl,
-      siteUrl: localInputs.setup.siteUrl,
-      anonKey: localInputs.setup.anonKey,
-      serviceRoleKey: localInputs.setup.serviceRoleKey,
-      storageTargetMigration: localInputs.setup.storageTargetMigration,
-      realtimeEnabledForSetup: localInputs.setup.realtimeEnabledForSetup,
-      storageEnabledForSetup: localInputs.setup.storageEnabledForSetup,
-      authEnabledForSetup: localInputs.setup.authEnabledForSetup,
-      serviceVersionOverrides: localInputs.setup.serviceVersionOverrides,
-      projectEnvValues: localInputs.setup.projectEnvValues,
-      debug: localInputs.setup.debug,
-      apiAutoExposeNewTables: toml.baseline.apiAutoExposeNewTables,
-      vault: toml.vault,
-    },
-  };
-}
+// `legacyShadowRunInputFromLocalContainerInputs` used to be re-exported here (promoted to
+// `shared/db-bootstrap/shadow-database.ts` when `migration squash` became this builder's
+// THIRD consumer, CLI-1969). All three call sites (`diff.handler.ts`, `pull.handler.ts`,
+// `legacy-pgdelta.cache.ts`) now import it from there directly — no re-export shim needed.
 
-export interface LegacyPrepareShadowSourceInput<E> extends LegacyShadowConnectionInput {
-  readonly setup: LegacyShadowDbSetupInput<E>;
+export interface LegacyPrepareShadowSourceInput<E> extends LegacyShadowSetupInput<E> {
   /** Go's `utils.IsLocalDatabase(config)` — the only target-derived input the shadow prep needs. */
   readonly targetLocal: boolean;
   /** Selects the declarative-apply engine for the local-declared branch, matching `DiffDatabase`. */

@@ -1,9 +1,9 @@
 import { Effect, Option } from "effect";
 
-import { LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
-import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { legacyGetRegistryImageUrl } from "../../../shared/legacy-docker-registry.ts";
-import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
+import { LegacyNetworkIdFlag } from "../../shared/legacy/global-flags.ts";
+import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
+import { legacyGetRegistryImageUrl } from "./legacy-docker-registry.ts";
+import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
 
 /**
  * Runs a pg_dump / pg_dumpall bash script in a one-shot container, streaming its
@@ -13,10 +13,14 @@ import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
  * by the global `--network-id`), no security-opt, and the Linux-only
  * `host.docker.internal:host-gateway` extra host.
  *
- * Shared by `db dump` (streams to `--file`/stdout) and `db pull`'s initial-migra
- * schema dump (streams to the migration file). The pooler-fallback *decision*
- * stays with the caller — this helper runs a single attempt and surfaces its
- * exit/stderr so the caller can classify with `legacyIsIPv6ConnectivityError`.
+ * Shared by `db dump` (streams to `--file`/stdout), `db pull`'s initial-migra
+ * schema dump (streams to the migration file), and (CLI-1969) `migration
+ * squash`'s three one-shot dumps (before/after `auth`/`storage` diff buffers,
+ * plus the full dump streamed straight into the target migration file) — the
+ * third consumer is why this module lives in `legacy/shared/` rather than
+ * `commands/db/shared/`. The pooler-fallback *decision* stays with the caller —
+ * this helper runs a single attempt and surfaces its exit/stderr so the caller
+ * can classify with `legacyIsIPv6ConnectivityError`.
  */
 export const legacyStreamPgDump = Effect.fnUntraced(function* <E>(params: {
   /** Resolved Postgres image tag (pre-registry-URL); the helper applies the registry mirror. */

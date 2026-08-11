@@ -44,6 +44,7 @@ import {
   legacyCreateShadowDatabase,
   legacyPrepareRawShadow,
   legacyRemoveShadowDatabase,
+  legacyShadowRunInputFromLocalContainerInputs,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -59,14 +60,17 @@ import {
 } from "../../../shared/legacy-diff-engine.ts";
 import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import { legacyWritePgDeltaMigrations } from "../shared/legacy-pgdelta-migrations.write.ts";
-import { type LegacyDumpOptions, legacyBuildSchemaDumpEnv } from "../shared/legacy-pg-dump.env.ts";
-import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
+import {
+  type LegacyDumpOptions,
+  legacyBuildSchemaDumpEnv,
+} from "../../../shared/legacy-pg-dump.env.ts";
+import { legacyStreamPgDump } from "../../../shared/legacy-pg-dump.run.ts";
 import {
   legacyEmitPoolerFallbackWarning,
   legacyIsDirectLinkedHost,
   legacyRunWithPoolerFallback,
 } from "../shared/legacy-pooler-fallback.ts";
-import { legacyDumpSchemaScript } from "../shared/legacy-pg-dump.scripts.ts";
+import { legacyDumpSchemaScript } from "../../../shared/legacy-pg-dump.scripts.ts";
 import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
@@ -81,10 +85,7 @@ import {
   legacyResolvePgDeltaProjectId,
 } from "../../../shared/legacy-pgdelta.ts";
 import { legacySaveEmptyPgDeltaPullDebug } from "./pull.debug.ts";
-import {
-  legacyPrepareShadowSource,
-  legacyShadowRunInputFromLocalContainerInputs,
-} from "../shared/legacy-shadow-source.ts";
+import { legacyPrepareShadowSource } from "../shared/legacy-shadow-source.ts";
 import type { LegacyDbPullFlags } from "./pull.command.ts";
 import {
   LegacyDbPullDumpError,

@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 import {
   LEGACY_ALLOWED_CONFIGS,
   LEGACY_EXCLUDED_SCHEMAS,
@@ -40,7 +40,7 @@ const baseOpt: LegacyDumpOptions = {
 // Resolve the Go `.sh` sources relative to this file so the byte-equality
 // assertion fails loudly if the embedded copies drift from upstream.
 const goScriptsDir = fileURLToPath(
-  new URL("../../../../../../cli-go/pkg/migration/scripts/", import.meta.url),
+  new URL("../../../../cli-go/pkg/migration/scripts/", import.meta.url),
 );
 const readGoScript = (name: string) => readFileSync(`${goScriptsDir}${name}`, "utf8");
 
