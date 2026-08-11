@@ -91,94 +91,25 @@ persistent adapter exist. The implementation issues it unblocks must attach real
 fixtures. CLI integration coverage begins when a real command boundary exists; a fixture-presence
 test is not evidence that an unimplemented command already satisfies the behavior.
 
-The fixture validator therefore checks more than catalog shape: selected, written, and effected
-identities must be declared rather than relying on absent claims, every API action must use a
-declared method with its required public inputs, a selection must belong to the
-checkout at the action path, and a selected stack's context and name must match its declared stack
-fact; explicit CLI and API stack IDs must match every selected, mutated, effected, and projected
-stack target, and requested stack-name sets, exact and automatic ports, runtime overrides,
-credential references, injected repositories, and isolated state roots must agree with their facts
-and projections; starts of existing stacks must
-declare a stopped lifecycle, every managed creation must declare an absent target, every fresh start
-must declare legacy state that is explicitly absent or incompatible, and every bootstrap copy must
-declare an absent target plus fully compatible stopped legacy state; managed state creation and
-registry publication must imply each other, as must managed-state deletion and registry tombstoning;
-projections of fully absent legacy state must remain non-mutating;
-reuse must begin from an existing target, runtime stop effects must begin from a running stack, and
-target-existence facts cannot contradict stack facts;
-running-source and credential-drift reports must begin from running sources, idempotent deletion
-must begin from a tombstone, orphan deletion must target orphaned state, and failed-copy cleanup may
-delete only a target proven absent before the attempt; direct-stack root facts must bind stack and
-runtime roots independently to caller-supplied inputs and temporary-state behavior, and disposing a
-direct stack must delete every declared temporary root;
-every state write and runtime effect must identify its target; contextual CLI stack results must
-bind their output to a selected target; Git identity writes must use the correct common or worktree
-scope, context writes must name the active branch as owner, and adapters cannot recreate an identity
-already declared by a checkout; new Git-derived contexts, manual ref replacement, branch deletion
-and recreation, detached-commit reuse, and selected linked worktrees must declare the relevant Git
-state or transition; branch commit, rebase, and reset preservation must bind an explicit history
-fact to the checked-out branch and matching transition; comparisons between branch contexts at one
-commit must declare both branch refs at that commit; selected contexts must agree with the active
-Git branch or an explicit
-checkout-scoped claim; ordinary folders must write their full untracked identity marker to the
-action workspace on creation and resolve it on reuse, while Git workspaces cannot trust that local
-marker; copied-branch evidence must agree with whether the original branch still exists, read-only
-unregistered results require an absent checkout claim, and named-stack API entries must agree with
-their deterministic context and stack-ID results; branch deletion must bind the deleted ref to its
-checkout, Git state, context, and orphaned stack; managed and sticky port conflicts and
-persisted-runtime conflicts must
-identify their actual target; managed port ownership requires an owner stack ID that agrees with
-every projection; exact-port conflicts must bind the same configured, occupied, and projected port;
-sticky reuse and collision must bind automatic config intent, assignment key, assignment port, and
-the selected target, while an exact-port change must bind the previous assignment and newly
-configured value and affirmative drift projections, including the transition from a removed exact
-key to sticky automatic state; fresh omitted automatic allocations must report host-wide sticky
-state, and a
-sibling automatic port allocation fixture must use unique service ports through the public managed
-start action without reusing sibling-owned ports; concurrent creation must bind its action target,
-contender count, result cardinality, and single-publication outcome to the declared race; persisted-runtime preflight
-failures must identify a stopped stack; a successful bootstrap retry must follow an explicit failed
-attempt that was rolled back; failed-copy rollback requires explicit failure injection against an
-absent target and a compatible stopped legacy source; automatic runtime selection must reuse
-persisted state owned by the selected stack or evaluate both fresh candidates before following
-Docker-then-qualified-native availability,
-and total automatic failure must project both declared unavailability reasons; successful explicit
-or configured runtime requests must match availability and every runtime/source projection, while
-runtime-drift reports must bind a running stack, its persisted runtime, the distinct configured
-runtime, and every service projection;
-native preflight results must agree with the action platform and complete qualified and failed
-service partitions, and the qualification matrix must use the package service catalog's current
-service names and default versions rather than duplicating them;
-credential create, update, and copy operations must prove that global state contains references
-instead of plaintext, configured credential changes must bind configured state with distinct old and
-new references in both directions, stable-default projections require matching local-default state,
-and local,
-persisted, and copied-legacy credentials must retain their declared reference and source;
-data-preserving prune must begin with mutable data and delete metadata only for an orphaned record
-with matching orphaned stack state; tracked identity markers
-must remain untouched; optional state-root inputs must be strings, and caller-provided state roots
-must agree with isolated managed options and the
-observed no-default-state boundary, and a CLI-projected managed status must begin from an active
-record, running stack, and matching persisted runtime; native qualification facts must partition the
-service matrix, use a declared platform, and match the platform passed to preflight; status
-operations must remain read-only reports; repository adapter matrices must be non-empty, unique, and match their declared repository
-facts while holding runtime and state-root options constant, and portable runtime matrices must
-satisfy the same rules against runtime facts while holding repository and state-root options
-constant, while
-repository adapter and portable runtime projections must reference a declared scenario, match its
-identity, agree on their complete decision, and publish equality flags derived from that comparison;
-every invalid stack name and every pair of
-mutually exclusive stop selectors must be exercised through a public action; structured JSON
-projections must always name their outcome and include the matching structured error or warning
-code; destructive stop deletion requires `--no-backup`; destructive runtime effects must map to
-mutable-state deletion and runtime-state deletion must stop the running target; other runtime effects
-must agree with permitted state writes; duplicate checkout and inaccessible-path failures must bind
-their exact claims and paths; explicit runtime failures must bind an unavailable requested runtime,
-and unsupported-native failures must use the declared unsupported-platform set; and stable
-identity plus exact human and JSON recovery fields cannot contradict the managed result. We
-deliberately do not introduce a parallel test-only identity resolver; it would duplicate product
-policy before the real managed surface exists and could pass while the production implementation
-drifts.
+The fixture validator is deliberately fixture lint, not a second implementation of the managed
+stack policy. It checks a small set of generic rule families:
+
+- catalog shape and unique scenario identity;
+- referential integrity for selected, written, and effected identities;
+- state-write and runtime-effect pairing;
+- structured diagnostic and read-only outcome shape; and
+- consistency between the managed result and its human, JSON, and API projections.
+
+The lint implementation lives separately in `managed-stack-contract-validation.ts` so the contract
+module remains centered on types and normative scenario data.
+
+The native qualification matrix derives service names and versions from the package service catalog
+so it cannot drift from the shipped manifest. Identity resolution, lifecycle preconditions, port and
+runtime selection, bootstrap policy, credential policy, and reclamation semantics belong to the real
+managed resolver and engine delivered by the implementation issues below. Further requests to
+"validate" those semantics should be covered by running these scenarios against that implementation,
+not by expanding this lint into a parallel rule engine. A new lint rule is appropriate only when it
+protects a generic fixture-format invariant across behavior areas.
 
 ## Implementation Handoff
 
@@ -236,10 +167,3 @@ managed surface explicitly.
 4. **Put the whole matrix in E2E tests**: rejected because the suite would be slow and failure
    diagnosis poor. E2E remains the fallback for boundaries that integration tests cannot exercise
    faithfully.
-
-## See Also
-
-- [CLI-2102](https://linear.app/supabase/issue/CLI-2102/contract-encode-approved-behavior-as-cross-layer-acceptance-fixtures)
-- [CLI-2103](https://linear.app/supabase/issue/CLI-2103/contract-freeze-project-checkout-worktree-branch-and-named-stack)
-- [CLI-2104](https://linear.app/supabase/issue/CLI-2104/contract-freeze-legacy-migration-declared-port-stop-and-rollback)
-- [CLI-2105](https://linear.app/supabase/issue/CLI-2105/contract-freeze-runtime-selection-naming-precedence-and-persistence)

@@ -14,6 +14,6 @@ export type {
 export {
   managedNativeServiceMatrix,
   managedStackContractFixtures,
-  validateManagedStackContractFixtures,
 } from "./managed-stack-contract.ts";
+export { validateManagedStackContractFixtures } from "./managed-stack-contract-validation.ts";
 export { UnixHttpClient } from "./UnixHttpClient.ts";
