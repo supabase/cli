@@ -319,16 +319,20 @@ export function legacyPgDeltaNextProfile(
     id: `supabase-cli-schemas:${selected.join(",")}`,
     filter: [
       {
-        match: { all: [{ schema: "*" }, { not: { schema: selected } }] },
-        action: "exclude",
-      },
-      {
-        match: { all: [{ kind: "schema" }, { not: { name: selected } }] },
-        action: "exclude",
-      },
-      {
         match: {
-          all: [{ target: { schema: "*" } }, { not: { target: { schema: selected } } }],
+          all: [
+            { verb: ["add", "remove", "set", "link", "unlink"] },
+            {
+              not: {
+                any: [
+                  { schema: selected },
+                  { all: [{ kind: "schema" }, { name: selected }] },
+                  { target: { schema: selected } },
+                  { target: { kind: "schema", name: selected } },
+                ],
+              },
+            },
+          ],
         },
         action: "exclude",
       },

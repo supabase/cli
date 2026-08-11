@@ -1,5 +1,13 @@
 import { it } from "@effect/vitest";
-import { ShadowLoadError } from "@supabase/pg-delta/frontends";
+import {
+  buildFactBase,
+  encodeId,
+  type DependencyEdge,
+  type Fact,
+  type StableId,
+} from "@supabase/pg-delta/core";
+import { renderPlanFiles, ShadowLoadError } from "@supabase/pg-delta/frontends";
+import { plan } from "@supabase/pg-delta/plan";
 import { Effect } from "effect";
 import { Pool } from "pg";
 import { describe, expect } from "vitest";
@@ -285,28 +293,200 @@ describe("LegacyPgDeltaNextAdapter", () => {
     ).toEqual(["log_min_messages"]);
   });
 
-  it("composes schema exclusions ahead of the Supabase managed-view policy", () => {
+  it("composes the operation-scoped schema complement ahead of the Supabase policy", () => {
     const profile = legacyPgDeltaNextProfile(["public", "tenant"]);
     expect(profile.id).toBe("supabase");
     expect(profile.policy?.filter).toEqual([
       {
-        match: { all: [{ schema: "*" }, { not: { schema: ["public", "tenant"] } }] },
-        action: "exclude",
-      },
-      {
         match: {
-          all: [{ kind: "schema" }, { not: { name: ["public", "tenant"] } }],
-        },
-        action: "exclude",
-      },
-      {
-        match: {
-          all: [{ target: { schema: "*" } }, { not: { target: { schema: ["public", "tenant"] } } }],
+          all: [
+            { verb: ["add", "remove", "set", "link", "unlink"] },
+            {
+              not: {
+                any: [
+                  { schema: ["public", "tenant"] },
+                  {
+                    all: [{ kind: "schema" }, { name: ["public", "tenant"] }],
+                  },
+                  { target: { schema: ["public", "tenant"] } },
+                  {
+                    target: {
+                      kind: "schema",
+                      name: ["public", "tenant"],
+                    },
+                  },
+                ],
+              },
+            },
+          ],
         },
         action: "exclude",
       },
     ]);
     expect(profile.policy?.extends).toHaveLength(1);
+  });
+
+  it("renders only selected-schema state while preserving its metadata and dependencies", () => {
+    const schemaPublic = { kind: "schema", name: "public" } satisfies StableId;
+    const schemaAuth = { kind: "schema", name: "auth" } satisfies StableId;
+    const existingRole = { kind: "role", name: "app_owner" } satisfies StableId;
+    const existingExtension = { kind: "extension", name: "hstore" } satisfies StableId;
+    const selectedTable = {
+      kind: "table",
+      schema: "public",
+      name: "selected_items",
+    } satisfies StableId;
+    const unselectedSchema = { kind: "schema", name: "private_data" } satisfies StableId;
+    const unselectedTable = {
+      kind: "table",
+      schema: "private_data",
+      name: "hidden_items",
+    } satisfies StableId;
+    const platformTable = {
+      kind: "table",
+      schema: "auth",
+      name: "hidden_platform_table",
+    } satisfies StableId;
+    const customRole = { kind: "role", name: "hidden_custom_role" } satisfies StableId;
+    const customExtension = {
+      kind: "extension",
+      name: "hidden_custom_extension",
+    } satisfies StableId;
+    const customPublication = {
+      kind: "publication",
+      name: "hidden_custom_publication",
+    } satisfies StableId;
+    const customFdw = { kind: "fdw", name: "hidden_custom_fdw" } satisfies StableId;
+
+    const fact = (id: StableId, payload: Fact["payload"] = {}, parent?: StableId): Fact =>
+      parent === undefined ? { id, payload } : { id, parent, payload };
+
+    const sourceFacts: Fact[] = [
+      fact(schemaPublic),
+      fact(schemaAuth),
+      fact(existingRole, { login: false, config: [] }),
+      fact(existingExtension, { schema: "public", relocatable: true }),
+    ];
+    const sourceEdges: DependencyEdge[] = [
+      { from: existingExtension, to: schemaPublic, kind: "depends" },
+    ];
+    const desiredFacts: Fact[] = [
+      ...sourceFacts,
+      fact(
+        selectedTable,
+        { persistence: "p", partitionBound: null, partitionKey: null, parentTable: null },
+        schemaPublic,
+      ),
+      fact(
+        { kind: "comment", target: selectedTable },
+        { text: "selected table metadata" },
+        selectedTable,
+      ),
+      fact(
+        { kind: "comment", target: schemaPublic },
+        { text: "selected schema metadata" },
+        schemaPublic,
+      ),
+      fact(
+        { kind: "acl", target: selectedTable, grantee: "PUBLIC" },
+        { privileges: ["SELECT"], grantable: [] },
+        selectedTable,
+      ),
+      fact(unselectedSchema),
+      fact(
+        unselectedTable,
+        { persistence: "p", partitionBound: null, partitionKey: null, parentTable: null },
+        unselectedSchema,
+      ),
+      fact(
+        { kind: "comment", target: unselectedTable },
+        { text: "unselected metadata" },
+        unselectedTable,
+      ),
+      fact(
+        platformTable,
+        { persistence: "p", partitionBound: null, partitionKey: null, parentTable: null },
+        schemaAuth,
+      ),
+      fact(customRole, { login: true, config: [] }),
+      fact(customExtension, { schema: "public", relocatable: true }),
+      fact(customPublication, {
+        allTables: false,
+        publish: ["insert", "update"],
+        viaRoot: false,
+      }),
+      fact(customFdw, { handler: null, validator: null, options: [] }),
+    ];
+    const desiredEdges: DependencyEdge[] = [
+      ...sourceEdges,
+      { from: selectedTable, to: existingExtension, kind: "depends" },
+      { from: selectedTable, to: existingRole, kind: "owner" },
+    ];
+
+    const profile = legacyPgDeltaNextProfile(["public", "auth"]);
+    const generated = plan(
+      buildFactBase(sourceFacts, sourceEdges),
+      buildFactBase(desiredFacts, desiredEdges),
+      { policy: profile.policy },
+    );
+    const rendered = renderPlanFiles(generated, { allowDrops: true });
+    const sql = rendered.files.map((file) => file.contents).join("\n");
+
+    expect(sql).toContain('CREATE TABLE "public"."selected_items"');
+    expect(sql).toContain("selected table metadata");
+    expect(sql).toContain("selected schema metadata");
+    expect(sql).toContain('GRANT SELECT ON TABLE "public"."selected_items" TO PUBLIC');
+    expect(sql).toContain('OWNER TO "app_owner"');
+    for (const leakedName of [
+      "private_data",
+      "hidden_items",
+      "hidden_platform_table",
+      "hidden_custom_role",
+      "hidden_custom_extension",
+      "hidden_custom_publication",
+      "hidden_custom_fdw",
+      "unselected metadata",
+    ]) {
+      expect(sql).not.toContain(leakedName);
+    }
+
+    expect(generated.deltas).toContainEqual({
+      verb: "link",
+      edge: { from: selectedTable, to: existingExtension, kind: "depends" },
+    });
+    expect(generated.deltas).toContainEqual({
+      verb: "link",
+      edge: { from: selectedTable, to: existingRole, kind: "owner" },
+    });
+    const filtered = generated.filteredDeltas.map((delta) => {
+      switch (delta.verb) {
+        case "add":
+        case "remove":
+          return encodeId(delta.fact.id);
+        case "set":
+          return encodeId(delta.id);
+        case "link":
+        case "unlink":
+          return encodeId(delta.edge.from);
+      }
+    });
+    expect(filtered).toEqual(
+      expect.arrayContaining([
+        encodeId(unselectedSchema),
+        encodeId(unselectedTable),
+        encodeId(customRole),
+        encodeId(customExtension),
+        encodeId(customPublication),
+        encodeId(customFdw),
+      ]),
+    );
+    expect(filtered).not.toContain(encodeId(platformTable));
+    expect(
+      generated.projectionAudit?.entries.some(
+        (entry) =>
+          entry.delta.verb === "add" && encodeId(entry.delta.fact.id) === encodeId(platformTable),
+      ),
+    ).toBe(true);
   });
 
   it.effect("constructs the real adapter from supported public pg-delta subpaths", () =>
