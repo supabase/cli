@@ -7,10 +7,12 @@
  * `legacy-migra.ts`/`legacy-migra.errors.ts`) if a second command ever needs it.
  *
  * Covers the two pure halves — `ProcessDiffProgress`/`ProcessDiffOutput`
- * (`container_output.go:94-201`) — and the container-invocation loop, `DiffSchemaPgAdmin`
- * (`pgadmin.go:91-121`). Shadow provisioning, the `Creating shadow database...`/`Diffing local
- * database with current migrations...` status lines, and `SaveDiff` all stay in
- * `diff.handler.ts`, matching Go's own module boundary.
+ * (`container_output.go:94-201`, split here into `legacyParsePgAdminDiffEntries` +
+ * `legacyRenderPgAdminDiff`, recomposed as `legacyProcessPgAdminDiffOutput` for a single
+ * whole buffer) — and the container-invocation loop, `DiffSchemaPgAdmin` (`pgadmin.go:91-121`).
+ * Shadow provisioning, the `Creating shadow database...`/`Diffing local database with
+ * current migrations...` status lines, and `SaveDiff` all stay in `diff.handler.ts`,
+ * matching Go's own module boundary.
  *
  * **Deliberate divergence, not bug-for-bug parity (`container_output.go:79,87`):** Go's
  * `DiffStream` declares `Stdout()`/`Collect()` on a VALUE receiver (`func (c DiffStream)
@@ -23,13 +25,19 @@
  * output: it never writes a migration file and never hits a JSON-parse error, on ANY schema
  * count. (`Stderr()`/progress DOES work: `c.w` is a `*io.PipeWriter`, a reference type, so
  * every copy shares the same pipe.) This port implements the INTENDED algorithm — the one
- * `NewDiffStream`'s own comments and `Collect`'s call to `ProcessDiffOutput` clearly intend —
- * accumulating every run's real stdout into one shared buffer and parsing it once. So where
- * the real Go binary silently reports an empty diff no matter what the differ produced, this
- * port produces the actual diff (or a real JSON-parse error, e.g. on ≥2 `--schema` runs that
- * each emit their own JSON array — see `legacyProcessPgAdminDiffOutput`'s own doc comment).
- * Ruling: keep this port's (correct) implementation rather than reproducing the empty-buffer
- * bug; see `SIDE_EFFECTS.md`'s "Deliberate divergence" entry for the user-facing framing.
+ * `NewDiffStream`'s own comments and `Collect`'s call to `ProcessDiffOutput` clearly intend
+ * — but completes it by parsing EACH run's own real stdout separately and aggregating the
+ * kept DDLs across runs, rather than gluing every run's raw bytes into one buffer and parsing
+ * that once: a shared *byte* buffer was never the intent behind `NewDiffStream`'s design, only
+ * a means to see every run's output at all, and concatenating raw JSON arrays before parsing
+ * turns a multi-`--schema` diff whose every run individually parses fine into a spurious
+ * `JSON.parse` "trailing data" failure — the worst of both worlds, matching neither Go-as-
+ * shipped (always an empty, successful diff) nor this algorithm's own evident purpose. So
+ * where the real Go binary silently reports an empty diff no matter what the differ produced,
+ * this port produces the actual, aggregated diff across every run (or a real per-run
+ * JSON-parse error — see `legacyParsePgAdminDiffEntries`'s own doc comment). Ruling: keep this
+ * port's (correct) implementation rather than reproducing the empty-buffer bug; see
+ * `SIDE_EFFECTS.md`'s "Deliberate divergence" entry for the user-facing framing.
  */
 
 import { Effect, Option, Result } from "effect";
@@ -46,9 +54,12 @@ import { LegacyDbDiffPgAdminError } from "./diff.errors.ts";
 const LEGACY_DIFFER_IMAGE = dockerfileServiceImage("differ");
 
 /**
- * Go's `ProcessDiffOutput` (`container_output.go:142-143`) trims this ONLY off the front of the
- * whole concatenated buffer — a second/third run's own copy of the same line (a real pgAdmin4
- * quirk, `supabase/pgadmin4#24`) is never stripped.
+ * Go's `ProcessDiffOutput` (`container_output.go:142-143`) trims this front-anchored only
+ * (`bytes.TrimPrefix`, not a global strip). `legacyParsePgAdminDiffEntries` runs once per
+ * differ run now, so each run's OWN copy of this note (a real pgAdmin4 quirk,
+ * `supabase/pgadmin4#24`) is trimmed off the front of that run's own buffer —
+ * `legacyProcessPgAdminDiffOutput`, applied to a single whole buffer, still only strips the
+ * very front of whatever string it's given.
  */
 export const LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX =
   "NOTE: Configuring authentication for DESKTOP mode.\n";
@@ -202,22 +213,26 @@ function legacyIsPgAdminDiffEntryElement(value: unknown): value is LegacyPgAdmin
 }
 
 /**
- * Port of Go's `ProcessDiffOutput` (`container_output.go:141-201`) — pure, no Effect. Parses
- * and filters the differ's ENTIRE concatenated stdout (every `--schema` run's output glued
- * together, matching the SHARED buffer the intended `DiffStream.Collect()` algorithm
- * accumulates into — see this module's own header comment for why the real Go binary never
- * actually reaches this step). So `>=2 --schema` runs that each emit a full JSON array is a
- * REAL, TS-only `JSON.parse` "trailing data" failure here — a deliberate divergence, not a
- * reproduced Go bug: the real Go CLI never parses concatenated bytes at all (its `Collect()`
- * always sees an empty buffer) and always reports "No schema changes found" instead.
+ * Port of the parse/filter half of Go's `ProcessDiffOutput` (`container_output.go:141-201`)
+ * — pure, no Effect. Trims the DESKTOP-mode NOTE prefix off the FRONT of `stdout` (a real
+ * pgAdmin4 quirk, `supabase/pgadmin4#24`), then parses and filters it into the ordered list
+ * of kept, trimmed DDL strings (Go's `[]DiffEntry` unmarshal + the `switch diffEntry.Type`
+ * allow-list + internal-schema/extension-dependency filtering). Rendering the header and
+ * joining is `legacyRenderPgAdminDiff`'s job, kept separate so `legacyDiffSchemaPgAdmin`'s
+ * run loop can parse EACH run's own buffer (trimming that run's own DESKTOP-mode note, if
+ * any) and aggregate every run's DDLs before rendering once — completing the intended
+ * shared-buffer algorithm's purpose (see this module's own header comment) without the
+ * round-1 regression of gluing raw bytes together first, which turned a multi-`--schema`
+ * diff where every run individually parsed fine into one spurious `JSON.parse` "trailing
+ * data" failure.
  */
-export function legacyProcessPgAdminDiffOutput(
+export function legacyParsePgAdminDiffEntries(
   stdout: string,
-): Result.Result<string, { readonly message: string }> {
+): Result.Result<ReadonlyArray<string>, { readonly message: string }> {
   const trimmed = stdout.startsWith(LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX)
     ? stdout.slice(LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX.length)
     : stdout;
-  if (trimmed.length === 0) return Result.succeed("");
+  if (trimmed.length === 0) return Result.succeed([]);
 
   let parsed: unknown;
   try {
@@ -258,8 +273,28 @@ export function legacyProcessPgAdminDiffOutput(
     if (trimmedDdl.length > 0) filteredDdls.push(trimmedDdl);
   }
 
-  if (filteredDdls.length === 0) return Result.succeed("");
-  return Result.succeed(`${LEGACY_PGADMIN_DIFF_HEADER}\n\n${filteredDdls.join("\n\n")}\n`);
+  return Result.succeed(filteredDdls);
+}
+
+/** Go's `diffHeader`-plus-join half of `ProcessDiffOutput` (`container_output.go:196-200`). */
+export function legacyRenderPgAdminDiff(ddls: ReadonlyArray<string>): string {
+  if (ddls.length === 0) return "";
+  return `${LEGACY_PGADMIN_DIFF_HEADER}\n\n${ddls.join("\n\n")}\n`;
+}
+
+/**
+ * Parse-then-render composition of the two halves above, applied to a SINGLE, whole buffer
+ * — kept for callers (and this file's own unit tests) that want Go's `ProcessDiffOutput` as
+ * one function over one buffer. `legacyDiffSchemaPgAdmin`'s run loop calls
+ * `legacyParsePgAdminDiffEntries`/`legacyRenderPgAdminDiff` directly instead, once per run,
+ * so this function's own single-buffer semantics (including the multi-JSON-array
+ * "trailing data" failure on a buffer that concatenates >=1 complete arrays) are unchanged
+ * but no longer reachable from a multi-`--schema` diff.
+ */
+export function legacyProcessPgAdminDiffOutput(
+  stdout: string,
+): Result.Result<string, { readonly message: string }> {
+  return Result.map(legacyParsePgAdminDiffEntries(stdout), legacyRenderPgAdminDiff);
 }
 
 /**
@@ -340,7 +375,7 @@ export const legacyDiffSchemaPgAdmin = (
     const runs: ReadonlyArray<string | undefined> =
       params.schema.length === 0 ? [undefined] : params.schema;
 
-    const stdoutChunks: Array<Uint8Array> = [];
+    const ddls: Array<string> = [];
     for (const s of runs) {
       if (s !== undefined) yield* params.emitStatus(`Diffing schema: ${s}`);
       const cmd =
@@ -368,10 +403,18 @@ export const legacyDiffSchemaPgAdmin = (
               }),
           ),
         );
+      // Emitted BEFORE the exit-code check below, matching Go's stderr goroutine: it scans
+      // `ProcessDiffProgress` off the container's stderr concurrently with the container
+      // still running (`NewDiffStream`'s `io.Pipe`), so a failed run's own status lines still
+      // print ahead of the container error surfacing. Returning early on a nonzero exit
+      // before reaching this would silently drop that run's already-captured statuses.
+      for (const line of legacyProcessPgAdminDiffProgress(result.stderr)) {
+        yield* params.emitStatus(line);
+      }
       if (result.exitCode !== 0) {
         // Go's `error running container: exit %d` (`docker.go:582-590`) — the differ's own
-        // stderr is never surfaced: it fed the progress-line filter above, and any
-        // non-matching line is silently dropped, even under `--debug`.
+        // stderr is never surfaced beyond the progress-line filter above; any non-matching
+        // line is silently dropped, even under `--debug`.
         return yield* Effect.fail(
           new LegacyDbDiffPgAdminError({
             message: `error running container: exit ${result.exitCode}`,
@@ -379,24 +422,22 @@ export const legacyDiffSchemaPgAdmin = (
           }),
         );
       }
-      stdoutChunks.push(result.stdout);
-      for (const line of legacyProcessPgAdminDiffProgress(result.stderr)) {
-        yield* params.emitStatus(line);
+      const stdout = new TextDecoder().decode(result.stdout);
+      // Parsed per run — completing the intended shared-buffer algorithm's actual purpose
+      // (see this module's own header comment) rather than round 1's literal-minded
+      // concatenate-then-parse-once, which turned a multi-`--schema` diff whose every run
+      // individually parsed fine into a spurious "trailing data" `JSON.parse` failure.
+      const parsed = legacyParsePgAdminDiffEntries(stdout);
+      if (Result.isFailure(parsed)) {
+        return yield* Effect.fail(
+          new LegacyDbDiffPgAdminError({
+            message: parsed.failure.message,
+            reason: "invalid_output",
+          }),
+        );
       }
+      ddls.push(...parsed.success);
     }
 
-    // Concatenate raw BYTES across every run before decoding, matching the SHARED buffer the
-    // intended `NewDiffStream` algorithm accumulates every run's stdout into (see this
-    // module's own header comment for why the real Go binary never actually reaches this
-    // shared-buffer step) — the multi-`--schema` JSON-concatenation quirk this port DOES
-    // exhibit is a property of the parse step below, not of how the bytes themselves are
-    // joined.
-    const accumulated = new TextDecoder().decode(Buffer.concat(stdoutChunks));
-    const parsed = legacyProcessPgAdminDiffOutput(accumulated);
-    if (Result.isFailure(parsed)) {
-      return yield* Effect.fail(
-        new LegacyDbDiffPgAdminError({ message: parsed.failure.message, reason: "invalid_output" }),
-      );
-    }
-    return parsed.success;
+    return legacyRenderPgAdminDiff(ddls);
   });

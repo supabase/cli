@@ -148,7 +148,10 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   stderr line arrives. This port batches instead: `LegacyDockerRun.runStream` only exposes an
   `onStdout` hook (no `onStderr` equivalent), so this port buffers each run's stderr via
   `runCapture` and only filters/emits its status lines once that run's container has already
-  exited — one status BATCH per `--schema` run, not a continuous stream. See
+  exited — one status BATCH per `--schema` run, not a continuous stream. That batch is
+  processed and emitted BEFORE this port's own exit-code check, matching Go's stderr goroutine
+  running concurrently with (i.e. ahead of) the container's own exit — so a run that goes on to
+  exit non-zero still has its own captured statuses printed first, not dropped. See
   `legacy-pgadmin-diff.ts`'s own doc comment on `legacyDiffSchemaPgAdmin` for the full
   rationale and the possible follow-up (adding an `onStderr` hook to `runStream`).
 - Order: `Creating shadow database...` → shadow setup diagnostics (stderr, shared
@@ -187,8 +190,9 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   `127.0.0.1` and `postgres:postgres`, ignoring `SUPABASE_SERVICES_HOSTNAME`/`[db] password`.
 - `AssertSupabaseDbIsRunning` runs for `--linked`/`--db-url` too, and AFTER config load +
   target resolution — every other engine on this command never runs this check at all.
-- The `NOTE: …DESKTOP mode.` prefix (`supabase/pgadmin4#24`) is trimmed only from the
-  front of the WHOLE concatenated buffer, not from each individual run's output.
+- The `NOTE: …DESKTOP mode.` prefix (`supabase/pgadmin4#24`) is trimmed from the front of
+  EACH run's own stdout independently (each run is parsed on its own — see the "Deliberate
+  divergence" entry below), not just the front of a single, first run's buffer.
 - The differ's stderr is filtered by the progress-line regex and non-matching lines are
   dropped, so a differ failure surfaces only `error running container: exit <n>` — even
   under `--debug`.
@@ -207,14 +211,27 @@ LATER `Collect()` call's own (separate, always-empty) copy. The practical effect
 CLI's `--use-pgadmin` ALWAYS reports "No schema changes found" (exit 0) — it never writes a
 migration file and never hits a JSON-parse error, regardless of the differ's actual output or
 `--schema` count. (`Stderr()`/progress is unaffected — `c.w` is a `*io.PipeWriter`, a reference
-type shared across copies.) This port implements the INTENDED algorithm instead — accumulate
-every run's real stdout into one shared buffer, then parse it once, which is what
-`NewDiffStream`'s own design clearly intends — so wherever the real Go binary silently
-discards a genuine diff, this port produces it (or a real parse failure). One concrete,
-testable instance: `>=2 --schema` values that each return a full JSON array concatenate into
-one buffer and fail a single `JSON.parse` ("trailing data") here — a REAL, TS-only failure,
-not a reproduction of a Go bug, since the real Go binary never even attempts that parse (its
-`Collect()` always sees zero bytes, so it just reports an empty diff instead).
+type shared across copies.) This port implements the INTENDED algorithm instead: every run's
+stdout is genuinely parsed and its kept DDL entries are aggregated into one final diff, which
+is what `NewDiffStream`'s own design clearly intends — so wherever the real Go binary silently
+discards a genuine diff, this port produces it (or a real per-run parse failure).
+
+Getting there took two rounds. The first, literal-minded reading of "one shared buffer" glued
+every run's raw stdout BYTES together before parsing once — which is neither Go-as-shipped
+(always an empty, successful diff, since `Collect()` never sees real bytes at all) nor
+Go-as-written-but-unreachable (which, had `Collect()` ever actually run against accumulated
+bytes, would itself have failed to parse `>=2` concatenated JSON arrays the exact same way).
+Both of those are nonsensical outcomes nobody would design for, so round two completes the
+INTENDED algorithm instead of literally reproducing either one: each run's OWN stdout is
+parsed independently (`legacyParsePgAdminDiffEntries`, trimming that run's own DESKTOP-mode
+NOTE prefix off its own buffer), and every run's filtered DDLs are aggregated into a single
+list before the header is rendered once (`legacyRenderPgAdminDiff`). A multi-`--schema` diff
+where every run's own `--json-diff` output is independently well-formed now succeeds — Go's
+own `[]DiffEntry`-per-run JSON shape was never designed to be concatenated and parsed as one
+document, so a per-run parse is the evident intent, not literal buffer-sharing. A genuinely
+malformed run (or a Go-parity-preserving concatenation WITHIN a single run's own buffer — see
+`legacyProcessPgAdminDiffOutput`'s own doc comment, still exercised by this file's unit tests)
+still fails with `invalid_output`, same as before.
 
 **Network reachability (settled, static ruling):** with the differ container on the project's
 default Docker network (the compose bridge `supabase_network_<projectId>`), `127.0.0.1` inside

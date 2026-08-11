@@ -1954,29 +1954,98 @@ describe("legacy db diff", () => {
     );
 
     it.effect(
-      "TS-only: >=2 --schema runs each emitting a diff array is a real JSON-parse failure here, not a reproduced Go bug",
+      ">=2 --schema runs each emitting a diff array succeed, aggregating every run's DDL under ONE header (CLI-1968 round 2: parsed per run, not concatenated then parsed once)",
       () => {
-        // Deliberate divergence, not Go parity: the real Go binary's `DiffStream`
-        // (`container_output.go:79,87`) declares `Stdout()`/`Collect()` on a VALUE
-        // receiver, so `Collect()` always sees its own (separate, always-empty) copy
-        // of the buffer — Go never actually concatenates or parses this run's real
-        // bytes, and just reports "No schema changes found" regardless of `--schema`
-        // count. This port implements the INTENDED shared-buffer algorithm instead
-        // (see `legacy-pgadmin-diff.ts`'s own header comment), so >=2 schemas that
-        // each emit a full JSON array genuinely concatenate into one buffer and fail
-        // a single `JSON.parse` here — a real, TS-only failure the real Go CLI never
-        // hits.
+        // Completes the intended shared-buffer algorithm's own purpose (see
+        // `legacy-pgadmin-diff.ts`'s own header comment): each run's stdout is
+        // parsed on its own, so >=2 `--schema` runs that each emit a full JSON
+        // array no longer concatenate into one buffer and fail a single
+        // `JSON.parse` — every run's own DESKTOP-mode NOTE prefix (`pgadmin4#24`)
+        // is trimmed from that run's own buffer too, not just the very first run's.
         const s = setup(tmp.current, {
-          pgadminStdout: [JSON.stringify([pgadminEntry()]), JSON.stringify([pgadminEntry()])],
+          pgadminStdout: [
+            `${LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry({ diff_ddl: "create table pub ();" })])}`,
+            `${LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX}${JSON.stringify([pgadminEntry({ diff_ddl: "create table app ();" })])}`,
+          ],
         });
         return Effect.gen(function* () {
-          const error = yield* legacyDbDiff(
-            flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }),
-          ).pipe(Effect.flip);
+          yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true), schema: ["public", "app"] }));
+          const text = stdout(s.out);
+          // A single header, not one per run.
+          expect(text.split(LEGACY_PGADMIN_DIFF_HEADER)).toHaveLength(2);
+          expect(text).toContain(
+            `${LEGACY_PGADMIN_DIFF_HEADER}\n\ncreate table pub ();\n\ncreate table app ();\n`,
+          );
+          // Per-run "Diffing schema:" ordering is preserved.
+          const idxPublic = text.indexOf("Diffing schema: public");
+          const idxApp = text.indexOf("Diffing schema: app");
+          expect(idxPublic).toBeGreaterThanOrEqual(0);
+          expect(idxApp).toBeGreaterThan(idxPublic);
+          // Neither run's raw NOTE prefix leaked into the rendered diff.
+          expect(text).not.toContain("NOTE: Configuring authentication for DESKTOP mode.");
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect("fails with invalid_output when a run's own --json-diff stdout doesn't parse", () => {
+      const s = setup(tmp.current, { pgadminStdout: ["not valid json"] });
+      return Effect.gen(function* () {
+        const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+          Effect.flip,
+        );
+        expect(error).toMatchObject({
+          _tag: "LegacyDbDiffPgAdminError",
+          reason: "invalid_output",
+        });
+        expect((error as { message: string }).message).toContain(
+          "failed to parse schema diff output:",
+        );
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect(
+      "emits a failed run's captured progress statuses before the container-error surfaces",
+      () => {
+        // Go's stderr goroutine (`NewDiffStream`'s `io.Pipe`) scans progress
+        // concurrently WHILE the container runs, so a run that later exits non-zero
+        // still had its status lines printed already. This port batches stderr via
+        // `runCapture` instead of streaming it, so parity requires processing/
+        // emitting that batch BEFORE the exit-code check, not after returning early.
+        const s = setup(tmp.current, {
+          pgadminExitCode: 1,
+          pgadminStderr: ["Comparing Tables 45%\nDiffing 100%\n"],
+        });
+        return Effect.gen(function* () {
+          const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+            Effect.flip,
+          );
           expect(error).toMatchObject({
             _tag: "LegacyDbDiffPgAdminError",
-            reason: "invalid_output",
+            reason: "differ",
+            message: "error running container: exit 1",
           });
+          const text = stdout(s.out);
+          expect(text).toContain("Comparing Tables \n");
+          expect(text).toContain("Diffing 1\n");
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
+
+    it.effect(
+      "in stream-json mode, a failed run's captured progress statuses redirect to stderr (CLI-1546) but are still emitted before the container-error result",
+      () => {
+        const s = setup(tmp.current, {
+          format: "stream-json",
+          pgadminExitCode: 1,
+          pgadminStderr: ["Comparing Tables 45%\n"],
+        });
+        return Effect.gen(function* () {
+          const error = yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) })).pipe(
+            Effect.flip,
+          );
+          expect(error).toMatchObject({ _tag: "LegacyDbDiffPgAdminError", reason: "differ" });
+          expect(stderr(s.out)).toContain("Comparing Tables \n");
+          expect(stdout(s.out)).toBe("");
         }).pipe(Effect.provide(s.layer));
       },
     );

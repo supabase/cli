@@ -4,8 +4,10 @@ import { Result } from "effect";
 import {
   LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX,
   LEGACY_PGADMIN_DIFF_HEADER,
+  legacyParsePgAdminDiffEntries,
   legacyProcessPgAdminDiffOutput,
   legacyProcessPgAdminDiffProgress,
+  legacyRenderPgAdminDiff,
 } from "./legacy-pgadmin-diff.ts";
 
 /** Go's `DiffEntry` (`container_output.go:127-134`) shape, defaulting to a kept entry. */
@@ -258,10 +260,49 @@ describe("legacyProcessPgAdminDiffOutput", () => {
       expect(result).toEqual(Result.succeed(headerPlus("ALTER TABLE test;")));
     });
 
-    it("rejects two concatenated JSON arrays — multi-schema runs share one buffer (TS-only: Go never parses, see DiffStream divergence)", () => {
+    it("rejects two concatenated JSON arrays in a SINGLE buffer (this function's own single-buffer contract — legacyDiffSchemaPgAdmin no longer feeds it a multi-run concatenation; see legacyParsePgAdminDiffEntries below for the per-run parse)", () => {
       const payload = `${JSON.stringify([entry()])}${JSON.stringify([entry()])}`;
       expect(Result.isFailure(legacyProcessPgAdminDiffOutput(payload))).toBe(true);
     });
+  });
+});
+
+describe("legacyParsePgAdminDiffEntries", () => {
+  it("returns an empty array for an entirely empty buffer", () => {
+    expect(legacyParsePgAdminDiffEntries("")).toEqual(Result.succeed([]));
+  });
+
+  it("returns an empty array when the buffer is only the DESKTOP-mode NOTE prefix", () => {
+    expect(legacyParsePgAdminDiffEntries(LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX)).toEqual(
+      Result.succeed([]),
+    );
+  });
+
+  it("trims the DESKTOP-mode NOTE prefix from the front of the buffer before parsing", () => {
+    const payload = LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX + JSON.stringify([entry()]);
+    expect(legacyParsePgAdminDiffEntries(payload)).toEqual(Result.succeed(["ALTER TABLE test;"]));
+  });
+
+  it("returns the ordered, filtered, trimmed DDLs — not the rendered header/join", () => {
+    const entries = [entry({ diff_ddl: "DDL_1;" }), entry({ diff_ddl: "DDL_2;" })];
+    expect(legacyParsePgAdminDiffEntries(JSON.stringify(entries))).toEqual(
+      Result.succeed(["DDL_1;", "DDL_2;"]),
+    );
+  });
+
+  it("fails on two concatenated JSON arrays within one buffer, same as legacyProcessPgAdminDiffOutput", () => {
+    const payload = `${JSON.stringify([entry()])}${JSON.stringify([entry()])}`;
+    expect(Result.isFailure(legacyParsePgAdminDiffEntries(payload))).toBe(true);
+  });
+});
+
+describe("legacyRenderPgAdminDiff", () => {
+  it("returns an empty string for an empty DDL list", () => {
+    expect(legacyRenderPgAdminDiff([])).toBe("");
+  });
+
+  it("renders the pgAdmin header followed by every DDL joined with a blank line", () => {
+    expect(legacyRenderPgAdminDiff(["DDL_1;", "DDL_2;"])).toBe(headerPlus("DDL_1;\n\nDDL_2;"));
   });
 });
 
