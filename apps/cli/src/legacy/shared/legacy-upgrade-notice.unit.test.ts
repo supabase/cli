@@ -484,13 +484,11 @@ describe("legacyRunUpgradeNotice", () => {
     for (const args of [
       ["--workdir", flagged, "--help"],
       ["--workdir", flagged, "--version"],
-      // pflag's valued and clustered spellings request the same built-ins —
-      // and a false value still does: the non-runnable root/group serves help
-      // before cobra ever reaches `preRun`.
+      // Valued spellings request the same built-ins, and a false value still
+      // does: the non-runnable root/group serves help before `preRun`.
       ["--workdir", flagged, "--help=true"],
       ["branches", "--workdir", flagged, "-h=1"],
       ["--workdir", flagged, "--version=true"],
-      ["--workdir", flagged, "-hv"],
       ["branches", "--workdir", flagged, "--help=true", "--help=false"],
       // The space-form operand never stops the root version built-in.
       ["--workdir", flagged, "--version", "true"],
@@ -504,6 +502,23 @@ describe("legacyRunUpgradeNotice", () => {
       args: ["db", "reset", "--workdir", flagged, "--version", "20240101000000"],
     });
     expect(readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toBe("v2.114.0");
+    ctx.cleanup();
+  });
+
+  it("does not treat Effect's -v shorthand as Go's root version flag", async () => {
+    const ctx = setup({ project: false });
+    const flagged = join(workdir, "flagged");
+    const cacheFile = join(flagged, "supabase", ".temp", "cli-latest");
+    mkdirSync(join(flagged, "supabase", ".temp"), { recursive: true });
+    writeFileSync(cacheFile, "v2.115.0");
+
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      args: ["--workdir", flagged, "-v"],
+    });
+
+    expect(ctx.fetchCalls).toBe(0);
+    expect(ctx.stderr).toContain("v2.115.0");
     ctx.cleanup();
   });
 

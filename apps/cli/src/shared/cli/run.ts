@@ -162,23 +162,22 @@ function isFlagOccurrence(token: string, name: string): boolean {
 const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 
 /**
- * pflag reads a single-dash token as a cluster of shorthand flags: `-hv` sets
- * `h` then `v`, `-hv=true` gives `v` an inline value, and a value-taking
- * shorthand consumes the rest of the cluster as its value.
+ * pflag reads a single-dash token as a cluster of shorthand flags until a
+ * value-taking shorthand consumes the rest of the cluster as its value.
  */
-function* shortClusterFlagValues(
+function* shortClusterFlagNames(
   token: string,
   isValueTakingToken: (token: string) => boolean,
-): Generator<{ readonly name: string; readonly value: boolean }> {
+): Generator<string> {
   if (!token.startsWith("-") || token.startsWith("--")) return;
   for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
     const short = `-${rest[0]!}`;
     if (isValueTakingToken(short)) return;
     if (rest[1] === "=") {
-      yield { name: short, value: PFLAG_BOOL_TRUE.has(rest.slice(2)) };
+      yield short;
       return;
     }
-    yield { name: short, value: true };
+    yield short;
   }
 }
 
@@ -219,9 +218,9 @@ function firstPositionalIndex(
 }
 
 /**
- * Whether argv sets the ROOT `--version`/`-v` flag — in any spelling pflag
- * marks as changed, which is what Go's `shouldFetchRelease` keys on: bare,
- * valued (`--version=false` included), clustered (`-hv`), or followed by a
+ * Whether argv sets the ROOT `--version` flag — in any spelling pflag marks as
+ * changed, which is what Go's `shouldFetchRelease` keys on: bare, valued
+ * (`--version=false` included), or followed by a
  * space-form operand (`--version true` — cobra serves the version built-in
  * before it ever validates the stray operand). A subcommand's own flag of the
  * same name (`db reset --version x`) does not count: a positional precedes
@@ -236,9 +235,6 @@ export function hasRootVersionFlag(
   for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (index >= positional) continue;
     if (isFlagOccurrence(token, "--version")) return true;
-    for (const { name } of shortClusterFlagValues(token, isValueTakingToken)) {
-      if (name === "-v") return true;
-    }
   }
   return false;
 }
@@ -263,15 +259,12 @@ export function hasRootHelpOrVersionFlag(
   let version: boolean | undefined;
   for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
     if (isFlagOccurrence(token, "--help") || isFlagOccurrence(token, "-h")) return true;
-    const shortFlags = [...shortClusterFlagValues(token, isValueTakingToken)];
-    if (shortFlags.some(({ name }) => name === "-h")) return true;
+    const shortFlags = [...shortClusterFlagNames(token, isValueTakingToken)];
+    if (shortFlags.includes("-h")) return true;
     if (index < positional) {
       if (token === "--version") version = true;
       else if (token.startsWith("--version=")) {
         version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
-      }
-      for (const entry of shortFlags) {
-        if (entry.name === "-v") version = entry.value;
       }
     }
   }
