@@ -110,6 +110,10 @@ managed resolver and engine delivered by the implementation issues below. Furthe
 not by expanding this lint into a parallel rule engine. A new lint rule is appropriate only when it
 protects a generic fixture-format invariant across behavior areas.
 
+Native-qualification facts describe the complete M5 launch-scope target, not the package's current
+Docker-backed implementation. CLI-2121 through CLI-2141 attach the real native service graph to that
+target contract.
+
 ## Implementation Handoff
 
 The downstream implementation issues own the executable drivers, while this ADR and fixture data

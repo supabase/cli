@@ -35,6 +35,11 @@ vi.mock("node:fs", async (importOriginal) => {
   };
 });
 
+const projectDirectStackHandle = (stack: { readonly url: string; readonly dbUrl: string }) => ({
+  url: stack.url.replace(/:\d+$/, ":<api-port>"),
+  dbUrl: stack.dbUrl.replace(/:\d+\//, ":<db-port>/"),
+});
+
 describe("managed stack acceptance contract", () => {
   it("keeps every shared scenario readable and executable through a public interface", () => {
     expect(validateManagedStackContractFixtures(managedStackContractFixtures)).toEqual([]);
@@ -56,7 +61,6 @@ describe("managed stack acceptance contract", () => {
     const readOnly = findScenario("identity.branch-copy-read-only-does-not-write");
     const noOp = findScenario("reclamation.delete-repeat-is-idempotent");
     const freshBootstrap = findScenario("bootstrap.absent-legacy-starts-fresh");
-    const directDispose = findScenario("api-boundary.direct-dispose-removes-temporary-roots");
     const repositoryContract = findScenario("api-boundary.repository-contract-is-storage-agnostic");
     const persistedRuntime = findScenario("runtime.persisted-runtime-reused-for-auto");
     const defaultOutputCli = findScenario("identity.non-git-folder-first-start-persists-identity");
@@ -73,7 +77,6 @@ describe("managed stack acceptance contract", () => {
       portConflict.expected.output.json === undefined ||
       freshBootstrap.expected.details === undefined ||
       freshBootstrap.expected.output.json === undefined ||
-      directDispose.expected.output.api === undefined ||
       repositoryAction.interface !== "managed-api"
     ) {
       throw new Error("lint examples require selected and structured fixture outputs");
@@ -315,20 +318,23 @@ describe("managed stack acceptance contract", () => {
       {
         fixtures: [
           {
-            ...directDispose,
-            expected: {
-              ...directDispose.expected,
-              output: {
-                ...directDispose.expected.output,
-                api: {
-                  ...directDispose.expected.output.api,
-                  temporaryRootsRemoved: false,
-                },
+            ...reuse,
+            given: [
+              ...reuse.given,
+              {
+                kind: "checkout",
+                path: "checkout-b",
+                projectId: "project-a",
+                checkoutId: "checkout-b",
               },
+            ],
+            expected: {
+              ...reuse.expected,
+              selection: { ...reuse.expected.selection, checkoutId: "checkout-b" },
             },
           },
         ],
-        expectedError: `${directDispose.id}: projected temporaryRootsRemoved disagrees with the managed result`,
+        expectedError: `${reuse.id}: selected checkout checkout-b disagrees with stack stack-main-default`,
       },
       {
         fixtures: managedStackContractFixtures.map((scenario) =>
@@ -527,6 +533,14 @@ describe("managed stack acceptance contract", () => {
     expect(forcedBranch).toMatchObject({
       given: expect.arrayContaining([
         expect.objectContaining({ kind: "branch", name: "main", contextId: "context-main" }),
+        {
+          kind: "stack",
+          name: "default",
+          stackId: "stack-a-main-default",
+          checkoutId: "checkout-a",
+          contextId: "context-main",
+          lifecycle: "running",
+        },
       ]),
       expected: {
         selection: {
@@ -540,19 +554,23 @@ describe("managed stack acceptance contract", () => {
       [],
     );
     expect(bareWorktrees).toMatchObject({
+      given: expect.arrayContaining([
+        {
+          kind: "stack",
+          name: "default",
+          stackId: "stack-a-main-default",
+          checkoutId: "checkout-a",
+          contextId: "context-main",
+          lifecycle: "running",
+        },
+      ]),
       expected: {
         selection: { checkoutId: "checkout-b", contextId: "context-main" },
-        writes: expect.arrayContaining([
-          {
-            target: "git-config",
-            operation: "create",
-            id: "context-main",
-            scope: "common",
-            owner: "main",
-          },
-        ]),
       },
     });
+    expect(bareWorktrees.expected.writes.filter((write) => write.target === "git-config")).toEqual(
+      [],
+    );
   });
 
   it("does not rewrite branch context after Git has preserved a rename", () => {
@@ -829,6 +847,12 @@ describe("managed stack acceptance contract", () => {
   });
 
   it("keeps public createStack usage isolated when state roots are omitted", async () => {
+    const scenario: ManagedStackContractScenario | undefined = managedStackContractFixtures.find(
+      ({ id }) => id === "api-boundary.direct-create-stack-is-ephemeral",
+    );
+    if (scenario?.expected.output.api === undefined) {
+      throw new Error("direct createStack fixture requires its public API projection");
+    }
     const testRoot = mkdtempSync(join(tmpdir(), "supabase-direct-contract-"));
     const projectDir = join(testRoot, "project");
     const cacheRoot = join(testRoot, "cache");
@@ -846,12 +870,9 @@ describe("managed stack acceptance contract", () => {
     try {
       const stack = await createStack({ cacheRoot, projectDir, startupMode: "lazy" });
       try {
-        expect(stack).toMatchObject({
-          url: expect.stringMatching(/^http:\/\/127\.0\.0\.1:/),
-          dbUrl: expect.stringMatching(/^postgresql:\/\//),
-        });
+        expect(projectDirectStackHandle(stack)).toEqual(scenario.expected.output.api);
       } finally {
-        await stack.dispose();
+        expect(await stack.dispose()).toBeUndefined();
       }
 
       expect(readFileSync(gitConfig, "utf8")).toBe("[core]\n\trepositoryformatversion = 0\n");
@@ -870,6 +891,16 @@ describe("managed stack acceptance contract", () => {
     const explicitRootKinds: ReadonlyArray<"runtime" | "stack"> = ["stack", "runtime"];
 
     for (const explicitRootKind of explicitRootKinds) {
+      const scenarioId =
+        explicitRootKind === "stack"
+          ? "api-boundary.direct-create-stack-keeps-omitted-runtime-root-temporary"
+          : "api-boundary.direct-create-stack-keeps-omitted-stack-root-temporary";
+      const scenario: ManagedStackContractScenario | undefined = managedStackContractFixtures.find(
+        ({ id }) => id === scenarioId,
+      );
+      if (scenario?.expected.output.api === undefined) {
+        throw new Error(`${scenarioId} fixture requires its public API projection`);
+      }
       const testRoot = mkdtempSync(join(tmpdir(), "supabase-partial-root-contract-"));
       const projectDir = join(testRoot, "project");
       const cacheRoot = join(testRoot, "cache");
@@ -900,10 +931,11 @@ describe("managed stack acceptance contract", () => {
         }
 
         try {
+          expect(projectDirectStackHandle(stack)).toEqual(scenario.expected.output.api);
           expect(generatedRoots).toHaveLength(1);
           expect(existsSync(generatedRoot)).toBe(true);
         } finally {
-          await stack.dispose();
+          expect(await stack.dispose()).toBeUndefined();
         }
 
         expect(existsSync(generatedRoot)).toBe(false);
@@ -942,6 +974,7 @@ describe("managed stack acceptance contract", () => {
           name: "default",
           stackId: "stack-main-default",
           contextId: "context-main",
+          checkoutId: "checkout-a",
           lifecycle: "stopped",
         },
       ],
@@ -1205,6 +1238,7 @@ describe("managed stack acceptance contract", () => {
         {
           kind: "stack",
           stackId: "stack-orphan",
+          checkoutId: "checkout-orphan",
           lifecycle: "running",
           orphaned: true,
         },
@@ -1279,8 +1313,8 @@ describe("managed stack acceptance contract", () => {
         },
         output: {
           api: {
-            handle: "stack-handle",
-            temporaryRoots: ["stack", "runtime"],
+            url: "http://127.0.0.1:<api-port>",
+            dbUrl: "postgresql://postgres:postgres@127.0.0.1:<db-port>/postgres",
           },
         },
       },

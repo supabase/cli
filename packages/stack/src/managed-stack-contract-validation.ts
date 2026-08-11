@@ -117,7 +117,14 @@ export const validateManagedStackContractFixtures = (
         errors.push(`${scenario.id}: default CLI invocation requires a human projection`);
       }
     }
-    if (output.human === undefined && output.json === undefined && output.api === undefined) {
+    const returnsVoid =
+      scenario.when.interface === "stack-api" && scenario.when.method === "dispose";
+    if (
+      !returnsVoid &&
+      output.human === undefined &&
+      output.json === undefined &&
+      output.api === undefined
+    ) {
       errors.push(`${scenario.id}: at least one observable output is required`);
     }
     if (output.human !== undefined && output.human.summary.trim().length === 0) {
@@ -266,6 +273,7 @@ export const validateManagedStackContractFixtures = (
           declareId(fact.stackId);
           break;
         case "stack":
+          declareId(fact.checkoutId);
           declareId(fact.contextId);
           declareId(fact.stackId);
           break;
@@ -330,6 +338,14 @@ export const validateManagedStackContractFixtures = (
       ) {
         errors.push(
           `${scenario.id}: selected context ${selection.contextId} disagrees with stack ${selection.stackId}`,
+        );
+      }
+      if (
+        selectedStackFact?.kind === "stack" &&
+        selectedStackFact.checkoutId !== selection.checkoutId
+      ) {
+        errors.push(
+          `${scenario.id}: selected checkout ${selection.checkoutId} disagrees with stack ${selection.stackId}`,
         );
       }
     }
