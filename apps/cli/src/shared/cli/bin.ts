@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
@@ -46,26 +46,31 @@ if (!binPath) {
   );
 }
 
-// A terminal Ctrl-C signals the whole foreground group; the compiled binary
-// owns signal semantics, so the shim only waits and mirrors its exit.
-// Registering handlers disables the default terminate action even while
-// execFileSync blocks the event loop.
-const holdSignal = () => {};
-const heldSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
-for (const signal of heldSignals) process.on(signal, holdSignal);
-try {
-  execFileSync(binPath, process.argv.slice(2), { stdio: "inherit" });
-} catch (e) {
-  if (e && typeof e === "object" && "status" in e && typeof e.status === "number")
-    process.exit(e.status);
-  if (e && typeof e === "object" && "signal" in e && typeof e.signal === "string") {
+// The compiled binary owns signal semantics, so the shim never dies to a
+// signal's default action while the child runs: a group signal (terminal
+// Ctrl-C) already reaches the child directly, and a signal sent to the shim
+// PID alone (a supervisor's kill) is forwarded so cancellation still lands.
+// Either way the shim just waits and mirrors the child's exit.
+const child = spawn(binPath, process.argv.slice(2), { stdio: "inherit" });
+const forwardedSignals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+const forwarders = forwardedSignals.map((signal) => {
+  const forward = () => {
+    if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+  };
+  process.on(signal, forward);
+  return [signal, forward] as const;
+});
+child.on("error", (error) => {
+  for (const [signal, forward] of forwarders) process.removeListener(signal, forward);
+  throw error;
+});
+child.on("exit", (code, signal) => {
+  for (const [sig, forward] of forwarders) process.removeListener(sig, forward);
+  if (signal !== null) {
     // Mirror a signal death so the parent shell sees the conventional 128+n.
-    for (const signal of heldSignals) process.removeListener(signal, holdSignal);
-    process.kill(process.pid, e.signal);
+    process.kill(process.pid, signal);
     setInterval(() => {}, 1_000); // keep the loop alive until it lands
-  } else {
-    throw e;
+    return;
   }
-} finally {
-  for (const signal of heldSignals) process.removeListener(signal, holdSignal);
-}
+  process.exit(code ?? 1);
+});
