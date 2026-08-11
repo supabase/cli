@@ -245,6 +245,20 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("ignores a --workdir operand after the -- terminator, like cobra", async () => {
+    const ctx = setup({});
+    const elsewhere = join(workdir, "elsewhere");
+    mkdirSync(join(elsewhere, "supabase"), { recursive: true });
+    const opCtx = { ...ctx.deps, args: ["db", "start", "--", "--workdir", elsewhere] };
+    await legacyRunUpgradeNotice(opCtx);
+    // The operand is not a flag: the cache lands in the real project, not `elsewhere`.
+    expect(readFileSync(ctx.cachePath, "utf8")).toBe("v2.114.0");
+    expect(() =>
+      readFileSync(join(elsewhere, "supabase", ".temp", "cli-latest"), "utf8"),
+    ).toThrow();
+    ctx.cleanup();
+  });
+
   it("never reads through or writes through a symlinked cache file", async () => {
     const ctx = setup({});
     const victim = join(workdir, "victim.txt");

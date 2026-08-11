@@ -12,7 +12,7 @@ import { stripVTControlCharacters } from "node:util";
 
 import { Effect } from "effect";
 
-import { hasRootVersionFlag } from "../../shared/cli/run.ts";
+import { hasRootVersionFlag, lastGlobalFlagValue } from "../../shared/cli/run.ts";
 import { CLI_VERSION } from "../../shared/cli/version.ts";
 import { legacyBold, legacyYellow } from "./legacy-colors.ts";
 
@@ -119,11 +119,7 @@ function resolveNoticeBaseDir(
   args: ReadonlyArray<string>,
   env: Readonly<Record<string, string | undefined>>,
 ): string {
-  let flagValue: string | undefined;
-  for (const [index, arg] of args.entries()) {
-    if (arg === "--workdir") flagValue = args[index + 1];
-    else if (arg.startsWith("--workdir=")) flagValue = arg.slice("--workdir=".length);
-  }
+  const flagValue = lastGlobalFlagValue(args, "--workdir");
   const explicit =
     flagValue !== undefined && flagValue !== "" ? flagValue : env["SUPABASE_WORKDIR"];
   if (explicit !== undefined && explicit !== "") {

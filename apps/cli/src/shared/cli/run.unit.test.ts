@@ -510,6 +510,7 @@ describe("hasRootVersionFlag", () => {
     [["--profile=x", "-v"], true],
     [["db", "reset", "--version", "20240101000000"], false],
     [["migration", "squash", "--version", "x"], false],
+    [["--", "--version"], false],
     [[], false],
   ])("%j -> %s", (args, expected) => {
     expect(hasRootVersionFlag(args as ReadonlyArray<string>)).toBe(expected);

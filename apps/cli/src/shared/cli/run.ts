@@ -106,19 +106,44 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
   return commandArgs;
 }
 
-/** Whether argv sets the ROOT `--version`/`-v` flag — not a subcommand's flag of the same name, and not a token consumed as a value-taking global flag's value (`--profile -v`). */
-export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
-  if (extractCommandPath(args).length > 0) return false;
+/**
+ * Yields argv tokens that are actual flag occurrences, with their positions,
+ * honoring cobra/pflag boundaries: everything after a bare `--` is an operand,
+ * and a token consumed as a value-taking global flag's value (`--profile -v`)
+ * is not a flag.
+ */
+function* rootFlagTokens(
+  args: ReadonlyArray<string>,
+): Generator<{ readonly token: string; readonly index: number }> {
   for (let index = 0; index < args.length; index += 1) {
     const arg = args[index]!;
-    if (arg === "--version" || arg === "-v") return true;
+    if (arg === "--") return;
     if (!arg.startsWith("-")) continue;
+    yield { token: arg, index };
     const [flag] = arg.split("=", 1);
     if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
       index += 1;
     }
   }
+}
+
+/** Whether argv sets the ROOT `--version`/`-v` flag — not a subcommand's flag of the same name, an operand after `--`, or a token consumed as another flag's value. */
+export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
+  if (extractCommandPath(args).length > 0) return false;
+  for (const { token } of rootFlagTokens(args)) {
+    if (token === "--version" || token === "-v") return true;
+  }
   return false;
+}
+
+/** The last value a root-level `--<name>`/`--<name>=<value>` occurrence sets. `name` must be a value-taking global flag, whose space-form value the token walk already skips. */
+export function lastGlobalFlagValue(args: ReadonlyArray<string>, name: string): string | undefined {
+  let value: string | undefined;
+  for (const { token, index } of rootFlagTokens(args)) {
+    if (token === name) value = args[index + 1];
+    else if (token.startsWith(`${name}=`)) value = token.slice(name.length + 1);
+  }
+  return value;
 }
 
 /** Whether the global signal-interrupt handler should wrap this invocation. */
