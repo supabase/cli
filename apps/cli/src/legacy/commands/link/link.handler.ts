@@ -1,11 +1,14 @@
-import type { ApiClient } from "@supabase/api/effect";
+import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 import { LegacyPlatformApi } from "../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
-import { LegacyProjectRefResolver } from "../../config/legacy-project-ref.service.ts";
+import {
+  LegacyProjectRefResolver,
+  PROJECT_REF_PATTERN,
+} from "../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -18,21 +21,38 @@ import {
 } from "../../../shared/telemetry/event-catalog.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
-import { sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
-import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
+import { legacyReadProjectRefFile, legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import {
   LegacyLinkApiKeysNetworkError,
   LegacyLinkAuthTokenError,
+  LegacyLinkBranchListNetworkError,
+  LegacyLinkBranchListStatusError,
+  LegacyLinkBranchNotFoundError,
+  LegacyLinkBranchNotLinkedError,
+  LegacyLinkBranchNotReadyError,
   LegacyLinkMissingKeyError,
+  LegacyLinkParentRefInvalidError,
   LegacyLinkProjectStatusError,
   LegacyLinkProjectStatusNetworkError,
+  LegacyLinkRefArgConflictError,
   LegacyProjectPausedError,
 } from "./link.errors.ts";
 import type { LegacyLinkFlags } from "./link.command.ts";
 
 type LegacyLinkProject = Effect.Success<ReturnType<ApiClient["v1"]["getProject"]>>;
+type LegacyLinkBranches = typeof V1ListAllBranchesOutput.Type;
+type LegacyLinkBranch = LegacyLinkBranches[number];
+
+/** Result of resolving a branch name/UUID to its project ref, threaded into the
+ * machine payload (`branch`, `parent_project_ref`) alongside the plain ref. */
+interface LegacyLinkBranchResolution {
+  readonly projectRef: string;
+  readonly branchName: string;
+  readonly parentRef: string;
+}
 
 // Classify a `getProject` failure: a 404 means the project is a branch (resolve
 // to `None`, link continues); any other status surfaces the body; transport
@@ -83,6 +103,210 @@ const mapApiKeysError = legacyMapTenantApiKeysError({
   statusError: LegacyLinkAuthTokenError,
 });
 
+/**
+ * A value made entirely of lowercase letters (but not 20 of them, or it would
+ * already have been treated as a ref) is a plausible ref typo. Appended to
+ * both branch-not-found messages and the not-linked message (CLI-2167).
+ */
+function legacyLinkTypoHint(value: string): string {
+  if (!/^[a-z]+$/.test(value)) return "";
+  return `\n  If you meant a project ref: refs are exactly 20 lowercase letters ("${value}" has ${value.length}).`;
+}
+
+function legacyLinkNotLinkedMessage(value: string): string {
+  return (
+    `Cannot resolve "${value}": it is not a project ref (refs are exactly 20 lowercase letters, ` +
+    "like `abcdefghijklmnopqrst`), so it was treated as a branch name — but no project is linked " +
+    "to search for branches.\n" +
+    "  If it is a branch name, link the parent project first: supabase link --project-ref <parent-ref>" +
+    legacyLinkTypoHint(value)
+  );
+}
+
+const LEGACY_LINK_MAX_LISTED_BRANCHES = 20;
+
+function legacyLinkBranchNotFoundMessage(
+  value: string,
+  parentRef: string,
+  branches: LegacyLinkBranches,
+): string {
+  if (branches.length === 0) {
+    return `Branch "${value}" not found: project ${parentRef} has no branches.${legacyLinkTypoHint(value)}`;
+  }
+
+  const sortedNames = branches.map((branch) => branch.name).toSorted();
+  const shown = sortedNames.slice(0, LEGACY_LINK_MAX_LISTED_BRANCHES);
+  const remaining = sortedNames.length - shown.length;
+  // Branch names are API-provided; sanitize the same way response bodies are
+  // before embedding them in an error message (module policy).
+  const shownSanitized = sanitizeLegacyErrorBody(shown.join(", "));
+  const namesList =
+    remaining > 0
+      ? `${shownSanitized}, … (${remaining} more — run supabase branches list)`
+      : shownSanitized;
+
+  const trimmedLower = value.trim().toLowerCase();
+  const nearMiss = branches.find((branch) => branch.name.toLowerCase() === trimmedLower);
+  const didYouMean = nearMiss !== undefined ? ` Did you mean "${nearMiss.name}"?` : "";
+
+  return (
+    `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}` +
+    `${didYouMean}${legacyLinkTypoHint(value)}`
+  );
+}
+
+type LegacyLinkParentResolution =
+  | { readonly kind: "resolved"; readonly ref: string }
+  | { readonly kind: "invalid" }
+  | { readonly kind: "absent" };
+
+/** Best-effort parse of `<workdir>/supabase/.temp/linked-project.json`'s `ref`
+ * field — a missing file, unreadable file, malformed JSON, or non-string/empty
+ * `ref` all degrade to `None` rather than failing the branch-name lookup. */
+function legacyLinkParseCachedParentRef(content: string): Option.Option<string> {
+  try {
+    const parsed: unknown = JSON.parse(content);
+    if (typeof parsed === "object" && parsed !== null && "ref" in parsed) {
+      const ref = (parsed as Record<string, unknown>).ref;
+      if (typeof ref === "string" && ref.length > 0) {
+        return Option.some(ref);
+      }
+    }
+  } catch {
+    // Malformed JSON degrades to "no candidate", same as a missing file.
+  }
+  return Option.none();
+}
+
+function legacyLinkClassifyParentCandidates(
+  candidates: ReadonlyArray<Option.Option<string>>,
+): LegacyLinkParentResolution {
+  for (const candidate of candidates) {
+    if (Option.isSome(candidate) && PROJECT_REF_PATTERN.test(candidate.value)) {
+      return { kind: "resolved", ref: candidate.value };
+    }
+  }
+  return candidates.some(Option.isSome) ? { kind: "invalid" } : { kind: "absent" };
+}
+
+/**
+ * Resolves the currently-linked PARENT project ref for a branch-name lookup.
+ * Deliberately NOT `resolver.resolveOptional` (which resolves the FINAL linked
+ * ref): right after linking a branch, that would return the branch's OWN ref,
+ * making a second `link <other-branch>` resolve the "parent" as the branch and
+ * fail (CLI-2167 follow-up). Candidate order, first ref-shaped value wins:
+ *
+ *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliConfig`).
+ *   2. `ref` in `<workdir>/supabase/.temp/linked-project.json`. KEY INVARIANT:
+ *      this file is written by `link`'s own success path only for a REAL
+ *      (non-404) project — the branch/404 path leaves it untouched — and
+ *      `LegacyLinkedProjectCache.cache` never overwrites an existing file, so
+ *      this reliably holds the last real parent project even after
+ *      subsequent branch links.
+ *   3. `<workdir>/supabase/.temp/project-ref`.
+ *
+ * If a candidate exists but none is ref-shaped, that's corrupt/stale linked
+ * state (`"invalid"`); if none exists at all, the workdir was never linked
+ * (`"absent"`).
+ */
+const resolveLegacyLinkParentRef = Effect.fnUntraced(function* () {
+  const cliConfig = yield* LegacyCliConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const paths = legacyTempPaths(path, cliConfig.workdir);
+
+  const cachedRef = yield* fs.readFileString(paths.linkedProjectCache).pipe(
+    Effect.map(legacyLinkParseCachedParentRef),
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+  const fileRef = yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+
+  return legacyLinkClassifyParentCandidates([cliConfig.projectId, cachedRef, fileRef]);
+});
+
+/**
+ * Resolves a non-ref-shaped `[ref-or-branch]`/`--project-ref` value to the
+ * branch's project ref by looking it up (by name or UUID) against the PARENT
+ * project's branches. TS-only surface (CLI-2167, no Go counterpart).
+ *
+ * A value that is ref-shaped (20 lowercase letters) is ALWAYS treated as a
+ * ref and never looked up as a branch name — this keeps every
+ * currently-working invocation byte-identical, and CLI-2167 accepts the
+ * (vanishingly rare) collision with a 20-lowercase-letter branch name.
+ *
+ * Deliberately uses the LIST endpoint (`GET /v1/projects/{ref}/branches`)
+ * rather than `branches.resolver.ts`'s single-branch lookup
+ * (`legacyResolveBranchProjectRef`, which calls `GET /v1/branches/{id}` for a
+ * UUID or `GET /v1/projects/{ref}/branches/{name}` for a name): the full list
+ * powers the available-branches error enrichment below, and — unlike that
+ * resolver, which is handed an already-resolved `projectRef` by its caller —
+ * `link` has to resolve the parent project itself first anyway.
+ */
+const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
+  const output = yield* Output;
+  const api = yield* LegacyPlatformApi;
+
+  const parent = yield* resolveLegacyLinkParentRef();
+  if (parent.kind === "absent") {
+    return yield* Effect.fail(
+      new LegacyLinkBranchNotLinkedError({ message: legacyLinkNotLinkedMessage(value) }),
+    );
+  }
+  if (parent.kind === "invalid") {
+    return yield* Effect.fail(
+      new LegacyLinkParentRefInvalidError({
+        message: `Cannot resolve branch "${value}": the linked project ref is invalid (checked SUPABASE_PROJECT_ID, supabase/.temp/linked-project.json, supabase/.temp/project-ref). Relink the parent project first: supabase link --project-ref <parent-ref>`,
+      }),
+    );
+  }
+  const parentRef = parent.ref;
+
+  const mapBranchListError = mapLegacyHttpError({
+    networkError: LegacyLinkBranchListNetworkError,
+    statusError: LegacyLinkBranchListStatusError,
+    networkMessage: (cause) => `failed to list branches: ${cause}`,
+    statusMessage: (status, body) =>
+      status === 404
+        ? `Cannot list branches for project ${parentRef} (HTTP 404). If ${parentRef} is itself a preview branch, link its parent project first: supabase link --project-ref <parent-ref>`
+        : `unexpected list branches status ${status}: ${body}`,
+  });
+
+  const task = output.format === "text" ? yield* output.task("Resolving branch...") : undefined;
+  const branches: LegacyLinkBranches = yield* api.v1.listAllBranches({ ref: parentRef }).pipe(
+    Effect.tapError(() => task?.fail() ?? Effect.void),
+    Effect.catch(mapBranchListError),
+  );
+  yield* task?.clear() ?? Effect.void;
+
+  const found: LegacyLinkBranch | undefined = branches.find(
+    (branch) => branch.name === value || branch.id === value,
+  );
+  if (found === undefined) {
+    return yield* Effect.fail(
+      new LegacyLinkBranchNotFoundError({
+        message: legacyLinkBranchNotFoundMessage(value, parentRef, branches),
+      }),
+    );
+  }
+
+  if (!PROJECT_REF_PATTERN.test(found.project_ref)) {
+    return yield* Effect.fail(
+      new LegacyLinkBranchNotReadyError({
+        branch: found.name,
+        status: found.status,
+        message: `Branch "${found.name}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
+      }),
+    );
+  }
+
+  const line = `Resolved branch "${found.name}" of project ${parentRef} to project ref ${found.project_ref}.`;
+  yield* output.format === "text" ? output.raw(`${line}\n`, "stderr") : output.info(line);
+
+  return { projectRef: found.project_ref, branchName: found.name, parentRef };
+});
+
 export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkFlags) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
@@ -94,7 +318,34 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const ref = yield* resolver.resolveForLink(flags.projectRef);
+  // Normalize inputs: an empty-string positional or flag value is absent,
+  // mirroring the resolver's own treatment of an empty `--project-ref`.
+  const refArg = Option.filter(flags.refOrBranch, (value) => value.length > 0);
+  const projectRefFlag = Option.filter(flags.projectRef, (value) => value.length > 0);
+
+  if (Option.isSome(refArg) && Option.isSome(projectRefFlag)) {
+    return yield* Effect.fail(
+      new LegacyLinkRefArgConflictError({
+        message:
+          "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
+      }),
+    );
+  }
+
+  const requested = Option.isSome(refArg) ? refArg : projectRefFlag;
+
+  // A ref-shaped value (20 lowercase letters) is always treated as a ref and
+  // never looked up as a branch name (see `resolveLegacyLinkBranchRef`).
+  const branchResolution =
+    Option.isSome(requested) && !PROJECT_REF_PATTERN.test(requested.value)
+      ? Option.some(yield* resolveLegacyLinkBranchRef(requested.value))
+      : Option.none<LegacyLinkBranchResolution>();
+
+  const resolvedRefOrBranch = Option.isSome(branchResolution)
+    ? Option.some(branchResolution.value.projectRef)
+    : requested;
+
+  const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
   const paths = legacyTempPaths(path, cliConfig.workdir);
 
   const writeTempFile: WriteTempFile = (filePath, content) =>
@@ -192,7 +443,17 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     if (output.format === "text") {
       yield* output.raw("Finished supabase link.\n");
     } else {
-      yield* output.success("", { project_ref: ref });
+      yield* output.success("", {
+        project_ref: ref,
+        // Purely additive — only present when a branch name/UUID was resolved
+        // to `ref` above; absent for a plain project-ref link (CLI-2167).
+        ...(Option.isSome(branchResolution)
+          ? {
+              branch: branchResolution.value.branchName,
+              parent_project_ref: branchResolution.value.parentRef,
+            }
+          : {}),
+      });
     }
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });
