@@ -7,18 +7,25 @@ delegated to [`@supabase/process-compose`](../../process-compose/docs/architectu
 
 ## Public entrypoints
 
-The package exposes two levels of Interface:
+The package exposes three levels of Interface:
 
 - `@supabase/stack` selects `bun.ts` or `node.ts` through export conditions and exposes the
   Promise-oriented `createStack()` / `StackHandle` Interface plus prefetch helpers.
 - `@supabase/stack/effect` selects a runtime Adapter through the same export conditions and exposes
   Effect Interfaces plus platform-bound layer factories used by the CLI and advanced callers.
+- `@supabase/stack/managed` selects the Node or Bun SQLite Adapter and exposes managed identity,
+  discovery, persistence, and lifecycle coordination. Its repository can be replaced by a caller.
 - `@supabase/stack/testing` exposes only the service tags needed to replace daemon transport in
   consumer tests. Runtime implementation tags do not leak through the root or Effect barrels.
 
 Internal runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
 socket HTTP implementations. `createStack.ts` and the layer factories remain platform-agnostic;
 the conditional root and Effect entries bind them to their selected runtime.
+
+The direct and managed surfaces compose in one direction only: managed policy resolves one opaque
+stack identity and concrete roots, ports, and runtime selection, then a caller may pass those
+resolved values to the core runtime. The core runtime never discovers workspaces or opens the
+global registry.
 
 ```mermaid
 flowchart LR
@@ -267,9 +274,51 @@ Unix-socket transport, not the public Supabase API proxy.
 
 See [detach mode](./detach-mode.md) for paths, process startup, and compiled executable dispatch.
 
-## Managed paths
+## Managed identity and state
 
-With the default cache root (`~/.supabase`), durable data is project-keyed:
+The managed surface owns a versioned SQLite registry with separate records for projects,
+checkouts, checkout locations, development contexts, stacks, port reservations, and operations.
+The public repository contract contains no SQLite types, so the same service runs with the
+in-memory test repository and the Node or Bun persistent Adapter.
+
+For an ordinary non-Git folder, the first mutating managed operation atomically publishes:
+
+```text
+<workspace>/.supabase/identity.json
+  version
+  projectId
+  checkoutId
+  contextId
+```
+
+No mutable runtime state or credential value is stored in that marker. Read-only discovery does
+not create it. The registry stores only an opaque credential reference, never resolved plaintext
+credentials.
+
+The managed state root is explicitly injectable. Otherwise it resolves from `SUPABASE_HOME` or
+the platform application-state directory. Every physical stack path is keyed only by its opaque
+stack UUID:
+
+```text
+<managedStateRoot>/
+  registry-v1.sqlite3
+  stacks/<stackId>/
+    data/
+    logs/
+    runtime/
+```
+
+Stack publication and operation claims are transactional. A new stack remains `pending` while its
+directories and caller-supplied initialization are validated, then becomes `active` atomically.
+Concurrent callers resolve the published record rather than creating aliases. Recovery retains an
+abandoned claim until a runtime inspector reports the actual running or stopped state. Explicit
+deletion safely stops, tombstones, and removes only the selected stack root; prune removes checkout
+location metadata only.
+
+## Legacy daemon paths
+
+The pre-managed daemon implementation still reads its project-keyed state as a legacy/bootstrap
+input for later CLI integration:
 
 ```text
 <cacheRoot>/projects/<sha256(projectDir)[0:16]>/stacks/<name>/
@@ -292,11 +341,16 @@ Callers may explicitly supply `projectStateRoot`, in which case durable stacks l
 `<projectStateRoot>/stacks/`; managed daemon callers may not directly override individual
 `stackRoot` or `runtimeRoot` values.
 
+These path hashes and stack-name directories are not identities in the new managed model and must
+not be used for new managed records.
+
 ## Runtime entrypoints and exports
 
 - `bun.ts` and `node.ts` are root export-condition targets.
 - `effect-bun.ts` and `effect-node.ts` are Effect export-condition targets. They bind foreground,
   daemon, and Unix-socket layers without exposing raw platform factories or bootstrap paths.
+- `managed-bun.ts` and `managed-node.ts` bind the same storage-independent managed service to the
+  runtime's built-in SQLite implementation.
 - `daemon-bun.ts` is exported as `@supabase/stack/daemon-bun` so the compiled CLI can dispatch to
   it in-process.
 - `daemon-node.ts` is intentionally not a package export. The internal Node platform Adapter

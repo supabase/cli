@@ -18,4 +18,5 @@ export {
   managedStackContractFixtures,
 } from "./managed-stack-contract.ts";
 export { validateManagedStackContractFixtures } from "./managed-stack-contract-validation.ts";
+export { createInMemoryManagedStackRepository } from "./managed/repository.ts";
 export { UnixHttpClient } from "./UnixHttpClient.ts";

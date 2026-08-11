@@ -2,6 +2,11 @@
 
 Programmatic local Supabase stack for TypeScript. Create a local Supabase runtime from code, then control lifecycle, status, and logs through a small async handle.
 
+The package also exposes `@supabase/stack/managed` for applications that need durable,
+system-aware stack identity and discovery. The managed surface is intentionally separate from
+`createStack()`: direct stacks never inspect Git, create workspace markers, or mutate the global
+registry.
+
 ## Features
 
 - **Single entry point** -- `createStack()` resolves config and returns a handle; `start()` prepares assets, starts services, and waits for readiness
@@ -33,6 +38,29 @@ const supabase = createClient(stack.url, stack.publishableKey);
 // ...
 await stack.dispose();
 ```
+
+### Managed ordinary-folder state
+
+```typescript
+import { createManagedStackService } from "@supabase/stack/managed";
+
+const managed = createManagedStackService();
+const result = await managed.provisionOrdinaryStack({
+  workspacePath: "/absolute/project",
+  configuration: {
+    runtimeRequest: "docker",
+    serviceVersions: { postgres: "17.6.1.143" },
+  },
+});
+
+console.log(result.stack.id, result.stack.paths.data);
+managed.close();
+```
+
+Managed state uses opaque project, checkout, context, and stack UUIDs. A non-Git workspace stores
+only its three identity UUIDs in `.supabase/identity.json`; mutable state, logs, runtime metadata,
+ports, and lifecycle ownership live under the user-level managed state root. Callers can inject an
+in-memory repository or an isolated state root for tests.
 
 ### With explicit config
 

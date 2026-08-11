@@ -7,6 +7,7 @@ import * as bunRoot from "./bun.ts";
 import * as bunEffect from "./effect-bun.ts";
 import * as nodeEffect from "./effect-node.ts";
 import * as nodeRoot from "./node.ts";
+import * as managed from "./managed-bun.ts";
 import type { StackHandle } from "./createStack.ts";
 import type { Stack } from "./Stack.ts";
 import * as testing from "./testing.ts";
@@ -40,6 +41,10 @@ describe("@supabase/stack entrypoints", () => {
         bun: "./src/effect-bun.ts",
         default: "./src/effect-node.ts",
       },
+      "./managed": {
+        bun: "./src/managed-bun.ts",
+        default: "./src/managed-node.ts",
+      },
       "./testing": "./src/testing.ts",
       "./daemon-bun": "./src/daemon-bun.ts",
     });
@@ -53,6 +58,13 @@ describe("@supabase/stack entrypoints", () => {
     expect(Object.keys(bunRoot).sort()).toEqual(["createStack", "prefetch"]);
     expectTypeOf(nodeRoot.createStack).returns.toEqualTypeOf<Promise<StackHandle>>();
     expectTypeOf(bunRoot.createStack).returns.toEqualTypeOf<Promise<StackHandle>>();
+  });
+
+  it("exposes managed policy through its own entrypoint", () => {
+    expect(managed).toHaveProperty("createManagedStackService");
+    expect(managed).toHaveProperty("makeManagedStackService");
+    expect(managed).toHaveProperty("openBunSqliteManagedStackRepository");
+    expect(nodeRoot).not.toHaveProperty("createManagedStackService");
   });
 
   it("binds consumer Effect layers without exposing implementation tags", () => {
@@ -74,6 +86,7 @@ describe("@supabase/stack entrypoints", () => {
     expect(Object.keys(testing).sort()).toEqual([
       "DaemonServer",
       "UnixHttpClient",
+      "createInMemoryManagedStackRepository",
       "managedNativePlatformByNodeTarget",
       "managedNativePlatformFromNode",
       "managedNativeServiceMatrix",

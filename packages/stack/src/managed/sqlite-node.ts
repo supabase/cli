@@ -1,0 +1,39 @@
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { DatabaseSync } from "node:sqlite";
+import { createSqliteManagedStackRepository, type ManagedSqliteDatabase } from "./sqlite.ts";
+
+export const openNodeSqliteManagedStackRepository = (path: string) => {
+  if (path !== ":memory:") {
+    mkdirSync(dirname(path), { recursive: true });
+  }
+  const database = new DatabaseSync(path);
+  const adapter: ManagedSqliteDatabase = {
+    exec(sql) {
+      database.exec(sql);
+    },
+    prepare(sql) {
+      const statement = database.prepare(sql);
+      return {
+        run(parameters = []) {
+          statement.run(...parameters);
+        },
+        get(parameters = []) {
+          return statement.get(...parameters);
+        },
+        all(parameters = []) {
+          return statement.all(...parameters);
+        },
+      };
+    },
+    close() {
+      database.close();
+    },
+  };
+  try {
+    return createSqliteManagedStackRepository(adapter);
+  } catch (error: unknown) {
+    database.close();
+    throw error;
+  }
+};

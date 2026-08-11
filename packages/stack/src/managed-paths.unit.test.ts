@@ -1,0 +1,32 @@
+import { describe, expect, it } from "vitest";
+import { managedStackPaths, resolveManagedStateRoot } from "./managed/paths.ts";
+
+describe("managed paths", () => {
+  it("isolates managed records beneath SUPABASE_HOME", () => {
+    expect(
+      resolveManagedStateRoot({
+        env: { SUPABASE_HOME: "/configured/supabase" },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe("/configured/supabase/managed");
+  });
+
+  it("uses platform application-state directories by default", () => {
+    expect(resolveManagedStateRoot({ env: {}, homeDir: "/home/user", platform: "linux" })).toBe(
+      "/home/user/.local/state/supabase/managed",
+    );
+    expect(resolveManagedStateRoot({ env: {}, homeDir: "/Users/user", platform: "darwin" })).toBe(
+      "/Users/user/Library/Application Support/supabase/managed",
+    );
+  });
+
+  it("keys every mutable stack path by opaque stack ID", () => {
+    expect(managedStackPaths("/state", "018f8b4e-8e5c-7e32-a956-6f297fd05a2d")).toEqual({
+      root: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d",
+      data: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d/data",
+      logs: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d/logs",
+      runtime: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d/runtime",
+    });
+  });
+});
