@@ -47,6 +47,8 @@ describe("legacyIsNewerCliVersion", () => {
     ["v2.114.0-beta.1", "2.114.0", false],
     ["", "2.113.0", false],
     ["not-a-version", "2.113.0", false],
+    // x/mod/semver requires the leading v: a bare tag is invalid to Go.
+    ["2.114.0", "2.113.0", false],
     ["v2.114.0", "0.0.0-dev", true],
     ["v2.114.0", "", true],
     ["v2.114.0-beta.10", "2.114.0-beta.9", true],

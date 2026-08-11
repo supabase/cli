@@ -69,9 +69,14 @@ interface ParsedSemver {
   readonly prerelease: string;
 }
 
-/** Go additionally rejects leading zeros in numeric prerelease identifiers; unreachable for real release tags, so not reproduced. */
+/**
+ * `x/mod/semver` requires the leading `v` — a bare `2.114.0` is invalid to Go
+ * and must stay invalid here. Go additionally rejects leading zeros in numeric
+ * prerelease identifiers and accepts shortened `v2`/`v2.1` forms; both are
+ * unreachable for real release tags, so neither is reproduced.
+ */
 function parseSemver(version: string): ParsedSemver | undefined {
-  const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
+  const match = /^v(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(version);
   if (match === null) return undefined;
   return {
     nums: [Number(match[1]), Number(match[2]), Number(match[3])],
@@ -87,7 +92,7 @@ function parseSemver(version: string): ParsedSemver | undefined {
 export function legacyIsNewerCliVersion(latestTag: string, currentVersion: string): boolean {
   const latest = parseSemver(latestTag);
   if (latest === undefined) return false;
-  const current = parseSemver(currentVersion);
+  const current = parseSemver(`v${currentVersion}`);
   if (current === undefined) return true;
   for (let index = 0; index < 3; index++) {
     const left = latest.nums[index] ?? 0;
