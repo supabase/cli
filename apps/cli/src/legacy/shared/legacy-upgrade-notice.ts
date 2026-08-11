@@ -122,11 +122,13 @@ function resolveNoticeBaseDir(
   cwd: string,
   args: ReadonlyArray<string>,
   env: Readonly<Record<string, string | undefined>>,
+  cleanShowHelp: boolean,
 ): string {
-  // `--help`/`--version` skip cobra's `PersistentPreRunE`, so Go never runs
-  // `ChangeWorkDir` for them: the cache resolves against the bare cwd, with
-  // `--workdir`/`SUPABASE_WORKDIR` and the ancestor walk all ignored.
-  if (hasRootHelpOrVersionFlag(args)) return cwd;
+  // `--help`/`--version` and a bare group's clean ShowHelp all skip cobra's
+  // `PersistentPreRunE`, so Go never runs `ChangeWorkDir` for them: the cache
+  // resolves against the bare cwd, with `--workdir`/`SUPABASE_WORKDIR` and
+  // the ancestor walk all ignored.
+  if (cleanShowHelp || hasRootHelpOrVersionFlag(args)) return cwd;
   // Viper: a set flag beats the env even when empty, and an empty effective
   // value falls through to the ancestor walk (`ChangeWorkDir`'s own rule).
   const flagValue = lastGlobalFlagValue(args, "--workdir");
@@ -152,6 +154,8 @@ async function isRealDirOrAbsent(path: string): Promise<boolean> {
 export interface LegacyUpgradeNoticeDeps {
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly args: ReadonlyArray<string>;
+  /** The exit-0 ShowHelp branch (bare group command) — served without Go's `ChangeWorkDir`. */
+  readonly cleanShowHelp?: boolean;
   readonly cwd: string;
   readonly currentVersion: string;
   readonly now: () => number;
@@ -162,7 +166,7 @@ export interface LegacyUpgradeNoticeDeps {
 export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Promise<void> {
   if (legacyUpdateNotifierDisabled(deps.env["SUPABASE_NO_UPDATE_NOTIFIER"])) return;
 
-  const base = resolveNoticeBaseDir(deps.cwd, deps.args, deps.env);
+  const base = resolveNoticeBaseDir(deps.cwd, deps.args, deps.env, deps.cleanShowHelp === true);
   const supabaseDir = join(base, "supabase");
   const tempDir = join(supabaseDir, ".temp");
   const cacheFile = join(tempDir, "cli-latest");
@@ -255,11 +259,15 @@ async function fetchLatestReleaseTag(): Promise<string> {
 }
 
 /** The `runCli` post-success hook. A rejected `Effect.promise` is a defect, so `Effect.ignoreCause` (not `ignore`) keeps this unable to fail. */
-export const legacyUpgradeNoticeHook = (args: ReadonlyArray<string>): Effect.Effect<void> =>
+export const legacyUpgradeNoticeHook = (
+  args: ReadonlyArray<string>,
+  info: { readonly cleanShowHelp: boolean },
+): Effect.Effect<void> =>
   Effect.promise(() =>
     legacyRunUpgradeNotice({
       env: process.env,
       args,
+      cleanShowHelp: info.cleanShowHelp,
       cwd: process.cwd(),
       currentVersion: CLI_VERSION,
       now: Date.now,

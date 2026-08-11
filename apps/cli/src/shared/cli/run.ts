@@ -538,10 +538,15 @@ export interface RunCliOptions {
   readonly additionalSelfManagedSignalCommands?: ReadonlyArray<ReadonlyArray<string>>;
   /**
    * Runs just before the process exits on any invocation that exits 0 — the
-   * seam for the legacy shell's upgrade notice. Must never fail, and cannot
-   * change the exit code.
+   * seam for the legacy shell's upgrade notice. `cleanShowHelp` marks the
+   * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
+   * without `PersistentPreRunE`. Must never fail, and cannot change the exit
+   * code.
    */
-  readonly afterSuccess?: (args: ReadonlyArray<string>) => Effect.Effect<void>;
+  readonly afterSuccess?: (
+    args: ReadonlyArray<string>,
+    info: { readonly cleanShowHelp: boolean },
+  ) => Effect.Effect<void>;
 }
 
 function cliProgramFor(
@@ -666,12 +671,12 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       // Runs on every exit-0 invocation (`--help` included), like Go's
       // `Execute()` tail. Signals stay held so a Ctrl-C during the ≤3s-bounded
       // hook cannot turn an already-successful command into exit 130.
-      const afterSuccess = (code: number) =>
+      const afterSuccess = (code: number, cleanShowHelp: boolean) =>
         code === 0 && options.afterSuccess !== undefined
           ? Effect.scoped(
               processControl
                 .holdSignals(["SIGINT", "SIGTERM", "SIGHUP"])
-                .pipe(Effect.andThen(options.afterSuccess(args))),
+                .pipe(Effect.andThen(options.afterSuccess(args, { cleanShowHelp }))),
             )
           : Effect.void;
       if (Exit.isFailure(exit)) {
@@ -685,11 +690,11 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
         if (shouldReportFailure(exit.cause, exitCode)) {
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
-        yield* afterSuccess(exitCode);
+        yield* afterSuccess(exitCode, true);
         return yield* processControl.exit(exitCode);
       }
       const exitCode = yield* processControl.getExitCode;
-      yield* afterSuccess(exitCode ?? 0);
+      yield* afterSuccess(exitCode ?? 0, false);
       return yield* processControl.exit(exitCode ?? 0);
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),

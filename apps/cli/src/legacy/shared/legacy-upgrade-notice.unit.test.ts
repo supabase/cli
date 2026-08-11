@@ -292,6 +292,22 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("a clean group-help exit resolves against the bare cwd, ignoring --workdir", async () => {
+    const ctx = setup({ project: false });
+    const flagged = join(workdir, "flagged");
+    mkdirSync(join(flagged, "supabase"), { recursive: true });
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      args: ["branches", "--workdir", flagged],
+      cleanShowHelp: true,
+    });
+    // Go serves the bare group's help without ChangeWorkDir: nothing lands in
+    // the flagged project, and the caller's cwd (no supabase/) writes nothing.
+    expect(() => readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toThrow();
+    expect(ctx.stderr).toContain("v2.114.0");
+    ctx.cleanup();
+  });
+
   it("ignores a --workdir operand after the -- terminator, like cobra", async () => {
     const ctx = setup({});
     const elsewhere = join(workdir, "elsewhere");
