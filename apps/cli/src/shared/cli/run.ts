@@ -123,50 +123,108 @@ export function* rootFlagTokens(
     const [flag] = arg.split("=", 1);
     if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
       index += 1;
+    } else if (shortClusterConsumesNextToken(arg)) {
+      index += 1;
     }
   }
 }
 
-/** `strconv.ParseBool`'s true spellings — what pflag accepts as a true `--flag=<value>` boolean value. */
-const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
-
-/**
- * `undefined` when `token` is not an occurrence of the boolean flag `name`;
- * otherwise the value that occurrence sets: bare `--help` is true, and a
- * valued `--help=<v>` spelling parses per pflag (an invalid value reads false
- * here — Go fails the whole parse for it, so a run never reaches the notice).
- */
-function booleanFlagTokenValue(token: string, name: string): boolean | undefined {
-  if (token === name) return true;
-  if (!token.startsWith(`${name}=`)) return undefined;
-  return PFLAG_BOOL_TRUE.has(token.slice(name.length + 1));
+/** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
+function isFlagOccurrence(token: string, name: string): boolean {
+  return token === name || token.startsWith(`${name}=`);
 }
 
-/** Whether argv sets the ROOT `--version`/`-v` flag in any spelling (pflag marks `--version=false` as changed too) — not a subcommand's flag of the same name, an operand after `--`, or a token consumed as another flag's value. */
+/**
+ * pflag reads a single-dash token as a cluster of shorthand flags: `-hv` sets
+ * `h` then `v`, `-hv=true` gives `v` an inline value, and a value-taking
+ * shorthand consumes the rest of the cluster as its value. Only meaningful in
+ * the root flag zone (before the first positional), where the shorthand
+ * namespace is the global one — past it a subcommand's own value-taking short
+ * may consume the letters.
+ */
+function* shortClusterFlagNames(token: string): Generator<string> {
+  if (!token.startsWith("-") || token.startsWith("--")) return;
+  for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
+    const short = `-${rest[0]!}`;
+    if (globalFlagsWithValues.has(short)) return;
+    yield short;
+    if (rest[1] === "=") return;
+  }
+}
+
+/** Whether a short cluster ends in a value-taking shorthand with no inline value, which pflag satisfies with the NEXT argv token (`-ho json`). */
+function shortClusterConsumesNextToken(token: string): boolean {
+  if (!token.startsWith("-") || token.startsWith("--")) return false;
+  for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
+    if (globalFlagsWithValues.has(`-${rest[0]!}`)) return rest.length === 1;
+    if (rest[1] === "=") return false;
+  }
+  return false;
+}
+
+/**
+ * Index of the first positional token — pflag's view, with flags and their
+ * consumed values skipped and everything from a bare `--` on positional —
+ * or `args.length` when there is none.
+ */
+function firstPositionalIndex(args: ReadonlyArray<string>): number {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--") return index + 1;
+    if (!arg.startsWith("-")) return index;
+    const [flag] = arg.split("=", 1);
+    if (!arg.includes("=") && flag !== undefined && globalFlagsWithValues.has(flag)) {
+      index += 1;
+    } else if (shortClusterConsumesNextToken(arg)) {
+      index += 1;
+    }
+  }
+  return args.length;
+}
+
+/**
+ * Whether argv sets the ROOT `--version`/`-v` flag — in any spelling pflag
+ * marks as changed, which is what Go's `shouldFetchRelease` keys on: bare,
+ * valued (`--version=false` included), clustered (`-hv`), or followed by a
+ * space-form operand (`--version true` — cobra serves the version built-in
+ * before it ever validates the stray operand). A subcommand's own flag of the
+ * same name (`db reset --version x`) does not count: a positional precedes
+ * it. Operands after `--` and tokens consumed as another flag's value never
+ * count.
+ */
 export function hasRootVersionFlag(args: ReadonlyArray<string>): boolean {
-  if (extractCommandPath(args).length > 0) return false;
-  for (const { token } of rootFlagTokens(args)) {
-    if (
-      booleanFlagTokenValue(token, "--version") !== undefined ||
-      booleanFlagTokenValue(token, "-v") !== undefined
-    ) {
-      return true;
+  const positional = firstPositionalIndex(args);
+  for (const { token, index } of rootFlagTokens(args)) {
+    if (index >= positional) continue;
+    if (isFlagOccurrence(token, "--version")) return true;
+    for (const short of shortClusterFlagNames(token)) {
+      if (short === "-v") return true;
     }
   }
   return false;
 }
 
-/** Whether argv is a `--help`/`-h` (any depth) or root `--version`/`-v` invocation — the built-ins cobra serves without running `PersistentPreRunE`. Valued spellings resolve pflag-style, last one wins: `--help=false` runs the command normally, and a subcommand's own value-taking `--version` (`db reset --version x`) does not count. */
+/**
+ * Whether cobra serves this argv as a built-in — help at any depth, or root
+ * version — without ever running `PersistentPreRunE`. Presence is what
+ * counts, not the parsed value: a false value on the root or a group still
+ * lands on cobra's non-`Runnable()` help (execute() serves help/version and
+ * the Runnable check before `preRun`), and the one input Go would instead run
+ * (a runnable leaf under `--help=false`) is a spelling the vendored effect
+ * CLI serves help for anyway.
+ */
 export function hasRootHelpOrVersionFlag(args: ReadonlyArray<string>): boolean {
-  const bareInvocation = extractCommandPath(args).length === 0;
-  let help: boolean | undefined;
-  let version: boolean | undefined;
-  for (const { token } of rootFlagTokens(args)) {
-    help = booleanFlagTokenValue(token, "--help") ?? booleanFlagTokenValue(token, "-h") ?? help;
-    version =
-      booleanFlagTokenValue(token, "--version") ?? booleanFlagTokenValue(token, "-v") ?? version;
+  const positional = firstPositionalIndex(args);
+  for (const { token, index } of rootFlagTokens(args)) {
+    if (isFlagOccurrence(token, "--help") || isFlagOccurrence(token, "-h")) return true;
+    if (index < positional) {
+      if (isFlagOccurrence(token, "--version")) return true;
+      for (const short of shortClusterFlagNames(token)) {
+        if (short === "-h" || short === "-v") return true;
+      }
+    }
   }
-  return help === true || (bareInvocation && version === true);
+  return false;
 }
 
 /** The last value a root-level `--<name>`/`--<name>=<value>` occurrence sets. `name` must be a value-taking global flag, whose space-form value the token walk already skips. */
