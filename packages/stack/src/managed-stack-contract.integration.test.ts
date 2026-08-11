@@ -18,6 +18,7 @@ import {
   type ManagedStackContractScenario,
   validateManagedStackContractFixtures,
 } from "./testing.ts";
+import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
 
 describe("managed stack acceptance contract", () => {
   it("keeps every shared scenario readable and executable through a public interface", () => {
@@ -1144,7 +1145,7 @@ describe("managed stack acceptance contract", () => {
       throw new Error("invalid stack name JSON fixture is required");
     }
     const { code: omittedCode, ...jsonWithoutCode } = invalidNameJson;
-    expect(omittedCode).toBe("invalid_stack_name");
+    expect(omittedCode).toBe("INVALID_STACK_NAME");
     const jsonProjectionWithoutCode = {
       ...invalidNameScenario,
       expected: {
@@ -1458,6 +1459,78 @@ describe("managed stack acceptance contract", () => {
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([copyFromRunningLegacyState])).toContain(
       `${bootstrapCopyScenario.id}: bootstrap copy requires absent target stack-main-default and compatible stopped legacy state`,
+    );
+  });
+
+  it("enforces diagnostic codes and non-mutating report and error outcomes", () => {
+    const readOnlyScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.branch-copy-read-only-does-not-write",
+      );
+    const ambiguousScenario: ManagedStackContractScenario | undefined =
+      managedStackContractFixtures.find(
+        ({ id }) => id === "identity.branch-copy-ambiguous-read-only",
+      );
+    if (readOnlyScenario === undefined || ambiguousScenario?.expected.error === undefined) {
+      throw new Error("branch-copy read-only fixtures are required");
+    }
+
+    const mutatingReport = {
+      ...readOnlyScenario,
+      expected: {
+        ...readOnlyScenario.expected,
+        writes: [{ target: "registry", operation: "update", id: "context-main" }],
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([mutatingReport])).toContain(
+      `${readOnlyScenario.id}: report outcome must not mutate state`,
+    );
+
+    const mutatingError = {
+      ...ambiguousScenario,
+      expected: {
+        ...ambiguousScenario.expected,
+        writes: [{ target: "managed-state", operation: "update", id: "context-main" }],
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([mutatingError])).toContain(
+      `${ambiguousScenario.id}: error outcome must not mutate state outside rollback cleanup`,
+    );
+
+    const lowerCaseCode = {
+      ...ambiguousScenario,
+      expected: {
+        ...ambiguousScenario.expected,
+        error: { ...ambiguousScenario.expected.error, code: "ambiguous_context_owner" },
+        output: {
+          ...ambiguousScenario.expected.output,
+          json: {
+            ...ambiguousScenario.expected.output.json,
+            code: "ambiguous_context_owner",
+          },
+        },
+      },
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([lowerCaseCode])).toContain(
+      `${ambiguousScenario.id}: diagnostic code ambiguous_context_owner must use SCREAMING_SNAKE_CASE`,
+    );
+
+    const ambiguityWithoutClaim = {
+      ...ambiguousScenario,
+      given: ambiguousScenario.given.filter((fact) => fact.kind !== "identity-claim"),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ambiguityWithoutClaim])).toContain(
+      `${ambiguousScenario.id}: ambiguous context must bind at least two claiming branches to its projections`,
+    );
+
+    const ambiguityWithoutTransition = {
+      ...ambiguousScenario,
+      given: ambiguousScenario.given.filter(
+        (fact) => fact.kind !== "identity-transition" || fact.operation !== "branch-copy",
+      ),
+    } satisfies ManagedStackContractScenario;
+    expect(validateManagedStackContractFixtures([ambiguityWithoutTransition])).toContain(
+      `${ambiguousScenario.id}: ambiguous context must bind at least two claiming branches to its projections`,
     );
   });
 
@@ -2656,11 +2729,11 @@ describe("managed stack acceptance contract", () => {
       ...qualificationScenario,
       expected: {
         ...qualificationScenario.expected,
-        error: { ...qualificationScenario.expected.error, code: "unrelated_error" },
+        error: { ...qualificationScenario.expected.error, code: "UNRELATED_ERROR" },
       },
     } satisfies ManagedStackContractScenario;
     expect(validateManagedStackContractFixtures([qualificationUsesUnrelatedError])).toContain(
-      `${qualificationScenario.id}: supported unqualified native platform must use native_platform_not_qualified`,
+      `${qualificationScenario.id}: supported unqualified native platform must use NATIVE_PLATFORM_NOT_QUALIFIED`,
     );
 
     const persistedRuntimeWithoutProvenance = {
@@ -3930,21 +4003,7 @@ describe("managed stack acceptance contract", () => {
     expect(managedNativeServiceMatrix).toEqual({
       targetPlatforms: ["darwin-arm64", "linux-amd64", "linux-arm64"],
       unsupportedPlatforms: ["darwin-x64", "windows-amd64", "windows-arm64"],
-      services: [
-        ["postgres", "17.6.1.160"],
-        ["postgrest", "v14.16"],
-        ["auth", "v2.195.0"],
-        ["edge-runtime", "v1.74.3"],
-        ["realtime", "v2.124.1"],
-        ["storage", "v1.68.9"],
-        ["pgmeta", "v0.96.8"],
-        ["studio", "2026.08.03-sha-022b374"],
-        ["analytics", "v1.50.1"],
-        ["pooler", "v2.9.10"],
-        ["mailpit", "v1.30.2"],
-        ["vector", "v0.53.0"],
-        ["imgproxy", "v3.27.2"],
-      ],
+      services: SERVICE_NAMES.map((service) => [service, DEFAULT_VERSIONS[service]]),
     });
 
     expect(
@@ -4180,10 +4239,27 @@ describe("managed stack acceptance contract", () => {
       argv: ["status", "--experimental", "--output", "json"],
       cwd: "checkout-a",
     });
+    expect(scenario?.given).toEqual(
+      expect.arrayContaining([
+        {
+          kind: "identity-transition",
+          operation: "branch-copy",
+          from: "main",
+          to: "feat-copy",
+          originalExists: true,
+        },
+        {
+          kind: "identity-claim",
+          scope: "context",
+          id: "context-main",
+          status: "ambiguous",
+        },
+      ]),
+    );
     expect(scenario?.expected).toEqual({
       outcome: "error",
       error: {
-        code: "ambiguous_context_owner",
+        code: "AMBIGUOUS_CONTEXT_OWNER",
         message: "Branches feat-copy and main both claim context-main",
         recovery: [
           "supabase stack inspect --context-id context-main",
@@ -4206,7 +4282,7 @@ describe("managed stack acceptance contract", () => {
         },
         json: {
           outcome: "error",
-          code: "ambiguous_context_owner",
+          code: "AMBIGUOUS_CONTEXT_OWNER",
           context_id: "context-main",
           branches: ["feat-copy", "main"],
           recovery: [
@@ -4245,7 +4321,7 @@ describe("managed stack acceptance contract", () => {
       expected: {
         outcome: "error",
         error: {
-          code: "exact_port_occupied",
+          code: "EXACT_PORT_OCCUPIED",
           recovery: [
             "Stop the process using port 54321",
             "Change api.port in supabase/config.toml",
@@ -4257,7 +4333,7 @@ describe("managed stack acceptance contract", () => {
         output: {
           json: {
             outcome: "error",
-            code: "exact_port_occupied",
+            code: "EXACT_PORT_OCCUPIED",
             port: 54321,
             config_key: "api.port",
           },
@@ -4292,7 +4368,7 @@ describe("managed stack acceptance contract", () => {
       expected: {
         outcome: "error",
         error: {
-          code: "runtime_conflicts_with_persisted_stack",
+          code: "RUNTIME_CONFLICTS_WITH_PERSISTED_STACK",
           recovery: [
             "Start a new named stack with --stack <name>",
             "Delete and recreate stack-main-default",
@@ -4303,7 +4379,7 @@ describe("managed stack acceptance contract", () => {
         output: {
           json: {
             outcome: "error",
-            code: "runtime_conflicts_with_persisted_stack",
+            code: "RUNTIME_CONFLICTS_WITH_PERSISTED_STACK",
             persisted_runtime: "docker",
             requested_runtime: "native",
           },

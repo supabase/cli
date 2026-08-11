@@ -29,6 +29,13 @@ of the M1 managed-stack behavior. Each scenario records:
 Opaque symbolic IDs make the same scenario reusable across an in-memory repository, a persistent
 adapter, the managed package, and future CLI integration tests. Linear records the decision history
 and links to implementation work; it is not a second source of executable truth.
+Each scenario starts from its own isolated `given` state, so a symbolic ID or port has no shared
+state across scenarios unless a fixture explicitly references another scenario. Conformance drivers
+must reset their repository between scenarios.
+
+Structured error and warning codes follow ADR 0001's `SCREAMING_SNAKE_CASE` convention. A `report`
+is always read-only, and an `error` has no state mutation or runtime effect except the explicit
+failed-bootstrap rollback, whose only permitted effects remove partial managed state.
 
 `@supabase/stack` has two distinct public responsibilities:
 
@@ -140,7 +147,8 @@ or configured runtime requests must match availability and every runtime/source 
 runtime-drift reports must bind a running stack, its persisted runtime, the distinct configured
 runtime, and every service projection;
 native preflight results must agree with the action platform and complete qualified and failed
-service partitions;
+service partitions, and the qualification matrix must use the package service catalog's current
+service names and default versions rather than duplicating them;
 credential create, update, and copy operations must prove that global state contains references
 instead of plaintext, configured credential changes must bind configured state with distinct old and
 new references in both directions, stable-default projections require matching local-default state,

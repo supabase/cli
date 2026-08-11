@@ -1,3 +1,4 @@
+import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
 
 export type ManagedStackContractArea =
@@ -360,21 +361,10 @@ export interface ManagedNativeServiceMatrix {
 export const managedNativeServiceMatrix: ManagedNativeServiceMatrix = {
   targetPlatforms: ["darwin-arm64", "linux-amd64", "linux-arm64"],
   unsupportedPlatforms: ["darwin-x64", "windows-amd64", "windows-arm64"],
-  services: [
-    ["postgres", "17.6.1.160"],
-    ["postgrest", "v14.16"],
-    ["auth", "v2.195.0"],
-    ["edge-runtime", "v1.74.3"],
-    ["realtime", "v2.124.1"],
-    ["storage", "v1.68.9"],
-    ["pgmeta", "v0.96.8"],
-    ["studio", "2026.08.03-sha-022b374"],
-    ["analytics", "v1.50.1"],
-    ["pooler", "v2.9.10"],
-    ["mailpit", "v1.30.2"],
-    ["vector", "v0.53.0"],
-    ["imgproxy", "v3.27.2"],
-  ],
+  services: SERVICE_NAMES.map((service): readonly [ServiceName, string] => [
+    service,
+    DEFAULT_VERSIONS[service],
+  ]),
 };
 
 const defineManagedStackContractFixtures = <
@@ -668,7 +658,7 @@ export const validateManagedStackContractFixtures = (
     if (output.human === undefined && output.json === undefined && output.api === undefined) {
       errors.push(`${scenario.id}: at least one observable output is required`);
     }
-    if (scenario.expected.error?.code === "mutually_exclusive_stack_selectors") {
+    if (scenario.expected.error?.code === "MUTUALLY_EXCLUSIVE_STACK_SELECTORS") {
       const stopArgv =
         scenario.when.interface === "cli" && scenario.when.argv[0] === "stop"
           ? scenario.when.argv
@@ -913,7 +903,7 @@ export const validateManagedStackContractFixtures = (
     ) {
       errors.push(`${scenario.id}: unnamed CLI start must select the default stack`);
     }
-    if (scenario.expected.error?.code === "invalid_stack_name") {
+    if (scenario.expected.error?.code === "INVALID_STACK_NAME") {
       const declaredNames = scenario.given.find((fact) => fact.kind === "stack-names");
       if (
         explicitActionStackName === undefined ||
@@ -1130,7 +1120,7 @@ export const validateManagedStackContractFixtures = (
       ) {
         if (
           scenario.expected.outcome !== "error" ||
-          scenario.expected.error?.code !== "persisted_runtime_unavailable" ||
+          scenario.expected.error?.code !== "PERSISTED_RUNTIME_UNAVAILABLE" ||
           typeof persistedAvailability.reason !== "string" ||
           output.json?.runtime !== persistedRuntime.runtime ||
           output.json.reason !== persistedAvailability.reason ||
@@ -1152,7 +1142,7 @@ export const validateManagedStackContractFixtures = (
           output.json.native_reason === nativeAvailability.reason;
         if (
           scenario.expected.outcome !== "error" ||
-          scenario.expected.error?.code !== "no_runtime_available" ||
+          scenario.expected.error?.code !== "NO_RUNTIME_AVAILABLE" ||
           scenario.expected.runtimeEffects.some((effect) => effect.operation === "start") ||
           !unavailableReasonsMatch
         ) {
@@ -1565,6 +1555,30 @@ export const validateManagedStackContractFixtures = (
       errors.push(`${scenario.id}: non-error outcome cannot include error metadata`);
     }
 
+    for (const diagnostic of [scenario.expected.error, scenario.expected.warning]) {
+      if (diagnostic !== undefined && !/^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)*$/.test(diagnostic.code)) {
+        errors.push(
+          `${scenario.id}: diagnostic code ${diagnostic.code} must use SCREAMING_SNAKE_CASE`,
+        );
+      }
+    }
+
+    const hasMutation =
+      scenario.expected.writes.length > 0 || scenario.expected.runtimeEffects.length > 0;
+    if (scenario.expected.outcome === "report" && hasMutation) {
+      errors.push(`${scenario.id}: report outcome must not mutate state`);
+    }
+    if (scenario.expected.outcome === "error" && hasMutation) {
+      const isBootstrapRollback = scenario.expected.error?.code === "LEGACY_BOOTSTRAP_FAILED";
+      const containsOnlyRollbackCleanup =
+        scenario.expected.writes.every(
+          (write) => write.target === "managed-state" && write.operation === "delete",
+        ) && scenario.expected.runtimeEffects.every((effect) => effect.operation === "delete");
+      if (!isBootstrapRollback || !containsOnlyRollbackCleanup) {
+        errors.push(`${scenario.id}: error outcome must not mutate state outside rollback cleanup`);
+      }
+    }
+
     if (scenario.expected.warning !== undefined) {
       if (scenario.expected.outcome === "error") {
         errors.push(`${scenario.id}: error outcome cannot also include warning metadata`);
@@ -1763,7 +1777,7 @@ export const validateManagedStackContractFixtures = (
           `${scenario.id}: copied branch transition must match live original and checked-out branch facts`,
         );
       }
-      if (scenario.expected.warning?.code === "copied_branch_context_conflict") {
+      if (scenario.expected.warning?.code === "COPIED_BRANCH_CONTEXT_CONFLICT") {
         if (
           typeof branchCopy.from !== "string" ||
           typeof branchCopy.to !== "string" ||
@@ -1995,7 +2009,7 @@ export const validateManagedStackContractFixtures = (
         errors.push(`${scenario.id}: symlink alias must report its canonical checkout path`);
       }
     }
-    if (scenario.expected.error?.code === "ambiguous_context_owner") {
+    if (scenario.expected.error?.code === "AMBIGUOUS_CONTEXT_OWNER") {
       const projectedContextId = output.json?.context_id;
       const projectedBranches = output.json?.branches;
       const projectedBranchNames =
@@ -2013,9 +2027,28 @@ export const validateManagedStackContractFixtures = (
         ?.split(",")
         .map((branch) => branch.trim())
         .filter((branch) => branch.length > 0);
+      const ambiguousContextClaim = scenario.given.find(
+        (fact) =>
+          fact.kind === "identity-claim" &&
+          fact.scope === "context" &&
+          fact.id === projectedContextId &&
+          fact.status === "ambiguous",
+      );
+      const copiedBranchTransition = scenario.given.find(
+        (fact) =>
+          fact.kind === "identity-transition" &&
+          fact.operation === "branch-copy" &&
+          typeof fact.from === "string" &&
+          claimingBranchNames.includes(fact.from) &&
+          typeof fact.to === "string" &&
+          claimingBranchNames.includes(fact.to) &&
+          fact.originalExists === true,
+      );
       if (
         typeof projectedContextId !== "string" ||
         new Set(claimingBranchNames).size < 2 ||
+        ambiguousContextClaim?.kind !== "identity-claim" ||
+        copiedBranchTransition?.kind !== "identity-transition" ||
         projectedBranchNames === undefined ||
         !managedStackContractStringSetEquals(claimingBranchNames, projectedBranchNames) ||
         humanBranchNames === undefined ||
@@ -2105,7 +2138,7 @@ export const validateManagedStackContractFixtures = (
       errors.push(`${scenario.id}: detached reuse must declare the commit transition`);
     }
 
-    if (scenario.expected.error?.code === "duplicate_checkout_claim") {
+    if (scenario.expected.error?.code === "DUPLICATE_CHECKOUT_CLAIM") {
       const copiedWorkspace = scenario.given.find(
         (fact) => fact.kind === "workspace" && fact.path === actionCwd,
       );
@@ -2137,7 +2170,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "checkout_path_inaccessible") {
+    if (scenario.expected.error?.code === "CHECKOUT_PATH_INACCESSIBLE") {
       const movedWorkspace = scenario.given.find(
         (fact) => fact.kind === "workspace" && fact.path === actionCwd,
       );
@@ -2203,7 +2236,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "ambiguous_folder_to_git_identity") {
+    if (scenario.expected.error?.code === "AMBIGUOUS_FOLDER_TO_GIT_IDENTITY") {
       const folderToGitTransition = scenario.given.find(
         (fact) => fact.kind === "identity-transition" && fact.operation === "folder-to-git",
       );
@@ -2284,7 +2317,7 @@ export const validateManagedStackContractFixtures = (
         const platformSupported = managedNativeServiceMatrix.targetPlatforms.includes(
           fact.platform,
         );
-        if (!platformSupported && scenario.expected.error?.code !== "native_platform_unsupported") {
+        if (!platformSupported && scenario.expected.error?.code !== "NATIVE_PLATFORM_UNSUPPORTED") {
           errors.push(
             `${scenario.id}: unsupported native platform must use the dedicated preflight error`,
           );
@@ -2293,10 +2326,10 @@ export const validateManagedStackContractFixtures = (
         if (
           platformSupported &&
           !platformQualified &&
-          scenario.expected.error?.code !== "native_platform_not_qualified"
+          scenario.expected.error?.code !== "NATIVE_PLATFORM_NOT_QUALIFIED"
         ) {
           errors.push(
-            `${scenario.id}: supported unqualified native platform must use native_platform_not_qualified`,
+            `${scenario.id}: supported unqualified native platform must use NATIVE_PLATFORM_NOT_QUALIFIED`,
           );
         }
         if (
@@ -2341,7 +2374,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "native_platform_unsupported") {
+    if (scenario.expected.error?.code === "NATIVE_PLATFORM_UNSUPPORTED") {
       const qualification = scenario.given.find((fact) => fact.kind === "native-qualification");
       const projectedPlatforms = output.json?.supported_platforms;
       if (
@@ -2600,7 +2633,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "persisted_runtime_unavailable") {
+    if (scenario.expected.error?.code === "PERSISTED_RUNTIME_UNAVAILABLE") {
       if (scenario.expected.details?.switched_to_docker !== false) {
         errors.push(`${scenario.id}: unavailable persisted runtime must not report a switch`);
       }
@@ -2968,7 +3001,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "exact_port_occupied") {
+    if (scenario.expected.error?.code === "EXACT_PORT_OCCUPIED") {
       const configuredPort = scenario.given.find(
         (fact) => fact.kind === "config-port" && fact.intent === "exact",
       );
@@ -2998,7 +3031,7 @@ export const validateManagedStackContractFixtures = (
     const managedPortOwners = scenario.given.flatMap((fact) =>
       fact.kind === "occupied-port" && fact.owner === "managed-stack" ? [fact] : [],
     );
-    if (scenario.expected.error?.code === "exact_port_occupied" && managedPortOwners.length > 0) {
+    if (scenario.expected.error?.code === "EXACT_PORT_OCCUPIED" && managedPortOwners.length > 0) {
       if (selection === undefined) {
         errors.push(`${scenario.id}: managed sibling port conflict requires a selected target`);
       }
@@ -3021,7 +3054,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "sticky_port_occupied") {
+    if (scenario.expected.error?.code === "STICKY_PORT_OCCUPIED") {
       if (selection === undefined) {
         errors.push(`${scenario.id}: sticky port conflict requires a selected target`);
       } else {
@@ -3072,7 +3105,7 @@ export const validateManagedStackContractFixtures = (
       (scenario.expected.outcome === "update" &&
         typeof output.json?.previous_port === "number" &&
         typeof output.json?.port === "number") ||
-      scenario.expected.warning?.code === "running_stack_config_drift";
+      scenario.expected.warning?.code === "RUNNING_STACK_CONFIG_DRIFT";
     if (expectsExactPortChange) {
       let exactPortChangeMatches = false;
       if (
@@ -3093,7 +3126,7 @@ export const validateManagedStackContractFixtures = (
             output.json?.port === changedExactPort.value &&
             output.human?.fields.apiUrl === `http://127.0.0.1:${changedExactPort.value}`);
         const driftProjectionMatches =
-          scenario.expected.warning?.code !== "running_stack_config_drift" ||
+          scenario.expected.warning?.code !== "RUNNING_STACK_CONFIG_DRIFT" ||
           (scenario.given.some(
             (fact) =>
               fact.kind === "stack" &&
@@ -3371,7 +3404,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.warning?.code === "running_stack_runtime_drift") {
+    if (scenario.expected.warning?.code === "RUNNING_STACK_RUNTIME_DRIFT") {
       const persistedRuntime = scenario.given.find(
         (fact) => fact.kind === "persisted-runtime" && fact.stackId === selection?.stackId,
       );
@@ -3439,7 +3472,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "runtime_conflicts_with_persisted_stack") {
+    if (scenario.expected.error?.code === "RUNTIME_CONFLICTS_WITH_PERSISTED_STACK") {
       if (selection === undefined) {
         errors.push(`${scenario.id}: persisted runtime conflict requires a selected target`);
       } else {
@@ -3472,7 +3505,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "runtime_selection_conflict") {
+    if (scenario.expected.error?.code === "RUNTIME_SELECTION_CONFLICT") {
       const explicitRequest = runtimeRequests.find(
         (fact) => fact.source === "cli" || fact.source === "managed-api",
       );
@@ -3494,10 +3527,10 @@ export const validateManagedStackContractFixtures = (
     }
 
     if (
-      scenario.expected.error?.code === "docker_unavailable" ||
-      scenario.expected.error?.code === "native_unavailable"
+      scenario.expected.error?.code === "DOCKER_UNAVAILABLE" ||
+      scenario.expected.error?.code === "NATIVE_UNAVAILABLE"
     ) {
-      const unavailableRuntime = scenario.expected.error.code.startsWith("docker")
+      const unavailableRuntime = scenario.expected.error.code.startsWith("DOCKER")
         ? "docker"
         : "native";
       const explicitRequest = runtimeRequests.find(
@@ -3536,7 +3569,7 @@ export const validateManagedStackContractFixtures = (
       (fact) => fact.kind === "managed-target" && fact.exists === false,
     );
     if (
-      scenario.expected.error?.code === "legacy_source_running" ||
+      scenario.expected.error?.code === "LEGACY_SOURCE_RUNNING" ||
       (isManagedStartAction(scenario.when) &&
         legacySource?.kind === "legacy-state" &&
         legacySource.lifecycle === "running" &&
@@ -3554,7 +3587,7 @@ export const validateManagedStackContractFixtures = (
             fact.exists,
         ) ||
         scenario.expected.outcome !== "error" ||
-        scenario.expected.error?.code !== "legacy_source_running" ||
+        scenario.expected.error?.code !== "LEGACY_SOURCE_RUNNING" ||
         scenario.expected.writes.length > 0 ||
         scenario.expected.runtimeEffects.length > 0
       ) {
@@ -3595,7 +3628,7 @@ export const validateManagedStackContractFixtures = (
       }
     }
 
-    if (scenario.expected.error?.code === "legacy_bootstrap_failed") {
+    if (scenario.expected.error?.code === "LEGACY_BOOTSTRAP_FAILED") {
       const rollbackStackId =
         scenario.when.interface === "managed-api" && scenario.when.method === "startStack"
           ? scenario.when.input.stackId
@@ -3869,7 +3902,7 @@ export const validateManagedStackContractFixtures = (
       errors.push(`${scenario.id}: credential update must bind old and new persisted references`);
     }
 
-    if (scenario.expected.warning?.code === "running_stack_credentials_drift") {
+    if (scenario.expected.warning?.code === "RUNNING_STACK_CREDENTIALS_DRIFT") {
       if (
         selection === undefined ||
         changedCredentials?.kind !== "credential-state" ||
@@ -4313,7 +4346,7 @@ const invalidStackNameFixture = (
   expected: {
     outcome: "error",
     error: {
-      code: "invalid_stack_name",
+      code: "INVALID_STACK_NAME",
       message: `${stackName} is not a lowercase DNS-label name`,
       recovery: ["Use default or a lowercase DNS-label name such as feature-a"],
     },
@@ -4327,7 +4360,7 @@ const invalidStackNameFixture = (
       },
       json: {
         outcome: "error",
-        code: "invalid_stack_name",
+        code: "INVALID_STACK_NAME",
         stack_name: stackName,
         recovery: ["Use default or a lowercase DNS-label name such as feature-a"],
       },
@@ -5168,7 +5201,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "duplicate_checkout_claim",
+        code: "DUPLICATE_CHECKOUT_CLAIM",
         message: "Two live paths claim checkout-a",
         recovery: [
           "Use the original checkout at /work/project-a",
@@ -5180,7 +5213,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "duplicate_checkout_claim",
+          code: "DUPLICATE_CHECKOUT_CLAIM",
           checkout_id: "checkout-a",
           paths: ["/copy/project-a", "/work/project-a"],
           recovery: [
@@ -5332,7 +5365,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "checkout_path_inaccessible",
+        code: "CHECKOUT_PATH_INACCESSIBLE",
         message: "Cannot verify whether /mnt/project-a still owns checkout-a",
         recovery: [
           "Restore access to /mnt/project-a and retry",
@@ -5352,7 +5385,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "error",
-          code: "checkout_path_inaccessible",
+          code: "CHECKOUT_PATH_INACCESSIBLE",
           checkout_id: "checkout-a",
           recovery: [
             "Restore access to /mnt/project-a and retry",
@@ -5549,7 +5582,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "report",
       warning: {
-        code: "copied_branch_context_conflict",
+        code: "COPIED_BRANCH_CONTEXT_CONFLICT",
         message: "feat-copy copied context-main from main",
         recovery: [
           "Run supabase start --experimental to create an independent context for feat-copy",
@@ -5560,7 +5593,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "report",
-          code: "copied_branch_context_conflict",
+          code: "COPIED_BRANCH_CONTEXT_CONFLICT",
           branch: "feat-copy",
           owner: "main",
           context_id: "context-main",
@@ -5861,7 +5894,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "ambiguous_folder_to_git_identity",
+        code: "AMBIGUOUS_FOLDER_TO_GIT_IDENTITY",
         message: "Multiple live claims can preserve the folder identity",
         recovery: [
           "Inspect the claims and explicitly adopt one identity or create a fresh Git identity",
@@ -5873,7 +5906,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "ambiguous_folder_to_git_identity",
+          code: "AMBIGUOUS_FOLDER_TO_GIT_IDENTITY",
           recovery: [
             "Inspect the claims and explicitly adopt one identity or create a fresh Git identity",
           ],
@@ -6214,7 +6247,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       error: {
-        code: "sticky_port_occupied",
+        code: "STICKY_PORT_OCCUPIED",
         message: "stack-feat-default owns sticky api.port 55421, but it is in use",
         recovery: [
           "Stop the process using port 55421",
@@ -6226,7 +6259,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "sticky_port_occupied",
+          code: "STICKY_PORT_OCCUPIED",
           stack_id: "stack-feat-default",
           port: 55421,
           config_key: "api.port",
@@ -6326,7 +6359,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       outcome: "report",
       selection: mainDefaultSelection,
       warning: {
-        code: "running_stack_config_drift",
+        code: "RUNNING_STACK_CONFIG_DRIFT",
         message: "api.port is running on 54321 but config requires 55321",
         recovery: ["Run supabase stop --experimental, then supabase start --experimental"],
       },
@@ -6346,7 +6379,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "report",
-          code: "running_stack_config_drift",
+          code: "RUNNING_STACK_CONFIG_DRIFT",
           stack_id: "stack-main-default",
           config_key: "api.port",
           running_port: 54321,
@@ -6427,7 +6460,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "legacy_source_running",
+        code: "LEGACY_SOURCE_RUNNING",
         message: "The matching legacy stack is still running on api.port 54321",
         recovery: ["Stop the legacy stack, then retry supabase start --experimental"],
       },
@@ -6442,7 +6475,7 @@ const additionalPortContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "legacy_source_running",
+          code: "LEGACY_SOURCE_RUNNING",
           port: 54321,
           config_key: "api.port",
           allocation_attempted: false,
@@ -6539,7 +6572,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "runtime_selection_conflict",
+        code: "RUNTIME_SELECTION_CONFLICT",
         message: "CLI requests docker while config.toml requests native",
         recovery: ["Remove one runtime override", "Make the CLI and config runtime values agree"],
       },
@@ -6548,7 +6581,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "runtime_selection_conflict",
+          code: "RUNTIME_SELECTION_CONFLICT",
           cli_runtime: "docker",
           config_runtime: "native",
           recovery: ["Remove one runtime override", "Make the CLI and config runtime values agree"],
@@ -6652,7 +6685,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "no_runtime_available",
+        code: "NO_RUNTIME_AVAILABLE",
         message: "Neither Docker nor native can run this stack",
         recovery: [
           "Start or install Docker",
@@ -6672,7 +6705,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "error",
-          code: "no_runtime_available",
+          code: "NO_RUNTIME_AVAILABLE",
           docker_reason: "daemon unavailable",
           native_reason: "platform graph not qualified",
           recovery: [
@@ -6705,7 +6738,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "docker_unavailable",
+        code: "DOCKER_UNAVAILABLE",
         message: "Docker was explicitly requested but its daemon is unavailable",
         recovery: ["Start Docker", "Remove --runtime docker to use automatic selection"],
       },
@@ -6715,7 +6748,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "docker_unavailable",
+          code: "DOCKER_UNAVAILABLE",
           requested_runtime: "docker",
           reason: "daemon unavailable",
           fallback_attempted: false,
@@ -6787,7 +6820,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       outcome: "error",
       selection: mainDefaultSelection,
       error: {
-        code: "persisted_runtime_unavailable",
+        code: "PERSISTED_RUNTIME_UNAVAILABLE",
         message: "stack-main-default uses native, but a required artifact is missing",
         recovery: [
           "Restore the native prerequisite",
@@ -6801,7 +6834,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "persisted_runtime_unavailable",
+          code: "PERSISTED_RUNTIME_UNAVAILABLE",
           stack_id: "stack-main-default",
           runtime: "native",
           reason: "artifact missing",
@@ -6839,7 +6872,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       outcome: "report",
       selection: mainDefaultSelection,
       warning: {
-        code: "running_stack_runtime_drift",
+        code: "RUNNING_STACK_RUNTIME_DRIFT",
         message: "stack-main-default runs with docker but config requests native",
         recovery: [
           "Keep using Docker by restoring runtime = docker",
@@ -6862,7 +6895,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "report",
-          code: "running_stack_runtime_drift",
+          code: "RUNNING_STACK_RUNTIME_DRIFT",
           stack_id: "stack-main-default",
           runtime: "docker",
           configured_runtime: "native",
@@ -6922,7 +6955,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "native_platform_not_qualified",
+        code: "NATIVE_PLATFORM_NOT_QUALIFIED",
         message: "linux-amd64 is missing qualification for imgproxy",
         recovery: ["Use Docker", "Complete imgproxy qualification for linux-amd64"],
       },
@@ -6966,7 +6999,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "native_platform_unsupported",
+        code: "NATIVE_PLATFORM_UNSUPPORTED",
         message: "Native mode is not qualified on darwin-x64",
         recovery: ["Use Docker", "Use darwin-arm64, linux-amd64, or linux-arm64"],
       },
@@ -6975,7 +7008,7 @@ const additionalRuntimeContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "native_platform_unsupported",
+          code: "NATIVE_PLATFORM_UNSUPPORTED",
           platform: "darwin-x64",
           supported_platforms: ["darwin-arm64", "linux-amd64", "linux-arm64"],
           recovery: ["Use Docker", "Use darwin-arm64, linux-amd64, or linux-arm64"],
@@ -7003,7 +7036,7 @@ const selectorConflictFixture = (
   expected: {
     outcome: "error",
     error: {
-      code: "mutually_exclusive_stack_selectors",
+      code: "MUTUALLY_EXCLUSIVE_STACK_SELECTORS",
       message: "Choose exactly one of contextual, --stack, --stack-id, or --all selection",
       recovery: ["Remove all but one stack selector"],
     },
@@ -7017,7 +7050,7 @@ const selectorConflictFixture = (
       },
       json: {
         outcome: "error",
-        code: "mutually_exclusive_stack_selectors",
+        code: "MUTUALLY_EXCLUSIVE_STACK_SELECTORS",
         selectors: selectorSummary.split(", "),
         recovery: ["Remove all but one stack selector"],
       },
@@ -7158,7 +7191,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "legacy_source_running",
+        code: "LEGACY_SOURCE_RUNNING",
         message: "The legacy stack must be stopped before it can be copied",
         recovery: ["Stop the legacy stack", "Retry supabase start --experimental"],
       },
@@ -7172,7 +7205,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       output: {
         json: {
           outcome: "error",
-          code: "legacy_source_running",
+          code: "LEGACY_SOURCE_RUNNING",
           legacy_source_stopped: false,
           managed_target_published: false,
           recovery: ["Stop the legacy stack", "Retry supabase start --experimental"],
@@ -7202,7 +7235,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "legacy_bootstrap_failed",
+        code: "LEGACY_BOOTSTRAP_FAILED",
         message: "Copying compatible legacy state failed before publication",
         recovery: ["Retry the same start command after correcting the copy failure"],
       },
@@ -7216,7 +7249,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       output: {
         api: {
           outcome: "error",
-          code: "legacy_bootstrap_failed",
+          code: "LEGACY_BOOTSTRAP_FAILED",
           activeTargetExists: false,
           registryRecordPublished: false,
           retryable: true,
@@ -7479,7 +7512,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
       outcome: "report",
       selection: mainDefaultSelection,
       warning: {
-        code: "running_stack_credentials_drift",
+        code: "RUNNING_STACK_CREDENTIALS_DRIFT",
         message: "Configured auth values differ from the running stack",
         recovery: ["Run supabase stop --experimental, then supabase start --experimental"],
       },
@@ -7493,7 +7526,7 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "report",
-          code: "running_stack_credentials_drift",
+          code: "RUNNING_STACK_CREDENTIALS_DRIFT",
           stack_id: "stack-main-default",
           drift: true,
           recovery: ["Run supabase stop --experimental, then supabase start --experimental"],
@@ -8100,6 +8133,19 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         contextId: "context-main",
         checkedOut: true,
       },
+      {
+        kind: "identity-transition",
+        operation: "branch-copy",
+        from: "main",
+        to: "feat-copy",
+        originalExists: true,
+      },
+      {
+        kind: "identity-claim",
+        scope: "context",
+        id: "context-main",
+        status: "ambiguous",
+      },
     ],
     when: {
       interface: "cli",
@@ -8109,7 +8155,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "ambiguous_context_owner",
+        code: "AMBIGUOUS_CONTEXT_OWNER",
         message: "Branches feat-copy and main both claim context-main",
         recovery: [
           "supabase stack inspect --context-id context-main",
@@ -8132,7 +8178,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "error",
-          code: "ambiguous_context_owner",
+          code: "AMBIGUOUS_CONTEXT_OWNER",
           context_id: "context-main",
           branches: ["feat-copy", "main"],
           recovery: [
@@ -8168,7 +8214,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     expected: {
       outcome: "error",
       error: {
-        code: "exact_port_occupied",
+        code: "EXACT_PORT_OCCUPIED",
         message: "api.port requires 54321, but that port is already in use",
         recovery: [
           "Stop the process using port 54321",
@@ -8194,7 +8240,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "error",
-          code: "exact_port_occupied",
+          code: "EXACT_PORT_OCCUPIED",
           port: 54321,
           config_key: "api.port",
           owner: "external-process",
@@ -8249,7 +8295,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       error: {
-        code: "exact_port_occupied",
+        code: "EXACT_PORT_OCCUPIED",
         message: "api.port requires 54321, but stack-main-default already owns that port",
         recovery: [
           "Stop managed stack stack-main-default",
@@ -8276,7 +8322,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "error",
-          code: "exact_port_occupied",
+          code: "EXACT_PORT_OCCUPIED",
           port: 54321,
           config_key: "api.port",
           owner: "managed-stack",
@@ -8330,7 +8376,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         stackName: "default",
       },
       error: {
-        code: "runtime_conflicts_with_persisted_stack",
+        code: "RUNTIME_CONFLICTS_WITH_PERSISTED_STACK",
         message: "stack-main-default uses docker, but start requested native",
         recovery: [
           "Start a new named stack with --stack <name>",
@@ -8354,7 +8400,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         },
         json: {
           outcome: "error",
-          code: "runtime_conflicts_with_persisted_stack",
+          code: "RUNTIME_CONFLICTS_WITH_PERSISTED_STACK",
           stack_id: "stack-main-default",
           persisted_runtime: "docker",
           requested_runtime: "native",
