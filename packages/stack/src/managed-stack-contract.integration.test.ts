@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createStack } from "./node.ts";
 import {
   managedNativeServiceMatrix,
@@ -17,8 +17,21 @@ import {
   type ManagedStackContractScenario,
   validateManagedStackContractFixtures,
 } from "./testing.ts";
-import { shortTempPrefixRoot } from "./paths.ts";
 import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
+
+const { createdTempRoots } = vi.hoisted(() => ({ createdTempRoots: new Array<string>() }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const fs = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...fs,
+    mkdtempSync(prefix: string) {
+      const root = fs.mkdtempSync(prefix);
+      createdTempRoots.push(root);
+      return root;
+    },
+  };
+});
 
 describe("managed stack acceptance contract", () => {
   it("keeps every shared scenario readable and executable through a public interface", () => {
@@ -328,8 +341,10 @@ describe("managed stack acceptance contract", () => {
         "identity.fresh-clone-creates-project-and-checkout",
         "identity.fresh-clone-ignores-tracked-marker",
         "identity.inaccessible-previous-path-fails",
+        "identity.invalid-stack-name-double-dot-fails",
         "identity.invalid-stack-name-leading-hyphen-fails",
         "identity.invalid-stack-name-repeated-dot-fails",
+        "identity.invalid-stack-name-single-dot-fails",
         "identity.invalid-stack-name-too-long-fails",
         "identity.invalid-stack-name-trailing-hyphen-fails",
         "identity.invalid-stack-name-uppercase-underscore-fails",
@@ -432,6 +447,14 @@ describe("managed stack acceptance contract", () => {
       {
         action: ["start", "--experimental", "--stack", "review..two"],
         names: ["review..two"],
+      },
+      {
+        action: ["start", "--experimental", "--stack", "."],
+        names: ["."],
+      },
+      {
+        action: ["start", "--experimental", "--stack", ".."],
+        names: [".."],
       },
       {
         action: ["start", "--experimental", "--stack", "review-"],
@@ -641,13 +664,6 @@ describe("managed stack acceptance contract", () => {
       const cacheRoot = join(testRoot, "cache");
       const explicitRoot = join(testRoot, `${explicitRootKind}-root`);
       const sentinel = join(explicitRoot, "caller-owned");
-      const generatedPrefix = explicitRootKind === "stack" ? "sb-run-" : "sb-stack-";
-      const temporaryRoots = (): ReadonlySet<string> =>
-        new Set(
-          readdirSync(shortTempPrefixRoot())
-            .filter((name) => name.startsWith(generatedPrefix))
-            .map((name) => join(shortTempPrefixRoot(), name)),
-        );
 
       mkdirSync(projectDir, { recursive: true });
       mkdirSync(cacheRoot, { recursive: true });
@@ -655,7 +671,7 @@ describe("managed stack acceptance contract", () => {
       writeFileSync(sentinel, "caller-owned\n");
 
       try {
-        const before = temporaryRoots();
+        const createdRootIndex = createdTempRoots.length;
         const explicitConfig =
           explicitRootKind === "stack"
             ? { stackRoot: explicitRoot }
@@ -666,19 +682,20 @@ describe("managed stack acceptance contract", () => {
           startupMode: "lazy",
           ...explicitConfig,
         });
-        let stableCandidates: ReadonlyArray<string> = [];
+        const generatedRoots = createdTempRoots.slice(createdRootIndex);
+        const generatedRoot = generatedRoots[0];
+        if (generatedRoot === undefined) {
+          throw new Error("createStack must generate the omitted state root");
+        }
 
         try {
-          const candidates = [...temporaryRoots()].filter((root) => !before.has(root));
-          await new Promise<void>((resolve) => setTimeout(resolve, 50));
-          stableCandidates = candidates.filter((root) => existsSync(root));
-          expect(stableCandidates.length).toBeGreaterThanOrEqual(1);
+          expect(generatedRoots).toHaveLength(1);
+          expect(existsSync(generatedRoot)).toBe(true);
         } finally {
           await stack.dispose();
         }
 
-        const removedRoots = stableCandidates.filter((root) => !existsSync(root));
-        expect(removedRoots).toHaveLength(1);
+        expect(existsSync(generatedRoot)).toBe(false);
         expect(readFileSync(sentinel, "utf8")).toBe("caller-owned\n");
         expect(existsSync(explicitRoot)).toBe(true);
       } finally {
@@ -1024,7 +1041,7 @@ describe("managed stack acceptance contract", () => {
       when: {
         interface: "stack-api",
         method: "createStack",
-        input: {},
+        input: { startupMode: "lazy" },
       },
       expected: {
         outcome: "create",

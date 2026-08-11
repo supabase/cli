@@ -412,8 +412,10 @@ const branchHistoryFixture = (
 
 const invalidStackNameFixture = (
   label:
+    | "double-dot"
     | "leading-hyphen"
     | "repeated-dot"
+    | "single-dot"
     | "too-long"
     | "trailing-hyphen"
     | "uppercase-underscore",
@@ -1527,6 +1529,8 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
   invalidStackNameFixture("uppercase-underscore", "Feature_A"),
   invalidStackNameFixture("leading-hyphen", "-review"),
   invalidStackNameFixture("repeated-dot", "review..two"),
+  invalidStackNameFixture("single-dot", "."),
+  invalidStackNameFixture("double-dot", ".."),
   invalidStackNameFixture("trailing-hyphen", "review-"),
   invalidStackNameFixture("too-long", "a".repeat(64)),
   {
@@ -4674,7 +4678,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     when: {
       interface: "stack-api",
       method: "createStack",
-      input: {},
+      input: { startupMode: "lazy" },
     },
     expected: {
       outcome: "create",
@@ -4725,6 +4729,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
         projectDir: "/work/project-a",
         cacheRoot: "/work/cache",
         stackRoot: "/work/stack",
+        startupMode: "lazy",
       },
     },
     expected: {
@@ -4766,7 +4771,7 @@ export const managedStackContractFixtures = defineManagedStackContractFixtures([
     when: {
       interface: "stack-api",
       method: "createStack",
-      input: { runtimeRoot: "/work/runtime" },
+      input: { runtimeRoot: "/work/runtime", startupMode: "lazy" },
     },
     expected: {
       outcome: "create",
