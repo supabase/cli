@@ -5,7 +5,16 @@
  * Go's own offline backoff.
  */
 
-import { lstat, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  constants as fsConstants,
+  lstat,
+  mkdir,
+  readFile,
+  rename,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
@@ -287,7 +296,10 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
       const tempFile = join(tempDir, `cli-latest.tmp.${crypto.randomUUID()}`);
       notifyError = await mkdir(tempDir, { recursive: true }).then(
         () =>
-          writeFile(tempFile, latestTag)
+          // Go opens `cli-latest` itself, so an existing read-only file fails
+          // its write and stays untouched — rename would replace it silently.
+          (cacheLstat === undefined ? Promise.resolve() : access(cacheFile, fsConstants.W_OK))
+            .then(() => writeFile(tempFile, latestTag))
             .then(() => rename(tempFile, cacheFile))
             .then(() => undefined)
             .catch((error: unknown) =>

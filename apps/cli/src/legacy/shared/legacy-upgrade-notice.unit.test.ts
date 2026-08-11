@@ -283,6 +283,40 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("a false root version flag before a leaf runs the normal path, workdir included", async () => {
+    // `--version=false <leaf>`: cobra parses false, runs the leaf with
+    // `ChangeWorkDir` — but pflag still marks the flag changed, forcing the
+    // fetch. Only the built-in classification must not trigger.
+    const ctx = setup({ project: false });
+    const flagged = join(workdir, "flagged");
+    mkdirSync(join(flagged, "supabase"), { recursive: true });
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      args: ["--workdir", flagged, "--version=false", "db", "push"],
+    });
+    expect(readFileSync(join(flagged, "supabase", ".temp", "cli-latest"), "utf8")).toBe("v2.114.0");
+    ctx.cleanup();
+  });
+
+  it.skipIf(process.getuid?.() === 0)(
+    "an existing read-only cache file fails the backoff write, like Go's direct open",
+    async () => {
+      const ctx = setup({
+        args: ["db", "start", "--debug"],
+        cacheContent: "v2.115.0",
+        cacheAgeMs: 11 * 60 * 60 * 1000,
+      });
+      chmodSync(ctx.cachePath, 0o444);
+      await legacyRunUpgradeNotice(ctx.deps);
+      chmodSync(ctx.cachePath, 0o644);
+      expect(ctx.stderr).toContain("failed to write file");
+      expect(ctx.stderr).not.toContain("cli-latest.tmp");
+      // The stale cache survives, exactly like Go's failed open.
+      expect(readFileSync(ctx.cachePath, "utf8")).toBe("v2.115.0");
+      ctx.cleanup();
+    },
+  );
+
   it("project dotenv SUPABASE_DEBUG surfaces diagnostics, like godotenv before the Execute tail", async () => {
     // A symlinked .temp disables the backoff write, so the fetch error is what
     // remains to log — and the debug gate resolves through the project chain.
