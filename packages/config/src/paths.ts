@@ -15,8 +15,11 @@ const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
   const jsonPath = path.join(supabaseDir, "config.json");
   const tomlPath = path.join(supabaseDir, "config.toml");
 
-  const jsonExists = yield* fs.exists(jsonPath);
-  const tomlExists = yield* fs.exists(tomlPath);
+  // A stat failure (e.g. ENOTDIR when this root has a FILE named `supabase`)
+  // means "no config here" — Go's getProjectRoot keeps climbing on any stat
+  // error (apps/cli-go/internal/utils/misc.go:216-231).
+  const jsonExists = yield* fs.exists(jsonPath).pipe(Effect.orElseSucceed(() => false));
+  const tomlExists = yield* fs.exists(tomlPath).pipe(Effect.orElseSucceed(() => false));
 
   if (!jsonExists && !tomlExists) {
     return null;
@@ -36,11 +39,11 @@ export interface FindProjectPathsOptions {
    * When `false`, only `cwd` itself is checked for `supabase/config.{json,toml}` —
    * no ancestor climb. Go's own resolution never searches twice: an explicit
    * `--workdir`/`SUPABASE_WORKDIR` is used exactly as given (`ChangeWorkDir`,
-   * `apps/cli-go/internal/utils/misc.go:231-247`), and once `os.Chdir`'d there,
+   * `apps/cli-go/internal/utils/misc.go:238-257`), and once `os.Chdir`'d there,
    * `config.toml` is read as a plain relative path with no further ancestor
    * search (`NewPathBuilder`, `pkg/config/utils.go:43-48`). Ancestor climbing in
    * Go only ever happens once, as the *default* when workdir is unset
-   * (`getProjectRoot`, `internal/utils/misc.go:209-224`).
+   * (`getProjectRoot`, `internal/utils/misc.go:216-231`).
    *
    * Callers that already hold an authoritative, Go-equivalent project root
    * (e.g. the legacy `stop`/`status` ports' `cliConfig.workdir`, which mirrors

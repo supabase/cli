@@ -36,6 +36,7 @@ import {
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionDeployCancelledError,
+  FunctionImportNotDirectoryError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
@@ -374,7 +375,12 @@ async function realpathIfExists(pathname: string) {
   try {
     return await realpath(resolve(pathname));
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+    // ENOTDIR (a path routed through a file) is as nonexistent as ENOENT here.
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
       return resolve(pathname);
     }
     throw error;
@@ -714,11 +720,20 @@ async function walkImportPaths(
       }
       contents = await readFile(resolvedCurrent);
     } catch (error) {
-      if (error instanceof Error) {
-        if ("code" in error && error.code === "ENOENT") {
+      if (error instanceof Error && "code" in error) {
+        if (error.code === "ENOENT") {
           const message = `failed to read file: open ${toApiRelativePath(displayRoot, current)}: no such file or directory`;
           await onWarning(`WARN: ${message}\n`);
           continue;
+        }
+        // Go aborts on any other read error (pkg/function/deno.go:131-136); an
+        // ENOTDIR (import path routed through a file) gets Go's message instead
+        // of an unhandled raw Node error, via a classified error so telemetry
+        // books it as user-fixable config instead of a panic.
+        if (error.code === "ENOTDIR") {
+          throw new FunctionImportNotDirectoryError({
+            message: `failed to read file: open ${toApiRelativePath(displayRoot, current)}: not a directory`,
+          });
         }
       }
       throw error;
@@ -741,7 +756,12 @@ async function walkImportPaths(
       );
       modulePath = toSlash(modulePath);
 
-      if (!modulePath.includes(".")) {
+      // A module file needs a dot in the FINAL path segment (Go's path.Ext
+      // semantics): a dot earlier in the path (`dist/index.mjs/core`) is a
+      // directory-shaped path, not a module file. Not basename(): a
+      // trailing-slash directory import must yield an empty final segment here.
+      const finalSegment = modulePath.slice(modulePath.lastIndexOf("/") + 1);
+      if (!finalSegment.includes(".")) {
         continue;
       }
       if (
@@ -1233,7 +1253,7 @@ export async function buildDockerBinds(
         options.skipMissingImportMapTargets === true &&
         error instanceof Error &&
         "code" in error &&
-        error.code === "ENOENT"
+        (error.code === "ENOENT" || error.code === "ENOTDIR")
       ) {
         await (options.onWarning ?? (async () => {}))(
           `WARN: Skipping missing import map target: ${target}\n`,

@@ -19,7 +19,9 @@ const findProjectRootFromRepoState = (
 
     while (true) {
       const projectLinkPath = path.join(current, PROJECT_HOME_DIR_NAME, PROJECT_LINK_FILE_NAME);
-      if (yield* fs.exists(projectLinkPath).pipe(Effect.orDie)) {
+      // A FILE named `.supabase` along the ancestor walk reads as "no link
+      // here" rather than crashing the boot (fs.exists only maps NotFound).
+      if (yield* fs.exists(projectLinkPath).pipe(Effect.orElseSucceed(() => false))) {
         return current;
       }
       if (current === root) {
