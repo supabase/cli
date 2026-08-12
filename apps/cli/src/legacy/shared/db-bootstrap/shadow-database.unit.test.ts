@@ -682,7 +682,7 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
   it.effect(
     "supports the extension-free declarative baseline on PG14 without resolving JWKS",
     () => {
-      const { session } = fakeSession();
+      const { session, calls } = fakeSession();
       const workdir = tempRoot.current;
       const mock = mockSpawner();
       let jwksEvaluated = false;
@@ -717,6 +717,18 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           { activateUserExtensions: false },
         );
         expect(jwksEvaluated).toBe(false);
+        const enablePgNet = calls.findIndex((call) =>
+          call.sql.includes("CREATE EXTENSION IF NOT EXISTS pg_net WITH SCHEMA extensions"),
+        );
+        const grantPgNet = calls.findIndex((call) =>
+          call.sql.includes("GRANT USAGE ON SCHEMA net TO supabase_functions_admin"),
+        );
+        const removePgNet = calls.findIndex(
+          (call) => call.sql === "drop extension if exists pg_net",
+        );
+        expect(enablePgNet).toBeGreaterThanOrEqual(0);
+        expect(grantPgNet).toBeGreaterThan(enablePgNet);
+        expect(removePgNet).toBeGreaterThan(grantPgNet);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

@@ -136,15 +136,19 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       const declarativeDirRel = Option.getOrElse(flags.output, () =>
         legacyResolveDeclarativeDir(path, toml.pgDelta),
       );
-      const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
-      if (
-        declarativeDirRel.trim().length === 0 ||
-        declarativeDir === path.resolve(cliConfig.workdir)
-      ) {
+      const workdir = path.resolve(cliConfig.workdir);
+      const declarativeDir = path.resolve(workdir, declarativeDirRel);
+      const workdirFromOutput = path.relative(declarativeDir, workdir);
+      const outputContainsWorkdir =
+        workdirFromOutput.length === 0 ||
+        (!path.isAbsolute(workdirFromOutput) &&
+          workdirFromOutput !== ".." &&
+          !workdirFromOutput.startsWith(`..${path.sep}`));
+      if (declarativeDirRel.trim().length === 0 || outputContainsWorkdir) {
         return yield* Effect.fail(
           new LegacyDeclarativeWriteError({
             message:
-              "declarative output directory must not be empty or resolve to the project directory",
+              "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
           }),
         );
       }

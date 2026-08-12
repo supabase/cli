@@ -9,7 +9,10 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
+import {
+  LegacyDbConnection,
+  type LegacyDbSession,
+} from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
 import {
@@ -75,6 +78,25 @@ interface NativeShadowBase {
   readonly localInputs: LegacyLocalDbContainerInputs;
   readonly image: string;
 }
+
+/**
+ * Removes extensions that the legacy PG14 platform baseline installs implicitly
+ * so the declarative shadow reflects only extension declarations in schema files.
+ * `pgjwt` has a hard extension dependency on `pgcrypto`, and `storage.objects.id`
+ * depends on `uuid-ossp`, so both dependencies must be detached before the
+ * user-manageable extensions can be dropped with the default RESTRICT behavior.
+ */
+export const legacyPreparePgDeltaNextDeclarativeBaseline = Effect.fnUntraced(function* (
+  session: Pick<LegacyDbSession, "exec">,
+  majorVersion: number,
+) {
+  if (majorVersion === 14) {
+    yield* session.exec("ALTER TABLE storage.objects ALTER COLUMN id DROP DEFAULT");
+    yield* session.exec("DROP EXTENSION IF EXISTS pgjwt");
+  }
+  yield* session.exec("DROP EXTENSION IF EXISTS pgcrypto");
+  yield* session.exec('DROP EXTENSION IF EXISTS "uuid-ossp"');
+});
 
 const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowDatabaseHandle) => ({
   fs: input.base.fs,
@@ -209,8 +231,10 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         yield* Effect.scoped(
           Effect.gen(function* () {
             const session = yield* legacyConnectShadowDatabase(setup.connConfig);
-            yield* session.exec("DROP EXTENSION IF EXISTS pgcrypto");
-            yield* session.exec('DROP EXTENSION IF EXISTS "uuid-ossp"');
+            yield* legacyPreparePgDeltaNextDeclarativeBaseline(
+              session,
+              input.base.setup.majorVersion,
+            );
           }),
         );
         return legacyToPostgresURL(setup.connConfig);

@@ -5,6 +5,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
+import { legacyWalkSqlFiles } from "../../../shared/legacy-glob.ts";
 import type {
   LegacyPgDeltaExportManifest,
   LegacyPgDeltaSqlFile,
@@ -91,54 +92,30 @@ export const LegacyLoadPgDeltaSqlFiles = Effect.fnUntraced(function* (
   path: Path.Path,
   directory: string,
 ) {
-  const pending = [directory];
-  const paths: Array<{ readonly full: string; readonly name: string }> = [];
-
-  while (pending.length > 0) {
-    const current = pending.pop();
-    if (current === undefined) break;
-    const entries = yield* fs
-      .readDirectory(current)
-      .pipe(
-        Effect.mapError((error) =>
-          filesError(`failed to read declarative schema directory: ${error.message}`),
-        ),
-      );
-    for (const entry of entries) {
-      const full = path.join(current, entry);
-      const stat = yield* fs
-        .stat(full)
-        .pipe(
-          Effect.mapError((error) =>
-            filesError(`failed to inspect declarative schema file: ${error.message}`),
-          ),
-        );
-      if (stat.type === "Directory") {
-        pending.push(full);
-        continue;
-      }
-      if (path.extname(entry).toLowerCase() !== ".sql") continue;
-
-      const name = path.relative(directory, full).split("\\").join("/");
-      const normalized = path.normalize(name);
-      if (normalized.startsWith("..") || path.isAbsolute(normalized)) {
-        return yield* Effect.fail(filesError(`unsafe declarative schema path: ${name}`));
-      }
-      paths.push({ full, name });
-    }
-  }
-
-  paths.sort((left, right) => left.name.localeCompare(right.name));
+  const paths = yield* legacyWalkSqlFiles(fs, directory, "").pipe(
+    Effect.mapError((error) =>
+      filesError(
+        error.reason.method === "stat"
+          ? `failed to inspect declarative schema file: ${error.message}`
+          : `failed to read declarative schema directory: ${error.message}`,
+      ),
+    ),
+  );
   const files: Array<LegacyPgDeltaSqlFile> = [];
-  for (const file of paths) {
+  for (const name of paths) {
+    const normalized = path.normalize(name);
+    if (normalized.startsWith("..") || path.isAbsolute(normalized)) {
+      return yield* Effect.fail(filesError(`unsafe declarative schema path: ${name}`));
+    }
+    const full = path.join(directory, name);
     const sql = yield* fs
-      .readFileString(file.full)
+      .readFileString(full)
       .pipe(
         Effect.mapError((error) =>
           filesError(`failed to read declarative schema file: ${error.message}`),
         ),
       );
-    files.push({ name: file.name, sql });
+    files.push({ name, sql });
   }
   return files;
 });

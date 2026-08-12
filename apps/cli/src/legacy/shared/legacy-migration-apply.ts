@@ -68,7 +68,7 @@ const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
 const ALTER_SYSTEM_PATTERN = /^ALTER\s+SYSTEM(?:\s|$)/u;
 const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
 const TRANSACTION_CONTROL_PATTERN =
-  /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ROLLBACK|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
+  /^(?:BEGIN|START\s+TRANSACTION|COMMIT|END|ABORT|PREPARE\s+TRANSACTION)(?:\s|$)/u;
 
 /**
  * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
@@ -116,8 +116,17 @@ export const legacyIsPipelineIncompatible = (sql: string): boolean => {
 };
 
 /** Whether the statement owns a transaction boundary that must not be nested. */
-export const legacyHasTransactionControl = (sql: string): boolean =>
-  TRANSACTION_CONTROL_PATTERN.test(legacyTrimLeadingSqlComments(sql).toUpperCase());
+export const legacyHasTransactionControl = (sql: string): boolean => {
+  const upper = legacyTrimLeadingSqlComments(sql).toUpperCase();
+  const words = upper.split(/\s+/u);
+  if (words[0] === "ROLLBACK") {
+    const toIndex = words[1] === "WORK" || words[1] === "TRANSACTION" ? 2 : 1;
+    // ROLLBACK [WORK | TRANSACTION] TO [SAVEPOINT] rewinds the current
+    // transaction without ending it, so it still needs the CLI-managed wrapper.
+    return words[toIndex] !== "TO";
+  }
+  return TRANSACTION_CONTROL_PATTERN.test(upper);
+};
 
 /** A buffered statement awaiting the next batch flush; `version` is the history insert. */
 type LegacyBatchItem =

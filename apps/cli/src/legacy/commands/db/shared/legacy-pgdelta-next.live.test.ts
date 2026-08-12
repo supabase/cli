@@ -612,6 +612,69 @@ describeDockerLive("pg-delta next declarative extension baseline (live)", () => 
   );
 });
 
+describeDockerLive("pg-delta next PG14 declarative scratch (live)", () => {
+  let projectDir = "";
+
+  beforeAll(async () => {
+    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-pg14-live-"));
+
+    const init = await runSupabaseLive(["init"], {
+      cwd: projectDir,
+      exitTimeoutMs: COMMAND_TIMEOUT_MS,
+    });
+    expect(init.exitCode, commandFailure(init)).toBe(0);
+
+    const configPath = path.join(projectDir, "supabase", "config.toml");
+    const generatedConfig = readFileSync(configPath, "utf8");
+    expect(generatedConfig).toContain("major_version = 17");
+    writeFileSync(
+      configPath,
+      generatedConfig
+        .replace("major_version = 17", "major_version = 14")
+        .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
+        .replace(
+          '# declarative_schema_path = "./database"',
+          'declarative_schema_path = "./schemas"',
+        ),
+    );
+
+    const schemasDir = path.join(projectDir, "supabase", "schemas");
+    mkdirSync(schemasDir, { recursive: true });
+    writeFileSync(
+      path.join(schemasDir, "extensions.sql"),
+      [
+        "create extension if not exists pgcrypto with schema extensions;",
+        "create extension if not exists pgjwt with schema extensions;",
+        'create extension if not exists "uuid-ossp" with schema extensions;',
+        "",
+      ].join("\n"),
+    );
+  }, COMMAND_TIMEOUT_MS);
+
+  afterAll(async () => {
+    if (projectDir.length === 0) return;
+    await runSupabaseLive(["stop", "--no-backup"], {
+      cwd: projectDir,
+      exitTimeoutMs: COMMAND_TIMEOUT_MS,
+    }).catch(() => undefined);
+    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
+  }, COMMAND_TIMEOUT_MS);
+
+  test(
+    "provisions an extension-free PG14 scratch before loading desired declarations",
+    { timeout: SCENARIO_TIMEOUT_MS },
+    async () => {
+      const sync = await runSupabaseLive(["db", "schema", "declarative", "sync", "--no-apply"], {
+        cwd: projectDir,
+        env: { ...NEXT_ENV, SUPABASE_YES: "true" },
+        exitTimeoutMs: COMMAND_TIMEOUT_MS,
+      });
+      expect(sync.exitCode, commandFailure(sync)).toBe(0);
+      expect(sync.stderr).toContain("No schema changes found");
+    },
+  );
+});
+
 describeDockerLive("pg-delta next isolated cron shadows (live)", () => {
   const jobName = "pgdelta_cli_inactive";
   const initialSchedule = "0 0 * * *";

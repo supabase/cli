@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, Layer, Option } from "effect";
@@ -556,12 +556,14 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("rejects output paths that could overwrite the project directory", () => {
-    const sentinel = join(tmp.current, "project-sentinel.txt");
+  it.effect("rejects output paths that could overwrite the project or an ancestor", () => {
+    const projectDir = join(tmp.current, "project");
+    mkdirSync(projectDir, { recursive: true });
+    const sentinel = join(projectDir, "project-sentinel.txt");
     writeFileSync(sentinel, "keep");
-    const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
+    const s = setup(projectDir, { experimental: true, engineImplementation: "next" });
     return Effect.gen(function* () {
-      for (const output of ["", "."]) {
+      for (const output of ["", ".", "..", dirname(projectDir)]) {
         const exit = yield* legacyDbSchemaDeclarativeGenerate(
           flags({ local: Option.some(true), output: Option.some(output), overwrite: true }),
         ).pipe(Effect.exit);
@@ -569,7 +571,7 @@ describe("legacy db schema declarative generate integration", () => {
         expect(failError(exit)).toMatchObject({
           _tag: "LegacyDeclarativeWriteError",
           message:
-            "declarative output directory must not be empty or resolve to the project directory",
+            "declarative output directory must not be empty, resolve to the project directory, or contain the project directory",
         });
         expect(readFileSync(sentinel, "utf8")).toBe("keep");
       }

@@ -183,6 +183,12 @@ alter default privileges for role postgres in schema public
 const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
   "create extension if not exists pg_net schema extensions;";
 
+// The historical PG14 dump installs pg_net because later statements grant on
+// its schema. Remove it after the dump so the final baseline still follows the
+// user's webhooks setting. Enabled projects recreate it after the dump, when
+// the bundled event trigger can apply the intended grants.
+const LEGACY_START_REMOVE_PG14_DATABASE_WEBHOOKS_SQL = "drop extension if exists pg_net;";
+
 /**
  * A SQL exec (schema/globals/API-privileges) or one-shot service-migration Docker
  * job failed, or the scratch temp directory/file could not be created. The Docker
@@ -1021,7 +1027,18 @@ export const legacySetupDatabase = (
                 }),
             ),
           );
+        const requiresPg14WebhooksCleanup = input.majorVersion === 14;
         yield* legacyStartInitSchema(spawner, input, tmpDir);
+        if (requiresPg14WebhooksCleanup) {
+          yield* legacyExecSqlConstant(
+            session,
+            fs,
+            path,
+            tmpDir,
+            "remove-pg14-database-webhooks.sql",
+            LEGACY_START_REMOVE_PG14_DATABASE_WEBHOOKS_SQL,
+          );
+        }
         const activateUserExtensions = options.activateUserExtensions ?? true;
         const legacyPgNetBaseline = options.legacyPgNetBaseline ?? false;
         const userEnabled = activateUserExtensions && input.webhooksEnabled;

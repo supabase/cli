@@ -325,6 +325,34 @@ describe("legacyApplyMigrationFile", () => {
     );
   });
 
+  it.effect("keeps savepoint rollback inside the managed migration transaction", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_savepoint.sql");
+    writeFileSync(
+      file,
+      "SAVEPOINT before_change;\n" +
+        "UPDATE accounts SET active = false;\n" +
+        "ROLLBACK TO SAVEPOINT before_change;\n" +
+        "SELECT 1;",
+    );
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const execs = calls.filter((call) => call.kind === "exec").map((call) => call.sql);
+          const setupCommit = execs.indexOf("COMMIT");
+          const managedBegin = execs.lastIndexOf("BEGIN");
+          const managedCommit = execs.lastIndexOf("COMMIT");
+          expect(managedBegin).toBeGreaterThan(setupCommit);
+          expect(execs.indexOf("SAVEPOINT before_change")).toBeGreaterThan(managedBegin);
+          expect(execs.indexOf("ROLLBACK TO SAVEPOINT before_change")).toBeLessThan(managedCommit);
+          expect(calls.filter((call) => call.kind === "query")).toHaveLength(1);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   it.effect("does not record history when an authored transaction fails", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_authored.sql");
@@ -350,12 +378,25 @@ describe("legacyHasTransactionControl", () => {
     expect(legacyHasTransactionControl("START TRANSACTION ISOLATION LEVEL SERIALIZABLE")).toBe(
       true,
     );
-    expect(legacyHasTransactionControl("ROLLBACK TO SAVEPOINT before_change")).toBe(true);
     expect(
       legacyHasTransactionControl(
         "CREATE FUNCTION f() RETURNS void AS $$ BEGIN END $$ LANGUAGE plpgsql",
       ),
     ).toBe(false);
+  });
+
+  it("distinguishes transaction rollback from savepoint rollback", () => {
+    for (const sql of ["ROLLBACK", "ROLLBACK WORK", "ROLLBACK TRANSACTION"]) {
+      expect(legacyHasTransactionControl(sql)).toBe(true);
+    }
+    for (const sql of [
+      "ROLLBACK TO before_change",
+      "ROLLBACK TO SAVEPOINT before_change",
+      "ROLLBACK WORK TO SAVEPOINT before_change",
+      "ROLLBACK TRANSACTION TO before_change",
+    ]) {
+      expect(legacyHasTransactionControl(sql)).toBe(false);
+    }
   });
 });
 
