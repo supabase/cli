@@ -6,12 +6,14 @@ import { textCliOutputFormatter } from "../../../../shared/output/text-formatter
 import { legacyFunctionsServeCommand } from "./serve.command.ts";
 
 describe("legacy functions serve command", () => {
-  it.live("accepts the legacy function name positional argument", () => {
+  it.live("accepts all legacy function name positional arguments", () => {
     let handlerRan = false;
+    let parsedFunctionNames: ReadonlyArray<string> = [];
     const command = legacyFunctionsServeCommand.pipe(
-      Command.withHandler(() =>
+      Command.withHandler(({ legacyFunctionNames }) =>
         Effect.sync(() => {
           handlerRan = true;
+          parsedFunctionNames = legacyFunctionNames;
         }),
       ),
     );
@@ -19,10 +21,11 @@ describe("legacy functions serve command", () => {
     return Effect.gen(function* () {
       const exit = yield* Command.runWith(command, {
         version: "0.0.0-test",
-      })(["hello-world"]).pipe(Effect.exit);
+      })(["hello-world", "send-email"]).pipe(Effect.exit);
 
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(handlerRan).toBe(true);
+      expect(parsedFunctionNames).toEqual(["hello-world", "send-email"]);
     }).pipe(
       Effect.provide(Layer.mergeAll(BunServices.layer, CliOutput.layer(textCliOutputFormatter()))),
     );

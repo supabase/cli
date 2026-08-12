@@ -51,9 +51,9 @@ const config = {
 
 const commandConfig = {
   ...config,
-  legacyFunctionName: Argument.string("Function name").pipe(
-    Argument.withDescription("Legacy Function name. All Functions are served."),
-    Argument.optional,
+  legacyFunctionNames: Argument.string("Function name").pipe(
+    Argument.withDescription("Legacy Function names. All Functions are served."),
+    Argument.variadic(),
   ),
 } as const;
 
