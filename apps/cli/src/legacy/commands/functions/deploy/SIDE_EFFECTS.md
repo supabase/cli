@@ -101,3 +101,11 @@ Legacy `--output` / `-o` does not change deploy output, matching the Go command.
 - `--use-api`, `--use-docker`, and `--legacy-bundle` are mutually exclusive deploy modes.
 - `--prune` deletes deployed Functions that are not present locally after a confirmation prompt;
   global `--yes` skips the prompt.
+- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled
+  2026-08-12):** the functions import scanner (`walkImportPaths`/`substituteImportMapValue`,
+  shared with `functions serve` and `start`'s Edge Runtime bring-up) matches import-map keys
+  per the import-maps spec Deno/edge-runtime implement — exact match, or prefix match only
+  for a `/`-suffixed key — instead of Go's any-key `strings.HasPrefix`
+  (`pkg/function/deno.go:150-155`). Upload sets may shrink vs the Go CLI for maps that relied
+  on bare-key prefix matching; an unwalkable target (`ENOTDIR` — a value routed through a
+  file) is skipped with a `WARN` instead of aborting the deploy.

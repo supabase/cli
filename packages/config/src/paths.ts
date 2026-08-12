@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 export interface ProjectPaths {
   readonly projectRoot: string;
@@ -8,6 +9,18 @@ export interface ProjectPaths {
   readonly envLocalPath: string;
 }
 
+// A stat failure (e.g. ENOTDIR when this root has a FILE named `supabase`)
+// means "no config here" — Go's getProjectRoot keeps climbing on any stat
+// error (apps/cli-go/internal/utils/misc.go:216-231). The failed probe is
+// logged at Debug as a structured hook for future diagnostics — the CLI does
+// not currently lower its minimum log level for `--debug`, so this is not
+// yet Go-parity debug visibility.
+const probeExists = (self: Effect.Effect<boolean, PlatformError>) =>
+  self.pipe(
+    Effect.tapError((error) => Effect.logDebug("config probe failed", error)),
+    Effect.orElseSucceed(() => false),
+  );
+
 const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -15,8 +28,8 @@ const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
   const jsonPath = path.join(supabaseDir, "config.json");
   const tomlPath = path.join(supabaseDir, "config.toml");
 
-  const jsonExists = yield* fs.exists(jsonPath);
-  const tomlExists = yield* fs.exists(tomlPath);
+  const jsonExists = yield* probeExists(fs.exists(jsonPath));
+  const tomlExists = yield* probeExists(fs.exists(tomlPath));
 
   if (!jsonExists && !tomlExists) {
     return null;
@@ -36,11 +49,11 @@ export interface FindProjectPathsOptions {
    * When `false`, only `cwd` itself is checked for `supabase/config.{json,toml}` —
    * no ancestor climb. Go's own resolution never searches twice: an explicit
    * `--workdir`/`SUPABASE_WORKDIR` is used exactly as given (`ChangeWorkDir`,
-   * `apps/cli-go/internal/utils/misc.go:231-247`), and once `os.Chdir`'d there,
+   * `apps/cli-go/internal/utils/misc.go:238-257`), and once `os.Chdir`'d there,
    * `config.toml` is read as a plain relative path with no further ancestor
    * search (`NewPathBuilder`, `pkg/config/utils.go:43-48`). Ancestor climbing in
    * Go only ever happens once, as the *default* when workdir is unset
-   * (`getProjectRoot`, `internal/utils/misc.go:209-224`).
+   * (`getProjectRoot`, `internal/utils/misc.go:216-231`).
    *
    * Callers that already hold an authoritative, Go-equivalent project root
    * (e.g. the legacy `stop`/`status` ports' `cliConfig.workdir`, which mirrors

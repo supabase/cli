@@ -40,3 +40,13 @@ export class FunctionDeployCancelledError extends Data.TaggedError("FunctionDepl
     return actionability.cancelled;
   }
 }
+
+export class FunctionImportNotDirectoryError extends Data.TaggedError(
+  "FunctionImportNotDirectoryError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
