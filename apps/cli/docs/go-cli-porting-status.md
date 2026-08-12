@@ -371,8 +371,7 @@ Flag divergences from the Go reference:
   project ref shape is always treated as a ref; any other non-empty value is resolved to its
   parent-project's branch project ref via the Management API before linking proceeds exactly as
   today (CLI-2167).
-
-Behavioral divergences from the Go reference:
+  Behavioral divergences from the Go reference:
 
 - `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref
   through a PARENT-scoped chain instead of plain `--project-ref` flag/env/file resolution: an
@@ -383,6 +382,38 @@ Behavioral divergences from the Go reference:
   returns 403 for a branch ref on every branches-management endpoint. No-op when linked to a real
   (non-branch) project — the cache and the file hold the same ref — so this only changes behavior
   in the previously-403ing branch-linked state (CLI-2167 follow-up, no Go equivalent).
+- `branches list`'s pretty table (not `-o json|yaml|toml`, not `--output-format json|stream-json`)
+  marks the row matching the CURRENTLY linked ref with a `<name> (active)` NAME cell, mirroring
+  `next/`'s convention. TS-only QoL, no Go equivalent (CLI-2167 follow-up).
+- `status` prints the current linked project/branch as a "Linked Project:" block on stdout in
+  human text mode (Neon-style — `Org:`/`Project:`/`Branch:` lines, each omitted when unknown),
+  before any daemon/stack work begins, and folds the same linked state into its machine-readable
+  outputs — additive `linked_project: {...} | null` (with `org_slug`/`org_id`) in the TS
+  `--output-format json`/`stream-json` payload, and additive `linked_project_ref`/
+  `linked_project_name`/`linked_org_slug`/`linked_org_id`/`linked_branch`/
+  `linked_parent_project_ref` keys (absent entirely when not linked) appended after the existing
+  keys in `-o env|json|yaml|toml`. A confirmed branch-linked state (from `linked-project.json`)
+  keeps showing the parent/org fields even when the branch-name lookup itself degrades (no
+  token, offline, API error) — only the branch's own name is ever missing, so the user always
+  sees they're on a branch. The Management API client for that lookup is acquired lazily
+  (`LegacyPlatformApiFactory`, not the eager `LegacyPlatformApi`) so `status` stays fully
+  functional offline/token-less. Intent: let an agent driving `status` discover which
+  project/branch it's on without a separate `link`/`branches` call. Read-only, never affects
+  `status`'s exit code, and never alters any of its existing failure behavior — a Docker/daemon
+  connection failure still fails exactly as today, with the linked block already printed above it
+  in text mode (CLI-2167 follow-up, no Go equivalent). The same `linked_project` object is also
+  carried on the `--output-format json`/`stream-json` FAILURE envelope (top-level, next to
+  `_tag`/`error` or `type`/`error`/`timestamp`) — the agent-discovery use case matters most when
+  `status` fails to reach a stopped stack — via a new opt-in, shared mechanism
+  (`shared/output/machine-error-context.service.ts`'s `MachineErrorContext`, read by
+  `jsonOutputLayer`/`streamJsonOutputLayer`'s `fail`); `-o env|json|yaml|toml`'s failure output is
+  deliberately unchanged (still no payload, matching Go). See `status/SIDE_EFFECTS.md`.
+- `projects list`'s `LINKED` marker (the `linked` boolean, rendered as the pretty table's `●`
+  bullet) now falls back to the PARENT chain when the linked ref matches no row exactly — the same
+  scenario as above, since a branch-linked ref never matches a real project row. **This changes
+  the `linked` field in the `-o json|yaml|toml` Go-struct payloads too**: in the branch-linked
+  state it was previously `false` on every row; it can now be `true` on the parent project's row.
+  The truthful fix IS the behavior change (CLI-2167 follow-up, no Go equivalent).
 - `services` warns on a malformed linked project ref (matching Go's
   `flags.LoadProjectRef` validation message) but, unlike Go, does not then use
   that ref for the remote lookup. Go's `cmd/services.go` treats the validation

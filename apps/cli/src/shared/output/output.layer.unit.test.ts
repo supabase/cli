@@ -3,6 +3,8 @@ import { afterEach, beforeEach, vi } from "vitest";
 import { Cause, Effect, Exit, Layer, Sink, Stdio, Stream } from "effect";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
 import { mockTty } from "../../../tests/helpers/mocks.ts";
+import { machineErrorContextLayer } from "./machine-error-context.layer.ts";
+import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
 import {
   jsonOutputLayer,
@@ -705,6 +707,50 @@ describe("Output", () => {
         });
       }).pipe(Effect.provide(layer));
     });
+
+    // CLI-2167 follow-up: `MachineErrorContext` is a command-scoped, opt-in
+    // cell — merged ALONGSIDE the output layer (not nested inside its own
+    // `Layer.provide`), matching how a real command runtime composes it, so
+    // the same live cell is visible both to this test's own `set` call and to
+    // `fail`'s read.
+    it.effect(
+      "fail merges MachineErrorContext fields at the envelope top level when provided",
+      () => {
+        const mock = mockStdio();
+        const layer = Layer.mergeAll(
+          jsonOutputLayer.pipe(Layer.provide(mock.layer)),
+          machineErrorContextLayer,
+        );
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const context = yield* MachineErrorContext;
+          yield* context.set({ linked_project: { project_ref: "abc" } });
+          yield* out.fail({ code: "E_TEST", message: "failed" });
+          expect(mock.stdout).toHaveLength(1);
+          const parsed = JSON.parse(mock.stdout[0]!);
+          expect(parsed).toEqual({
+            _tag: "Error",
+            error: { code: "E_TEST", message: "failed" },
+            linked_project: { project_ref: "abc" },
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.effect("fail leaves the envelope unchanged when MachineErrorContext isn't provided", () => {
+      const mock = mockStdio();
+      const layer = jsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({ code: "E_TEST", message: "failed" });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(parsed).toEqual({
+          _tag: "Error",
+          error: { code: "E_TEST", message: "failed" },
+        });
+        expect(Object.keys(parsed).sort()).toEqual(["_tag", "error"]);
+      }).pipe(Effect.provide(layer));
+    });
   });
 
   describe("stream-json layer", () => {
@@ -922,6 +968,44 @@ describe("Output", () => {
           suggestion: "try again",
         });
         expect(parsed.timestamp).toBeDefined();
+      }).pipe(Effect.provide(layer));
+    });
+
+    // CLI-2167 follow-up: same mechanism as the json layer's equivalent pair
+    // above — merged alongside `streamJsonOutputLayer`, not nested inside its
+    // `Layer.provide`.
+    it.effect("fail merges MachineErrorContext fields at the event top level when provided", () => {
+      const mock = mockStdio();
+      const layer = Layer.mergeAll(
+        streamJsonOutputLayer.pipe(Layer.provide(mock.layer)),
+        machineErrorContextLayer,
+      );
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        const context = yield* MachineErrorContext;
+        yield* context.set({ linked_project: { project_ref: "abc" } });
+        yield* out.fail({ code: "E_FAIL", message: "boom" });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(parsed.type).toBe("error");
+        expect(parsed.error).toEqual({ code: "E_FAIL", message: "boom" });
+        expect(parsed.linked_project).toEqual({ project_ref: "abc" });
+        expect(Object.keys(parsed).sort()).toEqual([
+          "error",
+          "linked_project",
+          "timestamp",
+          "type",
+        ]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect("fail leaves the event unchanged when MachineErrorContext isn't provided", () => {
+      const mock = mockStdio();
+      const layer = streamJsonOutputLayer.pipe(Layer.provide(mock.layer));
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.fail({ code: "E_FAIL", message: "boom" });
+        const parsed = JSON.parse(mock.stdout[0]!);
+        expect(Object.keys(parsed).sort()).toEqual(["error", "timestamp", "type"]);
       }).pipe(Effect.provide(layer));
     });
   });

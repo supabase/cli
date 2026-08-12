@@ -8,6 +8,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import { legacyResolveLinkedParentRef } from "../../../shared/legacy-parent-project-ref.ts";
 import {
   type LegacyGoType,
   encodeLegacyGoToml,
@@ -138,9 +139,28 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       yield* output.raw("Cannot find project ref. Have you run supabase link?\n", "stderr");
     }
 
+    // CLI-2167 follow-up: after `link <branch>`, `linkedRef` is the BRANCH's
+    // own ref, which never matches a row here (this endpoint only returns
+    // real projects), so the "you are here" marker silently vanished. An
+    // exact match always wins outright; only when it misses do we fall back
+    // to the PARENT chain (env → `linked-project.json` → `project-ref` file)
+    // and mark that ref's row instead. `linkedRef` itself (used below for the
+    // stderr message and the linked-project-cache write) is untouched — only
+    // the marker comparison changes. TS-only QoL, no Go counterpart.
+    let markerRef = linkedRef;
+    if (Option.isSome(linkedRef)) {
+      const hasExactMatch = parsed.some(
+        (project) => readProjectField(project, "id") === linkedRef.value,
+      );
+      if (!hasExactMatch) {
+        const parent = yield* legacyResolveLinkedParentRef();
+        markerRef = parent.kind === "resolved" ? Option.some(parent.ref) : Option.none();
+      }
+    }
+
     const projects: ReadonlyArray<LegacyLinkedProject> = parsed.map((project) => ({
       ...(typeof project === "object" && project !== null ? project : {}),
-      linked: Option.isSome(linkedRef) && readProjectField(project, "id") === linkedRef.value,
+      linked: Option.isSome(markerRef) && readProjectField(project, "id") === markerRef.value,
     }));
 
     const goFmt = Option.getOrUndefined(goOutputFlag);

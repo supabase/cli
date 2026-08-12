@@ -12,22 +12,54 @@ export type LegacyParentRefResolution =
   | { readonly kind: "invalid" }
   | { readonly kind: "absent" };
 
+/** The subset of `<workdir>/supabase/.temp/linked-project.json` callers care
+ * about: the parent project's `ref`, its `name`, and its
+ * `organization_slug`/`organization_id` — all optional, present only when the
+ * cache carries a usable (non-empty string) value for each. */
+export interface LegacyCachedLinkedProject {
+  readonly ref: string;
+  readonly name?: string;
+  readonly organizationSlug?: string;
+  readonly organizationId?: string;
+}
+
+function readOptionalCacheString(record: Record<string, unknown>, key: string): string | undefined {
+  const value = record[key];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
 /** Best-effort parse of `<workdir>/supabase/.temp/linked-project.json`'s `ref`
- * field — a missing file, unreadable file, malformed JSON, or non-string/empty
- * `ref` all degrade to `None` rather than failing the parent-ref lookup. */
-function legacyParseCachedParentRef(content: string): Option.Option<string> {
+ * (and, when present, `name`/`organization_slug`/`organization_id`) fields —
+ * a missing file, unreadable file, malformed JSON, or non-string/empty `ref`
+ * all degrade to `None` rather than failing the caller. */
+export function legacyParseCachedLinkedProject(
+  content: string,
+): Option.Option<LegacyCachedLinkedProject> {
   try {
     const parsed: unknown = JSON.parse(content);
     if (typeof parsed === "object" && parsed !== null && "ref" in parsed) {
-      const ref = (parsed as Record<string, unknown>).ref;
+      const record = parsed as Record<string, unknown>;
+      const ref = record.ref;
       if (typeof ref === "string" && ref.length > 0) {
-        return Option.some(ref);
+        const name = readOptionalCacheString(record, "name");
+        const organizationSlug = readOptionalCacheString(record, "organization_slug");
+        const organizationId = readOptionalCacheString(record, "organization_id");
+        return Option.some({
+          ref,
+          ...(name === undefined ? {} : { name }),
+          ...(organizationSlug === undefined ? {} : { organizationSlug }),
+          ...(organizationId === undefined ? {} : { organizationId }),
+        });
       }
     }
   } catch {
     // Malformed JSON degrades to "no candidate", same as a missing file.
   }
   return Option.none();
+}
+
+function legacyParseCachedParentRef(content: string): Option.Option<string> {
+  return Option.map(legacyParseCachedLinkedProject(content), (project) => project.ref);
 }
 
 function legacyClassifyParentCandidates(

@@ -1,0 +1,335 @@
+import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
+import { Effect, FileSystem, Option, Path } from "effect";
+
+import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
+import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { Output } from "../../shared/output/output.service.ts";
+import {
+  type LegacyCachedLinkedProject,
+  legacyParseCachedLinkedProject,
+  legacyResolveLinkedParentRef,
+} from "./legacy-parent-project-ref.ts";
+import { legacyReadProjectRefFile, legacyTempPaths } from "./legacy-temp-paths.ts";
+
+type LegacyLinkedStateBranches = typeof V1ListAllBranchesOutput.Type;
+
+/**
+ * Discriminated linked-state result.
+ *
+ *   - `parentRef` set → the linked ref (`projectRef`) is a BRANCH of a known,
+ *     DIFFERENT parent. `branch` is the branch's own resolved name, present
+ *     only when the best-effort API lookup found it — "assumed branch, name
+ *     unknown" is exactly this shape with `branch` absent.
+ *   - `parentRef` absent → a plain project link (or a linked ref with no
+ *     evidence of a distinct parent at all).
+ *   - `projectName`/`orgSlug`/`orgId` always describe whichever ref is shown
+ *     on the "Project:" line (`parentRef ?? projectRef`) — sourced from
+ *     `linked-project.json`, so only ever present when that cache is what
+ *     supplied the parent candidate.
+ */
+export type LegacyLinkedState =
+  | { readonly linked: false }
+  | {
+      readonly linked: true;
+      readonly projectRef: string;
+      readonly projectName?: string;
+      readonly orgSlug?: string;
+      readonly orgId?: string;
+      readonly parentRef?: string;
+      readonly branch?: string;
+    };
+
+/**
+ * Soft "currently linked ref" lookup: env `SUPABASE_PROJECT_ID` → the
+ * `<workdir>/supabase/.temp/project-ref` file, never a prompt, never a
+ * failure. Reproduces `LegacyProjectRefResolver.resolveOptional(Option.none())`
+ * without depending on that service, so `legacyResolveLinkedState` stays
+ * usable from a runtime (e.g. `status`'s) that never wires up the resolver —
+ * this shape only ever needs the flagless (env → file) tail of that chain
+ * anyway, so the reproduction can't drift out of sync with it.
+ */
+const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
+  const cliConfig = yield* LegacyCliConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  if (Option.isSome(cliConfig.projectId)) {
+    return cliConfig.projectId;
+  }
+  return yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+    Effect.orElseSucceed(() => Option.none<string>()),
+  );
+});
+
+/**
+ * Acquires a Management API client for the best-effort branch-name lookup,
+ * total (never fails, resolves `None` on any acquisition failure):
+ *
+ *   1. `Effect.serviceOption(LegacyPlatformApi)` — the cheapest path; existing
+ *      tests provide this directly, and any runtime that eagerly built the
+ *      typed client (e.g. `link`/`branches`) already has it in scope.
+ *   2. Otherwise `Effect.serviceOption(LegacyPlatformApiFactory)` → `factory.make`,
+ *      with every failure (no token, invalid token, network, decode) caught.
+ *      This is the path a token-optional runtime like `status`'s needs: the
+ *      factory's own layer build never resolves a token or touches the
+ *      network — that only happens here, lazily, exactly when a branch lookup
+ *      is actually attempted.
+ *
+ * Neither service being in scope (a runtime that wires up neither) also
+ * degrades to `None` rather than a compile-time requirement — this effect's
+ * own type carries no `LegacyPlatformApi`/`LegacyPlatformApiFactory`
+ * requirement at all, thanks to `Effect.serviceOption`.
+ */
+const legacyAcquireLinkedStateApi = Effect.fnUntraced(function* () {
+  const direct = yield* Effect.serviceOption(LegacyPlatformApi);
+  if (Option.isSome(direct)) return direct;
+
+  const factoryOption = yield* Effect.serviceOption(LegacyPlatformApiFactory);
+  if (Option.isNone(factoryOption)) return Option.none<ApiClient>();
+
+  return yield* factoryOption.value.make.pipe(
+    Effect.map(Option.some),
+    Effect.catch(() => Effect.succeed(Option.none<ApiClient>())),
+  );
+});
+
+/**
+ * Best-effort branch-name lookup against `parentRef`'s branches, returning
+ * the matching branch's `name` (or `undefined` on no match/any failure —
+ * this is the single degradation point {@link legacyResolveLinkedState}'s two
+ * call sites share). Shows the `Checking linked branch...` spinner in text
+ * mode, but only once an API client is actually available — an acquisition
+ * failure degrades silently, before ever touching the spinner.
+ */
+const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
+  parentRef: string,
+  linkedRef: string,
+) {
+  const output = yield* Output;
+
+  const apiOption = yield* legacyAcquireLinkedStateApi();
+  if (Option.isNone(apiOption)) return undefined;
+  const api = apiOption.value;
+
+  const task =
+    output.format === "text" ? yield* output.task("Checking linked branch...") : undefined;
+  const branchesOption: Option.Option<LegacyLinkedStateBranches> = yield* api.v1
+    .listAllBranches({ ref: parentRef })
+    .pipe(
+      Effect.map(Option.some),
+      // Best-effort: any transport/status/decode failure degrades below —
+      // this helper must never fail on a flaky lookup.
+      Effect.catch(() => Effect.succeed(Option.none<LegacyLinkedStateBranches>())),
+    );
+  yield* task?.clear() ?? Effect.void;
+
+  return Option.isSome(branchesOption)
+    ? branchesOption.value.find((branch) => branch.project_ref === linkedRef)?.name
+    : undefined;
+});
+
+/**
+ * Resolves the current linked-state display (project or branch). Used by
+ * `status` to show the linked project/branch without requiring a link
+ * beforehand. TS-only surface (CLI-2167 follow-up, no Go counterpart).
+ *
+ * NEVER FAILS — every step degrades rather than propagating an error:
+ *
+ *   - Not linked at all → `{ linked: false }`.
+ *   - `linked-project.json` CONFIRMS the linked ref is its own `ref` → a
+ *     plain project link (its `name`/org fields, when known); zero API calls.
+ *   - `linked-project.json` CONFIRMS a genuinely DIFFERENT parent → a branch
+ *     link. Always renders the branch-linked shape (parent ref + whatever
+ *     name/org the cache knows), attempting the best-effort branch-name
+ *     lookup ({@link legacyFindLinkedBranchName}) and degrading to the bare
+ *     "assumed branch, name unknown" shape — NOT to a plain/bare project
+ *     line — on any acquisition or API failure. This is the fix for the real
+ *     bug this feature shipped to fix: the user must still see they're on a
+ *     branch even when the lookup can't run (no token, offline, API error).
+ *   - No cache at all (missing/unreadable/malformed) → there is no CONFIRMED
+ *     parent, so `legacyResolveLinkedParentRef`'s ref-only env/file fallback
+ *     is used ONLY as an API query target, never to unconditionally claim a
+ *     branch link: if that lookup POSITIVELY finds a branch whose
+ *     `project_ref` matches the linked ref, render the branch-linked shape
+ *     (parent ref from the chain, no name/org); otherwise (no fallback
+ *     candidate, or the lookup found nothing / couldn't run) render the bare
+ *     project line with no parent claim at all.
+ */
+export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
+  const cliConfig = yield* LegacyCliConfig;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+
+  const linkedRef = yield* legacyResolveSoftLinkedRef();
+  if (Option.isNone(linkedRef)) {
+    return { linked: false } as const;
+  }
+
+  const paths = legacyTempPaths(path, cliConfig.workdir);
+  const cached = yield* fs.readFileString(paths.linkedProjectCache).pipe(
+    Effect.map(legacyParseCachedLinkedProject),
+    Effect.orElseSucceed(() => Option.none<LegacyCachedLinkedProject>()),
+  );
+
+  if (Option.isSome(cached)) {
+    const cacheFields = {
+      ...(cached.value.name === undefined ? {} : { projectName: cached.value.name }),
+      ...(cached.value.organizationSlug === undefined
+        ? {}
+        : { orgSlug: cached.value.organizationSlug }),
+      ...(cached.value.organizationId === undefined ? {} : { orgId: cached.value.organizationId }),
+    };
+
+    if (cached.value.ref === linkedRef.value) {
+      // The cache confirms the linked ref IS the parent — a plain project link.
+      return { linked: true, projectRef: linkedRef.value, ...cacheFields } as const;
+    }
+
+    // The cache confirms a genuinely DIFFERENT parent — always the
+    // branch-linked shape, degrading only the `branch` name.
+    const parentRef = cached.value.ref;
+    const branch = yield* legacyFindLinkedBranchName(parentRef, linkedRef.value);
+    return {
+      linked: true,
+      projectRef: linkedRef.value,
+      parentRef,
+      ...cacheFields,
+      ...(branch === undefined ? {} : { branch }),
+    } as const;
+  }
+
+  // No cache at all — the ref-only chain fallback is only trustworthy as an
+  // API query target, not as unconditional evidence of a branch link.
+  const parentFromChain = yield* legacyResolveLinkedParentRef().pipe(
+    Effect.map((resolution) =>
+      resolution.kind === "resolved" ? Option.some(resolution.ref) : Option.none<string>(),
+    ),
+  );
+  if (Option.isNone(parentFromChain)) {
+    return { linked: true, projectRef: linkedRef.value } as const;
+  }
+
+  const parentRef = parentFromChain.value;
+  const branch = yield* legacyFindLinkedBranchName(parentRef, linkedRef.value);
+  if (branch === undefined) {
+    // The lookup didn't POSITIVELY confirm a branch — no cache-backed
+    // evidence either, so make no parent claim at all.
+    return { linked: true, projectRef: linkedRef.value } as const;
+  }
+  return { linked: true, projectRef: linkedRef.value, parentRef, branch } as const;
+});
+
+function legacyFormatOrgLabel(slug: string | undefined, id: string | undefined): string {
+  if (slug !== undefined && id !== undefined) {
+    return slug === id ? slug : `${slug} (${id})`;
+  }
+  return slug ?? id ?? "";
+}
+
+function legacyFormatNamedRef(name: string | undefined, ref: string): string {
+  return name === undefined ? ref : `${name} (${ref})`;
+}
+
+/**
+ * Pure formatter for `LegacyLinkedState` — the full multi-line block,
+ * including its trailing newline. Not linked stays a single plain line (no
+ * header block, unchanged from the prior single-line format):
+ *
+ * ```
+ * Not linked.
+ * ```
+ *
+ * Linked renders a "Linked Project:" header with up to 3 indented lines —
+ * `Org:` only when at least one of `orgSlug`/`orgId` is known, `Project:`
+ * always, `Branch:` only in the branch-linked state (even when the branch's
+ * own name is unresolved, the user must still see they're on a branch):
+ *
+ * ```
+ * Linked Project:
+ *   Org: <org_slug> (<org_id>)
+ *   Project: <project_name> (<parent_or_project_ref>)
+ *   Branch: <branch_name> (<branch_ref>)
+ * ```
+ */
+export function legacyFormatLinkedStateBlock(state: LegacyLinkedState): string {
+  if (!state.linked) {
+    return "Not linked.\n";
+  }
+
+  const lines: Array<string> = ["Linked Project:"];
+
+  if (state.orgSlug !== undefined || state.orgId !== undefined) {
+    lines.push(`  Org: ${legacyFormatOrgLabel(state.orgSlug, state.orgId)}`);
+  }
+
+  const projectRef = state.parentRef ?? state.projectRef;
+  lines.push(`  Project: ${legacyFormatNamedRef(state.projectName, projectRef)}`);
+
+  if (state.parentRef !== undefined) {
+    lines.push(`  Branch: ${legacyFormatNamedRef(state.branch, state.projectRef)}`);
+  }
+
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * Additive flat snake_case keys for a Go machine-format payload
+ * (`-o env|json|yaml|toml`) — merge into the format's own key/value map
+ * AFTER its existing keys so their order is undisturbed (irrelevant for
+ * `-o env`/`-o json`, which sort keys anyway; preserved for `-o yaml`/`-o toml`,
+ * which don't). `encodeEnv`'s `toEnvKey` upper-cases these unchanged, so
+ * `linked_project_ref` becomes `LINKED_PROJECT_REF`, etc. Empty when not
+ * linked — absence of every key IS "not linked" for these formats, not a
+ * `linked: false`/empty-string entry. Degraded branch-linked state still
+ * emits every field it knows (`linked_project_ref`, `linked_parent_project_ref`,
+ * `linked_project_name`, org fields) — only `linked_branch` is absent. TS-only
+ * QoL (CLI-2167 follow-up, no Go counterpart), letting an agent driving a
+ * machine format discover the linked project/branch without a separate
+ * `link`/`branches` call.
+ */
+export function legacyLinkedStateGoFields(
+  state: LegacyLinkedState,
+): Readonly<Record<string, string>> {
+  if (!state.linked) return {};
+  return {
+    linked_project_ref: state.projectRef,
+    ...(state.projectName === undefined ? {} : { linked_project_name: state.projectName }),
+    ...(state.orgSlug === undefined ? {} : { linked_org_slug: state.orgSlug }),
+    ...(state.orgId === undefined ? {} : { linked_org_id: state.orgId }),
+    ...(state.branch === undefined ? {} : { linked_branch: state.branch }),
+    ...(state.parentRef === undefined ? {} : { linked_parent_project_ref: state.parentRef }),
+  };
+}
+
+/** The `linked_project` shape merged into a TS `--output-format json`/`stream-json`
+ * structured success payload — see {@link legacyLinkedStateGoFields} for the
+ * Go-machine-format counterpart. */
+export interface LegacyLinkedStateJsonField {
+  readonly project_ref: string;
+  readonly branch?: string;
+  readonly parent_project_ref?: string;
+  readonly project_name?: string;
+  readonly org_slug?: string;
+  readonly org_id?: string;
+}
+
+/**
+ * Additive nested field for a TS `--output-format json`/`stream-json`
+ * structured success payload: `null` when not linked, so its mere presence
+ * never collides with an existing top-level key. TS-only QoL (CLI-2167
+ * follow-up, no Go counterpart).
+ */
+export function legacyLinkedStateJsonField(
+  state: LegacyLinkedState,
+): LegacyLinkedStateJsonField | null {
+  if (!state.linked) return null;
+  return {
+    project_ref: state.projectRef,
+    ...(state.branch === undefined ? {} : { branch: state.branch }),
+    ...(state.parentRef === undefined ? {} : { parent_project_ref: state.parentRef }),
+    ...(state.projectName === undefined ? {} : { project_name: state.projectName }),
+    ...(state.orgSlug === undefined ? {} : { org_slug: state.orgSlug }),
+    ...(state.orgId === undefined ? {} : { org_id: state.orgId }),
+  };
+}

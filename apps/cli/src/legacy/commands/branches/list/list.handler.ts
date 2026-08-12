@@ -2,6 +2,7 @@ import type { V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -40,6 +41,7 @@ export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
   const api = yield* LegacyPlatformApi;
+  const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
@@ -91,6 +93,11 @@ export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
       return;
     }
 
-    yield* output.raw(renderBranchesListTable(branches));
+    // Pretty text table only: mark the branch matching the CURRENTLY linked
+    // ref as `(active)` — same soft chain `projects list` uses for its "you
+    // are here" marker, never a prompt/failure. TS-only QoL (CLI-2167
+    // follow-up, no Go counterpart); the machine payloads above stay untouched.
+    const activeRef = yield* resolver.resolveOptional(Option.none());
+    yield* output.raw(renderBranchesListTable(branches, Option.getOrUndefined(activeRef)));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });

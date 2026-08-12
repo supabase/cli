@@ -437,6 +437,91 @@ describe("legacy branches list integration", () => {
     );
   });
 
+  describe("active-branch marker in the pretty table (CLI-2167 follow-up)", () => {
+    const OTHER_BRANCH: Branches[number] = {
+      ...SAMPLE_BRANCH,
+      id: "66666666-7777-4888-8999-999999999999",
+      name: "other",
+      project_ref: "zzzzzzzzzzzzzzzzzzzz",
+    };
+
+    it.live("marks the linked branch's NAME cell with (active) and no other row", () => {
+      const { layer, out, workdir } = setup({
+        projectId: Option.none(),
+        response: [SAMPLE_BRANCH, OTHER_BRANCH],
+      });
+      writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
+      return Effect.gen(function* () {
+        yield* legacyBranchesList({ projectRef: Option.none() });
+        expect(out.stdoutText).toContain("feat-1 (active)");
+        expect(out.stdoutText).not.toContain("other (active)");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "omits the marker entirely for --output json (Go machine format, byte-identical to before)",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: "json",
+          projectId: Option.none(),
+          response: [SAMPLE_BRANCH],
+        });
+        writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
+        return Effect.gen(function* () {
+          yield* legacyBranchesList({ projectRef: Option.none() });
+          expect(out.stdoutText).not.toContain("active");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "omits the marker/field entirely for --output-format json (structured payload untouched)",
+      () => {
+        const { layer, out, workdir } = setup({
+          format: "json",
+          projectId: Option.none(),
+          response: [SAMPLE_BRANCH],
+        });
+        writeProjectRefFile(workdir, SAMPLE_BRANCH.project_ref);
+        return Effect.gen(function* () {
+          yield* legacyBranchesList({ projectRef: Option.none() });
+          const success = out.messages.find((m) => m.type === "success");
+          expect(success?.data).toEqual({ branches: [SAMPLE_BRANCH] });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "renders no marker when the active-ref chain (env/project-ref file) resolves to nothing, even though the parent (cache) resolves fine",
+      () => {
+        const { layer, out, workdir } = setup({
+          projectId: Option.none(),
+          response: [SAMPLE_BRANCH],
+        });
+        // Only the cache holds a parent — `resolveOptional` (env/project-ref
+        // file only) never consults it, so the marker chain comes up empty
+        // while the branches call itself still succeeds via the parent chain.
+        writeLinkedProjectCacheFile(workdir, PARENT_REF);
+        return Effect.gen(function* () {
+          yield* legacyBranchesList({ projectRef: Option.none() });
+          expect(out.stdoutText).not.toContain("(active)");
+          expect(out.stdoutText).toContain("feat-1");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live("renders no marker when the linked ref matches no listed branch", () => {
+      const { layer, out } = setup({
+        projectId: Option.some(EXPLICIT_REF),
+        response: [SAMPLE_BRANCH],
+      });
+      return Effect.gen(function* () {
+        yield* legacyBranchesList({ projectRef: Option.none() });
+        expect(out.stdoutText).not.toContain("(active)");
+      }).pipe(Effect.provide(layer));
+    });
+  });
+
   it.live("fails with LegacyBranchesListUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: [] });
     return Effect.gen(function* () {

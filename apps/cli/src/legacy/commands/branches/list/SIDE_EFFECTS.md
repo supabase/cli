@@ -21,6 +21,12 @@
 > ref-shaped. No-op when linked to a real (non-branch) project, since the cache and the
 > `project-ref` file then hold the same ref (CLI-2167 follow-up, TS-only divergence).
 
+> Pretty-table rendering ALSO makes its own independent, soft read of `<workdir>/supabase/.temp/project-ref`
+> (`LegacyProjectRefResolver.resolveOptional`: env → file, never a prompt, never a failure) to find
+> the CURRENTLY linked ref (which may be a branch ref) for the `(active)` marker below — separate
+> from, and unconditional on, the PARENT-scoped `ref` resolution above. Missing/unreadable → no
+> marker, never an error (CLI-2167 follow-up, TS-only).
+
 ## Files Written
 
 | Path                                             | Format | When                                                                     |
@@ -70,6 +76,12 @@ The legacy `--output {pretty,json,yaml,toml,env}` flag (Go-compatible) and the n
 ### `--output pretty` (Go default) / `--output-format text`
 
 Prints a Glamour-styled markdown table with columns `ID`, `NAME`, `DEFAULT`, `GIT BRANCH`, `WITH DATA`, `STATUS`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Byte-matched against the Go CLI.
+
+TS-only QoL (CLI-2167 follow-up, no Go counterpart): the row whose `project_ref` matches the
+CURRENTLY linked ref renders its NAME cell as `<name> (active)` — mirrors `next/`'s
+`branches list` convention. Pretty-table only; never applies to `--output json|yaml|toml` or
+`--output-format json|stream-json`, which stay byte-identical (no `active` field is added there,
+unlike `next/`'s JSON payload).
 
 ### `--output json` (Go-compat)
 
