@@ -46,7 +46,14 @@ import type { ProcessControl } from "../../src/shared/runtime/process-control.se
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
-import { mockAnalytics, mockProcessControl, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
+import {
+  mockAnalytics,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+  processEnvLayer,
+} from "./mocks.ts";
 
 // ---------------------------------------------------------------------------
 // Constants — Go-parity test fixtures used across every native-port integration
@@ -642,8 +649,17 @@ export function mockLegacyPlatformApiService(
     },
   });
 
+  // The legacy shell is a Go-parity port and only calls v1 operations, so v2
+  // has no stub support — any v2 call from legacy code is a wiring bug.
+  const v2Proxy = new Proxy({} as ApiClient["v2"], {
+    get(_target, prop: string) {
+      return () => Effect.die(`Unmocked LegacyPlatformApi.v2.${prop}`);
+    },
+  });
+
   const layer = Layer.succeed(LegacyPlatformApi, {
     v1: v1Proxy,
+    v2: v2Proxy,
     // Direct-service consumers don't exercise the raw-execute escape hatch.
     executeRaw: () => Effect.die("Unmocked LegacyPlatformApi.executeRaw"),
   } as ApiClient);
@@ -680,6 +696,26 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
       return root;
     },
   };
+}
+
+/**
+ * Ambient isolation for tests that construct the REAL `legacyCliConfigLayer` /
+ * `legacyCredentialsLayer` (directly or inside a command runtime layer) against
+ * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and
+ * `<homeDir>/.supabase/access-token`, resolving `SUPABASE_HOME` /
+ * `SUPABASE_PROFILE` from the raw process env — so both the home directory and
+ * the env must be pinned or stale files and ambient variables on the host
+ * machine leak into the test.
+ *
+ * Point `homeDir` at a per-test temp dir (see {@link useLegacyTempWorkdir});
+ * `env` replaces the entire ambient env for the layer's lifetime, so list every
+ * variable the test needs (e.g. `SUPABASE_ACCESS_TOKEN`, `SUPABASE_NO_KEYRING`).
+ */
+export function legacyIsolatedHomeLayer(
+  homeDir: string,
+  env: Readonly<Record<string, string | undefined>> = {},
+): Layer.Layer<RuntimeInfo> {
+  return Layer.mergeAll(mockRuntimeInfo({ homeDir }), processEnvLayer(env));
 }
 
 // ---------------------------------------------------------------------------
@@ -768,17 +804,34 @@ const LEGACY_SHADOW_STARTING_STATE =
  * scenarios never exercised. Defaulting both to `false` keeps every existing caller
  * (`pull.integration.test.ts`, `declarative.orchestrate.integration.test.ts`,
  * `diff.integration.test.ts`) byte-identical.
+ *
+ * `dbNotRunning`/`dbInspectFailsWith` (CLI-1968) fake the SEPARATE `docker container inspect
+ * supabase_db_<projectId>` probe `legacyIsLocalDbRunning` issues before `--use-pgadmin`
+ * provisions anything — distinguished from the shadow's own `container inspect <64-hex-id>`
+ * health probe by the target id's `supabase_db_` prefix, so both options leave the shadow's
+ * own health check on its normal (healthy/never-healthy) path. `dbNotRunning` reports the
+ * Go/Docker "container doesn't exist" shape (`legacyIsContainerNotFoundMessage`); mutually
+ * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
+ * (`legacyIsDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
+ * that sets both throws immediately, rather than one option silently winning).
  */
 export function mockLegacyShadowContainerCliSpawner(
   opts: {
     readonly neverHealthy?: boolean;
     readonly failCreate?: boolean;
     readonly failRemove?: boolean;
+    readonly dbNotRunning?: boolean;
+    readonly dbInspectFailsWith?: string;
   } = {},
 ): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly spawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
 } {
+  if (opts.dbNotRunning === true && opts.dbInspectFailsWith !== undefined) {
+    throw new Error(
+      "mockLegacyShadowContainerCliSpawner: dbNotRunning and dbInspectFailsWith are mutually exclusive",
+    );
+  }
   const neverHealthy = opts.neverHealthy ?? false;
   const failCreate = opts.failCreate ?? false;
   const failRemove = opts.failRemove ?? false;
@@ -802,6 +855,30 @@ export function mockLegacyShadowContainerCliSpawner(
               }),
             ),
           );
+        }
+        const isLocalDbInspect =
+          args[0] === "container" &&
+          args[1] === "inspect" &&
+          (args[2] ?? "").startsWith("supabase_db_");
+        if (
+          isLocalDbInspect &&
+          (opts.dbNotRunning === true || opts.dbInspectFailsWith !== undefined)
+        ) {
+          const stderrText =
+            opts.dbInspectFailsWith ?? `Error response from daemon: No such container: ${args[2]}`;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+            stdout: Stream.empty,
+            stderr: Stream.fromIterable([encoder.encode(stderrText)]),
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
         }
         let stdoutLines: ReadonlyArray<string> = [];
         let stderrLines: ReadonlyArray<string> = [];

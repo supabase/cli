@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { candidateCleanupTargets } from "./cleanup.ts";
+import { basename, dirname, join } from "node:path";
+import { candidateCleanupTargets, cleanupAutoManagedPaths } from "./cleanup.ts";
 import { dockerContainerName } from "./CleanupTargets.ts";
 import { runForegroundOperation, type StackHandle } from "./createStack.ts";
 import { StackReadinessError } from "./errors.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
-import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
+import {
+  DEFAULT_MANAGED_STACK_NAME,
+  projectKeyForProjectDir,
+  shortTempPrefixRoot,
+} from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
 import type {
   AuthConfig,
@@ -351,6 +355,27 @@ describe("resolveConfig startup mode", () => {
   it("preserves an explicit lazy startup mode", async () => {
     const config = await resolveConfig({ startupMode: "lazy" });
     expect(config.startupMode).toBe("lazy");
+  });
+});
+
+describe("resolveConfig state roots", () => {
+  it("uses disposable temporary roots when direct callers omit them", async () => {
+    const config = await resolveConfig({ startupMode: "lazy" });
+
+    try {
+      expect(config.autoManagedPaths).toEqual([config.stackRoot, config.runtimeRoot]);
+      expect(dirname(config.stackRoot)).toBe(shortTempPrefixRoot());
+      expect(dirname(config.runtimeRoot)).toBe(shortTempPrefixRoot());
+      expect(basename(config.stackRoot)).toMatch(/^sb-stack-/);
+      expect(basename(config.runtimeRoot)).toMatch(/^sb-run-/);
+      expect(existsSync(config.stackRoot)).toBe(true);
+      expect(existsSync(config.runtimeRoot)).toBe(true);
+    } finally {
+      cleanupAutoManagedPaths(config);
+    }
+
+    expect(existsSync(config.stackRoot)).toBe(false);
+    expect(existsSync(config.runtimeRoot)).toBe(false);
   });
 });
 

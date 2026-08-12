@@ -25,6 +25,8 @@ jobs:
       - name: Regenerate API package
         run: pnpm generate
         working-directory: packages/api
+        env:
+          SUPABASE_API_URL: https://api.supabase.com
 
       - name: Format API package
         run: pnpm exec nx run @supabase/api:fmt:fix
@@ -32,7 +34,7 @@ jobs:
       - name: Check for generated changes
         id: check
         run: |
-          if git diff --ignore-space-at-eol --exit-code --quiet packages/api/src/generated; then
+          if git diff --ignore-space-at-eol --exit-code --quiet packages/api/src/generated packages/api/scripts/openapi-source.json; then
             echo "No generated changes detected."
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
           else
@@ -61,7 +63,7 @@ jobs:
           body: |
             This PR was automatically created to sync the generated `@supabase/api` package with the latest Management API OpenAPI document.
 
-            Changes were detected in the upstream OpenAPI document exposed by `https://api.supabase.com/api/v1-json`.
+            Changes were detected in the upstream OpenAPI documents exposed by `https://api.supabase.com/api/v1-json` and `https://api.supabase.com/api/v2-json`.
           branch: sync/api-package
           base: develop
 

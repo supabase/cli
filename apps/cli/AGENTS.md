@@ -34,6 +34,32 @@ Both call `runCli(root)` from `shared/cli/run.ts`.
 
 ---
 
+## Legacy Port Status and Go CLI Authority
+
+`src/legacy/` started as a from-scratch 1:1 port of the Go CLI (`apps/cli-go/`) and is now largely
+there: see [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+for the live per-command tracker. As of writing, 95 of 103 legacy leaf commands are natively ported;
+only a small residual set is still a Phase 0 proxy to the Go binary.
+
+This changes what "Go CLI is authoritative" means day to day. `apps/cli-go/` is required reading
+only when:
+
+- Working on one of the remaining Phase 0 wrapped commands — maintaining its command/flag
+  definition and proxy handler (these gate which invocations reach the Go binary and must still
+  match it exactly) or replacing the wrapper with a native implementation, or
+- Changing something on an already-ported command's established parity surface: command/flag
+  names, stdout/stderr text, exit codes, all documented side effects (filesystem, database,
+  Docker/subprocess, API requests), or telemetry semantics (which events fire, when, and their
+  payload shape).
+
+For everything else in `src/legacy/` — bug fixes that don't touch that surface, internal refactors,
+hoisting shared helpers, adding a documented TS-only flag/feature, tests, tooling — treat it like any
+other TypeScript workspace. Go behavior is not the deciding standard, and there's no need to consult
+`apps/cli-go/`. See [ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md)
+for the full rationale.
+
+---
+
 ## Learning more about the "effect" library
 
 This project uses **Effect V4**. The full source code for the `effect` library is in `.repos/effect/`.
@@ -103,7 +129,16 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 ## Phase 0: Go Binary Wrapper
 
-Before any command is natively implemented in TypeScript, the first step for each command is to **wrap** it: define the command in the TS command tree and proxy all invocations to the bundled Go binary via subprocess.
+This phase is now the exception, not the default: only the commands listed as `wrapped` in the
+[Legacy Shell Command Status table](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+still need it. A Go CLI command that exists in `apps/cli-go/` but has no TS surface yet is rare at
+this point in the port; when one does show up, the first step is to **wrap** it: define the command
+in the TS command tree and proxy all invocations to the bundled Go binary via subprocess. Wrapping
+only works for a command the Go CLI already implements — there is nothing to proxy to otherwise. A
+genuinely TS-only addition with no Go equivalent (for example a TS-only flag on an already-ported
+command, per the "Flag divergences from the Go reference" list in
+[`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md)) is implemented natively and does
+not go through Phase 0 at all.
 
 ### Proxy handler pattern
 
@@ -256,6 +291,15 @@ The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility 
 
 When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `apps/cli-go/` and match it exactly.
 
+This contract governs behavior a command has already established — it does not mean every change in
+`src/legacy/` requires consulting Go. It applies when working on one of the remaining Phase 0
+wrapped commands (its command/flag definition or its native replacement), or changing an
+already-ported command in a way that could affect the surface above — which, per each command's
+`SIDE_EFFECTS.md`, also includes database mutations and Docker/subprocess behavior, and per the
+Telemetry Parity section below also includes which events fire and when, not just payload shape. It
+does not apply to internal refactors, TS-only additions, or bug fixes that leave that surface
+unchanged — see [Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority).
+
 ---
 
 ## Legacy Port: Go Parity Checklist
@@ -362,10 +406,11 @@ export class LegacyThingMissingError extends Data.TaggedError("LegacyThingMissin
 - **Nothing user-controlled may appear in a declaration.** The result is sent to PostHog, so no paths, SQL, project refs, hostnames, URLs, tokens, or response bodies — only closed enum values.
 - **Split materially different causes with `fingerprint_suffix`**, choosing a value from `CLI_ERROR_FINGERPRINT_SUFFIXES` (module-private — extend it in place), so unrelated failures sharing one class do not group together as repeats.
 - **An instance-dependent getter must stay valid when its fields are absent** — the drift guard evaluates it against a field-less probe.
+- **A plain `Error` subclass (no `_tag`) also declares its fingerprint identifier**: `static readonly [ErrorActionabilityFingerprintId] = "<ExportName>"`, matching the export name exactly. Tagged errors skip this — their fingerprint comes from the tag. The static identifier is what keeps `error:` fingerprints stable in minified release builds, where `constructor.name` is renamed.
 
 **Errors defined outside `apps/cli/src`** (`@supabase/stack`, `@supabase/config`, `@supabase/process-compose`, `@supabase/api`, `effect`) cannot carry a declaration. Add a structural adapter keyed by `_tag` to `externalActionabilityByTag` in that same module, branching on the producer's typed fields.
 
-`error-actionability-coverage.unit.test.ts` enforces this. It scans every `TaggedError("Tag")`, every `*Error("Tag")` factory, and every `class X extends Error` under `apps/cli/src`, and fails when a class is unexported or has no own declaration. A failure there is the guard working: classify the new error rather than loosening the guard, because `unknown` in production telemetry must mean a genuinely unforeseen failure, not one nobody categorized.
+`error-actionability-coverage.unit.test.ts` enforces this. It scans every `TaggedError("Tag")`, every `*Error("Tag")` factory, and every `class X extends Error` under `apps/cli/src`, and fails when a class is unexported, has no own declaration, or is untagged without its matching static fingerprint identifier. A failure there is the guard working: classify the new error rather than loosening the guard, because `unknown` in production telemetry must mean a genuinely unforeseen failure, not one nobody categorized.
 
 ---
 
@@ -457,6 +502,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - If a test needs multiple service replacements or `Layer.mergeAll(...)`, it likely belongs in `*.integration.test.ts`.
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
+- **Hermeticity:** a test whose layer graph includes a real filesystem (`BunServices.layer`) and code that reads or writes under `RuntimeInfo.homeDir` or `TelemetryRuntime.configDir` must pin those paths to a per-test temp dir — never rely on the mock defaults (`mockRuntimeInfo` / `mockTelemetryRuntime` default to a path that is intentionally never created). Use `useLegacyTempWorkdir` for the temp dir, and `legacyIsolatedHomeLayer` (in `tests/helpers/legacy-mocks.ts`) when the test builds the real `legacyCliConfigLayer` / `legacyCredentialsLayer`, since those also resolve `SUPABASE_HOME` / `SUPABASE_PROFILE` / tokens from ambient `process.env`.
 - **Forbidden pattern (do not add):** spawning the CLI to assert that `--help` renders a flag. Help text is dynamic over flag wiring and is exercised by the integration test's flag parser. The two backups e2e files removed alongside this guidance update are the canonical example of what not to write.
 
 ### Live tests (`*.live.test.ts`)
@@ -510,4 +556,13 @@ bun run --parallel "*:check"
 
 ### `apps/cli-go/`
 
-The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly. Exception: `internal/start` (Go's `supabase start`) was deleted outright as unreachable once ported (CLI-1966) — for that command, the last commit with the source intact (`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative reference instead.
+The [old Supabase CLI](https://github.com/supabase/cli) written in Go. Use this as the authoritative
+source, matched exactly, when working on one of the remaining wrapped commands (maintaining its
+command/flag definition, or replacing the wrapper with native TS), or when changing an
+already-ported legacy command's established output/flags/behavior/side-effects. It is not required
+reading for other legacy-shell work — see
+[Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority) and
+[ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md). Exception:
+`internal/start` (Go's `supabase start`) was deleted outright as unreachable once ported (CLI-1966)
+— for that command, the last commit with the source intact
+(`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative reference instead.

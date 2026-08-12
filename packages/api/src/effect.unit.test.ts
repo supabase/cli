@@ -442,6 +442,75 @@ describe("makeApiClient", () => {
     ]);
   });
 
+  test("addresses same-named v1 and v2 operations independently by namespace", async () => {
+    const seenRequests: Array<{ method: string; url: string }> = [];
+
+    const client = await Effect.runPromise(
+      makeApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenRequests.push({
+              method: request.method,
+              url: request.url,
+            });
+
+            if (request.url === "https://api.supabase.com/v1/organizations/my-org/members") {
+              return Effect.succeed(
+                jsonResponse(request, 200, [
+                  {
+                    user_id: "user-id",
+                    user_name: "user-name",
+                    role_name: "Owner",
+                    mfa_enabled: false,
+                    avatar_url: null,
+                  },
+                ]),
+              );
+            }
+
+            return Effect.succeed(
+              jsonResponse(request, 200, {
+                data: [],
+                links: { prev: null, next: null },
+              }),
+            );
+          }),
+        ),
+      ),
+    );
+
+    expect(typeof client.v1.listOrganizationMembers).toBe("function");
+    expect(typeof client.v2.listOrganizationMembers).toBe("function");
+
+    const v1Members = await Effect.runPromise(
+      client.v1.listOrganizationMembers({ slug: "my-org" }),
+    );
+    const v2Members = await Effect.runPromise(
+      client.v2.listOrganizationMembers({ slug: "my-org" }),
+    );
+
+    expect(v1Members).toEqual([
+      {
+        user_id: "user-id",
+        user_name: "user-name",
+        role_name: "Owner",
+        mfa_enabled: false,
+        avatar_url: null,
+      },
+    ]);
+    expect(v2Members.data).toEqual([]);
+    expect(seenRequests).toEqual([
+      {
+        method: "GET",
+        url: "https://api.supabase.com/v1/organizations/my-org/members",
+      },
+      {
+        method: "GET",
+        url: "https://api.supabase.com/v2/organizations/my-org/members",
+      },
+    ]);
+  });
+
   test("serializes generated binary methods through the effect facade", async () => {
     let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
 

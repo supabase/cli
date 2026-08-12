@@ -37,7 +37,15 @@ function makeLayer(opts: {
     Layer.provide(Layer.succeed(LegacyProfileFlag, profileFlag)),
     Layer.provide(Layer.succeed(LegacyWorkdirFlag, workdirFlag)),
     Layer.provide(Layer.succeed(CliArgs, { args: opts.argv ?? [] })),
-    Layer.provide(mockRuntimeInfo({ cwd: opts.cwd ?? "/test/cwd", homeDir: opts.home })),
+    // The layer reads `<homeDir>/.supabase/profile` through the real BunServices
+    // filesystem, so homeDir must default to a per-test directory — a shared
+    // fixed path would leak stale profile files between runs and machines.
+    Layer.provide(
+      mockRuntimeInfo({
+        cwd: opts.cwd ?? "/test/cwd",
+        homeDir: opts.home ?? join(tempRoot, "home"),
+      }),
+    ),
     Layer.provide(BunServices.layer),
     Layer.provide(processEnvLayer(opts.env ?? {})),
   );

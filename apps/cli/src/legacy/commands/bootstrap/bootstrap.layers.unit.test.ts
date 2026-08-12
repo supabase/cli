@@ -19,20 +19,20 @@ import {
   mockBrowser,
   mockOutput,
   mockProcessControl,
-  mockRuntimeInfo,
   mockStdin,
   mockTelemetryRuntime,
   mockTty,
-  processEnvLayer,
 } from "../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_TOKEN,
+  legacyIsolatedHomeLayer,
   mockLegacyCliConfig,
   mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheLayer,
   mockLegacyLoginApi,
   mockLegacyLoginCrypto,
   mockLegacyTelemetryStateLayer,
+  useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -52,6 +52,8 @@ import { LegacyIdentityStitch } from "../../shared/legacy-identity-stitch.ts";
 import { LegacyTemplateService } from "./bootstrap.templates.ts";
 
 import { legacyBootstrapRuntimeLayer } from "./bootstrap.layers.ts";
+
+const tempRoot = useLegacyTempWorkdir("supabase-bootstrap-layers-");
 
 /**
  * Stub layer satisfying every external service required by
@@ -102,7 +104,13 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    mockRuntimeInfo(),
+    // The runtime layer under test builds the REAL legacyCliConfigLayer against
+    // the real filesystem — see legacyIsolatedHomeLayer's docs. Bootstrap's
+    // legacyPlatformApiLayer additionally eagerly validates the access token at
+    // layer-construction time, so inject a valid token via the isolated env —
+    // the same mechanism the cli-e2e harness uses (SUPABASE_ACCESS_TOKEN env
+    // var, legacy CLAUDE.md item 4 dual-mode profile).
+    legacyIsolatedHomeLayer(tempRoot.current, { SUPABASE_ACCESS_TOKEN: LEGACY_VALID_TOKEN }),
     mockTty(),
     mockProcessControl().layer,
     mockBrowser(),
@@ -111,13 +119,6 @@ function ambientStubs() {
     mockTelemetryRuntime(),
     out.layer,
     flagLayers,
-    // Bootstrap's legacyPlatformApiLayer eagerly validates the access token at
-    // layer-construction time. Inject a valid token via the environment so the
-    // real legacyCliConfigLayer (built inside the bootstrap runtime) finds it —
-    // matching the same mechanism the cli-e2e harness uses (SUPABASE_ACCESS_TOKEN
-    // env var, legacy CLAUDE.md item 4 dual-mode profile). The processEnvLayer
-    // isolates the env mutation to this test's scope.
-    processEnvLayer({ SUPABASE_ACCESS_TOKEN: LEGACY_VALID_TOKEN }),
     mockLegacyCliConfig({ workdir: "/tmp/bootstrap-layers-test" }),
     mockLegacyCredentialsLayer,
     mockLegacyLinkedProjectCacheLayer,

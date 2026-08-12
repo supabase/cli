@@ -200,12 +200,18 @@ export function normalizeCliError(
     const code = rawCode === "UnknownSubcomand" ? "UnknownSubcommand" : rawCode;
     const message = readString(error, "message") ?? readString(error, "detail") ?? code;
     const detail = readString(error, "detail");
-    const suggestion = readString(error, "suggestion");
+    // Raw read: some producers' suggestion text is meaningful leading/trailing
+    // whitespace, not incidental — e.g. `suggestLegacyBundle`'s Go-parity
+    // string (`shared/functions/download.ts`) starts with `\n` to reproduce
+    // Go's blank separator line before the hint (`cmd/root.go:301-302`,
+    // `Fprintln(os.Stderr, CmdSuggestion)`). `readString` would trim exactly
+    // that away.
+    const suggestion = readRawString(error, "suggestion");
     return {
       code,
       message,
       ...(detail && detail !== message ? { detail } : {}),
-      ...(suggestion ? { suggestion } : {}),
+      ...(suggestion !== undefined && suggestion.length > 0 ? { suggestion } : {}),
     };
   }
 

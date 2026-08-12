@@ -1,6 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { Effect, Exit, Layer, Option, Stdio } from "effect";
 
 import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -19,8 +20,11 @@ import {
   deployFunctions,
   shouldChmodBundleOutputDirectory,
 } from "../../../../shared/functions/deploy.ts";
+import { toDockerPath } from "../../../../shared/functions/functions-docker.ts";
+import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import {
   ConflictingFunctionDeployFlagsError,
+  InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "../../../../shared/functions/deploy.errors.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
@@ -62,6 +66,37 @@ async function writeLocalFunction(
 // only when stderr supports color, so byte-assertions normalize first.
 // eslint-disable-next-line no-control-regex
 const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+
+function resolveDockerOutputPath(args: ReadonlyArray<string>): string {
+  const outputIndex = args.indexOf("--output");
+  if (outputIndex < 0 || args[outputIndex + 1] === undefined) {
+    throw new Error("missing docker bundle output flag");
+  }
+  return args[outputIndex + 1]!;
+}
+
+/**
+ * Every `docker image inspect` call is a cache hit (exit 0) — no real pull,
+ * no real registry candidate fallback (that path has its own coverage in
+ * `functions/download`'s integration tests) — and every `docker run`
+ * synthesizes the eszip the bundler container would otherwise have produced,
+ * so `bundleFunctionWithDocker` can read it back and complete the deploy.
+ */
+function mockDockerBundleSpawner() {
+  const spawnerOpts: {
+    exitCode?: number;
+    onSpawn?: (record: { command: string; args: ReadonlyArray<string> }) => void;
+  } = { exitCode: 0 };
+  spawnerOpts.onSpawn = (record) => {
+    if (record.command !== "docker" || record.args[0] !== "run") {
+      return;
+    }
+    const outputPath = resolveDockerOutputPath(record.args);
+    mkdirSync(dirname(outputPath), { recursive: true });
+    writeFileSync(outputPath, "eszip-test-output");
+  };
+  return mockChildProcessSpawner(spawnerOpts);
+}
 
 describe("legacy functions deploy", () => {
   it.live("deploys a function natively through the Management API", () => {
@@ -1167,7 +1202,7 @@ describe("legacy functions deploy", () => {
             projectRoot: tempRoot.current,
             supabaseDir: join(tempRoot.current, "supabase"),
             dashboardUrl: "https://supabase.com/dashboard",
-            goViperCompat: true,
+            goConfigCompat: legacyFunctionsGoConfigCompat,
             yes: false,
             rawArgs: ["functions", "deploy"],
             edgeRuntimeVersion: "1.69.12",
@@ -1212,6 +1247,547 @@ describe("legacy functions deploy", () => {
         expect(error.message).toBe(
           "No Functions specified or found in <sgr>supabase/functions</sgr>",
         );
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+  });
+
+  describe("Config.Validate parity (CLI-1963)", () => {
+    it.live(
+      "fails before any Docker/API work when config.toml has an explicit empty project_id",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current, 'project_id = ""\n'));
+          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+          const error = yield* legacyFunctionsDeploy(baseFlags).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toBe("Missing required field in config: project_id");
+          expect(api.requests).toEqual([]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "fails before any Docker/API work on an unrelated Config.Validate branch (unsupported Postgres major version)",
+      () => {
+        // Proves the WHOLE resolved config is validated, not just `project_id`
+        // — `db.major_version = 12` is a genuinely unrelated Go `Config.Validate`
+        // branch (`config.go:1034-1062`).
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            writeProjectConfig(
+              tempRoot.current,
+              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
+            ),
+          );
+          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+          const error = yield* legacyFunctionsDeploy(baseFlags).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toBe(
+            "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+          );
+          expect(api.requests).toEqual([]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "reports a Config.Validate failure before an invalid slug's format error, matching Go's flags.LoadConfig-before-slug-validation order (deploy.go:22-28)",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockLegacyPlatformApi();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current, 'project_id = ""\n'));
+
+          const error = yield* legacyFunctionsDeploy({
+            ...baseFlags,
+            functionNames: ["1-invalid-slug"],
+          }).pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(Error);
+          expect((error as Error).message).toBe("Missing required field in config: project_id");
+          expect(api.requests).toEqual([]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+        );
+      },
+    );
+
+    it.live("still rejects an invalid slug once the config itself is valid", () => {
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi();
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "1-invalid-slug"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+
+        const error = yield* legacyFunctionsDeploy({
+          ...baseFlags,
+          functionNames: ["1-invalid-slug"],
+        }).pipe(Effect.flip);
+
+        expect(error).toBeInstanceOf(InvalidFunctionDeploySlugError);
+        expect(api.requests).toEqual([]);
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+        ),
+      );
+    });
+  });
+
+  describe("Docker bundling path Go-parity config/env wiring (CLI-1963)", () => {
+    function mockFunctionCreateApi() {
+      return mockLegacyPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(legacyJsonResponse(request, 200, []));
+          }
+          return Effect.succeed(
+            legacyJsonResponse(request, 201, {
+              id: "function-id",
+              slug: "hello-world",
+              name: "hello-world",
+              status: "ACTIVE",
+              version: 1,
+              created_at: 1_687_423_025_152,
+              updated_at: 1_687_423_025_152,
+              verify_jwt: true,
+              import_map: false,
+              entrypoint_path: "functions/hello-world/index.ts",
+            }),
+          );
+        },
+      });
+    }
+
+    it.live(
+      "resolves the deno v1 edge-runtime image tag when SUPABASE_EDGE_RUNTIME_DENO_VERSION=1 overrides an unset config value",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockFunctionCreateApi();
+        const child = mockDockerBundleSpawner();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          }),
+        );
+
+        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+          // `docker info` is spawned[0]; the bundler's first image-inspect
+          // candidate (a cache hit here) is spawned[1].
+          expect(child.spawned[1]).toEqual({
+            command: "docker",
+            args: ["image", "inspect", "public.ecr.aws/supabase/edge-runtime:v1.68.4"],
+          });
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+              } else {
+                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "uses SUPABASE_NETWORK_ID as the bundler's docker network when no --network-id flag is passed",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockFunctionCreateApi();
+        const child = mockDockerBundleSpawner();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          }),
+        );
+
+        const previous = process.env["SUPABASE_NETWORK_ID"];
+        process.env["SUPABASE_NETWORK_ID"] = "env-network";
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+          expect(child.spawned[2]).toEqual({
+            command: "docker",
+            args: ["network", "inspect", "env-network"],
+          });
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args).toContain("env-network");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_NETWORK_ID"];
+              } else {
+                process.env["SUPABASE_NETWORK_ID"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "prefers an explicit --network-id flag over SUPABASE_NETWORK_ID for the bundler container",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockFunctionCreateApi();
+        const child = mockDockerBundleSpawner();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed([
+              "functions",
+              "deploy",
+              "hello-world",
+              "--use-api=false",
+              "--network-id",
+              "flag-network",
+            ]),
+          }),
+        );
+
+        const previous = process.env["SUPABASE_NETWORK_ID"];
+        process.env["SUPABASE_NETWORK_ID"] = "env-network";
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+          expect(child.spawned[2]).toEqual({
+            command: "docker",
+            args: ["network", "inspect", "flag-network"],
+          });
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args).toContain("flag-network");
+          expect(runCommand?.args).not.toContain("env-network");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_NETWORK_ID"];
+              } else {
+                process.env["SUPABASE_NETWORK_ID"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "labels the bundler container with the resolved project id (Go parity: docker.go:349-386)",
+      () => {
+        const out = mockOutput({ format: "text" });
+        const api = mockFunctionCreateApi();
+        const child = mockDockerBundleSpawner();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+            runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            writeProjectConfig(tempRoot.current, 'project_id = "test-project"\n'),
+          );
+          yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args).toEqual(
+            expect.arrayContaining([
+              "--label",
+              "com.supabase.cli.project=test-project",
+              "--label",
+              "com.docker.compose.project=test-project",
+            ]),
+          );
+          // Adjacent pairs, not merely present anywhere in argv —
+          // `buildFunctionsDockerRunArgs` emits the two `--label KEY=VALUE`
+          // pairs back-to-back, immediately before the image.
+          const cliLabelIndex = runCommand?.args.indexOf("--label") ?? -1;
+          expect(runCommand?.args.slice(cliLabelIndex, cliLabelIndex + 4)).toEqual([
+            "--label",
+            "com.supabase.cli.project=test-project",
+            "--label",
+            "com.docker.compose.project=test-project",
+          ]);
+          // `-w <toDockerPath(projectRoot)>` — Go's bundler sets WorkingDir to
+          // the post-ChangeWorkDir cwd (`bundle.go:79`), which
+          // `deploy.ts`/`deploy.handler.ts` resolve to `cliConfig.workdir`,
+          // i.e. `tempRoot.current` in this test.
+          const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
+          expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
+            "-w",
+            toDockerPath(tempRoot.current),
+          ]);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+        );
+      },
+    );
+
+    it.live(
+      "does not climb to an ancestor project's config.toml for the Docker bundling path",
+      () => {
+        // Go's `flags.LoadConfig` only ever resolves `supabase/config.toml`
+        // from the already-resolved workdir, with no ancestor climb
+        // (`NewPathBuilder`, `pkg/config/utils.go:43-48`) — mirrored by
+        // `loadFunctionsProjectConfig`'s `search: false` (a real behavior
+        // change: deploy did NOT have this before CLI-1963, unlike download).
+        const nestedWorkdir = join(tempRoot.current, "nested");
+        const out = mockOutput({ format: "text" });
+        const api = mockFunctionCreateApi();
+        const child = mockDockerBundleSpawner();
+        const layer = Layer.mergeAll(
+          buildLegacyTestRuntime({
+            out,
+            api,
+            cliConfig: mockLegacyCliConfig({ workdir: nestedWorkdir }),
+            runtimeInfo: mockRuntimeInfo({ cwd: nestedWorkdir }),
+          }),
+          Layer.succeed(LegacyYesFlag, false),
+          child.layer,
+          Stdio.layerTest({
+            args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+          }),
+        );
+
+        return Effect.gen(function* () {
+          yield* Effect.tryPromise(() =>
+            writeProjectConfig(tempRoot.current, 'project_id = "ancestor-project"\n'),
+          );
+          yield* Effect.tryPromise(() => writeLocalFunction(nestedWorkdir, "hello-world"));
+
+          yield* legacyFunctionsDeploy({ ...baseFlags, useApi: false, useDocker: true });
+
+          expect(child.spawned[2]).toEqual({
+            command: "docker",
+            args: ["network", "inspect", "supabase_network_abcdefghijklmnopqrst"],
+          });
+          const runCommand = child.spawned.find((spawned) => spawned.args[0] === "run");
+          expect(runCommand?.args).toContain("supabase_network_abcdefghijklmnopqrst");
+          expect(runCommand?.args).not.toContain("supabase_network_ancestor-project");
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.tryPromise(() => rm(tempRoot.current, { recursive: true, force: true })),
+          ),
+        );
+      },
+    );
+  });
+
+  describe("docker-not-running warning styling (Go parity: deploy.go:60; only WARNING: is styled)", () => {
+    it.live("wraps only the WARNING token, not the rest of the fallback line", () => {
+      // Calls the shared `deployFunctions` with a marker `styleWarning` instead
+      // of going through `legacyFunctionsDeploy`: the real hook (`legacyYellow`)
+      // is TTY-gated and therefore inert under vitest, so only an injected
+      // marker can deterministically observe styling scope — same pattern as
+      // the "no-functions error styling" block above.
+      const out = mockOutput({ format: "text" });
+      const api = mockLegacyPlatformApi({
+        handler: (request) => {
+          if (request.method === "GET") {
+            return Effect.succeed(legacyJsonResponse(request, 200, []));
+          }
+          return Effect.succeed(
+            legacyJsonResponse(request, 201, {
+              id: "function-id",
+              slug: "hello-world",
+              name: "hello-world",
+              status: "ACTIVE",
+              version: 1,
+              created_at: 1_687_423_025_152,
+              updated_at: 1_687_423_025_152,
+              verify_jwt: true,
+              import_map: false,
+              entrypoint_path: "functions/hello-world/index.ts",
+            }),
+          );
+        },
+      });
+      const child = mockChildProcessSpawner({ exitCode: 1 });
+      const layer = Layer.mergeAll(
+        buildLegacyTestRuntime({
+          out,
+          api,
+          cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
+          runtimeInfo: mockRuntimeInfo({ cwd: tempRoot.current }),
+        }),
+        Layer.succeed(LegacyYesFlag, false),
+        child.layer,
+        Stdio.layerTest({
+          args: Effect.succeed(["functions", "deploy", "hello-world", "--use-api=false"]),
+        }),
+      );
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeProjectConfig(tempRoot.current));
+        yield* Effect.tryPromise(() => writeLocalFunction(tempRoot.current, "hello-world"));
+
+        const platformApi = yield* LegacyPlatformApi;
+        yield* deployFunctions(
+          { ...baseFlags, useApi: false, useDocker: true },
+          {
+            api: platformApi,
+            cwd: tempRoot.current,
+            flagCwd: tempRoot.current,
+            projectRoot: tempRoot.current,
+            supabaseDir: join(tempRoot.current, "supabase"),
+            dashboardUrl: "https://supabase.com/dashboard",
+            goConfigCompat: legacyFunctionsGoConfigCompat,
+            yes: false,
+            rawArgs: ["functions", "deploy", "hello-world", "--use-api=false"],
+            edgeRuntimeVersion: "1.69.12",
+            resolveProjectRef: () => Effect.succeed("abcdefghijklmnopqrst"),
+            styleWarning: (text) => `<warn>${text}</warn>`,
+          },
+        );
+
+        expect(out.stderrText).toContain("<warn>WARNING:</warn> Docker is not running\n");
       }).pipe(
         Effect.provide(layer),
         Effect.ensuring(

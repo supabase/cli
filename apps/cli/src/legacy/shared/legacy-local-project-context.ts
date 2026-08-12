@@ -54,13 +54,16 @@ export interface LegacyLocalProjectContext {
 export const legacyLoadLocalProjectContext = <E>(
   workdir: string,
   mapConfigLoadError: (message: string) => E,
-  // The resolved `--linked` ref, when the caller already has one in scope (`db diff`/`db
-  // pull`'s shadow-provisioning prelude — CLI-1956) — threaded straight into
+  // The resolved `--linked`/`--project-ref` ref, when the caller already has one in scope
+  // (`db diff`/`db pull`'s shadow-provisioning prelude — CLI-1956 — and the `functions`
+  // Docker paths' Go-config pipeline — CLI-1963) — threaded straight into
   // `loadProjectConfig`'s own `projectRef` option so the matching `[remotes.<ref>]` block
   // merges over the base config, exactly like `legacyReadDbToml(..., ref)` already does for
-  // those same commands' OTHER config read. `db start`/`db reset` never pass this (neither
-  // operates against a linked target), so it defaults to `undefined` — no remote merge,
-  // unchanged from before.
+  // those same commands' OTHER config read. It also supplies Go's `Eject` default
+  // (`pkg/config/config.go:561-570`): `flags.LoadConfig` pre-sets `Config.ProjectId =
+  // ProjectRef` before merging the file, so `Eject`'s own basename fallback only triggers
+  // when that default is itself empty. `db start`/`db reset`/`start`/`stop`/`status` never
+  // pass this, so it defaults to `undefined` — no remote merge, unchanged from before.
   projectRef?: string,
 ): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
@@ -198,6 +201,7 @@ export const legacyLoadLocalProjectContext = <E>(
           : (projectEnvValues["SUPABASE_PROJECT_ID"] ?? process.env["SUPABASE_PROJECT_ID"]),
         config.project_id,
         workdir,
+        projectRef,
       ),
     );
 
