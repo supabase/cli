@@ -185,14 +185,19 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       }
       // `--project-ref` never implies `--linked` and must not be silently
       // discarded — see push.handler.ts's identical guard for the full TS-only
-      // rationale. Exception for explicit mode: `--from linked` / `--to linked`
-      // resolves a linked ref (via `resolveRef`'s "linked" case below) without
-      // any `--linked`/target flag at all, so the guard must NOT fire there —
-      // only when NEITHER side is the literal ref "linked" (e.g. plain
-      // `--project-ref X`, or `--from local --to migrations --project-ref X`,
-      // where the flag genuinely goes unused).
+      // rationale. Two exceptions in explicit mode: (1) `--from linked` /
+      // `--to linked` resolves a linked ref (via `resolveRef`'s "linked" case
+      // below) without any `--linked`/target flag at all, so the guard must
+      // NOT fire there — only when NEITHER side is the literal ref "linked"
+      // (e.g. plain `--project-ref X`, or `--from local --to migrations
+      // --project-ref X`, where the flag genuinely goes unused). (2) a changed
+      // `--linked` (even `--linked=false`) genuinely consumes `--project-ref`
+      // via the preflight below, whose `preflightConnType` keys off
+      // `Option.isSome(flags.linked)` regardless of the boolean's value — so
+      // the guard must not fire whenever `--linked` was explicitly set.
       if (
         Option.isSome(flags.projectRef) &&
+        Option.isNone(flags.linked) &&
         legacyClassifyExplicitRef(from) !== "linked" &&
         legacyClassifyExplicitRef(to) !== "linked"
       ) {

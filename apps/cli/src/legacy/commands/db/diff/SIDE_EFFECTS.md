@@ -117,7 +117,7 @@ migra/pg-delta-engine-specific).
 | ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success; empty diff ("No schema changes found")                                                                                                                                                                                              |
 | `1`  | `--from` without `--to`; engine-flag mutex; target mutex; unknown explicit target; connection/shadow/engine failure; file IO error; local db not running (`--use-pgadmin`); differ container non-zero exit; unparseable `--json-diff` output |
-| `1`  | `--project-ref` set with a resolved target other than linked; (in explicit mode) `--project-ref` with neither `--from` nor `--to` being `linked`; `--project-ref` combined with `--use-pg-schema` (see Notes)                                |
+| `1`  | `--project-ref` set with a resolved target other than linked; (in explicit mode) `--project-ref` with `--linked` unchanged and neither `--from` nor `--to` being `linked`; `--project-ref` combined with `--use-pg-schema` (see Notes)       |
 
 ## Output
 
@@ -178,17 +178,20 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   `SUPABASE_PROJECT_ID`, it does not affect the shadow container's project
   id/labels. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target (native mode) is a hard error, as is a plain
-  `--project-ref` with no `--from`/`--to` (defaults to `--local`). The one
-  exception is explicit mode with `--from linked` / `--to linked` — that
-  resolves a linked ref without any target flag at all, so the guard does not
-  fire there; it still fires for e.g. `--from local --to migrations
---project-ref X`, where the flag would otherwise go silently unused
+  `--project-ref` with no `--from`/`--to` (defaults to `--local`). Two
+  exceptions apply in explicit mode: `--from linked` / `--to linked` resolves a
+  linked ref without any target flag at all, so the guard does not fire there;
+  and a changed `--linked` (even `--linked=false`) genuinely consumes
+  `--project-ref` via the preflight, so the guard does not fire whenever
+  `--linked` was explicitly set either. It still fires for e.g. `--from local
+--to migrations --project-ref X` (explicit mode, `--linked` unchanged, and
+  neither side `linked`), where the flag would otherwise go silently unused
   (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent env
   var simply leaves unused on a non-linked target). `--use-pgadmin --linked`
   honors the flag like every other native engine (CLI-1968 — same target
-  resolve); `--use-pg-schema` rejects it up front, since the delegated Go
-  child never registered `--project-ref` and the flag would otherwise be
-  silently dropped.
+  resolve); `--use-pg-schema` rejects it up front, since the delegated Go child
+  never registered `--project-ref` and the flag would otherwise be silently
+  dropped.
 - `--use-pg-schema` rebuilds the argv and exec's the bundled Go binary (its side
   effects are Go's); the Go child's telemetry is disabled so the single
   `cli_command_executed` event comes from this TS command.

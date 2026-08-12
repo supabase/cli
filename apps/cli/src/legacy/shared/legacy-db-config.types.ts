@@ -87,6 +87,18 @@ export interface LegacyDbConfigFlags {
    * tenant ref matches the resolved ref before reusing it, so a stale pooler
    * URL for a DIFFERENT project than the one `--project-ref` now selects fails
    * loudly instead of silently connecting to the wrong project.
+   *
+   * Leaving this unset does NOT, however, confine the eight `db` commands to
+   * the workdir's saved `.temp/pooler-url` on an IPv4-only network: any
+   * explicit `linkedProjectRef` (this flag's own presence, independent of
+   * `adHocProjectRef`) additionally unlocks the Management API pooler-config
+   * fetch (`resolvePoolerConn`'s `fetchFromApi`) whenever that saved URL is
+   * absent or fails the tenant-ref check above — so `--project-ref` against an
+   * unlinked workdir (no saved pooler URL at all) still resolves an IPv4
+   * pooler connection instead of dead-ending in the "run supabase link" IPv6
+   * error. `ignoreSavedUrl` (skip a matching saved URL outright) stays keyed to
+   * `adHocProjectRef` alone, so a `db` command's own linked workdir's saved URL
+   * for the SAME ref is still reused with no API call.
    */
   readonly adHocProjectRef?: boolean;
 }

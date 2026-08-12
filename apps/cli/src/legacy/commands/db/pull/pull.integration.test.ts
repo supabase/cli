@@ -489,6 +489,25 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("rejects --project-ref combined with --experimental before delegating", () => {
+    // The bundled Go binary's own `db pull --experimental` re-resolves the
+    // workdir's own linked ref itself, and `rebuildDelegateArgs` never registered
+    // `--project-ref` to forward — fail up front instead of silently dropping it.
+    const FLAG_REF = "flagflagflagflagflag";
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags({ projectRef: Option.some(FLAG_REF) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
+      );
+      expect(s.proxyCalls).toEqual([]);
+      expect(s.proxyCaptureCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect(
     "a pg-delta plan with transaction boundaries writes one ordered migration file per unit",
     () => {

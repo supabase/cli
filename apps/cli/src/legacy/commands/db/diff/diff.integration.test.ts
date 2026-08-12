@@ -830,6 +830,46 @@ describe("legacy db diff", () => {
   );
 
   it.effect(
+    "explicit --from local --to migrations --linked --project-ref proceeds and applies the flag ref's remote override",
+    () => {
+      // Same `[remotes.staging]` fixture as the `--from linked` case above, but here
+      // it's a changed `--linked` (not a "linked" ref on either side) that resolves the
+      // flag ref via the preflight — `preflightConnType` keys off
+      // `Option.isSome(flags.linked)`, so the guard must not fire and the preflight's
+      // resolved ref must still drive the `[remotes.<ref>]` merge below.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          `project_id = "flagflagflagflagflag"`,
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { isLocal: false, diffSql: "create table m ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(
+          flags({
+            from: Option.some("local"),
+            to: Option.some("migrations"),
+            linked: Option.some(true),
+            projectRef: Option.some("flagflagflagflagflag"),
+          }),
+        );
+        const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
+        expect(createArgs).toContain("--tmpfs");
+        expect(s.cache.cachedRef).toBe("flagflagflagflagflag");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
     "explicit --from local --to migrations --project-ref errors (neither side is linked)",
     () => {
       // Neither side of the explicit cascade is the literal ref "linked", so the

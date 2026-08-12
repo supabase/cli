@@ -324,9 +324,26 @@ export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
   poolerHost: string,
   dnsResolver: "native" | "https",
   passwordFlag: Option.Option<string>,
-  adHocProjectRef = false,
-  resolveVaultSecrets = true,
+  options: {
+    readonly adHocProjectRef?: boolean;
+    readonly resolveVaultSecrets?: boolean;
+    /**
+     * Requests the Management API pooler-config fetch on an IPv4-only network
+     * independent of `adHocProjectRef`'s credential/saved-URL semantics — see
+     * `LegacyDbConfigFlags.linkedProjectRef`'s doc comment. Set when the caller
+     * supplied an explicit ref (`--project-ref`/`--project-id`) rather than
+     * falling back to `.temp/project-ref`, so an unlinked or mismatched-tenant
+     * workdir still reaches the primary pooler config instead of dead-ending in
+     * the "run supabase link" IPv6 error.
+     */
+    readonly fetchPoolerFromApi?: boolean;
+  } = {},
 ) {
+  const {
+    adHocProjectRef = false,
+    resolveVaultSecrets = true,
+    fetchPoolerFromApi = false,
+  } = options;
   const debug = yield* LegacyDebugLogger;
   // Read lazily (per invocation) rather than at layer build, so tests and
   // env-substitution see the current value. For an ad-hoc `--project-id` ref,
@@ -357,14 +374,19 @@ export const legacyResolveLinkedConn = Effect.fnUntraced(function* (
   // Direct host unreachable (IPv6-only network) → try the pooler. For an ad-hoc
   // `--project-id` ref the command already holds a Management API token, so fall
   // back to the API pooler config (and ignore the workdir's saved pooler URL)
-  // rather than failing with the IPv6 "run supabase link" suggestion.
+  // rather than failing with the IPv6 "run supabase link" suggestion. An explicit
+  // `--project-ref` on a non-ad-hoc `db` command keeps `ignoreSavedUrl` at the
+  // saved-URL-first default (the tenant-mismatch check in `poolerConfigFrom` still
+  // rejects a stale saved URL for a DIFFERENT ref), but independently requests the
+  // same API fetch via `fetchPoolerFromApi` so an unlinked or mismatched-tenant
+  // workdir doesn't dead-end in the IPv6 "run supabase link" error.
   const poolerConn = yield* resolvePoolerConn(
     ref,
     workdir,
     poolerHost,
     dnsResolver,
     base.password,
-    adHocProjectRef,
+    adHocProjectRef || fetchPoolerFromApi,
     adHocProjectRef,
     resolveVaultSecrets,
   );
@@ -553,8 +575,15 @@ export const legacyDbConfigLayer = Layer.effect(
               cliConfig.poolerHost,
               flags.dnsResolver,
               flags.password ?? Option.none(),
-              flags.adHocProjectRef ?? false,
-              resolveVaultSecrets,
+              {
+                adHocProjectRef: flags.adHocProjectRef ?? false,
+                resolveVaultSecrets,
+                // An explicit ref (the eight `db` commands' `--project-ref`, or
+                // `gen types --project-id`) independently unlocks the Management API
+                // pooler fetch, regardless of `adHocProjectRef`'s credential semantics
+                // — see `LegacyDbConfigFlags.linkedProjectRef`'s doc comment.
+                fetchPoolerFromApi: Option.isSome(flags.linkedProjectRef ?? Option.none()),
+              },
             );
             // NB: the linked-project telemetry cache (GET /v1/projects/{ref}) is NOT
             // issued here. Go caches it in `PersistentPostRun`

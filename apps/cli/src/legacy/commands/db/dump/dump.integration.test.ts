@@ -6,6 +6,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
+  LEGACY_VALID_REF,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
@@ -16,6 +17,16 @@ import {
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import {
+  LegacyInvalidProjectRefError,
+  LegacyProjectNotLinkedError,
+} from "../../../config/legacy-project-ref.errors.ts";
+import {
+  INVALID_PROJECT_REF_MESSAGE,
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+  PROJECT_REF_PATTERN,
+} from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
@@ -96,6 +107,49 @@ function mockResolver(opts: {
       return fallbackCalls;
     },
   };
+}
+
+/**
+ * Mocks `LegacyProjectRefResolver` for the up-front `loadProjectRef` pre-capture
+ * (`dump.handler.ts`), mirroring push/diff's identical mock (`push.integration.test.ts`,
+ * `diff.integration.test.ts`): `loadProjectRef` gives an explicit `--project-ref` flag
+ * top precedence, same as Go's `flags.LoadProjectRef` — a real (non-empty) ref pattern
+ * is validated so a malformed flag surfaces `LegacyInvalidProjectRefError`, matching the
+ * real service. `opts.projectId` stands in for `LegacyCliConfig.projectId`
+ * (`SUPABASE_PROJECT_ID`/`project_id`), which `loadProjectRef` consults before falling
+ * back to `opts.ref` (the SAME ref `mockResolver`'s own mock embeds in its resolved
+ * `ref`, so both stay consistent regardless of which fixture a test sets).
+ * `opts.linkedFails` simulates a genuinely unlinked workdir absent an explicit flag.
+ */
+function mockProjectRefResolver(opts: {
+  projectId: Option.Option<string>;
+  ref?: string;
+  linkedFails?: boolean;
+}) {
+  const validate = (ref: string) =>
+    PROJECT_REF_PATTERN.test(ref)
+      ? Effect.succeed(ref)
+      : Effect.fail(
+          new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
+        );
+  const layer = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? LEGACY_VALID_REF)),
+    loadProjectRef: (flagValue: Option.Option<string>) => {
+      if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+        return validate(flagValue.value);
+      }
+      if (Option.isSome(opts.projectId)) {
+        return validate(opts.projectId.value);
+      }
+      return opts.linkedFails === true
+        ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+        : Effect.succeed(opts.ref ?? LEGACY_VALID_REF);
+    },
+    promptProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+  });
+  return { layer };
 }
 
 interface DockerResult {
@@ -193,6 +247,7 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
   resolveFails?: boolean;
   ref?: string;
+  linkedFails?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -207,10 +262,16 @@ function setup(opts: SetupOpts = {}) {
     resolveFails: opts.resolveFails,
     ref: opts.ref,
   });
+  const projectRef = mockProjectRefResolver({
+    projectId: opts.projectId ?? Option.none(),
+    ref: opts.ref,
+    linkedFails: opts.linkedFails,
+  });
   const docker = mockDockerRun(opts);
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
+    projectRef.layer,
     docker.layer,
     mockLegacyCliConfig({
       workdir: opts.workdir ?? "/work/project",
@@ -617,9 +678,10 @@ describe("legacy db dump integration", () => {
 
   it.live("does not cache when the linked ref is unknown and resolution fails", () => {
     // No config project_id and no .temp/project-ref file (workdir is a throwaway
-    // path), so the ref is never loaded; Go gates ensureProjectGroupsCached on
-    // flags.ProjectRef != "", so nothing is cached.
-    const { layer, cache } = setup({ resolveFails: true });
+    // path), so the up-front `loadProjectRef` pre-capture itself fails "not linked"
+    // (linkedFails) before `resolve()` is ever reached; Go gates
+    // ensureProjectGroupsCached on flags.ProjectRef != "", so nothing is cached.
+    const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
     return Effect.gen(function* () {
       const exit = yield* legacyDbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -674,6 +736,27 @@ describe("legacy db dump integration", () => {
       expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "rejects a malformed --project-ref on the linked path before resolving or caching",
+    () => {
+      // The pre-capture now runs the SAME validated `loadProjectRef` the resolver
+      // would raise right after (codex review on dump.handler.ts:182), so a malformed
+      // flag value must fail fast — never reaching `resolver.resolve()` (no
+      // connection/API work) and never writing the linked-project cache (no
+      // `GET /v1/projects/*`).
+      const { layer, cache, resolver } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbDump(
+          flags({ linked: Option.some(true), projectRef: Option.some("BADREF") }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toBe(INVALID_PROJECT_REF_MESSAGE);
+        expect(resolver.calls).toEqual([]);
+        expect(cache.cached).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("rejects --project-ref combined with an explicit --local target", () => {
     const FLAG_REF = "flagflagflagflagflag";

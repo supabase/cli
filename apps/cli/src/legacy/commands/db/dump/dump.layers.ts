@@ -2,7 +2,9 @@ import { Layer } from "effect";
 
 import { legacyCredentialsLayer } from "../../../auth/legacy-credentials.layer.ts";
 import { legacyHttpClientLayer } from "../../../auth/legacy-http-debug.layer.ts";
+import { legacyPlatformApiFactoryLayer } from "../../../auth/legacy-platform-api-factory.layer.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
+import { legacyProjectRefLayer } from "../../../config/legacy-project-ref.layer.ts";
 import { legacyDbConfigLayer } from "../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../shared/legacy-db-connection.layer.ts";
 import { legacyDockerRunLayer } from "../../../shared/legacy-docker-run.layer.ts";
@@ -16,17 +18,38 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
  * Runtime layer for `supabase db dump`.
  *
  * Mirrors `test db`'s composition (`legacy/shared/legacy-test-db.layers.ts`): the
- * Management API stack is built lazily inside the resolver's `--linked` branch,
- * so this layer only exposes the always-needed, auth-free services. The dump
- * handler reaches the database through a pg_dump container (`LegacyDockerRun`),
- * never a direct connection, but the resolver still needs `LegacyDbConnection`
- * for the linked pooler temp-role probe.
+ * bulk of the Management API stack is still built lazily inside the resolver's
+ * `--linked` branch. The one exception is `LegacyProjectRefResolver`, exposed here
+ * (same shape as `db push`, `push.layers.ts:40-50`) so the handler's up-front
+ * `loadProjectRef` pre-capture can validate `--project-ref` before the
+ * linked-project-cache finalizer ever sees it. The dump handler reaches the
+ * database through a pg_dump container (`LegacyDockerRun`), never a direct
+ * connection, but the resolver still needs `LegacyDbConnection` for the linked
+ * pooler temp-role probe.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const credentials = legacyCredentialsLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDebugLoggerLayer),
+);
+
+// Deliberately the **lazy** `legacyPlatformApiFactoryLayer` (not the eager
+// management-API runtime), so dump's auth-free `--linked --password` path never
+// resolves an access token at layer-build time — same rationale as `db push`
+// (`push.layers.ts:26-31`).
+const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
+  Layer.provide(credentials),
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDebugLoggerLayer),
+  Layer.provide(legacyIdentityStitchLayer),
+);
+
+// Exposed so the handler can pre-validate `--project-ref` via `loadProjectRef`
+// before the linked-project-cache finalizer ever sees it.
+const projectRef = legacyProjectRefLayer.pipe(
+  Layer.provide(platformApiFactory),
+  Layer.provide(cliConfig),
 );
 
 // Exposed so the handler can cache the linked project (GET /v1/projects/{ref}) in
@@ -56,6 +79,7 @@ export const legacyDbDumpRuntimeLayer = Layer.mergeAll(
   legacyDbConnectionLayer,
   legacyDockerRunLayer,
   cliConfig,
+  projectRef,
   linkedProjectCache,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,

@@ -88,7 +88,7 @@ Notes/Delegation section below).
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success (migration written + optional history update; declarative export)                                                                                                                           |
 | `1`  | target mutex; `--declarative`/`--use-pg-delta` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error |
-| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                                                            |
+| `1`  | `--project-ref` set with a resolved target other than linked; `--project-ref` combined with the `--experimental` structured-dump pull (see Notes)                                                   |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
 > exit** for `db pull` — Go returns `errInSync` as an error.
@@ -122,7 +122,11 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   id/labels. It never implies `--linked`: passing it with a resolved
   `--local`/`--db-url` target is a hard error rather than a silently discarded
   flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent
-  env var simply leaves unused on a non-linked target).
+  env var simply leaves unused on a non-linked target). It is also rejected up
+  front when combined with the delegated `--experimental` structured-dump pull
+  (see below) — `rebuildDelegateArgs` never forwards `--project-ref` to the
+  delegated Go child, which would otherwise silently re-resolve the workdir's
+  own linked ref instead.
 - `--use-pg-delta` is hidden and emits the cobra deprecation line to stderr.
 - The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
   the remote schema into the migration file, then appends the migra diff. An empty
@@ -136,4 +140,9 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   (CLI-1957): a TS-fork-only warning (no Go counterpart) pointing at
   `--declarative` prints to stderr before the delegated exec. The Go child's
   telemetry is disabled so the single `cli_command_executed` event comes from
-  this TS command.
+  this TS command. `--project-ref` combined with this mode is rejected up
+  front instead of silently dropped or forwarded via `SUPABASE_PROJECT_ID`:
+  the latter was considered and rejected because it also overrides the
+  delegated child's own `Config.ProjectId` (and therefore its shadow/
+  edge-runtime container labels) — a coupling `--project-ref` deliberately
+  avoids. Mirrors `db diff --use-pg-schema`'s identical guard.
