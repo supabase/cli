@@ -50,6 +50,18 @@ const runFetch = Effect.fnUntraced(function* (
 
   const connType = target.connType ?? "linked"; // fetch defaults to `--linked` (Go: `Bool("linked", true)`).
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   // Resolve the DB config BEFORE any filesystem/prompt side effects — mirroring Go's
   // root `PersistentPreRunE` (`apps/cli-go/cmd/root.go:118`), which parses the DB config
   // before `migrationFetchCmd.RunE` calls `fetch.Run`. An invalid `--db-url`/`config.toml`
@@ -60,6 +72,7 @@ const runFetch = Effect.fnUntraced(function* (
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
@@ -79,7 +92,7 @@ const runFetch = Effect.fnUntraced(function* (
       ? yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
           const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const ref = yield* projectRef.loadProjectRef(Option.none());
+          const ref = yield* projectRef.loadProjectRef(flags.projectRef);
           return linkedProjectCache.cache(ref);
         })
       : undefined;

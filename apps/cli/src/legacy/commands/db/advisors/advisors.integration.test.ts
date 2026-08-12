@@ -143,10 +143,15 @@ function mockProjectRef() {
       }),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
-    loadProjectRef: () =>
+    // Gives an explicit `--project-ref` flag top precedence, same as Go's
+    // `flags.LoadProjectRef` — mirrors the real resolver so a test can prove the
+    // flag (not just the hardcoded fallback) drives the linked ref.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
         calls.push("loadProjectRef");
-        return LEGACY_VALID_REF;
+        return Option.isSome(flagValue) && flagValue.value.length > 0
+          ? flagValue.value
+          : LEGACY_VALID_REF;
       }),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
@@ -306,6 +311,7 @@ const flags = (over: Partial<LegacyDbAdvisorsFlags> = {}): LegacyDbAdvisorsFlags
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none<string>(),
   type: over.type ?? Option.none<"all" | "security" | "performance">(),
   level: over.level ?? Option.none<"info" | "warn" | "error">(),
   failOn: over.failOn ?? Option.none<"none" | "info" | "warn" | "error">(),
@@ -543,6 +549,56 @@ describe("legacy db advisors — linked", () => {
       expect(out.stdoutText).toContain("unindexed_foreign_keys");
       // Linked runs write the linked-project cache (Go PersistentPostRun).
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "fetches advisors for the project given via --project-ref, overriding the workdir's own ref",
+    () => {
+      // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+      // the workdir would resolve to absent the flag (e.g. .temp/project-ref) —
+      // the flag must win over it and drive both the API path and the cache.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, api, cache } = setup({
+        securityLints: [securityLint],
+        args: ["--linked"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbAdvisors(
+          flags({ type: Option.some("security"), projectRef: Option.some(FLAG_REF) }),
+        );
+        // The request path itself must be scoped to the FLAG ref, not merely
+        // any /advisors/security hit — proving the flag (not the fallback)
+        // drove the API call the same way it drove the cache below.
+        expect(
+          api.requests.some((r) => r.url.includes(`/v1/projects/${FLAG_REF}/advisors/security`)),
+        ).toBe(true);
+        expect(cache.cached).toBe(true);
+        expect(cache.cachedRef).toBe(FLAG_REF);
+        expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("rejects --project-ref on the default local target", () => {
+    // advisors defaults to the local path when --linked isn't set — the guard
+    // must fire from the flag alone, with no explicit --local/--db-url needed.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, connection, api, cache } = setup({ rows: [] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection, API call, or cache write.
+      expect(connection.execs).toEqual([]);
+      expect(api.requests).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

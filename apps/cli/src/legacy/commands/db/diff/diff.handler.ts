@@ -183,6 +183,31 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           }),
         );
       }
+      // `--project-ref` never implies `--linked` and must not be silently
+      // discarded — see push.handler.ts's identical guard for the full TS-only
+      // rationale. Two exceptions in explicit mode: (1) `--from linked` /
+      // `--to linked` resolves a linked ref (via `resolveRef`'s "linked" case
+      // below) without any `--linked`/target flag at all, so the guard must
+      // NOT fire there — only when NEITHER side is the literal ref "linked"
+      // (e.g. plain `--project-ref X`, or `--from local --to migrations
+      // --project-ref X`, where the flag genuinely goes unused). (2) a changed
+      // `--linked` (even `--linked=false`) genuinely consumes `--project-ref`
+      // via the preflight below, whose `preflightConnType` keys off
+      // `Option.isSome(flags.linked)` regardless of the boolean's value — so
+      // the guard must not fire whenever `--linked` was explicitly set.
+      if (
+        Option.isSome(flags.projectRef) &&
+        Option.isNone(flags.linked) &&
+        legacyClassifyExplicitRef(from) !== "linked" &&
+        legacyClassifyExplicitRef(to) !== "linked"
+      ) {
+        return yield* Effect.fail(
+          new LegacyDbDiffTargetFlagsError({
+            message:
+              "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
+          }),
+        );
+      }
       // `mergedLinkedRef` tracks the linked ref resolved so far (preflight or
       // cascade) so the config read below + a later `migrations` catalog export
       // merge the matching `[remotes.<ref>]` override. Undefined until a linked ref
@@ -207,6 +232,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
           connType: preflightConnType,
           dnsResolver,
           password: Option.none(),
+          linkedProjectRef: flags.projectRef,
         });
         if (preflightConnType === "linked") {
           const preflightRef = Option.getOrUndefined(preflight.ref ?? Option.none());
@@ -244,6 +270,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
                 connType: "linked",
                 dnsResolver,
                 password: Option.none(),
+                linkedProjectRef: flags.projectRef,
               });
               const ref2 = Option.getOrUndefined(resolved.ref ?? Option.none());
               if (ref2 !== undefined) {
@@ -359,6 +386,20 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     // pgadmin branch further down, which reuses this function's own target resolve.
     const usePgAdmin = Option.getOrElse(flags.usePgAdmin, () => false);
     const usePgSchema = Option.getOrElse(flags.usePgSchema, () => false);
+    // The pg-schema engine delegates to the bundled Go binary, whose `db diff`
+    // never registered `--project-ref` — `rebuildPgSchemaDelegateArgs` cannot
+    // forward it, so the flag would be silently dropped and the child would diff
+    // the workdir's own linked ref: the exact wrong-project hazard the guards
+    // below exist to prevent. Fail up front instead. (`--use-pgadmin` is native
+    // as of CLI-1968 and honors `--project-ref` through this function's own
+    // target resolve, like every other native engine.)
+    if (usePgSchema && Option.isSome(flags.projectRef)) {
+      return yield* Effect.fail(
+        new LegacyDbDiffTargetFlagsError({
+          message: "--project-ref is not supported with --use-pg-schema",
+        }),
+      );
+    }
     if (usePgSchema) {
       // CLI-1960: TS-only deprecation notice, printed before delegating (in both
       // text and machine output modes — diagnostics stay stderr-only per CLI-1546).
@@ -396,6 +437,20 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         ? "linked"
         : "local";
 
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // for the full TS-only rationale. (Explicit `--from`/`--to` mode has its own
+    // earlier guard, with the `--from/--to linked` exception; this native path
+    // never reaches here when explicit mode ran.)
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbDiffTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
     // Go's `ParseDatabaseConfig` resolves the linked ref via the hard `LoadProjectRef`, THEN
     // reads the `[remotes.<ref>]`-merged config (`LoadConfig`, which prints "Loading config
     // override" unconditionally the moment a remote matches — `pkg/config/config.go:605`) —
@@ -411,7 +466,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     let linkedRef: string | undefined;
     if (connType === "linked") {
       const projectRefResolver = yield* LegacyProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(Option.none());
+      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       // Cache the ref the moment it's known, not after `cfg`/`localInputs` below (both
       // fallible) resolve — Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the
       // GLOBAL `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
@@ -478,6 +533,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       connType,
       dnsResolver,
       password: Option.none(),
+      linkedProjectRef: flags.projectRef,
     });
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());

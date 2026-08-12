@@ -267,6 +267,40 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         ? "local"
         : "linked";
 
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbPullTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
+    // `--experimental`'s structured-dump mode delegates the whole pull to the
+    // bundled Go binary via `rebuildDelegateArgs`, which cannot forward a
+    // TS-only flag: the delegated child re-resolves the workdir's own linked
+    // ref itself (Go's `LoadProjectRef`, `internal/utils/flags/
+    // project_ref.go:54-76`), so `--project-ref` would be silently dropped and
+    // the child would target the wrong project — the exact wrong-project
+    // hazard the guard above exists to prevent for the native paths. Passing
+    // `SUPABASE_PROJECT_ID` through the child's env instead was considered and
+    // rejected: that variable ALSO overrides the child's own `Config.ProjectId`
+    // (and therefore its shadow/edge-runtime container labels,
+    // `pkg/config/config.go:563-570`) — a coupling `--project-ref` deliberately
+    // avoids (see `LegacyProjectRefResolver`'s use below). Mirrors
+    // `diff.handler.ts`'s identical `--use-pg-schema` guard.
+    if (Option.isSome(flags.projectRef) && delegatesExperimentalPull) {
+      return yield* Effect.fail(
+        new LegacyDbPullTargetFlagsError({
+          message:
+            "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
+        }),
+      );
+    }
+
     // Go's `ParseDatabaseConfig` resolves the linked ref via the hard `LoadProjectRef`, THEN
     // reads the `[remotes.<ref>]`-merged config (`LoadConfig`, which prints "Loading config
     // override" unconditionally the moment a remote matches — `pkg/config/config.go:605`) —
@@ -281,7 +315,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     let linkedRef: string | undefined;
     if (connType === "linked") {
       const projectRefResolver = yield* LegacyProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(Option.none());
+      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       // Cache the ref the moment it's known, not after `toml`/`localInputs` below (both
       // fallible) resolve — Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the
       // GLOBAL `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
@@ -347,6 +381,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       connType,
       dnsResolver,
       password: flags.password ?? Option.none(),
+      linkedProjectRef: flags.projectRef,
     });
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(resolved.ref ?? Option.none());
@@ -408,6 +443,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   connType: "linked",
                   dnsResolver,
                   password: flags.password ?? Option.none(),
+                  linkedProjectRef: flags.projectRef,
                 })
                 .pipe(Effect.orElseSucceed(() => Option.none()));
               if (Option.isSome(pooler)) {
@@ -727,6 +763,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   connType: "linked",
                   dnsResolver,
                   password: flags.password ?? Option.none(),
+                  linkedProjectRef: flags.projectRef,
                 })
                 .pipe(Effect.orElseSucceed(() => Option.none())),
             runWithConn: runSchemaDump,

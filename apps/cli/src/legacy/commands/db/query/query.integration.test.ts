@@ -122,16 +122,21 @@ function mockProjectRef(unlinked = false, refReadFails = false) {
   // The linked query preflight uses the hard `loadProjectRef`: it fails with
   // ErrNotLinked when absent and surfaces a `failed to load project ref` read error
   // (LegacyProjectRefReadError) on an unreadable ref file, rather than masking it.
-  const loadProjectRef = () =>
-    refReadFails
-      ? Effect.fail(
-          new LegacyProjectRefReadError({
-            message: "failed to load project ref: permission denied",
-          }),
-        )
-      : unlinked
-        ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
-        : Effect.succeed(REF);
+  // An explicit `--project-ref` flag gets top precedence, same as Go's
+  // `flags.LoadProjectRef` — short-circuiting BEFORE either failure mode, so a
+  // test can prove the flag resolves a ref even for an "unlinked" workdir.
+  const loadProjectRef = (flagValue: Option.Option<string>) =>
+    Option.isSome(flagValue) && flagValue.value.length > 0
+      ? Effect.succeed(flagValue.value)
+      : refReadFails
+        ? Effect.fail(
+            new LegacyProjectRefReadError({
+              message: "failed to load project ref: permission denied",
+            }),
+          )
+        : unlinked
+          ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+          : Effect.succeed(REF);
   return Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(REF),
     resolveForLink: () => Effect.succeed(REF),
@@ -166,10 +171,12 @@ function mockStdin(opts: { isTTY?: boolean; piped?: string }) {
 }
 
 function mockHttpClient(opts: { status?: number; body?: string; networkFail?: boolean }) {
-  return Layer.succeed(
+  const requests: Array<string> = [];
+  const layer = Layer.succeed(
     HttpClient.HttpClient,
-    HttpClient.make((request) =>
-      opts.networkFail === true
+    HttpClient.make((request) => {
+      requests.push(request.url);
+      return opts.networkFail === true
         ? Effect.fail(
             new HttpClientError.HttpClientError({
               reason: new HttpClientError.TransportError({ request, description: "ECONNREFUSED" }),
@@ -183,9 +190,15 @@ function mockHttpClient(opts: { status?: number; body?: string; networkFail?: bo
                 headers: { "content-type": "application/json" },
               }),
             ),
-          ),
-    ),
+          );
+    }),
   );
+  return {
+    layer,
+    get requests() {
+      return requests;
+    },
+  };
 }
 
 interface SetupOpts {
@@ -216,6 +229,11 @@ function setup(opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
   const telemetryOutputFormat = mockTelemetryOutputFormat();
+  const httpClient = mockHttpClient({
+    status: opts.linkedStatus,
+    body: opts.linkedBody,
+    networkFail: opts.networkFail,
+  });
   const layer = Layer.mergeAll(
     out.layer,
     telemetry.layer,
@@ -255,14 +273,10 @@ function setup(opts: SetupOpts = {}) {
       deleteProjectCredential: () =>
         Effect.die("unexpected legacy project-credential delete in test"),
     }),
-    mockHttpClient({
-      status: opts.linkedStatus,
-      body: opts.linkedBody,
-      networkFail: opts.networkFail,
-    }),
+    httpClient.layer,
     BunServices.layer,
   );
-  return { layer, out, telemetry, cache, telemetryOutputFormat };
+  return { layer, out, telemetry, cache, telemetryOutputFormat, httpClient };
 }
 
 const flags = (over: Partial<LegacyDbQueryFlags> = {}): LegacyDbQueryFlags => ({
@@ -270,6 +284,7 @@ const flags = (over: Partial<LegacyDbQueryFlags> = {}): LegacyDbQueryFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? Option.none(),
   local: over.local ?? Option.none(),
+  projectRef: over.projectRef ?? Option.none(),
   file: over.file ?? Option.none(),
 });
 
@@ -679,6 +694,79 @@ describe("legacy db query integration", () => {
       expect(out.stdoutText).toContain("│ name  │ id │");
       // Go's PersistentPostRun caches the linked project after a --linked run.
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("queries the project given via --project-ref without a linked workdir", () => {
+    // The fake resolver would otherwise fail as "unlinked" (`ErrNotLinked`) —
+    // only the flag can resolve a ref here.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, out, cache, httpClient } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+      unlinked: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(
+        flags({
+          sql: Option.some("select 1"),
+          linked: Option.some(true),
+          projectRef: Option.some(FLAG_REF),
+        }),
+      );
+      expect(out.stdoutText).toContain("│ name  │ id │");
+      // The request path itself must be scoped to the FLAG ref, not merely
+      // any successful query — proving the flag (not a fallback) drove the
+      // API call the same way it drove the cache below.
+      expect(
+        httpClient.requests.some((url) => url.includes(`/v1/projects/${FLAG_REF}/database/query`)),
+      ).toBe(true);
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    // The workdir already resolves to REF (e.g. via .temp/project-ref) — the
+    // flag must win over it.
+    const { layer, cache, httpClient } = setup({
+      linkedStatus: 201,
+      linkedBody: '[{"name":"alice","id":1}]',
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbQuery(
+        flags({
+          sql: Option.some("select 1"),
+          linked: Option.some(true),
+          projectRef: Option.some(FLAG_REF),
+        }),
+      );
+      expect(
+        httpClient.requests.some((url) => url.includes(`/v1/projects/${FLAG_REF}/database/query`)),
+      ).toBe(true);
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+      expect(cache.cachedRef).not.toBe(REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref without --linked (query defaults to the local target)", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, out, cache, httpClient } = setup({ result: SELECT_RESULT });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbQuery(
+        flags({ sql: Option.some("select 1"), projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      );
+      // The guard fires before any local connection/query, linked API call, or
+      // cache write — no query result is ever rendered.
+      expect(out.stdoutText).toBe("");
+      expect(httpClient.requests).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

@@ -46,6 +46,11 @@ const config = {
     Flag.withDescription("Queries the local database."),
     Flag.optional,
   ),
+  // TS-only override of the linked project ref — see push.command.ts.
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   file: Flag.string("file").pipe(
     Flag.withAlias("f"),
     Flag.withDescription("Path to a SQL file to execute."),
@@ -65,8 +70,12 @@ export const legacyDbQueryCommand = Command.make("query", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           file: flags.file,
         },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
         // db query's Go enum is `json|table|csv`, not the resource-command set.
         outputFormats: LEGACY_QUERY_OUTPUT_FORMATS,
         // Go registers `--file` with shorthand `-f` (`cmd/db.go:527`) and telemetry

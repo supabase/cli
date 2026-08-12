@@ -35,6 +35,7 @@ import { LegacyStorageConfigError } from "../../../shared/legacy-storage-credent
 import {
   LegacyStorageCopyBetweenBucketsError,
   LegacyStorageFileError,
+  LegacyStorageMutuallyExclusiveFlagsError,
   LegacyStorageObjectNotFoundError,
   LegacyStorageUnsupportedOperationError,
   LegacyStorageUrlParseError,
@@ -82,7 +83,19 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && flags.local) {
+      return yield* Effect.fail(
+        new LegacyStorageMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
+    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {

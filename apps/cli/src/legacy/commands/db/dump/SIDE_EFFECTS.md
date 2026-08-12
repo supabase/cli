@@ -5,13 +5,14 @@ script run inside the local Postgres image to stdout or `--file`.
 
 ## Files Read
 
-| Path                              | Format     | When                                                        |
-| --------------------------------- | ---------- | ----------------------------------------------------------- |
-| `supabase/config.toml`            | TOML       | always (db port/password/major_version, project_id)         |
-| `supabase/.temp/postgres-version` | plain text | always (best-effort) — pins the pg image tag when present   |
-| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable (pooler URL) |
-| `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset               |
-| `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)  |
+| Path                              | Format     | When                                                                                                                                         |
+| --------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/config.toml`            | TOML       | always (db port/password/major_version, project_id)                                                                                          |
+| `supabase/.temp/postgres-version` | plain text | always (best-effort) — pins the pg image tag when present                                                                                    |
+| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
+| `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
+| `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
+| `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
 
 ## Files Written
 
@@ -44,6 +45,7 @@ script run inside the local Postgres image to stdout or `--file`.
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                             |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container exit ≠ 0 |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                              |
 
 ## Output
 
@@ -71,6 +73,14 @@ the IPv4 transaction-pooler suggestion (Go's `SetConnectSuggestion`/`ipv6Suggest
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
   `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
+  command) overrides ONLY the linked-ref resolution used for the connection and
+  the linked-project cache (flag > `SUPABASE_PROJECT_ID`/config.toml
+  `project_id` > `.temp/project-ref`) — it does not affect any local container
+  id. It never implies `--linked`: passing it with a resolved
+  `--local`/`--db-url` target is a hard error rather than a silently discarded
+  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent
+  env var simply leaves unused on a non-linked target).
 - **Container-level pooler fallback is ported** (`RunWithPoolerFallback`,
   `internal/db/dump/pooler_fallback.go`). When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured

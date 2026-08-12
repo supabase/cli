@@ -10,6 +10,7 @@ import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage
 import {
   LegacyStorageLinkedFlagDef,
   LegacyStorageLocalFlagDef,
+  LegacyStorageProjectRefFlagDef,
   legacyAssertStorageTargetsExclusive,
 } from "../storage.flags.ts";
 import { legacyStorageMv } from "./mv.handler.ts";
@@ -23,6 +24,7 @@ const config = {
   ),
   linked: LegacyStorageLinkedFlagDef,
   local: LegacyStorageLocalFlagDef,
+  projectRef: LegacyStorageProjectRefFlagDef,
 } as const;
 
 export type LegacyStorageMvFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -47,8 +49,12 @@ export const legacyStorageMvCommand = Command.make("mv", config).pipe(
         recursive: flags.recursive,
         linked: flags.linked,
         local: flags.local,
+        "project-ref": flags.projectRef,
       };
       return yield* legacyStorageMv(flags).pipe(
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
         withLegacyCommandInstrumentation({ flags: telemetryFlags }),
       );
     }).pipe(withJsonErrorHandling),

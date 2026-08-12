@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -10,7 +11,6 @@ import {
   legacyLoadProjectEnv,
   legacyReadDbToml,
 } from "../../../shared/legacy-db-config.toml-read.ts";
-import { legacyReadProjectRefFile } from "../../../shared/legacy-temp-paths.ts";
 import { legacyResolveDbImage } from "../../../shared/legacy-db-image.ts";
 import {
   legacyIpv6Suggestion,
@@ -153,20 +153,30 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       : useLocal
         ? "local"
         : "linked";
+    // `--project-ref` never implies `--linked` and must not be silently discarded
+    // on a non-linked target — one-liner: see push.handler.ts's identical guard
+    // for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbDumpMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
     // Go's `LoadProjectRef` sets `flags.ProjectRef` BEFORE `NewDbConfigWithPassword`
     // (`flags/db_url.go:88` vs `:95`), and `ensureProjectGroupsCached` runs on failure
     // too (`cmd/root.go:176`), so a connection-resolution failure (IPv6 / pooler /
-    // login-role) still refreshes the linked-project cache. The resolver only returns
-    // the ref on success, so capture it up-front for the linked path. `db dump` has no
-    // `--project-ref` flag, so the ref comes from config.toml `project_id` then the
-    // `.temp/project-ref` file — the same chain `resolveOptional`/smart generate use.
+    // login-role) still refreshes the linked-project cache. Capture the ref up-front
+    // for the linked path via `loadProjectRef`, which implements the same flag >
+    // SUPABASE_PROJECT_ID/project_id > `.temp/project-ref` file precedence as the
+    // resolver, now validated — it raises the same invalid-ref/not-linked errors
+    // `resolver.resolve()` would raise right after, so the user-visible error surface
+    // is unchanged, and an unvalidated raw `--project-ref` value is never stored for
+    // the cache finalizer to send to the Management API.
     if (connType === "linked") {
-      const refOpt = Option.isSome(cliConfig.projectId)
-        ? cliConfig.projectId
-        : yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir);
-      if (Option.isSome(refOpt)) {
-        linkedRefForCache = refOpt.value;
-      }
+      const refResolver = yield* LegacyProjectRefResolver;
+      linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
     }
     const {
       conn,
@@ -177,6 +187,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
       connType,
       dnsResolver,
       password: flags.password,
+      linkedProjectRef: flags.projectRef,
     });
     const db = isLocal ? "local" : "remote";
     // On the linked path, re-read config with the resolved ref so a matching
@@ -347,6 +358,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
             connType: "linked",
             dnsResolver,
             password: flags.password,
+            linkedProjectRef: flags.projectRef,
           })
           .pipe(Effect.orElseSucceed(() => Option.none())),
       runWithConn: (c) => runContainer(mode.buildEnv(c, opt)),

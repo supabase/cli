@@ -75,7 +75,12 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   };
 }
 
-const localFlags = { dbUrl: Option.none<string>(), linked: false, local: true };
+const localFlags = {
+  dbUrl: Option.none<string>(),
+  linked: false,
+  local: true,
+  projectRef: Option.none<string>(),
+};
 
 type ParamKind = "none" | "schemas1" | "schemas2";
 
