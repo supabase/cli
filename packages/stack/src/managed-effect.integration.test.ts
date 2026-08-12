@@ -1,20 +1,19 @@
 import { describe, expect, it } from "@effect/vitest";
-import { BunFileSystem } from "@effect/platform-bun";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach } from "vitest";
-import { Effect, Exit, Layer } from "effect";
+import { Cause, Duration, Effect, Exit } from "effect";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
+  ManagedStackInitializationError,
   ManagedStackPublicationTimeoutError,
-  type UnsupportedManagedRegistryVersionError,
 } from "./managed/model.ts";
 import { managedRegistryPath, managedStackPaths } from "./managed/paths.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
-import { ManagedStackRepository } from "./managed/repository.ts";
-import { ManagedStackService, type ManagedStackServiceOptions } from "./managed/service.ts";
-import { bunSqliteManagedStackRepositoryLayer } from "./managed/sqlite-bun.ts";
+import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./managed/repository.ts";
+import { ManagedStackService } from "./managed/service.ts";
+import { managedStackLayer, type CreateManagedStackServiceOptions } from "./managed-bun.ts";
 
 /**
  * The Effect surface of the managed registry, exercised as an Effect consumer
@@ -46,22 +45,16 @@ const makeWorkspace = (root: string, name = "workspace"): string => {
   return workspace;
 };
 
-type ServiceOverrides = Omit<ManagedStackServiceOptions, "stateRoot">;
+type ServiceOverrides = Omit<CreateManagedStackServiceOptions, "stateRoot">;
 
 /**
- * The layer an Effect consumer assembles: the policy service over a repository
- * adapter over the platform filesystem. The repository is merged rather than only
- * provided so a test can drive the registry directly to stage a scenario.
+ * The layer an Effect consumer provides — the composed one the package exports,
+ * not a private re-assembly of it, so this suite fails if that assembly drifts.
+ * The repository is part of it, so a test can drive the registry directly to
+ * stage a scenario.
  */
-const managedLayer = (
-  stateRoot: string,
-  repositoryLayer: Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
-  overrides: ServiceOverrides,
-) =>
-  ManagedStackService.make({ stateRoot, publicationPollMs: 1, ...overrides }).pipe(
-    Layer.provideMerge(repositoryLayer),
-    Layer.provide(BunFileSystem.layer),
-  );
+const managedLayer = (stateRoot: string, overrides: ServiceOverrides) =>
+  managedStackLayer({ stateRoot, publicationPollMs: 1, ...overrides });
 
 const setupInMemory = (overrides: ServiceOverrides = {}) => {
   const root = makeRoot();
@@ -70,11 +63,10 @@ const setupInMemory = (overrides: ServiceOverrides = {}) => {
     root,
     stateRoot,
     workspace: makeWorkspace(root),
-    layer: managedLayer(
-      stateRoot,
-      Layer.succeed(ManagedStackRepository, createInMemoryManagedStackRepository()),
-      overrides,
-    ),
+    layer: managedLayer(stateRoot, {
+      repository: createInMemoryManagedStackRepository(),
+      ...overrides,
+    }),
   };
 };
 
@@ -86,12 +78,7 @@ const setupSqlite = (overrides: ServiceOverrides = {}) => {
     stateRoot,
     workspace: makeWorkspace(root),
     /** A fresh handle on the same registry file, the way a second process opens it. */
-    openRegistry: () =>
-      managedLayer(
-        stateRoot,
-        bunSqliteManagedStackRepositoryLayer(managedRegistryPath(stateRoot)),
-        overrides,
-      ),
+    openRegistry: () => managedLayer(stateRoot, overrides),
   };
 };
 
@@ -244,29 +231,126 @@ describe("managed stack Effect surface", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.effect("keeps a stack visible to a registry handle opened after the first one closed", () => {
+  // `it.live` rather than `it.effect`: this is the one test that drives the real
+  // SQLite adapter, whose cold start waits out another process' WAL conversion on
+  // a schedule. Under `TestClock` such a wait would never be released and the test
+  // would hang instead of failing.
+  it.live("keeps a stack visible to a registry handle opened after the first one closed", () => {
     const { workspace, stateRoot, openRegistry } = setupSqlite();
     return Effect.gen(function* () {
-      // The registry handle belongs to the layer's scope, so each `Effect.scoped`
-      // block opens the file, uses it, and closes it before the next block runs.
+      // The registry handle belongs to the layer's scope, which `Effect.provide`
+      // owns, so each block opens the file, uses it, and closes it before the
+      // next block runs.
       const provisioned = yield* Effect.gen(function* () {
         const managed = yield* ManagedStackService;
         const repository = yield* ManagedStackRepository;
         const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
         expect(yield* repository.getStack(stack.id)).toMatchObject({ id: stack.id });
         return stack;
-      }).pipe(Effect.scoped, Effect.provide(openRegistry()));
+      }).pipe(Effect.provide(openRegistry()));
 
       expect(existsSync(managedRegistryPath(stateRoot))).toBe(true);
 
       const reopened = yield* Effect.gen(function* () {
         const managed = yield* ManagedStackService;
         return yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
-      }).pipe(Effect.scoped, Effect.provide(openRegistry()));
+      }).pipe(Effect.provide(openRegistry()));
 
       expect(reopened.outcome).toBe("reuse");
       expect(reopened.stack.id).toBe(provisioned.id);
     });
+  });
+
+  it.live("rolls a provision back when the caller interrupts it mid-initialization", () => {
+    // A caller that times out or closes the service while initialization is
+    // running still owns the pending row, the operation claim, and the stack
+    // directory the provision created, so the compensation has to run even
+    // though the fiber it belongs to is being interrupted. The interruption
+    // itself must stay an interruption: a provision this caller abandoned is
+    // not an initialization that failed.
+    const { workspace, stateRoot, layer } = setupInMemory();
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const repository = yield* ManagedStackRepository;
+
+      const exit = yield* managed
+        .provisionOrdinaryStack({
+          workspacePath: workspace,
+          initialize: () => Effect.sleep(Duration.seconds(5)),
+        })
+        .pipe(Effect.timeout(Duration.millis(50)), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      const failure = Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined;
+      expect(failure).not.toBeInstanceOf(ManagedStackInitializationError);
+      expect(yield* repository.listStacks({ includeTombstoned: true })).toEqual([]);
+      expect(yield* repository.listActiveOperations()).toEqual([]);
+      const stackRoots = join(stateRoot, "stacks");
+      expect(existsSync(stackRoots) ? readdirSync(stackRoots) : []).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("releases the delete claim when the caller interrupts a stop that never returns", () => {
+    const { workspace, layer } = setupInMemory();
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const repository = yield* ManagedStackRepository;
+      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      yield* managed.updateStack(stack.id, { lifecycle: "running" });
+
+      const exit = yield* managed
+        .deleteStack(stack.id, { stop: () => Effect.sleep(Duration.seconds(5)) })
+        .pipe(Effect.timeout(Duration.millis(50)), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      // The claim is gone, so the next caller can delete the stack instead of
+      // being refused by an operation nobody will ever finish.
+      expect(yield* repository.listActiveOperations()).toEqual([]);
+      expect((yield* managed.inspectStack(stack.id))?.status).toBe("active");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("propagates an interrupted recovery pass instead of recording it as a failure", () => {
+    // Recovery reports rather than fails, but an interrupted step has no outcome
+    // to report: recording one would mark a stack failed and release a claim on
+    // behalf of a caller that is no longer there, and the operation the next pass
+    // should still recover would look like one recovery already gave up on.
+    const root = makeRoot();
+    const stateRoot = join(root, "managed");
+    const workspace = makeWorkspace(root);
+    const repository = createInMemoryManagedStackRepository();
+    // An embedder-supplied repository may be asynchronous, and a call into one
+    // can be cancelled: the step then reports interruption rather than a refusal.
+    const cancelling: ManagedStackRepositoryShape = {
+      ...repository,
+      reconcileOperation: () => Effect.interrupt,
+    };
+    const layer = managedLayer(stateRoot, { repository: cancelling });
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      // An abandoned claim with no owner to probe, so recovery goes straight to
+      // reconciling it.
+      const claimed = yield* repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: stack.id,
+        kind: "start",
+        now: "2026-08-11T00:00:00.000Z",
+      });
+      if (!claimed.acquired) {
+        return yield* Effect.die(new Error("Expected to stage an abandoned operation"));
+      }
+
+      const exit = yield* managed
+        .reconcileAbandonedOperations({ inspectRuntime: () => Effect.succeed("stopped") })
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      expect((yield* managed.inspectStack(stack.id))?.lifecycle).not.toBe("failed");
+      expect(
+        (yield* repository.listActiveOperations()).map((operation) => operation.token),
+      ).toEqual([claimed.operation.token]);
+    }).pipe(Effect.provide(layer));
   });
 
   it.live("gives up on a pending stack whose publisher never publishes", () => {
@@ -302,11 +386,7 @@ describe("managed stack Effect surface", () => {
     // A blank root would anchor every managed path to the process' working
     // directory, so the layer must fail while it is being built rather than at
     // whichever call first touches a path.
-    const layer = managedLayer(
-      "",
-      Layer.succeed(ManagedStackRepository, createInMemoryManagedStackRepository()),
-      {},
-    );
+    const layer = managedLayer("", { repository: createInMemoryManagedStackRepository() });
     return Effect.gen(function* () {
       const exit = yield* Effect.gen(function* () {
         return yield* ManagedStackService;

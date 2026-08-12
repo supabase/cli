@@ -1,11 +1,15 @@
 import { Context, Effect, Layer, ManagedRuntime, type FileSystem } from "effect";
+import { fromCallback, isBooleanAnswer, isFinished } from "./callback.ts";
+import { UnsafeManagedStackPathError } from "./model.ts";
 import type {
+  InvalidManagedOwnerPidError,
   ManagedCheckoutLocation,
   ManagedOperationRecord,
   ManagedStackConfiguration,
   ManagedStackRecord,
   UnsupportedManagedRegistryVersionError,
 } from "./model.ts";
+import { failsWith } from "./failure.ts";
 import {
   managedRegistryPath,
   requireExplicitManagedStateRoot,
@@ -98,18 +102,11 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   close(): Promise<void>;
 }
 
-/**
- * A caller-supplied callback may answer synchronously, asynchronously, or by
- * throwing either way. Whatever it does becomes this effect's outcome unchanged,
- * so the service's own handling of a failed callback is the same as it was when
- * the service awaited promises directly.
- */
-const fromCallback = <A>(run: () => A | Promise<A>): Effect.Effect<A, unknown> =>
-  Effect.flatMap(Effect.try({ try: run, catch: (error: unknown) => error }), (answer) =>
-    answer instanceof Promise
-      ? Effect.tryPromise({ try: () => answer, catch: (error: unknown) => error })
-      : Effect.succeed(answer),
-  );
+type InspectedManagedRuntime = "running" | "stopped" | "unknown";
+
+const isInspectedRuntime = (
+  answer: InspectedManagedRuntime | PromiseLike<InspectedManagedRuntime>,
+): answer is InspectedManagedRuntime => typeof answer === "string";
 
 const managedStackServiceHandle = async <ER>(
   layer: Layer.Layer<ManagedStackRepository | ManagedStackService, ER>,
@@ -124,42 +121,60 @@ const managedStackServiceHandle = async <ER>(
   const service = Context.get(context, ManagedStackService);
   const repository = Context.get(context, ManagedStackRepository);
 
+  /**
+   * Every method's run, so a call that arrives after `close` is reported as one.
+   *
+   * A disposed `ManagedRuntime` answers by dying with a bare string, which would
+   * reach the caller as a rejection with no name, message, or stack. Anything
+   * else is the failure itself and passes through untouched.
+   */
+  const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
+    runtime.runPromise(effect).catch((error: unknown) => {
+      throw typeof error === "string" && error.includes("disposed")
+        ? new Error(`The managed stack service handle is closed (${error})`)
+        : error;
+    });
+
   return {
     stateRoot: service.stateRoot,
     repository,
     provisionOrdinaryStack: (options) => {
       const initialize = options.initialize;
       const validate = options.validate;
-      return runtime.runPromise(
+      return run(
         service.provisionOrdinaryStack({
           workspacePath: options.workspacePath,
           stackName: options.stackName,
           configuration: options.configuration,
           initialize:
-            initialize === undefined ? undefined : (stack) => fromCallback(() => initialize(stack)),
+            initialize === undefined
+              ? undefined
+              : (stack) => fromCallback(() => initialize(stack), isFinished),
           validate:
-            validate === undefined ? undefined : (stack) => fromCallback(() => validate(stack)),
+            validate === undefined
+              ? undefined
+              : (stack) => fromCallback(() => validate(stack), isFinished),
         }),
       );
     },
     inspectOrdinaryWorkspace: (workspacePath) =>
-      runtime.runPromise(service.inspectOrdinaryWorkspace(workspacePath)),
-    inspectStack: (stackId) => runtime.runPromise(service.inspectStack(stackId)),
-    listStacks: (options) => runtime.runPromise(service.listStacks(options)),
-    updateStack: (stackId, configuration) =>
-      runtime.runPromise(service.updateStack(stackId, configuration)),
+      run(service.inspectOrdinaryWorkspace(workspacePath)),
+    inspectStack: (stackId) => run(service.inspectStack(stackId)),
+    listStacks: (options) => run(service.listStacks(options)),
+    updateStack: (stackId, configuration) => run(service.updateStack(stackId, configuration)),
     deleteStack: (stackId, options) => {
       const stop = options?.stop;
-      return runtime.runPromise(
+      return run(
         service.deleteStack(stackId, {
-          stop: stop === undefined ? undefined : (stack) => fromCallback(() => stop(stack)),
+          stop:
+            stop === undefined ? undefined : (stack) => fromCallback(() => stop(stack), isFinished),
         }),
       );
     },
     reconcileAbandonedOperations: (options) => {
       const inspectRuntime = (stack: ManagedStackRecord, operation: ManagedOperationRecord) =>
-        fromCallback(() => options.inspectRuntime(stack, operation));
-      return runtime.runPromise(
+        fromCallback(() => options.inspectRuntime(stack, operation), isInspectedRuntime);
+      return run(
         service.reconcileAbandonedOperations(
           options.force === undefined
             ? { inspectRuntime, startedBefore: options.startedBefore }
@@ -168,29 +183,81 @@ const managedStackServiceHandle = async <ER>(
       );
     },
     pruneCheckoutLocations: (shouldPrune) =>
-      runtime.runPromise(
-        service.pruneCheckoutLocations((location) => fromCallback(() => shouldPrune(location))),
+      run(
+        service.pruneCheckoutLocations((location) =>
+          fromCallback(() => shouldPrune(location), isBooleanAnswer),
+        ),
       ),
     close: () => runtime.dispose(),
     [Symbol.asyncDispose]: () => runtime.dispose(),
   };
 };
 
+/**
+ * What building a managed stack layer can refuse.
+ *
+ * {@link UnsupportedManagedRegistryVersionError} is the one an embedder can act
+ * on — the registry on disk was written by a newer CLI — so it stays in the error
+ * channel rather than being turned into a defect: an Effect consumer must be able
+ * to `catchTag` it. The other two are option bugs the layer refuses to start
+ * with.
+ */
+export type ManagedStackLayerFailure =
+  | InvalidManagedOwnerPidError
+  | UnsafeManagedStackPathError
+  | UnsupportedManagedRegistryVersionError;
+
 const serviceLayer = (
   options: ManagedStackServiceOptions,
   repositoryLayer: Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
-): Layer.Layer<
-  ManagedStackRepository | ManagedStackService,
-  UnsupportedManagedRegistryVersionError
-> =>
+): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
   ManagedStackService.make(options).pipe(
     // Merged rather than only provided: the facade hands the very repository the
     // service uses back to its caller, so an embedder can read the registry
     // without opening a second handle on it.
     Layer.provideMerge(repositoryLayer),
     Layer.provide(fileSystemLayer),
-    Layer.orDie,
+  );
+
+/**
+ * The whole managed assembly as one layer: the policy service, the registry
+ * adapter it decides over, and the platform filesystem it reclaims stack state
+ * through, with the state root resolved by the one resolver that owns that
+ * policy.
+ *
+ * This is what an Effect consumer provides, and it is what the Promise facade
+ * runs behind its handle, so the two assemblies cannot drift apart. A caller that
+ * brought its own repository gets that repository instead of an opened registry
+ * file.
+ */
+export const managedStackLayerWith = (
+  fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
+  openRepository: (
+    registryPath: string,
+  ) => Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
+  options: CreateManagedStackServiceOptions,
+): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
+  Layer.unwrap(
+    Effect.map(
+      // Resolved while the layer is built rather than while it is described, so
+      // an unusable root refuses the build instead of throwing at whichever
+      // expression happened to assemble the layer.
+      Effect.try({
+        try: () => resolveManagedStateRoot(options),
+        catch: failsWith<UnsafeManagedStackPathError>(UnsafeManagedStackPathError),
+      }),
+      (stateRoot) => {
+        const repository = options.repository;
+        return serviceLayer(
+          { ...options, stateRoot },
+          repository === undefined
+            ? openRepository(managedRegistryPath(stateRoot))
+            : Layer.succeed(ManagedStackRepository, repository),
+          fileSystemLayer,
+        );
+      },
+    ),
   );
 
 /**
@@ -231,16 +298,11 @@ export const createManagedStackServiceWith = async (
   ) => Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
   options: CreateManagedStackServiceOptions,
 ): Promise<ManagedStackServiceHandle> => {
+  // Validated here as well as in the layer, so a caller that supplied an
+  // unusable root or pid learns about it from the call that made the mistake.
   const stateRoot = resolveManagedStateRoot(options);
   assertManagedOwnerPid(options.ownerPid);
-  const repository = options.repository;
   return managedStackServiceHandle(
-    serviceLayer(
-      { ...options, stateRoot },
-      repository === undefined
-        ? openRepository(managedRegistryPath(stateRoot))
-        : Layer.succeed(ManagedStackRepository, repository),
-      fileSystemLayer,
-    ),
+    managedStackLayerWith(fileSystemLayer, openRepository, { ...options, stateRoot }),
   );
 };

@@ -1,6 +1,6 @@
 import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
-import { Duration, Effect, Exit, Layer, Schedule, Schema, Scope } from "effect";
+import { Duration, Effect, Layer, Schedule, Schema } from "effect";
 import {
   DuplicateManagedIdentityError,
   InvalidManagedOwnerPidError,
@@ -368,53 +368,53 @@ const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
 };
 
 /**
- * Runs one registry decision inside a transaction.
+ * `BEGIN`, the decision's statements, and `COMMIT` as one synchronous block.
  *
- * The decision itself stays a synchronous closure — the drivers are synchronous,
- * and a partially applied decision must never be observable — while the
- * transaction boundary is an acquired resource: the `Exit` decides whether the
- * statement batch commits or rolls back, so an interrupted fiber cannot leave a
- * transaction open. `catchFailure` names the domain failures the decision
- * raises; anything else is a defect and still rolls back.
+ * Atomicity here rests on the drivers being synchronous and the handle being
+ * single-threaded: nothing else can run between the statements, so a partially
+ * applied decision is never observable and two transactions can never nest on
+ * the same connection. That only holds while the whole block is one JavaScript
+ * turn — splitting the boundary across effects would reintroduce a suspension
+ * point where the fiber scheduler could preempt at its operation budget and let
+ * another fiber `BEGIN` on this very handle.
+ */
+const runTransaction = <A>(
+  database: ManagedSqliteDatabase,
+  begin: "BEGIN" | "BEGIN IMMEDIATE",
+  run: () => A,
+): A => {
+  database.exec(begin);
+  let decided: A;
+  try {
+    decided = run();
+  } catch (error: unknown) {
+    rollbackPreservingCause(database);
+    throw error;
+  }
+  commitPreservingCause(database);
+  return decided;
+};
+
+/**
+ * Runs one registry decision inside a transaction. `catchFailure` names the
+ * domain failures the decision raises; anything else is a defect, and either way
+ * the statement batch has already rolled back.
  */
 const transaction = <A, E>(
   database: ManagedSqliteDatabase,
   run: () => A,
   catchFailure: (error: unknown) => E,
 ): Effect.Effect<A, E> =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => {
-      database.exec("BEGIN IMMEDIATE");
-    }),
-    () => Effect.try({ try: run, catch: catchFailure }),
-    (_, exit) =>
-      Effect.sync(() => {
-        if (Exit.isSuccess(exit)) {
-          commitPreservingCause(database);
-          return;
-        }
-        rollbackPreservingCause(database);
-      }),
-  );
+  Effect.try({
+    try: () => runTransaction(database, "BEGIN IMMEDIATE", run),
+    catch: catchFailure,
+  });
 
 const readTransaction = <A>(
   database: ManagedSqliteDatabase,
   run: () => A,
 ): Effect.Effect<A, never> =>
-  Effect.acquireUseRelease(
-    Effect.sync(() => {
-      database.exec("BEGIN");
-    }),
-    () => Effect.try({ try: run, catch: neverFails }),
-    (_, exit) =>
-      Effect.sync(() => {
-        if (Exit.isSuccess(exit)) {
-          commitPreservingCause(database);
-          return;
-        }
-        rollbackPreservingCause(database);
-      }),
-  );
+  Effect.try({ try: () => runTransaction(database, "BEGIN", run), catch: neverFails });
 
 const decodePort = (row: unknown): ManagedPortAssignment => ({
   key: getString(row, "key"),
@@ -1141,12 +1141,11 @@ export const sqliteManagedStackRepositoryLayer = (
   Layer.effect(
     ManagedStackRepository,
     Effect.gen(function* () {
-      const scope = yield* Effect.scope;
-      const database = yield* Effect.sync(openDatabase);
-      yield* Scope.addFinalizer(
-        scope,
+      // Opening the handle and registering its close are one acquisition, so no
+      // interruption can land between them and leak the open database.
+      const database = yield* Effect.acquireRelease(Effect.sync(openDatabase), (open) =>
         Effect.sync(() => {
-          database.close();
+          open.close();
         }),
       );
       return yield* createSqliteManagedStackRepository(database);

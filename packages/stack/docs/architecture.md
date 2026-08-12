@@ -310,6 +310,12 @@ For an ordinary non-Git folder, the first mutating managed operation atomically 
   contextId
 ```
 
+That marker protocol is the one place in the managed surface that uses raw `node:fs/promises` instead
+of the `FileSystem` service the policy layer reclaims stack state through: writing a temporary file,
+hardlinking it into place, re-reading the winning marker on `EEXIST`, and removing the temporary path
+is a single indivisible claim, and the hardlink with that `EEXIST` contract is not part of the platform
+service's surface.
+
 No mutable runtime state or credential value is stored in that marker. Read-only discovery does
 not create it. The registry stores only an opaque credential reference, never resolved plaintext
 credentials. Discovery returns the marker identity even when it has no stack records, but reports
@@ -424,6 +430,14 @@ The managed surface is two `Context.Service` tags, each with layer factories:
   that could never be probed is refused while the layer is being built rather than at whichever call
   first touches a path.
 
+`managedStackLayer(options)` — exported from `managed-bun.ts` and `managed-node.ts` — is those two
+composed with the platform filesystem and the state root resolved by the one resolver that owns that
+policy. It is the assembly an Effect consumer provides _and_ the one the Promise facade runs behind its
+handle, so the two cannot drift apart. It fails with `ManagedStackLayerFailure`: the state-root and
+owner-PID refusals above plus `UnsupportedManagedRegistryVersionError`. Nothing on that path is turned
+into a defect, so the one registry failure a caller can act on — the registry was written by a newer
+CLI — stays recoverable with `catchTag` instead of being unreachable behind an `orDie`.
+
 Each method declares only the failures it can actually raise, rather than one service-wide union:
 `provisionOrdinaryStack` carries `ProvisionManagedStackFailure`, `updateStack` carries
 `UpdateManagedStackConfigurationFailure`, `deleteStack` carries `DeleteManagedStackFailure`,
@@ -434,17 +448,20 @@ stack that refused to stop was not deleted. Recovery reports rather than fails: 
 that is not a pair of managed UUIDs refuses a whole pass, so `reconcileAbandonedOperations` declares
 just `InvalidManagedIdentityError` and returns retained claims, skips, and failures in its result.
 
-Registry decisions are transactions written as `Effect.acquireUseRelease`. The acquire opens
-`BEGIN IMMEDIATE` (or `BEGIN` for read paths), the use runs the decision, and the release inspects
-the `Exit` to commit on success and roll back on failure — so an interrupted fiber cannot leave a
-transaction open, and a rollback never masks the original cause. The decision itself stays a
-synchronous closure: the drivers are synchronous, and a partially applied decision must never be
-observable.
+Registry decisions are transactions that run as one synchronous block: `Effect.try` wraps a closure
+that issues `BEGIN IMMEDIATE` (or `BEGIN` for read paths), runs the decision, and commits, rolling
+back and rethrowing the original cause if any statement refuses. Atomicity rests on the drivers being
+synchronous and the handle being single-threaded, so that boundary must never be split across
+effects: the fiber scheduler preempts at its operation budget, and a fiber parked between `BEGIN` and
+`COMMIT` would let another fiber `BEGIN IMMEDIATE` on the same connection — SQLite refuses the nested
+transaction, and either fiber's `COMMIT` could publish the other's writes. Keeping the whole
+transaction in one JavaScript turn is therefore what makes a partially applied decision
+unobservable and keeps interruption from ever landing inside a transaction.
 
-The database handle's lifetime is a scope. `sqliteManagedStackRepositoryLayer` opens the file when
-the layer is built and registers a finalizer that closes it, including on the path where schema
-initialization refuses the registry, so no failure path leaks an open handle. Closing the scope that
-built the layer closes the registry.
+The database handle's lifetime is a scope. `sqliteManagedStackRepositoryLayer` acquires the handle
+with `Effect.acquireRelease`, so opening the file and registering its close are one step nothing can
+land between, including on the path where schema initialization refuses the registry: no failure path
+leaks an open handle. Closing the scope that built the layer closes the registry.
 
 Waiting for a concurrent publisher is `Schedule`-driven. One look at the pending row is a retryable
 step — a still-pending row asks for another look, while a vanished or tombstoned row is a final
@@ -452,19 +469,32 @@ answer — repeated on `Schedule.exponential` from `publicationPollMs` with a 25
 publisher is not polled hundreds of times per second for the whole window. The ceiling only ever
 slows polling down, so a caller asking for a slower interval keeps its own. `publicationTimeoutMs` is
 the caller's bound on the entire wait and is applied as a timeout around the repeat, so it interrupts
-the poll instead of being checked between polls.
+the poll instead of being checked between polls. Both shipped adapters answer synchronously, so a look
+at the pending row always completes; with an embedder-supplied asynchronous repository that timeout can
+preempt a look that is still in flight. That is safe — a look has no side effects — but it means the
+option bounds the wait, not the number of looks that finish.
 
-An Effect consumer uses the tags directly, which is the primary API:
+Interruption is part of the contract, not an afterthought. Provisioning owns a pending row, an
+operation claim, and the directories it created, so its create path runs under
+`Effect.uninterruptibleMask`: only the provisioning steps themselves are interruptible, and the
+compensation that aborts the pending row and removes the leaked directory always runs. Deletion
+releases its claim the same way. An interrupted call stays interrupted rather than being reported as a
+failure of the work — a caller's own timeout is not a `ManagedStackInitializationError` — and recovery
+re-raises interruption instead of recording a retained claim or a reconciliation failure that never
+happened, so the operation the next pass should still recover does not look like one recovery already
+gave up on.
+
+An Effect consumer provides the composed layer, which is the primary API:
 
 ```typescript
-import { BunFileSystem } from "@effect/platform-bun";
-import { Effect, Layer } from "effect";
-import { bunSqliteManagedStackRepositoryLayer, ManagedStackService } from "@supabase/stack/managed";
+import { Effect } from "effect";
+import { managedStackLayer, ManagedStackService } from "@supabase/stack/managed";
 
-const managedLayer = ManagedStackService.make({ stateRoot }).pipe(
-  Layer.provide(bunSqliteManagedStackRepositoryLayer(registryPath)),
-  Layer.provide(BunFileSystem.layer),
-);
+// The policy service, the registry adapter it decides over, and the platform
+// filesystem it reclaims stack state through. It fails with
+// `ManagedStackLayerFailure`, so a registry written by a newer CLI is a typed
+// failure an embedder can recover from rather than a defect.
+const managedLayer = managedStackLayer({ stateRoot });
 
 const program = Effect.gen(function* () {
   const managed = yield* ManagedStackService;
@@ -477,7 +507,7 @@ const program = Effect.gen(function* () {
 ```
 
 `createManagedStackService()` — and `makeManagedStackService()` over a repository the caller already
-has — is a thin `ManagedRuntime` edge over exactly those layers, for consumers that do not run an
+has — is a thin `ManagedRuntime` edge over exactly that layer, for consumers that do not run an
 Effect runtime. It exists to serve the Promise-oriented `createStack()` boundary; the runtime
 lifecycle beneath it is Effect-based either way. Three properties of that edge are contracts rather
 than incidental:
@@ -501,10 +531,16 @@ than incidental:
   Because the retry suspends the fiber instead of spinning on `Atomics.wait`, a process opening the
   registry no longer stalls the event loop that every other caller in it depends on.
 
-`close()` disposes the `ManagedRuntime`, which closes the scope that owns the database handle. The
-handle is also an `AsyncDisposable`, so `await using service = await createManagedStackService()`
-closes it on every path out of the block. The facade hands back the very repository the service uses,
-so an embedder can read the registry without opening a second handle on it.
+`close()` disposes the `ManagedRuntime`, which interrupts whatever is still in flight and closes the
+scope that owns the database handle. Outstanding calls therefore reject, and because that scope closes
+alongside those interruptions rather than after them, a statement already on its way to the driver can
+race the close and fail against a closed handle: a caller that closes while work is outstanding must
+read those rejections as "did not complete", not as evidence about the registry. A call made after
+`close()` rejects with an `Error` saying the handle is closed, rather than with the runtime's own bare
+internal string. The handle is also an `AsyncDisposable`, so
+`await using service = await createManagedStackService()` closes it on every path out of the block. The
+facade hands back the very repository the service uses, so an embedder can read the registry without
+opening a second handle on it.
 
 ## Legacy daemon paths
 

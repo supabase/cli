@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { Context, Effect, ManagedRuntime } from "effect";
+import { Cause, Context, Effect, Exit, ManagedRuntime } from "effect";
 import { managedStackContractFixtures } from "./managed-stack-contract.ts";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
@@ -736,6 +736,54 @@ describe("managed service options", () => {
     });
     expect(service.stateRoot).toBe(join(root, "managed"));
     await service.close();
+  });
+
+  it("awaits an initialize callback that answers with a thenable rather than a Promise", async () => {
+    // A caller whose promises come from another implementation — a bundled
+    // polyfill, a Bluebird-style library — answers with a thenable that is not
+    // `instanceof Promise`. Publishing on such an answer would mean publishing a
+    // stack whose initialization has not run yet.
+    const root = makeRoot();
+    const service = await makePersistentService(root);
+    let initialized = false;
+    // Answering `then` through a proxy rather than declaring the property: the
+    // lint rule that guards against accidental thenables forbids writing one,
+    // and being a thenable on purpose is this fixture's whole point.
+    const thenable = new Proxy(
+      {},
+      {
+        get: (_target, property) =>
+          property === "then"
+            ? (resolve: (value: undefined) => void) => {
+                setTimeout(() => {
+                  initialized = true;
+                  resolve(undefined);
+                }, 5);
+              }
+            : undefined,
+      },
+    ) as unknown as Promise<void>;
+
+    const created = await service.provisionOrdinaryStack({
+      workspacePath: makeWorkspace(root),
+      initialize: () => thenable,
+    });
+
+    expect(initialized).toBe(true);
+    expect(created.stack.status).toBe("active");
+    await service.close();
+  });
+
+  it("rejects a call made after close with an error that says the handle is closed", async () => {
+    // A caller that reaches for a closed handle — a stray promise, a shutdown
+    // race — must get a diagnosable rejection rather than the runtime's bare
+    // internal string, which has neither a name nor a stack.
+    const root = makeRoot();
+    const service = await makePersistentService(root);
+    await service.close();
+
+    await expect(service.listStacks()).rejects.toBeInstanceOf(Error);
+    await expect(service.listStacks()).rejects.toThrow(/closed/i);
   });
 
   it("closes a service acquired with await using when its block ends", async () => {
@@ -2466,6 +2514,22 @@ describe("managed repository and lifecycle", () => {
     );
   });
 
+  it("refuses the production entrypoint over a registry written by a newer CLI", async () => {
+    // The one registry failure a caller can act on has to survive the whole
+    // production path — layer, runtime, facade — as itself, so an embedder can
+    // tell "upgrade your CLI" apart from a bug in this one.
+    const root = makeRoot();
+    const stateRoot = join(root, "managed");
+    mkdirSync(stateRoot, { recursive: true });
+    const database = new Database(managedRegistryPath(stateRoot), { create: true });
+    database.exec("PRAGMA user_version = 999");
+    database.close();
+
+    await expect(createManagedStackService({ stateRoot })).rejects.toBeInstanceOf(
+      UnsupportedManagedRegistryVersionError,
+    );
+  });
+
   it.each([1, 2])(
     "fails clearly instead of opening obsolete development schema v%i",
     async (version) => {
@@ -2480,6 +2544,38 @@ describe("managed repository and lifecycle", () => {
       );
     },
   );
+
+  it("keeps registry transactions atomic while concurrent fibers share one handle", async () => {
+    // A registry decision is a transaction on a single connection, so its
+    // `BEGIN`, statements, and `COMMIT` must run without a suspension point
+    // between them: a fiber parked mid-transaction would let another fiber's
+    // `BEGIN IMMEDIATE` nest on the same handle, and either fiber's `COMMIT`
+    // could then publish the other's writes. Each fiber runs far more
+    // sequential decisions than the scheduler's operation budget, so it is
+    // preempted many times over the course of the pass.
+    const root = makeRoot();
+    const registry = await openRegistry(managedRegistryPath(join(root, "concurrent")));
+    const rounds = Array.from({ length: 2_000 }, (_, index) => index);
+    const hammerRegistry = Effect.forEach(
+      rounds,
+      () =>
+        // A read transaction and a write transaction, so neither boundary is
+        // covered by the other's locking.
+        Effect.flatMap(registry.repository.listStacks(), () =>
+          registry.repository.pruneCheckoutLocations([]),
+        ),
+      { discard: true },
+    );
+
+    const exit = await Effect.runPromiseExit(
+      Effect.all([hammerRegistry, hammerRegistry, hammerRegistry, hammerRegistry], {
+        concurrency: "unbounded",
+      }),
+    );
+
+    expect(Exit.isSuccess(exit) ? "committed" : Cause.pretty(exit.cause)).toBe("committed");
+    await registry.close();
+  });
 
   it("writes the current schema version into a fresh registry", async () => {
     const root = makeRoot();

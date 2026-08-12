@@ -65,6 +65,7 @@ describe("@supabase/stack entrypoints", () => {
     expect(managed).toHaveProperty("createManagedStackService");
     expect(managed).toHaveProperty("makeManagedStackService");
     expect(managed).toHaveProperty("ManagedStackService");
+    expect(managed).toHaveProperty("managedStackLayer");
     expect(managed).toHaveProperty("bunSqliteManagedStackRepositoryLayer");
     expect(nodeRoot).not.toHaveProperty("createManagedStackService");
   });
@@ -107,6 +108,7 @@ describe("@supabase/stack entrypoints", () => {
       "isManagedStackError",
       "makeManagedStackService",
       "managedRegistryPath",
+      "managedStackLayer",
       "managedStackPaths",
       "ordinaryWorkspaceIdentityPath",
       "readOrdinaryWorkspaceIdentity",

@@ -9,7 +9,6 @@ import {
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { errorCode } from "./error-code.ts";
-import { failsWith } from "./failure.ts";
 import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
 
 /**
@@ -17,8 +16,22 @@ import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
  * errors that are not part of the identity protocol — an unreadable workspace, a
  * full disk — are defects: no caller can act on them, and inventing an identity
  * failure for them would hide what actually went wrong.
+ *
+ * Every protocol step here is a promise, so the sorting happens after the effect
+ * fails rather than inside `tryPromise`'s `catch` handler: `Effect.try` turns a
+ * throwing handler into a defect, but a `tryPromise` handler that throws does so
+ * inside the promise chain the runtime is awaiting, where nothing is watching for
+ * it.
  */
-const failsWithIdentity = failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError);
+const failsWithIdentity = <A>(
+  effect: Effect.Effect<A, unknown>,
+): Effect.Effect<A, InvalidManagedIdentityError> =>
+  Effect.catch(effect, (error) =>
+    error instanceof InvalidManagedIdentityError ? Effect.fail(error) : Effect.die(error),
+  );
+
+/** A `catch` handler that classifies nothing, so it can never throw. */
+const asRaised = (error: unknown): unknown => error;
 
 const identityField = (value: unknown, field: string): string => {
   if (typeof value !== "object" || value === null) {
@@ -64,16 +77,18 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
 export const canonicalizeOrdinaryWorkspacePath = (
   workspacePath: string,
 ): Effect.Effect<string, InvalidManagedIdentityError> =>
-  Effect.tryPromise({
-    try: async () => {
-      const info = await stat(workspacePath);
-      if (!info.isDirectory()) {
-        throw new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` });
-      }
-      return realpath(workspacePath);
-    },
-    catch: failsWithIdentity,
-  });
+  failsWithIdentity(
+    Effect.tryPromise({
+      try: async () => {
+        const info = await stat(workspacePath);
+        if (!info.isDirectory()) {
+          throw new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` });
+        }
+        return realpath(workspacePath);
+      },
+      catch: asRaised,
+    }),
+  );
 
 const readIdentity = async (
   workspacePath: string,
@@ -92,7 +107,7 @@ const readIdentity = async (
 export const readOrdinaryWorkspaceIdentity = (
   workspacePath: string,
 ): Effect.Effect<OrdinaryWorkspaceIdentity | undefined, InvalidManagedIdentityError> =>
-  Effect.tryPromise({ try: () => readIdentity(workspacePath), catch: failsWithIdentity });
+  failsWithIdentity(Effect.tryPromise({ try: () => readIdentity(workspacePath), catch: asRaised }));
 
 export interface EnsureOrdinaryWorkspaceIdentityResult {
   readonly identity: OrdinaryWorkspaceIdentity;
@@ -151,7 +166,9 @@ export const ensureOrdinaryWorkspaceIdentity = (
   workspacePath: string,
   idFactory: () => string = randomUUID,
 ): Effect.Effect<EnsureOrdinaryWorkspaceIdentityResult, InvalidManagedIdentityError> =>
-  Effect.tryPromise({
-    try: () => ensureIdentity(workspacePath, idFactory),
-    catch: failsWithIdentity,
-  });
+  failsWithIdentity(
+    Effect.tryPromise({
+      try: () => ensureIdentity(workspacePath, idFactory),
+      catch: asRaised,
+    }),
+  );

@@ -25,6 +25,7 @@ export type {
 export type {
   CreateManagedStackServiceOptions,
   MakeManagedStackServiceOptions,
+  ManagedStackLayerFailure,
   ManagedStackServiceHandle,
   ProvisionOrdinaryStackRequest,
   ReconcileAbandonedOperationsRequest,

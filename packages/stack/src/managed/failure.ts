@@ -9,6 +9,13 @@
  * that throws as a defect, so a corrupt registry row or a decoder bug stays a
  * defect instead of widening a method's error channel to `unknown`.
  *
+ * Both handlers here are therefore for `Effect.try` only. `Effect.tryPromise`
+ * calls its `catch` handler from inside the promise chain the runtime is
+ * awaiting, so a handler that rethrows there escapes into that chain instead of
+ * becoming a defect. An asynchronous call sorts its failures after the fact
+ * instead — see `identity.ts`, which recovers the effect with `Effect.catch` and
+ * dies on anything it does not recognize.
+ *
  * The expected union must be named explicitly, because TypeScript infers a
  * single class from a variadic list of unrelated constructors instead of
  * unioning them:

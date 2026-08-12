@@ -43,6 +43,7 @@ import {
   managedStackPaths,
   requireExplicitManagedStateRoot,
 } from "./paths.ts";
+import { fromCallback, isBooleanAnswer } from "./callback.ts";
 import { errorCode } from "./error-code.ts";
 import { failsWith } from "./failure.ts";
 import {
@@ -261,6 +262,23 @@ const dataRetained = (error: unknown): DeleteManagedStackResult["dataReclamation
 
 const unregisteredWorkspace: InspectOrdinaryWorkspaceResult = { registered: false, stacks: [] };
 
+/**
+ * How recovery and best-effort cleanup absorb a step that refused.
+ *
+ * Whatever the registry, the filesystem, or a caller's seam raised becomes part
+ * of the report — that is what makes these paths best-effort — but an interrupted
+ * step has no outcome to report at all: recording one would invent a refusal that
+ * never happened, mark a stack failed on behalf of a caller that has gone away,
+ * and make the operation the next pass should still recover look like one
+ * recovery already gave up on. So interruption is re-raised instead.
+ */
+const recordUnlessInterrupted =
+  <E, A2, E2, R2>(record: (cause: Cause.Cause<E>) => Effect.Effect<A2, E2, R2>) =>
+  <A, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A | A2, E2, R | R2> =>
+    Effect.catchCause(self, (cause) =>
+      Cause.hasInterruptsOnly(cause) ? Effect.interrupt : record(cause),
+    );
+
 /** What one look at a stack awaiting publication can refuse to wait for. */
 type PublicationPollFailure = ManagedAbandonedOperationError | ManagedStackNotFoundError;
 
@@ -353,13 +371,7 @@ export class ManagedStackService extends Context.Service<
          * kept in the error channel here rather than being turned into a defect.
          */
         const probeProcessAlive = (pid: number): Effect.Effect<boolean, unknown> =>
-          Effect.flatMap(
-            Effect.try({ try: () => isProcessAlive(pid), catch: (error: unknown) => error }),
-            (answer) =>
-              typeof answer === "boolean"
-                ? Effect.succeed(answer)
-                : Effect.tryPromise({ try: () => answer, catch: (error: unknown) => error }),
-          );
+          fromCallback(() => isProcessAlive(pid), isBooleanAnswer);
 
         /**
          * A stack's directory is only ever removed through the path guard, so a
@@ -381,7 +393,7 @@ export class ManagedStackService extends Context.Service<
         ): Effect.Effect<DeleteManagedStackResult["dataReclamation"]> =>
           removeStackState(stack).pipe(
             Effect.as(dataRemoved),
-            Effect.catchCause((cause) => Effect.succeed(dataRetained(Cause.squash(cause)))),
+            recordUnlessInterrupted((cause) => Effect.succeed(dataRetained(Cause.squash(cause)))),
           );
 
         const finishOperationBestEffort = (
@@ -392,7 +404,7 @@ export class ManagedStackService extends Context.Service<
           repository.finishOperation(stackId, operationToken, "failed", now(), String(error)).pipe(
             Effect.as(true),
             // Preserve the operation's original failure when ownership changed concurrently.
-            Effect.catchCause(() => Effect.succeed(false)),
+            recordUnlessInterrupted(() => Effect.succeed(false)),
           );
 
         /**
@@ -427,7 +439,7 @@ export class ManagedStackService extends Context.Service<
             })
             .pipe(
               // Releasing the abandoned claim is still useful if the failed lifecycle cannot be recorded.
-              Effect.catchCause(() => Effect.void),
+              recordUnlessInterrupted(() => Effect.void),
               Effect.flatMap(() =>
                 finishOperationBestEffort(operation.stackId, operation.token, error),
               ),
@@ -504,9 +516,12 @@ export class ManagedStackService extends Context.Service<
           | ManagedStackPublicationTimeoutError
         > =>
           pollPublication(pending).pipe(
+            // A refinement, so the answer the repeat stops on is narrowed to the
+            // published stack. The type argument is explicit because the
+            // narrowing is lost when the generic guard is inferred here.
             Effect.repeat({
               schedule: publicationPollSchedule,
-              while: (published) => Option.isNone(published),
+              while: Option.isNone<ManagedStackRecord>,
             }),
             // The timeout is the caller's bound on the whole wait, so it
             // interrupts the poll rather than being checked between polls.
@@ -515,11 +530,7 @@ export class ManagedStackService extends Context.Service<
               orElse: () =>
                 Effect.fail(new ManagedStackPublicationTimeoutError({ stackId: pending.id })),
             }),
-            Effect.flatMap((published) =>
-              Option.isSome(published)
-                ? Effect.succeed(published.value)
-                : Effect.fail(new ManagedStackPublicationTimeoutError({ stackId: pending.id })),
-            ),
+            Effect.map((published) => published.value),
           );
 
         const updateStackRecord = (
@@ -637,45 +648,61 @@ export class ManagedStackService extends Context.Service<
 
             const pending = prepared.stack;
             const operation = prepared.operation;
-            return yield* Effect.gen(function* () {
-              yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
-              yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
-              yield* fs.makeDirectory(pending.paths.runtime, { recursive: true, mode: 0o700 });
-              if (provisionOptions.initialize !== undefined) {
-                yield* provisionOptions.initialize(pending);
-              }
-              if (provisionOptions.validate !== undefined) {
-                yield* provisionOptions.validate(pending);
-              }
-              const published = yield* repository.publishPendingStack(
-                pending.id,
-                operation.token,
-                now(),
-              );
-              return provisionResult("create", published, marker.created);
-            }).pipe(
-              Effect.catchCause((cause) =>
+            // Between preparing the pending row and publishing it, this call
+            // owns a registry row, an operation claim, and the directories it
+            // created, so the compensation has to run even when the fiber is
+            // interrupted: a caller that times out or closes the service must
+            // not leave a pending stack and a leaked directory behind. Only the
+            // provisioning steps are interruptible; the rollback is not.
+            return yield* Effect.uninterruptibleMask((restore) =>
+              restore(
                 Effect.gen(function* () {
-                  const cleanupErrors: Array<unknown> = [];
-                  const aborted = yield* Effect.exit(
-                    repository.abortPendingStack(pending.id, operation.token),
-                  );
-                  if (Exit.isFailure(aborted)) {
-                    cleanupErrors.push(Cause.squash(aborted.cause));
-                  } else {
-                    const reclaimed = yield* Effect.exit(removeStackState(pending));
-                    if (Exit.isFailure(reclaimed)) {
-                      cleanupErrors.push(Cause.squash(reclaimed.cause));
-                    }
+                  yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
+                  yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
+                  yield* fs.makeDirectory(pending.paths.runtime, { recursive: true, mode: 0o700 });
+                  if (provisionOptions.initialize !== undefined) {
+                    yield* provisionOptions.initialize(pending);
                   }
-                  return yield* Effect.fail(
-                    new ManagedStackInitializationError({
-                      stackId: pending.id,
-                      cause: Cause.squash(cause),
-                      cleanupErrors,
-                    }),
+                  if (provisionOptions.validate !== undefined) {
+                    yield* provisionOptions.validate(pending);
+                  }
+                  const published = yield* repository.publishPendingStack(
+                    pending.id,
+                    operation.token,
+                    now(),
                   );
+                  return provisionResult("create", published, marker.created);
                 }),
+              ).pipe(
+                Effect.catchCause((cause) =>
+                  Effect.gen(function* () {
+                    const cleanupErrors: Array<unknown> = [];
+                    const aborted = yield* Effect.exit(
+                      repository.abortPendingStack(pending.id, operation.token),
+                    );
+                    if (Exit.isFailure(aborted)) {
+                      cleanupErrors.push(Cause.squash(aborted.cause));
+                    } else {
+                      const reclaimed = yield* Effect.exit(removeStackState(pending));
+                      if (Exit.isFailure(reclaimed)) {
+                        cleanupErrors.push(Cause.squash(reclaimed.cause));
+                      }
+                    }
+                    // A provision the caller abandoned is not an initialization
+                    // that failed: the interruption is the outcome, and
+                    // reporting it as a failure would tell the caller its own
+                    // timeout was the stack's fault.
+                    return yield* Cause.hasInterruptsOnly(cause)
+                      ? Effect.interrupt
+                      : Effect.fail(
+                          new ManagedStackInitializationError({
+                            stackId: pending.id,
+                            cause: Cause.squash(cause),
+                            cleanupErrors,
+                          }),
+                        );
+                  }),
+                ),
               ),
             );
           });
@@ -713,38 +740,51 @@ export class ManagedStackService extends Context.Service<
               return deletionResult("no-op", existing, yield* reclaimStackState(existing));
             }
             const operation = yield* requireOperation(stackId, "delete");
-            return yield* Effect.gen(function* () {
-              const current = yield* repository.getStack(stackId);
-              if (current === undefined) {
-                return yield* Effect.fail(new ManagedStackNotFoundError({ stackId }));
-              }
-              if (current.status === "tombstoned") {
-                const dataReclamation = yield* reclaimStackState(current);
-                yield* repository.finishOperation(stackId, operation.token, "completed", now());
-                return deletionResult("no-op", current, dataReclamation);
-              }
-              if (current.lifecycle !== "stopped") {
-                const stop = deleteOptions?.stop;
-                if (stop === undefined) {
-                  return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId }));
-                }
-                yield* stop(current);
-                yield* repository.updateStack({
-                  stackId,
-                  operationToken: operation.token,
-                  now: now(),
-                  lifecycle: "stopped",
-                  runtimeMetadata: { processIds: {}, containerIds: {} },
-                });
-              }
-              const tombstoned = yield* repository.tombstoneStack(stackId, operation.token, now());
-              const dataReclamation = yield* reclaimStackState(tombstoned);
-              yield* finishDeleteOperationTolerantly(stackId, operation.token);
-              return deletionResult("delete", tombstoned, dataReclamation);
-            }).pipe(
-              Effect.catchCause((cause) =>
-                finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
-                  Effect.flatMap(() => Effect.failCause(cause)),
+            // The claim belongs to this call, so releasing it has to survive an
+            // interruption too: a caller that gave up mid-delete must not leave
+            // the stack claimed by an operation nobody will ever finish. The
+            // original cause is re-raised either way, so an interrupted delete
+            // stays interrupted.
+            return yield* Effect.uninterruptibleMask((restore) =>
+              restore(
+                Effect.gen(function* () {
+                  const current = yield* repository.getStack(stackId);
+                  if (current === undefined) {
+                    return yield* Effect.fail(new ManagedStackNotFoundError({ stackId }));
+                  }
+                  if (current.status === "tombstoned") {
+                    const dataReclamation = yield* reclaimStackState(current);
+                    yield* repository.finishOperation(stackId, operation.token, "completed", now());
+                    return deletionResult("no-op", current, dataReclamation);
+                  }
+                  if (current.lifecycle !== "stopped") {
+                    const stop = deleteOptions?.stop;
+                    if (stop === undefined) {
+                      return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId }));
+                    }
+                    yield* stop(current);
+                    yield* repository.updateStack({
+                      stackId,
+                      operationToken: operation.token,
+                      now: now(),
+                      lifecycle: "stopped",
+                      runtimeMetadata: { processIds: {}, containerIds: {} },
+                    });
+                  }
+                  const tombstoned = yield* repository.tombstoneStack(
+                    stackId,
+                    operation.token,
+                    now(),
+                  );
+                  const dataReclamation = yield* reclaimStackState(tombstoned);
+                  yield* finishDeleteOperationTolerantly(stackId, operation.token);
+                  return deletionResult("delete", tombstoned, dataReclamation);
+                }),
+              ).pipe(
+                Effect.catchCause((cause) =>
+                  finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
+                    Effect.flatMap(() => Effect.failCause(cause)),
+                  ),
                 ),
               ),
             );
@@ -863,7 +903,7 @@ export class ManagedStackService extends Context.Service<
                   }
                   reclaimedStackIds.push(stack.id);
                 }).pipe(
-                  Effect.catchCause((cause) =>
+                  recordUnlessInterrupted((cause) =>
                     Effect.gen(function* () {
                       const error = Cause.squash(cause);
                       if (
