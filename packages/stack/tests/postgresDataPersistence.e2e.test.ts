@@ -30,10 +30,11 @@ const onlyPostgresConfig = {
   edgeRuntime: false,
 } as const;
 
-const dockerContainerNameFor = (apiPort: string) => `supabase-postgres-${apiPort}`;
+const POSTGRES_CONTAINER_NAME_PREFIX = "supabase-postgres-";
+const dockerContainerNameFor = (apiPort: string) => `${POSTGRES_CONTAINER_NAME_PREFIX}${apiPort}`;
 
-const runningContainerIds = (apiPort: string): ReadonlyArray<string> =>
-  execSync(`docker ps -q --filter name=${dockerContainerNameFor(apiPort)}`)
+const runningContainerIds = (nameFilter: string): ReadonlyArray<string> =>
+  execSync(`docker ps -q --filter name=${nameFilter}`)
     .toString()
     .trim()
     .split(/\s+/)
@@ -73,9 +74,11 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
   describe("phase 1: native postgres writes a marker row", () => {
     let stack: StackHandle;
     let apiPort: string;
-    let containerIdsBeforeStart: ReadonlySet<string>;
+    let containerIdsBeforeCreate: ReadonlySet<string>;
 
     beforeAll(async () => {
+      containerIdsBeforeCreate = new Set(runningContainerIds(POSTGRES_CONTAINER_NAME_PREFIX));
+
       stack = await createStack({
         mode: "native",
         ...onlyPostgresConfig,
@@ -83,8 +86,6 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
       });
 
       apiPort = new URL(stack.url).port;
-      // Only containers introduced by this stack say anything about its runtime mode.
-      containerIdsBeforeStart = new Set(runningContainerIds(apiPort));
 
       try {
         await stack.start();
@@ -116,7 +117,9 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
       { timeout: TEST_TIMEOUT_MS },
       () => {
         expect(
-          runningContainerIds(apiPort).filter((id) => !containerIdsBeforeStart.has(id)),
+          runningContainerIds(dockerContainerNameFor(apiPort)).filter(
+            (id) => !containerIdsBeforeCreate.has(id),
+          ),
         ).toEqual([]);
       },
     );
@@ -186,7 +189,7 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
     }, TEARDOWN_TIMEOUT_MS);
 
     test("runs postgres as a Docker container this time", { timeout: TEST_TIMEOUT_MS }, () => {
-      expect(runningContainerIds(apiPort)).not.toEqual([]);
+      expect(runningContainerIds(dockerContainerNameFor(apiPort))).not.toEqual([]);
     });
 
     // This is the assertion this whole file exists to make: the row written while
