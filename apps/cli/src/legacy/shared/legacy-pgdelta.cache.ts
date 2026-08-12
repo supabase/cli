@@ -16,6 +16,7 @@ import {
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
 } from "./legacy-db-config.toml-read.ts";
+import { legacyWalkSqlFiles } from "./legacy-glob.ts";
 import { legacyResolveDbImage } from "./legacy-db-image.ts";
 import {
   legacyBuildLocalDbContainerInputs,
@@ -337,48 +338,28 @@ export const legacyHashMigrations = Effect.fnUntraced(function* (
   return hash.digest("hex");
 });
 
-// The walk is deliberately strict: a readDirectory/stat failure mid-traversal must fail
-// the hash rather than silently drop entries — a partial hash can collide with an existing
-// cache key and serve a stale catalog for a tree that was only partially read. A missing
-// root is the one tolerated case (deterministic empty hash; callers gate on the dir's
-// existence before reaching catalog export).
-const collectSqlFiles = Effect.fnUntraced(function* (
-  fs: FileSystem.FileSystem,
-  path: Path.Path,
-  root: string,
-) {
-  const exists = yield* fs.exists(root).pipe(Effect.orElseSucceed(() => false));
-  if (!exists) return [] as ReadonlyArray<string>;
-  const files: Array<string> = [];
-  const stack: Array<string> = [root];
-  while (stack.length > 0) {
-    const dir = stack.pop()!;
-    const names = yield* fs.readDirectory(dir);
-    for (const name of names) {
-      const full = path.join(dir, name);
-      const stat = yield* fs.stat(full);
-      if (stat.type === "Directory") stack.push(full);
-      else if (path.extname(name) === ".sql") files.push(full);
-    }
-  }
-  return files as ReadonlyArray<string>;
-});
-
 /**
- * Mirrors Go's `hashDeclarativeSchemas` (`declarative.go:515`): walk the
- * declarative dir for `.sql` files, sort by path, and hash each file's
- * forward-slash relative path then its contents. Returns full hex.
+ * Walk the declarative dir for regular `.sql` files, byte-sort by relative path, and hash
+ * each file's forward-slash relative path then its contents. Returns full hex.
+ *
+ * Uses {@link legacyWalkSqlFiles} for the traversal, which gives three properties this cache
+ * key depends on: the walk is strict (a readDirectory/stat failure fails the hash rather than
+ * shrinking it into a possible stale-cache collision), it never follows symlinks (a directory
+ * symlink pointing at an ancestor would otherwise loop the walk forever, and symlinked `.sql`
+ * files are excluded like non-regular files), and each directory level plus the final list is
+ * byte-sorted so the key is stable across platforms. A missing root is the one tolerated
+ * case (deterministic empty hash; callers gate on the dir existing before catalog export).
  */
 export const legacyHashDeclarativeSchemas = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
-  path: Path.Path,
+  _path: Path.Path,
   declarativeDir: string,
 ) {
-  const files = [...(yield* collectSqlFiles(fs, path, declarativeDir))].sort();
+  const exists = yield* fs.exists(declarativeDir).pipe(Effect.orElseSucceed(() => false));
+  const files = exists ? yield* legacyWalkSqlFiles(fs, declarativeDir, "") : [];
   const hash = createHash("sha256");
-  for (const filePath of files) {
-    const contents = yield* fs.readFile(filePath);
-    const rel = path.relative(declarativeDir, filePath).split("\\").join("/");
+  for (const rel of files) {
+    const contents = yield* fs.readFile(`${declarativeDir}/${rel}`);
     hash.update(rel, "utf8");
     hash.update(contents);
   }

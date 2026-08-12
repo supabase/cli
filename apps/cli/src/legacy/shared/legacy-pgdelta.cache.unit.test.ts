@@ -377,6 +377,29 @@ describe("legacyHashDeclarativeSchemas", () => {
     );
   });
 
+  // A directory symlink pointing at an ancestor must not loop the walk, and symlinked
+  // entries are excluded from the hash entirely — matching the walker's no-follow
+  // semantics (codex review, PR #6162).
+  it.effect("skips symlinked entries instead of following them", () => {
+    const dir = withTemp();
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "public.sql"), "A");
+    symlinkSync(join(dir, "supabase"), join(declDir, "loop"));
+    const expected = createHash("sha256")
+      .update("public.sql", "utf8")
+      .update(Buffer.from("A"))
+      .digest("hex");
+    return withServices((fs, path) => legacyHashDeclarativeSchemas(fs, path, declDir)).pipe(
+      Effect.tap((hash) =>
+        Effect.sync(() => {
+          expect(hash).toBe(expected);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   // A partial hash can collide with an existing cache key and serve a stale catalog,
   // so a traversal failure must fail the hash, not shrink it (codex review, PR #6162).
   it.effect("fails when part of the tree cannot be read instead of hashing a subset", () => {
