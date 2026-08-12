@@ -292,7 +292,7 @@ describe("legacy ssl-enforcement update integration", () => {
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      expect(out.stdoutText).toContain("appliedSuccessfully: true");
+      expect(out.stdoutText).toContain("appliedsuccessfully: true");
       expect(out.stdoutText).toContain("database: true");
     }).pipe(Effect.provide(layer));
   });
@@ -305,8 +305,8 @@ describe("legacy ssl-enforcement update integration", () => {
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      expect(out.stdoutText).toContain("appliedSuccessfully = true");
-      expect(out.stdoutText).toContain("[currentConfig]");
+      expect(out.stdoutText).toContain("AppliedSuccessfully = true");
+      expect(out.stdoutText).toContain("[CurrentConfig]");
     }).pipe(Effect.provide(layer));
   });
 
@@ -365,7 +365,7 @@ describe("legacy ssl-enforcement update integration", () => {
         enableDbSslEnforcement: true,
         disableDbSslEnforcement: false,
       });
-      expect(out.stdoutText).toContain("appliedSuccessfully: true");
+      expect(out.stdoutText).toContain("appliedsuccessfully: true");
       expect(out.stdoutText.startsWith("{")).toBe(false);
     }).pipe(Effect.provide(layer));
   });

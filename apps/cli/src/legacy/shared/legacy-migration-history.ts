@@ -1,7 +1,8 @@
 import { Effect, type FileSystem, Option, type Path } from "effect";
 
-import { legacyListLocalMigrations } from "../commands/db/shared/legacy-pgdelta.cache.ts";
+import { legacyListLocalMigrations } from "./legacy-pgdelta.cache.ts";
 import { legacyBold } from "./legacy-colors.ts";
+import { legacyCompareUtf8Bytes } from "./legacy-glob.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
@@ -47,6 +48,10 @@ export const UPSERT_MIGRATION_VERSION =
 /** `DELETE ... WHERE version = ANY($1)` — Go's `DELETE_MIGRATION_VERSION` (repair reverted). */
 export const DELETE_MIGRATION_VERSION =
   "DELETE FROM supabase_migrations.schema_migrations WHERE version = ANY($1)";
+
+/** `DELETE ... WHERE version <= $1` — Go's `DELETE_MIGRATION_BEFORE` (squash baseline). */
+export const LEGACY_DELETE_MIGRATION_BEFORE =
+  "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1";
 
 /** `TRUNCATE supabase_migrations.schema_migrations` — Go's repair-all reset. */
 export const TRUNCATE_VERSION_TABLE = "TRUNCATE supabase_migrations.schema_migrations";
@@ -295,6 +300,25 @@ export const legacyLoadLocalVersions = (
 /** Basename of a path, handling both `/` and `\` separators (keeps the helper pure). */
 const baseName = (filePath: string): string => filePath.split(/[\\/]/u).pop() ?? filePath;
 
+/**
+ * Orders local migration paths by version so they line up with
+ * `schema_migrations` (`ORDER BY version`) before a two-pointer walk compares
+ * the two lists. Go sorts these by file name and compares by version, which
+ * only agrees while versions are the same width: `20260420010000_b.sql` sorts
+ * before `20260420_a.sql` by name (`'0'` < `'_'`) but after it by version,
+ * desynchronising the walk (supabase/cli#6036). Stable and keyed on the version
+ * alone, so same-width sets keep the exact name order Go produced.
+ */
+export function legacySortMigrationPathsByVersion(
+  localPaths: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return [...localPaths].sort((a, b) => {
+    const versionA = MIGRATE_FILE_PATTERN.exec(baseName(a))?.[1] ?? "";
+    const versionB = MIGRATE_FILE_PATTERN.exec(baseName(b))?.[1] ?? "";
+    return versionA < versionB ? -1 : versionA > versionB ? 1 : 0;
+  });
+}
+
 /** Outcome of `legacyFindPendingMigrations` — Go's `(slice, error)` as a tagged union. */
 export type LegacyPendingMigrations =
   | { readonly kind: "pending"; readonly paths: ReadonlyArray<string> }
@@ -309,19 +333,21 @@ export type LegacyPendingMigrations =
  * paths, or flags a remote version missing from local (`missing-local`) or an
  * out-of-order local migration (`missing-remote`). `localPaths` are full paths
  * whose basenames match `<version>_<name>.sql`; `remoteVersions` are sorted.
+ * Both sides must agree on ordering, so `localPaths` is re-sorted by version.
  */
 export function legacyFindPendingMigrations(
   localPaths: ReadonlyArray<string>,
   remoteVersions: ReadonlyArray<string>,
 ): LegacyPendingMigrations {
+  const sortedLocal = legacySortMigrationPathsByVersion(localPaths);
   const unapplied: Array<string> = [];
   const missing: Array<string> = [];
   let i = 0;
   let j = 0;
-  while (i < remoteVersions.length && j < localPaths.length) {
+  while (i < remoteVersions.length && j < sortedLocal.length) {
     const remote = remoteVersions[i]!;
     // `legacyListLocalMigrations` guarantees the basename matches the pattern.
-    const local = MIGRATE_FILE_PATTERN.exec(baseName(localPaths[j]!))?.[1] ?? "";
+    const local = MIGRATE_FILE_PATTERN.exec(baseName(sortedLocal[j]!))?.[1] ?? "";
     if (remote === local) {
       i++;
       j++;
@@ -330,17 +356,17 @@ export function legacyFindPendingMigrations(
       i++;
     } else {
       // Out-of-order local migration (older than an applied remote one).
-      unapplied.push(localPaths[j]!);
+      unapplied.push(sortedLocal[j]!);
       j++;
     }
   }
   // Any remote versions past the end of local are also missing.
-  if (j === localPaths.length) {
+  if (j === sortedLocal.length) {
     for (let k = i; k < remoteVersions.length; k++) missing.push(remoteVersions[k]!);
   }
   if (missing.length > 0) return { kind: "missing-local", versions: missing };
   if (unapplied.length > 0) return { kind: "missing-remote", paths: unapplied };
-  return { kind: "pending", paths: localPaths.slice(remoteVersions.length) };
+  return { kind: "pending", paths: sortedLocal.slice(remoteVersions.length) };
 }
 
 /**
@@ -400,9 +426,12 @@ export const legacyReadMigrationTable = (session: LegacyDbSession) =>
 /**
  * Resolves the local migration file for a version by globbing `<version>_*.sql`
  * against the migrations dir. Mirrors Go's `repair.GetMigrationFile`
- * (`internal/migration/repair/repair.go:90`): the lexically-first match, or
- * `None` when nothing matches (the caller raises the not-found error so the
- * exact Go message can be assembled). A missing directory is treated as no match.
+ * (`internal/migration/repair/repair.go:90-100`): `afero.Glob` reads the
+ * directory then byte-sorts entries (`sort.Strings`, `afero/match.go:91`) before
+ * matching, so ties resolve to the byte-ordered (Go `sort.Strings`) first match,
+ * not JS's default UTF-16-code-unit order — or `None` when nothing matches (the
+ * caller raises the not-found error so the exact Go message can be assembled). A
+ * missing directory is treated as no match.
  */
 export const legacyResolveMigrationFile = (
   fs: FileSystem.FileSystem,
@@ -424,7 +453,7 @@ export const legacyResolveMigrationFile = (
       const prefix = `${version}_`;
       const matches = names
         .filter((name) => name.startsWith(prefix) && name.endsWith(".sql"))
-        .sort();
+        .sort(legacyCompareUtf8Bytes);
       return matches.length > 0
         ? Option.some(path.join(migrationsDir, matches[0]!))
         : Option.none<string>();

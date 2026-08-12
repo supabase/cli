@@ -1,11 +1,4 @@
-import {
-  StateManager,
-  daemonLayer,
-  resolveDaemonConfig,
-  resolveManagedStack,
-  stopDaemon,
-} from "@supabase/stack/effect";
-import { daemonEntryPoint } from "@supabase/stack";
+import { StateManager, daemonLayer, resolveManagedStack, stopDaemon } from "@supabase/stack/effect";
 import { Effect, Option } from "effect";
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { CliConfig } from "../../../config/cli-config.service.ts";
@@ -160,21 +153,14 @@ export const switchBranch = Effect.fn("branches.switch")(function* (opts: {
       },
     });
 
-    const resolvedConfig = yield* Effect.promise(() =>
-      resolveDaemonConfig({
-        cacheRoot: cliConfig.supabaseHome,
-        cwd: runtimeInfo.cwd,
-        projectDir: projectHome.projectRoot,
-        projectStateRoot: projectHome.projectHomeDir,
-        name: stackState.name,
-        ...launchConfig,
-      }),
-    );
-
-    const stackLayer = yield* daemonLayer(
-      { ...resolvedConfig, name: stackState.name, projectDir: projectHome.projectRoot },
-      daemonEntryPoint,
-    );
+    const stackLayer = yield* daemonLayer({
+      cacheRoot: cliConfig.supabaseHome,
+      cwd: runtimeInfo.cwd,
+      projectDir: projectHome.projectRoot,
+      projectStateRoot: projectHome.projectHomeDir,
+      name: stackState.name,
+      ...launchConfig,
+    });
 
     yield* Effect.scoped(
       Effect.gen(function* () {

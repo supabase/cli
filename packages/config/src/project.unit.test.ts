@@ -51,7 +51,7 @@ describe("project discovery and lazy env resolution", () => {
   });
 
   test("search: false only checks cwd itself, matching Go's exact-workdir resolution", async () => {
-    // Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-247`):
+    // Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:238-257`):
     // an explicit workdir is used exactly as given, with no ancestor climb —
     // callers that already hold a Go-equivalent project root (e.g. the legacy
     // `stop`/`status` ports' `cliConfig.workdir`) pass `search: false` to avoid
@@ -80,6 +80,44 @@ describe("project discovery and lazy env resolution", () => {
       expect(
         await runConfigEffect(loadProjectEnvironment({ cwd: nestedCwd, search: false })),
       ).toBeNull();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("climbs past a FILE named `supabase` in the starting directory instead of failing with ENOTDIR", async () => {
+    // Go's getProjectRoot keeps climbing on any stat error
+    // (apps/cli-go/internal/utils/misc.go:216-231) — a stray FILE named
+    // `supabase` (not a directory) must read as "no config here", not crash.
+    const cwd = makeTempProject();
+    const nestedCwd = join(cwd, "child");
+
+    try {
+      await mkdir(nestedCwd, { recursive: true });
+      await writeFile(join(nestedCwd, "supabase"), "not a directory\n");
+
+      const paths = await runConfigEffect(findProjectPaths(nestedCwd));
+
+      expect(paths).toBeNull();
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+
+  test("returns the parent's project when the starting directory has a FILE named `supabase` but the parent has a real config", async () => {
+    const cwd = makeTempProject();
+    const child = join(cwd, "child");
+
+    try {
+      await mkdir(join(cwd, "supabase"), { recursive: true });
+      await mkdir(child, { recursive: true });
+      await writeFile(join(cwd, "supabase", "config.toml"), 'project_id = "parent"\n');
+      await writeFile(join(child, "supabase"), "not a directory\n");
+
+      const paths = await runConfigEffect(findProjectPaths(child));
+
+      expect(paths?.projectRoot).toBe(cwd);
+      expect(paths?.configPath).toBe(join(cwd, "supabase", "config.toml"));
     } finally {
       await rm(cwd, { recursive: true, force: true });
     }

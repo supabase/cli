@@ -15,6 +15,7 @@ function rawState(name: string, status: ServiceState["status"], error: string | 
     restartCount: 0,
     startedAt: null,
     error,
+    desired: "running",
   });
 }
 

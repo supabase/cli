@@ -63,6 +63,18 @@ const runDown = Effect.fnUntraced(function* (
 
   const connType = target.connType ?? "local"; // down defaults to `--local` (Go: `Bool("local", true)`).
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   // Resolve the DB config BEFORE the `--last` validation — Go's root `PersistentPreRunE`
   // runs `ParseDatabaseConfig` (`cmd/root.go:118`) before `down.Run`'s `last == 0` check
   // (`internal/migration/down/down.go:20-23`), so an unlinked/invalid target surfaces
@@ -71,6 +83,7 @@ const runDown = Effect.fnUntraced(function* (
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
@@ -89,7 +102,7 @@ const runDown = Effect.fnUntraced(function* (
       ? yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
           const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const linkedRef = yield* projectRef.loadProjectRef(Option.none());
+          const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
           return linkedProjectCache.cache(linkedRef);
         })
       : undefined;
@@ -150,6 +163,13 @@ const runDown = Effect.fnUntraced(function* (
         yield* legacyMigrateAndSeed(session, fs, path, cliConfig.workdir, version, {
           migrationsEnabled: toml.migrationsEnabled,
           seed: toml.seed,
+          // `version` is always non-empty here (`migration down` reverts to a concrete
+          // target) — Go's `len(version) == 0` half of `legacyMigrateAndSeed`'s declarative
+          // branch gate is therefore always false on this call site regardless of these
+          // three values, matching the file's own doc comment.
+          experimental: false,
+          pgDeltaEnabled: false,
+          schemaPaths: [],
         });
 
         if (output.format !== "text") {

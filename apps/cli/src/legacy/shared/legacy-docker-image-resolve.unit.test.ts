@@ -12,12 +12,16 @@ const REGISTRY_ENV = "SUPABASE_INTERNAL_IMAGE_REGISTRY";
 
 function mockSpawner(
   pullResults: ReadonlyArray<{ readonly exitCode: number; readonly stderr?: string }>,
-  // Defaults to a non-zero exit with empty stderr, which forces every
+  // Defaults to a confirmed "not found" inspect response, which forces every
   // candidate through the pull path instead of the already-cached shortcut —
   // the behavior both existing pull-retry tests below rely on. A test
   // covering `hasLocalImage`'s own fail-fast behavior overrides this to
-  // simulate a daemon-down `image inspect` response instead.
-  imageInspectResult: { readonly exitCode: number; readonly stderr?: string } = { exitCode: 1 },
+  // simulate a daemon-down (or other non-not-found) `image inspect` response
+  // instead.
+  imageInspectResult: { readonly exitCode: number; readonly stderr?: string } = {
+    exitCode: 1,
+    stderr: "Error response from daemon: No such image: placeholder",
+  },
 ) {
   const pulls: Array<string> = [];
   const imageInspectOptions: Array<ChildProcess.CommandOptions> = [];
@@ -85,6 +89,23 @@ function mockSpawner(
   };
 }
 
+/**
+ * Joins everything written to stderr — the tee's `Uint8Array` chunks and the
+ * resolver's own `string` writes — into one transcript, so tests can assert
+ * on the byte sequence a terminal would actually display (e.g. that a retry
+ * banner starts on a fresh line after an unterminated child error).
+ */
+function stderrTranscript(chunks: ReadonlyArray<unknown>): string {
+  const decoder = new TextDecoder();
+  return chunks
+    .map((chunk) => {
+      if (typeof chunk === "string") return chunk;
+      if (chunk instanceof Uint8Array) return decoder.decode(chunk);
+      return "";
+    })
+    .join("");
+}
+
 describe("legacyMakeDockerImageResolver", () => {
   it.effect(
     "retries a pull failure unconditionally through messages that wouldn't have matched the old retryable-pattern allowlist, giving up after 3 total attempts",
@@ -96,8 +117,17 @@ describe("legacyMakeDockerImageResolver", () => {
         // list built by `legacyGetRegistryImageUrlCandidates`.
         const previousRegistry = process.env[REGISTRY_ENV];
         process.env[REGISTRY_ENV] = "docker.io";
+        // Records every chunk written to stderr, including the `docker pull` child's own
+        // stdout/stderr, which `pullImage` tees live to the parent's stderr as `Uint8Array`
+        // chunks — only the `Retrying after …` banner (and its fresh-line `"\n"` separator)
+        // is ever written as a plain `string`, so filtering by `startsWith("Retrying after")`
+        // isolates the banner from the tee below.
+        const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
-        globalThis.process.stderr.write = (() => true) as typeof globalThis.process.stderr.write;
+        globalThis.process.stderr.write = ((chunk: unknown) => {
+          stderrChunks.push(chunk);
+          return true;
+        }) as typeof globalThis.process.stderr.write;
 
         try {
           // Mirrors Go's own `docker_test.go` "throws error on failure to pull
@@ -133,6 +163,26 @@ describe("legacyMakeDockerImageResolver", () => {
           for (const options of mock.imageInspectOptions) {
             expect(options).toMatchObject({ stdin: "ignore", stdout: "ignore", stderr: "pipe" });
           }
+          // Go's per-retry banner (`docker.go:314`): `Fprintf(os.Stderr, "Retrying after %v: %s\n", …)`
+          // — one banner before each of the 2 retries, escalating 4s then 8s, naming the exact
+          // candidate this resolver pinned to (see the comment above on `REGISTRY_ENV`).
+          const retryBanners = stderrChunks.filter(
+            (chunk): chunk is string =>
+              typeof chunk === "string" && chunk.startsWith("Retrying after"),
+          );
+          expect(retryBanners).toEqual([
+            "Retrying after 4s: supabase/postgres:17.6.1.138\n",
+            "Retrying after 8s: supabase/postgres:17.6.1.138\n",
+          ]);
+          // Go `Fprintln`s the failed error before the banner (`docker.go:312`),
+          // so the banner always starts on a fresh line. The child's error here
+          // has no trailing newline, so the resolver must add one — never the
+          // glued `…deviceRetrying after …`.
+          const transcript = stderrTranscript(stderrChunks);
+          expect(transcript).toContain(
+            "no space left on device\nRetrying after 4s: supabase/postgres:17.6.1.138\n",
+          );
+          expect(transcript).not.toContain("deviceRetrying");
         } finally {
           globalThis.process.stderr.write = originalWrite;
           if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
@@ -147,8 +197,12 @@ describe("legacyMakeDockerImageResolver", () => {
       Effect.gen(function* () {
         const previousRegistry = process.env[REGISTRY_ENV];
         process.env[REGISTRY_ENV] = "docker.io";
+        const stderrChunks: Array<unknown> = [];
         const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
-        globalThis.process.stderr.write = (() => true) as typeof globalThis.process.stderr.write;
+        globalThis.process.stderr.write = ((chunk: unknown) => {
+          stderrChunks.push(chunk);
+          return true;
+        }) as typeof globalThis.process.stderr.write;
 
         try {
           const mock = mockSpawner([
@@ -165,12 +219,128 @@ describe("legacyMakeDockerImageResolver", () => {
 
           expect(mock.pulls).toHaveLength(2);
           expect(image).toBe("supabase/postgres:17.6.1.138");
+          // Only the first candidate's failed attempt sleeps through a retry banner — the
+          // second attempt succeeds immediately, so the 8s banner (and a third pull) must
+          // never happen.
+          const retryBanners = stderrChunks.filter(
+            (chunk): chunk is string =>
+              typeof chunk === "string" && chunk.startsWith("Retrying after"),
+          );
+          expect(retryBanners).toEqual(["Retrying after 4s: supabase/postgres:17.6.1.138\n"]);
         } finally {
           globalThis.process.stderr.write = originalWrite;
           if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
           else process.env[REGISTRY_ENV] = previousRegistry;
         }
       }),
+  );
+
+  it.effect(
+    "does not inject a blank line before the banner when the child error is newline-terminated",
+    () =>
+      Effect.gen(function* () {
+        const previousRegistry = process.env[REGISTRY_ENV];
+        process.env[REGISTRY_ENV] = "docker.io";
+        const stderrChunks: Array<unknown> = [];
+        const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
+        globalThis.process.stderr.write = ((chunk: unknown) => {
+          stderrChunks.push(chunk);
+          return true;
+        }) as typeof globalThis.process.stderr.write;
+
+        try {
+          const mock = mockSpawner([
+            { exitCode: 1, stderr: "no space left on device\n" },
+            { exitCode: 0 },
+          ]);
+          const resolve = legacyMakeDockerImageResolver(mock.spawner);
+          const fiber = yield* resolve("supabase/postgres:17.6.1.138").pipe(
+            Effect.forkChild({ startImmediately: true }),
+          );
+
+          yield* TestClock.adjust("4 seconds");
+          const image = yield* Fiber.join(fiber);
+
+          expect(image).toBe("supabase/postgres:17.6.1.138");
+          // The child already terminated its own line — Go's `Fprintln`
+          // output shape is exactly one newline between error and banner, so
+          // the resolver must not add a second one.
+          const transcript = stderrTranscript(stderrChunks);
+          expect(transcript).toContain(
+            "no space left on device\nRetrying after 4s: supabase/postgres:17.6.1.138\n",
+          );
+          expect(transcript).not.toContain("\n\nRetrying");
+        } finally {
+          globalThis.process.stderr.write = originalWrite;
+          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+          else process.env[REGISTRY_ENV] = previousRegistry;
+        }
+      }),
+  );
+
+  it.live("gives every registry candidate its share when a deadline is passed", () => {
+    // Fail-fast pulls with a small budget: each candidate still gets a turn
+    // (unused share carries forward), and the guarded backoff never sleeps a
+    // 4s retry into the next candidate's time — the test finishing in
+    // milliseconds rather than seconds is itself the assertion.
+    const mock = mockSpawner([
+      { exitCode: 1, stderr: "denied" },
+      { exitCode: 1, stderr: "denied" },
+      { exitCode: 1, stderr: "denied" },
+    ]);
+    const resolve = legacyMakeDockerImageResolver(mock.spawner);
+    return resolve("supabase/postgres:15", Date.now() + 500).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(LegacyDockerRunError);
+        expect(mock.pulls.length).toBe(3);
+        expect(new Set(mock.pulls).size).toBe(3);
+      }),
+    );
+  });
+
+  it.live("reports exhausted candidate budgets instead of pulling past a spent deadline", () => {
+    const mock = mockSpawner([]);
+    const resolve = legacyMakeDockerImageResolver(mock.spawner);
+    return resolve("supabase/postgres:15", Date.now() - 1_000).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error.message).toContain("candidate budget exhausted");
+        expect(mock.pulls.length).toBe(0);
+      }),
+    );
+  });
+
+  it.effect("prints no Retrying banner when the first pull attempt succeeds", () =>
+    Effect.gen(function* () {
+      const previousRegistry = process.env[REGISTRY_ENV];
+      process.env[REGISTRY_ENV] = "docker.io";
+      const stderrChunks: Array<unknown> = [];
+      const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
+      globalThis.process.stderr.write = ((chunk: unknown) => {
+        stderrChunks.push(chunk);
+        return true;
+      }) as typeof globalThis.process.stderr.write;
+
+      try {
+        const mock = mockSpawner([{ exitCode: 0 }]);
+        const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+        const image = yield* resolve("supabase/postgres:17.6.1.138");
+
+        expect(mock.pulls).toHaveLength(1);
+        expect(image).toBe("supabase/postgres:17.6.1.138");
+        const retryBanners = stderrChunks.filter(
+          (chunk): chunk is string =>
+            typeof chunk === "string" && chunk.startsWith("Retrying after"),
+        );
+        expect(retryBanners).toEqual([]);
+      } finally {
+        globalThis.process.stderr.write = originalWrite;
+        if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+        else process.env[REGISTRY_ENV] = previousRegistry;
+      }
+    }),
   );
 
   it.effect("fails fast on a daemon-unreachable image inspect without ever attempting a pull", () =>
@@ -195,5 +365,63 @@ describe("legacyMakeDockerImageResolver", () => {
         else process.env[REGISTRY_ENV] = previousRegistry;
       }
     }),
+  );
+
+  it.effect(
+    "fails fast on a non-not-found image inspect error (e.g. an auth-plugin denial) without ever attempting a pull",
+    () =>
+      Effect.gen(function* () {
+        const previousRegistry = process.env[REGISTRY_ENV];
+        process.env[REGISTRY_ENV] = "docker.io";
+
+        try {
+          // Go's `DockerResolveImageIfNotCached` treats ONLY a confirmed `errdefs.IsNotFound`
+          // as a cache miss; every other inspect error — this is neither a "no such image" nor
+          // a daemon-unreachable message — returns immediately instead of falling through to
+          // the pull loop (`internal/utils/docker.go:326-334`).
+          const authPluginDenialStderr =
+            "Error response from daemon: authorization denied by plugin AuthZPlugin: no policy matched";
+          const mock = mockSpawner([], { exitCode: 1, stderr: authPluginDenialStderr });
+          const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+          const error = yield* resolve("supabase/postgres:17.6.1.138").pipe(Effect.flip);
+
+          expect(error).toBeInstanceOf(LegacyDockerRunError);
+          expect(error.message).toContain(authPluginDenialStderr);
+          expect(error.message).not.toContain(LEGACY_SUGGEST_DOCKER_INSTALL);
+          expect(mock.pulls).toHaveLength(0);
+        } finally {
+          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+          else process.env[REGISTRY_ENV] = previousRegistry;
+        }
+      }),
+  );
+
+  it.effect(
+    "treats Podman's differently worded image-inspect miss as a cache miss and proceeds to pull",
+    () =>
+      Effect.gen(function* () {
+        const previousRegistry = process.env[REGISTRY_ENV];
+        process.env[REGISTRY_ENV] = "docker.io";
+
+        try {
+          // An uncached `podman image inspect <missing>` exits non-zero with `image not
+          // known` rather than Docker's `No such image` — see `isImageNotFoundMessage`'s
+          // doc comment. Both wordings must reach the pull loop identically.
+          const mock = mockSpawner([{ exitCode: 0 }], {
+            exitCode: 1,
+            stderr: "supabase/postgres:17.6.1.138: image not known",
+          });
+          const resolve = legacyMakeDockerImageResolver(mock.spawner);
+
+          const image = yield* resolve("supabase/postgres:17.6.1.138");
+
+          expect(image).toBe("supabase/postgres:17.6.1.138");
+          expect(mock.pulls).toHaveLength(1);
+        } finally {
+          if (previousRegistry === undefined) delete process.env[REGISTRY_ENV];
+          else process.env[REGISTRY_ENV] = previousRegistry;
+        }
+      }),
   );
 });

@@ -4,11 +4,10 @@ import { CliOutput, Command } from "effect/unstable/cli";
 
 import { textCliOutputFormatter } from "../../../shared/output/text-formatter.ts";
 import { LEGACY_GLOBAL_FLAGS } from "../../../shared/legacy/global-flags.ts";
-import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
-import { makeTelemetryIdentity } from "../../../shared/telemetry/identity.ts";
-import { mockOutput, mockRuntimeInfo, processEnvLayer } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockTelemetryRuntime } from "../../../../tests/helpers/mocks.ts";
 import {
   buildLegacyTestRuntime,
+  legacyIsolatedHomeLayer,
   mockLegacyCliConfig,
   mockLegacyPlatformApi,
   useLegacyTempWorkdir,
@@ -25,8 +24,8 @@ import { legacySslEnforcementCommand } from "./ssl-enforcement.command.ts";
 const tempRoot = useLegacyTempWorkdir("supabase-ssl-enforcement-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacySslEnforcementCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {
@@ -41,42 +40,21 @@ function setup() {
     out,
     api,
     cliConfig: mockLegacyCliConfig({ workdir: tempRoot.current }),
-    // `RuntimeInfo` is ambient (not provided by `legacyManagementApiRuntimeLayer`
-    // itself), so the real `legacyCredentialsLayer` built inline inside the
-    // command for the "gate open" case resolves ITS `RuntimeInfo` from this
-    // layer. Point homeDir at this test's isolated tempRoot so the layer's
-    // file-based token fallback (`<homeDir>/.supabase/access-token`) can't pick
-    // up a stray token left at the shared default `/tmp/supabase-cli-test-home`.
-    runtimeInfo: mockRuntimeInfo({ homeDir: tempRoot.current }),
+    // The "gate open" case builds the real `legacyManagementApiRuntimeLayer`
+    // inline inside the command; its cliConfig/credentials layers read real
+    // files under homeDir and ambient env — an ambient SUPABASE_ACCESS_TOKEN,
+    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
+    // test would make these assertions non-deterministic. Isolate both, keeping
+    // only the keyring kill-switch set.
+    runtimeInfo: legacyIsolatedHomeLayer(tempRoot.current, { SUPABASE_NO_KEYRING: "1" }),
   });
   const layer = Layer.mergeAll(
     runtime,
     CliOutput.layer(textCliOutputFormatter()),
-    // The "gate open" case reaches the real `legacyManagementApiRuntimeLayer`
-    // (provided inline inside the command, not by this test's mocked runtime),
-    // which reads credentials/env directly — an ambient SUPABASE_ACCESS_TOKEN,
-    // SUPABASE_EXPERIMENTAL, or OS keyring entry on the machine running the
-    // test would make these assertions non-deterministic. Wipe process.env
-    // down to just this and disable the keyring fallback.
-    processEnvLayer({ SUPABASE_NO_KEYRING: "1" }),
-    Layer.succeed(
-      TelemetryRuntime,
-      TelemetryRuntime.of({
-        configDir: `${tempRoot.current}/.supabase`,
-        tracesDir: `${tempRoot.current}/.supabase/traces`,
-        consent: "granted",
-        showDebug: false,
-        deviceId: "test-device-id",
-        sessionId: "test-session-id",
-        identity: makeTelemetryIdentity(undefined),
-        isFirstRun: false,
-        isTty: false,
-        isCi: false,
-        os: "linux",
-        arch: "x64",
-        cliVersion: "0.1.0",
-      }),
-    ),
+    mockTelemetryRuntime({
+      configDir: `${tempRoot.current}/.supabase`,
+      tracesDir: `${tempRoot.current}/.supabase/traces`,
+    }),
   );
   return { layer, api };
 }

@@ -5,6 +5,11 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import { renderGlamourTable } from "../../legacy/output/legacy-glamour-table.ts";
 import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
+import {
   dockerfileServiceImages,
   parseDockerfileServiceImages,
   type DockerfileImageSpec,
@@ -197,9 +202,14 @@ export interface ServiceFetchConfig {
   readonly tenantBaseUrlOverride?: string;
 }
 
-class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
+/** @public */
+export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
   readonly service: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 function fieldValue(value: unknown, key: string): unknown {
   if (typeof value !== "object" || value === null) {
@@ -416,10 +426,6 @@ export function formatServicesWarning(message: string, textMode: boolean): strin
   const prefix = textMode ? styleText("yellow", "WARNING:") : "WARNING:";
   const [first, ...rest] = lines;
   return `${prefix} ${first}\n${rest.join("\n")}\n`;
-}
-
-export function encodeLegacyTomlRows(rows: ReadonlyArray<ServiceVersionRow>) {
-  return { services: rows } as const;
 }
 
 export function fetchLinkedServiceVersions(input: ServiceFetchConfig) {

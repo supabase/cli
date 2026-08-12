@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { BunServices } from "@effect/platform-bun";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { existsSync, mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,9 +16,11 @@ import {
   mockProcessControl,
   mockProjectLinkState,
   mockRuntimeInfo,
+  mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import { functionsCommand } from "../functions.command.ts";
 import { functionsNew } from "./new.handler.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-functions-new-"));
@@ -269,6 +271,8 @@ describe("functions new", () => {
       analytics.layer,
       processControl.layer,
       mockRuntimeInfo({ cwd: tempDir }),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      commandRuntimeLayer(["functions"]),
       BunServices.layer,
       commandTreeSupportLayer(tempDir),
       mockProjectLinkState(),

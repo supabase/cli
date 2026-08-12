@@ -1,5 +1,10 @@
 import type { Effect, Option } from "effect";
 import { Data, Schema, Context } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 
 const LinkedServiceVersionsSchema = Schema.Struct({
   postgres: Schema.optionalKey(Schema.String),
@@ -37,12 +42,20 @@ export type ProjectLinkStateValue = Schema.Schema.Type<typeof ProjectLinkStateVa
 export class InvalidProjectLinkStateError extends Data.TaggedError("InvalidProjectLinkStateError")<{
   readonly detail: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.relinkProject;
+  }
+}
 
 export class ProjectNotLinkedError extends Data.TaggedError("ProjectNotLinkedError")<{
   readonly detail: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.projectNotLinked;
+  }
+}
 
 interface ProjectLinkStateShape {
   readonly load: Effect.Effect<Option.Option<ProjectLinkStateValue>, InvalidProjectLinkStateError>;

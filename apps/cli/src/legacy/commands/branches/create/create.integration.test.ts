@@ -22,11 +22,12 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyBranchesCreateCommand, type LegacyBranchesCreateFlags } from "./create.command.ts";
 import { legacyBranchesCreate } from "./create.handler.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 
 type CreatedBranch = typeof V1CreateABranchOutput.Type;
 
 const CREATED: CreatedBranch = {
-  id: "11111111-2222-3333-4444-555555555555",
+  id: "11111111-2222-4333-8444-555555555555",
   name: "feat-x",
   project_ref: "aaaaaaaaaaaaaaaaaaaa",
   parent_project_ref: "bbbbbbbbbbbbbbbbbbbb",
@@ -217,6 +218,33 @@ describe("legacy branches create integration", () => {
         git_branch: "feature/login-page",
       });
     }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports a missing name before contacting the API outside a git repository", () => {
+    const previousHead = process.env["GITHUB_HEAD_REF"];
+    delete process.env["GITHUB_HEAD_REF"];
+    const { layer, api } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* legacyBranchesCreate(baseFlags).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain("LegacyBranchesBranchNameEmptyError");
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "user_actionable",
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
+      }
+      expect(api.requests).toHaveLength(0);
+    }).pipe(
+      Effect.ensuring(
+        Effect.sync(() => {
+          if (previousHead === undefined) delete process.env["GITHUB_HEAD_REF"];
+          else process.env["GITHUB_HEAD_REF"] = previousHead;
+        }),
+      ),
+      Effect.provide(layer),
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -442,8 +470,8 @@ describe("legacy branches create integration", () => {
   // succeeding where Go errors.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
-      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
       Command.withSubcommands([legacyBranchesCreateCommand]),
+      Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
     );
 
     return Effect.gen(function* () {

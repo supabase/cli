@@ -37,7 +37,4 @@ const runtimeRootId = (stackRoot: string): string =>
 export const defaultManagedRuntimeRoot = (stackRoot: string): string =>
   join(defaultManagedRuntimeBaseRoot(), `s-${runtimeRootId(stackRoot)}`);
 
-export const socketPathForRuntimeRoot = (runtimeRoot: string): string =>
-  join(runtimeRoot, "daemon.sock");
-
 export const shortTempPrefixRoot = (): string => shortTempRoot();

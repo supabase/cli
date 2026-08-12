@@ -10,19 +10,19 @@ The CLI is distributed as a set of platform-specific npm packages. Each platform
 @supabase/cli-darwin-arm64/
 └── bin/
     ├── supabase       ← TypeScript CLI (Bun single-file executable)
-    └── supabase-go    ← Go CLI binary (for the remaining proxied commands)
+    └── supabase-go    ← Go CLI binary (for Phase 0 proxy commands)
 ```
 
 The base `supabase` package routes to the correct platform package via `src/shared/cli/bin.ts`, which resolves and `execFileSync`s the platform-specific `bin/supabase` binary.
 
 ## Why Two Binaries
 
-The legacy shell is a TypeScript port of the Go CLI. The port was done in phases:
+The legacy shell is a gradual TypeScript port of the Go CLI. Commands are ported in phases:
 
-- **Phase 0** — Every command was defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
-- **Phase 1+** — Commands were replaced with native TypeScript implementations.
+- **Phase 0** — The command is defined in the TS CLI tree but proxied to the Go binary at runtime via `LegacyGoProxy`.
+- **Phase 1+** — The command is implemented natively in TypeScript.
 
-The port is complete: `apps/cli-go/` is frozen and almost all commands are native TypeScript, but a small number of commands still proxy to the Go binary. While any proxied command remains, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once the remaining commands are ported to TypeScript, the Go binary will no longer be needed.
+During Phase 0, the TS binary (`supabase`) needs the Go binary (`supabase-go`) available on the same system. Once all commands are ported to TypeScript, the Go binary will no longer be needed. Not every Go command from the original CLI still exists in this binary, though — some are deleted outright once nothing in the TypeScript CLI can reach them, directly or indirectly; see "Removed commands" under Release Workflow below.
 
 ## Package Layout
 
@@ -42,7 +42,7 @@ The musl packages only carry the Bun TS binary (compiled for musl). The Go binar
 
 ## Runtime Resolution
 
-When a proxied command runs, `go-proxy.layer.ts` resolves the Go binary in this order:
+When a Phase 0 command runs, `go-proxy.layer.ts` resolves the Go binary in this order:
 
 1. **`SUPABASE_GO_BINARY` env var** — explicit override, takes priority.
 2. **Co-located `supabase-go`** — looks next to `process.execPath`. Works in compiled SFE mode because the base shim uses `execFileSync`, making the TS SFE the main process with `process.execPath` pointing to itself.
@@ -59,8 +59,6 @@ pnpm repos:install
 
 This must be run after a fresh clone before building a legacy release.
 
-The Go tree is frozen: it exists only to build the `supabase-go` sidecar and as a read-only parity reference for the TypeScript port. Do not modify it — all CLI changes are TypeScript-only.
-
 ## Development Workflow
 
 No build step is required to run the legacy CLI from source. The PATH fallback handles Go binary resolution automatically.
@@ -75,8 +73,8 @@ No build step is required to run the legacy CLI from source. The PATH fallback h
 3. Run commands:
 
    ```sh
-   supabase-dev completion bash   # still proxied to the Go binary
-   supabase-dev login             # native TypeScript implementation
+   supabase-dev orgs list    # Phase 0: proxied to Go binary on PATH
+   supabase-dev login        # Phase 1+: native TypeScript implementation
    ```
 
 Alternatively, set `SUPABASE_GO_BINARY` to point to a specific binary:
@@ -100,6 +98,10 @@ This:
 3. Signs the macOS binaries (both `supabase` and `supabase-go`) before archiving, so every channel ships the signed bytes — see [release-process.md § Code signing (macOS)](./release-process.md#code-signing-macos) and [ADR 0014](../../../docs/adr/0014-macos-code-signing-and-notarization.md)
 4. Bundles both binaries into the platform archives (`.tar.gz` / `.zip`)
 5. Includes both binaries in the Linux package manager packages (deb/rpm/apk)
+
+### Removed commands
+
+`apps/cli-go/internal/start` (Go's `supabase start` implementation) was deleted outright (CLI-1966), not just excluded from the shipped binary. Native TS `start` talks to Docker directly and never proxies to Go for it, and no other still-live TS→Go delegation seam (`db test`, `db branch`/`db remote`, `db diff --use-pg-schema`, `db pull --experimental`, the hidden `db __catalog` seam (baseline/declarative modes only — the migrations mode was removed by CLI-1959, and the sibling hidden `db __shadow` seam was removed outright by CLI-1956) — the sibling hidden `db __db-bootstrap` seam was removed outright by CLI-1955, once native `db reset --local` became its last remaining caller — etc.) ever called into `internal/start` either — a repo-wide `grep` for the import confirmed the only reference anywhere in `apps/cli-go` was `start`'s own cobra registration. `internal/start` alone previously accounted for roughly half the shipped Go binary's size via its exclusive dependency tree (docker-compose/v2, buildx, buildkit, k8s client-go, aws-sdk-go-v2, notary, secret-detector), which `go mod tidy` dropped entirely once the package was deleted. `cmd/start.go` keeps `start`'s cobra registration and flag surface (needed by the `__complete` passthrough) but its `RunE` is a permanent stub returning a "not available in supabase-go" error — see `apps/cli-go/cmd/start_test.go` for the pinned error text. There is no longer a `bundled` build tag: with no second implementation to select between, the Go CLI's `cmd` package has only one `start`.
 
 ## See Also
 

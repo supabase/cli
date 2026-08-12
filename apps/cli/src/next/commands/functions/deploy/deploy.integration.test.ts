@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, FunctionResponse } from "@supabase/api/effect";
+import { dockerfileServiceImage } from "../../../../shared/services/dockerfile-images.ts";
 import { BunServices } from "@effect/platform-bun";
 import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -68,6 +69,16 @@ interface RecordedRequest {
   readonly path: string;
   readonly urlParams: string;
   readonly headers: Readonly<Record<string, string | undefined>>;
+  /** Parsed JSON body, for the non-multipart requests (e.g. the bulk update PUT). */
+  readonly body?: unknown;
+}
+
+function readJsonBody(request: HttpClientRequest.HttpClientRequest): unknown {
+  // Docker bundle uploads are raw `EZBR`-prefixed Uint8Array bodies, not JSON.
+  if (request.body._tag !== "Uint8Array" || !request.body.contentType.includes("json")) {
+    return undefined;
+  }
+  return JSON.parse(new TextDecoder().decode(request.body.body));
 }
 
 interface RecordedMultipart {
@@ -235,6 +246,7 @@ function mockDeployApi(
               path,
               urlParams,
               headers: request.headers,
+              body: readJsonBody(request),
             });
             const multipart = readMultipart(request);
             if (multipart !== undefined) {
@@ -263,6 +275,11 @@ function mockDeployApi(
                 UrlParams.getFirst(request.urlParams, "slug"),
                 () => "hello-world",
               );
+              if (status !== 201) {
+                return jsonResponse(request, status, {
+                  message: `deployment already exists for ${slug}`,
+                });
+              }
               return jsonResponse(request, 201, {
                 ...makeFunction({
                   slug,
@@ -283,6 +300,9 @@ function mockDeployApi(
                   { message: "Too Many Requests" },
                   { "Retry-After": "0" },
                 );
+              }
+              if (status !== 200) {
+                return jsonResponse(request, status, { message: "bulk update rejected" });
               }
               return jsonResponse(request, 200, {
                 functions: [],
@@ -699,6 +719,109 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
+  // INC-699: a `bundleOnly` upload bumps the remote version without persisting
+  // metadata, so a partially failed bulk deploy must still send the final PUT for
+  // whatever uploaded — otherwise the remote metadata is stranded and every later
+  // deploy conflicts.
+  describe("partial bulk upload failures (INC-699)", () => {
+    it.live("still persists the functions that uploaded when one upload fails", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+
+        const { out, api, layer } = setup(tempDir, {
+          api: { deployStatuses: [201, 409] },
+        });
+
+        const error = yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toBe(
+            'unexpected deploy status 409: {"message":"deployment already exists for bye-world"}',
+          );
+        }
+
+        // Both uploads ran — the 201 was not interrupted by the sibling 409.
+        expect(
+          api.requests.filter((request) => request.path.endsWith("/functions/deploy")),
+        ).toHaveLength(2);
+        const bulkUpdate = api.requests.find((request) => request.method === "PUT");
+        expect(bulkUpdate).toBeDefined();
+        expect(bulkUpdate?.body).toMatchObject([{ slug: "hello-world" }]);
+        expect(out.stdoutText).not.toContain("Deployed Functions on project");
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
+
+    it.live("skips the bulk update entirely when every upload fails", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+
+        const { out, api, layer } = setup(tempDir, {
+          api: { deployStatuses: [409, 400] },
+        });
+
+        const error = yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        // Go's `errors.Join`: one message per failed upload, in input order.
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toBe(
+            [
+              'unexpected deploy status 409: {"message":"deployment already exists for hello-world"}',
+              'unexpected deploy status 400: {"message":"deployment already exists for bye-world"}',
+            ].join("\n"),
+          );
+        }
+        expect(api.requests.some((request) => request.method === "PUT")).toBe(false);
+        expect(out.stdoutText).not.toContain("Deployed Functions on project");
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
+
+    it.live("reports the upload failure and the bulk update failure together", () => {
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "bye-world"));
+
+        const { api, layer } = setup(tempDir, {
+          api: { deployStatuses: [201, 409], bulkStatuses: [400] },
+        });
+
+        const error = yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world", "bye-world"],
+        }).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(error).toBeInstanceOf(Error);
+        if (error instanceof Error) {
+          expect(error.message).toBe(
+            [
+              'unexpected deploy status 409: {"message":"deployment already exists for bye-world"}',
+              'unexpected bulk update status 400: {"message":"bulk update rejected"}',
+            ].join("\n"),
+          );
+        }
+        expect(api.requests.filter((request) => request.method === "PUT")).toHaveLength(1);
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    });
+  });
+
   it.live("uploads import maps using the same relative path as metadata", () => {
     const tempDir = makeTempDir();
 
@@ -735,7 +858,12 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
-  it.live("uploads an explicit import map outside the project root", () => {
+  it.live("rejects an explicit import map outside the project root", () => {
+    // Go parity (CLI-1985): `--import-map` outside the workdir resolves to a
+    // `..`-relative name via Go's `toRelPath`, same as an auto-discovered
+    // monorepo import — Go's `writeForm`/`addFile` rejects any such path via
+    // `fs.ValidPath` before the upload happens, regardless of how the escaping
+    // path was reached.
     const tempDir = makeTempDir();
     const projectDir = join(tempDir, "project");
     const sharedDir = join(tempDir, "shared");
@@ -758,21 +886,26 @@ describe("functions deploy", () => {
         ],
       });
 
-      yield* functionsDeploy({
-        ...BASE_FLAGS,
-        functionNames: ["hello-world"],
-        importMap: Option.some("../shared/import_map.json"),
-      }).pipe(Effect.provide(layer));
-
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"import_map_path":"../shared/import_map.json"',
+      const exit = yield* Effect.exit(
+        functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+          importMap: Option.some("../shared/import_map.json"),
+        }).pipe(Effect.provide(layer)),
       );
-      expect(api.multiparts[0]?.fileNames).toContain("../shared/import_map.json");
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to read file: open ../shared/import_map.json: invalid argument",
+        );
+      }
+      expect(api.multiparts).toHaveLength(0);
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
   it.live(
-    "uploads local targets referenced by an explicit import map outside the project root",
+    "rejects local targets referenced by an explicit import map outside the project root",
     () => {
       const tempDir = makeTempDir();
       const projectDir = join(tempDir, "project");
@@ -811,15 +944,21 @@ describe("functions deploy", () => {
           ],
         });
 
-        yield* functionsDeploy({
-          ...BASE_FLAGS,
-          functionNames: ["hello-world"],
-          importMap: Option.some("../shared/import_map.json"),
-        }).pipe(Effect.provide(layer));
+        const exit = yield* Effect.exit(
+          functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+            importMap: Option.some("../shared/import_map.json"),
+          }).pipe(Effect.provide(layer)),
+        );
 
-        expect(api.multiparts[0]?.fileNames).toContain("../shared/import_map.json");
-        expect(api.multiparts[0]?.fileNames).toContain("../shared/lib.ts");
-        expect(api.multiparts[0]?.fileNames).toContain("../shared/helper.ts");
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "failed to read file: open ../shared/import_map.json: invalid argument",
+          );
+        }
+        expect(api.multiparts).toHaveLength(0);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
@@ -1193,62 +1332,114 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), cleanupTempDir(outsideDir)])));
   });
 
-  it.live("uploads git-root workspace imports through the API", () => {
-    const repoRoot = makeTempDir();
-    const projectRoot = join(repoRoot, "app");
-    const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
+  it.live(
+    "skips an unreferenced `/`-suffixed import-map target that resolves through a file, on the default API deploy path",
+    () => {
+      // Regression: a spec-valid `/`-suffixed import-map value (which SHOULD
+      // end in "/") pointing at a real FILE used to crash `uploadScopeTarget`
+      // with a raw, unhandled ENOTDIR — independent of whether the
+      // entrypoint even references the key, since `forEachLocalImportMapTarget`
+      // walks every import-map value unconditionally.
+      const tempDir = makeTempDir();
 
-    return Effect.gen(function* () {
-      yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
-      yield* Effect.promise(() => writeProjectConfig(projectRoot));
-      yield* Effect.promise(() =>
-        writeLocalFunction(
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() =>
+          writeFile(
+            join(tempDir, "supabase", "functions", "hello-world", "vendor.mjs"),
+            "export const x = 1;\n",
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+            JSON.stringify({ imports: { "@x/": "./vendor.mjs/" } }),
+          ),
+        );
+
+        const { out, api, layer } = setup(tempDir, {
+          rawArgs: ["functions", "deploy", "hello-world"],
+        });
+
+        yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+        }).pipe(Effect.provide(layer));
+
+        expect(api.multiparts).toHaveLength(1);
+        expect(out.stderrText).toContain(
+          "WARN: Skipping import map target that is not a directory:",
+        );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    },
+  );
+
+  it.live(
+    "rejects a git-root workspace import that escapes the workdir with a `..` segment",
+    () => {
+      // Go parity (CLI-1985): names are anchored at the workdir like Go's
+      // `toRelPath` (relative to `os.Getwd()`), so a git-root workspace import
+      // outside the workdir resolves to a `..`-relative name. Go's
+      // `writeForm`/`addFile` (`pkg/function/deploy.go:251-284`) opens every
+      // uploaded path through an `fs.FS`, which rejects any path containing a
+      // `..` element (`fs.ValidPath`) before the read — and thus the upload —
+      // happens. Assert the CLI hard-fails the same way instead of letting a
+      // `..`-relative name reach the server.
+      const repoRoot = makeTempDir();
+      const projectRoot = join(repoRoot, "app");
+      const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => mkdir(join(repoRoot, ".git"), { recursive: true }));
+        yield* Effect.promise(() => writeProjectConfig(projectRoot));
+        yield* Effect.promise(() =>
+          writeLocalFunction(
+            projectRoot,
+            "hello-world",
+            [
+              'import { shared } from "@repo/shared"',
+              "Deno.serve(() => new Response(shared))",
+              "",
+            ].join("\n"),
+          ),
+        );
+        yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
+        yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
+        yield* Effect.promise(() =>
+          writeFile(
+            join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
+            JSON.stringify({
+              imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
+            }),
+          ),
+        );
+
+        const { out, api, layer } = setup(projectRoot, {
           projectRoot,
-          "hello-world",
-          [
-            'import { shared } from "@repo/shared"',
-            "Deno.serve(() => new Response(shared))",
-            "",
-          ].join("\n"),
-        ),
-      );
-      yield* Effect.promise(() => mkdir(dirname(sharedPath), { recursive: true }));
-      yield* Effect.promise(() => writeFile(sharedPath, 'export const shared = "ok"\n'));
-      yield* Effect.promise(() =>
-        writeFile(
-          join(projectRoot, "supabase", "functions", "hello-world", "deno.json"),
-          JSON.stringify({
-            imports: { "@repo/shared": "../../../../packages/shared/src/index.ts" },
-          }),
-        ),
-      );
+          rawArgs: ["functions", "deploy", "hello-world"],
+        });
 
-      const { out, api, layer } = setup(projectRoot, {
-        projectRoot,
-        rawArgs: ["functions", "deploy", "hello-world"],
-      });
+        const exit = yield* Effect.exit(
+          functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+          }).pipe(Effect.provide(layer)),
+        );
 
-      yield* functionsDeploy({
-        ...BASE_FLAGS,
-        functionNames: ["hello-world"],
-      }).pipe(Effect.provide(layer));
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(String(exit.cause)).toContain(
+            "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+          );
+        }
+        expect(api.multiparts).toHaveLength(0);
+        expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
+      }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
+    },
+  );
 
-      expect(api.multiparts[0]?.fileNames).toContain("app/supabase/functions/hello-world/index.ts");
-      expect(api.multiparts[0]?.fileNames).toContain(
-        "app/supabase/functions/hello-world/deno.json",
-      );
-      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
-      );
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"import_map_path":"app/supabase/functions/hello-world/deno.json"',
-      );
-      expect(out.stderrText).not.toContain("WARN: Skipping import path outside source root:");
-    }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
-  });
-
-  it.live("treats a .git file as the repo root marker for API uploads", () => {
+  it.live("rejects an escaping import even when a `.git` file marks the repo root", () => {
     const repoRoot = makeTempDir();
     const projectRoot = join(repoRoot, "app");
     const sharedPath = join(repoRoot, "packages", "shared", "src", "index.ts");
@@ -1285,15 +1476,20 @@ describe("functions deploy", () => {
         rawArgs: ["functions", "deploy", "hello-world"],
       });
 
-      yield* functionsDeploy({
-        ...BASE_FLAGS,
-        functionNames: ["hello-world"],
-      }).pipe(Effect.provide(layer));
-
-      expect(api.multiparts[0]?.fileNames).toContain("packages/shared/src/index.ts");
-      expect(api.multiparts[0]?.metadata).toContain(
-        '"entrypoint_path":"app/supabase/functions/hello-world/index.ts"',
+      const exit = yield* Effect.exit(
+        functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+        }).pipe(Effect.provide(layer)),
       );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(String(exit.cause)).toContain(
+          "failed to read file: open ../packages/shared/src/index.ts: invalid argument",
+        );
+      }
+      expect(api.multiparts).toHaveLength(0);
     }).pipe(Effect.ensuring(cleanupTempDir(repoRoot)));
   });
 
@@ -1517,16 +1713,23 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(4);
+      expect(child.spawned).toHaveLength(5);
       expect(child.spawned[0]).toEqual({
         command: "docker",
         args: ["info"],
       });
+      // Go: `DockerStart` -> `DockerResolveImageIfNotCached` — resolved
+      // before the network/volume ensure; `deno_version = 1` pins
+      // `DENO1_EDGE_RUNTIME_VERSION` ("1.68.4").
       expect(child.spawned[1]).toEqual({
+        command: "docker",
+        args: ["image", "inspect", "public.ecr.aws/supabase/edge-runtime:v1.68.4"],
+      });
+      expect(child.spawned[2]).toEqual({
         command: "docker",
         args: ["network", "inspect", "supabase_network_test-project"],
       });
-      expect(child.spawned[2]).toEqual({
+      expect(child.spawned[3]).toEqual({
         command: "docker",
         args: [
           "volume",
@@ -1600,7 +1803,7 @@ describe("functions deploy", () => {
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
-  it.live("forwards npm auth environment to the Docker bundler", () => {
+  it.live("forwards only NPM_CONFIG_REGISTRY to the Docker bundler", () => {
     const tempDir = makeTempDir();
     const previousRegistry = process.env["NPM_CONFIG_REGISTRY"];
     const previousToken = process.env["NPM_AUTH_TOKEN"];
@@ -1655,9 +1858,10 @@ describe("functions deploy", () => {
         args[index - 1] === "-e" ? [arg] : [],
       );
 
-      expect(forwardedEnv).toEqual(
-        expect.arrayContaining(["NPM_CONFIG_REGISTRY", "NPM_AUTH_TOKEN"]),
-      );
+      // Go parity (`bundle.go:68-70`, CLI-1985): only NPM_CONFIG_REGISTRY is
+      // forwarded into the bundler container; NPM_AUTH_TOKEN is not.
+      expect(forwardedEnv).toContain("NPM_CONFIG_REGISTRY");
+      expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN");
       expect(forwardedEnv).not.toContain("NPM_AUTH_TOKEN=test-token");
     }).pipe(Effect.ensuring(Effect.all([cleanupTempDir(tempDir), restoreEnv])));
   });
@@ -1804,7 +2008,7 @@ describe("functions deploy", () => {
           path: `/v1/projects/${PROJECT_REF}/functions/hello-world`,
         });
         expect(api.requests[1]?.urlParams).not.toContain("name=");
-        expect(child.spawned).toHaveLength(4);
+        expect(child.spawned).toHaveLength(5);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     },
   );
@@ -1975,7 +2179,10 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:v9.9.9");
+      // The pin's content is applied VERBATIM as the tag (Go's
+      // `replaceImageTag`, `pkg/config/utils.go:81-84`) — a bare `9.9.9` pin
+      // stays bare, with no `v` synthesized.
+      expect(child.spawned.at(-1)?.args).toContain("public.ecr.aws/supabase/edge-runtime:9.9.9");
     }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
   });
 
@@ -2021,7 +2228,7 @@ describe("functions deploy", () => {
         useDocker: true,
       }).pipe(Effect.provide(layer));
 
-      expect(child.spawned).toHaveLength(4);
+      expect(child.spawned).toHaveLength(5);
       expect(child.spawned.at(-1)?.args).toContain(
         yield* Effect.promise(() => expectedDockerBind(staticFile)),
       );
@@ -2415,5 +2622,117 @@ describe("functions deploy", () => {
         expect(api.requests.some((request) => request.method === "DELETE")).toBe(false);
       }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
     });
+  });
+
+  describe("Go's Config.Validate/env-override parity is legacy-only (CLI-1963)", () => {
+    it.live(
+      "does not fail on an explicit empty project_id, unlike the legacy shell's Config.Validate",
+      () => {
+        const tempDir = makeTempDir();
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(() => writeProjectConfig(tempDir, 'project_id = ""\n'));
+          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+          const { out, layer } = setup(tempDir, {
+            rawArgs: ["functions", "deploy", "hello-world"],
+          });
+
+          yield* functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+          }).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toContain(
+            `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
+          );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+      },
+    );
+
+    it.live(
+      "does not fail on an unrelated Config.Validate branch (unsupported Postgres major version)",
+      () => {
+        const tempDir = makeTempDir();
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            writeProjectConfig(
+              tempDir,
+              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
+            ),
+          );
+          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+          const { out, layer } = setup(tempDir, {
+            rawArgs: ["functions", "deploy", "hello-world"],
+          });
+
+          yield* functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+          }).pipe(Effect.provide(layer));
+
+          expect(out.stdoutText).toContain(
+            `Deployed Functions on project ${PROJECT_REF}: hello-world\n`,
+          );
+        }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+      },
+    );
+
+    it.live(
+      "ignores SUPABASE_EDGE_RUNTIME_DENO_VERSION and resolves the default edge-runtime image tag",
+      () => {
+        const tempDir = makeTempDir();
+        const child = mockChildProcessSpawner({
+          exitCode: 0,
+          onSpawn: (record) => {
+            if (record.command !== "docker" || record.args[0] !== "run") {
+              return;
+            }
+            const outputPath = resolveDockerOutputPath(record.args);
+            mkdirSync(dirname(outputPath), { recursive: true });
+            writeFileSync(outputPath, "eszip-test-output");
+          },
+        });
+
+        const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+        process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+
+        return Effect.gen(function* () {
+          yield* Effect.promise(() => writeProjectConfig(tempDir));
+          yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+
+          const { layer } = setup(tempDir, {
+            rawArgs: ["functions", "deploy", "hello-world", "--use-docker"],
+            childLayer: child.layer,
+          });
+
+          yield* functionsDeploy({
+            ...BASE_FLAGS,
+            functionNames: ["hello-world"],
+            useDocker: true,
+          }).pipe(Effect.provide(layer));
+
+          // `docker info` is spawned[0]; the bundler's first image-inspect
+          // candidate (a cache hit here) is spawned[1].
+          expect(child.spawned[1]).toEqual({
+            command: "docker",
+            args: ["image", "inspect", `public.ecr.aws/${dockerfileServiceImage("edgeruntime")}`],
+          });
+        }).pipe(
+          Effect.ensuring(cleanupTempDir(tempDir)),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+              } else {
+                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
+              }
+            }),
+          ),
+        );
+      },
+    );
   });
 });

@@ -18,15 +18,16 @@ import {
   mockAnalytics,
   mockOutput,
   mockProcessControl,
-  mockRuntimeInfo,
   mockTelemetryRuntime,
   mockTty,
 } from "../../../../tests/helpers/mocks.ts";
 import {
+  legacyIsolatedHomeLayer,
   mockLegacyCliConfig,
   mockLegacyCredentialsLayer,
   mockLegacyLinkedProjectCacheLayer,
   mockLegacyTelemetryStateLayer,
+  useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
@@ -43,6 +44,8 @@ import { LegacyDbConnection } from "../../shared/legacy-db-connection.service.ts
 import { LegacyIdentityStitch } from "../../shared/legacy-identity-stitch.ts";
 
 import { legacyInspectBaseLayer } from "./inspect.layers.ts";
+
+const tempRoot = useLegacyTempWorkdir("supabase-inspect-layers-");
 
 /**
  * Stub layer satisfying every external service required by
@@ -75,7 +78,9 @@ function ambientStubs() {
 
   return Layer.mergeAll(
     BunServices.layer,
-    mockRuntimeInfo(),
+    // The runtime layer under test builds the REAL legacyCliConfigLayer against
+    // the real filesystem — see legacyIsolatedHomeLayer's docs.
+    legacyIsolatedHomeLayer(tempRoot.current),
     mockTty(),
     mockProcessControl().layer,
     analytics.layer,

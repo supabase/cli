@@ -18,6 +18,10 @@ export interface FormattedCliErrors {
   readonly changed: boolean;
 }
 
+export function cliErrorCode(error: CliError.CliError): string {
+  return error._tag === "UnknownSubcomand" ? "UnknownSubcommand" : error._tag;
+}
+
 interface CommandWithHelpDoc extends Command.Command.Any {
   readonly buildHelpDoc: (path: ReadonlyArray<string>) => HelpDoc.HelpDoc;
 }
@@ -289,7 +293,7 @@ export function formatCliErrorsForDisplay(
       }
     }
 
-    if (error._tag === "UnknownSubcommand" && suppressedUnknownSubcommands.has(error.subcommand)) {
+    if (error._tag === "UnknownSubcomand" && suppressedUnknownSubcommands.has(error.subcommand)) {
       changed = true;
       continue;
     }
@@ -308,7 +312,12 @@ export function formatCliErrorsForDisplay(
       }
     }
 
-    formatted.push({ _tag: error._tag, message: error.message, source: error, changed: false });
+    formatted.push({
+      _tag: cliErrorCode(error),
+      message: error.message,
+      source: error,
+      changed: false,
+    });
   }
 
   return { errors: formatted, changed };

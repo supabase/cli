@@ -36,12 +36,12 @@ no new config reads.
 
 ## Environment Variables
 
-| Variable                                             | Purpose                           | Required?                               |
-| ---------------------------------------------------- | --------------------------------- | --------------------------------------- |
-| `SUPABASE_DB_PASSWORD` / `DB_PASSWORD`               | database password (linked/local)  | no (prompts / config fallback)          |
-| `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only) | no (falls back to keyring / token file) |
-| `SUPABASE_PROJECT_ID`                                | project ref fallback (linked)     | no (config resolution fallback)         |
-| libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used   | no                                      |
+| Variable                                             | Purpose                                                               | Required?                               |
+| ---------------------------------------------------- | --------------------------------------------------------------------- | --------------------------------------- |
+| `SUPABASE_DB_PASSWORD` / `DB_PASSWORD`               | database password (linked/local)                                      | no (prompts / config fallback)          |
+| `SUPABASE_ACCESS_TOKEN`                              | Management API auth (linked only)                                     | no (falls back to keyring / token file) |
+| `SUPABASE_PROJECT_ID`                                | project ref fallback (linked), superseded by `--project-ref` when set | no (config resolution fallback)         |
+| libpq vars (`PGSSLROOTCERT`, `PGCONNECT_TIMEOUT`, …) | honored when `--db-url` is used                                       | no                                      |
 
 ## Database Queries
 
@@ -73,10 +73,11 @@ Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 
 ## Exit Codes
 
-| Code | Condition                                                          |
-| ---- | ------------------------------------------------------------------ |
-| `0`  | success                                                            |
-| `1`  | mutually-exclusive flags, resolution, connection, or query failure |
+| Code | Condition                                                                |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | success                                                                  |
+| `1`  | mutually-exclusive flags, resolution, connection, or query failure       |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
 
 ## Telemetry Events Fired
 
@@ -119,3 +120,11 @@ Emit one extra stderr line before the table:
   from the absence of `--db-url` / `--local` while keeping the mutual-exclusivity check
   keyed off explicitly-set flags.
 - All queries are read-only `SELECT`s; the command performs no writes to the database.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution `LegacyDbConfigResolver` performs
+  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
+  `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
+  error rather than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  a non-linked target). Shared verbatim by every `inspect db` subcommand via
+  `LEGACY_INSPECT_DB_FLAGS`.

@@ -1,11 +1,17 @@
 import { describe, expect, test } from "@effect/vitest";
-import { BunServices } from "@effect/platform-bun";
 import { Console, Effect, Exit, Layer } from "effect";
-import { CliOutput, Command, Flag } from "effect/unstable/cli";
+import { Argument, CliOutput, Command, Flag } from "effect/unstable/cli";
 import { legacyBranchesCommand } from "../../legacy/commands/branches/branches.command.ts";
+import { LEGACY_GLOBAL_FLAGS } from "../legacy/global-flags.ts";
 import { textCliOutputFormatter } from "../output/text-formatter.ts";
+import { emptyEnv, mockOutput } from "../../../tests/helpers/mocks.ts";
 import { CliArgs } from "./cli-args.service.ts";
+import { OutputFormatFlag } from "./global-flags.ts";
 import { exitCodeForFailure, withoutParseErrorHelpDump } from "./run.ts";
+
+const testBranchesCommand = legacyBranchesCommand.pipe(
+  Command.withGlobalFlags([OutputFormatFlag, ...LEGACY_GLOBAL_FLAGS]),
+);
 
 /**
  * A `Console.Console` test double that records `log`/`error` calls into
@@ -74,12 +80,13 @@ describe("legacy group command exit codes (CLI-1906)", () => {
     Layer.mergeAll(
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
-      BunServices.layer,
+      mockOutput({ format: "text" }).layer,
+      emptyEnv(),
     );
 
   const runBranches = (args: ReadonlyArray<string>) =>
     Effect.runPromiseExit(
-      Command.runWith(legacyBranchesCommand, { version: "0.0.0-test" })(args).pipe(
+      Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args).pipe(
         Effect.provide(layerFor(args)),
       ),
     );
@@ -152,13 +159,14 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
       CliOutput.layer(textCliOutputFormatter()),
       Layer.succeed(CliArgs, { args }),
       Layer.succeed(Console.Console, console),
-      BunServices.layer,
+      mockOutput({ format: "text" }).layer,
+      emptyEnv(),
     );
 
   const runBranches = (args: ReadonlyArray<string>, console: Console.Console) =>
     withoutParseErrorHelpDump(
-      Command.runWith(legacyBranchesCommand, { version: "0.0.0-test" })(args),
-      { rootCommand: legacyBranchesCommand, args },
+      Command.runWith(testBranchesCommand, { version: "0.0.0-test" })(args),
+      { rootCommand: testBranchesCommand, args },
     ).pipe(Effect.provide(layerFor(args, console)));
 
   // `type`'s `-t` alias mirrors the real `sso add --type`/`-t` flag
@@ -303,5 +311,39 @@ describe("withoutParseErrorHelpDump (CLI-1901)", () => {
     expect(result).toBe("done");
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.some((call) => call.includes("hello from a handler"))).toBe(true);
+  });
+});
+
+describe("nested command parsing", () => {
+  test("forwards operands after -- to a nested variadic argument", async () => {
+    let receivedPaths: ReadonlyArray<string> = [];
+    const db = Command.make("db", {
+      paths: Argument.string("path").pipe(Argument.variadic()),
+    }).pipe(
+      Command.withHandler(({ paths }) =>
+        Effect.sync(() => {
+          receivedPaths = paths;
+        }),
+      ),
+    );
+    const testCommand = Command.make("test").pipe(Command.withSubcommands([db]));
+    const root = Command.make("supabase").pipe(Command.withSubcommands([testCommand]));
+    const args = ["test", "db", "--", "-foo.sql", "--literal"];
+
+    const exit = await Effect.runPromiseExit(
+      Command.runWith(root, { version: "0.0.0-test" })(args).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            CliOutput.layer(textCliOutputFormatter()),
+            Layer.succeed(CliArgs, { args }),
+            mockOutput({ format: "text" }).layer,
+            emptyEnv(),
+          ),
+        ),
+      ),
+    );
+
+    expect(Exit.isSuccess(exit)).toBe(true);
+    expect(receivedPaths).toEqual(["-foo.sql", "--literal"]);
   });
 });

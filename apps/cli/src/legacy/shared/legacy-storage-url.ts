@@ -1,3 +1,10 @@
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
 /**
  * Storage URL parsing, ported 1:1 from Go's `internal/storage/client/scheme.go`
  * plus the slices of `net/url` that `url.Parse` exercises for the `ss://` scheme.
@@ -28,9 +35,14 @@ const LEGACY_STORAGE_INVALID_URL_MESSAGE = "URL must match pattern ss:///bucket/
  * `errors.Errorf("failed to parse … url: %w", err)`.
  */
 export class LegacyGoUrlParseError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyGoUrlParseError";
   constructor(rawURL: string, inner: string) {
     super(`parse "${rawURL}": ${inner}`);
     this.name = "LegacyGoUrlParseError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 
@@ -41,9 +53,14 @@ export class LegacyGoUrlParseError extends Error {
  * parse-error tagged error.
  */
 export class LegacyStorageUrlPatternError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyStorageUrlPatternError";
   constructor() {
     super(LEGACY_STORAGE_INVALID_URL_MESSAGE);
     this.name = "LegacyStorageUrlPatternError";
+  }
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
   }
 }
 

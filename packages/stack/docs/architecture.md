@@ -1,1188 +1,634 @@
 # Architecture of `@supabase/stack`
 
-Manages a local Supabase development stack — resolving native binaries, wiring services into a dependency graph, and exposing a single async `createStack()` call that returns running connection details.
+`@supabase/stack` turns Supabase-local configuration into a supervised graph of native processes
+and Docker containers. It owns Supabase-specific configuration, artifact selection, topology,
+proxying, state projection, managed-daemon persistence, and cleanup. Generic process lifecycle is
+delegated to [`@supabase/process-compose`](../../process-compose/docs/architecture.md).
 
-## Table of contents
+## Public entrypoints
 
-- [High-level overview](#high-level-overview)
-- [Relationship to process-compose](#relationship-to-process-compose)
-- [Components](#components)
-  - [errors — typed error hierarchy](#errors--typed-error-hierarchy)
-  - [Platform — OS and architecture detection](#platform--os-and-architecture-detection)
-  - [BinaryResolver — download and cache binaries](#binaryresolver--download-and-cache-binaries)
-  - [resolveService — binary-first Docker fallback](#resolveservice--binary-first-docker-fallback)
-  - [JwtGenerator — JWT token generation and opaque keys](#jwtgenerator--jwt-token-generation-and-opaque-keys)
-  - [PortAllocator — dynamic port assignment](#portallocator--dynamic-port-assignment)
-  - [prefetch — pre-download binaries and images](#prefetch--pre-download-binaries-and-images)
-  - [ApiProxy — reverse proxy with key translation](#apiproxy--reverse-proxy-with-key-translation)
-  - [services — ServiceDef factories](#services--servicedef-factories)
-  - [StackBuilder — assemble the dependency graph](#stackbuilder--assemble-the-dependency-graph)
-  - [StackLifecycleCoordinator — lifecycle management](#stacklifecyclecoordinator--lifecycle-management)
-  - [createStack — platform-agnostic core](#createstack--platform-agnostic-core)
-  - [bun.ts / node.ts — runtime implementations behind the root export](#bunts--nodets--runtime-implementations-behind-the-root-export)
-- [Data flow](#data-flow)
-- [Testing](#testing)
+The package exposes three levels of Interface:
 
----
+- `@supabase/stack` selects `bun.ts` or `node.ts` through export conditions and exposes the
+  Promise-oriented `createStack()` / `StackHandle` Interface plus prefetch helpers.
+- `@supabase/stack/effect` selects a runtime Adapter through the same export conditions and exposes
+  Effect Interfaces plus platform-bound layer factories used by the CLI and advanced callers.
+- `@supabase/stack/managed` selects the Node or Bun SQLite Adapter and exposes managed identity,
+  discovery, persistence, and lifecycle coordination. Its repository can be replaced by a caller.
+- `@supabase/stack/testing` exposes only the service tags needed to replace daemon transport in
+  consumer tests. Runtime implementation tags do not leak through the root or Effect barrels.
 
-## High-level overview
+Internal runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
+socket HTTP implementations. `createStack.ts` and the layer factories remain platform-agnostic;
+the conditional root and Effect entries bind them to their selected runtime.
 
-`@supabase/stack` answers a single question: given a `StackConfig`, start a local Supabase stack and give me the URLs and keys I need to talk to it.
-
-Behind that simple surface, startup now has three explicit phases. `StackPreparation` resolves native-vs-Docker execution, downloads binaries, and pulls Docker images. `StackBuilder` turns the prepared artifacts into a process graph and service projection. `StackLifecycleCoordinator` then starts the orchestrator, merges pre-start and runtime state into one public stream, and exposes `Downloading`, `Starting`, `Initializing`, and `Healthy` as one continuous lifecycle to callers. An `ApiProxy` sits in front of GoTrue and PostgREST, translating opaque API keys into JWTs before forwarding requests.
-
-```mermaid
-graph TB
-    subgraph Input
-        SC["StackConfig<br/><i>ports, versions, secrets, keys</i>"]
-    end
-
-    subgraph "@supabase/stack"
-        PLT["Platform<br/><i>detect OS + arch</i>"]
-        BR["BinaryResolver<br/><i>download + cache</i>"]
-        PREP["StackPreparation<br/><i>resolve + fetch assets</i>"]
-        JG["JwtGenerator<br/><i>sign JWT tokens + opaque keys</i>"]
-        PA["PortAllocator<br/><i>allocate ports</i>"]
-        AP["ApiProxy<br/><i>reverse proxy + key translation</i>"]
-        SB["StackBuilder<br/><i>wire ServiceDefs</i>"]
-        LC["StackLifecycleCoordinator<br/><i>prepare + runtime lifecycle</i>"]
-        CS["createStack()<br/><i>resolveConfig + layer wiring</i>"]
-        BUN["bun.ts<br/><i>Bun entry point</i>"]
-        NODE["node.ts<br/><i>Node.js entry point</i>"]
-    end
-
-    subgraph "@supabase/process-compose"
-        BG["buildGraph()<br/><i>topological sort</i>"]
-        ORC["Orchestrator<br/><i>spawn + health + restart</i>"]
-    end
-
-    subgraph Output
-        SI["Stack<br/><i>url, publishableKey, secretKey, dbUrl<br/>start/stop, ready, logs, status, dispose</i>"]
-    end
-
-    SC --> CS
-    PLT --> BR
-    BR --> PREP
-    PREP --> SB
-    JG --> CS
-    PA --> CS
-    SB --> BG
-    BG --> ORC
-    ORC --> LC
-    LC --> CS
-    AP --> CS
-    BUN --> CS
-    NODE --> CS
-    CS --> SI
-```
-
-The package has no CLI. It is a library: callers supply a `StackConfig` object and get back a `Stack` with a rich interface including `dispose()`. When `projectDir` points at a Supabase project, the stack can use project config to serve local Edge Functions automatically. Bun and Node.js consumers import from the package root, and the export conditions select the appropriate runtime implementation from `bun.ts` or `node.ts`.
-
----
-
-## Relationship to process-compose
-
-`@supabase/stack` and `@supabase/process-compose` have a clean boundary: stack owns _what_ to run and _where_ to get it; process-compose owns _how_ to run it.
-
-```mermaid
-graph LR
-    subgraph "@supabase/stack"
-        direction TB
-        PLAT["Platform detection"]
-        BRES["Binary download + checksum"]
-        SDEFS["ServiceDef construction<br/><i>postgres / postgrest / auth</i>"]
-        JWTGEN["JwtGenerator<br/><i>HS256 JWT signing + opaque keys</i>"]
-        PALLOC["PortAllocator<br/><i>dynamic port assignment</i>"]
-        PROXY["ApiProxy<br/><i>reverse proxy + key translation</i>"]
-        PREP["StackPreparation"]
-        BUILD["StackBuilder"]
-        COORD["StackLifecycleCoordinator"]
-        CSTACK["createStack()<br/><i>resolveConfig + layer wiring</i>"]
-    end
-
-    subgraph "@supabase/process-compose"
-        direction TB
-        BGRAPH["buildGraph()<br/><i>validates + sorts deps</i>"]
-        ORCH["Orchestrator<br/><i>spawn, health, log, restart, shutdown</i>"]
-        LB["LogBuffer"]
-    end
-
-    SDEFS --> BGRAPH
-    PREP --> BUILD
-    BUILD --> BGRAPH
-    BGRAPH --> ORCH
-    JWTGEN --> CSTACK
-    PALLOC --> CSTACK
-    PROXY --> COORD
-    COORD --> ORCH
-```
-
-| Concern                          | Owner                       |
-| -------------------------------- | --------------------------- |
-| OS / arch detection              | `@supabase/stack`           |
-| Binary download, cache, verify   | `@supabase/stack`           |
-| ServiceDef construction          | `@supabase/stack`           |
-| JWT generation                   | `@supabase/stack`           |
-| Opaque API key translation       | `@supabase/stack`           |
-| Reverse proxy (GoTrue/PostgREST) | `@supabase/stack`           |
-| Dependency graph construction    | `@supabase/process-compose` |
-| Process spawning                 | `@supabase/process-compose` |
-| Health checks                    | `@supabase/process-compose` |
-| Log streaming                    | `@supabase/process-compose` |
-| Restart policies                 | `@supabase/process-compose` |
-| Graceful shutdown                | `@supabase/process-compose` |
-
----
-
-## Components
-
-### errors — typed error hierarchy
-
-**File:** `src/errors.ts`
-
-All Effect errors extend `Data.TaggedError`, which adds a `_tag` discriminator for type-safe pattern matching in Effect pipelines. The compiler tracks which errors each function can produce — callers know at compile time which failure modes they need to handle.
-
-`StackError` is a plain `Error` subclass (not a tagged Effect error) that non-Effect consumers receive from `Stack` method promises. `toStackError()` maps any tagged Effect error to a `StackError` with a string `code` field.
-
-| Error                   | Tag                       | When raised                                                |
-| ----------------------- | ------------------------- | ---------------------------------------------------------- |
-| `BinaryNotFoundError`   | `"BinaryNotFoundError"`   | No asset exists for the current OS/arch combination        |
-| `DownloadError`         | `"DownloadError"`         | Network request fails or `tar` extraction fails            |
-| `ChecksumMismatchError` | `"ChecksumMismatchError"` | Downloaded tarball does not match the published SHA-256    |
-| `DockerPullError`       | `"DockerPullError"`       | Docker image pull fails (exit code != 0 or platform error) |
-| `StackBuildError`       | `"StackBuildError"`       | Any failure during binary resolution or graph assembly     |
-| `PortConflictError`     | `"PortConflictError"`     | Configured port is already in use (reserved for future)    |
-| `PortAllocationError`   | `"PortAllocationError"`   | Failed to bind or allocate a network port                  |
-| `StackError`            | n/a (plain `Error`)       | Thrown from `Stack` promise methods for non-Effect callers |
-
-Each Effect error carries structured metadata:
-
-```ts
-class BinaryNotFoundError extends Data.TaggedError("BinaryNotFoundError")<{
-  readonly service: string; // "auth"
-  readonly platform: string; // "darwin-arm64"
-}> {}
-
-class ChecksumMismatchError extends Data.TaggedError("ChecksumMismatchError")<{
-  readonly url: string; // the .sha256 URL
-  readonly expected: string; // hex from the checksum file
-  readonly actual: string; // hex computed from the downloaded bytes
-}> {}
-```
-
-`StackBuildError` is the catch-all that `StackBuilder` uses to wrap errors from `BinaryResolver`. This means consumers of `StackBuilder.build()` only need to handle one error type — the root cause is attached in `cause` for debugging.
-
-`StackError` is the boundary type for Promise consumers:
-
-```ts
-class StackError extends Error {
-  readonly code: string; // e.g. "SERVICE_NOT_FOUND", "BUILD_ERROR", "DOWNLOAD_ERROR"
-}
-
-function toStackError(err: unknown): StackError;
-```
-
----
-
-### Platform — OS and architecture detection
-
-**File:** `src/Platform.ts`
-
-A thin module that reads `process.platform` and `process.arch` and maps them to the asset-name strings used in GitHub release URLs. Different services use different naming conventions in their releases, so each has its own mapping function.
-
-```ts
-interface PlatformInfo {
-  readonly os: string; // "darwin" | "linux"
-  readonly arch: string; // "arm64" | "x64"
-}
-
-// Reads process.platform and process.arch
-export const detectPlatform: Effect.Effect<PlatformInfo>;
-```
-
-The four mapping functions return `null` for unsupported platforms — `BinaryResolver` converts `null` into a `BinaryNotFoundError`. Returning `null` rather than throwing keeps the logic pure and easy to test without an Effect context.
-
-**Platform support matrix:**
-
-| Service      | darwin-arm64     | linux-x64             | linux-arm64      | win32-x64        |
-| ------------ | ---------------- | --------------------- | ---------------- | ---------------- |
-| postgres     | `darwin-arm64`   | `linux-x64`           | `linux-arm64`    | `null` (Docker)  |
-| postgrest    | `macos-aarch64`  | `linux-static-x86-64` | `ubuntu-aarch64` | `windows-x86-64` |
-| auth         | `darwin-arm64`   | `x86`                 | `arm64`          | `null` (Docker)  |
-| edge-runtime | `aarch64-darwin` | `x86_64-linux`        | `aarch64-linux`  | `null` (Docker)  |
-
-When a mapping function returns `null`, `BinaryResolver` fails with `BinaryNotFoundError` and the stack can fall back to Docker in `auto` mode. Postgres has no Windows binary. PostgREST has native binaries on all supported platforms including Windows (as a `.zip` archive instead of `.tar.xz`). Auth has native macOS arm64 and Linux binaries. Edge Runtime release assets exist for macOS arm64 and Linux, but the stack currently keeps Edge Runtime on Docker while the native path is not exposed.
+The direct and managed surfaces compose in one direction only: managed policy resolves one opaque
+stack identity and concrete roots, ports, and runtime selection, then a caller may pass those
+resolved values to the core runtime. The core runtime never discovers workspaces or opens the
+global registry.
 
 ```mermaid
 flowchart LR
-    PLT["PlatformInfo\nos + arch"] --> PA["postgresAssetName()"]
-    PLT --> PRA["postgrestAssetName()"]
-    PLT --> AA["authAssetName()"]
-
-    PA -->|"darwin-arm64"| PAS["darwin-arm64"]
-    PA -->|"linux-x64"| PAL["linux-x64"]
-    PA -->|"win32/other"| PAX["null → Docker fallback"]
-
-    PRA -->|"darwin-arm64"| PRAS["macos-aarch64"]
-    PRA -->|"linux-x64"| PRAL["linux-static-x86-64"]
-    PRA -->|"win32-x64"| PRAW["windows-x86-64"]
-    PRA -->|"other"| PRAX["null → BinaryNotFoundError"]
-
-    AA -->|"linux-x64"| AAS["x86"]
-    AA -->|"linux-arm64"| AAL["arm64"]
-    AA -->|"darwin/win32"| AAX["null → Docker fallback"]
+    Input["StackConfig"] --> Resolve["StackConfigResolver"]
+    Resolve --> Layer["foregroundLayer"]
+    Layer --> Prepare["StackPreparation"]
+    Prepare --> Builder["StackBuilder"]
+    Builder --> Orch["process-compose Orchestrator"]
+    Layer --> Proxy["ApiProxy"]
+    Orch --> Stack["Stack Interface"]
+    Proxy --> Stack
 ```
 
----
+`StackHandle` converts Effect calls and streams to Promises and `AsyncIterable`s and implements
+`AsyncDisposable`. The Effect `Stack` Interface is also implemented by `RemoteStack`, so CLI code
+can use the same lifecycle calls against an in-process stack or a detached daemon.
 
-### BinaryResolver — download and cache binaries
+## Configuration and roots
 
-**File:** `src/BinaryResolver.ts`
+`StackConfig` is an in-memory library input, not the project configuration-file schema. Its
+top-level fields choose runtime mode, startup mode, cache/runtime roots, API keys, JWT secret, a
+resolved Edge Functions bundle, and per-service configuration. `false` disables an optional
+service.
 
-`BinaryResolver` is the most complex piece of the package. Given a service name and version, it locates or downloads the correct binary for the current platform, verifies its integrity, and returns a path to the extracted directory.
+`StackConfigResolver.resolveConfig()`:
 
-#### Service interface
+1. chooses cache, durable stack, runtime, and project roots;
+2. allocates every required port through one port allocator;
+3. creates development JWTs and opaque publishable/secret keys;
+4. applies per-service defaults and current `DEFAULT_VERSIONS`;
+5. records auto-managed paths for scoped cleanup.
 
-```ts
-class BinaryResolver extends ServiceMap.Service<
-  BinaryResolver,
-  {
-    readonly resolve: (
-      spec: BinarySpec,
-    ) => Effect.Effect<string, BinaryNotFoundError | DownloadError | ChecksumMismatchError>;
-  }
->()("local/BinaryResolver") {}
+Readiness policy is part of the resolved configuration. The package default is a finite three-minute
+deadline; callers can choose a different finite deadline or explicit infinite waiting. Per-call
+`ReadyOptions` take precedence over the stack policy, while `inherit` delegates to the stack
+policy. The local Implementation applies this resolver to startup, service activation, restart,
+reload, and explicit readiness waits. A finite deadline fails with `StackReadinessError` and runs
+the same scoped cleanup used by disposal. Promise and remote Adapters pass `ReadyOptions` through
+to that Implementation instead of layering a second timeout rule around it.
 
-interface BinarySpec {
-  readonly service: ServiceName; // "postgres" | "postgrest" | "auth"
-  readonly version: string;
-  readonly cacheDir?: string; // defaults to ~/.supabase/bin
-}
+Request-triggered lazy activation expands the package-default deadline when a service's transitive
+startup budget is longer than three minutes. Explicit finite and infinite stack policies are never
+expanded.
+
+The current zero-config stack enables PostgreSQL, PostgREST, Auth, and Edge Runtime. Realtime,
+Storage, imgproxy, Mailpit, Postgres Meta, Studio, Analytics, Vector, and Supavisor are enabled only
+when their corresponding configuration object is present. In `native` mode, Edge Runtime is also
+disabled by omission because the automatic artifact policy currently classifies it as Docker-only.
+
+`mode` has these meanings:
+
+- `native`: require native artifacts and reject enabled Docker-only services;
+- `auto`: prefer supported native artifacts, then fall back to Docker;
+- `docker`: resolve every enabled service to a Docker image.
+
+`startupMode` defaults to `eager`; `lazy` defers eligible proxied services until first use.
+
+## Preparation and artifact resolution
+
+Preparation is separate from topology construction:
+
+- `ServiceCatalog.ts` is the exhaustive source for service identity, default version, runtime
+  support, artifact providers, activation policy, and allocated port fields.
+- `BinaryResolver` detects the platform, downloads and verifies archives, restores executable
+  permissions, and publishes complete cache entries atomically.
+- `StackPreparation` resolves all enabled public services, emits download/pull progress, and
+  returns `PreparedStackArtifacts`.
+- `StackBuilder` consumes only resolved artifacts; it does not perform network fetches.
+
+Native cache identity includes service, provider, version, and asset name. `.complete` is written
+last, so an incomplete download is never treated as reusable. Supabase-owned Docker images are
+tried through ECR, Docker Hub, then GHCR; upstream images use their canonical repository.
+
+`ServiceResolution` belongs to this preparation domain. `prefetch()` uses the same
+`StackPreparation` Interface and its binary-to-Docker fallback without constructing a lifecycle
+runtime.
+
+## Service coverage and topology
+
+`StackBuilder.build(config, prepared)` is the explicit owner of cross-service topology. Individual
+factories under `src/services/` own executable arguments, environment, mounts, health checks, and
+per-process cleanup. Docker factories also own their host-network and port-mapping arguments. The
+builder owns which definitions exist and how they depend on one another, including the choice
+between `postgres-init (completed)` and `postgres (healthy)` for every database consumer.
+
+| Public service | Automatic runtime support               | Principal dependency or role                                                                                       |
+| -------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| `postgres`     | Native preferred, Docker fallback       | Root database process. Native PostgreSQL also introduces the internal `postgres-init` one-shot definition.         |
+| `postgrest`    | Native preferred, Docker fallback       | Database initialization completed, or PostgreSQL healthy in all-Docker mode.                                       |
+| `auth`         | Native preferred, Docker fallback       | Database initialization completed/healthy; optionally sends mail through Mailpit.                                  |
+| `edge-runtime` | Docker-only under automatic preparation | Database initialization completed/healthy; reads a generated functions runtime file.                               |
+| `realtime`     | Docker                                  | Database initialization completed/healthy; started eagerly and routed by the API proxy for ordinary HTTP requests. |
+| `storage`      | Docker                                  | Database initialization completed/healthy; optionally calls imgproxy.                                              |
+| `imgproxy`     | Docker                                  | Storage healthy; owned and activated with Storage.                                                                 |
+| `mailpit`      | Docker                                  | Direct web, SMTP, and POP3 listeners.                                                                              |
+| `pgmeta`       | Docker                                  | Database initialization completed/healthy.                                                                         |
+| `analytics`    | Docker                                  | Database initialization completed/healthy.                                                                         |
+| `vector`       | Docker                                  | Analytics healthy; owned and activated with Analytics.                                                             |
+| `pooler`       | Docker                                  | Database initialization completed/healthy; direct database and admin listeners.                                    |
+| `studio`       | Docker                                  | Postgres Meta healthy and, when enabled, Analytics healthy.                                                        |
+
+`postgres-init` is an internal helper only for native PostgreSQL. It applies initial schema and
+privilege setup and completes before database consumers start. `StackStateProjection` hides it and
+projects active initialization as `postgres: Initializing`; helper failure is projected onto
+PostgreSQL.
+
+Configuration validation prevents unsupported combinations, including imgproxy without Storage,
+Vector without Analytics, and Studio without Postgres Meta.
+
+## Lifecycle ownership
+
+The local Implementation is `LocalStack`. Its scoped layer owns one lifecycle:
+
+- preparation and its single-flight deferred;
+- graph construction and the process-compose runtime;
+- a shared `LogBuffer`;
+- public state projection;
+- activation and lifecycle locks;
+- exact cleanup targets and metadata persistence;
+- disposal of processes, Docker resources, ports, and auto-managed paths.
+
+`Stack.ts` contains only the public Effect Interface and transport schemas. `LocalStack` constructs
+the state once and publishes both `Stack` and the narrower `StackServiceActivator` Interface from
+the same scoped layer. `ApiProxy` therefore activates a lazy backend without gaining unrelated
+lifecycle operations or requiring a second pass-through lifecycle tag.
+
+Before the orchestrator exists, `LocalStack` publishes synthetic `Pending` and `Downloading`
+states. After construction, it subscribes to raw process-compose state and publishes only public
+projected states. `StackServiceState` adds `Downloading`, `Initializing`, and `Dormant` to the raw
+process statuses.
+
+`start()` prepares artifacts, creates the runtime once, starts the appropriate services, and waits
+for their generic process-compose readiness. `stop()` preserves explicit per-service stop intent;
+`dispose()` additionally closes the scoped runtime and executes cleanup. Stack readiness policy is
+enforced around generic process-compose waits, which remain intentionally policy-free and
+unbounded. Structural `Equal.equals` comparison suppresses duplicate projected state emissions.
+
+## Eager and lazy activation
+
+`ServiceActivation.ts` evaluates the startup and companion-ownership metadata in
+`ServiceCatalog.ts`:
+
+- eager: PostgreSQL, Realtime, Mailpit, Studio, and Pooler;
+- lazy: PostgREST, Auth, Edge Runtime, Storage, imgproxy, Postgres Meta, Analytics, and Vector;
+- Storage activates and owns imgproxy;
+- Analytics activates and owns Vector;
+- Studio activates Analytics but does not own it.
+
+In eager startup mode, every enabled service is started. In lazy mode, the internal
+`postgres-init` service, enabled eager services, and any activation companions they require start
+initially. Proxy handlers activate their backend before forwarding, with single-flight lifecycle
+coordination and a 30-second proxy activation timeout. Unrequested lazy services project as
+`Dormant`; `waitAllReady()` considers only services desired to run.
+
+Realtime stays eager because the HTTP proxy owns ordinary request forwarding, while WebSocket
+transport is not duplicated in a separate lazy-activation Adapter. Direct listeners must also
+exist before their endpoints are advertised.
+
+## API proxy and connection information
+
+`ApiProxy` owns the public API port and routes Supabase paths to loopback service ports. It covers
+Auth, PostgREST, Edge Functions, Realtime, Storage, Postgres Meta, Analytics, Pooler administration,
+and Studio's MCP route. It adds forwarding/CORS headers and translates opaque `publishableKey` and
+`secretKey` values into the internal anon and service-role JWTs when appropriate.
+
+`StackInfo` contains user-facing connection data:
+
+- API URL and database URL;
+- opaque publishable and secret keys;
+- internal anon and service-role JWTs;
+- endpoints for enabled services.
+
+Cleanup targets do not belong to `StackInfo`; they are internal runtime metadata.
+
+## Functions runtime configuration and reload
+
+Project discovery is outside the stack boundary. A caller supplies a serializable
+`ResolvedFunctionsBundle` containing absolute entrypoint, optional import-map, and static-file
+paths plus already-resolved shared and per-function environment values. The import-map path is
+explicitly nullable. Per-function environment values override shared values; stack-owned runtime
+URLs and credentials take final precedence when the worker is created.
+
+`LocalStack` keeps the current bundle in runtime-local memory. `reloadFunctions({ functions })`
+replaces it, while a reload without `functions` preserves the latest bundle. An Edge Runtime reload
+uses that same current bundle unless its body supplies a replacement. The stack combines the
+bundle with runtime URLs and credentials, atomically publishes `functions-runtime-config.json`
+with owner-only permissions under the Edge Runtime workspace, and removes it on disposal.
+
+Detached stacks deliberately exclude resolved bundles from daemon startup IPC, durable metadata,
+live state, logs, URLs, and rendered validation errors. Both `/functions/reload` and
+`/edge-runtime/reload` accept validated JSON bodies over the local Unix socket. This keeps resolved
+environment values confined to an explicit request body and the ephemeral runtime file.
+
+## Port leases
+
+Port allocation returns a `PortLease`, not just numbers. The stack reserves ports before cold asset
+preparation. The lifecycle Adapter passes:
+
+- `beforeStart` to reserve the service's fields again for a restart generation;
+- `beforeSpawn` to release those fields immediately before process creation;
+- a platform-factory release Effect for the public API server.
+
+This narrows but cannot completely remove the race between releasing a reservation and the child
+binding. Supervised Docker services have a wider window because the supervisor starts before
+`docker run` binds published ports.
+
+## Cleanup and crash recovery
+
+Every Docker definition has ordinary in-process cleanup and supervisor-owned orphan cleanup.
+`StackBuilder` also returns exact Docker container names for the definitions it constructed. The
+local Implementation captures these targets before persistence or orchestrator setup, persists
+them for managed daemons, and uses them as a force-removal safety net after graceful stop. Launch,
+exact cleanup, and candidate cleanup all derive container identity through the same naming
+function. Auto-created PostgreSQL, Storage, and runtime paths are also removed.
+
+Cleanup is intentionally defensive:
+
+1. process-compose finalizers stop individual process trees and run definition cleanup;
+2. supervisor runtimes survive abrupt owner loss long enough to kill child trees and clean
+   external resources;
+3. stack disposal force-removes exact known Docker containers;
+4. managed `stop` can use persisted cleanup metadata after daemon death;
+5. a failure before the exact build plan exists has candidate cleanup derived from enabled catalog
+   services; a partial startup failure disposes the exact build-produced plan.
+
+These paths overlap by design and must remain idempotent.
+
+## Foreground and daemon Adapters
+
+`foregroundLayer()` builds the local stack and API proxy in the caller process.
+
+Detached mode adds:
+
+- `daemonLayer()`: forks a runtime-specific daemon entrypoint and returns a `RemoteStack` layer;
+- `daemon.ts`: receives configuration excluding the resolved Functions bundle over Node IPC,
+  resolves ports, builds the foreground daemon layer, claims live state, and waits for HTTP stop or
+  a signal;
+- `DaemonServer`: exposes the `Stack` Interface over HTTP/SSE on a Unix-domain socket;
+- `RemoteStack`: maps that transport back to the same Effect `Stack` Interface;
+- `StateManager`: atomically persists and discovers durable metadata and live state.
+
+The management transport includes health, status, status stream, start/stop, readiness,
+per-service lifecycle, logs/history, and Edge Runtime reload routes. Readiness waits use validated
+`ReadyOptions` JSON bodies and preserve `StackReadinessError` across the transport. It is local
+Unix-socket transport, not the public Supabase API proxy.
+
+See [detach mode](./detach-mode.md) for paths, process startup, and compiled executable dispatch.
+
+## Managed identity and state
+
+Here, **managed state** means the centralized registry API exposed from
+`@supabase/stack/managed`. It is distinct from the older `ManagedStack` daemon-discovery record in
+`managed-stack.ts`, which remains part of the legacy Effect daemon surface. The registry API is
+Effect-native: its services are `Context.Service` tags, its failures live in the effect error
+channel, and its resources are owned by scopes. A Promise facade sits at the edge for callers that
+do not run an Effect runtime; see "Managed service composition" below.
+
+Managed errors are `Data.TaggedError` classes carrying stable `code` fields, and there is no shared
+base class: `ManagedStackError` is a union type over the seventeen failures, with
+`isManagedStackError` as the runtime guard. `_tag` is the Effect-native discriminant, so a consumer
+can `catchTag` them directly against the union a given method declares; `code` is the wire-level
+contract that survives identifier minification, so Node and Bun callers — and the CLI's telemetry
+classifier — can branch on failures without requiring an Effect runtime at this persistence
+boundary. `MANAGED_ERROR_TAG_BY_CODE` links the two so a consumer keying a table by one and
+dispatching on the other cannot drift.
+
+The managed surface owns a versioned SQLite registry with separate records for projects,
+checkouts, checkout locations, development contexts, stacks, port reservations, and operations.
+The public repository contract contains no SQLite types, so the same service runs with the
+in-memory test repository and the Node or Bun persistent Adapter. Both adapters owe identical
+observable semantics, so record ordering — port assignments by key, active operations by start time
+then operation token — and input validation such as refusing an operation owner PID that could never
+be probed live in shared helpers rather than in either adapter.
+
+For an ordinary non-Git folder, the first mutating managed operation atomically publishes:
+
+```text
+<workspace>/.supabase/identity.json
+  version
+  projectId
+  checkoutId
+  contextId
 ```
 
-#### Binary resolution flow
+That marker protocol is the one place in the managed surface that uses raw `node:fs/promises` instead
+of the `FileSystem` service the policy layer reclaims stack state through: writing a temporary file,
+hardlinking it into place, re-reading the winning marker on `EEXIST`, and removing the temporary path
+is a single indivisible claim, and the hardlink with that `EEXIST` contract is not part of the platform
+service's surface. The claim itself is `claimFileAtomically` in `managed/atomic-claim.ts`, shared with
+`StateManager`'s single-stack state claim so both settle a race the same way; a filesystem without
+hardlinks (`EPERM` or `ENOTSUP`) falls back to an exclusive create, which still decides the race but
+publishes without the hardlink's all-or-nothing guarantee. The marker protocol owns what a lost race
+means: the identity claim adopts the winning marker, while a claimed stack state is a failure.
 
-```mermaid
-flowchart TD
-    A["resolve(spec)"] --> B["detectPlatform"]
-    B --> C{"assetName?"}
-    C -->|"null"| D["BinaryNotFoundError"]
-    C -->|"string"| E["construct cachePath"]
-    E --> F{"fs.exists(cacheDir)?"}
-    F -->|"yes"| G["return cacheDir"]
-    F -->|"no"| H["HttpClient.get tarball from GitHub"]
-    H -->|"network error"| I["DownloadError"]
-    H -->|"ok"| J{"checksumUrl?"}
-    J -->|"null"| L["skip verification"]
-    J -->|"string"| K["HttpClient.get .sha256 file"]
-    K --> M["verifyChecksum (SHA-256)"]
-    M -->|"mismatch"| N["ChecksumMismatchError"]
-    M -->|"ok"| L
-    L --> O["fs.makeDirectory (recursive)"]
-    O --> P["write _download.tar"]
-    P --> Q["tar xzf/xf to cacheDir"]
-    Q -->|"exitCode != 0"| R["DownloadError"]
-    Q -->|"ok"| S["fs.remove _download.tar"]
-    S --> G
+No mutable runtime state or credential value is stored in that marker. Read-only discovery does
+not create it. The registry stores only an opaque credential reference, never resolved plaintext
+credentials. Discovery returns the marker identity even when it has no stack records, but reports
+`registered: false` until at least one stack exists for the marker's complete project, checkout,
+and context identity.
+
+The managed state root is explicitly injectable. Otherwise it resolves from `SUPABASE_HOME` or
+the platform application-state directory. Every physical stack path is keyed only by its opaque
+stack UUID:
+
+```text
+<managedStateRoot>/
+  registry-v3.sqlite3
+  stacks/<stackId>/
+    data/
+    logs/
+    runtime/
 ```
 
-#### Cache layout
+Schema v3 intentionally has no migration path for this unreleased POC. Before first use of v3,
+developers holding any earlier `registry-v*.sqlite3` must remove the old managed state root,
+including its shared `stacks/` directory; registry generations must not be kept side by side.
+The state root is required to be a non-empty path wherever it is passed explicitly, so a blank
+value fails instead of silently anchoring managed state to the process' working directory. An
+explicit root is a decision and a blank one is a caller bug; a blank environment value is instead
+treated as unset and falls through to the next source.
+Recovery can also leave an
+unregistered UUID stack root when a provisioner writes after its pending row was concurrently
+aborted. The provision error reports the failed ownership cleanup, but there is no automatic orphan
+garbage collection; remove that root only after independently confirming its runtime is stopped.
 
-The cache directory mirrors the logical identity of each binary: `<cacheDir>/<service>/<version>/<assetName>/`. Two versions of the same service coexist without conflict. The check is a simple `fs.exists` — if the directory is present, it was extracted successfully on a previous run.
+Stack publication and operation claims are transactional; "Managed service composition" below
+describes how that transaction boundary and the wait for a concurrent publisher are expressed. A new
+stack remains `pending` while its
+directories and caller-supplied initialization are validated, then becomes `active` atomically.
+Concurrent callers resolve the published record rather than creating aliases. Recovery first
+retains claims whose owner process is still alive. Once an owner is gone, runtime inspection either
+publishes a running pending stack or aborts a stopped pending stack so the same identity can retry.
+An abandoned claim over an already tombstoned row is a deletion that died before releasing it:
+recovery finishes that deletion instead of reconciling a lifecycle, without consulting runtime
+inspection at all. Tombstoning already zeroed the runtime metadata an inspector would read, so
+requiring an answer there would retain every crashed deletion forever. It never revives the row and
+never drops the tombstone, since idempotent deletion depends on it; it releases the claim and
+reclaims the leaked stack directory, reporting a failed removal like any other reclamation failure.
+Reconciliation is therefore repeatable: a second pass over the same crashed deletion is a no-op.
+Ownership races are isolated per operation so one completed claim does not stop the recovery pass.
+PID liveness is deliberately conservative and assumes the managed root stays within one host PID
+namespace. A stored PID that is not a probeable PID counts as no owner at all, both when recovery
+walks abandoned claims and when provision decides whether to wait for a publisher, since probing it
+could report a dead owner as alive. Because a PID is not a permanent process identity, callers can request forced recovery
+after trustworthy runtime inspection; this is also the required integration path for a state root
+shared across PID namespaces. Forced recovery requires an exact stack ID and operation token and
+processes only that claim. It bypasses the PID gate, and tombstoned rows are reclaimed without
+runtime inspection because tombstoning already cleared the runtime metadata an inspector would
+read; forcing a claim whose owner is genuinely still finishing a delete can therefore race it—the
+delete still completes and reports success, but the two processes may both attempt the same
+directory removal. Forced recovery and the `startedBefore` age filter are mutually exclusive.
+Recovery results distinguish live owners, unknown or failed liveness/runtime inspection, concurrent
+skips, reconciliation failures, reclaimed tombstones from finished deletions, and post-abort
+data-reclamation failures. An aborted or reclaimed stack ID is reported only after its leaked
+directory is actually removed, so the two lists never claim data is gone while it is still on disk.
+A failed removal is reported as a data-reclamation failure either way, but the two cases diverge
+afterward: a reclaimed (tombstoned) stack's row survives in the registry, so its removal stays
+retryable through ordinary `deleteStack` idempotency, while a discarded pending stack's row is
+already gone by the time removal is attempted, so a failed removal leaves an orphaned directory
+that is reported once and never revisited automatically—like any other orphan root, there is no
+automatic garbage collection, so it requires manual cleanup. A failed reconciliation of an active
+stack marks its lifecycle
+`failed` before best-effort claim release, preserving the requirement for an explicit stop path
+before deletion. A failed pending-stack adoption retains its claim so a later pass can retry without
+losing potentially live unpublished data. That claim blocks other mutations, including deletion,
+until normal reconciliation succeeds or the caller obtains its stack ID and token from
+`repository.listActiveOperations()` and performs a scoped forced recovery after trustworthy runtime
+inspection.
 
-```
-~/.supabase/bin/
-  postgres/
-    17.6.1.081-cli/
-      darwin-arm64/       <- extracted binary tree
-        start.sh
-        bin/
-          postgres
-  postgrest/
-    14.5/
-      macos-aarch64/
-        postgrest
-  auth/
-    2.187.0/
-      arm64/
-        auth
-```
+Port assignments are sticky metadata, while port ownership is a lifecycle lease. Stopped stacks
+retain their assigned numbers without blocking other stopped stacks. Entering `starting`,
+`running`, or `stopping` claims those ports host-wide; a collision fails without relocating a
+sticky automatic assignment. On a stopped stack, exact configuration replaces persisted automatic
+state, while an automatic request reuses the current number and changes only its intent. Failed
+stacks follow the same non-occupying rules. Intent-only changes are accepted, and a lifecycle update
+can release a lease and change ports atomically; port-number drift is rejected only while a stack
+continues to occupy its ports.
 
-The cache path components — `<service>/<version>/<assetName>` — are exposed as static methods (`BinaryResolver.downloadUrl`, `BinaryResolver.checksumUrl`, `BinaryResolver.cachePath`) so they can be tested without constructing the full Effect service. These static helpers are the pure core; the Effect service wraps them with the actual I/O.
+Explicit deletion re-reads lifecycle after claiming the operation, safely stops when needed,
+tombstones, and removes only the UUID-derived selected stack root. Repeating deletion retries any
+leftover tombstoned data reclamation. Once tombstoned, unsafe or failed filesystem cleanup is
+reported as retained data rather than making future deletion non-idempotent. Prune removes checkout
+location metadata only. The delete outcome describes the registry tombstone, not guaranteed disk
+reclamation: callers must inspect `dataReclamation`, surface retained errors, and arrange a later
+retry. Lifecycle transitions likewise trust the caller to stop the real runtime before declaring a
+port-occupying stack stopped and releasing its lease. Runtime qualification, legacy bootstrap
+selection, and credential resolution remain outside this persistence boundary and are composed by
+later CLI slices.
 
-#### Checksum verification
+## Managed service composition
 
-Only postgres publishes SHA-256 checksums alongside its tarballs (as `<tarball-url>.sha256`). The verifier uses `node:crypto`'s `createHash("sha256")` to hash the downloaded bytes in memory before extraction, so a corrupted download is caught before any files are written to disk.
+The managed surface is two `Context.Service` tags, each with layer factories:
 
-#### Archive extraction
+- `ManagedStackRepository` is the storage contract. It is provided by
+  `bunSqliteManagedStackRepositoryLayer(path)` or `nodeSqliteManagedStackRepositoryLayer(path)` —
+  re-exported from `managed-bun.ts` and `managed-node.ts` respectively — or, in tests, by
+  `Layer.succeed(ManagedStackRepository, createInMemoryManagedStackRepository())`, since the
+  in-memory factory from `@supabase/stack/testing` returns the Effect-shaped service object directly.
+  The contract contains no SQLite types, so the adapter is swappable without the policy layer
+  noticing. Opening a registry whose schema version is neither zero nor the supported version fails
+  the layer with `UnsupportedManagedRegistryVersionError`.
+- `ManagedStackService` is the policy layer described above: identity markers, provisioning order,
+  publication waiting, deletion, and recovery. `ManagedStackService.make(options)` returns a layer
+  requiring `FileSystem.FileSystem | ManagedStackRepository` and failing with
+  `InvalidManagedOwnerPidError | UnsafeManagedStackPathError`, so a blank state root or an owner PID
+  that could never be probed is refused while the layer is being built rather than at whichever call
+  first touches a path.
 
-The download is written to a temporary file (`_download.tar` or `_download.zip`) inside the cache directory. For tarballs (`.tar.gz`, `.tar.xz`), `tar` is used with `--strip-components=1` to remove the top-level directory. For zip archives (PostgREST on Windows), `unzip` is used on Unix or `tar xf` on Windows. The `tar`/`unzip` subprocess is spawned via `ChildProcessSpawner` from `effect/unstable/process`. After extraction, the temp file is removed (errors ignored — a leftover file is harmless).
+`managedStackLayer(options)` — exported from `managed-bun.ts` and `managed-node.ts` — is those two
+composed with the platform filesystem and the state root resolved by the one resolver that owns that
+policy. It is the assembly an Effect consumer provides _and_ the one the Promise facade runs behind its
+handle, so the two cannot drift apart. It fails with `ManagedStackLayerFailure`: the state-root and
+owner-PID refusals above plus `UnsupportedManagedRegistryVersionError`. Nothing on that path is turned
+into a defect, so the one registry failure a caller can act on — the registry was written by a newer
+CLI — stays recoverable with `catchTag` instead of being unreachable behind an `orDie`.
 
-#### Layer wiring
+Each method declares only the failures it can actually raise, rather than one service-wide union:
+`provisionOrdinaryStack` carries `ProvisionManagedStackFailure`, `updateStack` carries
+`UpdateManagedStackConfigurationFailure`, `deleteStack` carries `DeleteManagedStackFailure`,
+`inspectOrdinaryWorkspace` carries only `InvalidManagedIdentityError`, and `inspectStack` and
+`listStacks` cannot fail at all. `deleteStack` and `pruneCheckoutLocations` are additionally generic
+in their callback's error type, so a `stop` callback's own failure reaches the caller unchanged — a
+stack that refused to stop was not deleted. Recovery reports rather than fails: only a forced target
+that is not a pair of managed UUIDs refuses a whole pass, so `reconcileAbandonedOperations` declares
+just `InvalidManagedIdentityError` and returns retained claims, skips, and failures in its result.
 
-`BinaryResolver` requires `FileSystem | Path | HttpClient.HttpClient | ChildProcessSpawner.ChildProcessSpawner` from the environment. The HOME directory is read via `Config.string("HOME")` rather than `process.env["HOME"]` directly.
+Registry decisions are transactions that run as one synchronous block: `Effect.try` wraps a closure
+that issues `BEGIN IMMEDIATE` (or `BEGIN` for read paths), runs the decision, and commits, rolling
+back and rethrowing the original cause if any statement refuses. Atomicity rests on the drivers being
+synchronous and the handle being single-threaded, so that boundary must never be split across
+effects: the fiber scheduler preempts at its operation budget, and a fiber parked between `BEGIN` and
+`COMMIT` would let another fiber `BEGIN IMMEDIATE` on the same connection — SQLite refuses the nested
+transaction, and either fiber's `COMMIT` could publish the other's writes. Keeping the whole
+transaction in one JavaScript turn is therefore what makes a partially applied decision
+unobservable and keeps interruption from ever landing inside a transaction. Synchrony cannot rule out
+the other way two transactions could meet, a decision that re-enters the repository, so the handles
+currently inside a transaction are tracked and a re-entering `BEGIN` is refused before it runs:
+SQLite has no nested transactions, and unwinding the inner attempt would roll back the outer
+decision's writes.
 
-`BinaryResolver.layer` requires all four platform services from the environment. There is no `defaultLayer` — platform layers are provided at the entry point level (`bun.ts` / `node.ts`), not baked into `BinaryResolver`.
+The database handle's lifetime is a scope. `sqliteManagedStackRepositoryLayer` acquires the handle
+with `Effect.acquireRelease`, so opening the file and registering its close are one step nothing can
+land between, including on the path where schema initialization refuses the registry: no failure path
+leaks an open handle. Closing the scope that built the layer closes the registry.
 
----
+Waiting for a concurrent publisher is `Schedule`-driven. One look at the pending row is a retryable
+step — a still-pending row asks for another look, while a vanished or tombstoned row is a final
+answer — repeated on `Schedule.exponential` from `publicationPollMs` with a 250 ms ceiling, so a slow
+publisher is not polled hundreds of times per second for the whole window. The ceiling only ever
+slows polling down, so a caller asking for a slower interval keeps its own. `publicationTimeoutMs` is
+the caller's bound on the entire wait and is applied as a timeout around the repeat, so it interrupts
+the poll instead of being checked between polls. Both shipped adapters answer synchronously, so a look
+at the pending row always completes; with an embedder-supplied asynchronous repository that timeout can
+preempt a look that is still in flight. That is safe — a look has no side effects — but it means the
+option bounds the wait, not the number of looks that finish. The answer the repeat stops on is checked
+rather than asserted through a type refinement: a recurrence bound added to that schedule later would
+hand back the final still-pending answer, and the check turns that into a defect instead of an
+unpublished stack presented as a published one.
 
-### resolveService — binary-first Docker fallback
+Interruption is part of the contract, not an afterthought. Provisioning owns a pending row, an
+operation claim, and the directories it created, so its create path runs under
+`Effect.uninterruptibleMask`: only the provisioning steps themselves are interruptible, and the
+compensation that aborts the pending row and removes the leaked directory always runs. Deletion
+releases its claim the same way. An interrupted call stays interrupted rather than being reported as a
+failure of the work — a caller's own timeout is not a `ManagedStackInitializationError` — and recovery
+re-raises interruption instead of recording a retained claim or a reconciliation failure that never
+happened, so the operation the next pass should still recover does not look like one recovery already
+gave up on. That rule covers the steps whose exits recovery absorbs one at a time — the liveness probe,
+the runtime inspection, the state reclamation — not just the pass as a whole.
 
-**File:** `src/resolve.ts`
+The single deliberate exception is the claim release on a failed operation's way out: it discards
+whatever it raises, its own interruption included, because the caller's outcome is the failure the
+operation actually suffered and a release reporting interruption would replace it. The mask itself
+begins after the pending row and its claim exist, which is sound only because both shipped adapters
+decide synchronously and offer no suspension point during that write. An asynchronous embedder
+repository interrupted mid-prepare would leave a pending row and a claim nothing compensates, so the
+mask has to be extended over row creation before asynchronous repositories become real.
 
-`resolveService` is a thin helper that wraps `BinaryResolver.resolve()` and implements the binary-first, Docker-fallback strategy used by `StackPreparation` and therefore shared by both `stack.start()` and `prefetch()`.
+An Effect consumer provides the composed layer, which is the primary API:
 
-#### ServiceResolution type
+```typescript
+import { Effect } from "effect";
+import { managedStackLayer, ManagedStackService } from "@supabase/stack/managed";
 
-```ts
-type ServiceResolution =
-  | { readonly type: "binary"; readonly path: string }
-  | { readonly type: "docker"; readonly image: string };
-```
+// The policy service, the registry adapter it decides over, and the platform
+// filesystem it reclaims stack state through. It fails with
+// `ManagedStackLayerFailure`, so a registry written by a newer CLI is a typed
+// failure an embedder can recover from rather than a defect.
+const managedLayer = managedStackLayer({ stateRoot });
 
-This discriminated union is the canonical output of resolution: downstream code switches on `type` to pick the right service factory.
-
-#### Resolution logic
-
-`resolveService(resolver, service, version)` calls `resolver.resolve({ service, version })` and maps the result:
-
-- **Success** (binary found and extracted) → `{ type: "binary", path }`.
-- **`BinaryNotFoundError`** (no native asset for this OS/arch) → `{ type: "docker", image }` using the default Docker image for the service and version.
-- **`DownloadError`** (network or extraction failure) → `{ type: "docker", image }` — falls back to Docker rather than hard-failing.
-- **`ChecksumMismatchError`** → propagates as a real error; a tampered or corrupted download is never silently replaced by Docker.
-
-```ts
-export const resolveService = (
-  resolver: BinaryResolver["Service"],
-  service: ServiceName,
-  version: string,
-): Effect.Effect<ServiceResolution, ChecksumMismatchError> =>
-  resolver.resolve({ service, version }).pipe(
-    Effect.map((path): ServiceResolution => ({ type: "binary", path })),
-    Effect.catchTag("BinaryNotFoundError", () =>
-      Effect.succeed<ServiceResolution>({
-        type: "docker",
-        image: dockerImageForService(service, version),
-      }),
-    ),
-    Effect.catchTag("DownloadError", () =>
-      Effect.succeed<ServiceResolution>({
-        type: "docker",
-        image: dockerImageForService(service, version),
-      }),
-    ),
-  );
-```
-
----
-
-### JwtGenerator — JWT token generation and opaque keys
-
-**File:** `src/JwtGenerator.ts`
-
-A focused service that encapsulates HS256 JWT signing. It also exports two hardcoded opaque API key constants that match the Go CLI defaults.
-
-#### Opaque key constants
-
-```ts
-// Hardcoded opaque key defaults matching Go CLI (pkg/config/apikeys.go:19-20).
-// These are client-facing keys for local dev — SDKs use these, not JWTs directly.
-export const defaultPublishableKey = "sb_publishable_ACJWlzQHlZjBrEguHvfOxg_3BJgxAaH";
-export const defaultSecretKey = "sb_secret_N7UND0UgjKTVK-Uodkm0Hg_xSvEMPvz";
-```
-
-These opaque keys (`publishableKey` / `secretKey`) are what callers and SDKs use. They are not JWTs. The `ApiProxy` translates them to the actual JWTs (`anonJwt` / `serviceRoleJwt`) before forwarding requests to GoTrue and PostgREST.
-
-#### Service interface
-
-```ts
-class JwtGenerator extends ServiceMap.Service<
-  JwtGenerator,
-  {
-    readonly generate: (secret: string, role: string) => Effect.Effect<string>;
-  }
->()("local/JwtGenerator") {}
-```
-
-`generate(secret, role)` produces a signed JWT with `{ role }` as the payload claim, using HMAC-SHA256 (`node:crypto`'s `createHmac("sha256", secret)`). Tokens are set to expire 10 years from issue time — appropriate for local development use.
-
-#### Layer
-
-`JwtGenerator.layer` is a `Layer.succeed` with no external dependencies — it has no I/O and requires no platform services.
-
----
-
-### PortAllocator — dynamic port assignment
-
-**File:** `src/PortAllocator.ts`
-
-`PortAllocator` resolves all port numbers before the stack starts. It supports two strategies: an explicit port requested by the caller, or a randomly assigned port from the OS.
-
-#### Interface
-
-```ts
-export const DEFAULT_API_PORT = 54321;
-export const DEFAULT_DB_PORT = 54322;
-
-export interface PortInput {
-  readonly apiPort?: number;
-  readonly dbPort?: number;
-  readonly authPort?: number;
-  readonly postgrestPort?: number;
-  readonly postgrestAdminPort?: number;
-}
-
-export interface AllocatedPorts {
-  readonly apiPort: number;
-  readonly dbPort: number;
-  readonly authPort: number;
-  readonly postgrestPort: number;
-  readonly postgrestAdminPort: number;
-}
-
-export const allocatePorts = (
-  input: PortInput,
-): Effect.Effect<AllocatedPorts, PortAllocationError>;
-```
-
-#### Two strategies
-
-- **Explicit port** (`input.apiPort !== undefined`) → `probeExactPort(port)`: binds the specific port on `127.0.0.1` to confirm it is available. Fails with `PortAllocationError` if the port is already in use.
-- **Omitted** → `probeRandomPort(exclude)`: binds port `0` on `127.0.0.1` so the OS assigns a free port, then closes the server immediately and returns the assigned port number.
-
-#### Collision avoidance
-
-Allocated ports are tracked in a `Set<number>`. When `probeRandomPort` returns a port already in the set (rare but possible under concurrent allocation), it retries automatically. This prevents two services from racing to the same port.
-
----
-
-### prefetch — pre-download binaries and images
-
-**File:** `src/prefetch.ts`
-
-`prefetch` is now a thin wrapper over `StackPreparation`. It downloads all service binaries and pulls all Docker images concurrently, so the first `createStack()` or `stack.start()` call in a test run does not stall on slow downloads.
-
-#### Interface
-
-```ts
-export interface PrefetchOptions {
-  readonly versions?: Partial<VersionManifest>;
-  /** Services to prefetch. Defaults to all. */
-  readonly services?: ReadonlyArray<ServiceName>;
-}
-
-export type PrefetchResult = Record<string, ServiceResolution>;
-
-export const prefetch: (
-  options?: PrefetchOptions,
-) => Effect.Effect<
-  PrefetchResult,
-  DockerPullError | ChecksumMismatchError,
-  BinaryResolver | ChildProcessSpawner
->;
+const program = Effect.gen(function* () {
+  const managed = yield* ManagedStackService;
+  return yield* managed.provisionOrdinaryStack({ workspacePath });
+}).pipe(
+  Effect.catchTag("ManagedStackPublicationTimeoutError", (error) =>
+    Effect.fail(`another process never published ${error.stackId}`),
+  ),
+);
 ```
 
-#### How it works
+`createManagedStackService()` — and `makeManagedStackService()` over a repository the caller already
+has — is a thin `ManagedRuntime` edge over exactly that layer, for consumers that do not run an
+Effect runtime. It exists to serve the Promise-oriented `createStack()` boundary; the runtime
+lifecycle beneath it is Effect-based either way. Three properties of that edge are contracts rather
+than incidental:
 
-For each requested service, `prefetch` delegates to `StackPreparation.prepare()`:
+- **Acquisition is asynchronous.** Both factories return a `Promise<ManagedStackServiceHandle>` and
+  build the runtime's context through `runtime.context()`, because opening the registry is I/O: a
+  file is created and hardened, its schema read, and a cold start may have to wait out another
+  process' WAL conversion. Everything that can refuse the acquisition arrives as a rejection — a
+  blank state root, an owner PID that could never be probed, and a registry written by an
+  unsupported schema version all reject with the same typed error instances, so a caller has one
+  failure channel instead of a throw plus a rejection.
+- **Reads are Promises too.** `inspectStack` and `listStacks` return Promises rather than answering
+  inline. A handle that read synchronously would only be hiding the registry's I/O from its caller,
+  and it is what forced the cold-start retry below to block. The `repository` accessor stays a plain
+  property: the context is already resolved by the time a caller holds the handle.
+- **The cold-start WAL retry is a schedule, not a blocking wait.** Converting a fresh registry to
+  WAL can lose a race with another process doing the same thing, so `enableWriteAheadLogging`
+  retries exactly the `SQLITE_BUSY`/`SQLITE_LOCKED` classification on `Schedule.exponential` from
+  10 ms, capped at 100 ms per wait and bounded to a total ~4 s budget. Contention that never clears
+  surfaces the driver's own busy error, as an immediate non-busy failure of that pragma always has.
+  Because the retry suspends the fiber instead of spinning on `Atomics.wait`, a process opening the
+  registry no longer stalls the event loop that every other caller in it depends on.
 
-- If the result is `{ type: "binary" }`, the binary is already cached — nothing more to do.
-- If the result is `{ type: "docker" }`, `prefetch` runs `docker pull <image>` via `ChildProcessSpawner`. A non-zero exit code or a `PlatformError` both map to `DockerPullError`.
+`close()` disposes the `ManagedRuntime`, which interrupts whatever is still in flight and closes the
+scope that owns the database handle. Outstanding calls therefore reject, and because that scope closes
+alongside those interruptions rather than after them, a statement already on its way to the driver can
+race the close and fail against a closed handle: a caller that closes while work is outstanding must
+read those rejections as "did not complete", not as evidence about the registry. A call made after
+`close()` rejects with an `Error` saying the handle is closed, rather than with the runtime's own bare
+internal string. That diagnosis comes from the handle's own closed state, never from what a rejection
+says, so a caller's callback that refuses with a string mentioning disposal still reaches the caller
+as itself. The handle is also an `AsyncDisposable`, so
+`await using service = await createManagedStackService()` closes it on every path out of the block. The
+facade hands back the very repository the service uses, so an embedder can read the registry without
+opening a second handle on it.
 
-All services are resolved and pulled concurrently (`concurrency: "unbounded"`). The returned `PrefetchResult` maps each service name to its `ServiceResolution`.
+## Legacy daemon paths
 
-#### Typical usage — vitest globalSetup
+The pre-managed daemon implementation still reads its project-keyed state as a legacy/bootstrap
+input for later CLI integration:
 
-```ts
-// vitest.config.ts / globalSetup.ts
-import { prefetch } from "@supabase/stack";
-
-export async function setup() {
-  await prefetch(); // downloads auto-mode assets for all services before any test runs
-  await prefetch({ mode: "docker" }); // pulls Docker images for all services
-}
+```text
+<cacheRoot>/projects/<sha256(projectDir)[0:16]>/stacks/<name>/
+  stack.json
+  state.json
+  data/
 ```
 
-Pass `versions` to pin specific versions, or `services` to fetch a subset.
+The live runtime directory is short and outside the project tree:
 
----
-
-### ApiProxy — reverse proxy with key translation
-
-**File:** `src/ApiProxy.ts`
-
-`ApiProxy` is a reverse proxy that sits in front of GoTrue (auth) and PostgREST (REST API). Its primary job is to translate opaque API keys (`publishableKey`, `secretKey`) into JWTs before forwarding requests to the backend services. It also handles CORS and standard proxy headers.
-
-#### Service interface
-
-```ts
-export interface ProxyConfig {
-  readonly listenPort: number;
-  readonly gotruePort: number;
-  readonly postgrestPort: number;
-  readonly postgrestAdminPort: number;
-  readonly publishableKey: string; // opaque — e.g. "sb_publishable_..."
-  readonly secretKey: string; // opaque — e.g. "sb_secret_..."
-  readonly anonJwt: string; // internal HS256 JWT passed to GoTrue/PostgREST
-  readonly serviceRoleJwt: string; // internal HS256 JWT passed to GoTrue/PostgREST
-}
-
-class ApiProxy extends ServiceMap.Service<
-  ApiProxy,
-  {
-    readonly address: HttpServer.Address;
-  }
->()("local/ApiProxy") {
-  static layer: (
-    config: ProxyConfig,
-  ) => Layer.Layer<ApiProxy, never, HttpServer.HttpServer | HttpClient.HttpClient>;
-}
+```text
+/tmp/supabase/s-<sha256(stackRoot)[0:12]>/
+  daemon-<generation>.sock
 ```
 
-#### Request routing
-
-| Route pattern        | Backend           | Auth transformation |
-| -------------------- | ----------------- | ------------------- |
-| `GET /health`        | (local, 200 OK)   | none                |
-| `/auth/v1/verify`    | GoTrue            | none (open)         |
-| `/auth/v1/callback`  | GoTrue            | none (open)         |
-| `/auth/v1/authorize` | GoTrue            | none (open)         |
-| `/auth/v1/*`         | GoTrue            | key translation     |
-| `/rest/v1/*`         | PostgREST         | key translation     |
-| `/rest-admin/v1/*`   | PostgREST (admin) | none                |
-
-#### Key translation logic
-
-`transformAuthorization` is called for routes marked with auth transformation:
-
-1. If `Authorization` is present and is NOT `Bearer sb_*`, pass it through (caller has a real JWT).
-2. If `apikey` matches `publishableKey` → set `Authorization: Bearer <anonJwt>`.
-3. If `apikey` matches `secretKey` → set `Authorization: Bearer <serviceRoleJwt>`.
-4. If `apikey` is present but unrecognized → pass it through as `Authorization`.
-
-```mermaid
-flowchart TD
-    REQ["Incoming request"] --> AUTH{"Authorization header<br/>not Bearer sb_*?"}
-    AUTH -->|"yes"| PASS["Pass through unchanged"]
-    AUTH -->|"no / missing"| KEY{"apikey header?"}
-    KEY -->|"= publishableKey"| ANON["Authorization: Bearer anonJwt"]
-    KEY -->|"= secretKey"| SVC["Authorization: Bearer serviceRoleJwt"]
-    KEY -->|"other"| FWD["Authorization: <apikey value>"]
-    KEY -->|"missing"| NONE["No Authorization header"]
-    PASS --> BACKEND["Forward to backend"]
-    ANON --> BACKEND
-    SVC --> BACKEND
-    FWD --> BACKEND
-    NONE --> BACKEND
-```
-
-#### CORS handling
-
-All responses receive standard CORS headers (`access-control-allow-origin: *`, etc.). `OPTIONS` preflight requests are intercepted globally and receive a `204 No Content` response before reaching the router — this matches the Go proxy behavior.
-
-#### Layer requirements
-
-`ApiProxy.layer(config)` requires `HttpServer.HttpServer | HttpClient.HttpClient`. The `HttpServer` instance is platform-provided (via `bun.ts` or `node.ts`); `HttpClient` is provided by `FetchHttpClient.layer` in `createStack.ts`.
-
----
-
-### services — ServiceDef factories
-
-**Files:** `src/services/postgres.ts`, `src/services/postgrest.ts`, `src/services/auth.ts`
-
-Pure factory functions that construct `ServiceDef` objects for `@supabase/process-compose`. No Effect, no async — just data construction. This separation means the shape of each service definition can be tested with plain `vitest` `it()` calls without any Effect infrastructure.
-
-#### postgres
-
-```ts
-interface PostgresServiceOptions {
-  readonly binPath: string; // path to extracted binary dir (contains start.sh)
-  readonly dataDir: string; // PGDATA directory
-  readonly port: number;
-}
-```
-
-Postgres is the foundation of the stack. It has no dependencies and uses a TCP health check (connecting to port 5432) rather than HTTP. The TCP probe is appropriate here because postgres doesn't expose an HTTP endpoint — a successful connection on the port indicates the server is accepting connections.
-
-The start command is `${binPath}/start.sh`, not the postgres binary directly, because the supabase-postgres release includes a wrapper script that sets the correct extension paths and configuration.
-
-Shutdown uses `SIGINT` (not the default `SIGTERM`) with a 15-second timeout. Postgres responds to `SIGINT` with a fast shutdown: it terminates connections and exits cleanly, whereas `SIGTERM` triggers a slower smart shutdown that waits for clients to disconnect.
-
-Postgres has two factories (like auth) because there is no Windows native binary:
-
-```ts
-// Native binary — macOS and Linux
-export const makePostgresService = (opts: NativePostgresOptions): ServiceDef
-
-// Docker — fallback for Windows
-export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef
-```
-
-Both share `postgresEnv()` and `postgresHealthCheck()` helpers. The Docker variant mounts the data directory as a volume (`-v dataDir:/var/lib/postgresql/data`) and publishes the configured host port to the container port.
-
-#### postgrest
-
-```ts
-interface PostgrestServiceOptions {
-  readonly binPath: string; // path to the postgrest binary
-  readonly dbPort: number;
-  readonly apiPort: number;
-  readonly schemas: ReadonlyArray<string>;
-  readonly extraSearchPath: ReadonlyArray<string>;
-  readonly maxRows: number;
-  readonly jwtSecret: string;
-}
-```
-
-PostgREST depends on postgres being `healthy` before it starts. It uses an HTTP health check on `GET /` which PostgREST serves once it has established a database connection. Key environment variables are translated directly from config options — schema lists are joined with commas because PostgREST's `PGRST_DB_SCHEMAS` expects a comma-separated string.
-
-The anonymous role is hardcoded to `anon`: this matches the Supabase database convention where the `anon` role has limited public permissions enforced by Row Level Security.
-
-#### auth (two factories)
-
-Auth has two factories because the stack supports both native and Docker auth launches:
-
-```ts
-// Native binary
-export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef
-
-// Docker fallback
-export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef
-```
-
-Both factories share the `authEnv()` helper which builds the `GOTRUE_*` environment variables from the same `AuthBaseOptions`. The native factory sets `command` to the binary path; the Docker factory sets `command: "docker"` and builds `args: ["run", "--rm", ...networkArgs, ...envArgs, image]`.
-
-Docker services reach host-native services through `host.docker.internal`. On Linux the stack adds Docker's `host-gateway` alias explicitly; Docker Desktop provides that host name on macOS and Windows. This keeps published-port behavior consistent across all supported operating systems.
-
-Both variants use an HTTP health check on `GET /health` (the GoTrue health endpoint). Both depend on postgres being `healthy` before starting.
-
----
-
-### StackBuilder — assemble the dependency graph
-
-**File:** `src/StackBuilder.ts`
-
-`StackBuilder` is now graph-only. Asset preparation moved out into `StackPreparation`, so
-`StackBuilder` receives a `ResolvedStackConfig` plus `PreparedStackArtifacts`, constructs the
-complete `ServiceDef[]` list, and passes it to `buildGraph()` from `@supabase/process-compose`.
-
-#### Service interface
-
-```ts
-class StackBuilder extends ServiceMap.Service<
-  StackBuilder,
-  {
-    readonly build: (
-      config: ResolvedStackConfig,
-      prepared: PreparedStackArtifacts,
-    ) => Effect.Effect<BuildResult, StackBuildError>;
-  }
->()("local/StackBuilder") {}
-```
-
-`build()` is the only method. It takes a fully resolved `ResolvedStackConfig` (all defaults applied,
-ports concrete, JWTs generated) plus prepared binary / Docker resolutions and returns the graph,
-public service projection metadata, and exact cleanup targets.
-
-#### ResolvedStackConfig
-
-`StackBuilder.build()` receives a `ResolvedStackConfig`, not the raw user-facing `StackConfig`. All resolution (port allocation, JWT generation, default application) happens in `createStack.ts` before `build()` is called:
-
-```ts
-interface ResolvedStackConfig {
-  readonly jwtSecret: string;
-  readonly apiPort: number;
-  readonly dbPort: number;
-  readonly publishableKey: string;
-  readonly secretKey: string;
-  readonly autoManagedDataDir: boolean;
-  readonly anonJwt: string;
-  readonly serviceRoleJwt: string;
-  readonly postgres: ResolvedPostgresConfig;
-  readonly postgrest: ResolvedPostgrestConfig | false;
-  readonly auth: ResolvedAuthConfig | false;
-}
-```
-
-Setting `postgrest` or `auth` to `false` excludes those services entirely. Postgres is always included.
-
-#### Build flow
-
-```mermaid
-flowchart TD
-    A["StackPreparation.prepare(config)"] --> B["PreparedStackArtifacts"]
-    B --> C["StackBuilder.build(config, prepared)"]
-    C --> D["BuildResult"]
-```
-
-Docker vs native selection, cache probing, binary downloads, and Docker pulls now happen entirely in
-`StackPreparation`. `StackBuilder` only consumes the prepared resolutions and turns them into graph
-definitions plus cleanup metadata.
-
----
-
-### StackLifecycleCoordinator — lifecycle management
-
-**File:** `src/StackLifecycleCoordinator.ts`
-
-`StackLifecycleCoordinator` is the top-level runtime coordinator. It owns the startup state machine,
-drives `StackPreparation`, builds the orchestrator from `StackBuilder`, persists cleanup targets,
-and exposes the unified public state stream used by both in-process and daemon-backed flows.
-
-#### Service interface
-
-```ts
-class StackLifecycleCoordinator extends ServiceMap.Service<
-  StackLifecycleCoordinator,
-  {
-    readonly getInfo: () => Effect.Effect<StackInfo>;
-    readonly start: () => Effect.Effect<void, ServiceReadyError | StackBuildError>;
-    readonly stop: () => Effect.Effect<void>;
-    readonly startService: (
-      name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
-    readonly stopService: (
-      name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
-    readonly restartService: (
-      name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | StackBuildError>;
-    readonly getState: (name: string) => Effect.Effect<StackServiceState, ServiceNotFoundError>;
-    readonly getAllStates: () => Effect.Effect<ReadonlyArray<StackServiceState>>;
-    readonly stateChanges: (
-      name: string,
-    ) => Effect.Effect<Stream.Stream<StackServiceState>, ServiceNotFoundError>;
-    readonly allStateChanges: () => Stream.Stream<StackServiceState>;
-    readonly waitReady: (
-      name: string,
-    ) => Effect.Effect<void, ServiceNotFoundError | ServiceReadyError | StackBuildError>;
-    readonly waitAllReady: () => Effect.Effect<void, ServiceReadyError | StackBuildError>;
-    readonly subscribeLogs: (name: string) => Stream.Stream<LogEntry>;
-    readonly subscribeAllLogs: (services?: ReadonlyArray<string>) => Stream.Stream<LogEntry>;
-    readonly logHistory: (name: string, limit?: number) => Effect.Effect<ReadonlyArray<LogEntry>>;
-    readonly logHistoryAll: (
-      limit?: number,
-      services?: ReadonlyArray<string>,
-    ) => Effect.Effect<ReadonlyArray<LogEntry>>;
-  }
->()("stack/StackLifecycleCoordinator") {}
-```
-
-Internally, the coordinator owns these lifecycle phases:
-
-- `idle`
-- `preparing`
-- `prepared`
-- `starting`
-- `running`
-- `stopping`
-- `stopped`
-
-Before the orchestrator exists, it publishes synthetic service states derived from config. That is
-why `getAllStates()` and `allStateChanges()` can surface `Downloading` during cold-cache startup
-even though no process has been spawned yet.
-
-#### StackInfo
-
-```ts
-interface StackInfo {
-  readonly url: string; // "http://127.0.0.1:<apiPort>"
-  readonly dbUrl: string; // "postgresql://postgres:postgres@127.0.0.1:<dbPort>/postgres"
-  readonly publishableKey: string; // opaque key for SDK consumers
-  readonly secretKey: string; // opaque key for SDK consumers (privileged)
-  readonly anonJwt: string; // internal HS256 JWT (role: "anon")
-  readonly serviceRoleJwt: string; // internal HS256 JWT (role: "service_role")
-  readonly serviceEndpoints: Readonly<Record<string, string>>;
-}
-```
-
-The `url` points to the `ApiProxy` listener, not to PostgREST directly. Callers use
-`publishableKey` / `secretKey` as their API keys; the proxy translates them to JWTs internally.
-`StackInfo` intentionally does not include runtime cleanup details such as Docker container names.
-Those are persisted separately as internal metadata after preparation/build.
-
-#### Layer construction
-
-```mermaid
-graph TB
-    subgraph "StackLifecycleCoordinator.layer(config)"
-        PREP["StackPreparation.prepareEvents()<br/><i>emits Downloading + prepared artifacts</i>"]
-        SB["StackBuilder.build(config, prepared)<br/><i>produces ResolvedGraph</i>"]
-        LB["LogBuffer.layer<br/><i>shared between Orchestrator + coordinator</i>"]
-        OL["Orchestrator.layer(graph)<br/><i>provided with shared LogBuffer</i>"]
-        EP["Layer.buildWithScope(orchLayer, scope)<br/><i>scoped to coordinator scope</i>"]
-        INFO["StackInfo object<br/><i>built from ResolvedStackConfig — no JWT generation needed</i>"]
-        STATE["SubscriptionRef<StackServiceState[]><br/><i>authoritative public state stream</i>"]
-    end
-
-    PREP --> SB
-    SB --> LB
-    LB --> OL
-    OL --> EP
-    EP --> STATE
-    STATE --> INFO
-```
-
-The `LogBuffer` is created at coordinator level and shared with the `Orchestrator`. This gives the
-coordinator direct access to `logBuffer.subscribe(name)`, `logBuffer.subscribeAll()`, and
-`logBuffer.history(name, limit)` — powering the `subscribeLogs`, `subscribeAllLogs`,
-`logHistory`, and `logHistoryAll` methods without going through the Orchestrator.
-
-Public status is projected in `@supabase/stack`, not exposed raw from `@supabase/process-compose`.
-Helper jobs like `postgres-init` remain part of the process graph, but the public stack API hides
-them and instead projects their lifecycle onto the owning service. While `postgres-init` is active,
-callers see `postgres: Initializing`.
-
-The Orchestrator layer is constructed inside `StackLifecycleCoordinator.layer` using
-`Layer.buildWithScope`. This means the Orchestrator lives within the coordinator's scope: when the
-runtime is disposed, the Orchestrator's scope closes, which triggers `FiberMap` to interrupt all
-service fibers and run their shutdown finalizers.
-
-#### JWT fields and key naming
-
-The public `Stack` service is now a thin facade over `StackLifecycleCoordinator`. `StackInfo`
-contains only stable user-facing connection info; exact cleanup targets are internal runtime
-metadata persisted separately for crash recovery.
-
----
-
-### createStack — platform-agnostic core
-
-**File:** `src/createStack.ts`
-
-`createStack` is the platform-agnostic core. It wires all layers, delegates to a `ManagedRuntime`, and returns a rich `Stack` interface. It takes a `PlatformFactory` parameter — a function `(apiPort: number) => PlatformLayer` — so the platform-specific HTTP server (Bun or Node.js) can be bound to the already-resolved port. Platform-specific layers (`BunHttpServer`, `NodeHttpServer`) are provided by the entry points (`bun.ts`, `node.ts`), not baked in.
-
-`createStack` also owns `resolveConfig()`, the internal async function that turns a raw
-`StackConfig` into a `ResolvedStackConfig`: it allocates ports via `PortAllocator`, generates JWTs
-via `generateJwt()` from `JwtGenerator.ts`, creates an ephemeral temp directory if no `dataDir`
-was specified, and applies all service config defaults.
-
-Once the runtime is built, `stack.start()` now means:
-
-1. prepare assets via `StackPreparation`
-2. publish synthetic `Downloading` states on cache misses
-3. build the orchestrator through `StackBuilder`
-4. start services and wait for health through `StackLifecycleCoordinator`
-
-#### PlatformLayer type
-
-```ts
-/**
- * The minimum set of platform services required to run a local stack.
- * Platform entry points (bun.ts, node.ts) provide layers that satisfy this type.
- */
-export type PlatformServices =
-  | FileSystem.FileSystem
-  | Path.Path
-  | ChildProcessSpawner.ChildProcessSpawner
-  | HttpServer.HttpServer;
-
-export type PlatformLayer = Layer.Layer<PlatformServices>;
-```
-
-#### Stack interface
-
-```ts
-interface Stack extends AsyncDisposable {
-  // Connection info
-  readonly url: string; // proxy listener URL
-  readonly dbUrl: string;
-  readonly publishableKey: string; // opaque publishable API key for SDK consumers
-  readonly secretKey: string; // opaque secret API key for privileged SDK consumers
-
-  // Stack lifecycle
-  start(): Promise<void>;
-  stop(): Promise<void>;
-  dispose(): Promise<void>;
-
-  // Per-service lifecycle
-  startService(name: string): Promise<void>;
-  stopService(name: string): Promise<void>;
-  restartService(name: string): Promise<void>;
-
-  // Status
-  getStatus(): Promise<ReadonlyArray<StackServiceState>>;
-  getServiceStatus(name: string): Promise<StackServiceState>;
-  statusChanges(): AsyncIterable<StackServiceState>;
-
-  // Logs
-  logs(): AsyncIterable<LogEntry>;
-  serviceLogs(name: string): AsyncIterable<LogEntry>;
-  logHistory(name: string, limit?: number): Promise<ReadonlyArray<LogEntry>>;
-
-  // Readiness
-  ready(opts?: ReadyOptions): Promise<void>;
-  serviceReady(name: string, opts?: ReadyOptions): Promise<void>;
-
-  // AsyncDisposable — supports `await using stack = await createStack(...)`
-  [Symbol.asyncDispose](): Promise<void>;
-}
-
-async function createStack(
-  config: StackConfig | undefined,
-  platformFactory: PlatformFactory,
-): Promise<Stack>;
-```
-
-`Stack` implements `AsyncDisposable`, so it works with the `await using` statement in environments that support it.
-
-All `Stack` methods that can fail throw `StackError` (not Effect tagged errors), making them straightforward to catch in non-Effect code.
-
-#### Layer composition
-
-```mermaid
-graph BT
-    subgraph "Runtime layers (bottom to top)"
-        PL["PlatformLayer<br/><i>provided by bun.ts / node.ts<br/>— FileSystem, Path, ChildProcessSpawner, HttpServer</i>"]
-        FH["FetchHttpClient.layer<br/><i>for BinaryResolver + ApiProxy</i>"]
-        BRL["BinaryResolver.layer<br/><i>+ FetchHttpClient</i>"]
-        PREP["StackPreparation.layer<br/><i>+ BinaryResolver</i>"]
-        SBL["StackBuilder.layer"]
-        COORD["StackLifecycleCoordinator.layer(resolvedConfig)<br/><i>+ StackPreparation + StackBuilder</i>"]
-        STACK["Stack.layer(resolvedConfig)<br/><i>thin facade over coordinator</i>"]
-        APL["ApiProxy.layer(proxyConfig)<br/><i>+ FetchHttpClient</i>"]
-        FULL["Layer.mergeAll(Stack, ApiProxy)<br/><i>+ PlatformLayer</i>"]
-    end
-
-    PL --> FULL
-    FH --> BRL
-    BRL --> PREP
-    PREP --> COORD
-    SBL --> COORD
-    COORD --> STACK
-    STACK --> FULL
-    FH --> APL
-    APL --> FULL
-```
-
-The assembled layer is passed to `ManagedRuntime.make()`. A `ManagedRuntime` is an Effect runtime that holds an open scope — resources allocated inside the scope (like the Orchestrator's `FiberMap`) stay alive as long as the runtime is alive. Calling `runtime.dispose()` closes the scope, which triggers all finalizers and kills all spawned processes.
-
-Streams (`statusChanges`, `logs`, `serviceLogs`) are converted to `AsyncIterable` via `Stream.toAsyncIterableWith(stream, services)`, which requires the runtime's services map for correct resource management.
-
----
-
-### bun.ts / node.ts — runtime implementations behind the root export
-
-**Files:** `src/bun.ts`, `src/node.ts`
-
-These thin wrappers are the runtime-specific implementations selected by the package root export conditions. Each one constructs the platform-specific layer and delegates to `createStack` from `createStack.ts`.
-
-```ts
-// bun.ts
-import * as BunHttpServer from "@effect/platform-bun/BunHttpServer";
-
-export async function createStack(config?: StackConfig): Promise<Stack> {
-  return createStackCore(
-    config,
-    (apiPort) => BunHttpServer.layer({ port: apiPort }) as unknown as PlatformLayer,
-  );
-}
-```
-
-```ts
-// node.ts
-import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
-
-export async function createStack(config?: StackConfig): Promise<Stack> {
-  return createStackCore(config, (apiPort) => {
-    const spawnerLayer = NodeChildProcessSpawnerLayer.pipe(
-      Layer.provide(Layer.mergeAll(NodeFileSystemLayer, NodePathLayer)),
-    );
-    const httpServerLayer = NodeHttpServer.layer(() => createServer(), { port: apiPort });
-    return Layer.mergeAll(httpServerLayer, spawnerLayer) as unknown as PlatformLayer;
-  });
-}
-```
-
-Callers import from the package root:
-
-```ts
-import { createStack } from "@supabase/stack";
-```
-
-The `HttpServer` instance is configured to listen on `apiPort` — this is the port that `ApiProxy` binds to, so the proxy's listener port matches the configured API port.
-
----
-
-## Data flow
-
-End-to-end from caller to running stack:
-
-```mermaid
-graph TB
-    subgraph "1. Entry"
-        CS["createStack(config, platformFactory)"]
-    end
-
-    subgraph "2. Layer assembly"
-        LA["ManagedRuntime.make(fullLayer)<br/><i>wires BinaryResolver → StackPreparation → StackBuilder → StackLifecycleCoordinator + ApiProxy</i>"]
-    end
-
-    subgraph "3. Asset preparation"
-        DP["detectPlatform()"]
-        CH["check ~/.supabase/bin cache"]
-        DL["HttpClient.get GitHub release tarball"]
-        PI["docker pull image when service resolves to Docker"]
-        VR["verify SHA-256 (node:crypto createHash)"]
-        EX["ChildProcessSpawner → tar extract to cache"]
-        DS["publish synthetic Downloading states"]
-    end
-
-    subgraph "4. Graph assembly"
-        SD["makePostgresService()<br/>makePostgrestService()<br/>makeAuthServiceNative/Docker()"]
-        BG["buildGraph(allDefs)<br/><i>topological sort + validation</i>"]
-    end
-
-    subgraph "5. Orchestrator startup"
-        OL["Orchestrator.layer(graph) + shared LogBuffer"]
-        FM["FiberMap — one fiber per service"]
-        DEP["Await dependency Deferreds<br/><i>postgres healthy before postgrest/auth</i>"]
-        SP["ChildProcessSpawner.spawn()"]
-        HC["HealthProbe running"]
-    end
-
-    subgraph "6. ApiProxy startup"
-        AP["ApiProxy.layer(proxyConfig)<br/><i>binds HttpServer on apiPort</i>"]
-        KT["Key translation: publishableKey → anonJwt<br/>secretKey → serviceRoleJwt"]
-    end
-
-    subgraph "7. Output"
-        SI["Stack { url, publishableKey, secretKey, dbUrl,<br/>start/stop, ready, per-service, status, logs, dispose }"]
-    end
-
-    CS --> LA
-    LA --> DP
-    DP --> CH
-    CH -->|"miss"| DL
-    DL --> VR
-    VR --> EX
-    CH -->|"docker"| PI
-    DL --> DS
-    PI --> DS
-    EX --> SD
-    PI --> SD
-    CH -->|"hit"| SD
-    SD --> BG
-    BG --> OL
-    OL --> FM
-    FM --> DEP
-    DEP --> SP
-    SP --> HC
-    HC -->|"healthy"| AP
-    AP --> KT
-    KT --> SI
-```
-
----
+Windows substitutes its system temporary directory for `/tmp`. Socket names are generation-scoped
+so a delayed daemon shutdown cannot unlink a replacement daemon's socket.
+
+Callers may explicitly supply `projectStateRoot`, in which case durable stacks live under
+`<projectStateRoot>/stacks/`; managed daemon callers may not directly override individual
+`stackRoot` or `runtimeRoot` values.
+
+These path hashes and stack-name directories are not identities in the new managed model and must
+not be used for new managed records.
+
+## Runtime entrypoints and exports
+
+- `bun.ts` and `node.ts` are root export-condition targets.
+- `effect-bun.ts` and `effect-node.ts` are Effect export-condition targets. They bind foreground,
+  daemon, and Unix-socket layers without exposing raw platform factories or bootstrap paths.
+- `managed-bun.ts` and `managed-node.ts` bind the same storage-independent managed service to the
+  runtime's built-in SQLite implementation. Both delegate to one shared factory
+  (`managed/create-service.ts`) parameterized by how a registry file is opened, so their option
+  surfaces cannot drift apart. The in-memory repository is not part of this entrypoint; it is a test
+  seam published through `@supabase/stack/testing`.
+- `managed/model.ts` is exported as `@supabase/stack/managed-model` because it has no runtime
+  imports: consumers can read `MANAGED_ERROR_CODES` under either runtime without pulling in a SQLite
+  driver. The CLI's telemetry classifier types its managed dispatch table against that union, so a
+  new managed error code cannot be added without classifying it.
+- `daemon-bun.ts` is exported as `@supabase/stack/daemon-bun` so the compiled CLI can dispatch to
+  it in-process.
+- `daemon-node.ts` is intentionally not a package export. The internal Node platform Adapter
+  resolves it by file URL and passes that filesystem path to `daemonLayer`; the package
+  `knip.entry` list preserves this live file-URL-only entrypoint.
+- `effect.ts` is the platform-agnostic consumer contract re-exported by the conditional Effect
+  entries. There is no general-purpose `internals.ts` entrypoint.
 
 ## Testing
 
-### Test file table
+- Unit tests cover configuration resolution, ports, versions, artifact definitions, service
+  factories, topology, projection, cleanup metadata, and protocol schemas.
+- Integration tests exercise binary publication, lifecycle coordination, daemon HTTP/SSE, remote
+  stack behavior, state persistence, and Unix socket streaming with stateful Effect Adapters.
+- The managed registry is covered from both of its surfaces. `managed-service.integration.test.ts`
+  carries the behavioral load through the Promise facade against the in-memory and both SQLite
+  adapters, while `managed-effect.integration.test.ts` uses `@effect/vitest` to hold the Effect
+  surface itself to account: the tags composed as layers, typed failures recovered with `catchTag`,
+  and the scoped registry handle released when its scope closes.
+- Targeted e2e tests own the expensive process/container Seam for full stack startup, parallel
+  stacks, daemon lifecycle, and cleanup behavior.
 
-| File                                 | Type        | What it tests                                                                                                                |
-| ------------------------------------ | ----------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `src/Platform.unit.test.ts`          | Unit        | `detectPlatform`, all three asset-name mapping functions                                                                     |
-| `src/BinaryResolver.unit.test.ts`    | Unit        | Static helpers: `downloadUrl`, `checksumUrl`, `cachePath`                                                                    |
-| `src/services/services.unit.test.ts` | Unit        | `makePostgresService`, `makePostgresServiceDocker`, `makePostgrestService`, `makeAuthServiceNative`, `makeAuthServiceDocker` |
-| `src/ApiProxy.unit.test.ts`          | Unit        | `transformAuthorization` key translation logic, CORS headers, route routing                                                  |
-| `src/StackBuilder.unit.test.ts`      | Unit        | `StackBuilder.build()` with prepared artifacts and mocked platform services                                                  |
-| `src/prefetch.unit.test.ts`          | Unit        | `StackPreparation` / `prefetch` cache hits, Docker fallback order, and pull behavior                                         |
-| `src/Stack.unit.test.ts`             | Integration | Public `Stack` facade over `StackLifecycleCoordinator`, including pre-start `Downloading` state publication                  |
-| `src/createStack.unit.test.ts`       | Unit        | Type shape assertions + missing `stackConfig` error                                                                          |
-| `tests/createStack.e2e.test.ts`      | E2e         | Full stack lifecycle: health checks, auth sign up/in/out, PostgREST CRUD                                                     |
-| `tests/parallelStacks.e2e.test.ts`   | E2e         | Concurrent stacks: port uniqueness, health check validation                                                                  |
-
-### Mock patterns
-
-The test helper in `tests/helpers/mocks.ts` follows the same factory pattern as `@supabase/process-compose`:
-
-```ts
-function mockBinaryResolver(
-  opts: {
-    binaries?: Record<string, string>;
-    failServices?: string[];
-  } = {},
-) {
-  const resolved: Array<{ service: string; version: string }> = [];
-  // ...
-  return {
-    layer: Layer.succeed(BinaryResolver, {
-      resolve: (spec) => {
-        /* ... */
-      },
-    }),
-    resolved, // observable state — assert after the effect runs
-  };
-}
-```
-
-No `vi.fn()` spies. The mock accumulates calls in a plain array; tests assert on `resolver.resolved` after the effect completes. This avoids the overhead of mock expectation setup and teardown, and makes the test read like a data transformation check rather than a spy assertion.
-
-**Integration test example — `StackBuilder` with mocked binaries:**
-
-```ts
-it.effect("uses docker fallback when auth binary not found", () => {
-  const prepared = {
-    resolutions: {
-      postgres: { type: "binary", path: "/tmp/postgres" },
-      postgrest: { type: "binary", path: "/tmp/postgrest" },
-      auth: { type: "docker", image: "public.ecr.aws/supabase/gotrue:v2.188.0-rc.15" },
-    },
-  };
-
-  return Effect.gen(function* () {
-    const builder = yield* StackBuilder;
-    const { graph } = yield* builder.build(baseConfig, prepared);
-
-    const authDef = graph.startOrder.find((s) => s.name === "auth");
-    expect(authDef?.command).toBe("docker");
-  }).pipe(Effect.provide(StackBuilder.layer));
-});
-```
-
-**Integration test example — public `Stack` key naming:**
-
-```ts
-it.effect("StackInfo uses publishableKey and secretKey", () => {
-  const { layer } = setupLayer(defaultConfig);
-
-  return Effect.gen(function* () {
-    const stack = yield* Stack;
-    const info = yield* stack.getInfo();
-
-    expect(info.publishableKey).toBe(defaultPublishableKey);
-    expect(info.secretKey).toBe(defaultSecretKey);
-    expect(info.anonJwt).toMatch(/^ey/); // base64url JWT
-    expect(info.serviceRoleJwt).toMatch(/^ey/);
-  }).pipe(Effect.provide(layer));
-});
-```
-
-`Stack` integration tests wire the coordinator and preparation layers together via `setupLayer()`.
-The exact helper in the repo also provides metadata persistence and the shared child-process
-spawner; the key idea is that tests compose `Stack.layer(config)` on top of a real
-`StackLifecycleCoordinator.layer(config)`.
-
-```ts
-function setupLayer(config: ResolvedStackConfig = defaultConfig) {
-  const resolver = mockBinaryResolver();
-  const spawner = mockChildProcessSpawner(); // from @supabase/process-compose mocks
-
-  const preparationLayer = StackPreparation.layer.pipe(
-    Layer.provide(resolver.layer),
-    Layer.provide(spawner.layer),
-  );
-  const coordinatorLayer = StackLifecycleCoordinator.layer(config).pipe(
-    Layer.provide(StackBuilder.layer),
-    Layer.provide(preparationLayer),
-    Layer.provide(StackMetadataPersistence.noop),
-  );
-  const layer = Stack.layer(config).pipe(Layer.provide(coordinatorLayer));
-
-  return { layer, resolver, spawner };
-}
-```
-
-The `mockChildProcessSpawner` is reused from `@supabase/process-compose`'s test helpers — it
-stubs process spawning without forking real OS processes, making `Stack` / coordinator tests fast
-and deterministic.
+The authoritative current service versions are the `defaultVersion` fields in
+`src/ServiceCatalog.ts`; `DEFAULT_VERSIONS` is derived from that catalog, and package
+documentation should link to that source rather than copy its values.

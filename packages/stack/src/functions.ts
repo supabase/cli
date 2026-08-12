@@ -1,24 +1,132 @@
-import { readFileSync } from "node:fs";
-import { isAbsolute, join, resolve } from "node:path";
-import {
-  inferFunctionsManifest,
-  loadProjectConfig,
-  loadProjectEnvironment,
-  resolveProjectSubtree,
-  type ResolvedFunctionConfig,
-} from "@supabase/config";
-import { Effect, FileSystem, Path, Redacted } from "effect";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { existsSync, realpathSync } from "node:fs";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { Effect, FileSystem, Path, Schema } from "effect";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
 
-export interface FunctionsConfig {
-  readonly envFile?: string;
-  readonly noVerifyJwt?: boolean;
+const absolutePath = Schema.String.check(
+  Schema.makeFilter((value) =>
+    isAbsolute(value) ? undefined : { path: [], issue: "Expected an absolute path" },
+  ),
+);
+
+const environment = Schema.Record(Schema.String, Schema.String);
+
+export const ResolvedFunctionSchema = Schema.Struct({
+  name: Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_-]+$/)),
+  verifyJWT: Schema.Boolean,
+  entrypointPath: absolutePath,
+  importMapPath: Schema.NullOr(absolutePath),
+  staticFiles: Schema.Array(absolutePath),
+  env: environment,
+});
+
+export interface ResolvedFunction extends Schema.Schema.Type<typeof ResolvedFunctionSchema> {}
+
+/**
+ * Project-owned Edge Functions input. Every path and environment reference is
+ * resolved before the bundle crosses into the stack package.
+ *
+ * `env` contains values shared by every function. A function's own `env`
+ * overrides matching shared values when its worker is created.
+ */
+export const ResolvedFunctionsBundleSchema = Schema.Struct({
+  env: environment,
+  functions: Schema.Array(ResolvedFunctionSchema),
+}).check(
+  Schema.makeFilter((bundle) => {
+    const names = new Set<string>();
+    for (let index = 0; index < bundle.functions.length; index += 1) {
+      const name = bundle.functions[index]?.name;
+      if (name !== undefined && names.has(name)) {
+        return {
+          path: ["functions", index, "name"],
+          issue: `Duplicate function name: ${name}`,
+        };
+      }
+      if (name !== undefined) {
+        names.add(name);
+      }
+    }
+    return undefined;
+  }),
+);
+
+export interface ResolvedFunctionsBundle extends Schema.Schema.Type<
+  typeof ResolvedFunctionsBundleSchema
+> {}
+
+function isWithinPath(root: string, candidate: string): boolean {
+  const relativePath = relative(root, candidate);
+  return (
+    relativePath === "" ||
+    (relativePath !== ".." && !relativePath.startsWith(`..${sep}`) && !isAbsolute(relativePath))
+  );
 }
 
-export interface ResolvedFunctionsConfig {
-  readonly envFile?: string;
-  readonly noVerifyJwt: boolean;
+function nearestExistingAncestor(candidate: string): string | undefined {
+  let current = resolve(candidate);
+  while (!existsSync(current)) {
+    const parent = dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+  return current;
 }
+
+function isWithinProjectDir(projectDir: string, candidate: string): boolean {
+  const resolvedProjectDir = resolve(projectDir);
+  if (!isWithinPath(resolvedProjectDir, candidate)) return false;
+
+  const existingCandidate = nearestExistingAncestor(candidate);
+  if (existingCandidate === undefined) return false;
+  try {
+    return isWithinPath(realpathSync(resolvedProjectDir), realpathSync(existingCandidate));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Docker mounts `projectDir` at the same absolute path as the host. Keeping all
+ * referenced files below that root gives native and Docker runtimes the same
+ * bundle contract, including after a reload.
+ */
+export const resolvedFunctionsBundleSchemaForProject = (projectDir: string) =>
+  ResolvedFunctionsBundleSchema.check(
+    Schema.makeFilter((bundle) => {
+      for (let index = 0; index < bundle.functions.length; index += 1) {
+        const fn = bundle.functions[index];
+        if (fn === undefined) continue;
+
+        const paths = [
+          { field: "entrypointPath", value: fn.entrypointPath },
+          ...(fn.importMapPath === null
+            ? []
+            : [{ field: "importMapPath", value: fn.importMapPath }]),
+          ...fn.staticFiles.map((value, staticIndex) => ({
+            field: `staticFiles.${staticIndex}`,
+            value,
+          })),
+        ];
+        const outsideProject = paths.find(({ value }) => !isWithinProjectDir(projectDir, value));
+        if (outsideProject !== undefined) {
+          return {
+            path: ["functions", index, outsideProject.field],
+            issue: "Function paths must be within projectDir",
+          };
+        }
+      }
+      return undefined;
+    }),
+  );
+
+export const FunctionsReloadConfigSchema = Schema.Struct({
+  functions: Schema.optionalKey(ResolvedFunctionsBundleSchema),
+});
+
+export interface FunctionsReloadConfig extends Schema.Schema.Type<
+  typeof FunctionsReloadConfigSchema
+> {}
 
 export interface FunctionsRuntimeConfig {
   readonly functionsUrl: string;
@@ -34,8 +142,9 @@ export interface FunctionsRuntimeConfig {
       {
         readonly verifyJWT: boolean;
         readonly entrypointPath: string;
-        readonly importMapPath: string;
+        readonly importMapPath: string | null;
         readonly staticFiles: ReadonlyArray<string>;
+        readonly env: Readonly<Record<string, string>>;
       }
     >
   >;
@@ -55,141 +164,14 @@ export function functionsRuntimeConfigPath(runtimeRoot: string): string {
   return join(edgeRuntimeWorkspaceDir(runtimeRoot), functionsRuntimeConfigFileName);
 }
 
-function reveal(value: string | Redacted.Redacted<string>): string {
-  return Redacted.isRedacted(value) ? Redacted.value(value) : value;
-}
-
-function absolutizeProjectPath(projectDir: string, relativePath: string): string {
-  if (relativePath.length === 0) {
-    return "";
-  }
-
-  const withoutDotSlash = relativePath.startsWith("./") ? relativePath.slice(2) : relativePath;
-  return isAbsolute(withoutDotSlash)
-    ? withoutDotSlash
-    : join(projectDir, "supabase", withoutDotSlash);
-}
-
-function parseDotEnv(contents: string): Record<string, string> {
-  const env: Record<string, string> = {};
-  const lines = contents.replace(/\r\n?/g, "\n").split("\n");
-
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (trimmed === "" || trimmed.startsWith("#")) {
-      continue;
-    }
-
-    const equals = line.indexOf("=");
-    if (equals === -1) {
-      continue;
-    }
-
-    const key = line
-      .slice(0, equals)
-      .trim()
-      .replace(/^export\s+/, "");
-    let value = line.slice(equals + 1).trim();
-    const quote = value[0];
-    if (
-      (quote === '"' || quote === "'" || quote === "`") &&
-      value.endsWith(quote) &&
-      value.length >= 2
-    ) {
-      value = value.slice(1, -1);
-    }
-    if (quote === '"') {
-      value = value.replace(/\\n/g, "\n").replace(/\\r/g, "\r");
-    }
-    env[key] = value;
-  }
-
-  return env;
-}
-
-function loadEnvFile(path: string): Record<string, string> {
-  try {
-    return parseDotEnv(readFileSync(path, "utf8"));
-  } catch {
-    return {};
-  }
-}
-
-const resolveFunctionsProjectConfig = Effect.fnUntraced(function* (projectDir: string) {
-  const projectEnv = yield* loadProjectEnvironment({ cwd: projectDir, baseEnv: process.env });
-  const loadedConfig = yield* loadProjectConfig(projectDir);
-  if (projectEnv === null || loadedConfig === null) {
-    return undefined;
-  }
-
-  const resolvedFunctions = yield* resolveProjectSubtree(
-    loadedConfig.config.functions,
-    projectEnv,
-    "functions",
-  );
-
-  return {
-    ...loadedConfig.config,
-    functions: Object.fromEntries(
-      Object.entries(resolvedFunctions).map(([slug, config]) => [
-        slug,
-        {
-          ...config,
-          entrypoint: reveal(config.entrypoint),
-          import_map: reveal(config.import_map),
-          static_files: config.static_files.map((path) => reveal(path)),
-          env: Object.fromEntries(
-            Object.entries(config.env).map(([name, value]) => [name, reveal(value)]),
-          ),
-        },
-      ]),
-    ),
-  };
-});
-
-function functionToRuntimeConfig(
-  projectDir: string,
-  noVerifyJwt: boolean,
-  config: ResolvedFunctionConfig,
-) {
-  return {
-    verifyJWT: noVerifyJwt ? false : config.verify_jwt,
-    entrypointPath: absolutizeProjectPath(projectDir, config.entrypoint),
-    importMapPath: absolutizeProjectPath(projectDir, config.import_map),
-    staticFiles: config.static_files.map((path) => absolutizeProjectPath(projectDir, path)),
-  };
-}
-
-export const resolveFunctionsRuntimeConfig = Effect.fnUntraced(function* (
+export function resolveFunctionsRuntimeConfig(
   stackConfig: ResolvedStackConfig,
   runtimeHost: FunctionsRuntimeHost,
-) {
-  const functionsConfig = stackConfig.functions;
-  if (functionsConfig === false || stackConfig.edgeRuntime === false) {
+  bundle: ResolvedFunctionsBundle | undefined,
+): FunctionsRuntimeConfig | undefined {
+  if (bundle === undefined || bundle.functions.length === 0 || stackConfig.edgeRuntime === false) {
     return undefined;
   }
-
-  const projectConfig = yield* resolveFunctionsProjectConfig(stackConfig.projectDir);
-  const manifest = yield* inferFunctionsManifest({
-    cwd: stackConfig.projectDir,
-    ...(projectConfig === undefined ? {} : { config: projectConfig }),
-  });
-  const enabledManifest = Object.entries(manifest).filter(([, config]) => config.enabled);
-  if (enabledManifest.length === 0) {
-    return undefined;
-  }
-
-  const functionEnv = Object.fromEntries(
-    enabledManifest.flatMap(([, config]) => Object.entries(config.env)),
-  );
-  const envFilePath =
-    functionsConfig.envFile === undefined
-      ? join(stackConfig.projectDir, "supabase", "functions", ".env")
-      : resolve(stackConfig.projectDir, functionsConfig.envFile);
-  const env = {
-    ...loadEnvFile(envFilePath),
-    ...functionEnv,
-  };
 
   return {
     functionsUrl: `http://127.0.0.1:${stackConfig.apiPort}/functions/v1`,
@@ -198,15 +180,21 @@ export const resolveFunctionsRuntimeConfig = Effect.fnUntraced(function* (
     publishableKey: stackConfig.publishableKey,
     secretKey: stackConfig.secretKey,
     jwtSecret: stackConfig.jwtSecret,
-    env,
+    env: bundle.env,
     functions: Object.fromEntries(
-      enabledManifest.map(([slug, config]) => [
-        slug,
-        functionToRuntimeConfig(stackConfig.projectDir, functionsConfig.noVerifyJwt, config),
+      bundle.functions.map((fn) => [
+        fn.name,
+        {
+          verifyJWT: fn.verifyJWT,
+          entrypointPath: fn.entrypointPath,
+          importMapPath: fn.importMapPath,
+          staticFiles: fn.staticFiles,
+          env: fn.env,
+        },
       ]),
     ),
-  } satisfies FunctionsRuntimeConfig;
-});
+  };
+}
 
 const writeFunctionsRuntimeConfig = Effect.fnUntraced(function* (
   runtimeRoot: string,
@@ -215,20 +203,41 @@ const writeFunctionsRuntimeConfig = Effect.fnUntraced(function* (
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const filePath = functionsRuntimeConfigPath(runtimeRoot);
-  yield* fs.makeDirectory(path.dirname(filePath), { recursive: true });
-  yield* fs.writeFileString(filePath, `${JSON.stringify(config, null, 2)}\n`);
+  const directory = path.dirname(filePath);
+  const temporaryPath = `${filePath}.tmp-${crypto.randomUUID()}`;
+
+  yield* fs.makeDirectory(directory, { recursive: true, mode: 0o700 });
+  yield* Effect.gen(function* () {
+    yield* fs.writeFileString(temporaryPath, `${JSON.stringify(config, null, 2)}\n`, {
+      flag: "wx",
+      mode: 0o600,
+    });
+    yield* fs.chmod(temporaryPath, 0o600);
+    yield* fs.rename(temporaryPath, filePath);
+  }).pipe(Effect.ensuring(fs.remove(temporaryPath).pipe(Effect.ignore)));
 });
 
-const clearFunctionsRuntimeConfig = Effect.fnUntraced(function* (runtimeRoot: string) {
+export const clearFunctionsRuntimeConfig = Effect.fnUntraced(function* (runtimeRoot: string) {
   const fs = yield* FileSystem.FileSystem;
-  yield* fs.remove(functionsRuntimeConfigPath(runtimeRoot)).pipe(Effect.ignore);
+  const filePath = functionsRuntimeConfigPath(runtimeRoot);
+  const directory = yield* Path.Path.pipe(Effect.map((path) => path.dirname(filePath)));
+
+  yield* fs.remove(filePath).pipe(Effect.ignore);
+
+  const entries = yield* fs.readDirectory(directory).pipe(Effect.orElseSucceed(() => []));
+  yield* Effect.forEach(
+    entries.filter((entry) => entry.startsWith(`${functionsRuntimeConfigFileName}.tmp-`)),
+    (entry) => fs.remove(join(directory, entry)).pipe(Effect.ignore),
+    { discard: true },
+  );
 });
 
 export const configureFunctionsRuntime = Effect.fnUntraced(function* (
   stackConfig: ResolvedStackConfig,
   runtimeHost: FunctionsRuntimeHost,
+  bundle: ResolvedFunctionsBundle | undefined,
 ) {
-  const runtimeConfig = yield* resolveFunctionsRuntimeConfig(stackConfig, runtimeHost);
+  const runtimeConfig = resolveFunctionsRuntimeConfig(stackConfig, runtimeHost, bundle);
   if (runtimeConfig === undefined) {
     yield* clearFunctionsRuntimeConfig(stackConfig.runtimeRoot);
   } else {

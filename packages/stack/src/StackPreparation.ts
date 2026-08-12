@@ -2,8 +2,8 @@ import { Cause, Data, Effect, Exit, Layer, Queue, Context, Stream } from "effect
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { BinaryResolver } from "./BinaryResolver.ts";
 import type { ChecksumMismatchError } from "./errors.ts";
-import { DockerPullError } from "./errors.ts";
-import type { ServiceResolution } from "./resolve.ts";
+import { DockerPullError, isDockerDaemonDownMessage } from "./errors.ts";
+import { isDockerOnlyService } from "./ServiceCatalog.ts";
 import {
   DEFAULT_VERSIONS,
   SERVICE_NAMES,
@@ -15,6 +15,10 @@ import {
 export interface PreparedStackArtifacts {
   readonly resolutions: Partial<Record<ServiceName, ServiceResolution>>;
 }
+
+export type ServiceResolution =
+  | { readonly type: "binary"; readonly path: string }
+  | { readonly type: "docker"; readonly image: string };
 
 export interface StackPreparationInput {
   readonly versions?: Partial<VersionManifest>;
@@ -38,19 +42,6 @@ type StackPreparationEvent =
   | ServiceDownloadStarted
   | ServiceDownloadFinished
   | PreparationCompleted;
-
-const dockerOnlyServices = new Set<ServiceName>([
-  "edge-runtime",
-  "realtime",
-  "storage",
-  "imgproxy",
-  "mailpit",
-  "pgmeta",
-  "studio",
-  "analytics",
-  "vector",
-  "pooler",
-]);
 
 const DOCKER_PULL_RETRY_DELAYS_MS = [500] as const;
 const RETRYABLE_PULL_PATTERNS = [
@@ -120,7 +111,7 @@ export const prepareAssetsWithDependencies = (
         );
       }
 
-      if (dockerOnlyServices.has(service)) {
+      if (isDockerOnlyService(service)) {
         return resolveDockerImageForService(spawner, service, versions[service], {
           onDownloadStart: markDownloadStart(),
         }).pipe(
@@ -145,9 +136,11 @@ export const prepareAssetsWithDependencies = (
       concurrency: "unbounded",
     });
 
-    const artifacts = {
-      resolutions: Object.fromEntries(results) as PreparedStackArtifacts["resolutions"],
-    } satisfies PreparedStackArtifacts;
+    const resolutions: Partial<Record<ServiceName, ServiceResolution>> = {};
+    for (const [service, resolution] of results) {
+      resolutions[service] = resolution;
+    }
+    const artifacts = { resolutions } satisfies PreparedStackArtifacts;
     yield* publishEvent?.(new PreparationCompleted({ artifacts })) ?? Effect.void;
     return artifacts;
   });
@@ -209,6 +202,7 @@ const pullImage = (
     yield* callbacks?.onDownloadStart ?? Effect.void;
 
     const failures: PullAttemptFailure[] = [];
+    let spawnFailed = false;
 
     for (const image of images) {
       for (
@@ -219,6 +213,9 @@ const pullImage = (
         const attempt = attemptIndex + 1;
         const result = yield* Effect.exit(runPullCommand(spawner, image));
         if (Exit.isSuccess(result)) {
+          // A successful spawn proves the runtime is usable; an earlier
+          // transient spawn failure must not taint the final classification.
+          spawnFailed = false;
           if (result.value.exitCode === 0) {
             return image;
           }
@@ -233,6 +230,10 @@ const pullImage = (
             break;
           }
         } else {
+          // A failed effect (rather than a non-zero exit) means the container
+          // runtime could not be spawned at all — a local Docker setup
+          // problem, not a registry failure.
+          spawnFailed = true;
           const cause = Cause.squash(result.cause);
           const message = cause instanceof Error ? cause.message : String(cause);
           failures.push({ image, attempt, message });
@@ -258,6 +259,8 @@ const pullImage = (
         image: images[0] ?? "unknown",
         detail: `Failed to pull Docker image from all registries. ${detail}`,
         cause: new Error(detail),
+        daemonDown:
+          spawnFailed || failures.some((failure) => isDockerDaemonDownMessage(failure.message)),
       }),
     );
   });

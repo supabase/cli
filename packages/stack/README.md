@@ -2,13 +2,19 @@
 
 Programmatic local Supabase stack for TypeScript. Create a local Supabase runtime from code, then control lifecycle, status, and logs through a small async handle.
 
+The package also exposes `@supabase/stack/managed` for applications that need durable,
+system-aware stack identity and discovery. The managed surface is intentionally separate from
+`createStack()`: direct stacks never inspect Git, create workspace markers, or mutate the global
+registry.
+
 ## Features
 
 - **Single entry point** -- `createStack()` resolves config and returns a handle; `start()` prepares assets, starts services, and waits for readiness
 - **Preparation-aware startup** -- cold-cache startup can surface `Downloading` before normal runtime states like `Starting`, `Initializing`, and `Healthy`
 - **Native binaries with Docker fallback** -- uses native services when available and falls back to Docker images automatically
-- **Automatic port allocation** -- all ports are optional and auto-assigned to avoid conflicts
+- **Leased port allocation** -- optional ports are auto-assigned and held until their service starts
 - **API proxy with opaque keys** -- SDKs use `publishableKey`/`secretKey` (like production), translated to JWTs internally
+- **Lazy HTTP services** -- opt into `startupMode: "lazy"` to start proxied HTTP services on first use while keeping direct listeners and Realtime reachable
 - **`AsyncDisposable` support** -- use `await using` for automatic cleanup
 - **Streaming logs and status** -- real-time `AsyncIterable` streams for service state changes and log output
 - **Per-service lifecycle control** -- start, stop, and restart individual services independently
@@ -32,6 +38,71 @@ const supabase = createClient(stack.url, stack.publishableKey);
 // ...
 await stack.dispose();
 ```
+
+### Managed ordinary-folder state
+
+The managed registry is an Effect API. `ManagedStackService` is the policy layer and
+`ManagedStackRepository` is the storage contract; each has layer factories, failures arrive in the
+error channel, and the registry handle is owned by a scope:
+
+```typescript
+import { BunFileSystem } from "@effect/platform-bun";
+import { Effect, Layer } from "effect";
+import {
+  bunSqliteManagedStackRepositoryLayer,
+  managedRegistryPath,
+  ManagedStackService,
+} from "@supabase/stack/managed";
+
+const stateRoot = "/absolute/managed-state";
+const managedLayer = ManagedStackService.make({ stateRoot }).pipe(
+  Layer.provide(bunSqliteManagedStackRepositoryLayer(managedRegistryPath(stateRoot))),
+  Layer.provide(BunFileSystem.layer),
+);
+
+const program = Effect.gen(function* () {
+  const managed = yield* ManagedStackService;
+  const result = yield* managed.provisionOrdinaryStack({
+    workspacePath: "/absolute/project",
+    configuration: {
+      runtimeRequest: "docker",
+      serviceVersions: { postgres: "17.6.1.143" },
+    },
+  });
+  console.log(result.stack.id, result.stack.paths.data);
+}).pipe(
+  // Every method declares the failures it can raise, so recovery is typed.
+  Effect.catchTag("ManagedStackPublicationTimeoutError", (error) =>
+    Effect.sync(() => console.log(`another process never published ${error.stackId}`)),
+  ),
+);
+
+// The layer's scope owns the registry handle, so it closes with the scope.
+await Effect.runPromise(Effect.scoped(Effect.provide(program, managedLayer)));
+```
+
+Callers that do not run an Effect runtime can use the Promise edge over the same layers. Acquiring it
+is I/O, so it is awaited and a registry this process cannot open rejects there rather than at the
+first call that touches it. The handle is an `AsyncDisposable`, so `await using` closes it:
+
+```typescript
+import { createManagedStackService } from "@supabase/stack/managed";
+
+await using managed = await createManagedStackService();
+const result = await managed.provisionOrdinaryStack({
+  workspacePath: "/absolute/project",
+});
+
+console.log((await managed.inspectStack(result.stack.id))?.status);
+```
+
+Managed state uses opaque project, checkout, context, and stack UUIDs. A non-Git workspace stores
+only its three identity UUIDs in `.supabase/identity.json`; mutable state, logs, runtime metadata,
+ports, and lifecycle ownership live under the user-level managed state root. Callers can inject an
+isolated state root for tests, or the in-memory repository from `@supabase/stack/testing`. Stopped stacks keep sticky port
+assignments without holding a host-wide lease; exact configuration takes precedence when a stopped
+or failed stack is updated. A stack may change port numbers as part of one transition out of a
+port-occupying lifecycle; intent-only updates never count as runtime port drift.
 
 ### With explicit config
 
@@ -75,13 +146,14 @@ await stack.dispose();
 
 ### Top-level settings
 
-| Field            | Type                             | Required | Default  | Description                                                                                                                                                     |
-| ---------------- | -------------------------------- | -------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"` | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
-| `jwtSecret`      | `string`                         | No       |          | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
-| `port`           | `number`                         | No       |          | API proxy port (auto-allocated if omitted)                                                                                                                      |
-| `publishableKey` | `string`                         | No       |          | Custom opaque publishable key                                                                                                                                   |
-| `secretKey`      | `string`                         | No       |          | Custom opaque secret key                                                                                                                                        |
+| Field            | Type                             | Required | Default   | Description                                                                                                                                                     |
+| ---------------- | -------------------------------- | -------- | --------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `mode`           | `"native" \| "auto" \| "docker"` | No       | `"auto"`  | Resolution mode. `"native"` requires native binaries, `"auto"` tries native first and falls back to Docker, and `"docker"` uses Docker images for all services. |
+| `startupMode`    | `"eager" \| "lazy"`              | No       | `"eager"` | In lazy mode, proxied HTTP services start on first use. Direct listeners and Realtime start with the stack.                                                     |
+| `jwtSecret`      | `string`                         | No       |           | Secret for JWT signing (min 32 characters). Defaults to a well-known dev secret                                                                                 |
+| `port`           | `number`                         | No       |           | API proxy port (auto-allocated if omitted)                                                                                                                      |
+| `publishableKey` | `string`                         | No       |           | Custom opaque publishable key                                                                                                                                   |
+| `secretKey`      | `string`                         | No       |           | Custom opaque secret key                                                                                                                                        |
 
 ### `postgres`
 
@@ -91,7 +163,7 @@ Optional. When omitted, uses all defaults (ephemeral temp data directory, auto-a
 | --------- | -------- | -------- | ------------------------------------------------------------------------------------------- |
 | `dataDir` | `string` | No       | Directory for Postgres data (PGDATA). Ephemeral temp dir if omitted (cleaned up on dispose) |
 | `port`    | `number` | No       | Postgres port (auto-allocated if omitted)                                                   |
-| `version` | `string` | No       | Postgres version (default: `17.6.1.081`)                                                    |
+| `version` | `string` | No       | Override the current pinned Postgres version                                                |
 
 ### `postgrest`
 
@@ -102,7 +174,7 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 | `schemas`         | `string[]` | `["public"]`               | Database schemas to expose                |
 | `extraSearchPath` | `string[]` | `["public", "extensions"]` | Additional Postgres `search_path` entries |
 | `maxRows`         | `number`   | `1000`                     | Maximum rows returned per request         |
-| `version`         | `string`   | `14.5`                     | PostgREST version                         |
+| `version`         | `string`   | current pinned version     | PostgREST version override                |
 
 ### `auth`
 
@@ -114,7 +186,7 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 | `siteUrl`     | `string` | `http://localhost:3000`    | Auth redirect URL (your app's URL) |
 | `jwtExpiry`   | `number` | `3600`                     | JWT expiry in seconds              |
 | `externalUrl` | `string` | `http://127.0.0.1:${port}` | Auth external URL                  |
-| `version`     | `string` | `2.188.0-rc.15`            | Auth version                       |
+| `version`     | `string` | current pinned version     | Auth version override              |
 
 ### Full config example
 
@@ -122,11 +194,45 @@ Optional. Omit to include with defaults, set to `false` to exclude.
 const stack = await createStack({
   jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
   port: 54321,
-  postgres: { port: 54322, dataDir: "/tmp/data", version: "17.6.1.081" },
-  postgrest: { schemas: ["public", "custom"], maxRows: 500, version: "14.5" },
+  postgres: { port: 54322, dataDir: "/tmp/data" },
+  postgrest: { schemas: ["public", "custom"], maxRows: 500 },
   auth: { port: 9999, siteUrl: "http://myapp.dev:3000", jwtExpiry: 7200 },
 });
 ```
+
+### Edge Functions
+
+The stack accepts an explicit, fully resolved Functions bundle. Paths must be absolute and the
+caller owns project-file discovery, environment-file parsing, and manifest interpretation:
+
+```typescript
+const projectDir = "/absolute/project";
+const stack = await createStack({
+  projectDir,
+  functions: {
+    env: { SHARED_VALUE: "available to every function" },
+    functions: [
+      {
+        name: "hello",
+        verifyJWT: true,
+        entrypointPath: "/absolute/project/supabase/functions/hello/index.ts",
+        importMapPath: null,
+        staticFiles: [],
+        env: { FUNCTION_VALUE: "available only to hello" },
+      },
+    ],
+  },
+});
+```
+
+Every referenced path must be contained by `projectDir` so the same bundle works when Edge Runtime
+runs in Docker and the project directory is bind-mounted into the container.
+
+Per-function environment values override shared values. Stack-owned runtime URLs and credentials
+take final precedence. To update the active bundle, call
+`reloadFunctions({ functions: nextBundle })`; `reloadFunctions()` preserves and reapplies the most
+recent bundle. `reloadEdgeRuntime()` follows the same preservation rule when its optional
+`functions` field is omitted.
 
 ## Docker Mode
 
@@ -176,13 +282,18 @@ service process exists. During that phase, `getStatus()` / `statusChanges()` can
 ### Per-Service Lifecycle
 
 ```typescript
-await stack.stopService("auth"); // Stop a single service
+await stack.stopService("auth"); // Stop a service and its active dependents
 await stack.startService("auth"); // Restart it (blocks until ready)
 await stack.restartService("auth"); // Stop + start in one call
 ```
 
-Common service names include `"postgres"`, `"postgrest"`, `"auth"`, `"realtime"`, `"storage"`,
-`"imgproxy"`, `"mailpit"`, `"pgmeta"`, `"studio"`, `"analytics"`, `"vector"`, and `"pooler"`.
+Service activation is dependency-aware. Starting Storage also starts imgproxy when enabled, and
+starting Analytics also starts Vector when enabled, so a public service never comes up without the
+companion it calls or feeds.
+
+Service names are `"postgres"`, `"postgrest"`, `"auth"`, `"edge-runtime"`, `"realtime"`,
+`"storage"`, `"imgproxy"`, `"mailpit"`, `"pgmeta"`, `"studio"`, `"analytics"`, `"vector"`, and
+`"pooler"`.
 
 Internal helper processes are projected away from the public stack API. For example, `postgres-init`
 is treated as an implementation detail of `postgres`, so callers only see the public `postgres`
@@ -191,13 +302,25 @@ service and its projected status.
 ### Readiness
 
 ```typescript
-await stack.ready(); // Wait for all services
-await stack.ready({ timeout: 30_000 }); // With timeout (ms)
-await stack.serviceReady("postgres"); // Wait for one service
-await stack.serviceReady("auth", { timeout: 10_000 });
+await stack.ready(); // Inherit the stack's finite three-minute default
+await stack.ready({ mode: "finite", timeoutMs: 30_000 });
+await stack.ready({ mode: "infinite" }); // Explicit debugging override
+await stack.serviceReady("postgres");
+await stack.serviceReady("auth", { mode: "finite", timeoutMs: 10_000 });
 ```
 
-Note: `start()` already blocks until all services are ready. Use `ready()` and `serviceReady()` after manually starting individual services.
+In eager mode, `start()` blocks until every enabled service is ready. In lazy mode it waits only
+for direct listeners and services activated so far. Unrequested lazy services report `Dormant`.
+Calling `serviceReady()` for a dormant lazy
+service fails immediately; activate it through the proxy or call `startService()` first. Foreground
+and detached stacks use the same readiness rules. The configured policy also applies to service
+start, restart, activation, and reload operations; a call-specific option overrides it. A finite
+deadline fails with `STACK_READINESS_TIMEOUT` and disposes the local runtime, so the handle cannot
+be used to relaunch processes afterward.
+
+When no readiness policy is configured, request-triggered lazy activation expands the three-minute
+default to cover the target service's complete transitive startup budget. An explicitly configured
+finite or infinite stack policy remains authoritative.
 
 ### Status
 
@@ -264,22 +387,18 @@ await prefetch({ versions: { postgres: "17.4.1.045" } });
 
 ## Service Versions
 
-Default versions are used when no `version` field is specified per service:
-
-| Service   | Default Version |
-| --------- | --------------- |
-| Postgres  | `17.6.1.081`    |
-| PostgREST | `14.5`          |
-| Auth      | `2.188.0-rc.15` |
+Default versions are used when no per-service `version` field is specified. The authoritative,
+exhaustive values live in [`src/ServiceCatalog.ts`](./src/ServiceCatalog.ts) and are exported as
+the derived `DEFAULT_VERSIONS` manifest; they are intentionally not copied into this README.
 
 Override versions per service:
 
 ```typescript
 const stack = await createStack({
   jwtSecret: "...",
-  postgres: { dataDir: "/tmp/data", version: "17.4.1.045" },
-  postgrest: { version: "14.4" },
-  auth: { version: "2.180.0" },
+  postgres: { dataDir: "/tmp/data", version: "<postgres-version>" },
+  postgrest: { version: "<postgrest-version>" },
+  auth: { version: "<auth-version>" },
 });
 ```
 
@@ -300,15 +419,16 @@ try {
 }
 ```
 
-| Code                | Description                                  |
-| ------------------- | -------------------------------------------- |
-| `SERVICE_NOT_FOUND` | Referenced a service that doesn't exist      |
-| `SERVICE_NOT_READY` | Service failed to become healthy             |
-| `BUILD_ERROR`       | Failed to build the service dependency graph |
-| `BINARY_NOT_FOUND`  | No binary available for the current platform |
-| `DOWNLOAD_ERROR`    | Binary download failed                       |
-| `PORT_CONFLICT`     | Requested port is already in use             |
-| `PORT_ALLOCATION`   | Failed to allocate a free port               |
+| Code                      | Description                                  |
+| ------------------------- | -------------------------------------------- |
+| `SERVICE_NOT_FOUND`       | Referenced a service that doesn't exist      |
+| `SERVICE_NOT_READY`       | Service failed to become healthy             |
+| `STACK_READINESS_TIMEOUT` | Stack readiness exceeded its finite deadline |
+| `BUILD_ERROR`             | Failed to build the service dependency graph |
+| `BINARY_NOT_FOUND`        | No binary available for the current platform |
+| `DOWNLOAD_ERROR`          | Binary download failed                       |
+| `PORT_CONFLICT`           | Requested port is already in use             |
+| `PORT_ALLOCATION`         | Failed to allocate a free port               |
 
 ## Examples
 

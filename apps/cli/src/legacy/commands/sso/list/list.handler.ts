@@ -5,12 +5,12 @@ import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts"
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeEnv, encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
+import { LEGACY_GO_SSO_PROVIDERS_WRAPPER } from "../sso.go-payload.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -22,6 +22,7 @@ import {
   LegacySsoListNetworkError,
   LegacySsoListSamlDisabledError,
   LegacySsoListUnexpectedStatusError,
+  LegacySsoTomlEncodeError,
 } from "../sso.errors.ts";
 import { renderListProviders } from "../sso.format.ts";
 import type { LegacySsoListFlags } from "./list.command.ts";
@@ -40,7 +41,7 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
     if (mapped._tag === "LegacySsoListUnexpectedStatusError") {
-      yield* legacySuggestUpgrade({
+      const upgradeSuggested = yield* legacySuggestUpgrade({
         projectRef: ref,
         featureKey: "auth.saml_2",
         statusCode: mapped.status,
@@ -48,9 +49,17 @@ const handleListError = (ref: string, cause: SupabaseApiError) =>
       });
       if (mapped.status === 404) {
         return yield* Effect.fail(
-          new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE }),
+          new LegacySsoListSamlDisabledError({ message: SAML_DISABLED_MESSAGE, upgradeSuggested }),
         );
       }
+      return yield* Effect.fail(
+        new LegacySsoListUnexpectedStatusError({
+          status: mapped.status,
+          body: mapped.body,
+          message: mapped.message,
+          upgradeSuggested,
+        }),
+      );
     }
     return yield* Effect.fail(mapped);
   });
@@ -83,11 +92,21 @@ export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: Lega
         return;
       }
       if (goFmt === "yaml") {
-        yield* output.raw(encodeYaml(payload));
+        yield* output.raw(encodeLegacyGoYaml(payload, LEGACY_GO_SSO_PROVIDERS_WRAPPER));
         return;
       }
       if (goFmt === "toml") {
-        yield* output.raw(encodeToml(payload) + "\n");
+        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
+        // rejects the payload (e.g. a nil element in an attribute-mapping
+        // `default` array).
+        const toml = yield* Effect.try({
+          try: () => encodeLegacyGoToml(payload, LEGACY_GO_SSO_PROVIDERS_WRAPPER),
+          catch: (cause) =>
+            new LegacySsoTomlEncodeError({
+              message: `failed to output toml: ${cause instanceof Error ? cause.message : String(cause)}`,
+            }),
+        });
+        yield* output.raw(toml);
         return;
       }
       if (goFmt === "env") {

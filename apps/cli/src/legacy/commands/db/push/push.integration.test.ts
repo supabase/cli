@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -43,6 +43,8 @@ const LIST_MIGRATIONS =
 const SELECT_SEEDS = "SELECT path, hash FROM supabase_migrations.seed_files";
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 
+const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
 const LOCAL_CONN: LegacyPgConnInput = {
   host: "127.0.0.1",
   port: 54322,
@@ -55,22 +57,32 @@ const DEFAULT_FLAGS: LegacyDbPushFlags = {
   includeAll: false,
   includeRoles: false,
   includeSeed: false,
+  skipVault: false,
   dryRun: false,
   dbUrl: Option.none(),
   linked: false,
   local: true,
+  projectRef: Option.none(),
   password: Option.none(),
 };
 
-function mockResolver(opts: { isLocal?: boolean } = {}) {
-  return Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) =>
-      Effect.succeed({
-        conn: LOCAL_CONN,
-        isLocal: opts.isLocal ?? true,
-      } satisfies LegacyResolvedDbConfig),
+function mockResolver(
+  opts: { isLocal?: boolean; onResolve?: (flags: LegacyDbConfigFlags) => void } = {},
+) {
+  const calls: Array<LegacyDbConfigFlags> = [];
+  const layer = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: (flags: LegacyDbConfigFlags) =>
+      Effect.sync(() => {
+        calls.push(flags);
+        opts.onResolve?.(flags);
+        return {
+          conn: LOCAL_CONN,
+          isLocal: opts.isLocal ?? true,
+        } satisfies LegacyResolvedDbConfig;
+      }),
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
+  return { layer, calls };
 }
 
 function mockConnection(opts: {
@@ -166,6 +178,13 @@ function setup(
     catalogStdout?: string;
     catalogExportFailWith?: string;
     noProjectId?: boolean;
+    // Simulates the real `LegacyDbConfigResolver`'s own "Initialising login
+    // role..." stderr line (`legacy-db-config.layer.ts`'s `initLoginRole`),
+    // fired as part of `resolve()`'s own connection-resolution work — i.e.
+    // strictly before `legacyDbPushCore` (and its "DRY RUN: …" line) ever runs.
+    // `mockResolver` is otherwise silent, so tests pin real Go output ordering
+    // (`db_url.go:204` before `push.go:22-24`) against this stand-in line.
+    simulateInitialisingLoginRole?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -205,21 +224,35 @@ function setup(
     resolve: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? LEGACY_VALID_REF)),
-    loadProjectRef: () =>
-      opts.linkedFails === true
-        ? Effect.fail(
-            new LegacyProjectNotLinkedError({
-              message: "Cannot find project ref. Have you run supabase link?",
-            }),
-          )
-        : Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
+    // Go's `loadProjectRef` gives `--project-ref` top precedence, short-circuiting
+    // BEFORE the "not linked" failure — mirror that here so a test can prove the
+    // flag resolves a ref even when the workdir would otherwise fail to link.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed(flagValue.value)
+        : opts.linkedFails === true
+          ? Effect.fail(
+              new LegacyProjectNotLinkedError({
+                message: "Cannot find project ref. Have you run supabase link?",
+              }),
+            )
+          : Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     promptProjectRef: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
   });
 
+  const resolver = mockResolver({
+    isLocal: opts.isLocal ?? true,
+    onResolve:
+      opts.simulateInitialisingLoginRole === true
+        ? () => {
+            out.rawChunks.push({ text: "Initialising login role...\n", stream: "stderr" });
+          }
+        : undefined,
+  });
   const layer = Layer.mergeAll(
     out.layer,
     conn.layer,
-    mockResolver({ isLocal: opts.isLocal ?? true }),
+    resolver.layer,
     mockLegacyCliConfig({
       workdir,
       ...(opts.noProjectId === true ? { projectId: Option.none() } : {}),
@@ -239,7 +272,16 @@ function setup(
     edge,
     sslProbe,
   );
-  return { layer, out, conn, telemetry, linkedCache, edgeRunCalls, registryEnvAtRunTime };
+  return {
+    layer,
+    out,
+    conn,
+    telemetry,
+    linkedCache,
+    resolver,
+    edgeRunCalls,
+    registryEnvAtRunTime,
+  };
 }
 
 const MIGRATION_DIR = "supabase/migrations";
@@ -257,6 +299,20 @@ describe("legacy db push", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toBe("Local database is up to date.\n");
       // No migration was applied.
+      expect(conn.execs).not.toContain("BEGIN");
+    });
+  });
+
+  it.live("reports up to date when an 8-digit and 14-digit version share a prefix (#6036)", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: { ...migrationFile("20260420"), ...migrationFile("20260420010000") },
+      remoteMigrations: ["20260420", "20260420010000"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stdoutText).toBe("Local database is up to date.\n");
       expect(conn.execs).not.toContain("BEGIN");
     });
   });
@@ -359,9 +415,85 @@ describe("legacy db push", () => {
     });
   });
 
-  it.live("caches the migrations catalog with an empty projectId when none is resolved", () => {
+  it.live(
+    "falls back to config.toml's project_id for the pg-delta volume when SUPABASE_PROJECT_ID is unset",
+    () => {
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        // Go's `Config.ProjectId` resolves config.toml's `project_id` (here "test")
+        // once no `SUPABASE_PROJECT_ID` env override wins — the pg-delta Deno-cache
+        // volume must key off that same id, not fall through to an empty/shared name.
+        expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_test:/root/.cache/deno:rw");
+      });
+    },
+  );
+
+  it.live(
+    "falls back to the workdir basename for the pg-delta volume when config.toml has no project_id",
+    () => {
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: "[experimental.pgdelta]\nenabled = true\n",
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        const expectedId = basename(tmp.current);
+        expect(edgeRunCalls[0]?.binds).toContain(
+          `supabase_edge_runtime_${expectedId}:/root/.cache/deno:rw`,
+        );
+      });
+    },
+  );
+
+  it.live(
+    "falls back to the linked project ref for the pg-delta volume when config.toml has no project_id",
+    () => {
+      // Go's `flags.LoadConfig` (`internal/utils/flags/config_path.go:11`) seeds
+      // `Config.ProjectId = ProjectRef` BEFORE `Config.Load` runs, so on the
+      // linked path (the default target here — no `--local`/`--db-url`) an
+      // absent `project_id` retains the linked ref rather than falling to the
+      // workdir basename; only `--local`/`--db-url` (the previous test, where
+      // `ProjectRef` is never seeded) fall through to the basename.
+      const { layer, out, edgeRunCalls } = setup(tmp.current, {
+        toml: "[experimental.pgdelta]\nenabled = true\n",
+        args: ["db", "push", "--linked"],
+        isLocal: false,
+        projectRef: LEGACY_VALID_REF,
+        files: migrationFile("20240101000000"),
+        confirm: [true],
+        catalogStdout: '{"snapshot":"ok"}',
+        noProjectId: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush({ ...DEFAULT_FLAGS, local: false, linked: true }).pipe(
+          Effect.provide(layer),
+        );
+        expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+        expect(edgeRunCalls).toHaveLength(1);
+        expect(edgeRunCalls[0]?.binds).toContain(
+          `supabase_edge_runtime_${LEGACY_VALID_REF}:/root/.cache/deno:rw`,
+        );
+      });
+    },
+  );
+
+  it.live("sanitizes an invalid config.toml project_id before naming the pg-delta volume", () => {
     const { layer, out, edgeRunCalls } = setup(tmp.current, {
-      toml: 'project_id = "test"\n[experimental.pgdelta]\nenabled = true\n',
+      toml: 'project_id = "my app"\n[experimental.pgdelta]\nenabled = true\n',
       files: migrationFile("20240101000000"),
       confirm: [true],
       catalogStdout: '{"snapshot":"ok"}',
@@ -371,6 +503,11 @@ describe("legacy db push", () => {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("failed to cache migrations catalog");
       expect(edgeRunCalls).toHaveLength(1);
+      // Go's `Config.Validate` (`config.go:992-995`) sanitizes an invalid
+      // `project_id` (replacing the disallowed run with `_`) once at
+      // config-load time, so every later reader — including `EdgeRuntimeId` —
+      // sees the sanitized form, never the raw `"my app"`.
+      expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_my_app:/root/.cache/deno:rw");
     });
   });
 
@@ -449,6 +586,51 @@ describe("legacy db push", () => {
       expect(conn.execs).not.toContain("BEGIN");
     });
   });
+
+  it.live("skips vault decryption in dry-run mode with --skip-vault", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:not-valid"\n',
+      files: migrationFile("20240101000000"),
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true, skipVault: true }).pipe(
+        Effect.provide(layer),
+      );
+      expect(out.stderrText).toContain("Would push these migrations:");
+      expect(conn.queries.some((query) => query.sql.includes("vault."))).toBe(false);
+      expect(conn.execs).toEqual([]);
+    });
+  });
+
+  it.live(
+    "prints the DRY RUN heads-up line after the connection resolves, not before (Go's push.Run order)",
+    () => {
+      // Go's actual order (verified against apps/cli-go): the connection-resolution
+      // phase (`flags.ParseDatabaseConfig` → `NewDbConfigWithPassword`, which prints
+      // "Initialising login role..." when minting a temp role, `db_url.go:204`) runs
+      // BEFORE `push.Run` is even invoked — and "DRY RUN: …" is the literal first line
+      // of `push.Run` itself (`push.go:22-24`), so it prints AFTER that resolution
+      // output, never before. `simulateInitialisingLoginRole` stands in for the real
+      // resolver's stderr line (the fake resolver is otherwise silent) so this
+      // asserts on actual accumulated stderr text ordering, not internal call timing.
+      const { layer, out } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        simulateInitialisingLoginRole: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPush({ ...DEFAULT_FLAGS, dryRun: true }).pipe(Effect.provide(layer));
+        const loginRoleIndex = out.stderrText.indexOf("Initialising login role...");
+        const dryRunIndex = out.stderrText.indexOf(
+          "DRY RUN: migrations will *not* be pushed to the database.",
+        );
+        expect(loginRoleIndex).toBeGreaterThanOrEqual(0);
+        expect(dryRunIndex).toBeGreaterThan(loginRoleIndex);
+        // ...and, in turn, before the connect step's own progress line.
+        const connectingIndex = out.stderrText.indexOf("Connecting to local database...");
+        expect(connectingIndex).toBeGreaterThan(dryRunIndex);
+      });
+    },
+  );
 
   it.live("fails with a repair suggestion when remote has versions missing locally", () => {
     const { layer, out } = setup(tmp.current, {
@@ -755,7 +937,7 @@ describe("legacy db push", () => {
   });
 
   it.live("upserts vault secrets (update existing, create new) before migrating", () => {
-    const { layer, out, conn } = setup(tmp.current, {
+    const { layer, out, conn, resolver } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
       files: migrationFile("20240101000000"),
       // `existing` already present remotely → update; `fresh` → create.
@@ -765,9 +947,62 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Updating vault secrets...");
+      expect(resolver.calls[0]?.resolveVaultSecrets).toBe(true);
       const sqls = conn.queries.map((q) => q.sql);
       expect(sqls).toContain("SELECT vault.update_secret($1, $2)");
       expect(sqls).toContain("SELECT vault.create_secret($1, $2)");
+    });
+  });
+
+  it.live("applies migrations without touching vault when --skip-vault is set", () => {
+    const { layer, out, conn, resolver } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nexisting = "v1"\nfresh = "v2"\n',
+      files: migrationFile("20240101000000"),
+      vaultRows: [{ id: "id-1", name: "existing" }],
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(Effect.provide(layer));
+      expect(out.stderrText).not.toContain("Updating vault secrets...");
+      expect(resolver.calls[0]?.resolveVaultSecrets).toBe(false);
+      expect(conn.queries.some((query) => query.sql.includes("vault."))).toBe(false);
+      expect(
+        conn.queries.some((query) => query.sql.includes("INSERT INTO supabase_migrations")),
+      ).toBe(true);
+    });
+  });
+
+  it.live("does not decrypt vault secrets skipped by --skip-vault", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:not-valid"\n',
+      files: migrationFile("20240101000000"),
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
+      expect(conn.queries.some((query) => query.sql.includes("vault."))).toBe(false);
+    });
+  });
+
+  it.live("still validates non-vault secrets with --skip-vault", () => {
+    const { layer, out, conn } = setup(tmp.current, {
+      toml: 'project_id = "test"\n\n[db]\nroot_key = "encrypted:not-valid"\n',
+      files: migrationFile("20240101000000"),
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({ ...DEFAULT_FLAGS, skipVault: true }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("failed to parse config:");
+      expect(out.stderrText).not.toContain("Connecting to local database...");
+      expect(conn.queries).toEqual([]);
     });
   });
 
@@ -1028,6 +1263,102 @@ describe("legacy db push", () => {
       expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
+    });
+  });
+
+  it.live("pushes to the project given via --project-ref without a linked workdir", () => {
+    // No `.temp/project-ref` and the resolver's own ref-file fallback is
+    // simulated as failing (`linkedFails`) — only the flag can resolve a ref.
+    const { layer, out, linkedCache, resolver } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      linkedFails: true,
+      format: "json",
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Connecting to remote database...");
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
+      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_PROJECT_REF));
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
+    });
+  });
+
+  it.live("--project-ref drives which [remotes.<ref>] block merges into config", () => {
+    // The `[remotes.staging]` block's `project_id` matches the FLAG ref, not the
+    // resolver's own `LEGACY_VALID_REF` fallback — the override only announces if
+    // the flag (not the fallback) actually resolved the ref config merges against.
+    const { layer, out } = setup(tmp.current, {
+      toml: `project_id = "base"\n\n[remotes.staging]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
+    });
+  });
+
+  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+    const { layer, linkedCache } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      // The workdir is linked to LEGACY_VALID_REF (e.g. via .temp/project-ref) —
+      // the flag must win over it.
+      projectRef: LEGACY_VALID_REF,
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer));
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
+      expect(linkedCache.cachedRef).not.toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection/config resolution or cache write.
+      expect(conn.execs).toEqual([]);
+      expect(resolver.calls).toEqual([]);
+      expect(linkedCache.cached).toBe(false);
     });
   });
 });

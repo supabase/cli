@@ -7,7 +7,9 @@ import {
 } from "./studio.service.ts";
 
 // Mirrors the fixture Go's `TestBuildStudioEnv` builds via `config.NewConfig()`
-// plus its explicit field overrides (`apps/cli-go/internal/start/start_test.go:522-564`),
+// plus its explicit field overrides (formerly `apps/cli-go/internal/start/start_test.go:522-564`,
+// deleted along with the rest of `internal/start` as unreachable in CLI-1966;
+// last present at commit a253ccba25c21356ccd33044c4474aecb77d1ae4),
 // translated into this pure function's explicit input shape.
 const baseEnvInput: LegacyBuildStudioEnvInput = {
   dbPassword: "postgres",

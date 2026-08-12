@@ -9,6 +9,7 @@ import {
 } from "./supervisor-protocol.ts";
 
 type RemovePathAction = Extract<ExternalCleanupAction, { readonly _tag: "RemovePath" }>;
+type RunCommandAction = Extract<ExternalCleanupAction, { readonly _tag: "RunCommand" }>;
 
 interface SupervisorRuntimeConfig {
   readonly command: string;
@@ -23,6 +24,8 @@ interface ChildExit {
   readonly code: number | null;
   readonly signal: NodeJS.Signals | null;
 }
+
+const DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS = 5_000;
 
 const isMain = (() => {
   if (process.argv[1] == null) {
@@ -104,16 +107,35 @@ const cleanupActionFrom = (value: unknown): ExternalCleanupAction | undefined =>
   }
 
   const tag = getField(value, "_tag");
-  if (tag === "DockerRemove") {
-    const containerName = getField(value, "containerName");
-    return typeof containerName === "string" ? { _tag: tag, containerName } : undefined;
+  if (tag === "RunCommand") {
+    const executable = getField(value, "executable");
+    const args = stringArrayFrom(getField(value, "args"));
+    const timeoutMs = getField(value, "timeoutMs");
+    if (
+      typeof executable !== "string" ||
+      executable.length === 0 ||
+      args === undefined ||
+      (timeoutMs !== undefined &&
+        (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0))
+    ) {
+      return undefined;
+    }
+    return {
+      _tag: tag,
+      executable,
+      args,
+      timeoutMs: typeof timeoutMs === "number" ? timeoutMs : undefined,
+    };
   }
 
   if (tag === "RemovePath") {
     const path = getField(value, "path");
     const recursive = getField(value, "recursive");
     const force = getField(value, "force");
-    return typeof path === "string"
+    return typeof path === "string" &&
+      path.length > 0 &&
+      (recursive === undefined || typeof recursive === "boolean") &&
+      (force === undefined || typeof force === "boolean")
       ? {
           _tag: tag,
           path,
@@ -148,6 +170,11 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
 
   const ownerPid = getField(value, "ownerPid");
   const shutdownTimeoutMs = getField(value, "shutdownTimeoutMs");
+  const cleanupValue = getField(value, "cleanup");
+  const cleanup = cleanupValue === undefined ? undefined : cleanupActionsFrom(cleanupValue);
+  if (cleanupValue !== undefined && cleanup === undefined) {
+    throw new Error("Invalid supervisor cleanup");
+  }
 
   return {
     command,
@@ -155,7 +182,7 @@ const parseSupervisorRuntimeConfig = (encodedConfig: string): SupervisorRuntimeC
     ownerPid: typeof ownerPid === "number" ? ownerPid : undefined,
     shutdownSignal: signalFrom(getField(value, "shutdownSignal")),
     shutdownTimeoutMs: typeof shutdownTimeoutMs === "number" ? shutdownTimeoutMs : undefined,
-    cleanup: cleanupActionsFrom(getField(value, "cleanup")),
+    cleanup,
   };
 };
 
@@ -207,14 +234,10 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
     }
   };
 
-  const killChildTree = (signal: ChildProcess.Signal): void => {
-    if (child.pid == null) {
-      return;
-    }
-
+  const killProcessTree = (pid: number, signal: ChildProcess.Signal): void => {
     if (isWindows) {
       try {
-        execFileSync("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+        execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], {
           stdio: "ignore",
           timeout: 5_000,
         });
@@ -224,16 +247,48 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
     }
 
     try {
-      process.kill(-child.pid, signal);
+      process.kill(-pid, signal);
       return;
     } catch {}
 
     try {
-      process.kill(child.pid, signal);
+      process.kill(pid, signal);
     } catch {}
   };
 
-  const runCleanup = () => {
+  const killChildTree = (signal: ChildProcess.Signal): void => {
+    if (child.pid != null) {
+      killProcessTree(child.pid, signal);
+    }
+  };
+
+  const runCleanupCommand = (action: RunCommandAction): Promise<void> =>
+    new Promise((resolve) => {
+      const cleanupChild = spawn(action.executable, action.args, {
+        detached: !isWindows,
+        env: childEnv,
+        stdio: "ignore",
+      });
+      let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+      const finish = () => {
+        if (timeoutId != null) {
+          clearTimeout(timeoutId);
+        }
+        resolve();
+      };
+
+      cleanupChild.once("error", finish);
+      cleanupChild.once("exit", finish);
+      timeoutId = setTimeout(() => {
+        if (cleanupChild.pid != null) {
+          killProcessTree(cleanupChild.pid, "SIGKILL");
+        }
+        finish();
+      }, action.timeoutMs ?? DEFAULT_CLEANUP_COMMAND_TIMEOUT_MS);
+    });
+
+  const runCleanup = async (): Promise<void> => {
     const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const removePathWithRetry = async (action: RemovePathAction): Promise<void> => {
       for (let attempt = 0; attempt < 20; attempt++) {
@@ -249,20 +304,26 @@ export function runSupervisorRuntime(encodedConfig = process.argv[2]): void {
       }
     };
 
-    return Promise.all(
-      (config.cleanup ?? []).map(async (action) => {
+    const runCommands = async () => {
+      for (const action of config.cleanup ?? []) {
+        if (action._tag !== "RunCommand") {
+          continue;
+        }
+
         try {
-          if (action._tag === "DockerRemove") {
-            execFileSync("docker", ["rm", "-f", action.containerName], {
-              stdio: "ignore",
-              timeout: 5_000,
-            });
-          } else if (action._tag === "RemovePath") {
-            await removePathWithRetry(action);
-          }
+          await runCleanupCommand(action);
         } catch {}
-      }),
-    ).then(() => undefined);
+      }
+    };
+
+    // Commands serialize so their worst-case timeouts add together. Each runs in its own Unix
+    // process group (or uses taskkill on Windows), allowing a timeout to terminate its whole tree.
+    await Promise.all([
+      runCommands(),
+      ...(config.cleanup ?? []).map((action) =>
+        action._tag === "RemovePath" ? removePathWithRetry(action) : Promise.resolve(),
+      ),
+    ]);
   };
 
   const shutdown = async (signal: ChildProcess.Signal): Promise<void> => {

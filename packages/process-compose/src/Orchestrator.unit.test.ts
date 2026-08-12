@@ -48,7 +48,6 @@ function mockLogBuffer() {
             line: entry.line,
           }));
         }),
-      truncate: () => Effect.void,
     }),
     get entries() {
       return entries;
@@ -77,6 +76,7 @@ interface SpawnOpts {
   getExitCode?: () => number;
   stdout?: string[];
   exitDelay?: Duration.Input;
+  getExitDelay?: () => Duration.Input;
 }
 
 function createWaitList() {
@@ -183,7 +183,7 @@ function mockChildProcessSpawner(
           const resolvedExitCode = svcOpts.getExitCode?.() ?? svcOpts.exitCode ?? 0;
           yield* Effect.forkDetach(
             Effect.andThen(
-              Effect.sleep(svcOpts.exitDelay ?? "10 millis"),
+              Effect.sleep(svcOpts.getExitDelay?.() ?? svcOpts.exitDelay ?? "10 millis"),
               Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(resolvedExitCode)),
             ),
           );
@@ -362,6 +362,32 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("a stopping dependency does not release services waiting for it to start", () => {
+    const startedHook = Deferred.makeUnsafe<void>();
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db", {
+          hooks: [{ on: "started", run: () => Deferred.await(startedHook) }],
+        }),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      yield* proc.waitForSpawn("db");
+      yield* orc.stopService("db");
+      yield* Effect.sleep("50 millis");
+
+      expect(proc.spawned.some((spawn) => spawn.command === "api")).toBe(false);
+      yield* orc.stopService("api");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("getState returns current state for a service", () => {
     const { layer } = setupOrchestrator([svc("a")], {
       exitDelay: "500 millis",
@@ -428,11 +454,17 @@ describe("Orchestrator", () => {
 
   it.live("supervised services spawn the supervisor runtime", () => {
     const { layer, proc } = setupOrchestrator([
-      svc("postgres", {
-        command: "docker",
-        args: ["run", "--rm", "postgres"],
+      svc("database", {
+        command: "container-runtime",
+        args: ["run", "database"],
         supervision: {
-          orphanCleanup: [{ _tag: "DockerRemove", containerName: "supabase-postgres-test" }],
+          orphanCleanup: [
+            {
+              _tag: "RunCommand",
+              executable: "container-runtime",
+              args: ["remove", "database-test"],
+            },
+          ],
         },
       }),
     ]);
@@ -443,6 +475,37 @@ describe("Orchestrator", () => {
       expect(proc.spawned).toHaveLength(1);
       expect(proc.spawned[0]?.command).toBe(process.execPath);
       expect(proc.spawned[0]?.args[0]).toContain("supervisor-runtime.ts");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("stopping a supervisor during its spawn handshake cleans it up", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("database", {
+          command: "container-runtime",
+          args: ["run", "database"],
+          supervision: {
+            orphanCleanup: [
+              {
+                _tag: "RunCommand",
+                executable: "container-runtime",
+                args: ["remove", "database-test"],
+              },
+            ],
+          },
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("database", { beforeSpawn: () => Effect.void });
+      yield* proc.waitForSpawnCount(1);
+
+      yield* orc.stopService("database");
+      yield* proc.waitForKillCount(1);
+
+      expect(proc.killed[0]?.command).toBe(process.execPath);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
@@ -511,6 +574,350 @@ describe("Orchestrator", () => {
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
+  it.live("runs beforeSpawn for each service at its spawn boundary", () => {
+    const events: string[] = [];
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db"),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      {
+        exitDelay: "500 millis",
+        onSpawn: ({ command }) => events.push(`spawn:${command}`),
+      },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api", {
+        beforeSpawn: (name) => Effect.sync(() => events.push(`release:${name}`)),
+      });
+      yield* proc.waitForSpawnCount(2);
+
+      expect(events).toEqual(["release:db", "spawn:db", "release:api", "spawn:api"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService restarts an explicitly requested dependency closure", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db"),
+        svc("web", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "500 millis" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("web");
+      yield* proc.waitForSpawnCount(2);
+      yield* orc.stopService("db");
+      yield* waitForStopped(orc, "db");
+
+      yield* orc.startService("web");
+      yield* proc.waitForSpawnCount(4);
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["db", "web", "db", "web"]);
+      expect((yield* orc.getState("db")).status).not.toBe("Stopped");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService preserves successful one-shot dependencies", () => {
+    const { layer, proc } = setupOrchestrator([
+      svc("setup", { restart: "no" }),
+      svc("api", {
+        dependencies: [{ service: "setup", condition: "completed" }],
+      }),
+      svc("worker", {
+        dependencies: [{ service: "setup", condition: "completed" }],
+      }),
+    ]);
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api");
+      yield* proc.waitForSpawnCount(2);
+      yield* waitForStopped(orc, "setup");
+
+      yield* orc.startService("worker");
+      yield* proc.waitForSpawnCount(3);
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["setup", "api", "worker"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService restarts a stopped health-checked dependency", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db", {
+          restart: "no",
+          healthCheck: {
+            probe: { _tag: "Exec", command: "check", args: [] },
+            periodSeconds: 0.01,
+          },
+        }),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "healthy" }],
+        }),
+        svc("worker", {
+          dependencies: [{ service: "db", condition: "healthy" }],
+          dependencyTimeoutSeconds: 1,
+        }),
+      ],
+      {
+        exitDelay: "5 seconds",
+        perService: {
+          db: { exitCode: 0, exitDelay: "50 millis" },
+          check: { exitCode: 0, exitDelay: "1 millis" },
+        },
+      },
+    );
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api");
+      yield* proc.waitForSpawn("api");
+      yield* waitForStopped(orc, "db");
+
+      yield* orc.startService("worker");
+      yield* proc.waitForSpawn("db", 2);
+      yield* proc.waitForSpawn("worker");
+
+      expect(proc.spawned.filter((spawn) => spawn.command === "db")).toHaveLength(2);
+      expect((yield* orc.getState("worker")).status).not.toBe("Failed");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService reruns a directly requested successful one-shot", () => {
+    const { layer, proc } = setupOrchestrator([svc("setup", { restart: "no" })]);
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("setup");
+      yield* proc.waitForSpawn("setup");
+      yield* waitForStopped(orc, "setup");
+
+      yield* orc.startService("setup");
+      yield* proc.waitForSpawn("setup", 2);
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["setup", "setup"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService restarts a naturally stopped long-running service", () => {
+    const { layer, proc } = setupOrchestrator([svc("api", { restart: "on-failure" })], {
+      exitCode: 0,
+      exitDelay: "25 millis",
+    });
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api");
+      yield* proc.waitForSpawn("api");
+      yield* waitForStopped(orc, "api");
+
+      yield* orc.startService("api");
+      yield* proc.waitForSpawn("api", 2);
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["api", "api"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService replaces a failed fiber before retrying", () => {
+    let attempts = 0;
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("api", {
+          restart: "no",
+          hooks: [
+            {
+              on: "started",
+              run: () =>
+                Effect.suspend(() => {
+                  attempts++;
+                  return attempts === 1
+                    ? Effect.fail(new Error("first attempt failed"))
+                    : Effect.void;
+                }),
+            },
+          ],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api");
+      yield* waitForFailed(orc, "api");
+
+      yield* orc.startService("api");
+      yield* proc.waitForSpawn("api", 2);
+      yield* Effect.sleep(Duration.millis(25));
+
+      expect(attempts).toBe(2);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService serializes concurrent retries of the same failed service", () => {
+    let attempts = 0;
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("api", {
+          restart: "no",
+          hooks: [
+            {
+              on: "started",
+              run: () =>
+                Effect.suspend(() => {
+                  attempts++;
+                  return attempts === 1
+                    ? Effect.fail(new Error("first attempt failed"))
+                    : Effect.void;
+                }),
+            },
+          ],
+        }),
+      ],
+      { exitDelay: "50 millis" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api");
+      yield* waitForFailed(orc, "api");
+
+      yield* Effect.all([orc.startService("api"), orc.startService("api")], {
+        concurrency: "unbounded",
+      });
+      yield* orc.waitReady("api");
+
+      expect(attempts).toBe(2);
+      expect(proc.spawned.map((record) => record.command)).toEqual(["api", "api"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("dependents observe a retried service without being relaunched", () => {
+    let attempts = 0;
+    const beforeSpawn: string[] = [];
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db", {
+          restart: "no",
+          hooks: [
+            {
+              on: "started",
+              run: () =>
+                Effect.suspend(() => {
+                  attempts++;
+                  return attempts === 1
+                    ? Effect.fail(new Error("first attempt failed"))
+                    : Effect.void;
+                }),
+            },
+          ],
+        }),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api", {
+        beforeSpawn: (name) => Effect.sync(() => beforeSpawn.push(name)),
+      });
+      yield* waitForFailed(orc, "db");
+      const ready = yield* orc.waitReady("api").pipe(Effect.forkScoped);
+
+      yield* orc.startService("db", {
+        beforeSpawn: (name) => Effect.sync(() => beforeSpawn.push(name)),
+      });
+      yield* proc.waitForSpawn("api");
+      yield* Fiber.join(ready);
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["db", "db", "api"]);
+      expect(beforeSpawn).toEqual(["db", "db", "api"]);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("one-shot readiness waiters survive a dependency retry", () => {
+    let attempts = 0;
+    const { layer } = setupOrchestrator(
+      [
+        svc("db", {
+          restart: "no",
+          hooks: [
+            {
+              on: "started",
+              run: () =>
+                Effect.suspend(() => {
+                  attempts++;
+                  return attempts === 1
+                    ? Effect.fail(new Error("first attempt failed"))
+                    : Effect.void;
+                }),
+            },
+          ],
+        }),
+        svc("setup", {
+          restart: "no",
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "20 millis" },
+    );
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("setup");
+      yield* waitForFailed(orc, "db");
+      const ready = yield* orc.waitReady("setup").pipe(Effect.forkScoped);
+
+      yield* orc.startService("db");
+      yield* Fiber.join(ready);
+
+      expect(attempts).toBe(2);
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("startService leaves never-requested dependents pending when retrying a service", () => {
+    let attempts = 0;
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db", {
+          restart: "no",
+          hooks: [
+            {
+              on: "started",
+              run: () =>
+                Effect.suspend(() => {
+                  attempts++;
+                  return attempts === 1
+                    ? Effect.fail(new Error("first attempt failed"))
+                    : Effect.void;
+                }),
+            },
+          ],
+        }),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("db");
+      yield* waitForFailed(orc, "db");
+
+      yield* orc.startService("db");
+      yield* proc.waitForSpawn("db", 2);
+      yield* Effect.sleep(Duration.millis(25));
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["db", "db"]);
+      expect((yield* orc.getState("api")).status).toBe("Pending");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   it.live("restartService stops and restarts a service", () => {
     const { layer, proc } = setupOrchestrator([svc("a")], {
       exitDelay: "5 seconds",
@@ -560,6 +967,69 @@ describe("Orchestrator", () => {
         unrelated: 1,
         web: 2,
       });
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("restartService leaves never-started dependents pending", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db"),
+        svc("api", {
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("db");
+      yield* proc.waitForSpawn("db");
+
+      yield* orc.restartService("db");
+      yield* proc.waitForSpawn("db", 2);
+
+      expect(proc.spawned.map((record) => record.command)).toEqual(["db", "db"]);
+      expect((yield* orc.getState("api")).status).toBe("Pending");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
+  it.live("restartService replays completed dependencies of active dependents", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("db"),
+        svc("setup", {
+          restart: "no",
+          dependencies: [{ service: "db", condition: "started" }],
+        }),
+        svc("api", {
+          dependencies: [{ service: "setup", condition: "completed" }],
+        }),
+      ],
+      {
+        perService: {
+          db: { exitDelay: "5 seconds" },
+          setup: { exitDelay: "10 millis" },
+          api: { exitDelay: "5 seconds" },
+        },
+      },
+    );
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api");
+      yield* proc.waitForSpawnCount(3);
+      yield* waitForStopped(orc, "setup");
+
+      yield* orc.restartService("db");
+      yield* proc.waitForSpawnCount(6);
+
+      expect(proc.spawned.map((record) => record.command)).toEqual([
+        "db",
+        "setup",
+        "api",
+        "db",
+        "setup",
+        "api",
+      ]);
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
@@ -655,6 +1125,7 @@ describe("Orchestrator", () => {
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Stopped");
       expect(state.exitCode).toBe(0);
+      expect(state.pid).toBeNull();
     }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
@@ -671,6 +1142,7 @@ describe("Orchestrator", () => {
       const state = yield* orc.getState("a");
       expect(state.status).toBe("Failed");
       expect(state.exitCode).toBe(1);
+      expect(state.pid).toBeNull();
       expect(log.entries.some((e) => e.line.includes("[process-exited]"))).toBe(true);
       expect(log.entries.some((e) => e.line.includes("about to fail"))).toBe(true);
     }).pipe(Effect.provide(layer), Effect.scoped);
@@ -702,6 +1174,183 @@ describe("Orchestrator", () => {
         const state = yield* orc.getState("api");
         expect(state.status).toBe("Failed");
         expect(state.error).toContain("Timed out");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("healthy dependency fails immediately when health restarts are exhausted", () => {
+      const { layer } = setupOrchestrator(
+        [
+          svc("db", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              failureThreshold: 1,
+            },
+          }),
+          svc("api", {
+            restart: "no",
+            dependencies: [{ service: "db", condition: "healthy" }],
+            dependencyTimeoutSeconds: 5,
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        const state = yield* waitForFailed(orc, "api");
+        expect(state.error).toContain("Dependency db failed");
+        expect(state.error).not.toContain("Timed out");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("healthy dependency waits through a transient failed restart", () => {
+      let databaseSpawns = 0;
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("db", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              initialDelaySeconds: 0.05,
+              periodSeconds: 0.05,
+            },
+          }),
+          svc("api", {
+            restart: "no",
+            dependencies: [{ service: "db", condition: "healthy" }],
+            dependencyTimeoutSeconds: 5,
+          }),
+        ],
+        {
+          perService: {
+            db: {
+              exitCode: 1,
+              getExitDelay: () => (++databaseSpawns === 1 ? "10 millis" : "5 seconds"),
+            },
+            check: { exitCode: 0, exitDelay: "1 millis" },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("api");
+
+        expect(proc.spawned.filter((spawn) => spawn.command === "db")).toHaveLength(2);
+        expect((yield* orc.getState("api")).status).not.toBe("Failed");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("healthy dependency fails after clean-exit restarts are exhausted", () => {
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("db", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              initialDelaySeconds: 5,
+            },
+          }),
+          svc("api", {
+            restart: "no",
+            dependencies: [{ service: "db", condition: "healthy" }],
+            dependencyTimeoutSeconds: 3,
+          }),
+        ],
+        {
+          perService: {
+            db: { exitCode: 0, exitDelay: "10 millis" },
+            check: { exitCode: 0, exitDelay: "1 millis" },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+
+        const state = yield* waitForFailed(orc, "api");
+        expect(state.error).toContain("Dependency db failed");
+        expect(state.error).not.toContain("Timed out");
+        expect(proc.spawned.filter((spawn) => spawn.command === "db")).toHaveLength(2);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("completed dependency waits through a transient failed restart", () => {
+      let setupSpawns = 0;
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("setup", {
+            restart: "on-failure",
+            maxRestarts: 1,
+          }),
+          svc("app", {
+            restart: "no",
+            dependencies: [{ service: "setup", condition: "completed" }],
+            dependencyTimeoutSeconds: 5,
+          }),
+        ],
+        {
+          perService: {
+            setup: {
+              getExitCode: () => (++setupSpawns === 1 ? 1 : 0),
+              exitDelay: "10 millis",
+            },
+            app: { exitDelay: "5 seconds" },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("app");
+
+        expect(proc.spawned.filter((spawn) => spawn.command === "setup")).toHaveLength(2);
+        expect((yield* orc.getState("app")).status).not.toBe("Failed");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("dependency waits use the running generation restart policy", () => {
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("setup", { restart: "no" }),
+          svc("app", {
+            restart: "no",
+            dependencies: [{ service: "setup", condition: "completed" }],
+            dependencyTimeoutSeconds: 1,
+          }),
+        ],
+        {
+          perService: {
+            setup: { exitCode: 1, exitDelay: "200 millis" },
+            app: { exitDelay: "5 seconds" },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("setup");
+
+        // The replacement applies on the next explicit restart. The running
+        // generation still uses restart:no and must remain authoritative.
+        yield* orc.updateServiceDefinition("setup", svc("setup", { restart: "always" }));
+
+        const state = yield* waitForFailed(orc, "app");
+        expect(state.error).toContain("Dependency setup failed");
+        expect(state.error).not.toContain("Timed out");
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
@@ -751,6 +1400,39 @@ describe("Orchestrator", () => {
         const state = yield* orc.getState("app");
         expect(state.status).toBe("Failed");
         expect(state.error).toContain("Timed out");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("completed dependency fails immediately when health restarts are exhausted", () => {
+      const { layer } = setupOrchestrator(
+        [
+          svc("setup", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              failureThreshold: 1,
+            },
+          }),
+          svc("app", {
+            restart: "no",
+            dependencies: [{ service: "setup", condition: "completed" }],
+            dependencyTimeoutSeconds: 5,
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        const state = yield* waitForFailed(orc, "app");
+        expect(state.error).toContain("Dependency setup failed");
+        expect(state.error).not.toContain("Timed out");
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
   });
@@ -849,6 +1531,123 @@ describe("Orchestrator", () => {
         yield* orc.start();
         yield* waitForHealthy(orc, "a");
         expect(hookRan).toBe(true);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("runs on:healthy hook when an unhealthy service recovers", () => {
+      let checkCalls = 0;
+      let healthyHookRuns = 0;
+      const { layer } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "no",
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              successThreshold: 1,
+              failureThreshold: 1,
+            },
+            hooks: [
+              {
+                on: "healthy",
+                run: () =>
+                  Effect.sync(() => {
+                    healthyHookRuns++;
+                  }),
+              },
+            ],
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: {
+            check: {
+              exitDelay: "1 millis",
+              getExitCode: () => (++checkCalls === 1 ? 1 : 0),
+            },
+          },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
+        yield* waitForHealthy(orc, "a");
+        expect(healthyHookRuns).toBe(1);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("publishes a failed recovery hook as a terminal failure", () => {
+      let checkCalls = 0;
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "no",
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 1,
+              successThreshold: 1,
+              failureThreshold: 1,
+            },
+            hooks: [{ on: "healthy", run: () => Effect.fail(new Error("recovery failed")) }],
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: {
+            check: {
+              exitDelay: "1 millis",
+              getExitCode: () => (++checkCalls === 1 ? 1 : 0),
+            },
+          },
+        },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
+        const state = yield* waitForFailed(orc, "a");
+        expect(proc.killed.some((record) => record.command === "a")).toBe(true);
+        expect(state.pid).toBeNull();
+        expect(state.error).toContain("on:healthy");
+        expect(state.error).toContain("recovery failed");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("dependent waits for on:started hook to complete before starting", () => {
+      const order: string[] = [];
+      const { layer } = setupOrchestrator(
+        [
+          svc("db", {
+            hooks: [
+              {
+                on: "started",
+                run: (_log) =>
+                  Effect.gen(function* () {
+                    yield* Effect.sleep(Duration.millis(100));
+                    order.push("db-hook-done");
+                  }),
+              },
+            ],
+          }),
+          svc("api", {
+            dependencies: [{ service: "db", condition: "started" }],
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          onSpawn: (record) => {
+            if (record.command === "api") order.push("api-spawned");
+          },
+        },
+      );
+      return Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator;
+        yield* orchestrator.start();
+        yield* waitForHealthy(orchestrator, "api");
+        expect(order).toEqual(["db-hook-done", "api-spawned"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
@@ -1192,7 +1991,7 @@ describe("Orchestrator", () => {
     });
 
     it.live("stop() force-interrupts when global timeout expires", () => {
-      const { layer } = setupOrchestratorWithStuckKill(
+      const { layer, proc } = setupOrchestratorWithStuckKill(
         [svc("stuck", { shutdown: { timeoutSeconds: 999 } })],
         { shutdownTimeoutSeconds: 0.5 },
       );
@@ -1204,6 +2003,11 @@ describe("Orchestrator", () => {
         yield* orc.stop();
         const elapsed = Date.now() - before;
         expect(elapsed).toBeLessThan(3000);
+        const state = yield* orc.getState("stuck");
+        expect(state.status).toBe("Stopped");
+        expect(state.pid).toBeNull();
+        expect(state.exitCode).toBe(143);
+        expect(proc.killed).toEqual(["SIGTERM", "SIGKILL"]);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
@@ -1223,9 +2027,28 @@ describe("Orchestrator", () => {
     });
   });
 
+  it.live("fails readiness when a pre-start hook fails", () => {
+    const { layer } = setupOrchestrator([svc("api")], { exitDelay: "5 seconds" });
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.startService("api", {
+        beforeStart: () => Effect.fail(new Error("port reservation failed")),
+      });
+
+      const error = yield* orc.waitReady("api").pipe(Effect.flip);
+      expect(error._tag).toBe("ServiceReadyError");
+      if (error._tag === "ServiceReadyError") {
+        expect(error.reason).toContain("port reservation failed");
+      }
+      expect((yield* orc.getState("api")).status).toBe("Failed");
+    }).pipe(Effect.provide(layer), Effect.scoped);
+  });
+
   describe("unhealthy restart", () => {
     it.live("restarts service when it becomes unhealthy and restart policy allows", () => {
       let checkCalls = 0;
+      const prepared: string[] = [];
       const { layer, proc } = setupOrchestrator(
         [
           svc("a", {
@@ -1255,11 +2078,65 @@ describe("Orchestrator", () => {
       );
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
-        yield* orc.start();
+        yield* orc.start({
+          beforeStart: (name) => Effect.sync(() => prepared.push(name)),
+        });
         yield* proc.waitForSpawn("a", 2);
         // Should have spawned the main service twice (original + 1 restart)
         const mainSpawns = proc.spawned.filter((s) => s.command === "a");
         expect(mainSpawns.length).toBe(2);
+        expect(prepared).toEqual(["a", "a"]);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("fails readiness when unhealthy restart preparation fails", () => {
+      let checkCalls = 0;
+      let prepareCalls = 0;
+      const { layer } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.05,
+              successThreshold: 1,
+              failureThreshold: 2,
+            },
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: {
+            check: {
+              exitDelay: "1 millis",
+              getExitCode: () => {
+                checkCalls++;
+                return checkCalls <= 1 ? 0 : 1;
+              },
+            },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start({
+          beforeStart: () =>
+            Effect.suspend(() => {
+              prepareCalls++;
+              return prepareCalls === 1
+                ? Effect.void
+                : Effect.fail(new Error("port reservation failed"));
+            }),
+        });
+
+        yield* waitForState(orc, "a", (state) => state.status === "Failed", "Failed");
+        const error = yield* orc.waitReady("a").pipe(Effect.flip);
+        expect(error._tag).toBe("ServiceReadyError");
+        if (error._tag === "ServiceReadyError") {
+          expect(error.reason).toContain("port reservation failed");
+        }
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
@@ -1331,12 +2208,110 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         yield* proc.waitForSpawn("a", 2);
-        yield* waitForState(orc, "a", (state) => state.status === "Unhealthy", "Unhealthy");
+        const state = yield* waitForState(
+          orc,
+          "a",
+          (candidate) => candidate.status === "Failed",
+          "Failed",
+        );
         // maxRestarts=1 means original spawn + 1 restart = 2 total
         const mainSpawns = proc.spawned.filter((s) => s.command === "a");
         expect(mainSpawns.length).toBe(2);
+        expect(state.pid).toBeNull();
+        expect(state.exitCode).toBeNull();
+        expect(state.error).toBe("Health check failed and restart budget was exhausted");
+
+        const readyError = yield* orc.waitReady("a").pipe(Effect.flip);
+        expect(readyError._tag).toBe("ServiceReadyError");
+        if (readyError._tag === "ServiceReadyError") {
+          expect(readyError.reason).toBe("Health check failed and restart budget was exhausted");
+        }
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
+
+    it.live("applies startup failures before a service has ever been healthy", () => {
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              startupFailureThreshold: 2,
+              failureThreshold: 1,
+            },
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        const state = yield* waitForFailed(orc, "a");
+        expect(proc.spawned.filter((spawn) => spawn.command === "a")).toHaveLength(2);
+        expect(state.pid).toBeNull();
+        expect(state.exitCode).toBeNull();
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("keeps an initially unhealthy no-restart service alive", () => {
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "no",
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              periodSeconds: 0.01,
+              failureThreshold: 1,
+            },
+          }),
+        ],
+        {
+          exitDelay: "5 seconds",
+          perService: { check: { exitCode: 1, exitDelay: "1 millis" } },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        const state = yield* waitForState(
+          orc,
+          "a",
+          (candidate) => candidate.status === "Unhealthy",
+          "Unhealthy",
+        );
+        expect(state.pid).not.toBeNull();
+        expect(state.exitCode).toBeNull();
+        expect(proc.spawned.filter((spawn) => spawn.command === "a")).toHaveLength(1);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+  });
+
+  it.live("finalizes the child before publishing a healthy-hook failure", () => {
+    const { layer, proc } = setupOrchestrator(
+      [
+        svc("a", {
+          hooks: [{ on: "healthy", run: () => Effect.fail(new Error("warmup failed")) }],
+        }),
+      ],
+      { exitDelay: "5 seconds" },
+    );
+
+    return Effect.gen(function* () {
+      const orc = yield* Orchestrator;
+      yield* orc.start();
+      const state = yield* waitForFailed(orc, "a");
+      expect(proc.killed.some((record) => record.command === "a")).toBe(true);
+      expect(state.pid).toBeNull();
+      expect(state.exitCode).toBeNull();
+      expect(state.error).toContain("on:healthy");
+    }).pipe(Effect.provide(layer), Effect.scoped);
   });
 
   describe("readiness", () => {
@@ -1353,6 +2328,61 @@ describe("Orchestrator", () => {
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
 
+    it.live("waitReady follows a configured restart instead of failing on its exit state", () => {
+      let serviceSpawns = 0;
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("a", {
+            restart: "always",
+            maxRestarts: 1,
+            healthCheck: {
+              probe: { _tag: "Exec", command: "check", args: [] },
+              initialDelaySeconds: 0.05,
+              periodSeconds: 0.05,
+            },
+          }),
+        ],
+        {
+          perService: {
+            a: {
+              exitCode: 1,
+              getExitDelay: () => (++serviceSpawns === 1 ? "10 millis" : "5 seconds"),
+            },
+            check: { exitCode: 0, exitDelay: "1 millis" },
+          },
+        },
+      );
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* orc.waitReady("a");
+
+        expect(proc.spawned.filter((spawn) => spawn.command === "a")).toHaveLength(2);
+        expect((yield* orc.getState("a")).status).toBe("Healthy");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("waitReady uses the running generation restart policy", () => {
+      const { layer, proc } = setupOrchestrator([svc("a", { restart: "no" })], {
+        exitCode: 1,
+        exitDelay: "200 millis",
+      });
+
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("a");
+
+        // The replacement applies to the next generation; this one still
+        // terminates under restart:no and readiness must fail with it.
+        yield* orc.updateServiceDefinition("a", svc("a", { restart: "always" }));
+
+        const exit = yield* orc.waitReady("a").pipe(Effect.exit, Effect.timeout("1 second"));
+        expect(Exit.isFailure(exit)).toBe(true);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
     it.live("waitReady resolves when one-shot service completes successfully", () => {
       const { layer } = setupOrchestrator([svc("a", { restart: "no" })], {
         exitCode: 0,
@@ -1361,6 +2391,19 @@ describe("Orchestrator", () => {
       return Effect.gen(function* () {
         const orc = yield* Orchestrator;
         yield* orc.start();
+        yield* orc.waitReady("a");
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("waitReady resolves after a one-shot service has already completed", () => {
+      const { layer } = setupOrchestrator([svc("a", { restart: "no" })], {
+        exitCode: 0,
+        exitDelay: "10 millis",
+      });
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* waitForStopped(orc, "a");
         yield* orc.waitReady("a");
       }).pipe(Effect.provide(layer), Effect.scoped);
     });
@@ -1397,6 +2440,31 @@ describe("Orchestrator", () => {
         const orc = yield* Orchestrator;
         yield* orc.start();
         const exit = yield* orc.waitReady("a").pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+      }).pipe(Effect.provide(layer), Effect.scoped);
+    });
+
+    it.live("waitReady fails when a starting service is stopped", () => {
+      const { layer, proc } = setupOrchestrator(
+        [
+          svc("a", {
+            healthCheck: {
+              probe: { _tag: "Exec", command: "true", args: [] },
+              initialDelaySeconds: 999,
+            },
+          }),
+        ],
+        { exitDelay: "5 seconds" },
+      );
+      return Effect.gen(function* () {
+        const orc = yield* Orchestrator;
+        yield* orc.start();
+        yield* proc.waitForSpawn("a");
+        const ready = yield* orc.waitReady("a").pipe(Effect.forkScoped);
+
+        yield* orc.stopService("a");
+
+        const exit = yield* Fiber.await(ready);
         expect(Exit.isFailure(exit)).toBe(true);
       }).pipe(Effect.provide(layer), Effect.scoped);
     });

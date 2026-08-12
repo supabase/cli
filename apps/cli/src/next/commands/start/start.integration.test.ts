@@ -171,9 +171,16 @@ function setupNonInteractive(
   opts: {
     info?: Partial<StackInfo>;
     stateChanges?: Array<{ name: string; status: StackServiceStatus }>;
+    startPending?: boolean;
+    liveStateChanges?: boolean;
   } = {},
 ) {
-  const stack = mockStack({ info: opts.info, stateChanges: opts.stateChanges });
+  const stack = mockStack({
+    info: opts.info,
+    stateChanges: opts.stateChanges,
+    startPending: opts.startPending,
+    liveStateChanges: opts.liveStateChanges,
+  });
   const analytics = mockAnalytics();
   const out = mockOutput({ format: "text", interactive: false });
   const ink = mockInk();
@@ -244,6 +251,39 @@ describe("start", () => {
       });
 
       expect(stack.started).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("completes startup progress for healthy and dormant services", () => {
+    const { layer, stack, out } = setupNonInteractive({
+      stateChanges: [
+        { name: "postgres", status: "Pending" },
+        { name: "studio", status: "Pending" },
+      ],
+      startPending: true,
+      liveStateChanges: true,
+    });
+    return Effect.gen(function* () {
+      const fiber = yield* start(backgroundFlags).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* waitFor(() => stack.started, "stack startup did not begin");
+
+      stack.emitStateChange({ name: "postgres", status: "Healthy" });
+      stack.emitStateChange({ name: "studio", status: "Dormant" });
+      stack.resolveStart();
+      yield* Fiber.join(fiber);
+
+      expect(
+        out.progressEvents
+          .filter((event) => event.type === "advance")
+          .reduce((sum, event) => sum + (event.step ?? 0), 0),
+      ).toBe(2);
+      expect(out.progressEvents).toContainEqual({
+        type: "advance",
+        step: 1,
+        message: "studio is dormant",
+      });
     }).pipe(Effect.provide(layer));
   });
 

@@ -1,10 +1,14 @@
 import { ServiceNotFoundError, ServiceReadyError, type LogEntry } from "@supabase/process-compose";
 import { Effect, Layer, Schema, Stream } from "effect";
 import * as Sse from "effect/unstable/encoding/Sse";
-import { HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { HttpClientError, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
+import { DaemonErrorResponseSchema } from "./DaemonProtocol.ts";
+import { StackBuildError, StackReadinessError } from "./errors.ts";
 import { Stack, StackInfoSchema } from "./Stack.ts";
+import { inheritReadyOptions } from "./StackConfig.ts";
 import { StackServiceState, StackServiceStatusSchema } from "./StackServiceState.ts";
 import { UnixHttpClient, UnixHttpClientError } from "./UnixHttpClient.ts";
+import { SERVICE_NAMES } from "./versions.ts";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -32,10 +36,6 @@ const StatusResponseSchema = Schema.Struct({
   services: Schema.Array(StatusServiceSchema),
 });
 
-const ServiceErrorResponseSchema = Schema.Struct({
-  error: Schema.String,
-});
-
 const StatusServiceEventSchema = Schema.fromJsonString(StatusServiceSchema);
 const LogEntryEventSchema = Schema.fromJsonString(LogEntrySchema);
 const decodeStatusServiceEvent = Schema.decodeUnknownSync(StatusServiceEventSchema);
@@ -48,6 +48,13 @@ const decodeLogEntryEvent = Schema.decodeUnknownSync(LogEntryEventSchema);
 function requestHeaders(init?: RequestInit) {
   return Object.fromEntries(new Headers(init?.headers).entries());
 }
+
+const publicServicePath = (name: string): Effect.Effect<string, ServiceNotFoundError> => {
+  const service = SERVICE_NAMES.find((candidate) => candidate === name);
+  return service === undefined
+    ? Effect.fail(new ServiceNotFoundError({ name }))
+    : Effect.succeed(encodeURIComponent(service));
+};
 
 function makeRequest(path: string, init?: RequestInit) {
   const url = `http://localhost${path}`;
@@ -86,13 +93,107 @@ function unixResponse(socketPath: string, path: string, init?: RequestInit) {
   );
 }
 
+/** Preserve daemon RPC identity when an HTTP status or body cannot be decoded. */
+function dieOnNonOkStatus<A>(
+  socketPath: string,
+  path: string,
+  effect: Effect.Effect<A, HttpClientError.HttpClientError>,
+) {
+  return effect.pipe(
+    Effect.mapError(
+      (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "status" }),
+    ),
+    Effect.orDie,
+  );
+}
+
+function dieOnBodyDecodeError<A, E, R>(
+  socketPath: string,
+  path: string,
+  effect: Effect.Effect<A, E, R>,
+) {
+  return effect.pipe(
+    Effect.mapError(
+      (cause) => new UnixHttpClientError({ socketPath, path, cause, reason: "protocol" }),
+    ),
+    Effect.orDie,
+  );
+}
+
+function withAbortSignal<A, E, R>(
+  effect: (signal: AbortSignal) => Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> {
+  return Effect.acquireUseRelease(
+    Effect.sync(() => new AbortController()),
+    (controller) => effect(controller.signal),
+    (controller) => Effect.sync(() => controller.abort()),
+  );
+}
+
+const failDaemonResponse = (
+  socketPath: string,
+  path: string,
+  response: HttpClientResponse.HttpClientResponse,
+  fallbackName: string,
+): Effect.Effect<
+  never,
+  ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+> =>
+  Effect.gen(function* () {
+    const body = yield* dieOnBodyDecodeError(
+      socketPath,
+      path,
+      HttpClientResponse.schemaBodyJson(DaemonErrorResponseSchema)(response),
+    );
+    switch (body.code) {
+      case "SERVICE_NOT_FOUND":
+        return yield* new ServiceNotFoundError({ name: body.service ?? fallbackName });
+      case "SERVICE_NOT_READY":
+        return yield* new ServiceReadyError({
+          name: body.service ?? fallbackName,
+          reason: body.error,
+          ...(body.exitCode === undefined ? {} : { exitCode: body.exitCode }),
+        });
+      case "STACK_BUILD_ERROR":
+        return yield* new StackBuildError({
+          detail: body.error,
+          ...(body.reason === undefined ? {} : { reason: body.reason }),
+        });
+      case "STACK_READINESS_TIMEOUT":
+        return yield* new StackReadinessError({
+          target: body.service ?? fallbackName,
+          timeoutMs: body.timeoutMs ?? 0,
+          detail: body.error,
+        });
+    }
+  });
+
+const expectDaemonOk = (
+  socketPath: string,
+  path: string,
+  response: HttpClientResponse.HttpClientResponse,
+  fallbackName: string,
+): Effect.Effect<
+  void,
+  ServiceNotFoundError | ServiceReadyError | StackBuildError | StackReadinessError
+> =>
+  response.status >= 200 && response.status < 300
+    ? Effect.void
+    : failDaemonResponse(socketPath, path, response, fallbackName);
+
 /** Fetch JSON from the daemon, dying on HTTP errors. */
 function fetchStatus(socketPath: string, path: string, method = "GET") {
   return Effect.gen(function* () {
     const response = yield* unixResponse(socketPath, path, { method });
-    const okResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
-    return yield* HttpClientResponse.schemaBodyJson(StatusResponseSchema)(okResponse).pipe(
-      Effect.orDie,
+    const okResponse = yield* dieOnNonOkStatus(
+      socketPath,
+      path,
+      HttpClientResponse.filterStatusOk(response),
+    );
+    return yield* dieOnBodyDecodeError(
+      socketPath,
+      path,
+      HttpClientResponse.schemaBodyJson(StatusResponseSchema)(okResponse),
     );
   });
 }
@@ -100,9 +201,15 @@ function fetchStatus(socketPath: string, path: string, method = "GET") {
 function fetchLogEntries(socketPath: string, path: string) {
   return Effect.gen(function* () {
     const response = yield* unixResponse(socketPath, path);
-    const okResponse = yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
-    return yield* HttpClientResponse.schemaBodyJson(Schema.Array(LogEntrySchema))(okResponse).pipe(
-      Effect.orDie,
+    const okResponse = yield* dieOnNonOkStatus(
+      socketPath,
+      path,
+      HttpClientResponse.filterStatusOk(response),
+    );
+    return yield* dieOnBodyDecodeError(
+      socketPath,
+      path,
+      HttpClientResponse.schemaBodyJson(Schema.Array(LogEntrySchema))(okResponse),
     );
   });
 }
@@ -131,8 +238,22 @@ function sseStream<A>(socketPath: string, path: string, parse: (data: string) =>
     Effect.gen(function* () {
       const controller = new AbortController();
       const response = yield* unixFetch(socketPath, path, { signal: controller.signal });
-      if (!response.ok || !response.body) {
-        return yield* Effect.die(new Error(`SSE request failed: ${response.status}`));
+      if (!response.ok) {
+        return yield* new UnixHttpClientError({
+          socketPath,
+          path,
+          cause: new Error(`SSE request failed: ${response.status}`),
+          reason: "status",
+        });
+      }
+      const body = response.body;
+      if (body === null) {
+        return yield* new UnixHttpClientError({
+          socketPath,
+          path,
+          cause: new Error("SSE response body is missing"),
+          reason: "protocol",
+        });
       }
 
       // State shared across chunks — parser is stateful, accumulates partial events
@@ -144,15 +265,22 @@ function sseStream<A>(socketPath: string, path: string, parse: (data: string) =>
       });
 
       return Stream.fromReadableStream({
-        evaluate: () => response.body!,
-        onError: (error) => (error instanceof Error ? error : new Error(String(error))),
+        evaluate: () => body,
+        onError: (cause) =>
+          new UnixHttpClientError({ socketPath, path, cause, reason: "transport" }),
       }).pipe(
-        Stream.flatMap((chunk: Uint8Array) => {
-          collected.length = 0;
-          parser.feed(new TextDecoder().decode(chunk, { stream: true }));
-          return Stream.fromIterable(Array.from(collected));
-        }),
-        Stream.orDie,
+        Stream.mapEffect((chunk: Uint8Array) =>
+          Effect.try({
+            try: () => {
+              collected.length = 0;
+              parser.feed(new TextDecoder().decode(chunk, { stream: true }));
+              return Array.from(collected);
+            },
+            catch: (cause) =>
+              new UnixHttpClientError({ socketPath, path, cause, reason: "protocol" }),
+          }),
+        ),
+        Stream.flatMap(Stream.fromIterable),
         Stream.ensuring(Effect.sync(() => controller.abort())),
       );
     }),
@@ -212,121 +340,102 @@ export const RemoteStack = {
           start: () =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, "/start", { method: "POST" });
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                const path = "/start";
+                const response = yield* unixResponse(socketPath, path, { method: "POST" });
+                yield* expectDaemonOk(socketPath, path, response, "stack").pipe(
+                  Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
+                );
               }),
             ),
 
           stop: () =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, "/stop", { method: "POST" });
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                const path = "/stop";
+                const response = yield* unixResponse(socketPath, path, { method: "POST" });
+                yield* dieOnNonOkStatus(
+                  socketPath,
+                  path,
+                  HttpClientResponse.filterStatusOk(response),
+                );
               }),
             ),
 
           dispose: () =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, "/stop", { method: "POST" });
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                const path = "/stop";
+                const response = yield* unixResponse(socketPath, path, { method: "POST" });
+                yield* dieOnNonOkStatus(
+                  socketPath,
+                  path,
+                  HttpClientResponse.filterStatusOk(response),
+                );
               }),
             ),
 
           startService: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, `/services/${name}/start`, {
+                const servicePath = yield* publicServicePath(name);
+                const path = `/services/${servicePath}/start`;
+                const response = yield* unixResponse(socketPath, path, {
                   method: "POST",
                 });
-                if (response.status === 404) {
-                  return yield* new ServiceNotFoundError({ name });
-                }
-                if (response.status === 500) {
-                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
-                    response,
-                  ).pipe(Effect.orDie);
-                  return yield* new ServiceReadyError({ name, reason: body.error });
-                }
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                yield* expectDaemonOk(socketPath, path, response, name);
               }),
             ),
 
           stopService: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, `/services/${name}/stop`, {
+                const servicePath = yield* publicServicePath(name);
+                const path = `/services/${servicePath}/stop`;
+                const response = yield* unixResponse(socketPath, path, {
                   method: "POST",
                 });
-                if (response.status === 404) {
-                  return yield* new ServiceNotFoundError({ name });
-                }
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                yield* expectDaemonOk(socketPath, path, response, name).pipe(
+                  Effect.catchTag("ServiceReadyError", (error) => Effect.die(error)),
+                  Effect.catchTag("StackReadinessError", (error) => Effect.die(error)),
+                );
               }),
             ),
 
           restartService: (name: string) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, `/services/${name}/restart`, {
+                const servicePath = yield* publicServicePath(name);
+                const path = `/services/${servicePath}/restart`;
+                const response = yield* unixResponse(socketPath, path, {
                   method: "POST",
                 });
-                if (response.status === 404) {
-                  return yield* new ServiceNotFoundError({ name });
-                }
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                yield* expectDaemonOk(socketPath, path, response, name);
               }),
             ),
 
           reloadFunctions: (opts) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(
-                  socketPath,
-                  `/functions/reload${encodeSearchParams({
-                    envFile: opts?.envFile,
-                    noVerifyJwt:
-                      opts?.noVerifyJwt === undefined ? undefined : String(opts.noVerifyJwt),
-                  })}`,
-                  { method: "POST" },
-                );
-                if (response.status === 404) {
-                  return yield* new ServiceNotFoundError({ name: "edge-runtime" });
-                }
-                if (response.status === 500) {
-                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
-                    response,
-                  ).pipe(Effect.orDie);
-                  return yield* new ServiceReadyError({
-                    name: "edge-runtime",
-                    reason: body.error,
-                  });
-                }
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                const path = "/functions/reload";
+                const response = yield* unixResponse(socketPath, path, {
+                  method: "POST",
+                  headers: { "content-type": "application/json" },
+                  body: JSON.stringify(opts ?? {}),
+                });
+                yield* expectDaemonOk(socketPath, path, response, "edge-runtime");
               }),
             ),
 
           reloadEdgeRuntime: (opts) =>
             withUnixHttpClient(
               Effect.gen(function* () {
-                const response = yield* unixResponse(socketPath, "/edge-runtime/reload", {
+                const path = "/edge-runtime/reload";
+                const response = yield* unixResponse(socketPath, path, {
                   method: "POST",
                   headers: { "content-type": "application/json" },
                   body: JSON.stringify(opts),
                 });
-                if (response.status === 404) {
-                  return yield* new ServiceNotFoundError({ name: "edge-runtime" });
-                }
-                if (response.status === 500) {
-                  const body = yield* HttpClientResponse.schemaBodyJson(ServiceErrorResponseSchema)(
-                    response,
-                  ).pipe(Effect.orDie);
-                  return yield* new ServiceReadyError({
-                    name: "edge-runtime",
-                    reason: body.error,
-                  });
-                }
-                yield* HttpClientResponse.filterStatusOk(response).pipe(Effect.orDie);
+                yield* expectDaemonOk(socketPath, path, response, "edge-runtime");
               }),
             ),
 
@@ -374,69 +483,46 @@ export const RemoteStack = {
               }),
             ),
 
-          waitReady: (name: string) =>
+          waitReady: (name, opts) =>
             withUnixHttpClient(
-              Effect.gen(function* () {
-                // Check current state first
-                const { services } = yield* fetchStatus(socketPath, "/status");
-                const match = services.find((s) => s.name === name);
-                if (!match) {
-                  return yield* new ServiceNotFoundError({ name });
-                }
-                if (match.status === "Healthy" || match.status === "Running") return;
-
-                // Wait for state change via SSE
-                yield* withUnixHttpClient(
-                  sseStream(socketPath, "/status/stream", (data) => {
-                    const raw = decodeStatusServiceEvent(data);
-                    return toServiceState(raw);
-                  }).pipe(
-                    Stream.filter((s) => s.name === name),
-                    Stream.takeUntil((s) => s.status === "Healthy" || s.status === "Running"),
-                    Stream.runDrain,
-                  ),
-                );
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const servicePath = yield* publicServicePath(name);
+                  const path = `/services/${servicePath}/ready`;
+                  const response = yield* unixResponse(socketPath, path, {
+                    method: "POST",
+                    signal,
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify(opts ?? inheritReadyOptions),
+                  });
+                  yield* expectDaemonOk(socketPath, path, response, name);
+                }),
+              ),
             ),
 
-          waitAllReady: () =>
+          waitAllReady: (opts) =>
             withUnixHttpClient(
-              Effect.gen(function* () {
-                // Check current state first
-                const { services } = yield* fetchStatus(socketPath, "/status");
-                const allReady = services.every(
-                  (s) => s.status === "Healthy" || s.status === "Running",
-                );
-                if (allReady) return;
-
-                // Track service readiness via SSE
-                const readySet = new Set(
-                  services
-                    .filter((s) => s.status === "Healthy" || s.status === "Running")
-                    .map((s) => s.name),
-                );
-                const totalCount = services.length;
-
-                yield* withUnixHttpClient(
-                  sseStream(socketPath, "/status/stream", (data) => {
-                    const raw = decodeStatusServiceEvent(data);
-                    return toServiceState(raw);
-                  }).pipe(
-                    Stream.takeUntil((s) => {
-                      if (s.status === "Healthy" || s.status === "Running") {
-                        readySet.add(s.name);
-                      }
-                      return readySet.size >= totalCount;
-                    }),
-                    Stream.runDrain,
-                  ),
-                );
-              }),
+              withAbortSignal((signal) =>
+                Effect.gen(function* () {
+                  const path = "/ready";
+                  const response = yield* unixResponse(socketPath, path, {
+                    method: "POST",
+                    signal,
+                    headers: { "content-type": "application/json" },
+                    body: JSON.stringify(opts ?? inheritReadyOptions),
+                  });
+                  yield* expectDaemonOk(socketPath, path, response, "stack").pipe(
+                    Effect.catchTag("ServiceNotFoundError", (error) => Effect.die(error)),
+                  );
+                }),
+              ),
             ),
 
           subscribeLogs: (name: string) =>
             withUnixHttpClientStream(
-              sseStream<LogEntry>(socketPath, `/logs/${name}`, (data) => decodeLogEntryEvent(data)),
+              sseStream<LogEntry>(socketPath, `/logs/${encodeURIComponent(name)}`, (data) =>
+                decodeLogEntryEvent(data),
+              ),
             ),
 
           subscribeAllLogs: (services) => {
@@ -448,7 +534,9 @@ export const RemoteStack = {
 
           logHistory: (name: string, limit?: number) => {
             const query = limit !== undefined ? `?limit=${limit}` : "";
-            return withUnixHttpClient(fetchLogEntries(socketPath, `/logs/${name}/history${query}`));
+            return withUnixHttpClient(
+              fetchLogEntries(socketPath, `/logs/${encodeURIComponent(name)}/history${query}`),
+            );
           },
 
           logHistoryAll: (limit?: number, services?: ReadonlyArray<string>) => {

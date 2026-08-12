@@ -35,6 +35,7 @@ import { LegacyStorageConfigError } from "../../../shared/legacy-storage-credent
 import {
   LegacyStorageCopyBetweenBucketsError,
   LegacyStorageFileError,
+  LegacyStorageMutuallyExclusiveFlagsError,
   LegacyStorageObjectNotFoundError,
   LegacyStorageUnsupportedOperationError,
   LegacyStorageUrlParseError,
@@ -67,10 +68,12 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   const runtimeInfo = yield* RuntimeInfo;
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
-  // Intentional deviation from Go: `--jobs` is a uint there, so `--jobs 0` is
-  // accepted and reaches NewJobQueue(0) (apps/cli-go/pkg/queue/queue.go), whose
-  // unbuffered channel + zero-run priming loop deadlocks the first Put. We clamp
-  // `< 1 → 1` to avoid that hang — do not "restore parity" by removing it.
+  // A non-uint `--jobs` is already rejected in `cp.command.ts` with pflag's
+  // uint parse error (Go: `UintVarP`, `cmd/storage.go:107`). The remaining clamp is
+  // an intentional deviation from Go for `--jobs 0` only: Go accepts 0 and
+  // reaches NewJobQueue(0) (apps/cli-go/pkg/queue/queue.go), whose unbuffered
+  // channel + zero-run priming loop deadlocks the first Put. We clamp `0 → 1`
+  // to avoid that hang — do not "restore parity" by removing it.
   const jobs = jobsFlag < 1 ? 1 : jobsFlag;
   const contentTypeFlag = Option.getOrElse(flags.contentType, () => "");
   const cacheControlRaw = Option.getOrElse(flags.cacheControl, () => "max-age=3600");
@@ -80,7 +83,19 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && flags.local) {
+      return yield* Effect.fail(
+        new LegacyStorageMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
+    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {

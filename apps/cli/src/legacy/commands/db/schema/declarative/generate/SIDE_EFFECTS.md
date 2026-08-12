@@ -28,7 +28,7 @@ pg-delta catalog (source) against the target database's catalog (target).
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
 | `supabase-go db schema declarative __catalog --mode baseline --experimental` (hidden seam) — provisions a shadow Postgres + `start.SetupDatabase`, exports the baseline catalog | always                                                         |
 | Edge-runtime container (`supabase/edge-runtime`) running the pg-delta declarative-export Deno script (host network, deno-cache volume `supabase_edge_runtime_<projectId>`)      | always                                                         |
-| `supabase-go db reset --local`                                                                                                                                                  | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase`     | smart-mode Local choice when reset is confirmed (or `--reset`) |
 
 ## Environment Variables
 

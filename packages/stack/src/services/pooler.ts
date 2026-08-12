@@ -1,5 +1,7 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerPortMapArgs } from "../Platform.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 type PoolMode = "transaction" | "session";
 
@@ -7,6 +9,7 @@ interface DockerPoolerOptions {
   readonly image: string;
   readonly apiPort: number;
   readonly hostAdminPort: number;
+  readonly hostPort: number;
   readonly dbHost: string;
   readonly dbPort: number;
   readonly poolMode: PoolMode;
@@ -16,7 +19,7 @@ interface DockerPoolerOptions {
   readonly tenantId: string;
   readonly encryptionKey: string;
   readonly secretKeyBase: string;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -28,9 +31,7 @@ const poolerHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/api/health",
     scheme: "http",
   },
-  initialDelaySeconds: 2,
-  periodSeconds: 1,
-  failureThreshold: 60,
+  ...stackHealthBudgets.pooler,
 });
 
 const tenantScript = (
@@ -69,9 +70,18 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
   (() => {
     return dockerRunService({
       name: "pooler",
-      containerName: `supabase-pooler-${opts.apiPort}`,
+      apiPort: opts.apiPort,
       image: opts.image,
-      networkArgs: opts.networkArgs,
+      networkArgs: dockerPortMapArgs(opts.platformOs, [
+        { host: opts.hostAdminPort, container: poolerContainerPorts.admin },
+        {
+          host: opts.hostPort,
+          container:
+            opts.poolMode === "session"
+              ? poolerContainerPorts.session
+              : poolerContainerPorts.transaction,
+        },
+      ]),
       env: {
         PORT: String(poolerContainerPorts.admin),
         PROXY_PORT_SESSION: String(poolerContainerPorts.session),
@@ -92,7 +102,7 @@ export const makePoolerServiceDocker = (opts: DockerPoolerOptions): ServiceDef =
         "-c",
         `/app/bin/migrate && /app/bin/supavisor eval '${tenantScript(opts)}' && /app/bin/server`,
       ],
-      dependsOn: opts.dependencies,
+      dependencies: opts.dependencies,
       healthCheck: poolerHealthCheck(opts.hostAdminPort),
     });
   })();

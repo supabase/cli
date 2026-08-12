@@ -1,41 +1,50 @@
 import { Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import { detectGitBranch } from "../../../../shared/git/git-branch.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import {
   legacyResolveExperimentalWithProjectEnv,
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
-import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { legacyAqua, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyResolveResetSeedConfig } from "../../../shared/db-bootstrap/db-setup.ts";
+import { legacyResetLocalDatabase } from "../../../shared/db-bootstrap/reset-local-database.ts";
+import { legacyParseBoolEnv } from "../../../shared/legacy-diff-engine.ts";
+import { redactLegacyConnectionString } from "../../../shared/legacy-db-config.parse.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
+  legacyApplyProjectEnv,
   legacyCheckDbToml,
   legacyLoadProjectEnv,
-  legacyResolveSeedSqlPath,
 } from "../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
-import { legacyApplyMigrations } from "../../../shared/legacy-migration-apply.ts";
-import { legacyParseMigrationVersion } from "../../../shared/legacy-migration-timestamp.format.ts";
-import { legacyPromptYesNo } from "../../../../shared/legacy/legacy-prompt-yes-no.ts";
 import {
-  type LegacyDbConnType,
-  resolveLegacyDbTargetFlags,
-} from "../../../shared/legacy-db-target-flags.ts";
+  legacyResolveLocalProjectId,
+  legacySanitizeProjectId,
+} from "../../../shared/legacy-docker-ids.ts";
+import {
+  legacyApplyMigrations,
+  legacyApplySchemaFiles,
+} from "../../../shared/legacy-migration-apply.ts";
+import { legacyParseMigrationVersion } from "../../../shared/legacy-migration-timestamp.format.ts";
+import {
+  legacyListLocalMigrations,
+  legacyTryCacheMigrationsCatalog,
+} from "../../../shared/legacy-pgdelta.cache.ts";
+import { type LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
+import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
+import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
+import { resolveLegacyDbTargetFlags } from "../../../shared/legacy-db-target-flags.ts";
+import { legacyGetPendingSeeds, legacySeedData } from "../../../shared/legacy-seed-ops.ts";
+import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyDropUserSchemas } from "../shared/legacy-drop-schemas.ts";
-import { LegacyDbBootstrapSeam } from "../shared/legacy-db-bootstrap.seam.service.ts";
-import { legacyListLocalMigrations } from "../shared/legacy-pgdelta.cache.ts";
-import { legacyGetPendingSeeds, legacySeedData } from "../shared/legacy-seed-ops.ts";
-import { legacyPathMatch } from "../../../shared/legacy-path-match.ts";
-import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
-import { legacySeedBucketsRun } from "../../../shared/legacy-seed-buckets.ts";
 import type { LegacyDbResetFlags } from "./reset.command.ts";
 import {
   LegacyDbResetApplyError,
@@ -43,7 +52,6 @@ import {
   LegacyDbResetInvalidVersionError,
   LegacyDbResetLastFlagError,
   LegacyDbResetMigrationFileError,
-  LegacyDbResetNotRunningError,
   LegacyDbResetSeedFlagsError,
   LegacyDbResetTargetFlagsError,
   LegacyDbResetVersionFlagsError,
@@ -51,60 +59,36 @@ import {
 
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
 
-const applyError = (message: string) => new LegacyDbResetApplyError({ message });
+const applyError = (message: string, suggestion?: string) =>
+  new LegacyDbResetApplyError({ message, ...(suggestion !== undefined ? { suggestion } : {}) });
 
 /** Go's `toLogMessage` (`internal/db/reset/reset.go:88-91`). */
 const toLogMessage = (version: string): string =>
   version.length > 0 ? ` to version: ${version}` : "...";
 
 /**
- * Rebuilds the `db reset` argv for the remaining Go-delegated path: a remote
- * `--experimental` reset with no resolved version. Only the flags reachable on
- * that path are forwarded — `--local` always takes the native path, and a set
- * `--version`/`--last` resolves a non-empty version which disables the experimental
- * delegation (a degenerate `--last 0` resolves to "" and is behaviourally identical
- * whether or not it is forwarded, so it is omitted).
- *
- * The target selector is forwarded from the RESOLVED `connType`, not the raw `--linked`
- * boolean: the parent's `resolveLegacyDbTargetFlags` follows Cobra's `Changed` semantics, so
- * `--linked=false` selects the linked/remote target (this path is remote-only). Forwarding
- * only when `flags.linked === true` would drop the selector for `--linked=false` and let the
- * Go child fall back to its local default — resetting the wrong database.
- */
-const buildResetArgs = (
-  flags: LegacyDbResetFlags,
-  connType: LegacyDbConnType,
-  yes: boolean,
-): Array<string> => {
-  const args = ["db", "reset"];
-  if (Option.isSome(flags.dbUrl)) args.push("--db-url", flags.dbUrl.value);
-  else if (connType === "linked") args.push("--linked");
-  if (flags.noSeed) args.push("--no-seed");
-  for (const p of flags.sqlPaths) args.push("--sql-paths", p);
-  // Forward the parent's RESOLVED `yes` as a bound flag. Go's `--yes` beats `AutomaticEnv`,
-  // so `--yes=false` overrides an inherited `SUPABASE_YES=true` (the child no longer
-  // auto-confirms a reset the user protected with `--yes=false`), while `--yes=true` honors
-  // an explicit `--yes` / env even in machine mode where the child's stdin is ignored.
-  // `--yes=false` still prompts on a TTY (Go's PromptYesNo only short-circuits on true), so
-  // this matches the default behavior when neither flag nor env is set.
-  args.push(`--yes=${yes}`);
-  return args;
-};
-
-/**
  * `supabase db reset` — reinitialise a database from local migrations (+ seed).
  *
- * Strict 1:1 port of `apps/cli-go/internal/db/reset/reset.go`. The remote path
- * (`--linked` / a remote `--db-url`) is native. The local path (and the niche
- * `--experimental` schema-files path) delegate to the Go binary as a documented
- * interim until the container-bootstrap seam is ported (CLI-1325 Stage 3).
+ * Strict 1:1 port of `apps/cli-go/internal/db/reset/reset.go`. Fully native — no
+ * remaining Go delegation on either target. The local path's container-recreate
+ * primitives are native (the hidden `db __db-bootstrap` Go seam this used to
+ * delegate to, CLI-1325 Stage 3's documented interim, is gone — CLI-1955), and the
+ * local-reset composition itself is hoisted into `legacyResetLocalDatabase`
+ * (`legacy/shared/db-bootstrap/reset-local-database.ts`, CLI-2062) so `db schema
+ * declarative`'s smart-target/sync recovery reset can call it in-process too,
+ * instead of shelling out to a second `supabase-go` child. The remote target's
+ * `--experimental` schema-files path — the last remaining Go delegation on this
+ * command — is now also native (`legacyApplySchemaFiles`, CLI-1958): a versionless
+ * `--experimental`/`SUPABASE_EXPERIMENTAL` remote reset with pg-delta NOT enabled
+ * takes Go's EXPERIMENTAL declarative schema-files branch of `apply.MigrateAndSeed`
+ * instead of replaying timestamped migrations, mirroring `legacyMigrateAndSeed`'s
+ * already-native local-side implementation of the exact same Go branch (reused by
+ * both the PG14 and PG15 recreate paths).
  */
 export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: LegacyDbResetFlags) {
   const output = yield* Output;
   const resolver = yield* LegacyDbConfigResolver;
   const dbConn = yield* LegacyDbConnection;
-  const proxy = yield* LegacyGoProxy;
-  const seam = yield* LegacyDbBootstrapSeam;
   const cliConfig = yield* LegacyCliConfig;
   const telemetryState = yield* LegacyTelemetryState;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
@@ -125,6 +109,16 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
+    // Go's `loadNestedEnv` (`os.Setenv`) makes every project-`.env` key visible to the
+    // WHOLE reset run, not just the flag-gate reads above — in particular
+    // `legacyGetRegistryImageUrl` / `legacyPgDeltaNpmRegistryOption` read
+    // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY` straight from
+    // `process.env` for the pg-delta catalog export below (review CLI-1958). `db push`
+    // (`push.handler.ts`) scopes this the same way, as the first statement of its own
+    // `body` — mirror that exactly so a private/air-gapped registry configured only in
+    // `supabase/.env` reaches the catalog export instead of silently falling back to the
+    // default registries.
+    yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
     // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local").
     if (target.setFlags.length > 1) {
@@ -234,35 +228,18 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     }
 
     const connType = target.connType ?? "local";
-    // Single source of truth for "does this reset delegate to the Go child?" —
-    // checked at both delegation sites below (before `resolve()` for a linked
-    // target, after it for a `--db-url` target) so the two call sites can never
-    // drift apart.
-    const shouldDelegateExperimental = experimental && resolvedVersion === "";
 
-    // Delegates the remaining `--experimental` schema-files apply path
-    // (`apply.MigrateAndSeed`, not ported) to the Go child. In text mode inherit
-    // its stdio. Under a machine-output mode (`--output-format json|stream-json`)
-    // the Go child emits no TS envelope, so suppress its stdout (capture + discard)
-    // and emit the same structured success the native local and remote paths do,
-    // keeping the JSON contract consistent across all reset paths.
-    const delegateExperimentalReset = () =>
-      Effect.gen(function* () {
-        const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
-        if (output.format === "text") {
-          yield* proxy.exec(buildResetArgs(flags, connType, yes), { env });
-        } else {
-          // Machine-output mode is non-interactive: give the Go child a non-TTY stdin
-          // (`stdin: "ignore"`) so it can't block on (or be answered at) Go's
-          // destructive reset prompt — it takes the default `false`, matching the
-          // native reset path which suppresses prompts under json/stream-json.
-          yield* proxy.execCapture(buildResetArgs(flags, connType, yes), { env, stdin: "ignore" });
-          yield* output.success("Reset remote database.", {
-            target: "remote",
-            version: resolvedVersion,
-          });
-        }
-      });
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbResetTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
 
     // Go's ParseDatabaseConfig runs LoadProjectRef BEFORE the fallible linked
     // resolution (db_url.go:87-95), and Execute() writes the linked-project cache
@@ -271,110 +248,28 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // config, temp-role mint, connection) — mirrors push.handler.
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
-      linkedRefForCache = yield* refResolver.loadProjectRef(Option.none());
-
-      // A linked target is never local (`resolver.resolve()`'s "linked" branch
-      // always returns `isLocal: false`), so the delegated-experimental check can
-      // run BEFORE calling `resolve()`. This matters: for `connType === "linked"`,
-      // `resolve()` mints/verifies a temporary Postgres login role over the
-      // Management API — and the delegated Go child re-runs that exact same
-      // `ParseDatabaseConfig` work itself once delegation happens. Calling
-      // `resolve()` here would mint the temp role twice for zero downstream use on
-      // this branch (Go's own reset flow mints it exactly once, as part of the code
-      // path being delegated to — confirmed against `apps/cli-go/internal/utils/
-      // flags/db_url.go`'s `NewDbConfigWithPassword`/`initLoginRole`). CLI-1879.
-      if (shouldDelegateExperimental) {
-        yield* delegateExperimentalReset();
-        return;
-      }
+      linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
     }
 
-    const cfg = yield* resolver.resolve({ dbUrl: flags.dbUrl, connType, dnsResolver });
+    const cfg = yield* resolver.resolve({
+      dbUrl: flags.dbUrl,
+      connType,
+      dnsResolver,
+      linkedProjectRef: flags.projectRef,
+    });
 
-    // Local target → native local reset. The container-recreate primitives live
-    // behind the hidden Go `db __db-bootstrap` seam; TS orchestrates the rest
-    // (running check, messages, bucket seeding, git-branch line, output shaping).
-    // Mirrors `internal/db/reset/reset.go:57-77`.
+    // Local target → native local reset. Mirrors `internal/db/reset/reset.go:57-77`;
+    // the actual composition (running check, container recreate, storage-health gate,
+    // bucket seeding, git-branch line) is hoisted into `legacyResetLocalDatabase`
+    // (CLI-2062) — shared with `db schema declarative`'s in-process recovery reset —
+    // so this call site stays a thin wrapper around it, keeping only the version/
+    // seed-flags plumbing and the JSON envelope, which belong to this top-level
+    // command alone (see that function's own header for why).
     if (cfg.isLocal) {
-      // Go's `flags.LoadConfig` (root `PersistentPreRunE` → the local target's
-      // per-connType `LoadConfig`, `internal/utils/flags/db_url.go:77-80`) runs full
-      // config validation before `reset.Run` ever reaches `AssertSupabaseDbIsRunning`
-      // / the destructive `resetDatabase` (`internal/db/reset/reset.go:57-61`). The
-      // resolver's own local read (above, line 239) already performs the identical
-      // validation and would already reject a broken config before this point is
-      // reached — so today this re-validates for its own sake. Repeat it here anyway,
-      // as an explicit, independent gate (the same pattern `db start` and `db push`
-      // use), so the "malformed config aborts before the local database is recreated"
-      // guarantee is enforced by this handler directly and stays covered by a
-      // handler-level test even if the resolver's own internal read is ever mocked,
-      // relaxed, or refactored to stop validating.
-      yield* legacyCheckDbToml(fs, path, workdir);
-
-      // AssertSupabaseDbIsRunning — error if the local db container is down.
-      const running = yield* seam.isDbRunning();
-      if (!running) {
-        return yield* Effect.fail(
-          new LegacyDbResetNotRunningError({
-            message: `${legacyAqua("supabase start")} is not running.`,
-          }),
-        );
-      }
-      // resetDatabase: "Resetting local database…" then recreate + migrate + seed.
-      yield* output.raw(`Resetting local database${toLogMessage(resolvedVersion)}\n`, "stderr");
-      yield* seam.recreateDatabase({
+      yield* legacyResetLocalDatabase({
         version: resolvedVersion,
-        noSeed: flags.noSeed,
-        sqlPaths: flags.sqlPaths,
+        seedFlags: { noSeed: flags.noSeed, sqlPaths: flags.sqlPaths },
       });
-
-      // Seed objects from supabase/buckets when storage is up (Go gates buckets on
-      // an existing, healthy storage container). Reuses the ported seed-buckets
-      // local path; its summary is suppressed (reset emits its own result).
-      const storageReady = yield* seam.awaitStorageReady();
-      if (storageReady) {
-        // Go's `buckets.Run(ctx, "", false, fsys)` — non-interactive: overwrite/prune
-        // confirmations take their defaults instead of blocking on input.
-        //
-        // `legacyCheckDbToml` above resolves `env(VAR)` via `legacyLoadProjectEnv`,
-        // which mirrors Go's full nested-env walk (`.env.<SUPABASE_ENV>.local`,
-        // `.env.local`, `.env.<SUPABASE_ENV>`, `.env`, across both `supabase/` and the
-        // project root — `pkg/config/config.go:1220-1257`). This reload instead goes
-        // through `@supabase/config`'s `loadProjectConfig` → `loadProjectEnvironment`,
-        // which only ever reads `supabase/.env`/`.env.local` plus ambient env
-        // (`packages/config/src/project.ts:209-245`) — regardless of `goViperCompat`,
-        // which only widens `env(VAR)` matching, not the file set consulted. So a
-        // config whose `env(VAR)` reference is backed by e.g. `supabase/.env.development`
-        // is genuinely Go-valid (Go's `godotenv.Load` calls `os.Setenv`, so the value is
-        // real ambient env by the time Go resolves it — `config.go:1260-1261`) and
-        // already passed `legacyCheckDbToml` and the real recreate above, but this
-        // narrower reload can still reject it. A `LegacySeedConfigLoadError` here is
-        // that env-file-set gap, not a genuinely invalid config — and recreate already
-        // dropped/rebuilt the DB, so aborting now would leave the reset half-done; warn
-        // and skip buckets so `db reset` finishes like Go instead.
-        yield* legacySeedBucketsRun({
-          projectRef: "",
-          emitSummary: false,
-          interactive: false,
-          // Go loads nested env before `buckets.Run`, so `SUPABASE_YES` in `supabase/.env`
-          // auto-confirms bucket/vector/analytics prune prompts. Pass the project-env-resolved
-          // `yes` (the shared runner's own `legacyResolveYes` only sees the shell env).
-          yes,
-        }).pipe(
-          Effect.catchTag("LegacySeedConfigLoadError", (error) =>
-            output.raw(
-              `${legacyYellow("WARNING:")} skipped seeding storage buckets: ${error.message}\n`,
-              "stderr",
-            ),
-          ),
-        );
-      }
-
-      // "Finished supabase db reset on branch <branch>." (both Aqua).
-      const branch = Option.getOrElse(yield* detectGitBranch(workdir), () => "main");
-      yield* output.raw(
-        `Finished ${legacyAqua("supabase db reset")} on branch ${legacyAqua(branch)}.\n`,
-        "stderr",
-      );
       if (output.format !== "text") {
         yield* output.success("Reset local database.", {
           target: "local",
@@ -385,21 +280,11 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     }
 
     // Re-confirm `linkedRefForCache` from the now-resolved `cfg.ref` for the native
-    // remote linked path below (a linked+experimental+versionless target already
-    // delegated and returned above, before `resolve()` was ever called — see the
-    // `connType === "linked"` block earlier in this function). A `connType ===
-    // "db-url"` target leaves `linkedRefForCache` as whatever the pre-load block
-    // set (nothing, for `db-url`), since this assignment only fires when linked.
+    // remote path below. A `connType === "db-url"` target leaves `linkedRefForCache`
+    // as whatever the pre-load block set (nothing, for `db-url`), since this
+    // assignment only fires when linked.
     const linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
     if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
-
-    // Remaining remote target: a `--db-url` pointing at a non-local host (the
-    // `connType === "linked"` case already delegated above, before `resolve()`,
-    // without resolving a connection at all).
-    if (shouldDelegateExperimental) {
-      yield* delegateExperimentalReset();
-      return;
-    }
 
     // Single Go-parity config load (`flags.LoadConfig` → `config.Load` + `Validate`):
     // decodes the whole config with Go's env-expansion + `strconv.ParseBool` weak typing
@@ -437,7 +322,28 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         yield* legacyDropUserSchemas(session, applyError);
         yield* legacyUpsertVaultSecrets(session, vaultSecrets);
 
-        if (toml.migrationsEnabled) {
+        // Go's three-conjunct EXPERIMENTAL gate (`apply.MigrateAndSeed`, `apply.go:19`):
+        // `--experimental`/`SUPABASE_EXPERIMENTAL` + no resolved version + pg-delta NOT
+        // enabled. A hard `if`/`else if` in Go (`apply.go:19-27`) — taking the
+        // schema-files branch means timestamped migrations never run at all, even when
+        // the glob matches nothing (Go's `schema_paths = []` default silently applies
+        // NOTHING rather than falling back to migrations — CLI-1958).
+        const useSchemaFiles = experimental && resolvedVersion === "" && !toml.pgDelta.enabled;
+        if (useSchemaFiles) {
+          // `projectEnv` (loaded above, before `experimental`/`yes` resolve) is threaded
+          // through so a `SUPABASE_SCANNER_BUFFER_SIZE` set only in `supabase/.env` is
+          // honored here exactly like Go's `loadNestedEnv` (see
+          // `checkScannerBufferSize`'s doc comment, `legacy-migration-apply.ts`).
+          yield* legacyApplySchemaFiles(
+            session,
+            fs,
+            path,
+            workdir,
+            toml.schemaPaths,
+            applyError,
+            projectEnv,
+          );
+        } else if (toml.migrationsEnabled) {
           const locals = yield* legacyListLocalMigrations(fs, path, migrationsDir);
           // LoadPartialMigrations filter: version === "" || v <= version.
           const pending = locals.filter((p) => {
@@ -450,22 +356,66 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
 
         // `--no-seed` disables seeding; `--sql-paths` overrides [db.seed].sql_paths
         // and force-enables it (Go's applyDbResetSeedFlags). The two are mutually
-        // exclusive (validated above).
-        const overrideSeed = flags.sqlPaths.length > 0;
-        // `--sql-paths` force-enables seeding (Go's applyDbResetSeedFlags); otherwise
-        // honor `db.seed.enabled` (already `SUPABASE_DB_SEED_ENABLED`-resolved by the reader).
-        const seedEnabled = overrideSeed || (toml.seed.enabled && !flags.noSeed);
-        if (seedEnabled) {
-          // `[db.seed].sql_paths` is already Go-config-resolved (supabase/-joined) by the
-          // reader; the `--sql-paths` override is resolved here the same way Go's
-          // `resolveSeedSqlPaths` does, so both feed the glob identical paths.
-          const seedPaths = overrideSeed
-            ? flags.sqlPaths.map((p) => legacyResolveSeedSqlPath(path, p))
-            : toml.seed.sqlPaths;
-          const seeds = yield* legacyGetPendingSeeds(session, fs, path, seedPaths, workdir);
+        // exclusive (validated above). Same single home as the local path's identical
+        // override (`legacyResolveResetSeedConfig`, `db-setup.ts`) — one implementation
+        // of Go's `applyDbResetSeedFlags` for both targets, per "Hoist Before You
+        // Duplicate" (`apps/cli/CLAUDE.md`).
+        const resolvedSeed = legacyResolveResetSeedConfig(
+          toml.seed,
+          { noSeed: flags.noSeed, sqlPaths: flags.sqlPaths },
+          path,
+        );
+        if (resolvedSeed.enabled) {
+          const seeds = yield* legacyGetPendingSeeds(
+            session,
+            fs,
+            path,
+            resolvedSeed.sqlPaths,
+            workdir,
+          );
           yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
         }
-        // Go's best-effort pgcache catalog warning is not ported (no output impact).
+
+        // Go's `down.ResetAll` (`internal/migration/down/down.go:48-61`) — the function
+        // `resetRemote` delegates to — best-effort caches the migrations catalog for
+        // pg-delta right after `apply.MigrateAndSeed` succeeds, warning (never failing
+        // the reset) on error. `pgcache.TryCacheMigrationsCatalog` itself no-ops when
+        // `resolvedVersion` is non-empty (`len(version) > 0`, `pgcache/cache.go:73`) —
+        // a versioned reset (`--version`/`--last`) never refreshes the cache — so gate
+        // the call the same way rather than threading that check into the shared
+        // native helper (already used by `db push`, which has no version concept).
+        const cacheEnabled =
+          resolvedVersion === "" &&
+          (toml.pgDelta.enabled ||
+            legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")));
+        const pgDeltaCtx: LegacyPgDeltaContext = {
+          projectId: legacySanitizeProjectId(
+            legacyResolveLocalProjectId(
+              Option.getOrUndefined(cliConfig.projectId),
+              Option.getOrUndefined(toml.projectId) ??
+                (linkedRef !== undefined && linkedRef !== "" ? linkedRef : undefined),
+              workdir,
+            ),
+          ),
+          cwd: workdir,
+          npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
+          denoVersion: toml.denoVersion,
+          projectEnv: toml.projectEnv,
+        };
+        yield* legacyTryCacheMigrationsCatalog(fs, path, pgDeltaCtx, {
+          enabled: cacheEnabled,
+          targetUrl: legacyToPostgresURL(cfg.conn),
+          conn: cfg.conn,
+          isLocal: false,
+          migrationsDir,
+        }).pipe(
+          Effect.catch((error) =>
+            output.raw(
+              `Warning: failed to cache migrations catalog: ${redactLegacyConnectionString(error.message)}\n`,
+              "stderr",
+            ),
+          ),
+        );
       }),
     );
 
@@ -486,5 +436,8 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       ),
     ),
     Effect.ensuring(telemetryState.flush),
+    // Closes the `Scope` `legacyApplyProjectEnv` (above) acquires its `process.env`
+    // reverts against — mirrors `push.handler.ts`'s own `body.pipe(..., Effect.scoped)`.
+    Effect.scoped,
   );
 });

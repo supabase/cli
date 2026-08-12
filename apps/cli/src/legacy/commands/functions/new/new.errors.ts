@@ -1,11 +1,20 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 export class LegacyFunctionsNewInvalidSlugError extends Data.TaggedError(
   "LegacyFunctionsNewInvalidSlugError",
 )<{
   readonly message: string;
   readonly detail: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 export class LegacyFunctionsNewFileExistsError extends Data.TaggedError(
   "LegacyFunctionsNewFileExistsError",
@@ -13,12 +22,20 @@ export class LegacyFunctionsNewFileExistsError extends Data.TaggedError(
   readonly path: string;
   readonly message: string;
   readonly suggestion: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 export class LegacyFunctionsNewWriteError extends Data.TaggedError("LegacyFunctionsNewWriteError")<{
   readonly path: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 /**
  * Maps an arbitrary thrown cause from a filesystem write to a typed

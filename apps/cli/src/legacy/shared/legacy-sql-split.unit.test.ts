@@ -39,6 +39,17 @@ describe("legacySplitAndTrim", () => {
     ]);
   });
 
+  it("treats a non-decimal Unicode digit as an invalid dollar-tag character, like Go's unicode.IsDigit", () => {
+    // Go's TagState.Next gates on unicode.IsDigit (category Nd only), which is false
+    // for superscript-2 (U+00B2, category No) — the tag "a²" is therefore invalid,
+    // Go falls back out of the tag and the embedded `;` becomes a real boundary.
+    const sql = "CREATE FUNCTION f() AS $a²$foo; bar$a²$ LANGUAGE sql;";
+    expect(legacySplitAndTrim(sql)).toEqual([
+      "CREATE FUNCTION f() AS $a²$foo",
+      "bar$a²$ LANGUAGE sql",
+    ]);
+  });
+
   it("respects named dollar tags", () => {
     const sql = "CREATE FUNCTION f() AS $body$ SELECT ';'; $body$ LANGUAGE sql; SELECT 2;";
     expect(legacySplitAndTrim(sql)).toEqual([

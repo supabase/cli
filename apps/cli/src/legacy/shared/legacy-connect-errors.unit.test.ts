@@ -8,6 +8,7 @@ import {
   legacyConnectFailureMessage,
   legacyConnectSuggestion,
   legacyIpv6Suggestion,
+  legacyIsDialFailure,
   legacyIsIPv6ConnectivityError,
   legacyIsIPv6ConnectivityErrorCause,
 } from "./legacy-connect-errors.ts";
@@ -479,6 +480,48 @@ describe("legacyConnectSuggestion", () => {
 
   it("returns undefined for an unrecognized connect error", () => {
     expect(legacyConnectSuggestion(sqlError(new Error("some other failure")), ctx)).toBeUndefined();
+  });
+});
+
+describe("legacyIsDialFailure", () => {
+  it("classifies dial errno failures", () => {
+    expect(
+      legacyIsDialFailure(realSqlConnectError(dialError("ECONNREFUSED", "127.0.0.1", 54322))),
+    ).toBe(true);
+    expect(
+      legacyIsDialFailure(realSqlConnectError(dialError("ETIMEDOUT", "127.0.0.1", 54322))),
+    ).toBe(true);
+  });
+
+  it("classifies the last attempt of a multi-address dial", () => {
+    expect(
+      legacyIsDialFailure(
+        realSqlConnectError(
+          new AggregateError([
+            dialError("ENETUNREACH", "::1", 54322),
+            dialError("ECONNREFUSED", "127.0.0.1", 54322),
+          ]),
+        ),
+      ),
+    ).toBe(true);
+  });
+
+  it("classifies the code-less connect timeouts", () => {
+    expect(legacyIsDialFailure(realSqlConnectError(new Error("Connection timed out")))).toBe(true);
+    expect(legacyIsDialFailure(realSqlConnectError(new Error("timeout expired")))).toBe(true);
+    expect(
+      legacyIsDialFailure(
+        realSqlConnectError(new Error("timeout exceeded when trying to connect")),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not classify server, auth, or unknown errors", () => {
+    expect(legacyIsDialFailure(realSqlConnectError(authFailedError()))).toBe(false);
+    expect(
+      legacyIsDialFailure(realSqlConnectError(new Error("Connection terminated unexpectedly"))),
+    ).toBe(false);
+    expect(legacyIsDialFailure(undefined)).toBe(false);
   });
 });
 

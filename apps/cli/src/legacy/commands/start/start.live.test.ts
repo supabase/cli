@@ -253,7 +253,7 @@ describeLive("supabase start (live)", () => {
         expect(start.exitCode, `stdout:\n${start.stdout}\nstderr:\n${start.stderr}`).not.toBe(0);
         // Go reports `utils.InbucketId`, not the id `docker create` returns.
         expect(start.stderr).toContain(`${mailpitContainer} container logs:`);
-        expect(start.stderr).toContain(`${mailpitContainer}: container is not ready`);
+        expect(start.stderr).toContain(`${mailpitContainer} container is not ready`);
         // ...and the advice names that container's actual resolved image.
         expect(start.stderr).toContain(`${mailpitContainer}'s image ${mailpitImage}`);
         expect(start.stderr).toContain(`image rm -f ${mailpitImage}`);

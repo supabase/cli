@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { makeApiClient } from "@supabase/api/effect";
+import { makeApiClient, SupabaseApiInputError } from "@supabase/api/effect";
 import { Effect, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
@@ -20,6 +20,7 @@ import {
   InvalidFunctionSlugError,
 } from "../../../../shared/functions/delete.errors.ts";
 import { functionsDelete } from "./delete.handler.ts";
+import { classifyCliErrorActionability } from "../../../../shared/telemetry/error-actionability.ts";
 
 const PROJECT_REF = "abcdefghijklmnopqrst";
 const BRANCH_REF = "branchrefabcdefghij";
@@ -186,6 +187,29 @@ describe("functions delete", () => {
       }).pipe(Effect.provide(layer), Effect.flip);
 
       expect(error).toBeInstanceOf(InvalidFunctionSlugError);
+      expect(api.requests).toHaveLength(0);
+    }),
+  );
+
+  it.live("marks a rejected project ref as user input without sending a request", () =>
+    Effect.gen(function* () {
+      const { layer, api } = setup({ linked: false });
+
+      const error = yield* functionsDelete({
+        slug: "hello-world",
+        projectRef: Option.some("invalid-ref"),
+      }).pipe(Effect.provide(layer), Effect.flip);
+
+      expect(error).toBeInstanceOf(SupabaseApiInputError);
+      if (!(error instanceof SupabaseApiInputError)) {
+        return yield* Effect.die("expected SupabaseApiInputError");
+      }
+      expect(error.source).toBe("user_input");
+      expect(classifyCliErrorActionability(error)).toMatchObject({
+        error_kind: "user_actionable",
+        error_category: "invalid_input",
+        error_fingerprint: "tag:SupabaseApiInputError:request_input",
+      });
       expect(api.requests).toHaveLength(0);
     }),
   );

@@ -15,6 +15,11 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(Flag.withDescription("Inspect the linked project.")),
   local: Flag.boolean("local").pipe(Flag.withDescription("Inspect the local database.")),
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   outputDir: Flag.string("output-dir").pipe(
     Flag.withDescription("Path to save CSV files in."),
     Flag.withDefault("."),
@@ -33,8 +38,12 @@ export const legacyInspectReportCommand = Command.make("report", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           "output-dir": flags.outputDir,
         },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),

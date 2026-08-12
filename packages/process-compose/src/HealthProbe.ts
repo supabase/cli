@@ -69,13 +69,15 @@ export const runHealthProbe = (config: {
     const timeout = hc.timeoutSeconds ?? defaults.healthCheck.timeoutSeconds;
     const successThreshold = hc.successThreshold ?? defaults.healthCheck.successThreshold;
     const failureThreshold = hc.failureThreshold ?? defaults.healthCheck.failureThreshold;
+    const startupFailureThreshold = hc.startupFailureThreshold ?? failureThreshold;
 
     if (initialDelay > 0) {
       yield* Effect.sleep(Duration.seconds(initialDelay));
     }
 
     const counters = yield* Ref.make({ successes: 0, failures: 0 });
-    let isHealthy = false;
+    let phase: "Starting" | "Healthy" | "Unhealthy" = "Starting";
+    let hasEverBeenHealthy = false;
 
     yield* Effect.repeat(
       Effect.gen(function* () {
@@ -86,8 +88,9 @@ export const runHealthProbe = (config: {
             successes: c.successes + 1,
             failures: 0,
           }));
-          if (!isHealthy && successes + 1 >= successThreshold) {
-            isHealthy = true;
+          if (phase !== "Healthy" && successes + 1 >= successThreshold) {
+            phase = "Healthy";
+            hasEverBeenHealthy = true;
             yield* config.callbacks.onHealthy();
           }
         } else {
@@ -95,8 +98,11 @@ export const runHealthProbe = (config: {
             successes: 0,
             failures: c.failures + 1,
           }));
-          if (isHealthy && failures + 1 >= failureThreshold) {
-            isHealthy = false;
+          const activeFailureThreshold = hasEverBeenHealthy
+            ? failureThreshold
+            : startupFailureThreshold;
+          if (phase !== "Unhealthy" && failures + 1 >= activeFailureThreshold) {
+            phase = "Unhealthy";
             yield* config.callbacks.onUnhealthy();
           }
         }

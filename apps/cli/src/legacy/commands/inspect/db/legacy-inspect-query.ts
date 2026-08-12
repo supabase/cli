@@ -3,6 +3,11 @@ import { Data, Effect, Option } from "effect";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 import { renderGlamourTable } from "../../../output/legacy-glamour-table.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyResolvedDbConfig } from "../../../shared/legacy-db-config.types.ts";
@@ -21,6 +26,8 @@ export interface LegacyInspectConnectionFlags {
   readonly dbUrl: Option.Option<string>;
   readonly linked: boolean;
   readonly local: boolean;
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  readonly projectRef: Option.Option<string>;
 }
 
 /**
@@ -60,7 +67,11 @@ export interface LegacyInspectQuerySpec {
  */
 export class LegacyInspectMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyInspectMutuallyExclusiveFlagsError",
-)<{ readonly message: string }> {}
+)<{ readonly message: string }> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Cell formatters — pure, exported, unit-tested. Each reproduces a Go `fmt`
@@ -148,9 +159,11 @@ export function legacyInspectStmt(value: unknown): string {
 
 /**
  * A whitespace-collapsed statement cell that Go ALSO wraps in backticks
- * (`calls.go:52` / `outliers.go:50` write the query as `` `%s` ``, unlike
- * `locks`/`blocking` which leave it bare). Same empty-code-span rule as
- * `legacyInspectText`: an empty value surfaces as the two literal backticks.
+ * (`calls.go:52` / `outliers.go:50` write the query as `` `%s` ``, and
+ * `blocking.go:56` does the same for `blocking_statement` — unlike `locks`
+ * and `blocking`'s `blocked_statement`, which stay bare). Same
+ * empty-code-span rule as `legacyInspectText`: an empty value surfaces as the
+ * two literal backticks.
  */
 export function legacyInspectBacktickStmt(value: unknown): string {
   const stmt = legacyInspectStmt(value);
@@ -194,10 +207,23 @@ export const legacyRunInspectQuery = Effect.fnUntraced(function* (
   // so deriving the connType here does not re-trigger it.
   const connType = target.connType ?? "linked";
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyInspectMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   const rows = yield* Effect.scoped(
