@@ -10,6 +10,7 @@ declare global {
     readonly glob: (patterns: ReadonlyArray<string>) => Record<string, () => Promise<unknown>>;
   }
 }
+import { MANAGED_ERROR_CODES, MANAGED_ERROR_TAG_BY_CODE } from "@supabase/stack/managed-model";
 import {
   CliErrorCategory,
   CliErrorKind,
@@ -17,6 +18,7 @@ import {
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
   isClassifiedExternalErrorTag,
+  isClassifiedManagedErrorCode,
 } from "./error-actionability.ts";
 
 /**
@@ -193,6 +195,54 @@ describe("workspace package error tags have external adapters", () => {
       }
     });
   }
+});
+
+// Managed failures are tagged errors that also declare a stable `code`, and the
+// CLI's dispatch table is generated from the package's tag/code map. The
+// generic scan above already requires an adapter for each tag; this guard is
+// what keeps the two halves of the contract joined — the (class, tag, code)
+// triples in the model must agree with the exported map, the code list, and the
+// code-keyed classification table.
+const MANAGED_TAGGED_CLASS_PATTERN =
+  /class\s+([A-Za-z0-9_]+)\s+extends\s+Data\.TaggedError\(\s*"([A-Za-z0-9_]+)",?\s*\)[\s\S]*?readonly\s+code\s*=\s*"([A-Z0-9_]+)"/g;
+
+describe("managed registry error codes are classified", () => {
+  it("packages/stack/src/managed/model.ts", () => {
+    const modelPath = resolve(repoRoot, "packages/stack/src/managed/model.ts");
+    const matches = [...readFileSync(modelPath, "utf8").matchAll(MANAGED_TAGGED_CLASS_PATTERN)];
+    // One match per declared code: a class written in a shape this regex cannot
+    // see would otherwise pass vacuously instead of failing loudly.
+    expect(matches.length).toBe(MANAGED_ERROR_CODES.length);
+    const declaredCodes = new Set<string>(MANAGED_ERROR_CODES);
+    const scannedCodes = new Set<string>();
+    for (const match of matches) {
+      const className = match[1] ?? "";
+      const tag = match[2] ?? "";
+      const code = match[3] ?? "";
+      scannedCodes.add(code);
+      expect(tag, `${className} is tagged "${tag}" rather than its own export name`).toBe(
+        className,
+      );
+      expect(
+        declaredCodes.has(code),
+        `${className}'s code "${code}" is missing from MANAGED_ERROR_CODES`,
+      ).toBe(true);
+      expect(
+        Reflect.get(MANAGED_ERROR_TAG_BY_CODE, code),
+        `MANAGED_ERROR_TAG_BY_CODE does not map "${code}" to ${className}`,
+      ).toBe(tag);
+      expect(
+        isClassifiedManagedErrorCode(code),
+        `${className} ("${code}") has no entry in managedActionabilityByCode in error-actionability.ts`,
+      ).toBe(true);
+      expect(
+        isClassifiedExternalErrorTag(tag),
+        `${className} ("${tag}") has no generated entry in externalActionabilityByTag in error-actionability.ts`,
+      ).toBe(true);
+    }
+    // Every declared code is backed by a class, not just the other way round.
+    expect([...scannedCodes].sort()).toEqual([...declaredCodes].sort());
+  });
 });
 
 describe("Effect CLI parser errors have exhaustive handling", () => {
