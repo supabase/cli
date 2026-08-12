@@ -62,12 +62,25 @@ const runDown = Effect.fnUntraced(function* (
 
   const connType = target.connType ?? "local"; // down defaults to `--local`.
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   // Resolve the DB config BEFORE the `--last` validation, so an unlinked/invalid
   // target surfaces before the `--last must be greater than 0` error.
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   // The project .env loads after the parse-time flag-group validation above — so a
@@ -86,7 +99,7 @@ const runDown = Effect.fnUntraced(function* (
       ? yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
           const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const linkedRef = yield* projectRef.loadProjectRef(Option.none());
+          const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
           return linkedProjectCache.cache(linkedRef);
         })
       : undefined;

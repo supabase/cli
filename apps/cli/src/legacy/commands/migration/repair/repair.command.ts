@@ -26,6 +26,11 @@ const config = {
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Repairs the migration history of the local database."),
   ),
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   password: Flag.string("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
@@ -43,6 +48,7 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
       dbUrl: flags.dbUrl,
       linked: flags.linked,
       local: flags.local,
+      projectRef: flags.projectRef,
       password: flags.password,
     }).pipe(
       withLegacyCommandInstrumentation({
@@ -51,11 +57,13 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
         // --status is Flag.choice and is auto-detected as safe via `config`
-        // below; password stays redacted.
+        // below; password stays redacted. --project-ref has no established
+        // telemetry-safety baseline either, so it stays redacted too.
         config,
         aliases: { p: "password" },
       }),

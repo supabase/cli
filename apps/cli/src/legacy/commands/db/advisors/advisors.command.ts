@@ -16,6 +16,11 @@ const config = {
     Flag.withDescription("Checks the linked project for issues."),
   ),
   local: Flag.boolean("local").pipe(Flag.withDescription("Checks the local database for issues.")),
+  // TS-only override of the linked project ref — see push.command.ts.
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   type: Flag.choice("type", ["all", "security", "performance"] as const).pipe(
     Flag.withDescription("Type of advisors to check: all, security, performance."),
     Flag.optional,
@@ -42,12 +47,15 @@ export const legacyDbAdvisorsCommand = Command.make("advisors", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           type: flags.type,
           level: flags.level,
           "fail-on": flags.failOn,
         },
         // type/level/fail-on are Flag.choice and are auto-detected as safe via
         // `config` below; --db-url stays redacted (plain string, may carry secrets).
+        // --project-ref has no established telemetry-safety baseline either, so
+        // it stays redacted too.
         config,
       }),
       withJsonErrorHandling,

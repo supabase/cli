@@ -50,6 +50,18 @@ const runFetch = Effect.fnUntraced(function* (
 
   const connType = target.connType ?? "linked"; // fetch defaults to `--linked`.
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   // Resolve the DB config BEFORE any filesystem/prompt side effects — an invalid
   // `--db-url`/`config.toml` then fails immediately, instead of first creating
   // `supabase/migrations` or letting a declined overwrite prompt mask the real error
@@ -58,6 +70,7 @@ const runFetch = Effect.fnUntraced(function* (
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   // The project .env loads after the parse-time flag-group validation above — so a
@@ -75,7 +88,7 @@ const runFetch = Effect.fnUntraced(function* (
       ? yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
           const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const ref = yield* projectRef.loadProjectRef(Option.none());
+          const ref = yield* projectRef.loadProjectRef(flags.projectRef);
           return linkedProjectCache.cache(ref);
         })
       : undefined;

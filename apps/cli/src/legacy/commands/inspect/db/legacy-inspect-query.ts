@@ -26,6 +26,8 @@ export interface LegacyInspectConnectionFlags {
   readonly dbUrl: Option.Option<string>;
   readonly linked: boolean;
   readonly local: boolean;
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  readonly projectRef: Option.Option<string>;
 }
 
 /**
@@ -196,10 +198,23 @@ export const legacyRunInspectQuery = Effect.fnUntraced(function* (
   // so deriving the connType here does not re-trigger it.
   const connType = target.connType ?? "linked";
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyInspectMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   const rows = yield* Effect.scoped(

@@ -20,6 +20,11 @@ export const LEGACY_INSPECT_DB_FLAGS = {
   ),
   linked: Flag.boolean("linked").pipe(Flag.withDescription("Inspect the linked project.")),
   local: Flag.boolean("local").pipe(Flag.withDescription("Inspect the local database.")),
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
 } as const;
 
 /**
@@ -34,7 +39,15 @@ export function legacyInspectDbCommandHandler<E, R>(
   return (flags: LegacyInspectConnectionFlags) =>
     handler(flags).pipe(
       withLegacyCommandInstrumentation({
-        flags: { "db-url": flags.dbUrl, linked: flags.linked, local: flags.local },
+        flags: {
+          "db-url": flags.dbUrl,
+          linked: flags.linked,
+          local: flags.local,
+          "project-ref": flags.projectRef,
+        },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
       }),
       withJsonErrorHandling,
     );

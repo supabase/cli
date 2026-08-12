@@ -6,15 +6,15 @@ before migrations unless `--skip-vault` is set.
 
 ## Files Read
 
-| Path                                  | Format     | When                                                                    |
-| ------------------------------------- | ---------- | ----------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`      | TOML       | always (embedded defaults used when absent)                             |
-| `~/.supabase/<hash>/project-ref`      | plain text | on the `--linked` path (and the default target), to resolve the ref     |
-| `~/.supabase/access-token`            | plain text | when `SUPABASE_ACCESS_TOKEN` unset and a linked temp-role is minted     |
-| `<workdir>/supabase/migrations/`      | directory  | when `[db.migrations].enabled` (default true), to list local files      |
-| `<workdir>/supabase/migrations/*.sql` | SQL        | for each pending migration, when applied (and not `--dry-run`)          |
-| seed files from `[db.seed].sql_paths` | SQL        | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`) |
-| `<workdir>/supabase/roles.sql`        | SQL        | when `--include-roles` (existence check + apply)                        |
+| Path                                  | Format     | When                                                                                                                                 |
+| ------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.toml`      | TOML       | always (embedded defaults used when absent)                                                                                          |
+| `~/.supabase/<hash>/project-ref`      | plain text | on the `--linked` path (and the default target), to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
+| `~/.supabase/access-token`            | plain text | when `SUPABASE_ACCESS_TOKEN` unset and a linked temp-role is minted                                                                  |
+| `<workdir>/supabase/migrations/`      | directory  | when `[db.migrations].enabled` (default true), to list local files                                                                   |
+| `<workdir>/supabase/migrations/*.sql` | SQL        | for each pending migration, when applied (and not `--dry-run`)                                                                       |
+| seed files from `[db.seed].sql_paths` | SQL        | when `--include-seed` and `[db.seed].enabled` (paths under `supabase/`)                                                              |
+| `<workdir>/supabase/roles.sql`        | SQL        | when `--include-roles` (existence check + apply)                                                                                     |
 
 ## Files Written
 
@@ -43,15 +43,16 @@ before migrations unless `--skip-vault` is set.
 
 ## Environment Variables
 
-| Variable                           | Purpose                                                                                                          | Required?                                               |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                                                        | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`                     | auto-confirm prompts                                                                                             | no (also `--yes`)                                       |
-| `DOTENV_PRIVATE_KEY*`              | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                  | no                                                      |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset                              | no (project `.env` or shell)                            |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export                                          | no (project `.env` or shell)                            |
-| `PGDELTA_NPM_REGISTRY`             | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the cache export | no (project `.env` or shell)                            |
+| Variable                           | Purpose                                                                                                                                                                                                                           | Required?                                               |
+| ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                                                                                                                                                                       | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                                                                                                                                                                         | no (`--password`/`-p` takes precedence)                 |
+| `SUPABASE_YES`                     | auto-confirm prompts                                                                                                                                                                                                              | no (also `--yes`)                                       |
+| `SUPABASE_PROJECT_ID`              | linked-ref resolution override, superseded by `--project-ref` when set (same precedence position); also independently feeds the pg-delta migrations-catalog cache's project id, which `--project-ref` does NOT affect — see Notes | no                                                      |
+| `DOTENV_PRIVATE_KEY*`              | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                                                                                                                                   | no                                                      |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset                                                                                                                                               | no (project `.env` or shell)                            |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export                                                                                                                                                           | no (project `.env` or shell)                            |
+| `PGDELTA_NPM_REGISTRY`             | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the cache export                                                                                                                  | no (project `.env` or shell)                            |
 
 ## Exit Codes
 
@@ -64,6 +65,7 @@ before migrations unless `--skip-vault` is set.
 | `1`  | user declined a confirmation prompt (`context canceled`)                  |
 | `1`  | `config.toml` parse failure                                               |
 | `1`  | database connection / migration / seed / roles / vault apply failure      |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)  |
 
 ## Output
 
@@ -96,6 +98,15 @@ stdout is payload-only. A single `result` object is emitted:
 
 - **Targets**: `--db-url`, `--linked` (default), and `--local` are mutually
   exclusive; with no flag the target defaults to linked.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
+  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
+  it does not affect the pg-delta migrations-catalog cache's project id, which
+  still derives from `SUPABASE_PROJECT_ID`/config.toml/workdir basename only.
+  It never implies `--linked`: passing it with a resolved `--local`/`--db-url`
+  target is a hard error rather than a silently discarded flag (deliberately
+  stricter than `SUPABASE_PROJECT_ID`, which simply goes unused on a
+  non-linked target).
 - **Prompt order**: custom roles → migrations → seeds; each defaults to "yes" and
   declining returns `context canceled`.
 - **`--dry-run`** prints the plan (roles / migrations / seeds) and applies nothing.

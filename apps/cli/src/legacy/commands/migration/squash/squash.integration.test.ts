@@ -329,11 +329,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
 
+  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
+  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
+  // (not just the `opts.linkedRef`/`LEGACY_VALID_REF` fallback) drives the linked ref.
   const projectRef = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? LEGACY_VALID_REF)),
-    loadProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Effect.succeed(
+        Option.isSome(flagValue) && flagValue.value.length > 0
+          ? flagValue.value
+          : (opts.linkedRef ?? LEGACY_VALID_REF),
+      ),
     promptProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
   });
 
@@ -405,6 +413,7 @@ const flags = (over: Partial<LegacyMigrationSquashFlags> = {}): LegacyMigrationS
   linked: over.linked ?? false,
   local: over.local ?? true,
   password: over.password ?? Option.none(),
+  projectRef: over.projectRef ?? Option.none(),
 });
 
 const seedMigration = (workdir: string, name: string, body = "create table t (id int);\n") => {
@@ -459,6 +468,57 @@ describe("legacy migration squash", () => {
             "if any flags in the group [db-url password] are set none of the others can be; [db-url password] were all set",
           );
         }
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect("rejects --project-ref on the default local target", () => {
+      // No target flag given at all — squash defaults to `--local`, so the
+      // guard must fire from the flag alone, with no explicit --local needed.
+      const s = setup(tmp.current);
+      return Effect.gen(function* () {
+        const exit = yield* legacyMigrationSquash(
+          flags({ projectRef: Option.some(LEGACY_VALID_REF) }),
+        ).pipe(Effect.exit);
+        expect(failureTag(exit)).toBe("LegacyMigrationTargetFlagsError");
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+          );
+        }
+        // The guard fires before any resolver call, shadow/dump work, or cache write.
+        expect(s.resolverCalls).toEqual([]);
+        expect(s.shadowSpawned).toEqual([]);
+        expect(s.dumpCalls).toEqual([]);
+        expect(s.setupJobCalls).toEqual([]);
+        expect(s.cache.cached).toBe(false);
+      }).pipe(Effect.provide(s.layer));
+    });
+
+    it.effect("rejects --project-ref combined with an explicit --db-url target", () => {
+      const s = setup(tmp.current, {
+        args: ["--db-url", "postgresql://x", "--project-ref", LEGACY_VALID_REF],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyMigrationSquash(
+          flags({
+            dbUrl: Option.some("postgresql://x"),
+            projectRef: Option.some(LEGACY_VALID_REF),
+          }),
+        ).pipe(Effect.exit);
+        expect(failureTag(exit)).toBe("LegacyMigrationTargetFlagsError");
+        if (Exit.isFailure(exit)) {
+          const failure = Cause.findErrorOption(exit.cause);
+          expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+          );
+        }
+        // The guard fires before any resolver call, shadow/dump work, or cache write.
+        expect(s.resolverCalls).toEqual([]);
+        expect(s.shadowSpawned).toEqual([]);
+        expect(s.dumpCalls).toEqual([]);
+        expect(s.setupJobCalls).toEqual([]);
+        expect(s.cache.cached).toBe(false);
       }).pipe(Effect.provide(s.layer));
     });
 
@@ -1358,6 +1418,30 @@ describe("legacy migration squash", () => {
         expect(s.cache.cachedRef).toBe(LEGACY_VALID_REF);
       }).pipe(Effect.provide(s.layer));
     });
+
+    it.effect(
+      "--linked --project-ref overrides the workdir's own linked ref for resolution and caching",
+      () => {
+        // `opts.linkedRef` (LEGACY_VALID_REF) represents whatever the workdir would
+        // resolve to absent the flag — the explicit --project-ref flag must win over
+        // it, both for the resolver call and for what ultimately gets cached.
+        const FLAG_REF = "flagflagflagflagflag";
+        const s = setup(tmp.current, {
+          isLocal: false,
+          linkedRef: LEGACY_VALID_REF,
+          args: ["--linked", "--project-ref", FLAG_REF],
+        });
+        return Effect.gen(function* () {
+          const exit = yield* legacyMigrationSquash(
+            flags({ linked: true, projectRef: Option.some(FLAG_REF), version: Option.some("bad") }),
+          ).pipe(Effect.exit);
+          expect(failureTag(exit)).toBe("LegacyMigrationInvalidVersionError");
+          expect(s.cache.cached).toBe(true);
+          expect(s.cache.cachedRef).toBe(FLAG_REF);
+          expect(s.cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+        }).pipe(Effect.provide(s.layer));
+      },
+    );
 
     it.effect(
       "--linked reads [remotes.<ref>] and prints the config-override line before resolving",

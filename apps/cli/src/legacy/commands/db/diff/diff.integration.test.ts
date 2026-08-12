@@ -29,7 +29,11 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import {
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+} from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import {
   LegacyDbConnection,
@@ -83,7 +87,11 @@ interface SetupOpts {
   // config.toml/workdir-basename fallback `legacyResolveLocalProjectId` provides for
   // the pg-delta edge-runtime cache bind.
   readonly projectId?: Option.Option<string>;
-  // --- native --use-pgadmin ---
+  // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
+  // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
+  // instead of silently falling back to `opts.linkedRef ?? LEGACY_VALID_REF`.
+  readonly linkedFails?: boolean;
+  // --- CLI-1968 (native --use-pgadmin) ---
   // Per-differ-run `--json-diff` stdout, one entry per `runCapture` call to the differ
   // image (index 0 = the no-`--schema` run, or the 1st `--schema` run; index 1 = the
   // 2nd `--schema` run; …). Falls back to `""` (an empty/"No schema changes" diff) once
@@ -267,6 +275,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const resolver = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (resolveFlags) => {
       resolverCalls.push(resolveFlags);
+      // A threaded `--project-ref` flag wins over the fixed `opts.linkedRef` test
+      // fixture, same top precedence a real resolver would give it — lets a test
+      // prove the flag (not just `opts.linkedRef`) drives the resolved ref (read
+      // by both the native path and explicit mode's "linked" case).
+      const flagRef = resolveFlags.linkedProjectRef ?? Option.none();
+      const ref =
+        Option.isSome(flagRef) && flagRef.value.length > 0 ? flagRef.value : opts.linkedRef;
       return Effect.succeed({
         conn: {
           host: "127.0.0.1",
@@ -276,7 +291,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           database: "postgres",
         },
         isLocal: opts.isLocal ?? true,
-        ref: opts.linkedRef !== undefined ? Option.some(opts.linkedRef) : Option.none(),
+        ref: ref !== undefined ? Option.some(ref) : Option.none(),
       });
     },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
@@ -287,11 +302,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // `LegacyProjectRefResolver`, mirroring the SAME ref `resolver`'s own mock embeds in
   // its resolved `ref` above, so both stay consistent regardless of whether a test sets
   // `opts.linkedRef` (mirrors `reset.integration.test.ts`'s identical mock).
+  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
+  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
+  // (not just `opts.linkedRef`) drives the linked ref.
   const projectRefResolver = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.linkedRef ?? LEGACY_VALID_REF)),
-    loadProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed(flagValue.value)
+        : opts.linkedFails === true
+          ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+          : Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
     promptProjectRef: () => Effect.succeed(opts.linkedRef ?? LEGACY_VALID_REF),
   });
 
@@ -376,6 +399,7 @@ const flags = (over: Partial<LegacyDbDiffFlags> = {}): LegacyDbDiffFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? Option.none(),
   local: over.local ?? Option.none(),
+  projectRef: over.projectRef ?? Option.none(),
   file: over.file ?? Option.none(),
   schema: over.schema ?? [],
 });
@@ -715,6 +739,160 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  it.effect("diffs the project given via --project-ref without a linked workdir", () => {
+    // The fake resolver fails as "unlinked" (`LegacyProjectNotLinkedError`)
+    // absent the flag — only the flag can resolve a ref here.
+    const FLAG_REF = "flagflagflagflagflag";
+    const s = setup(tmp.current, {
+      isLocal: false,
+      diffSql: "alter table x;\n",
+      linkedFails: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      expect(s.cache.cached).toBe(true);
+      expect(s.cache.cachedRef).toBe(FLAG_REF);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    // The workdir already resolves to LEGACY_VALID_REF (e.g. via
+    // .temp/project-ref) — the flag must win over it.
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      diffSql: "alter table x;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      expect(s.cache.cached).toBe(true);
+      expect(s.cache.cachedRef).toBe(FLAG_REF);
+      expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbDiff(flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      );
+      // The guard fires before any connection resolution or cache write.
+      expect(s.resolverCalls).toEqual([]);
+      expect(s.cache.cached).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect(
+    "explicit --from linked --to migrations --project-ref proceeds and uses the flag ref",
+    () => {
+      // The `[remotes.staging]` block's `project_id` matches the FLAG ref, not the
+      // resolver's own `opts.linkedRef` fallback (left unset) — the shadow only
+      // gets the remote's `db.major_version = 14` override (`--tmpfs` on PG<=14)
+      // if the flag (not a fallback) actually resolved the "linked" ref.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          `project_id = "flagflagflagflagflag"`,
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { isLocal: false, diffSql: "create table m ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(
+          flags({
+            from: Option.some("linked"),
+            to: Option.some("migrations"),
+            projectRef: Option.some("flagflagflagflagflag"),
+          }),
+        );
+        const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
+        expect(createArgs).toContain("--tmpfs");
+        expect(s.cache.cachedRef).toBe("flagflagflagflagflag");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "explicit --from local --to migrations --linked --project-ref proceeds and applies the flag ref's remote override",
+    () => {
+      // Same `[remotes.staging]` fixture as the `--from linked` case above, but here
+      // it's a changed `--linked` (not a "linked" ref on either side) that resolves the
+      // flag ref via the preflight — `preflightConnType` keys off
+      // `Option.isSome(flags.linked)`, so the guard must not fire and the preflight's
+      // resolved ref must still drive the `[remotes.<ref>]` merge below.
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(
+        join(tmp.current, "supabase", "config.toml"),
+        [
+          "[db]",
+          "major_version = 17",
+          "",
+          "[remotes.staging]",
+          `project_id = "flagflagflagflagflag"`,
+          "",
+          "[remotes.staging.db]",
+          "major_version = 14",
+          "",
+        ].join("\n"),
+      );
+      const s = setup(tmp.current, { isLocal: false, diffSql: "create table m ();\n" });
+      return Effect.gen(function* () {
+        yield* legacyDbDiff(
+          flags({
+            from: Option.some("local"),
+            to: Option.some("migrations"),
+            linked: Option.some(true),
+            projectRef: Option.some("flagflagflagflagflag"),
+          }),
+        );
+        const createArgs = s.shadowSpawned.find((c) => c.args[0] === "create")?.args ?? [];
+        expect(createArgs).toContain("--tmpfs");
+        expect(s.cache.cachedRef).toBe("flagflagflagflagflag");
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
+  it.effect(
+    "explicit --from local --to migrations --project-ref errors (neither side is linked)",
+    () => {
+      // Neither side of the explicit cascade is the literal ref "linked", so the
+      // flag would go unused — the guard fires instead of silently discarding it.
+      const FLAG_REF = "flagflagflagflagflag";
+      const s = setup(tmp.current);
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(
+          legacyDbDiff(
+            flags({
+              from: Option.some("local"),
+              to: Option.some("migrations"),
+              projectRef: Option.some(FLAG_REF),
+            }),
+          ),
+        );
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(JSON.stringify(exit)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked, or --from/--to linked, in explicit mode",
+        );
+        expect(s.resolverCalls).toEqual([]);
+      }).pipe(Effect.provide(s.layer));
+    },
+  );
+
   it.effect(
     "caches the linked ref even when the merged config fails to load afterward (review: PRRT_kwDOErm0O86XLe6s)",
     () => {
@@ -788,6 +966,48 @@ describe("legacy db diff", () => {
       }).pipe(Effect.provide(s.layer));
     },
   );
+
+  it.effect("rejects --project-ref combined with --use-pg-schema before delegating", () => {
+    // The bundled Go binary's own `db diff` never registered `--project-ref`, so
+    // the flag can't be forwarded — fail up front instead of silently dropping it.
+    // (`--use-pgadmin` is native as of CLI-1968 and honors the flag — see the
+    // positive test below.)
+    const FLAG_REF = "flagflagflagflagflag";
+    const s = setup(tmp.current);
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbDiff(flags({ usePgSchema: Option.some(true), projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain("--project-ref is not supported with --use-pg-schema");
+      expect(s.proxyCalls).toEqual([]);
+      expect(s.proxyCaptureCalls).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--use-pgadmin --linked honors --project-ref like the other native engines", () => {
+    // CLI-1968 made pgadmin share the same target resolve as migra/pg-delta, so
+    // the flag ref must win over the workdir's own linked ref here too.
+    const FLAG_REF = "flagflagflagflagflag";
+    const s = setup(tmp.current, {
+      isLocal: false,
+      linkedRef: "abcdefghijklmnopqrst",
+      pgadminStdout: [JSON.stringify([pgadminEntry()])],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(
+        flags({
+          usePgAdmin: Option.some(true),
+          linked: Option.some(true),
+          projectRef: Option.some(FLAG_REF),
+        }),
+      );
+      expect(s.proxyCalls).toEqual([]);
+      expect(s.differCalls).toHaveLength(1);
+      expect(s.cache.cached).toBe(true);
+      expect(s.cache.cachedRef).toBe(FLAG_REF);
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect(
     "--use-pgadmin --linked succeeds when only the [remotes.<ref>] override fixes an invalid base config",

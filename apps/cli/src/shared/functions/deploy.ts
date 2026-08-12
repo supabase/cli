@@ -36,6 +36,7 @@ import {
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionDeployCancelledError,
+  FunctionImportNotDirectoryError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
@@ -375,7 +376,12 @@ async function realpathIfExists(pathname: string) {
   try {
     return await realpath(resolve(pathname));
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+    // ENOTDIR (a path routed through a file) is as nonexistent as ENOENT here.
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
       return resolve(pathname);
     }
     throw error;
@@ -637,8 +643,22 @@ function substituteImportMapValue(
 ): string | undefined {
   let match: [string, string] | undefined;
   for (const entry of Object.entries(mappings)) {
-    const [prefix] = entry;
-    if (!specifier.startsWith(prefix)) {
+    const [prefix, value] = entry;
+    if (prefix.length === 0) {
+      continue;
+    }
+    // Import-maps spec (implemented by Deno): a key matches exactly, or as a
+    // prefix only when it ends with "/". Go's walker prefix-matches every key
+    // (pkg/function/deno.go:150-155) — intentional divergence, see
+    // go-cli-porting-status.md: the lax match fabricates paths the runtime
+    // can never resolve (the ENOTDIR family this PR fixes).
+    if (prefix.endsWith("/")) {
+      // Spec normalization: a `/`-suffixed key whose address lacks a trailing
+      // `/` is an invalid mapping — dropped, not concatenated.
+      if (!value.endsWith("/") || !specifier.startsWith(prefix)) {
+        continue;
+      }
+    } else if (specifier !== prefix) {
       continue;
     }
     if (match === undefined || prefix.length > match[0].length) {
@@ -662,7 +682,11 @@ function resolveImportSpecifier(
   let scopedMappings: Readonly<Record<string, string>> | undefined;
   let scopedPrefixLength = -1;
   for (const [scopeName, scopeValue] of Object.entries(importMap.scopes)) {
-    if (!currentPath.startsWith(scopeName) || scopeName.length <= scopedPrefixLength) {
+    // Same import-maps spec rule as key matching: a scope matches exactly, or
+    // as a prefix only when it ends with "/".
+    const scopeMatches =
+      scopeName === currentPath || (scopeName.endsWith("/") && currentPath.startsWith(scopeName));
+    if (!scopeMatches || scopeName.length <= scopedPrefixLength) {
       continue;
     }
     scopedMappings = scopeValue;
@@ -715,11 +739,20 @@ async function walkImportPaths(
       }
       contents = await readFile(resolvedCurrent);
     } catch (error) {
-      if (error instanceof Error) {
-        if ("code" in error && error.code === "ENOENT") {
+      if (error instanceof Error && "code" in error) {
+        if (error.code === "ENOENT") {
           const message = `failed to read file: open ${toApiRelativePath(displayRoot, current)}: no such file or directory`;
           await onWarning(`WARN: ${message}\n`);
           continue;
+        }
+        // Go aborts on any other read error (pkg/function/deno.go:131-136); an
+        // ENOTDIR (import path routed through a file) gets Go's message instead
+        // of an unhandled raw Node error, via a classified error so telemetry
+        // books it as user-fixable config instead of a panic.
+        if (error.code === "ENOTDIR") {
+          throw new FunctionImportNotDirectoryError({
+            message: `failed to read file: open ${toApiRelativePath(displayRoot, current)}: not a directory`,
+          });
         }
       }
       throw error;
@@ -742,7 +775,12 @@ async function walkImportPaths(
       );
       modulePath = toSlash(modulePath);
 
-      if (!modulePath.includes(".")) {
+      // A module file needs a dot in the FINAL path segment (Go's path.Ext
+      // semantics): a dot earlier in the path (`dist/index.mjs/core`) is a
+      // directory-shaped path, not a module file. Not basename(): a
+      // trailing-slash directory import must yield an empty final segment here.
+      const finalSegment = modulePath.slice(modulePath.lastIndexOf("/") + 1);
+      if (!finalSegment.includes(".")) {
         continue;
       }
       if (
@@ -1004,14 +1042,26 @@ async function writeSourceDeployForm(
   };
 
   const uploadScopeTarget = async (pathname: string) => {
-    const resolvedPath = await realpath(pathname);
+    let resolvedPath: string;
+    let pathInfo: Awaited<ReturnType<typeof stat>>;
+    try {
+      resolvedPath = await realpath(pathname);
+      pathInfo = await stat(pathname);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOTDIR") {
+        await Effect.runPromise(
+          outputRaw(`WARN: Skipping import map target that is not a directory: ${pathname}\n`),
+        );
+        return;
+      }
+      throw error;
+    }
     if (!isContainedInAnyPath(importMapAllowedRoots, resolvedPath)) {
       await Effect.runPromise(
         outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`),
       );
       return;
     }
-    const pathInfo = await stat(pathname);
     if (!pathInfo.isDirectory()) {
       await uploadImportMapTargetAsset(pathname, await readFile(pathname));
       await walkLocalImportMapTargetImports(
@@ -1230,16 +1280,23 @@ export async function buildDockerBinds(
         async () => {},
       );
     } catch (error) {
-      if (
-        options.skipMissingImportMapTargets === true &&
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ) {
-        await (options.onWarning ?? (async () => {}))(
-          `WARN: Skipping missing import map target: ${target}\n`,
-        );
-        return;
+      if (error instanceof Error && "code" in error) {
+        // ENOTDIR (a trailing-slash value routed through a file) is never a
+        // walkable target regardless of caller: an import that actually
+        // reaches through that file still fails via the walker's
+        // FunctionImportNotDirectoryError.
+        if (error.code === "ENOTDIR") {
+          await (options.onWarning ?? (async () => {}))(
+            `WARN: Skipping import map target that is not a directory: ${target}\n`,
+          );
+          return;
+        }
+        if (options.skipMissingImportMapTargets === true && error.code === "ENOENT") {
+          await (options.onWarning ?? (async () => {}))(
+            `WARN: Skipping missing import map target: ${target}\n`,
+          );
+          return;
+        }
       }
       throw error;
     }
@@ -1325,7 +1382,9 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     }
     const outputPath = join(outputDir, "output.eszip");
     const binds = yield* Effect.promise(() =>
-      buildDockerBinds(projectId, functionsDir, outputDir, config),
+      buildDockerBinds(projectId, functionsDir, outputDir, config, {
+        onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
+      }),
     );
     // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
     // — resolves ECR->GHCR->Docker-Hub candidates and pulls with retry, per

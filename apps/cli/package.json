@@ -81,6 +81,7 @@
     "semantic-release": "^25.0.8",
     "smol-toml": "^1.7.1",
     "tldts": "catalog:",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "catalog:",
     "yaml": "^2.9.0"
   },

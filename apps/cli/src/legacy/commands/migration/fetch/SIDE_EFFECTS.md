@@ -2,10 +2,11 @@
 
 ## Files Read
 
-| Path                                          | Format     | When                                              |
-| --------------------------------------------- | ---------- | ------------------------------------------------- |
-| `~/.supabase/access-token`                    | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878)      |
+| Path                                          | Format     | When                                                                                                      |
+| --------------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                    | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                                                         |
+| `<workdir>/supabase/.temp/project-ref`        | plain text | `--linked` (default), to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878)                                                              |
 
 ## Files Written
 
@@ -28,11 +29,12 @@
 
 ## Exit Codes
 
-| Code | Condition                       |
-| ---- | ------------------------------- |
-| `0`  | success                         |
-| `1`  | database connection failure     |
-| `1`  | failed to write migration files |
+| Code | Condition                                                                |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | success                                                                  |
+| `1`  | database connection failure                                              |
+| `1`  | failed to write migration files                                          |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
 
 ## Output
 
@@ -63,6 +65,13 @@ Same structured `files` result delivered as an NDJSON `result` event.
 ## Notes
 
 - `--linked` (default true), `--local`, and `--db-url` are mutually exclusive.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution used for the connection (flag >
+  `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
+  passing it with a resolved `--local`/`--db-url` target is a hard error rather
+  than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  a non-linked target).
 - Fetches migration file contents from the `supabase_migrations.schema_migrations` history table.
 - **Empty-statements rows:** a row whose `statements` array is empty
   (NULL/`{}` — possible on older projects or manually-inserted rows) is written as

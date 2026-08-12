@@ -441,6 +441,18 @@ const runSquash = Effect.fnUntraced(function* (
     // squash defaults to `--local`, same as `up`/`down`.
     const connType = target.connType ?? "local";
 
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyMigrationTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
     // 2/3. Linked pre-resolution (mirrors `db diff --linked`, `diff.handler.ts:400-430`):
     // resolve + cache the project ref, and read the remote-merged config, BEFORE
     // `resolver.resolve()` below. Read unconditionally (base config when not linked) since the
@@ -448,7 +460,7 @@ const runSquash = Effect.fnUntraced(function* (
     let linkedRef: string | undefined;
     if (connType === "linked") {
       const projectRefResolver = yield* LegacyProjectRefResolver;
-      linkedRef = yield* projectRefResolver.loadProjectRef(Option.none());
+      linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       linkedRefForCache = linkedRef;
     }
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
@@ -476,6 +488,7 @@ const runSquash = Effect.fnUntraced(function* (
       connType,
       dnsResolver,
       password: flags.password,
+      linkedProjectRef: flags.projectRef,
     });
     if (linkedRef === undefined) {
       linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());

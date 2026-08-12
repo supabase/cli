@@ -6,13 +6,14 @@ the result as a table or JSON.
 
 ## Files Read
 
-| Path                                 | Format     | When                                                          |
-| ------------------------------------ | ---------- | ------------------------------------------------------------- |
-| `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin) |
-| stdin                                | SQL        | when piped (not a TTY) and no `--file`/positional SQL         |
-| `supabase/config.toml`               | TOML       | local / `--db-url` connection resolution                      |
-| `~/.supabase/access-token`           | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                 |
-| `supabase/.temp/linked-project.json` | JSON       | `--linked` existence check before the cache write (see below) |
+| Path                                 | Format     | When                                                                                       |
+| ------------------------------------ | ---------- | ------------------------------------------------------------------------------------------ |
+| `<path>` (from `--file`)             | SQL        | when `--file` / `-f` is set (takes precedence over arg/stdin)                              |
+| stdin                                | SQL        | when piped (not a TTY) and no `--file`/positional SQL                                      |
+| `supabase/config.toml`               | TOML       | local / `--db-url` connection resolution                                                   |
+| `~/.supabase/access-token`           | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                              |
+| `supabase/.temp/project-ref`         | plain text | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
+| `supabase/.temp/linked-project.json` | JSON       | `--linked` existence check before the cache write (see below)                              |
 
 ## Files Written
 
@@ -40,6 +41,7 @@ the result as a table or JSON.
 | ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                                             |
 | `1`  | conflicting `--db-url`/`--linked`/`--local`; no SQL provided; empty stdin; unreadable `--file`; `--linked` without login; query exec failure; non-201 linked status |
+| `1`  | `--project-ref` set without `--linked` (see Notes / Divergences)                                                                                                    |
 
 ## Output
 
@@ -80,6 +82,13 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
     matching the old CLI's per-command enum validation. See `legacy-go-output-flag.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
+  command) overrides ONLY the linked-ref resolution used for the connection and
+  the linked-project cache (flag > `SUPABASE_PROJECT_ID` >
+  `.temp/project-ref`). It never implies `--linked`: passing it without
+  `--linked` (i.e. targeting local or `--db-url`) is a hard error rather than a
+  silently discarded flag (deliberately stricter than `SUPABASE_PROJECT_ID`,
+  which simply goes unused on a non-linked target).
 - **Linked-project cache.** On the `--linked` path,
   after the query runs — whether it succeeds or fails — the handler issues
   `GET /v1/projects/{ref}` and writes `supabase/.temp/linked-project.json`. The

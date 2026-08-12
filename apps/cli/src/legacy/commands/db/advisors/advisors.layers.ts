@@ -27,10 +27,10 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * smoke test — legacy CLAUDE.md item 5 / 7).
  *
  * Instead the project-ref resolver is given the **lazy** `legacyPlatformApiFactoryLayer`,
- * whose `make` is only forced by an interactive project-ref prompt. advisors only
- * ever calls `resolve(Option.none())` (a soft, non-prompting ref load), so no
- * token is resolved on the local path; the linked path resolves it explicitly
- * in the handler.
+ * whose `make` is only forced by an interactive project-ref prompt. The linked path
+ * resolves the ref via the non-prompting `loadProjectRef`, which never forces the
+ * factory; the local path never resolves a project ref at all, so no token is
+ * resolved there either.
  *
  * `legacyCliConfigLayer` is provided to each consumer that needs it (item 5:
  * `Layer.provide` does not share to merge siblings); layers are memoised by

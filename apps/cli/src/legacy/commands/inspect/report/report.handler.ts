@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -94,10 +94,24 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
 
   // `--linked` is the default, so absence of the others resolves to linked.
   const connType = target.connType ?? "linked";
+
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyInspectMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   // `outDir = <output-dir>/<date>`, resolved against the process CWD when relative

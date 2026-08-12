@@ -320,3 +320,12 @@ prose, not structured data.
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
   initialization, and `start` reports the existing not-running status instead.
+- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled
+  2026-08-12):** Edge Runtime bind mounts are computed by the same functions import scanner
+  as `functions deploy`/`functions serve` (`walkImportPaths`/`substituteImportMapValue`,
+  shared code), which now matches import-map keys per the import-maps spec Deno/edge-runtime
+  implement (exact match, or prefix match only for a `/`-suffixed key) instead of Go's
+  any-key `strings.HasPrefix` (`pkg/function/deno.go:150-155`). Bind mounts may shrink vs
+  the Go CLI for maps that relied on bare-key prefix matching; an unwalkable target
+  (`ENOTDIR` — a value routed through a file) is skipped with a `WARN`, matching the same
+  divergence documented on the `functions deploy`/`functions serve` SIDE_EFFECTS.md.

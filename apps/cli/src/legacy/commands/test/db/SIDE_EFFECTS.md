@@ -2,13 +2,14 @@
 
 ## Files Read
 
-| Path                                  | Format | When                                                                                                                                      |
-| ------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `<cwd>/supabase/tests/**/*.{sql,pg}`  | SQL    | default test discovery when no `[path]` given                                                                                             |
-| `<path...>`                           | SQL    | when explicit test files/dirs are passed                                                                                                  |
-| `<workdir>/supabase/config.toml`      | TOML   | always: `db.port`, `db.shadow_port`, `db.password`, `project_id`. Absent → defaults; **present but malformed → command fails**            |
-| `<workdir>/supabase/.temp/pooler-url` | text   | `--linked` pooler fallback only — the connection-pooler URL written by `supabase link` (read from this file rather than from config.toml) |
-| `~/.supabase/access-token`            | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                       |
+| Path                                   | Format | When                                                                                                                                      |
+| -------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `<cwd>/supabase/tests/**/*.{sql,pg}`   | SQL    | default test discovery when no `[path]` given                                                                                             |
+| `<path...>`                            | SQL    | when explicit test files/dirs are passed                                                                                                  |
+| `<workdir>/supabase/config.toml`       | TOML   | always: `db.port`, `db.shadow_port`, `db.password`, `project_id`. Absent → defaults; **present but malformed → command fails**            |
+| `<workdir>/supabase/.temp/pooler-url`  | text   | `--linked` pooler fallback only — the connection-pooler URL written by `supabase link` (read from this file rather than from config.toml) |
+| `~/.supabase/access-token`             | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                       |
+| `<workdir>/supabase/.temp/project-ref` | text   | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                      |
 
 ## Files Written
 
@@ -62,6 +63,7 @@ One-shot `docker run --rm <pg_prove image>`, where the image is `supabase/pg_pro
 | `1`  | `pg_prove` exits non-zero (test failures) — `error running container: exit N`                        |
 | `1`  | `--db-url` / `--linked` / `--local` set together (mutually exclusive)                                |
 | `1`  | database connection failure / pgTAP enable failure / docker failure / `--linked` auth or IPv6 errors |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                             |
 
 ## Telemetry Events Fired
 
@@ -99,6 +101,13 @@ command (exit 1).
 ## Notes
 
 - Native TypeScript port (Phase 1+); no Go proxy. Hidden command.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command;
+  shared verbatim by `db test` via `legacyTestDbConfig`) overrides ONLY the
+  linked-ref resolution used for the connection (flag > `SUPABASE_PROJECT_ID` >
+  `.temp/project-ref`). It never implies `--linked`: passing it with a
+  resolved `--local`/`--db-url` target is a hard error rather than a silently
+  discarded flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which
+  simply goes unused on a non-linked target).
 - Postgres TLS behavior: local connections disable TLS
   (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`); remote (`--db-url` / `--linked`)
   connections honor the URL's `sslmode` —

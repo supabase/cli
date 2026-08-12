@@ -12,6 +12,7 @@ import { legacyParseUintBase0 } from "../../../shared/legacy-parse-uint.ts";
 import {
   LegacyStorageLinkedFlagDef,
   LegacyStorageLocalFlagDef,
+  LegacyStorageProjectRefFlagDef,
   legacyAssertStorageTargetsExclusive,
 } from "../storage.flags.ts";
 import { legacyStorageCp } from "./cp.handler.ts";
@@ -79,6 +80,7 @@ const config = {
   ),
   linked: LegacyStorageLinkedFlagDef,
   local: LegacyStorageLocalFlagDef,
+  projectRef: LegacyStorageProjectRefFlagDef,
   src: Argument.string("src").pipe(Argument.withDescription("Source path to copy from.")),
   dst: Argument.string("dst").pipe(Argument.withDescription("Destination path to copy to.")),
 } as const;
@@ -118,8 +120,12 @@ export const legacyStorageCpCommand = Command.make("cp", config).pipe(
         jobs: flags.jobs,
         linked: flags.linked,
         local: flags.local,
+        "project-ref": flags.projectRef,
       };
       return yield* legacyStorageCp(flags).pipe(
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
         withLegacyCommandInstrumentation({ flags: telemetryFlags }),
       );
     }).pipe(withJsonErrorHandling),

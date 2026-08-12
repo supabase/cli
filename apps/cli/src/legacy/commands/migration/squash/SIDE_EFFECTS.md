@@ -16,7 +16,7 @@ migration-history table to match.
 | `<workdir>/supabase/migrations/<version>_*.sql`                         | SQL        | each migration up to the target, applied to the shadow; the target file's own final content is read by `--version`/baseline lookups |
 | `<workdir>/supabase/roles.sql`                                          | SQL        | shadow `SetupDatabase` (custom-roles seed); missing file tolerated                                                                  |
 | `<workdir>/supabase/.env`, `.env.local`, `SUPABASE_ENV`-selected dotenv | dotenv     | always (`--yes`/registry/network-id overrides)                                                                                      |
-| `<workdir>/supabase/.temp/{project-ref,postgres-version,pooler-url}`    | plain text | `--linked` / linked path                                                                                                            |
+| `<workdir>/supabase/.temp/{project-ref,postgres-version,pooler-url}`    | plain text | `--linked` / linked path — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                           |
 | `~/.supabase/access-token`                                              | plain text | `--linked` without `--password`/`SUPABASE_ACCESS_TOKEN`                                                                             |
 | `~/.docker/config.json` + Docker context store                          | JSON       | resolving the Docker hostname for shadow/pg_dump containers                                                                         |
 
@@ -74,6 +74,7 @@ migration-history table to match.
 | ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`   | success — **including** the single-migration no-op **and** a declined remote-baseline prompt                                                                                                                                                                  |
 | `1`   | invalid `--version`; `--version` file not found; `version not found`; migrations-dir read failure; shadow create/health/setup/apply failure; `pg_dump` non-zero exit; migration-file open/write failure; baseline connect/batch failure; flag-group conflicts |
+| `1`   | `--project-ref` set with a resolved target other than linked (see Notes)                                                                                                                                                                                      |
 | `130` | SIGINT                                                                                                                                                                                                                                                        |
 
 ## Output
@@ -122,6 +123,12 @@ code or the rest of the payload.
 
 - `--local` defaults **true**; `[db-url linked local]` and
   `[db-url password]` are the two mutually-exclusive flag groups.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution used for the connection (flag >
+  `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
+  passing it with a resolved `--local`/`--db-url` target is a hard error rather
+  than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which simply goes unused on a non-linked target).
 - The shadow gets `legacySetupDatabase` only — **no** `CREATE DATABASE contrib_regression` (unlike
   `db diff`/`db pull`).
 - `--version` is compared **lexically** against zero-padded timestamps.

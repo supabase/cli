@@ -19,6 +19,11 @@ const config = {
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Lints the local database for schema errors."),
   ),
+  // TS-only override of the linked project ref — see push.command.ts.
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   schema: Flag.string("schema").pipe(
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
@@ -50,13 +55,15 @@ export const legacyDbLintCommand = Command.make("lint", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           schema: flags.schema,
           level: flags.level,
           "fail-on": flags.failOn,
         },
         // level/fail-on are Flag.choice and are auto-detected as safe via
         // `config` below. --schema stays redacted: it's a string-slice flag,
-        // not a choice.
+        // not a choice. --project-ref has no established telemetry-safety
+        // baseline either, so it stays redacted too.
         config,
         // Telemetry reports flags under their canonical name even for the
         // `-s` shorthand; map it so `db lint -s public` records the schema

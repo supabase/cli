@@ -352,7 +352,6 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       cliConfig.poolerHost,
       dnsResolver,
       Option.some(created.dbPassword),
-      false,
     ).pipe(
       Effect.catchTag("LegacyDbConfigIpv6Error", (error) =>
         output.raw(`${error.message}\n`, "stderr").pipe(Effect.as(dbConfig)),

@@ -93,11 +93,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
+  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
+  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
   const projectRef = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
-    loadProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Effect.succeed(
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+      ),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
 
@@ -121,13 +127,14 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     BunServices.layer,
   );
-  return { layer, out, telemetry };
+  return { layer, out, telemetry, cache };
 }
 
 const flags = (over: Partial<LegacyMigrationFetchFlags> = {}): LegacyMigrationFetchFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? true,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none(),
 });
 
 const migrationsDir = (workdir: string) => join(workdir, "supabase", "migrations");
@@ -417,4 +424,46 @@ describe("legacy migration fetch", () => {
       }).pipe(Effect.provide(layer));
     },
   );
+
+  it.live(
+    "fetches from the project given via --project-ref, overriding the default linked ref",
+    () => {
+      // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+      // the workdir would resolve to absent the flag — the flag must win over it
+      // and drive the cached ref.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, cache } = setup(tmp.current, { rows: [] });
+      return Effect.gen(function* () {
+        yield* legacyMigrationFetch(flags({ projectRef: Option.some(FLAG_REF) }));
+        expect(cache.cached).toBe(true);
+        expect(cache.cachedRef).toBe(FLAG_REF);
+        expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, out, cache } = setup(tmp.current, { cliArgs: ["--local"] });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationFetch(
+        flags({ linked: false, local: true, projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe(
+          "LegacyMigrationTargetFlagsError",
+        );
+        expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection resolution, filesystem write, or
+      // cache write.
+      expect(existsSync(migrationsDir(tmp.current))).toBe(false);
+      expect(out.promptConfirmCalls.length).toBe(0);
+      expect(cache.cached).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
 });

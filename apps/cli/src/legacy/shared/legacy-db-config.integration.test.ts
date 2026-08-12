@@ -831,3 +831,256 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
     );
   });
 });
+
+// CLI P1 fix (codex review, legacy-db-config.types.ts:81): an explicit
+// `--project-ref`/`linkedProjectRef` on a NON-ad-hoc `db` command must
+// independently unlock the Management API pooler fetch on an IPv4-only
+// network — it must not stay confined to the workdir's saved
+// `.temp/pooler-url` the way the plain `--linked` default path is.
+describe("legacyDbConfigResolver (--project-ref pooler fetch decoupled from adHocProjectRef)", () => {
+  it.effect(
+    "an unlinked workdir + explicit --project-ref resolves via the API pooler config, honoring the ambient password with no login-role mint",
+    () => {
+      const ref = "targetprojectrefabcd";
+      // Fully unlinked: `withWorkdir()` creates no `supabase/` directory at all,
+      // so there is no `.temp/project-ref` and no `.temp/pooler-url` to reuse.
+      const dir = withWorkdir();
+
+      const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
+      const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
+      const previousFetch = globalThis.fetch;
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const dbConnection = Layer.succeed(LegacyDbConnection, {
+        connect: () =>
+          Effect.die("unexpected connect() — the ambient password path never verify-connects"),
+      });
+      const fetchMock = Object.assign(
+        async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = new URL(
+            typeof input === "string" || input instanceof URL ? input : input.url,
+          );
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          requests.push({ method, path: url.pathname });
+
+          if (method === "GET" && url.pathname === `/v1/projects/${ref}/config/database/pooler`) {
+            return new Response(
+              JSON.stringify([
+                {
+                  identifier: "primary",
+                  database_type: "PRIMARY",
+                  is_using_scram_auth: true,
+                  db_user: "postgres",
+                  db_host: "db.example",
+                  db_port: 5432,
+                  db_name: "postgres",
+                  connection_string: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                  connectionString: `postgres://postgres.${ref}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                  default_pool_size: null,
+                  max_client_conn: null,
+                  pool_mode: "transaction",
+                },
+              ]),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+
+          return new Response(JSON.stringify({ message: "unexpected request" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        },
+        { preconnect: previousFetch.preconnect },
+      );
+
+      process.env["SUPABASE_ACCESS_TOKEN"] = LEGACY_VALID_TOKEN;
+      process.env["SUPABASE_DB_PASSWORD"] = "ambient-password";
+      globalThis.fetch = fetchMock;
+
+      return resolve(
+        dir,
+        {
+          ...linkedFlags,
+          linkedProjectRef: Option.some(ref),
+        },
+        { projectHost: "invalid", dbConnection },
+      ).pipe(
+        Effect.tap((r) =>
+          Effect.sync(() => {
+            expect(r.conn).toEqual({
+              host: "aws-0-us-east-1.pooler.supabase.com",
+              port: 5432,
+              user: `postgres.${ref}`,
+              password: "ambient-password",
+              database: "postgres",
+              suggestionContext: {
+                dashboardUrl: "https://supabase.com/dashboard",
+                profileName: "supabase",
+              },
+            });
+            expect(r.ref).toEqual(Option.some(ref));
+            // Only the pooler-config GET fires — no `cli/login-role` POST, since
+            // the ambient password takes precedence once the pooler is resolved.
+            expect(requests).toEqual([
+              { method: "GET", path: `/v1/projects/${ref}/config/database/pooler` },
+            ]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            globalThis.fetch = previousFetch;
+            if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
+            else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
+            if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+            else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "a saved pooler URL for a DIFFERENT project than --project-ref is rejected and the target ref's pooler is fetched",
+    () => {
+      const linkedRef = "workdirlinkedrefabcd";
+      const targetRef = "targetprojectrefabcd";
+      const dir = withWorkdir(
+        [`project_id = "${linkedRef}"`, "[db]", "major_version = 15", ""].join("\n"),
+      );
+      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".temp", "project-ref"), linkedRef);
+      writeFileSync(
+        join(dir, "supabase", ".temp", "pooler-url"),
+        `postgres://postgres.${linkedRef}:saved-workdir-password@stale.pooler.supabase.com:6543/postgres`,
+      );
+
+      const previousAccessToken = process.env["SUPABASE_ACCESS_TOKEN"];
+      const previousPassword = process.env["SUPABASE_DB_PASSWORD"];
+      const previousFetch = globalThis.fetch;
+      const requests: Array<{ readonly method: string; readonly path: string }> = [];
+      const dbConnection = Layer.succeed(LegacyDbConnection, {
+        connect: () =>
+          Effect.die("unexpected connect() — the ambient password path never verify-connects"),
+      });
+      const fetchMock = Object.assign(
+        async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+          const url = new URL(
+            typeof input === "string" || input instanceof URL ? input : input.url,
+          );
+          const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+          requests.push({ method, path: url.pathname });
+
+          if (
+            method === "GET" &&
+            url.pathname === `/v1/projects/${targetRef}/config/database/pooler`
+          ) {
+            return new Response(
+              JSON.stringify([
+                {
+                  identifier: "primary",
+                  database_type: "PRIMARY",
+                  is_using_scram_auth: true,
+                  db_user: "postgres",
+                  db_host: "db.example",
+                  db_port: 5432,
+                  db_name: "postgres",
+                  connection_string: `postgres://postgres.${targetRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                  connectionString: `postgres://postgres.${targetRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:6543/postgres`,
+                  default_pool_size: null,
+                  max_client_conn: null,
+                  pool_mode: "transaction",
+                },
+              ]),
+              { status: 200, headers: { "content-type": "application/json" } },
+            );
+          }
+
+          return new Response(JSON.stringify({ message: "unexpected request" }), {
+            status: 404,
+            headers: { "content-type": "application/json" },
+          });
+        },
+        { preconnect: previousFetch.preconnect },
+      );
+
+      process.env["SUPABASE_ACCESS_TOKEN"] = LEGACY_VALID_TOKEN;
+      process.env["SUPABASE_DB_PASSWORD"] = "ambient-password";
+      globalThis.fetch = fetchMock;
+
+      return resolve(
+        dir,
+        {
+          ...linkedFlags,
+          linkedProjectRef: Option.some(targetRef),
+        },
+        { projectHost: "invalid", dbConnection },
+      ).pipe(
+        Effect.tap((r) =>
+          Effect.sync(() => {
+            expect(r.conn).toEqual({
+              host: "aws-0-us-east-1.pooler.supabase.com",
+              port: 5432,
+              user: `postgres.${targetRef}`,
+              password: "ambient-password",
+              database: "postgres",
+              suggestionContext: {
+                dashboardUrl: "https://supabase.com/dashboard",
+                profileName: "supabase",
+              },
+            });
+            expect(r.ref).toEqual(Option.some(targetRef));
+            // The saved URL is read (not skipped — `ignoreSavedUrl` stays tied to
+            // `adHocProjectRef` only) but rejected by the tenant-ref check, so a
+            // second-chance API fetch for `targetRef` follows.
+            expect(requests).toEqual([
+              { method: "GET", path: `/v1/projects/${targetRef}/config/database/pooler` },
+            ]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            globalThis.fetch = previousFetch;
+            if (previousAccessToken === undefined) delete process.env["SUPABASE_ACCESS_TOKEN"];
+            else process.env["SUPABASE_ACCESS_TOKEN"] = previousAccessToken;
+            if (previousPassword === undefined) delete process.env["SUPABASE_DB_PASSWORD"];
+            else process.env["SUPABASE_DB_PASSWORD"] = previousPassword;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "the plain --linked path (no --project-ref) keeps the IPv6 error when no pooler URL is saved",
+    () => {
+      // Pins the untouched default path: `linkedProjectRef` is absent, so
+      // `fetchPoolerFromApi` stays false and an unreachable direct host with no
+      // saved `.temp/pooler-url` still fails with Go's IPv6 suggestion — the fix
+      // only widens the explicit `--project-ref` path, not this default one.
+      const ref = "plainlinkedrefabcdef";
+      const dir = withWorkdir(
+        [`project_id = "${ref}"`, "[db]", "major_version = 15", ""].join("\n"),
+      );
+      mkdirSync(join(dir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(join(dir, "supabase", ".temp", "project-ref"), ref);
+
+      return resolve(dir, linkedFlags, { projectHost: "invalid" }).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const json = JSON.stringify(exit.cause);
+              expect(json).toContain("LegacyDbConfigIpv6Error");
+              expect(json).toContain(
+                `Run supabase link --project-ref ${ref} to setup IPv4 connection.`,
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+});

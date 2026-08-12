@@ -179,6 +179,7 @@ const flags = (over: Partial<LegacyInspectConnectionFlags> = {}): LegacyInspectC
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none<string>(),
 });
 
 describe("legacy inspect db query runner", () => {
@@ -367,6 +368,44 @@ describe("legacy inspect db query runner", () => {
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags({ linked: true }));
       expect(resolver.resolveInput?.connType).toBe("linked");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("inspects the project given via --project-ref on the default linked path", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
+    return Effect.gen(function* () {
+      yield* legacyInspectDbDbStats(flags({ projectRef: Option.some(FLAG_REF) }));
+      // `inspect db` never caches the ref — the resolver call it threads the flag
+      // into is the strongest observable this harness offers.
+      expect(resolver.resolveInput?.connType).toBe("linked");
+      expect(resolver.resolveInput?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyInspectDbDbStats(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          const error = failure.value;
+          expect(error).toBeInstanceOf(LegacyInspectMutuallyExclusiveFlagsError);
+          if (error instanceof LegacyInspectMutuallyExclusiveFlagsError) {
+            expect(error.message).toBe(
+              "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+            );
+          }
+        }
+      }
+      // The guard fires before any connection resolution.
+      expect(resolver.resolveInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 

@@ -94,11 +94,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
+  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
+  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
   const projectRef = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
-    loadProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Effect.succeed(
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+      ),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
 
@@ -131,6 +137,7 @@ const input = (over: Partial<LegacyMigrationRepairInput> = {}): LegacyMigrationR
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? true,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none(),
   password: over.password ?? Option.none(),
 });
 
@@ -457,6 +464,57 @@ describe("legacy migration repair", () => {
           "LegacyMigrationTargetFlagsError",
         );
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("repairs the project given via --project-ref, overriding the default linked ref", () => {
+    // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+    // the workdir would resolve to absent the flag — the flag must win over it
+    // and drive the cached ref.
+    const FLAG_REF = "flagflagflagflagflag";
+    seedMigration(tmp.current, "20240101000000_init.sql", "create table a;\n");
+    const { layer, cache } = setup(tmp.current);
+    return Effect.gen(function* () {
+      yield* legacyMigrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          projectRef: Option.some(FLAG_REF),
+        }),
+      );
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+      expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, execs, queries, cache } = setup(tmp.current, { args: ["--local"] });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationRepair(
+        input({
+          versions: ["20240101000000"],
+          status: "applied",
+          linked: false,
+          local: true,
+          projectRef: Option.some(FLAG_REF),
+        }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe(
+          "LegacyMigrationTargetFlagsError",
+        );
+        expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection resolution or cache write.
+      expect(execs).toEqual([]);
+      expect(queries).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

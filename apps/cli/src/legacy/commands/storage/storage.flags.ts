@@ -28,6 +28,15 @@ export const LegacyStorageLocalFlagDef = Flag.boolean("local").pipe(
   Flag.withDescription("Connects to Storage API of the local database."),
 );
 
+// TS-only override of the linked project ref — see push.command.ts (db push).
+// No Go equivalent: `storage.go` never registers `--project-ref` on this
+// command family. Declared once here (not per-leaf) since all four
+// `storage ls/cp/mv/rm` leaves share the identical declaration.
+export const LegacyStorageProjectRefFlagDef = Flag.string("project-ref").pipe(
+  Flag.withDescription("Project ref of the Supabase project."),
+  Flag.optional,
+);
+
 /** Changed `--linked`/`--local` set (cobra `pflag.Changed`), for the exclusivity check. */
 export function legacyStorageChangedTargetFlags(
   args: ReadonlyArray<string>,
