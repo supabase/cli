@@ -374,6 +374,15 @@ Flag divergences from the Go reference:
 
 Behavioral divergences from the Go reference:
 
+- `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref
+  through a PARENT-scoped chain instead of plain `--project-ref` flag/env/file resolution: an
+  explicit `--project-ref` still wins outright, but the fallback is env `SUPABASE_PROJECT_ID` →
+  `supabase/.temp/linked-project.json`'s `ref` → `supabase/.temp/project-ref`, first ref-shaped
+  candidate wins. This is a direct consequence of the `link` branch-name divergence above: after
+  `supabase link <branch>`, `project-ref` holds the branch's own ref, and the Management API
+  returns 403 for a branch ref on every branches-management endpoint. No-op when linked to a real
+  (non-branch) project — the cache and the file hold the same ref — so this only changes behavior
+  in the previously-403ing branch-linked state (CLI-2167 follow-up, no Go equivalent).
 - `services` warns on a malformed linked project ref (matching Go's
   `flags.LoadProjectRef` validation message) but, unlike Go, does not then use
   that ref for the remote lookup. Go's `cmd/services.go` treats the validation

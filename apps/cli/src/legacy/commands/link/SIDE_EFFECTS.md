@@ -28,7 +28,10 @@ counterpart exists for this behavior.
 > second `link <other-branch>` (CLI-2167 follow-up). `linked-project.json` works as the parent
 > candidate because `link` only writes it for a real (non-404) project — the branch/404 path
 > leaves it untouched — and `LegacyLinkedProjectCache.cache` never overwrites an existing file, so
-> it reliably holds the last real parent project even after subsequent branch links.
+> it reliably holds the last real parent project even after subsequent branch links. This parent
+> resolution is hoisted into `legacy/shared/legacy-parent-project-ref.ts`
+> (`legacyResolveLinkedParentRef`), shared with the `branches` command family, which is
+> PARENT-scoped for the same reason — see `branches/list/SIDE_EFFECTS.md`.
 
 ## Files Written
 

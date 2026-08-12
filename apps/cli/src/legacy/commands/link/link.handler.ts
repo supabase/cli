@@ -21,12 +21,13 @@ import {
   PropLinkedVia,
   PropParentProjectRef,
 } from "../../../shared/telemetry/event-catalog.ts";
+import { legacyResolveLinkedParentRef } from "../../shared/legacy-parent-project-ref.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
 import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
-import { legacyReadProjectRefFile, legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
+import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import {
   LegacyLinkApiKeysNetworkError,
   LegacyLinkAuthTokenError,
@@ -157,77 +158,6 @@ function legacyLinkBranchNotFoundMessage(
   );
 }
 
-type LegacyLinkParentResolution =
-  | { readonly kind: "resolved"; readonly ref: string }
-  | { readonly kind: "invalid" }
-  | { readonly kind: "absent" };
-
-/** Best-effort parse of `<workdir>/supabase/.temp/linked-project.json`'s `ref`
- * field — a missing file, unreadable file, malformed JSON, or non-string/empty
- * `ref` all degrade to `None` rather than failing the branch-name lookup. */
-function legacyLinkParseCachedParentRef(content: string): Option.Option<string> {
-  try {
-    const parsed: unknown = JSON.parse(content);
-    if (typeof parsed === "object" && parsed !== null && "ref" in parsed) {
-      const ref = (parsed as Record<string, unknown>).ref;
-      if (typeof ref === "string" && ref.length > 0) {
-        return Option.some(ref);
-      }
-    }
-  } catch {
-    // Malformed JSON degrades to "no candidate", same as a missing file.
-  }
-  return Option.none();
-}
-
-function legacyLinkClassifyParentCandidates(
-  candidates: ReadonlyArray<Option.Option<string>>,
-): LegacyLinkParentResolution {
-  for (const candidate of candidates) {
-    if (Option.isSome(candidate) && PROJECT_REF_PATTERN.test(candidate.value)) {
-      return { kind: "resolved", ref: candidate.value };
-    }
-  }
-  return candidates.some(Option.isSome) ? { kind: "invalid" } : { kind: "absent" };
-}
-
-/**
- * Resolves the currently-linked PARENT project ref for a branch-name lookup.
- * Deliberately NOT `resolver.resolveOptional` (which resolves the FINAL linked
- * ref): right after linking a branch, that would return the branch's OWN ref,
- * making a second `link <other-branch>` resolve the "parent" as the branch and
- * fail (CLI-2167 follow-up). Candidate order, first ref-shaped value wins:
- *
- *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliConfig`).
- *   2. `ref` in `<workdir>/supabase/.temp/linked-project.json`. KEY INVARIANT:
- *      this file is written by `link`'s own success path only for a REAL
- *      (non-404) project — the branch/404 path leaves it untouched — and
- *      `LegacyLinkedProjectCache.cache` never overwrites an existing file, so
- *      this reliably holds the last real parent project even after
- *      subsequent branch links.
- *   3. `<workdir>/supabase/.temp/project-ref`.
- *
- * If a candidate exists but none is ref-shaped, that's corrupt/stale linked
- * state (`"invalid"`); if none exists at all, the workdir was never linked
- * (`"absent"`).
- */
-const resolveLegacyLinkParentRef = Effect.fnUntraced(function* () {
-  const cliConfig = yield* LegacyCliConfig;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  const paths = legacyTempPaths(path, cliConfig.workdir);
-
-  const cachedRef = yield* fs.readFileString(paths.linkedProjectCache).pipe(
-    Effect.map(legacyLinkParseCachedParentRef),
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
-  const fileRef = yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
-
-  return legacyLinkClassifyParentCandidates([cliConfig.projectId, cachedRef, fileRef]);
-});
-
 /**
  * Resolves a non-ref-shaped `[ref-or-branch]`/`--project-ref` value to the
  * branch's project ref by looking it up (by name or UUID) against the PARENT
@@ -250,7 +180,7 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
   const output = yield* Output;
   const api = yield* LegacyPlatformApi;
 
-  const parent = yield* resolveLegacyLinkParentRef();
+  const parent = yield* legacyResolveLinkedParentRef();
   if (parent.kind === "absent") {
     return yield* Effect.fail(
       new LegacyLinkBranchNotLinkedError({ message: legacyLinkNotLinkedMessage(value) }),

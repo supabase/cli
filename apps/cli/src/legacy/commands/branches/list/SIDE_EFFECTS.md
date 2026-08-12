@@ -2,12 +2,24 @@
 
 ## Files Read
 
-| Path                                      | Format                    | When                                                                                          |
-| ----------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------- |
-| keyring `"Supabase CLI"` / `<profile>`    | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliConfig.profile` |
-| keyring `"Supabase CLI"` / `access-token` | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                      |
-| `~/.supabase/access-token`                | plain text (token string) | last-resort fallback after env + keyring miss                                                 |
-| `<workdir>/supabase/.temp/project-ref`    | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset                                 |
+| Path                                           | Format                    | When                                                                                                    |
+| ---------------------------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------- |
+| keyring `"Supabase CLI"` / `<profile>`         | OS keychain               | when `SUPABASE_ACCESS_TOKEN` unset and keyring available; account = `LegacyCliConfig.profile`           |
+| keyring `"Supabase CLI"` / `access-token`      | OS keychain               | legacy-key fallback when the profile-keyed lookup misses                                                |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON (`ref` field)        | when `--project-ref` is unset, as the 2nd PARENT-ref candidate (CLI-2167 follow-up, TS-only, see below) |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | when `--project-ref` and `SUPABASE_PROJECT_ID` are both unset, as the 3rd (last) PARENT-ref candidate   |
+| `~/.supabase/access-token`                     | plain text (token string) | last-resort fallback after env + keyring miss                                                           |
+
+> `branches` is PARENT-scoped: after `supabase link <branch>`, the on-disk `project-ref` file
+> holds the BRANCH's own ref, and the Management API returns 403 for a branch ref on every
+> branches-management endpoint. Every `branches` subcommand therefore resolves the project ref
+> via `legacyResolveParentScopedProjectRef` (`legacy/shared/legacy-parent-project-ref.ts`) instead
+> of calling `LegacyProjectRefResolver.resolve` directly: an explicit `--project-ref` still wins
+> outright; otherwise the PARENT is resolved as env `SUPABASE_PROJECT_ID` → `linked-project.json`'s
+> `ref` → the `project-ref` file, first ref-shaped candidate wins, falling through to
+> `resolver.resolve(None)`'s ordinary env/prompt/not-linked behavior when no candidate is
+> ref-shaped. No-op when linked to a real (non-branch) project, since the cache and the
+> `project-ref` file then hold the same ref (CLI-2167 follow-up, TS-only divergence).
 
 ## Files Written
 
@@ -24,12 +36,12 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                                                                                                                                                                              | Required?                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                                 | no (falls back to keyring → `~/.supabase/access-token`)                    |
-| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (Go parity — used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                                   | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
-| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                                    | no (walks up from CWD looking for `supabase/config.toml`)                  |
+| Variable                | Purpose                                                                                                                                                                                                                                                                                              | Required?                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                                 | no (falls back to keyring → `~/.supabase/access-token`)                                            |
+| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (Go parity — used by the cli-e2e test harness). | no (defaults to `supabase`)                                                                        |
+| `SUPABASE_PROJECT_ID`   | PARENT project ref fallback (1st candidate) when `--project-ref` is unset (CLI-2167 follow-up)                                                                                                                                                                                                       | no (also reads `linked-project.json` → `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
+| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                                    | no (walks up from CWD looking for `supabase/config.toml`)                                          |
 
 ## Exit Codes
 
