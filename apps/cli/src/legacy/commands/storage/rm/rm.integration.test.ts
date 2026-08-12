@@ -583,7 +583,6 @@ describe("legacy storage rm", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("Error status 503");
-      // The command fails before any delete is attempted.
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
     });
   });
@@ -655,7 +654,6 @@ describe("legacy storage rm", () => {
       expect(JSON.stringify(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
       );
-      // The guard fires before any network call or cache write.
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });

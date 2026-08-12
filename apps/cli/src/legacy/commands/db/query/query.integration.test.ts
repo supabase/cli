@@ -762,8 +762,6 @@ describe("legacy db query integration", () => {
       expect(failMessage(exit)).toBe(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      // The guard fires before any local connection/query, linked API call, or
-      // cache write — no query result is ever rendered.
       expect(out.stdoutText).toBe("");
       expect(httpClient.requests).toEqual([]);
       expect(cache.cached).toBe(false);

@@ -15,10 +15,6 @@ import {
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacySnippetsList } from "./list.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 type SnippetsResponse = typeof V1ListAllSnippetsOutput.Type;
 
 const SNIPPET_ID = "00000000-0000-4000-8000-000000000001";
@@ -69,10 +65,6 @@ const EMPTY_RESPONSE: SnippetsResponse = {
   data: [],
 };
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
@@ -105,10 +97,6 @@ function setup(opts: SetupOpts = {}) {
   });
   return { layer, out, api, telemetry, cache };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy snippets list integration", () => {
   it.live("renders an ASCII table in text mode with all six columns", () => {

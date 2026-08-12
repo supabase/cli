@@ -91,7 +91,6 @@ describe("legacy migration new", () => {
       yield* legacyMigrationNew({ migrationName: "as_json" });
 
       const file = onlyMigration(tmp.current);
-      // No human text line in machine mode.
       expect(out.stdoutText).toBe("");
       expect(out.messages).toContainEqual(
         expect.objectContaining({
@@ -146,8 +145,6 @@ describe("legacy migration new", () => {
           expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
         }
       }
-      // The guard fires before any directory/file is touched: nothing is created
-      // under the workdir (not the migrations dir, not the escaped target).
       expect(existsSync(join(tmp.current, "supabase"))).toBe(false);
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));

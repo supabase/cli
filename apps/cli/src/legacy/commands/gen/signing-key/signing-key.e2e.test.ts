@@ -43,7 +43,6 @@ describe("supabase gen signing-key (legacy)", () => {
       });
       expect(exitCode).toBe(1);
       expect(stderr).toContain("context canceled");
-      // No debug-flag suggestion fallback for a cancelled context.
       expect(stderr).not.toContain("Try rerunning the command with --debug");
       expect(stderr).not.toContain("Service not found");
       const saved = readFileSync(join(projectDir, "supabase", "signing_keys.json"), "utf8");

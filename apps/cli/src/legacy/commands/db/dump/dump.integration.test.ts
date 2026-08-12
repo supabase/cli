@@ -468,7 +468,6 @@ describe("legacy db dump integration", () => {
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
-      // No container ran and the file was never created/truncated on dry-run.
       expect(docker.lastOpts).toBeUndefined();
       expect(existsSync(filePath)).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -767,7 +766,6 @@ describe("legacy db dump integration", () => {
       expect(failMessage(exit)).toBe(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      // The guard fires before any connection resolution or cache write.
       expect(resolver.calls).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));

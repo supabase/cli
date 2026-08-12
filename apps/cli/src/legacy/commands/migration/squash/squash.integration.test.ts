@@ -207,10 +207,6 @@ function faultyFsLayer(opts: FsFaultOpts): Layer.Layer<FileSystem.FileSystem> {
   ).pipe(Layer.provide(BunServices.layer));
 }
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -434,10 +430,6 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 const tmp = useLegacyTempWorkdir();
 
 describe("legacy migration squash", () => {
-  // -------------------------------------------------------------------------
-  // Flag surface & ordering
-  // -------------------------------------------------------------------------
-
   describe("flag surface & ordering", () => {
     it.effect("rejects --linked combined with --local", () => {
       const s = setup(tmp.current, { args: ["--linked", "--local"] });
@@ -513,7 +505,6 @@ describe("legacy migration squash", () => {
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
           );
         }
-        // The guard fires before any resolver call, shadow/dump work, or cache write.
         expect(s.resolverCalls).toEqual([]);
         expect(s.shadowSpawned).toEqual([]);
         expect(s.dumpCalls).toEqual([]);
@@ -599,10 +590,6 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // squashToVersion
-  // -------------------------------------------------------------------------
-
   describe("squashToVersion", () => {
     it.effect("fails with 'version not found' when the migrations directory is empty", () => {
       const s = setup(tmp.current);
@@ -665,9 +652,7 @@ describe("legacy migration squash", () => {
     );
   });
 
-  // -------------------------------------------------------------------------
   // Happy path — squashing two-or-more migrations
-  // -------------------------------------------------------------------------
 
   describe("squashing local migrations", () => {
     const BEFORE_SQL = "CREATE SCHEMA IF NOT EXISTS auth;\nold auth object;\n";
@@ -893,10 +878,8 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // Failure paths — every one leaves the shadow removed (unless creation
   // itself is what failed, matching the established leak-on-create-failure behavior).
-  // -------------------------------------------------------------------------
 
   describe("squashMigrations failure paths", () => {
     it.effect("fails when the shadow container cannot be created and never attempts a dump", () => {
@@ -1175,9 +1158,7 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // Step 2 — local target
-  // -------------------------------------------------------------------------
 
   describe("local target", () => {
     it.effect(
@@ -1206,9 +1187,7 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // Step 2 — remote target
-  // -------------------------------------------------------------------------
 
   describe("remote target", () => {
     function setupRemote(opts: SetupOpts = {}) {
@@ -1469,10 +1448,6 @@ describe("legacy migration squash", () => {
       },
     );
   });
-
-  // -------------------------------------------------------------------------
-  // Output formats
-  // -------------------------------------------------------------------------
 
   describe("output formats", () => {
     it.effect("json emits the squash payload on stdout and keeps progress on stderr", () => {

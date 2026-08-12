@@ -244,7 +244,6 @@ describe("legacy inspect db query runner", () => {
           data: { rows: [DB_STATS_ROW] },
         }),
       );
-      // No table is written to stdout in machine modes.
       expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -404,7 +403,6 @@ describe("legacy inspect db query runner", () => {
           }
         }
       }
-      // The guard fires before any connection resolution.
       expect(resolver.resolveInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });

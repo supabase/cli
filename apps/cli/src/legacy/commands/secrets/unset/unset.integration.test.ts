@@ -15,10 +15,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySecretsUnset } from "./unset.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 type SecretsList = typeof V1ListAllSecretsOutput.Type;
 
 interface SetupOpts {
@@ -78,16 +74,11 @@ function parseDeleteBody(body: unknown): string[] {
   return body as string[];
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("legacy secrets unset integration", () => {
   it.live("unsets a single secret given explicitly (with --yes)", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // No GET call: names came from args.
       expect(api.requests.filter((r) => r.method === "GET")).toHaveLength(0);
       const deletes = api.requests.filter((r) => r.method === "DELETE");
       expect(deletes).toHaveLength(1);

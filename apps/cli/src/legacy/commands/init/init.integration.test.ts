@@ -327,7 +327,6 @@ describe("legacy init", () => {
 
       yield* legacyInit({ ...BASE_INIT_FLAGS, interactive: true }).pipe(Effect.provide(layer));
 
-      // No clack prompt fired; the auto-accepted question was echoed to stderr.
       expect(out.promptConfirmCalls).toHaveLength(0);
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y\n");
       // Go returns after writing VS Code settings — IntelliJ is never asked.

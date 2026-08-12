@@ -21,6 +21,5 @@ export const legacyInspectDbCommandPath = (leaf: string): ReadonlyArray<string> 
   leaf,
 ];
 
-/** Runtime layer for a single `supabase inspect db <leaf>` subcommand. */
 export const legacyInspectDbRuntimeLayer = (leaf: string) =>
   Layer.merge(legacyInspectBaseLayer, commandRuntimeLayer(legacyInspectDbCommandPath(leaf)));

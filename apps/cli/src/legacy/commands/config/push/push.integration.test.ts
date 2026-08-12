@@ -515,7 +515,6 @@ file_size_limit = "50MiB"
   });
 
   it.live("aborts with exit 1 when no config.toml exists", () => {
-    // Fresh temp workdir, but no supabase/config.toml written.
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
       handler: (request) =>

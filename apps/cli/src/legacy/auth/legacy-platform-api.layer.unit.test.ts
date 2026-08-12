@@ -303,7 +303,6 @@ describe("legacyPlatformApiLayer", () => {
           expect(errorJson).toContain("LegacyInvalidAccessTokenError");
           expect(errorJson).toContain("Invalid access token format");
         }
-        // The bad token was never sent to the API.
         expect(http.requests).toHaveLength(0);
       });
     },

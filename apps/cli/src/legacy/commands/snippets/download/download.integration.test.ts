@@ -14,10 +14,6 @@ import {
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacySnippetsDownload } from "./download.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const VALID_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
 // Raw 32-hex form of VALID_ID, uppercase — a form `uuid.Parse` accepts
 // (google/uuid v1.6.0) that the old handler rejected before this fix.
@@ -43,10 +39,6 @@ const SNIPPET_RESPONSE: SnippetResponse = {
   favorite: false,
   content: { schema_version: "1.0.0", sql: SQL },
 };
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 // `goOutput` is intentionally absent: the download handler does not consume
 // `LegacyOutputFlag` at all — it always prints the raw SQL unconditionally.
@@ -79,10 +71,6 @@ function setup(opts: SetupOpts = {}) {
   });
   return { layer, out, api, telemetry, cache };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy snippets download integration", () => {
   it.live("prints raw SQL with a trailing newline in text mode", () => {

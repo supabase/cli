@@ -79,9 +79,7 @@ export function renderBranchGetTable(detail: typeof V1GetABranchConfigOutput.Typ
   return renderGlamourTable(GET_HEADERS, rows);
 }
 
-// ---------------------------------------------------------------------------
 // Standard-env projection for `branches get` non-pretty modes.
-// ---------------------------------------------------------------------------
 
 const POOLER_PASSWORD_PLACEHOLDER = "[YOUR-PASSWORD]";
 

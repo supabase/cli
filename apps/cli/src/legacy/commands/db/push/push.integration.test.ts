@@ -298,7 +298,6 @@ describe("legacy db push", () => {
       const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stdoutText).toBe("Local database is up to date.\n");
-      // No migration was applied.
       expect(conn.execs).not.toContain("BEGIN");
     });
   });
@@ -1359,7 +1358,6 @@ describe("legacy db push", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection/config resolution or cache write.
       expect(conn.execs).toEqual([]);
       expect(resolver.calls).toEqual([]);
       expect(linkedCache.cached).toBe(false);

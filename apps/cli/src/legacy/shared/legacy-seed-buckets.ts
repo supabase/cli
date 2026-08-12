@@ -265,7 +265,6 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
 
     const summary = emptySummary();
 
-    // Upsert configured buckets.
     yield* upsertBuckets(output, yes, interactive, gateway, bucketPropsByName, summary);
 
     // Upsert analytics buckets (remote --linked only).

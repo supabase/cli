@@ -29,10 +29,8 @@ export function readProjectField(project: unknown, key: string): string {
   return typeof value === "string" ? value : "";
 }
 
-// ---------------------------------------------------------------------------
 // Region display names: known region codes render as a human-readable name;
 // unknown codes pass through unchanged.
-// ---------------------------------------------------------------------------
 
 const REGION_MAP: Readonly<Record<string, string>> = {
   "ap-east-1": "East Asia (Hong Kong)",
@@ -59,10 +57,8 @@ export function formatRegion(region: string): string {
   return REGION_MAP[region] ?? region;
 }
 
-// ---------------------------------------------------------------------------
 // Dashboard URL per profile. Defaults to the production dashboard for
 // unknown / file-based profiles.
-// ---------------------------------------------------------------------------
 
 const DASHBOARD_URLS: Readonly<Record<string, string>> = {
   supabase: "https://supabase.com/dashboard",

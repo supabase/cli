@@ -43,7 +43,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       continue;
     }
 
-    // Expand matching lines as far as possible.
     const start: Pair = { x: m.x, y: m.y };
     while (start.x > done.x && start.y > done.y && x[start.x - 1] === y[start.y - 1]) {
       start.x--;
@@ -55,7 +54,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       end.y++;
     }
 
-    // Emit the mismatched lines before start into this chunk.
     for (const s of x.slice(done.x, start.x)) {
       ctext.push("-" + s);
       count.x++;
@@ -65,8 +63,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       count.y++;
     }
 
-    // If we're not at EOF and have too few common lines, the chunk includes all
-    // the common lines and continues.
     if (
       (end.x < x.length || end.y < y.length) &&
       (end.x - start.x < C || (ctext.length > 0 && end.x - start.x < 2 * C))
@@ -80,7 +76,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       continue;
     }
 
-    // End chunk with common lines for context.
     if (ctext.length > 0) {
       const n = Math.min(end.x - start.x, C);
       for (const s of x.slice(start.x, start.x + n)) {
@@ -107,12 +102,10 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       ctext = [];
     }
 
-    // If we reached EOF, we're done.
     if (end.x >= x.length && end.y >= y.length) {
       break;
     }
 
-    // Otherwise start a new chunk.
     chunk = { x: end.x - C, y: end.y - C };
     for (const s of x.slice(chunk.x, end.x)) {
       ctext.push(" " + s);

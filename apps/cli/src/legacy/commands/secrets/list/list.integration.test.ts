@@ -13,20 +13,12 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySecretsList } from "./list.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 type SecretsResponse = typeof V1ListAllSecretsOutput.Type;
 
 const SAMPLE_SECRETS: SecretsResponse = [
   { name: "FOO", value: "digest-foo" },
   { name: "BAR", value: "digest-bar" },
 ];
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -57,10 +49,6 @@ function setup(opts: SetupOpts = {}) {
   });
   return { layer, out, api };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy secrets list integration", () => {
   it.live("renders a Glamour ASCII table with NAME and DIGEST columns in text mode", () => {

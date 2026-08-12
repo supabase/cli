@@ -595,7 +595,6 @@ describe("legacy db advisors — linked", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection, API call, or cache write.
       expect(connection.execs).toEqual([]);
       expect(api.requests).toEqual([]);
       expect(cache.cached).toBe(false);

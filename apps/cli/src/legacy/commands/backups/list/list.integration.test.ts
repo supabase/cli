@@ -17,10 +17,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyBackupsList } from "./list.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const PITR_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   region: "ap-southeast-1",
   walg_enabled: true,
@@ -43,10 +39,6 @@ const LOGICAL_RESPONSE: typeof V1ListAllBackupsOutput.Type = {
   ],
   physical_backup_data: {},
 };
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -81,10 +73,6 @@ function setup(opts: SetupOpts = {}) {
   });
   return { layer, out, api };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy backups list integration", () => {
   it.live("renders a PITR-only table when no physical backups exist", () => {

@@ -351,7 +351,6 @@ describe("legacy domains get integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDomainsGet(baseFlags));
       expect(Exit.isFailure(exit)).toBe(true);
-      // No spinner task is started in json mode.
       expect(out.progressEvents).toHaveLength(0);
     }).pipe(Effect.provide(layer));
   });

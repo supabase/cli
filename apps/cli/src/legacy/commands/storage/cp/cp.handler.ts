@@ -180,9 +180,7 @@ function absLocal(path: Path.Path, cwd: string, p: string): string {
 /** Write a stream chunk fully to the open file handle. */
 const writeChunk = (handle: FileSystem.File, chunk: Uint8Array) => handle.writeAll(chunk);
 
-// ---------------------------------------------------------------------------
 // Download (remote → local)
-// ---------------------------------------------------------------------------
 
 /** Go `api.DownloadObject` (`objects.go:135-142`): O_EXCL create, then stream. */
 const downloadSingle = (
@@ -306,9 +304,7 @@ const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>
     ),
   );
 
-// ---------------------------------------------------------------------------
 // Upload (local → remote)
-// ---------------------------------------------------------------------------
 
 interface UploadCtx {
   readonly gateway: LegacyStorageGateway;

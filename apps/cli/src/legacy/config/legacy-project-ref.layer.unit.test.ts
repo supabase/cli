@@ -311,7 +311,6 @@ describe("legacyProjectRefLayer", () => {
           expect(errorJson).toContain("LegacyProjectNotLinkedError");
           expect(errorJson).toContain("supabase link");
         }
-        // No project picker was opened.
         expect(out.promptSelectCalls).toHaveLength(0);
       }).pipe(Effect.provide(layer));
     });

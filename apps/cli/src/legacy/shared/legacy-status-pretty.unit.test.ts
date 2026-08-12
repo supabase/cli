@@ -151,7 +151,6 @@ describe("legacyRenderStatusPretty", () => {
     const out = stripAnsi(legacyRenderStatusPretty({ DB_URL: FULL_VALUES.DB_URL ?? "" }, NAMES));
     const lines = out.split("\n");
 
-    // No rounded-box characters before the Database group's own box.
     expect(lines[0]).not.toMatch(/[╭│╰]/);
     expect(lines[0]).toBe("");
     expect(out).not.toContain("Development Tools");

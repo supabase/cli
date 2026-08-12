@@ -61,10 +61,8 @@ export class LegacyInspectCsvqError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
 // CSV parsing (RFC 4180, the shape Postgres `COPY ... WITH CSV HEADER` emits).
 // Every field is a string; quoting only affects escaping, not value identity.
-// ---------------------------------------------------------------------------
 
 /** A parsed CSV table: header → column index, plus the data rows as strings. */
 export interface LegacyCsvTable {
@@ -143,9 +141,7 @@ export function legacyParseReportCsv(input: Uint8Array | string): LegacyCsvTable
   return { columns, rows: records.slice(1) };
 }
 
-// ---------------------------------------------------------------------------
 // Tokenizer
-// ---------------------------------------------------------------------------
 
 type Token =
   | { readonly t: "ident"; readonly v: string }
@@ -257,9 +253,7 @@ function tokenize(sql: string): Array<Token> {
   return tokens;
 }
 
-// ---------------------------------------------------------------------------
 // AST
-// ---------------------------------------------------------------------------
 
 type ValNode =
   | { readonly k: "num"; readonly n: number }
@@ -297,9 +291,7 @@ interface SelectStmt {
 
 const AGG_FNS = new Set(["LISTAGG", "COUNT", "SUM", "MIN", "MAX", "AVG"]);
 
-// ---------------------------------------------------------------------------
 // Parser (recursive descent)
-// ---------------------------------------------------------------------------
 
 class Parser {
   private pos = 0;
@@ -539,9 +531,7 @@ class Parser {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Evaluation
-// ---------------------------------------------------------------------------
 
 type EvalValue =
   | { readonly kind: "null" }

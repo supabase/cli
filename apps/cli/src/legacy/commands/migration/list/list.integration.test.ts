@@ -216,7 +216,6 @@ describe("legacy migration list", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution or cache write.
       expect(ctx.resolverCalls).toEqual([]);
       expect(ctx.cache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(ctx.layer));

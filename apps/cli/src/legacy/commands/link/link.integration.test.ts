@@ -21,10 +21,6 @@ import {
 import { legacyLink } from "./link.handler.ts";
 import type { LegacyLinkFlags } from "./link.command.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const HEALTHY_PROJECT = {
   id: LEGACY_VALID_REF,
   ref: LEGACY_VALID_REF,
@@ -67,10 +63,6 @@ const POOLER_PRIMARY = [
     pool_mode: "transaction",
   },
 ];
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface V1StubResult {
   readonly ok?: unknown;
@@ -177,10 +169,6 @@ function tempFile(workdir: string, name: string): string {
 function readTemp(workdir: string, name: string): string {
   return readFileSync(tempFile(workdir, name), "utf8");
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy link integration", () => {
   it.live("links a project, writing the project-ref and version files", () => {

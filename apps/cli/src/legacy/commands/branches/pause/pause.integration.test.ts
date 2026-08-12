@@ -111,7 +111,6 @@ describe("legacy branches pause integration", () => {
       yield* legacyBranchesPause({ ...baseFlags, name: Option.some(BRANCH_REF) });
       const post = api.requests.find((r) => r.method === "POST");
       expect(post?.url).toContain(`/v1/projects/${BRANCH_REF}/pause`);
-      // No resolver lookup
       expect(api.requests.find((r) => r.method === "GET")).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });

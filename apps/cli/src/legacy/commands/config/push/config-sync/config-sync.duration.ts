@@ -81,7 +81,6 @@ export function durationString(ns: number): string {
   return result;
 }
 
-/** Nanoseconds per unit. */
 const NS_PER_SECOND = 1_000_000_000;
 const NS_PER_MINUTE = 60 * NS_PER_SECOND;
 const NS_PER_HOUR = 60 * NS_PER_MINUTE;

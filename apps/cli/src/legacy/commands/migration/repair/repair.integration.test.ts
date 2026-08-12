@@ -511,7 +511,6 @@ describe("legacy migration repair", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution or cache write.
       expect(execs).toEqual([]);
       expect(queries).toEqual([]);
       expect(cache.cached).toBe(false);

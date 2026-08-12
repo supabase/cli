@@ -339,7 +339,6 @@ describe("legacy inspect report", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution.
       expect(resolver.resolveInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
@@ -482,9 +481,7 @@ describe("legacy inspect report", () => {
       expect(data?.files?.length).toBe(14);
       expect(typeof data?.outputDir).toBe("string");
       expect(data?.rules?.length).toBe(13);
-      // CSVs are still written.
       expect(dateFolderContents(base).files.length).toBe(14);
-      // No progress lines in machine mode.
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });

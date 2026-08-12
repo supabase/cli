@@ -1096,7 +1096,6 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("failed to parse response body");
-      // No bucket was created from the bad response.
       expect(requests.some((r) => r.method === "POST")).toBe(false);
     });
   });
@@ -1562,9 +1561,7 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
   // --linked remote path tests
-  // ---------------------------------------------------------------------------
 
   it.live("--linked seeds the remote storage project", () => {
     const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
@@ -1648,7 +1645,6 @@ describe("legacy seed buckets", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
         );
       }
-      // The guard fires before any HTTP request or cache write.
       expect(requests).toEqual([]);
       expect(linkedCache.cached).toBe(false);
     });
@@ -2009,9 +2005,7 @@ describe("legacy seed buckets", () => {
     },
   );
 
-  // ---------------------------------------------------------------------------
   // Fix 1 — --linked merges [remotes.*] config overrides
-  // ---------------------------------------------------------------------------
 
   it.live("--linked merges [remotes.*] storage config override before seeding", () => {
     // The base config has [storage.buckets.base] with public=true; the remote block
@@ -2084,9 +2078,7 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
   // Fix 2 — validate bucket names up front
-  // ---------------------------------------------------------------------------
 
   it.live("fails with exact error message on an invalid bucket name", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
@@ -2138,9 +2130,7 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
   // Fix 3 — SUPABASE_AUTH_JWT_SECRET / SUPABASE_AUTH_SERVICE_ROLE_KEY for local
-  // ---------------------------------------------------------------------------
 
   it.live("local run: SUPABASE_AUTH_JWT_SECRET overrides auth.jwt_secret", () => {
     const prevJwt = process.env["SUPABASE_AUTH_JWT_SECRET"];
@@ -2226,9 +2216,7 @@ describe("legacy seed buckets", () => {
     );
   });
 
-  // ---------------------------------------------------------------------------
   // Fix 5 — validate api.tls cert/key pairing before seeding
-  // ---------------------------------------------------------------------------
 
   it.live("fails when cert_path is set but key_path is missing", () => {
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });

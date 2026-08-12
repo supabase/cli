@@ -29,9 +29,7 @@ interface TenantVersionOptions {
   readonly userAgent: string;
 }
 
-// ---------------------------------------------------------------------------
 // Pure parsers — exported for focused unit coverage.
-// ---------------------------------------------------------------------------
 
 /**
  * PostgREST advertises its version in the OpenAPI/Swagger `info.version` field at
@@ -70,9 +68,7 @@ export function parseLegacyStorageVersion(body: string): Option.Option<string> {
   return Option.some(`v${body}`);
 }
 
-// ---------------------------------------------------------------------------
 // Effectful probes.
-// ---------------------------------------------------------------------------
 
 function tenantRequest(opts: TenantVersionOptions, pathName: string) {
   let request = HttpClientRequest.get(`https://${opts.ref}.${opts.projectHost}${pathName}`).pipe(

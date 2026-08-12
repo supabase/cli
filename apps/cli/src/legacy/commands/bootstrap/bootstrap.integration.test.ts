@@ -311,7 +311,6 @@ describe("legacy bootstrap integration", () => {
       yield* legacyBootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF);
       expect(s.downloads).toHaveLength(1);
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
-      // No blank config.toml when a template is downloaded.
       expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
     }).pipe(Effect.provide(s.layer));
@@ -625,7 +624,6 @@ describe("legacy bootstrap integration", () => {
         start_command: "supabase start",
         workdir: s.workdir,
       });
-      // No human progress banners on stdout in json mode.
       expect(s.out.stdoutText).not.toContain("To start your app:");
     }).pipe(Effect.provide(s.layer));
   });

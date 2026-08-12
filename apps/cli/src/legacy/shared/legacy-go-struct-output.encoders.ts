@@ -31,9 +31,7 @@ import {
  * yaml.v3 v3.0.1) over the same payloads.
  */
 
-// ---------------------------------------------------------------------------
 // Go struct specs
-// ---------------------------------------------------------------------------
 
 export type LegacyGoType =
   | { readonly kind: "string" }
@@ -124,9 +122,7 @@ export function legacyGoFieldName(jsonName: string): string {
     .join("");
 }
 
-// ---------------------------------------------------------------------------
 // Normalized Go value tree (decoded JSON + spec → what the Go structs hold)
-// ---------------------------------------------------------------------------
 
 type GoValue =
   | { readonly k: "nil" }
@@ -318,9 +314,7 @@ function normalizeGoTime(value: string): string {
   return `${base}${frac}${zone}`;
 }
 
-// ---------------------------------------------------------------------------
 // Go float formatting (strconv.FormatFloat(f, 'g', -1, bits))
-// ---------------------------------------------------------------------------
 
 /**
  * Shortest round-trip digits for a float32 value (Go marshals via the typed
@@ -443,9 +437,7 @@ export function legacyGoFormatFloat(value: number, bits: 32 | 64): string {
   return `${sign}${digits.slice(0, dp)}.${digits.slice(dp)}`;
 }
 
-// ---------------------------------------------------------------------------
 // YAML encoder (gopkg.in/yaml.v3 v3.0.1 semantics)
-// ---------------------------------------------------------------------------
 
 /**
  * Encode a decoded payload as the Go CLI's `-o yaml` output for the given Go
@@ -1056,9 +1048,7 @@ function yamlBlockLiteral(s: string, indent: number): string {
   return ` |${indicator}${chomp}\n${body}\n`;
 }
 
-// ---------------------------------------------------------------------------
 // TOML encoder (github.com/BurntSushi/toml v1.6.0 semantics)
-// ---------------------------------------------------------------------------
 
 /**
  * Thrown when BurntSushi would refuse the payload: a populated

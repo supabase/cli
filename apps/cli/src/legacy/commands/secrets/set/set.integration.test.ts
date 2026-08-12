@@ -57,10 +57,6 @@ function permissionDeniedReadLayer(target: string) {
   ).pipe(Layer.provide(BunServices.layer));
 }
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   goOutput?: "pretty" | "json" | "yaml" | "toml" | "env";
@@ -109,10 +105,6 @@ function parsePostBody(body: unknown): Array<{ name: string; value: string }> {
   // helper just narrows the type for the test assertions.
   return body as Array<{ name: string; value: string }>;
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy secrets set integration", () => {
   it.live("sets a single secret via CLI arg FOO=bar", () => {

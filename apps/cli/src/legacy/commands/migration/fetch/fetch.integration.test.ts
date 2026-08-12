@@ -205,7 +205,6 @@ describe("legacy migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
-      // No new file written on cancel.
       expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
@@ -459,8 +458,6 @@ describe("legacy migration fetch", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution, filesystem write, or
-      // cache write.
       expect(existsSync(migrationsDir(tmp.current))).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
       expect(cache.cached).toBe(false);

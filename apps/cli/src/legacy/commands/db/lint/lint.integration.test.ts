@@ -529,7 +529,6 @@ describe("legacy db lint", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection or cache write.
       expect(connection.execs).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -597,9 +596,7 @@ describe("legacy db lint", () => {
     const { layer, out, cache } = setup({ checkRows: { public: [] }, args: ["--local=false"] });
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"] }));
-      // Routes to local → "Connecting to local database..."
       expect(out.stderrText).toContain("Connecting to local database...");
-      // No linked-project cache for local runs.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });

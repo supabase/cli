@@ -24,10 +24,6 @@ import {
   type RemoteAuthConfig,
 } from "./auth.sync.ts";
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 const lines = (...l: ReadonlyArray<string>) => l.join("\n") + "\n";
 
 /** Mirror of Go `newWithDefaults()` projected to AuthSubset. */
@@ -137,10 +133,6 @@ function bareAuth(overrides: Partial<AuthSubset> = {}): AuthSubset {
 function withRemote(local: AuthSubset, remote: RemoteAuthConfig): AuthSubset {
   return applyRemoteAuthConfig(local, remote);
 }
-
-// ---------------------------------------------------------------------------
-// TestAuthDiff
-// ---------------------------------------------------------------------------
 
 describe("TestAuthDiff", () => {
   it("local and remote enabled — no diff", () => {
@@ -252,10 +244,6 @@ describe("TestAuthDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TestCaptchaDiff
-// ---------------------------------------------------------------------------
-
 describe("TestCaptchaDiff", () => {
   it("local and remote enabled — no diff", () => {
     const local = bareAuth({
@@ -357,10 +345,6 @@ describe("TestCaptchaDiff", () => {
     expect(diffAuth(remote, local)).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// TestHookDiff
-// ---------------------------------------------------------------------------
 
 describe("TestHookDiff", () => {
   it("local and remote enabled — no diff", () => {
@@ -617,10 +601,6 @@ describe("TestHookDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TestMfaDiff
-// ---------------------------------------------------------------------------
-
 describe("TestMfaDiff", () => {
   it("local and remote enabled — no diff", () => {
     const local = bareAuth({
@@ -741,10 +721,6 @@ describe("TestMfaDiff", () => {
     expect(diffAuth(remote, local)).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// TestSmsDiff
-// ---------------------------------------------------------------------------
 
 describe("TestSmsDiff", () => {
   it("local disabled remote enabled — matches golden diff", () => {
@@ -906,10 +882,6 @@ describe("TestSmsDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TestRateLimitsDiff
-// ---------------------------------------------------------------------------
-
 describe("TestRateLimitsDiff", () => {
   it("local and remote rate limits match — no diff", () => {
     const local = bareAuth({
@@ -1018,10 +990,6 @@ describe("TestRateLimitsDiff", () => {
     expect(diffAuth(remote, local)).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// TestExternalDiff
-// ---------------------------------------------------------------------------
 
 describe("TestExternalDiff", () => {
   it("local and remote enabled — no diff", () => {
@@ -1371,9 +1339,7 @@ describe("TestExternalDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // authToUpdateBody — secret round-trip (regression: must send raw values, not hashes)
-// ---------------------------------------------------------------------------
 
 describe("authToUpdateBody secrets", () => {
   it("sends the raw plaintext secret value, not the hash (Go Secret.Value)", () => {
@@ -1402,7 +1368,6 @@ describe("authToUpdateBody secrets", () => {
     const body = authToUpdateBody(local);
     expect(body["security_captcha_secret"]).toBe("my-captcha-plaintext");
     expect(body["external_github_secret"]).toBe("my-github-plaintext");
-    // Never the hashed form.
     expect(body["security_captcha_secret"]).not.toContain("hash:");
     expect(body["external_github_secret"]).not.toContain("hash:");
   });
