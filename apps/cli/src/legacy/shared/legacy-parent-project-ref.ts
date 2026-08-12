@@ -68,12 +68,20 @@ function legacyParseCachedParentRef(content: string): Option.Option<string> {
 function legacyClassifyParentCandidates(
   candidates: ReadonlyArray<Option.Option<string>>,
 ): LegacyParentRefResolution {
+  // The FIRST PRESENT candidate decides (PR #6168 review): a present-but-
+  // malformed higher-priority candidate (a typo'd SUPABASE_PROJECT_ID) must
+  // hard-classify as invalid rather than silently falling through to a
+  // lower-priority project — otherwise a mutation could run against the
+  // previously linked project the user explicitly tried to override away
+  // from. This also restores the pre-CLI-2167 resolver's env validation.
   for (const candidate of candidates) {
-    if (Option.isSome(candidate) && PROJECT_REF_PATTERN.test(candidate.value)) {
-      return { kind: "resolved", ref: candidate.value };
+    if (Option.isSome(candidate)) {
+      return PROJECT_REF_PATTERN.test(candidate.value)
+        ? { kind: "resolved", ref: candidate.value }
+        : { kind: "invalid" };
     }
   }
-  return candidates.some(Option.isSome) ? { kind: "invalid" } : { kind: "absent" };
+  return { kind: "absent" };
 }
 
 /**
@@ -82,7 +90,8 @@ function legacyClassifyParentCandidates(
  * linked ref): right after linking a branch, that would return the branch's
  * OWN ref, breaking any subsequent command that needs the PARENT (a second
  * `link <other-branch>`, or any `branches` subcommand — CLI-2167 follow-up).
- * Candidate order, first ref-shaped value wins:
+ * Candidate order; the FIRST PRESENT candidate decides — valid resolves,
+ * malformed hard-classifies as `"invalid"` (never silently skipped):
  *
  *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliConfig`) — UNLESS it merely
  *      RESTATES candidate 3's own value. A CI workflow commonly exports
@@ -106,9 +115,10 @@ function legacyClassifyParentCandidates(
  *      candidate 3 is exactly the proof of (PR #6168 review).
  *   3. `<workdir>/supabase/.temp/project-ref`.
  *
- * If a candidate exists but none is ref-shaped, that's corrupt/stale linked
- * state (`"invalid"`); if none exists at all, the workdir was never linked
- * (`"absent"`).
+ * A present-but-malformed first candidate is corrupt/stale linked state or a
+ * typo'd override (`"invalid"` — callers surface an error rather than acting
+ * on a lower-priority project); if no candidate exists at all, the workdir
+ * was never linked (`"absent"`).
  */
 export const legacyResolveLinkedParentRef = Effect.fnUntraced(function* () {
   const cliConfig = yield* LegacyCliConfig;
@@ -127,12 +137,15 @@ export const legacyResolveLinkedParentRef = Effect.fnUntraced(function* () {
     : Option.none<string>();
 
   // Dedup rule (PR #6168 review): an env candidate that merely restates the
-  // file candidate's own value carries no parent information — drop it so
-  // the cache gets a chance to win instead.
+  // file candidate's own (valid) value carries no parent information — drop
+  // it so the cache gets a chance to win instead. Restricted to pattern-valid
+  // values so a garbage env that happens to equal a garbage file still
+  // hard-classifies as invalid below instead of sneaking past to the cache.
   const envRef =
     Option.isSome(cliConfig.projectId) &&
     Option.isSome(fileRef) &&
-    cliConfig.projectId.value === fileRef.value
+    cliConfig.projectId.value === fileRef.value &&
+    PROJECT_REF_PATTERN.test(cliConfig.projectId.value)
       ? Option.none<string>()
       : cliConfig.projectId;
 

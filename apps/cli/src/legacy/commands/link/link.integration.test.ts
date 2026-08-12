@@ -819,8 +819,12 @@ describe("legacy link integration", () => {
     );
 
     it.live(
-      "a garbage SUPABASE_PROJECT_ID falls through to the cache file, not the project-ref file (first-VALID-wins)",
+      "a garbage SUPABASE_PROJECT_ID hard-fails the branch lookup with LegacyLinkParentRefInvalidError, never falling through to the cache (PR #6168 review)",
       () => {
+        // Superseded behavior: first-VALID-wins used to skip a malformed env
+        // in favor of the cache. The first PRESENT candidate now decides —
+        // an explicit-but-typo'd override must not silently resolve a
+        // different parent.
         const { layer, apiMock, workdir } = setup({
           branches: { ok: [LINK_BRANCH] },
           projectId: Option.some("not-a-valid-ref"),
@@ -828,11 +832,16 @@ describe("legacy link integration", () => {
         writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
         writeLinkedParentRef(workdir, FILE_ONLY_REF);
         return Effect.gen(function* () {
-          yield* legacyLink(
-            flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
+          const exit = yield* Effect.exit(
+            legacyLink(
+              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
+            ),
           );
-          const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
-          expect(branchCall?.input).toMatchObject({ ref: CACHE_ONLY_REF });
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyLinkParentRefInvalidError");
+          }
+          expect(apiMock.requests.find((r) => r.method === "listAllBranches")).toBeUndefined();
         }).pipe(Effect.provide(layer));
       },
     );

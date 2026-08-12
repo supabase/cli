@@ -105,36 +105,38 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
   // share one computation.
   const goFmt = Option.getOrUndefined(goOutputFlag);
 
-  // TS-only QoL (CLI-2167 follow-up, no Go counterpart): resolve the current
-  // linked project/branch in EVERY output mode — never fails, and machine
-  // formats fold the result into their own payload below — so agents driving
-  // `status` machine-readable output can discover which project/branch
-  // they're on without a separate `link`/`branches` call. Resolved before any
-  // daemon/stack work begins so, in human text mode, the printed line below
-  // is visible even when status subsequently fails to connect to Docker.
-  const linkedState = yield* legacyResolveLinkedState();
-  if (output.format === "text" && (goFmt === undefined || goFmt === "pretty")) {
-    yield* output.raw(legacyFormatLinkedStateBlock(linkedState));
-  }
-  if (output.format === "json" || output.format === "stream-json") {
-    // TS-only QoL (CLI-2167 follow-up): the agent-discovery use case for this
-    // field matters MOST when status fails to reach the daemon/stack — a
-    // stopped stack is the common state an agent probes in — so mirror it
-    // onto the shared machine error envelope too (`MachineErrorContext`,
-    // read by `output.fail`), not just the success payload below. Harmless
-    // on the success path, since `output.success` never reads this cell.
-    // Read optionally (adds no R requirement) so this command's runtime
-    // choosing not to provide the cell just skips the mirroring, matching
-    // `output.fail`'s own optional read on the other end.
-    const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
-    if (Option.isSome(machineErrorContext)) {
-      yield* machineErrorContext.value.set({
-        linked_project: legacyLinkedStateJsonField(linkedState),
-      });
-    }
-  }
-
   yield* Effect.gen(function* () {
+    // TS-only QoL (CLI-2167 follow-up, no Go counterpart): resolve the current
+    // linked project/branch in EVERY output mode — never fails, and machine
+    // formats fold the result into their own payload below — so agents driving
+    // `status` machine-readable output can discover which project/branch
+    // they're on without a separate `link`/`branches` call. Resolved before any
+    // daemon/stack work begins so, in human text mode, the printed line below
+    // is visible even when status subsequently fails to connect to Docker.
+    // Lives INSIDE the telemetry-ensured scope: an interruption during the
+    // (bounded) lookup must still flush telemetry state (PR #6168 review).
+    const linkedState = yield* legacyResolveLinkedState();
+    if (output.format === "text" && (goFmt === undefined || goFmt === "pretty")) {
+      yield* output.raw(legacyFormatLinkedStateBlock(linkedState));
+    }
+    if (output.format === "json" || output.format === "stream-json") {
+      // TS-only QoL (CLI-2167 follow-up): the agent-discovery use case for this
+      // field matters MOST when status fails to reach the daemon/stack — a
+      // stopped stack is the common state an agent probes in — so mirror it
+      // onto the shared machine error envelope too (`MachineErrorContext`,
+      // read by `output.fail`), not just the success payload below. Harmless
+      // on the success path, since `output.success` never reads this cell.
+      // Read optionally (adds no R requirement) so this command's runtime
+      // choosing not to provide the cell just skips the mirroring, matching
+      // `output.fail`'s own optional read on the other end.
+      const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
+      if (Option.isSome(machineErrorContext)) {
+        yield* machineErrorContext.value.set({
+          linked_project: legacyLinkedStateJsonField(linkedState),
+        });
+      }
+    }
+
     // 0. Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
     // unconditionally `os.Chdir`s the resolved `--workdir`/`SUPABASE_WORKDIR`
     // in `PersistentPreRunE` (`cmd/root.go:93-105`) — before `status`'s own

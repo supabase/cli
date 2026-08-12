@@ -375,8 +375,10 @@ Flag divergences from the Go reference:
   writes this cache for a branch ref at all): a name/UUID-resolved branch link persists its known
   parent ref (a ref-only record when no richer cache exists yet); a raw ref-shaped branch link
   whose existing cache names a different project best-effort correlates the two via one extra
-  `listAllBranches` call and deletes the cache only on a verified mismatch. Both are best-effort and
-  never affect `link`'s own outcome — see `link/SIDE_EFFECTS.md`.
+  `listAllBranches` call and deletes the cache on EVERY unverified result — a verified mismatch,
+  a timeout, or any transport/status/decode failure (fail-safe: an unverifiable divergent cache is
+  untrustworthy). Both are best-effort and never affect `link`'s own outcome — see
+  `link/SIDE_EFFECTS.md`.
   Behavioral divergences from the Go reference:
 
 - `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref

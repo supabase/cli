@@ -398,8 +398,13 @@ describe("legacy branches list integration", () => {
     );
 
     it.live(
-      "a garbage SUPABASE_PROJECT_ID falls through to the cache file and succeeds (previously failed before any API call)",
+      "a garbage SUPABASE_PROJECT_ID hard-fails with LegacyInvalidProjectRefError even when a valid cache/file exists (PR #6168 review)",
       () => {
+        // Superseded behavior: a malformed env used to be silently skipped in
+        // favor of the cache. An explicit-but-typo'd override silently acting
+        // on a DIFFERENT project is the same "silent wrong target" class the
+        // rest of this feature guards against — and hard-failing restores the
+        // pre-CLI-2167 resolver's env validation.
         const { layer, api, workdir } = setup({
           projectId: Option.some("not-a-valid-ref"),
           response: [SAMPLE_BRANCH],
@@ -407,9 +412,12 @@ describe("legacy branches list integration", () => {
         writeProjectRefFile(workdir, FILE_ONLY_REF);
         writeLinkedProjectCacheFile(workdir, CACHE_REF);
         return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.none() });
-          expect(api.requests).toHaveLength(1);
-          expect(api.requests[0]?.url).toContain(`/v1/projects/${CACHE_REF}/branches`);
+          const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyInvalidProjectRefError");
+          }
+          expect(api.requests).toHaveLength(0);
         }).pipe(Effect.provide(layer));
       },
     );
