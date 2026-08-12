@@ -25,6 +25,7 @@ import {
   legacyCreateShadowDatabase,
   legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
+  legacyShadowRunInputFromLocalContainerInputs,
   legacySetupShadowDatabase,
   type LegacyShadowDatabaseHandle,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
@@ -38,7 +39,6 @@ import {
   type LegacyPgDeltaNextPlanShadows,
   type LegacyPgDeltaNextShadowInput,
 } from "./legacy-pgdelta-next-shadow.service.ts";
-import { legacyShadowRunInputFromLocalContainerInputs } from "./legacy-shadow-source.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 
 const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => {

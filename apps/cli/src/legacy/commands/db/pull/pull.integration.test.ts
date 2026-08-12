@@ -32,10 +32,17 @@ import {
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
 import type { OutputFormat } from "../../../../shared/output/types.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import {
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+} from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
+import {
+  LegacyDockerRun,
+  type LegacyDockerRunOpts,
+} from "../../../shared/legacy-docker-run.service.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
@@ -118,6 +125,10 @@ interface SetupOpts {
   // `Option.some("test")`; pass `Option.none()` to exercise the config.toml/workdir-basename
   // fallback `legacyResolveLocalProjectId` provides for the pg-delta edge-runtime cache bind.
   readonly projectId?: Option.Option<string>;
+  // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
+  // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
+  // instead of silently falling back to `opts.resolvedRef ?? LEGACY_VALID_REF`.
+  readonly linkedFails?: boolean;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -271,7 +282,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // `runStream`; deliver the configured bytes to `onStdout` (as Go's StdCopy would),
   // then report the exit code + stderr. `dumpFailFirstWith` fails the first attempt
   // so the pooler retry runs.
-  const dumpCalls: Array<{ env: Readonly<Record<string, string>>; image: string }> = [];
+  const dumpCalls: Array<{
+    env: Readonly<Record<string, string>>;
+    image: string;
+    network: LegacyDockerRunOpts["network"];
+  }> = [];
   let dumpRunCount = 0;
   const docker = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.die("run unused"),
@@ -288,7 +303,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           return { exitCode: 0, stderr: "" };
         }
         dumpRunCount += 1;
-        dumpCalls.push({ env: runOpts.env, image: runOpts.image });
+        dumpCalls.push({ env: runOpts.env, image: runOpts.image, network: runOpts.network });
         if (opts.dumpFailFirstWith !== undefined && dumpRunCount === 1) {
           if (opts.dumpFailFirstPartialBytes !== undefined) {
             const partial = new TextEncoder().encode(opts.dumpFailFirstPartialBytes);
@@ -394,11 +409,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // its `db.<ref>.<host>` connection host above, so both stay consistent regardless of
   // whether a test sets `opts.resolvedRef` (mirrors `reset.integration.test.ts`'s
   // identical mock).
+  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
+  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
+  // (not just `opts.resolvedRef`) drives the linked ref.
   const projectRefResolver = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.resolvedRef ?? LEGACY_VALID_REF)),
-    loadProjectRef: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed(flagValue.value)
+        : opts.linkedFails === true
+          ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+          : Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
     promptProjectRef: () => Effect.succeed(opts.resolvedRef ?? LEGACY_VALID_REF),
   });
 
@@ -475,6 +498,7 @@ const flags = (over: Partial<LegacyDbPullFlags> = {}): LegacyDbPullFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? Option.none(),
   local: over.local ?? Option.none(),
+  projectRef: over.projectRef ?? Option.none(),
   password: over.password ?? Option.none(),
 });
 
@@ -533,6 +557,84 @@ describe("legacy db pull", () => {
       // `LoadProjectRef`, matching the CLI-1879 pattern `db reset`/`db push` use.
       expect(s.cache.cached).toBe(true);
       expect(s.cache.cachedRef).toBe("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("pulls from the project given via --project-ref without a linked workdir", () => {
+    // The fake resolver fails as "unlinked" (`LegacyProjectNotLinkedError`)
+    // absent the flag — only the flag can resolve a ref here.
+    const FLAG_REF = "flagflagflagflagflag";
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
+      yes: true,
+      projectId: Option.none(),
+      linkedFails: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(
+        flags({ diffEngine: Option.some("pg-delta"), projectRef: Option.some(FLAG_REF) }),
+      );
+      expect(s.cache.cached).toBe(true);
+      expect(s.cache.cachedRef).toBe(FLAG_REF);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("--project-ref overrides an already-linked workdir's project ref", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    seedMigration(tmp.current, "20240101000000");
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      edgeStdout: pgDeltaDiffEnvelope([{ name: "schema_changes", sql: "create table remote ();" }]),
+      yes: true,
+      // The workdir already resolves to LEGACY_VALID_REF (e.g. via
+      // .temp/project-ref) — the flag must win over it.
+      resolvedRef: "abcdefghijklmnopqrst",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(
+        flags({ diffEngine: Option.some("pg-delta"), projectRef: Option.some(FLAG_REF) }),
+      );
+      expect(s.cache.cached).toBe(true);
+      expect(s.cache.cachedRef).toBe(FLAG_REF);
+      expect(s.cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const s = setup(tmp.current, {});
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(
+        flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      );
+      // The guard fires before any connection resolution or cache write.
+      expect(s.resolveCalls).toEqual([]);
+      expect(s.cache.cached).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("rejects --project-ref combined with --experimental before delegating", () => {
+    // The bundled Go binary's own `db pull --experimental` re-resolves the
+    // workdir's own linked ref itself, and `rebuildDelegateArgs` never registered
+    // `--project-ref` to forward — fail up front instead of silently dropping it.
+    const FLAG_REF = "flagflagflagflagflag";
+    const s = setup(tmp.current, { experimental: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPull(flags({ projectRef: Option.some(FLAG_REF) })).pipe(
+        Effect.exit,
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--project-ref is not supported with the --experimental structured-dump pull; use --declarative instead",
+      );
+      expect(s.proxyCalls).toEqual([]);
+      expect(s.proxyCaptureCalls).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1438,6 +1540,39 @@ describe("legacy db pull", () => {
           Effect.sync(() => {
             if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
             else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+          }),
+        ),
+        Effect.provide(s.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
+    () => {
+      // Go's `dockerExec` sets host networking by default (dump.go:91-93), but
+      // `DockerStart` overrides it with `viper.GetString("network-id")` whenever that
+      // resolves non-empty (docker.go:379-380) — a value sourced only from
+      // `supabase/.env` (after `loadNestedEnv`'s `os.Setenv`) still wins over host.
+      const prev = process.env["SUPABASE_NETWORK_ID"];
+      delete process.env["SUPABASE_NETWORK_ID"];
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
+      const s = setup(tmp.current, {
+        remoteVersions: [], // no remote history → initial-migra pg_dump path
+        dumpStdout: "create table dumped ();\n",
+        edgeStdout: "",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
+        expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+            else process.env["SUPABASE_NETWORK_ID"] = prev;
           }),
         ),
         Effect.provide(s.layer),

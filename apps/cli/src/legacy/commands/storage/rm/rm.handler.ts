@@ -23,6 +23,7 @@ import {
 import {
   LegacyStorageMissingBucketError,
   LegacyStorageMissingFlagError,
+  LegacyStorageMutuallyExclusiveFlagsError,
   LegacyStorageObjectNotFoundError,
 } from "../storage.errors.ts";
 import { legacyListStoragePaths } from "../storage.iterate.ts";
@@ -34,6 +35,8 @@ export interface LegacyStorageRmFlags {
   // reads only `local` (Go `storage.go:21-32` reads `GetBool("local")`).
   readonly linked: boolean;
   readonly local: boolean;
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  readonly projectRef: Option.Option<string>;
 }
 
 interface RmSummary {
@@ -67,7 +70,19 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
     // work). An unlinked workdir must fail fast with the not-linked guidance
     // before a malformed/unreadable `supabase/.env` gets a chance to mask it
     // with an env-parse error.
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && flags.local) {
+      return yield* Effect.fail(
+        new LegacyStorageMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
+    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
     // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320). Both the
     // `--local` and (default) `--linked` branches of `ParseDatabaseConfig` call

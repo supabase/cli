@@ -18,14 +18,12 @@ import {
 import {
   legacyCreateShadowDatabase,
   legacyRemoveShadowDatabase,
+  legacyShadowRunInputFromLocalContainerInputs,
 } from "./db-bootstrap/shadow-database.ts";
 import { legacyCompareUtf8Bytes } from "./legacy-glob.ts";
 import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "./legacy-pgdelta.ts";
-import {
-  legacyPrepareShadowSource,
-  legacyShadowRunInputFromLocalContainerInputs,
-} from "../commands/db/shared/legacy-shadow-source.ts";
+import { legacyPrepareShadowSource } from "../commands/db/shared/legacy-shadow-source.ts";
 
 /**
  * Declarative catalog-cache key builders + on-disk catalog resolution, ported

@@ -2,6 +2,7 @@ import { Effect, type FileSystem, Option, type Path } from "effect";
 
 import { legacyListLocalMigrations } from "./legacy-pgdelta.cache.ts";
 import { legacyBold } from "./legacy-colors.ts";
+import { legacyCompareUtf8Bytes } from "./legacy-glob.ts";
 import type { LegacyDbExecError } from "./legacy-db-connection.errors.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
@@ -47,6 +48,10 @@ export const UPSERT_MIGRATION_VERSION =
 /** `DELETE ... WHERE version = ANY($1)` — Go's `DELETE_MIGRATION_VERSION` (repair reverted). */
 export const DELETE_MIGRATION_VERSION =
   "DELETE FROM supabase_migrations.schema_migrations WHERE version = ANY($1)";
+
+/** `DELETE ... WHERE version <= $1` — Go's `DELETE_MIGRATION_BEFORE` (squash baseline). */
+export const LEGACY_DELETE_MIGRATION_BEFORE =
+  "DELETE FROM supabase_migrations.schema_migrations WHERE version <= $1";
 
 /** `TRUNCATE supabase_migrations.schema_migrations` — Go's repair-all reset. */
 export const TRUNCATE_VERSION_TABLE = "TRUNCATE supabase_migrations.schema_migrations";
@@ -421,9 +426,12 @@ export const legacyReadMigrationTable = (session: LegacyDbSession) =>
 /**
  * Resolves the local migration file for a version by globbing `<version>_*.sql`
  * against the migrations dir. Mirrors Go's `repair.GetMigrationFile`
- * (`internal/migration/repair/repair.go:90`): the lexically-first match, or
- * `None` when nothing matches (the caller raises the not-found error so the
- * exact Go message can be assembled). A missing directory is treated as no match.
+ * (`internal/migration/repair/repair.go:90-100`): `afero.Glob` reads the
+ * directory then byte-sorts entries (`sort.Strings`, `afero/match.go:91`) before
+ * matching, so ties resolve to the byte-ordered (Go `sort.Strings`) first match,
+ * not JS's default UTF-16-code-unit order — or `None` when nothing matches (the
+ * caller raises the not-found error so the exact Go message can be assembled). A
+ * missing directory is treated as no match.
  */
 export const legacyResolveMigrationFile = (
   fs: FileSystem.FileSystem,
@@ -445,7 +453,7 @@ export const legacyResolveMigrationFile = (
       const prefix = `${version}_`;
       const matches = names
         .filter((name) => name.startsWith(prefix) && name.endsWith(".sql"))
-        .sort();
+        .sort(legacyCompareUtf8Bytes);
       return matches.length > 0
         ? Option.some(path.join(migrationsDir, matches[0]!))
         : Option.none<string>();

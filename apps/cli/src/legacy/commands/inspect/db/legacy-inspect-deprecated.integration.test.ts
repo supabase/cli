@@ -84,6 +84,7 @@ const flags: LegacyInspectConnectionFlags = {
   dbUrl: Option.none<string>(),
   linked: false,
   local: true,
+  projectRef: Option.none<string>(),
 };
 
 // All deprecated-alias handlers share the same factory-produced type.

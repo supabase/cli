@@ -55,6 +55,18 @@ const runList = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && (target.connType ?? "linked") !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const listBody = Effect.gen(function* () {
     // list defaults to `--linked` (Go: `Bool("linked", true)`).
     const cfg = yield* resolver.resolve({
@@ -62,6 +74,7 @@ const runList = Effect.fnUntraced(function* (
       connType: target.connType ?? "linked",
       dnsResolver,
       password: flags.password,
+      linkedProjectRef: flags.projectRef,
     });
 
     const remote = yield* Effect.scoped(
@@ -100,7 +113,7 @@ const runList = Effect.fnUntraced(function* (
   if ((target.connType ?? "linked") === "linked") {
     const projectRef = yield* LegacyProjectRefResolver;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(Option.none());
+    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
     return yield* listBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }
   return yield* listBody;

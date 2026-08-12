@@ -210,6 +210,7 @@ const flags = () => ({
   dbUrl: Option.none<string>(),
   linked: false,
   local: true,
+  projectRef: Option.none<string>(),
 });
 
 describe("legacy db test (alias) integration", () => {

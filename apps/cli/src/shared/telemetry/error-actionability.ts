@@ -1,3 +1,8 @@
+import {
+  MANAGED_ERROR_CODES,
+  MANAGED_ERROR_TAG_BY_CODE,
+  type ManagedErrorCode,
+} from "@supabase/stack/managed-model";
 import { Cause, Option } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
@@ -102,6 +107,20 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_url",
   "internal_build",
   "invalid_config",
+  "managed_identity",
+  "managed_identity_conflict",
+  "managed_initialization",
+  "managed_operation_in_progress",
+  "managed_operation_ownership",
+  "managed_owner_pid",
+  "managed_pending_update",
+  "managed_port",
+  "managed_port_change",
+  "managed_port_duplicate_key",
+  "managed_publication_timeout",
+  "managed_recovery",
+  "managed_stack_name",
+  "managed_stack_not_stopped",
   "network",
   "not_found",
   "plan_limit",
@@ -755,8 +774,128 @@ const effectCliActionabilityByTag = {
   UnrecognizedOption: () => actionability.invalidInput,
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
+/**
+ * `@supabase/stack` managed registry failures, keyed by the stable `code`
+ * literal each class declares. `code` is the package's wire-level contract: it
+ * survives the identifier minification of release builds, and Node/Bun callers
+ * outside an Effect runtime branch on it. Dispatch, however, goes through
+ * `_tag` like every other external error — {@link managedActionabilityByTag}
+ * projects this table onto the tags via the package's own tag/code map.
+ *
+ * Keyed by the package's exported {@link ManagedErrorCode} union, so the table
+ * is exhaustive by construction: a new managed failure cannot be added in
+ * `@supabase/stack` without being classified here.
+ */
+const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionabilityDeclaration> = {
+  INVALID_MANAGED_IDENTITY: {
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_identity",
+  },
+  DUPLICATE_MANAGED_IDENTITY: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "managed_identity_conflict",
+  },
+  MANAGED_INVALID_STACK_NAME: {
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_stack_name",
+  },
+  UNSUPPORTED_MANAGED_REGISTRY_VERSION: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "invalid_config",
+  },
+  MANAGED_STACK_NOT_FOUND: { ...actionability.invalidInput, fingerprint_suffix: "not_found" },
+  // Another caller owns the stack right now; the remediation is to settle that
+  // operation before retrying.
+  MANAGED_OPERATION_IN_PROGRESS: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_operation_in_progress",
+  },
+  MANAGED_OPERATION_OWNERSHIP_MISMATCH: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_operation_ownership",
+  },
+  MANAGED_STACK_PUBLICATION_TIMEOUT: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_publication_timeout",
+  },
+  MANAGED_OPERATION_REQUIRES_RECONCILIATION: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_recovery",
+  },
+  MANAGED_STACK_NOT_STOPPED: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_stack_not_stopped",
+  },
+  MANAGED_RUNNING_STACK_PORT_CHANGE: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_port_change",
+  },
+  // The operation owner pid comes from the CLI process itself, never from user
+  // input, so a rejected pid is a broken internal invariant.
+  MANAGED_INVALID_OWNER_PID: {
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_owner_pid",
+  },
+  // Only internal misuse of the repository can call `updateStack` on a still
+  // unpublished (pending) row; nothing a user does reaches this.
+  MANAGED_PENDING_STACK_UPDATE: {
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_pending_update",
+  },
+  MANAGED_PORT_ALREADY_RESERVED: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "port_conflict",
+  },
+  // The port number itself is unusable (fractional or outside 1-65535), which
+  // is the user's own configured value rather than a conflict with a peer.
+  MANAGED_INVALID_PORT: { ...actionability.invalidConfig, fingerprint_suffix: "managed_port" },
+  // Two of the user's own port assignments name the same key, which is the
+  // user's configured value rather than a conflict with another stack.
+  MANAGED_DUPLICATE_PORT_KEY: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "managed_port_duplicate_key",
+  },
+  // The registry derives every stack root itself, so a path that fails the
+  // containment check means the CLI passed a rejected argument.
+  UNSAFE_MANAGED_STACK_PATH: {
+    ...actionability.impossibleState,
+    fingerprint_suffix: "bad_argument",
+  },
+  MANAGED_STACK_INITIALIZATION_FAILED: {
+    ...actionability.startStack,
+    fingerprint_suffix: "managed_initialization",
+  },
+};
+
+/**
+ * The managed table above, re-keyed by the `_tag` of the class that declares
+ * each code. Generated from `@supabase/stack`'s own tag/code map so the
+ * eighteen managed tags are classified without restating a single verdict:
+ * {@link managedActionabilityByCode} stays the one place a managed failure is
+ * classified, and a tag/code pair the package renames cannot silently fall
+ * through to `unknown`.
+ */
+const managedActionabilityByTag: Record<string, ErrorActionabilityAdapter> = Object.fromEntries(
+  MANAGED_ERROR_CODES.map((code) => {
+    const declaration = managedActionabilityByCode[code];
+    return [MANAGED_ERROR_TAG_BY_CODE[code], () => declaration];
+  }),
+);
+
+/**
+ * Whether a `@supabase/stack` managed error code has a classification in
+ * {@link managedActionabilityByCode}. Used by the coverage test to keep the
+ * table exhaustive against the managed classes; the tags themselves are checked
+ * through {@link isClassifiedExternalErrorTag}, which the generated entries
+ * satisfy.
+ */
+export function isClassifiedManagedErrorCode(code: string): boolean {
+  return Object.hasOwn(managedActionabilityByCode, code);
+}
+
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ...effectCliActionabilityByTag,
+  ...managedActionabilityByTag,
 
   // effect PlatformError — OS/filesystem operations. `reason` is
   // `BadArgument | SystemError`; BadArgument means the CLI itself passed a
@@ -1028,6 +1167,14 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     if (isErrorRecord(cause) && readErrorTag(cause) === "PlatformError") {
       return classifyAtDepth(cause, depth + 1);
     }
+  }
+
+  // ManagedStackInitializationError is only a wrapper: the real provisioning
+  // failure (a Docker pull, a config parse, ...) is preserved in `cause`, and
+  // the generic initialization verdict would hide the actionable one.
+  if (isErrorRecord(error) && tag === "ManagedStackInitializationError") {
+    const cause = classifiableCause(error);
+    if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
   }
 
   if (tag !== undefined && isErrorRecord(error)) {

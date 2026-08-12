@@ -85,6 +85,7 @@ resolve the connection (via `LegacyDbConfigResolver`).
 | `1`  | COPY failure (`failed to copy output`) / file-write failure (`failed to create output file`) |
 | `1`  | malformed `config.toml`                                                                      |
 | `1`  | more than one of `--db-url` / `--linked` / `--local`                                         |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                     |
 
 A **per-rule** csvq evaluation error does **not** fail the command — it becomes the
 rule's STATUS cell, matching Go.
@@ -121,3 +122,13 @@ instead a structured result is emitted:
 ```json
 { "outputDir": "<abs path>", "files": [{ "name": "locks", "path": "..." }, ...], "rules": [{ "name": "...", "status": "...", "matches": "..." }, ...] }
 ```
+
+## Notes
+
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution `LegacyDbConfigResolver` performs
+  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
+  `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
+  error rather than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  a non-linked target).

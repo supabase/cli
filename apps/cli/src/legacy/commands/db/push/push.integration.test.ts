@@ -43,6 +43,8 @@ const LIST_MIGRATIONS =
 const SELECT_SEEDS = "SELECT path, hash FROM supabase_migrations.seed_files";
 const READ_VAULT = "SELECT id, name FROM vault.secrets WHERE name = ANY($1)";
 
+const FLAG_PROJECT_REF = "flagflagflagflagflag";
+
 const LOCAL_CONN: LegacyPgConnInput = {
   host: "127.0.0.1",
   port: 54322,
@@ -60,6 +62,7 @@ const DEFAULT_FLAGS: LegacyDbPushFlags = {
   dbUrl: Option.none(),
   linked: false,
   local: true,
+  projectRef: Option.none(),
   password: Option.none(),
 };
 
@@ -221,14 +224,19 @@ function setup(
     resolve: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(opts.projectRef ?? LEGACY_VALID_REF)),
-    loadProjectRef: () =>
-      opts.linkedFails === true
-        ? Effect.fail(
-            new LegacyProjectNotLinkedError({
-              message: "Cannot find project ref. Have you run supabase link?",
-            }),
-          )
-        : Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
+    // Go's `loadProjectRef` gives `--project-ref` top precedence, short-circuiting
+    // BEFORE the "not linked" failure — mirror that here so a test can prove the
+    // flag resolves a ref even when the workdir would otherwise fail to link.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed(flagValue.value)
+        : opts.linkedFails === true
+          ? Effect.fail(
+              new LegacyProjectNotLinkedError({
+                message: "Cannot find project ref. Have you run supabase link?",
+              }),
+            )
+          : Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
     promptProjectRef: () => Effect.succeed(opts.projectRef ?? LEGACY_VALID_REF),
   });
 
@@ -1316,6 +1324,102 @@ describe("legacy db push", () => {
       expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
       const success = out.messages.find((m) => m.type === "success");
       expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
+    });
+  });
+
+  it.live("pushes to the project given via --project-ref without a linked workdir", () => {
+    // No `.temp/project-ref` and the resolver's own ref-file fallback is
+    // simulated as failing (`linkedFails`) — only the flag can resolve a ref.
+    const { layer, out, linkedCache, resolver } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      linkedFails: true,
+      format: "json",
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Connecting to remote database...");
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
+      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_PROJECT_REF));
+      const success = out.messages.find((m) => m.type === "success");
+      expect(success?.data?.["migrations"]).toEqual(["20240101000000_test.sql"]);
+    });
+  });
+
+  it.live("--project-ref drives which [remotes.<ref>] block merges into config", () => {
+    // The `[remotes.staging]` block's `project_id` matches the FLAG ref, not the
+    // resolver's own `LEGACY_VALID_REF` fallback — the override only announces if
+    // the flag (not the fallback) actually resolved the ref config merges against.
+    const { layer, out } = setup(tmp.current, {
+      toml: `project_id = "base"\n\n[remotes.staging]\nproject_id = "${FLAG_PROJECT_REF}"\n`,
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer));
+      expect(out.stderrText).toContain("Loading config override: [remotes.staging]");
+    });
+  });
+
+  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+    const { layer, linkedCache } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--linked"],
+      isLocal: false,
+      // The workdir is linked to LEGACY_VALID_REF (e.g. via .temp/project-ref) —
+      // the flag must win over it.
+      projectRef: LEGACY_VALID_REF,
+      confirm: [true],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        local: false,
+        linked: true,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer));
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(FLAG_PROJECT_REF);
+      expect(linkedCache.cachedRef).not.toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
+      toml: 'project_id = "test"\n',
+      files: migrationFile("20240101000000"),
+      args: ["db", "push", "--local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbPush({
+        ...DEFAULT_FLAGS,
+        projectRef: Option.some(FLAG_PROJECT_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection/config resolution or cache write.
+      expect(conn.execs).toEqual([]);
+      expect(resolver.calls).toEqual([]);
+      expect(linkedCache.cached).toBe(false);
     });
   });
 });

@@ -21,8 +21,8 @@ import {
   LegacyPgDeltaEngineError,
   type LegacyPgDeltaDiffResult,
   type LegacyPgDeltaEndpoint,
-  type LegacyPgDeltaTransactionMode,
 } from "./legacy-pgdelta-engine.service.ts";
+import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migration-file.ts";
 import {
   type LegacyPgDeltaContext,
   legacyDeclarativeExportPgDelta,
@@ -45,7 +45,7 @@ function normalizeDiff(
     readonly files: ReadonlyArray<{
       readonly order: number;
       readonly name: string;
-      readonly transactionMode: LegacyPgDeltaTransactionMode;
+      readonly transactionMode: LegacyMigrationTransactionMode;
       readonly sql: string;
     }>;
   },

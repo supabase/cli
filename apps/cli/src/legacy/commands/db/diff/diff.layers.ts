@@ -21,16 +21,19 @@ import { legacyPgDeltaNextShadowLayer } from "../shared/legacy-pgdelta-next-shad
  * Runtime layer for `supabase db diff`.
  *
  * Mirrors `db schema declarative generate` (`generate.layers.ts`): the db-config
- * resolver plus the native pg-delta / migra stack — the edge-runtime runner, the
- * SSL probe, and `HttpClient` (the native shadow's health-check wait). Shadow
- * provisioning (both `db diff`'s own and the explicit `--from migrations`/`--to
- * migrations` catalog shadow) is fully native (CLI-1956/CLI-1959) — see
- * `commands/db/shared/legacy-shadow-source.ts` and `shared/legacy-pgdelta.cache.ts`
- * — so no `LegacyDeclarativeSeam` layer is needed here (`--use-pgadmin`/
- * `--use-pg-schema` delegate through `LegacyGoProxy` instead, not this seam).
+ * resolver plus the native pg-delta / migra / pgAdmin stack — the edge-runtime
+ * runner, the SSL probe, and `HttpClient` (the native shadow's health-check wait).
+ * Shadow provisioning (`db diff`'s own — migra/pg-delta AND pgadmin alike — plus
+ * the explicit `--from migrations`/`--to migrations` catalog shadow) is fully
+ * native (CLI-1956/CLI-1959/CLI-1968) — see `commands/db/shared/
+ * legacy-shadow-source.ts` and `shared/legacy-pgdelta.cache.ts` — so no
+ * `LegacyDeclarativeSeam` layer is needed here. `--use-pg-schema` is now the
+ * only engine that delegates through `LegacyGoProxy` (CLI-1960's keep-in-Go
+ * exception); `--use-pgadmin` uses `LegacyDockerRun` natively instead, the same
+ * service the migra OOM bash fallback already needed.
  * `LegacyDockerRun` is exposed in the merge (not just provided to the
- * edge-runtime layer) because the migra OOM bash fallback runs the
- * `supabase/migra` container directly.
+ * edge-runtime layer) because both the migra OOM bash fallback and the pgadmin
+ * differ container run their own container directly.
  * Per the "provide doesn't share to siblings" rule, `LegacyCliConfig` is provided
  * to every layer that needs it.
  */

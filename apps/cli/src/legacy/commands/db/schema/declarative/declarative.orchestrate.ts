@@ -11,6 +11,7 @@ import {
   legacyCreateShadowDatabase,
   legacyPrepareRawShadow,
   legacyRemoveShadowDatabase,
+  legacyShadowRunInputFromLocalContainerInputs,
 } from "../../../../shared/db-bootstrap/shadow-database.ts";
 import type { LegacyPgDeltaContext } from "../../../../shared/legacy-pgdelta.ts";
 import type { LegacySetupInputs } from "../../../../shared/legacy-pgdelta.cache.ts";
@@ -26,7 +27,6 @@ import {
   LegacyLoadPgDeltaSqlFiles,
   LegacyReadPgDeltaExportManifest,
 } from "../../shared/legacy-pgdelta-files.ts";
-import { legacyShadowRunInputFromLocalContainerInputs } from "../../shared/legacy-shadow-source.ts";
 import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
 
 /** Ambient inputs shared by the orchestration steps. */

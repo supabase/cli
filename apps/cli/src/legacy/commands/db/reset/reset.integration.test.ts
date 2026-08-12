@@ -25,7 +25,11 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import {
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+} from "../../../config/legacy-project-ref.service.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
@@ -74,6 +78,7 @@ const DEFAULT_FLAGS: LegacyDbResetFlags = {
   dbUrl: Option.none(),
   linked: false,
   local: false,
+  projectRef: Option.none(),
   noSeed: false,
   sqlPaths: [],
   version: Option.none(),
@@ -93,8 +98,16 @@ function mockResolver(opts: {
 }) {
   let calls = 0;
   const layer = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) => {
+    resolve: (flags: LegacyDbConfigFlags) => {
       calls++;
+      // A threaded `--project-ref` flag takes the same top precedence a real
+      // resolver would give it, so a test can prove the flag (not just the
+      // fixed `opts.ref`) drives the resolved (and later cached) ref.
+      const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
+      const resolvedRef =
+        Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
+          ? linkedProjectRef.value
+          : opts.ref;
       return opts.resolveFails === true
         ? Effect.fail(
             new LegacyDbConfigConnectTempRoleError({
@@ -107,7 +120,7 @@ function mockResolver(opts: {
               : {
                   conn: CONN,
                   isLocal: opts.isLocal,
-                  ref: opts.ref !== undefined ? Option.some(opts.ref) : Option.none(),
+                  ref: resolvedRef !== undefined ? Option.some(resolvedRef) : Option.none(),
                 }) satisfies LegacyResolvedDbConfig,
           );
     },
@@ -422,6 +435,10 @@ function setup(
     // wired into the remote-reset path after a successful migrate/schema-files + seed).
     catalogStdout?: string;
     catalogExportFailWith?: string;
+    // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
+    // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
+    // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
+    linkedFails?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -498,11 +515,19 @@ function setup(
     mockStdin(true),
     // The linked ref is pre-loaded (for the post-run cache) before resolve,
     // mirroring Go's LoadProjectRef-before-NewDbConfigWithPassword order.
+    // `loadProjectRef` gives an explicit `--project-ref` flag top precedence,
+    // same as Go's `flags.LoadProjectRef` — mirror that so a test can prove the
+    // flag (not just `opts.ref`) drives the linked ref.
     Layer.succeed(LegacyProjectRefResolver, {
       resolve: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
       resolveForLink: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
       resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? LEGACY_VALID_REF)),
-      loadProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+      loadProjectRef: (flagValue: Option.Option<string>) =>
+        Option.isSome(flagValue) && flagValue.value.length > 0
+          ? Effect.succeed(flagValue.value)
+          : opts.linkedFails === true
+            ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+            : Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
       promptProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
     }),
     Layer.succeed(LegacyPlatformApiFactory, {
@@ -1520,6 +1545,74 @@ describe("legacy db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(linkedCache.cached).toBe(true);
         expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+      });
+    });
+
+    it.live("resets the project given via --project-ref without a linked workdir", () => {
+      // The fake resolver fails as "unlinked" (`LegacyProjectNotLinkedError`)
+      // absent the flag — only the flag can resolve a ref here.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, conn, linkedCache } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        confirm: [true],
+        linkedFails: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({
+          ...DEFAULT_FLAGS,
+          linked: true,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+        expect(linkedCache.cached).toBe(true);
+        expect(linkedCache.cachedRef).toBe(FLAG_REF);
+      });
+    });
+
+    it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+      const FLAG_REF = "flagflagflagflagflag";
+      // The workdir already resolves to LEGACY_VALID_REF (e.g. via
+      // .temp/project-ref) — the flag must win over it.
+      const { layer, linkedCache } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        ref: LEGACY_VALID_REF,
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({
+          ...DEFAULT_FLAGS,
+          linked: true,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer));
+        expect(linkedCache.cached).toBe(true);
+        expect(linkedCache.cachedRef).toBe(FLAG_REF);
+        expect(linkedCache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      });
+    });
+
+    it.live("rejects --project-ref on the default local target", () => {
+      // reset defaults to local when no target flag is set — the guard must
+      // fire from the flag alone, with no explicit --local/--db-url needed.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbReset({
+          ...DEFAULT_FLAGS,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+          );
+        }
+        // The guard fires before any connection resolution or cache write.
+        expect(conn.execs).toEqual([]);
+        expect(resolver.calls).toBe(0);
+        expect(linkedCache.cached).toBe(false);
       });
     });
 

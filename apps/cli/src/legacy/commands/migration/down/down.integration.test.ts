@@ -114,11 +114,17 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       }),
   });
 
+  // `loadProjectRef` gives an explicit `--project-ref` flag top precedence, same
+  // as Go's `flags.LoadProjectRef` — mirror that so a test can prove the flag
+  // (not just the hardcoded `LEGACY_VALID_REF` fallback) drives the linked ref.
   const projectRef = Layer.succeed(LegacyProjectRefResolver, {
     resolve: () => Effect.succeed(LEGACY_VALID_REF),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
-    loadProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Effect.succeed(
+        Option.isSome(flagValue) && flagValue.value.length > 0 ? flagValue.value : LEGACY_VALID_REF,
+      ),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
 
@@ -142,7 +148,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     ),
     BunServices.layer,
   );
-  return { layer, out, telemetry, execs, queries };
+  return { layer, out, telemetry, execs, queries, cache };
 }
 
 const flags = (over: Partial<LegacyMigrationDownFlags> = {}): LegacyMigrationDownFlags => ({
@@ -150,6 +156,7 @@ const flags = (over: Partial<LegacyMigrationDownFlags> = {}): LegacyMigrationDow
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? false,
   local: over.local ?? true,
+  projectRef: over.projectRef ?? Option.none(),
 });
 
 const seed = (workdir: string, name: string, body = "create table a;\n") => {
@@ -221,6 +228,58 @@ describe("legacy migration down", () => {
             q.sql.includes("INSERT INTO supabase_migrations") && q.params?.[0] === "20240101000000",
         ),
       ).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "reverts on the project given via --project-ref --linked, overriding the linked ref",
+    () => {
+      // down defaults to local; only with --linked does the flag's ref get
+      // cached. The fake resolver's own fallback (LEGACY_VALID_REF) represents
+      // whatever the workdir would resolve to absent the flag.
+      const FLAG_REF = "flagflagflagflagflag";
+      seed(tmp.current, "20240101000000_a.sql");
+      const { layer, cache } = setup(tmp.current, {
+        args: ["--linked"],
+        confirm: true,
+        remote: ["20240101000000", "20240102000000"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyMigrationDown(
+          flags({ last: 1, linked: true, local: false, projectRef: Option.some(FLAG_REF) }),
+        );
+        expect(cache.cached).toBe(true);
+        expect(cache.cachedRef).toBe(FLAG_REF);
+        expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("rejects --project-ref on the default local target", () => {
+    // down defaults to local when no target flag is set — the guard must fire
+    // from the flag alone, with no explicit --local/--db-url needed.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, execs, queries, cache } = setup(tmp.current, {
+      remote: ["20240101000000", "20240102000000"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationDown(
+        flags({ last: 1, projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure) && failure.value._tag).toBe(
+          "LegacyMigrationTargetFlagsError",
+        );
+        expect(Option.isSome(failure) && (failure.value as { message: string }).message).toBe(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection resolution or cache write.
+      expect(execs).toEqual([]);
+      expect(queries).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

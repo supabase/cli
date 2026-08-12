@@ -10,7 +10,7 @@ import {
   legacyFormatMigrationTimestamp,
   legacyGetMigrationPath,
 } from "../../../shared/legacy-migration-file.ts";
-import type { LegacyPgDeltaTransactionMode } from "./legacy-pgdelta-engine.service.ts";
+import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migration-file.ts";
 
 /** A migration file written by a diff/pull, paired with its history version. */
 export interface LegacyWrittenMigration {
@@ -73,7 +73,7 @@ export const legacyWritePgDeltaMigrations = (
       readonly name: string;
       readonly suffix?: string | null;
       readonly sql: string;
-      readonly transactionMode: LegacyPgDeltaTransactionMode;
+      readonly transactionMode: LegacyMigrationTransactionMode;
     }>;
   },
 ): Effect.Effect<Array<LegacyWrittenMigration>, LegacyPgDeltaMigrationWriteError> =>

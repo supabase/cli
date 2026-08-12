@@ -23,7 +23,7 @@ import {
   LegacyDeclarativeParseOutputError,
   LegacyPgDeltaDiffParseError,
 } from "../commands/db/shared/legacy-pgdelta.errors.ts";
-import type { LegacyPgDeltaTransactionMode } from "../commands/db/shared/legacy-pgdelta-engine.service.ts";
+import type { LegacyMigrationTransactionMode } from "./legacy-migration-file.ts";
 
 const PG_DELTA_NPM_REGISTRY_ENV = "PGDELTA_NPM_REGISTRY";
 
@@ -50,7 +50,7 @@ export interface LegacyDeclarativeOutput {
 interface LegacyPgDeltaPlanFile {
   readonly order: number;
   readonly name: string;
-  readonly transactionMode: LegacyPgDeltaTransactionMode;
+  readonly transactionMode: LegacyMigrationTransactionMode;
   readonly sql: string;
 }
 

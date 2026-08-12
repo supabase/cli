@@ -13,6 +13,7 @@ stack is used; with `--linked` the remote project is used.
 | `<workdir>/supabase/<objects_path>/**`        | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/` (Go `config.go:757-759`), an absolute path is used as-is                                                                                                |
 | `<workdir>/supabase/<api.tls.cert_path>`      | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read).      |
 | `<workdir>/supabase/<api.tls.key_path>`       | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing (Go `config.go:845-861`) — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`. |
+| `<workdir>/supabase/.temp/project-ref`        | plain text  | `--linked` only, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                                                                                                                                                                             |
 | `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv      | when no pre-resolved `yes` is passed in (the standalone command; `db reset --local` passes its own), to resolve `SUPABASE_YES` for the overwrite/prune prompts (CLI-1878; Go's `loadNestedEnv`)                                                                                  |
 
 ## Files Written
@@ -88,6 +89,7 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | `1`  | network / connection failure to the Storage gateway                                                           |
 | `1`  | malformed list response (a 200 body whose shape doesn't decode, mirroring Go's strict `ParseJSON`)            |
 | `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                               |
+| `1`  | `--project-ref` set without `--linked` (see Notes)                                                            |
 
 ## Telemetry Events Fired
 
@@ -141,6 +143,11 @@ stdout and a terminal `result`/`error` event is emitted.
 
 ## Notes
 
+- **`--project-ref`** (TS-only, no Go equivalent — Go's `seed` defines no
+  `--project-ref` at all) overrides ONLY the linked-ref resolution used above
+  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
+  `--linked`: passing it without `--linked` (i.e. targeting local) is a hard
+  error rather than a silently discarded flag.
 - **Remote (`--linked`) — config override merge.** The project ref is resolved
   BEFORE config is loaded. `loadProjectConfig` then merges the `[remotes.<name>]`
   block whose `project_id` equals the resolved ref over the base config (including

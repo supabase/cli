@@ -2,7 +2,7 @@ import type { Path } from "effect";
 
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
-type LegacyMigrationTransactionMode = "transactional" | "none";
+export type LegacyMigrationTransactionMode = "transactional" | "none";
 
 export interface LegacyParsedMigrationContent {
   readonly statements: ReadonlyArray<string>;

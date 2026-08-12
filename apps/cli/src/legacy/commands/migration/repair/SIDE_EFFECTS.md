@@ -2,9 +2,10 @@
 
 ## Files Read
 
-| Path                       | Format     | When                                              |
-| -------------------------- | ---------- | ------------------------------------------------- |
-| `~/.supabase/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
+| Path                                   | Format     | When                                                                                                      |
+| -------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                                                         |
+| `<workdir>/supabase/.temp/project-ref` | plain text | `--linked` (default), to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 
 ## Files Written
 
@@ -27,11 +28,12 @@
 
 ## Exit Codes
 
-| Code | Condition                          |
-| ---- | ---------------------------------- |
-| `0`  | success                            |
-| `1`  | database connection failure        |
-| `1`  | invalid or missing `--status` flag |
+| Code | Condition                                                                |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | success                                                                  |
+| `1`  | database connection failure                                              |
+| `1`  | invalid or missing `--status` flag                                       |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
 
 ## Output
 
@@ -77,3 +79,10 @@ migration history table to match local migration files?` (default **NO**).
   for the name + statements; a missing file exits non-zero.
 - `--linked` (default true), `--local`, and `--db-url` are mutually exclusive, as
   are `--db-url` and `--password`/`-p`.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution used for the connection (flag >
+  `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
+  passing it with a resolved `--local`/`--db-url` target is a hard error rather
+  than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  a non-linked target).

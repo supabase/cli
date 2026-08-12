@@ -56,6 +56,18 @@ const runUp = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && (target.connType ?? "local") !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
@@ -64,6 +76,7 @@ const runUp = Effect.fnUntraced(function* (
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
       dnsResolver,
+      linkedProjectRef: flags.projectRef,
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
@@ -144,7 +157,7 @@ const runUp = Effect.fnUntraced(function* (
   if ((target.connType ?? "local") === "linked") {
     const projectRef = yield* LegacyProjectRefResolver;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const linkedRef = yield* projectRef.loadProjectRef(Option.none());
+    const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
     return yield* upBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedRef)));
   }
   return yield* upBody;

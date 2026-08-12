@@ -176,8 +176,15 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
     resolveForLink: () =>
       opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
-    loadProjectRef: () =>
-      opts.linkedFails === true ? Effect.fail(notLinked()) : Effect.succeed(projectRefRef),
+    // Gives an explicit `--project-ref` flag top precedence, same as Go's
+    // `flags.LoadProjectRef` — short-circuits BEFORE `linkedFails`, so a test
+    // can prove the flag resolves a ref even for an "unlinked" workdir.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed(flagValue.value)
+        : opts.linkedFails === true
+          ? Effect.fail(notLinked())
+          : Effect.succeed(projectRefRef),
     promptProjectRef: () => Effect.succeed(projectRefRef),
   });
 

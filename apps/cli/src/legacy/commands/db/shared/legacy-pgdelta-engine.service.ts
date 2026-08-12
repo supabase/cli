@@ -7,6 +7,7 @@ import type {
 import type { LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 import type { LegacySetupInputs } from "../../../shared/legacy-pgdelta.cache.ts";
 import type { LegacyPgDeltaImplementation } from "../../../shared/legacy-pgdelta-next-flag.ts";
+import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migration-file.ts";
 import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
 import {
   actionability,
@@ -44,8 +45,6 @@ export interface LegacyPgDeltaExportManifest {
   readonly files?: ReadonlyArray<string>;
 }
 
-export type LegacyPgDeltaTransactionMode = "transactional" | "none";
-
 export interface LegacyPgDeltaRenderedFile {
   readonly sequence: number;
   /** Legacy semantic unit name. */
@@ -53,7 +52,7 @@ export interface LegacyPgDeltaRenderedFile {
   /** Next renderer's exact filename suffix (`null`, `_1`, `_2`, ...). */
   readonly suffix?: string | null;
   readonly sql: string;
-  readonly transactionMode: LegacyPgDeltaTransactionMode;
+  readonly transactionMode: LegacyMigrationTransactionMode;
   readonly actionCount?: number;
 }
 

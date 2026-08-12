@@ -6,10 +6,8 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
-import type {
-  LegacyPgDeltaRemovalSummary,
-  LegacyPgDeltaTransactionMode,
-} from "./legacy-pgdelta-engine.service.ts";
+import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migration-file.ts";
+import type { LegacyPgDeltaRemovalSummary } from "./legacy-pgdelta-engine.service.ts";
 
 export type LegacyPgDeltaNextOperation =
   | "diff"
@@ -38,7 +36,7 @@ export interface LegacyPgDeltaNextRenderedFile {
   readonly sequence: number;
   readonly suffix: string | null;
   readonly sql: string;
-  readonly transactionMode: LegacyPgDeltaTransactionMode;
+  readonly transactionMode: LegacyMigrationTransactionMode;
   readonly actionCount: number;
 }
 
