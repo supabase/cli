@@ -46,7 +46,8 @@ function legacyReportDateFolder(epochMillis: number): string {
  * query into `<output-dir>/<YYYY-MM-DD>/`, then prints a Glamour "rules" summary
  * table validating those CSVs.
  *
- * 1:1 port of Go's `inspect.Report` (`apps/cli-go/internal/inspect/report.go`).
+ * 1:1 port of Go's `inspect.Report` (`apps/cli-go/internal/inspect/report.go`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  * Telemetry is flushed on success and failure (Go's `PersistentPostRun`); the
  * command-level wrapper adds the `cli_command_executed` instrumentation and the
  * machine-format JSON error envelope.

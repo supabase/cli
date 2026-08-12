@@ -1,6 +1,6 @@
 # `supabase db push`
 
-Native TypeScript port of `apps/cli-go/internal/db/push/push.go`. Applies pending
+Native TypeScript port of `apps/cli-go/internal/db/push/push.go` (deleted in CLI-1970; last present at commit 7b469f5b3). Applies pending
 local migrations (and optionally seed data and custom roles) to the local or
 linked/remote Postgres database, updating configured Vault secrets before migrations
 unless `--skip-vault` is set.

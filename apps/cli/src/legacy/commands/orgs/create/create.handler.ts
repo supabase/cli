@@ -54,7 +54,8 @@ export const legacyOrgsCreate = Effect.fn("legacy.orgs.create")(function* (
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
     // Go calls `fmt.Println("Created organization:", id)` once before its
-    // format switch (`apps/cli-go/internal/orgs/create/create.go:22`). We
+    // format switch (`apps/cli-go/internal/orgs/create/create.go:22`, deleted
+    // in CLI-1970; last present at commit 7b469f5b3). We
     // repeat the preamble inside each Go-format branch rather than hoisting
     // it, so the TS `--output-format json` / `stream-json` paths (which emit
     // a single structured event below) stay preamble-free.

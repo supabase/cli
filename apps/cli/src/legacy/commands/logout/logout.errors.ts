@@ -7,7 +7,8 @@ import {
 
 /**
  * Raised when the user declines the logout confirmation prompt. Go returns
- * `errors.New(context.Canceled)` (`apps/cli-go/internal/logout/logout.go:19`),
+ * `errors.New(context.Canceled)` (`apps/cli-go/internal/logout/logout.go:19`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3),
  * which the root error handler renders as `context canceled` on stderr with
  * exit code 1 and no `--debug` suggestion (`cmd/root.go:287-303` skips
  * `SuggestDebugFlag` for `context.Canceled`). The TS renderer mirrors that:

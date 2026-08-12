@@ -147,7 +147,8 @@ export function legacyServiceContainerIds(projectId: string): ReadonlyArray<stri
  * sanitized string. An explicit `--project-id <value>` (where one exists,
  * e.g. `stop`) is Go's one exception: it assigns straight to
  * `Config.ProjectId` without going through `Validate`
- * (`apps/cli-go/internal/stop/stop.go:19-20`), so that path must stay raw/
+ * (`apps/cli-go/internal/stop/stop.go:19-20`, deleted in CLI-1970; last
+ * present at commit 7b469f5b3), so that path must stay raw/
  * unsanitized to match. There is also no injection risk either way: this
  * value is always passed as a single argv element to a spawned process
  * (never through a shell), so a malformed value can only make Docker's own

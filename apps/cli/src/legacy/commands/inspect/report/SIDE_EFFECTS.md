@@ -2,7 +2,7 @@
 
 Runs every inspect query against the target Postgres database, writes one CSV per
 query into `<output-dir>/<YYYY-MM-DD>/`, then prints a Glamour "rules" summary table
-validating those CSVs. Native TypeScript port of `apps/cli-go/internal/inspect/report.go`.
+validating those CSVs. Native TypeScript port of `apps/cli-go/internal/inspect/report.go` (deleted in CLI-1970; last present at commit 7b469f5b3).
 
 ## Files Read
 
@@ -43,7 +43,7 @@ completed remain on disk (both sides write each file before running the next que
 the command aborts with exit code 1, and the rules summary is not printed.
 
 **Divergence on the query that was in flight when `COPY` failed:** Go's
-`copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`) opens the output file
+`copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`, deleted in CLI-1970; last present at commit 7b469f5b3) opens the output file
 with `O_TRUNC` _before_ running the query, then streams `COPY ... TO STDOUT` directly
 into it — so a failing/erroring `COPY` still leaves that query's `<name>.csv` on disk,
 empty or partially written. TS buffers the `COPY` result in memory

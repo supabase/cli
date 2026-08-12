@@ -5,7 +5,7 @@ import {
 } from "../legacy-inspect-query.ts";
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/vacuum_stats/vacuum_stats.sql`.
+// Verbatim from `apps/cli-go/internal/inspect/vacuum_stats/vacuum_stats.sql` (deleted in CLI-1970; last present at commit 7b469f5b3).
 const SQL = `WITH table_opts AS (
   SELECT
     pg_class.oid, relname, nspname, array_to_string(reloptions, '') AS relopts
@@ -72,7 +72,8 @@ ORDER BY
 
 /**
  * `inspect db vacuum-stats` — per-table vacuum statistics.
- * Port of `apps/cli-go/internal/inspect/vacuum_stats/vacuum_stats.go`. The query
+ * Port of `apps/cli-go/internal/inspect/vacuum_stats/vacuum_stats.go` (deleted
+ * in CLI-1970; last present at commit 7b469f5b3). The query
  * returns 11 columns but only 9 are rendered (Go drops `autovacuum_threshold`
  * and `autoanalyze_threshold`). The `rowcount` cell has a one-shot `-1` → `No
  * stats` replacement (Go's `strings.Replace(..., 1)`).

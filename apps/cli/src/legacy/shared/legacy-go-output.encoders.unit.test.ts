@@ -53,6 +53,7 @@ describe("encodeGoJson", () => {
 
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
     // Matches Go's `apps/cli-go/internal/backups/list/list_test.go` "encodes json output" fixture
+    // (deleted in CLI-1970; last present at commit 7b469f5b3)
     // — empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
     const out = encodeGoJson(
       {

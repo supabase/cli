@@ -23,7 +23,8 @@ const METADATA_URL_MAX_BYTES = 5 * 1024 * 1024;
  * the response body, and decoding it as strict UTF-8.
  *
  * Mirrors Go's `saml.ValidateMetadataURL`
- * (`apps/cli-go/internal/sso/internal/saml/files.go:62-93`) with two
+ * (`apps/cli-go/internal/sso/internal/saml/files.go:62-93`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3) with two
  * defence-in-depth hardenings over the Go original:
  *   1. **No redirects** — the underlying `fetch` is configured with
  *      `redirect: "error"` so a 3xx hop from the user's HTTPS URL to

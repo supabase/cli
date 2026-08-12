@@ -35,7 +35,8 @@ export interface LegacySquashDumpParams<E> {
  * Port of Go's `migration.DumpSchema(ctx, cfg, w, dump.DockerExec, opts...)`
  * (`pkg/migration/dump.go`): a schema-only `pg_dump`, streamed to `onStdout` at
  * constant memory. `squashMigrations` calls this exactly three times
- * (`apps/cli-go/internal/migration/squash/squash.go:109,116,126`): before/after
+ * (`apps/cli-go/internal/migration/squash/squash.go:109,116,126`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3): before/after
  * with `WithSchema("auth","storage")`, and a third, unrestricted call for the final
  * full dump written straight to the target migration file.
  */

@@ -52,7 +52,7 @@
 | `cli_command_executed`  | post-run, success or failure (via wrapper)      | `exit_code`, `duration_ms`, `flags` (`--project-ref` whitelisted) |
 | `cli_upgrade_suggested` | on 4xx with `branching_limit` entitlement gated | `{feature_key: "branching_limit", org_slug}`                      |
 
-Matches `apps/cli-go/internal/branches/create/`.
+Matches `apps/cli-go/internal/branches/create/` (deleted in CLI-1970; last present at commit 7b469f5b3).
 
 ## Output
 

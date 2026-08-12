@@ -1,6 +1,7 @@
 /**
  * Vector container spec builder — port of Go's "Start vector" block
- * (`apps/cli-go/internal/start/start.go:396-484`), gated on
+ * (`apps/cli-go/internal/start/start.go:396-484`, deleted in CLI-1966; last
+ * present at commit a253ccba2), gated on
  * `config.analytics.enabled && !isContainerExcluded(config.analytics.vector_image,
  * excluded)` — see `legacy-service-catalog.ts`'s `vector` entry
  * (`excludeKey: "vector"`, depends on `logflare` being healthy). Gating and

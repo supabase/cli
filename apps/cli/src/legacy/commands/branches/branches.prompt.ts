@@ -22,7 +22,8 @@ const mapListError = mapLegacyHttpError({
 });
 
 /**
- * Reproduces Go's `promptBranchId` (`apps/cli-go/cmd/branches.go:230-269`).
+ * Reproduces Go's `promptBranchId` (`apps/cli-go/cmd/branches.go:230-269`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  *
  *   - Non-TTY: read from stdin via `Output.promptText`. The prompt label
  *     includes the current git branch as a default when one is detected.
@@ -51,7 +52,8 @@ export const legacyPromptBranchId = Effect.fnUntraced(function* (
     const gitBranch = yield* detectGitBranch();
     const defaultBranch = Option.getOrElse(gitBranch, () => "");
     // Go applies `utils.Aqua(branchId)` to the default in the prompt label
-    // (`apps/cli-go/cmd/branches.go:235`). lipgloss color "14" maps to ANSI
+    // (`apps/cli-go/cmd/branches.go:235`, deleted in CLI-1970; last present at
+    // commit 7b469f5b3). lipgloss color "14" maps to ANSI
     // bright cyan; `styleText("cyan", ...)` is the closest faithful match.
     const label =
       defaultBranch.length > 0
@@ -78,7 +80,8 @@ export const legacyPromptBranchId = Effect.fnUntraced(function* (
   if (branches.length === 0) {
     return yield* new LegacyBranchesBranchingDisabledError({
       message: "branching is disabled",
-      // Go's `utils.CmdSuggestion` (`apps/cli-go/cmd/branches.go:252`).
+      // Go's `utils.CmdSuggestion` (`apps/cli-go/cmd/branches.go:252`, deleted
+      // in CLI-1970; last present at commit 7b469f5b3).
       // The command name is wrapped in lipgloss color "14" (ANSI cyan).
       suggestion: `Create your first branch with: ${styleText("cyan", "supabase branches create")}`,
     });

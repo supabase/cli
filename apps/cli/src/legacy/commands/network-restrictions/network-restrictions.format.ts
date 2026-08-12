@@ -25,7 +25,8 @@ function formatGoSlice(value: readonly string[] | undefined): string {
 
 /**
  * Reproduces the three-line `fmt.Printf` block emitted by Go's
- * `apps/cli-go/internal/restrictions/{get,update}/*.go` byte-for-byte.
+ * `apps/cli-go/internal/restrictions/{get,update}/*.go` byte-for-byte
+ * (deleted in CLI-1970; last present at commit 7b469f5b3).
  */
 export function printNetworkRestrictionsStatus(input: PrintableStatus): string {
   return (

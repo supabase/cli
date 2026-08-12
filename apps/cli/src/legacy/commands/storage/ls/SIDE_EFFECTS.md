@@ -1,6 +1,6 @@
 # `supabase storage ls [path]`
 
-Native TypeScript port of `apps/cli-go/internal/storage/ls`. Lists objects/buckets
+Native TypeScript port of `apps/cli-go/internal/storage/ls` (deleted in CLI-1970; last present at commit 7b469f5b3). Lists objects/buckets
 by path prefix against the Storage gateway (local stack or linked project).
 
 ## Files Read

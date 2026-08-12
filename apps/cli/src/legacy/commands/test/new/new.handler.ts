@@ -24,7 +24,8 @@ export const legacyTestNew = Effect.fn("legacy.test.new")(function* (flags: Lega
   yield* Effect.gen(function* () {
     // Go builds the path relative to the project root (`utils.DbTestsDir` =
     // "supabase/tests") and prints that relative path; FS ops are rooted at the
-    // resolved workdir (`apps/cli-go/internal/test/new/new.go:24`).
+    // resolved workdir (`apps/cli-go/internal/test/new/new.go:24`, deleted
+    // in CLI-1970; last present at commit 7b469f5b3).
     const relPath = path.join("supabase", "tests", `${flags.name}_test.sql`);
     const target = path.join(cliConfig.workdir, relPath);
 

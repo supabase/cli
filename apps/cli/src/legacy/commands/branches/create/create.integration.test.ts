@@ -464,7 +464,8 @@ describe("legacy branches create integration", () => {
   });
 
   // Go parity (`apps/cli-go/cmd/projects.go:34-55`, reused by `branches create`
-  // at `apps/cli-go/cmd/branches.go:212`): Go's --size EnumFlag is an 18-value
+  // at `apps/cli-go/cmd/branches.go:212` — both deleted in CLI-1970; last
+  // present at commit 7b469f5b3): Go's --size EnumFlag is an 18-value
   // list that does not include "nano" (or "pico") and rejects any other value
   // at flag-parse time. TS previously listed "nano" as a valid choice, silently
   // succeeding where Go errors.

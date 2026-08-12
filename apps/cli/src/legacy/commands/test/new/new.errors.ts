@@ -8,7 +8,8 @@ import {
 
 /**
  * The target test file already exists. Byte-matches Go's
- * `errors.New(path + " already exists.")` (`apps/cli-go/internal/test/new/new.go:26`).
+ * `errors.New(path + " already exists.")` (`apps/cli-go/internal/test/new/new.go:26`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  */
 export class LegacyTestNewFileExistsError extends Data.TaggedError("LegacyTestNewFileExistsError")<{
   readonly path: string;

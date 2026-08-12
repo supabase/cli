@@ -71,7 +71,8 @@ export type LegacySsoUpdateFlags = CliCommand.Command.Config.Infer<typeof config
 
 export const legacySsoUpdateCommand = Command.make("update", config).pipe(
   // Mirrors Go's long description verbatim, including the `of a already added`
-  // grammar slip in `apps/cli-go/cmd/sso.go`. Strict 1:1 port — file a Go-side
+  // grammar slip in `apps/cli-go/cmd/sso.go` (deleted in CLI-1970; last
+  // present at commit 7b469f5b3). Strict 1:1 port — file a Go-side
   // fix upstream rather than diverging here.
   Command.withDescription(
     "Update the configuration settings of a already added SSO identity provider.",

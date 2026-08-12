@@ -84,7 +84,8 @@ import {
 type Spawner = ChildProcessSpawnerType["Service"];
 
 /**
- * Port of Go's `squashMigrations` (`apps/cli-go/internal/migration/squash/squash.go:81-132`):
+ * Port of Go's `squashMigrations` (`apps/cli-go/internal/migration/squash/squash.go:81-132`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * shadow create -> health-wait -> connect -> `start.SetupDatabase` DIRECTLY (Go's `squash.go:96`
  * — NOT `setupShadowConn`, so NO `CREATE DATABASE contrib_regression` template) -> dump the
  * auth/storage schema before migrating -> apply every migration -> dump auth/storage again ->
@@ -242,7 +243,8 @@ interface LegacySquashToVersionResult {
 }
 
 /**
- * Port of Go's `squashToVersion` (`apps/cli-go/internal/migration/squash/squash.go:54-79`):
+ * Port of Go's `squashToVersion` (`apps/cli-go/internal/migration/squash/squash.go:54-79`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * loads the local migrations up to `version` (all when empty), squashes every one but the
  * last into the shadow-produced dump, then removes the merged files — a removal failure is
  * NON-FATAL (Go only prints it to stderr and continues).
@@ -311,7 +313,8 @@ const squashToVersion = Effect.fnUntraced(function* (
 });
 
 /**
- * Port of Go's `baselineMigrations` (`apps/cli-go/internal/migration/squash/squash.go:159-190`):
+ * Port of Go's `baselineMigrations` (`apps/cli-go/internal/migration/squash/squash.go:159-190`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * re-derives an empty `version` from the (POST-file-removal) local version listing, prints the
  * "Baselining…" banner BEFORE connecting, then deletes every history row `<= version` and
  * inserts the target migration's row in one transaction.
@@ -422,7 +425,8 @@ const runSquash = Effect.fnUntraced(function* (
 
   yield* Effect.gen(function* () {
     // 1. Flag groups — cobra's parse-time `MarkFlagsMutuallyExclusive`, ahead of the root
-    // `PersistentPreRunE` (`apps/cli-go/cmd/migration.go:66-75`).
+    // `PersistentPreRunE` (`apps/cli-go/cmd/migration.go:66-75`, deleted in
+    // CLI-1970; last present at commit 7b469f5b3).
     if (target.setFlags.length > 1) {
       return yield* Effect.fail(
         new LegacyMigrationTargetFlagsError({

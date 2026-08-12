@@ -126,7 +126,8 @@ export function legacyParseUintBase0(token: string): LegacyParseUintResult {
  * Faithful port of Go's `strconv.ParseInt(s, 0, 64)` — the exact parser
  * pflag runs for an `Int64VarP`/`Int64Var` flag (`int64Value.Set`,
  * `pflag/int64.go`), e.g. `backups restore --timestamp`
- * (`apps/cli-go/cmd/backups.go:43`). Only a syntax-and-range VERDICT is
+ * (`apps/cli-go/cmd/backups.go:43`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3). Only a syntax-and-range VERDICT is
  * needed for completion (not the parsed value), so this returns a boolean
  * rather than mirroring `LegacyParseUintResult`'s shape.
  *

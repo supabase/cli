@@ -27,7 +27,8 @@ const config = {
   ),
   // Modelled as `Option<boolean>` (presence = pflag `Changed`), not a plain
   // boolean: Cobra's `MarkFlagsMutuallyExclusive("project-id", "all")`
-  // (`apps/cli-go/cmd/stop.go:31`) rejects the command whenever BOTH flags
+  // (`apps/cli-go/cmd/stop.go:31`, deleted in CLI-1970; last present at
+  // commit 7b469f5b3) rejects the command whenever BOTH flags
   // were explicitly set, regardless of the value `--all` was set to — the
   // vendored cobra@v1.10.2 `flag_groups.go:139` check is
   // `groupStatus[group][name] = flag.Changed`, not the flag's boolean value.

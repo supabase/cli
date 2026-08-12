@@ -153,7 +153,8 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
   });
 
   // PARITY GUARD — do not "fix" this:
-  // Go's `apps/cli-go/internal/sso/internal/render/render.go:140-143` populates
+  // Go's `apps/cli-go/internal/sso/internal/render/render.go:140-143` (deleted
+  // in CLI-1970; last present at commit 7b469f5b3) populates
   // the `UPDATED AT (UTC)` row with `provider.CreatedAt`, not `provider.UpdatedAt`
   // — almost certainly a Go-side bug, but the legacy shell is a strict 1:1 port.
   // If you find yourself reaching to change line 194 of sso.format.ts because

@@ -75,4 +75,4 @@ Single `success` event with the response as data.
 
 - The `<provider-id>` argument must be a valid UUID; invalid input produces `identity provider ID "<input>" is not a UUID`. UUIDs are accepted case-insensitively (matches Go's `uuid.Parse`).
 - `--metadata` short-circuits any `--output` selection.
-- The `## SAML 2.0 Metadata XML` fenced block is pretty-printed via a Go-xmlfmt-equivalent (`formatSsoMetadataXml` in `sso.format.ts`) — byte-parity with `xmlfmt.FormatXML(..., "  ", "  ")` at `apps/cli-go/internal/sso/internal/render/render.go:155`.
+- The `## SAML 2.0 Metadata XML` fenced block is pretty-printed via a Go-xmlfmt-equivalent (`formatSsoMetadataXml` in `sso.format.ts`) — byte-parity with `xmlfmt.FormatXML(..., "  ", "  ")` at `apps/cli-go/internal/sso/internal/render/render.go:155` (deleted in CLI-1970; last present at commit 7b469f5b3).

@@ -3,7 +3,8 @@ import { LEGACY_SERVICE_CATALOG } from "../../shared/legacy-service-catalog.ts";
 
 /**
  * Go's real `ExcludableContainers()` order (`apps/cli-go/internal/start/start.go:
- * 1297-1303`), which walks `config.Images.Services()`
+ * 1297-1303`, deleted in CLI-1966; last present at commit a253ccba2), which
+ * walks `config.Images.Services()`
  * (`apps/cli-go/pkg/config/constants.go:60-76`) in this exact sequence — Gotrue,
  * Realtime, Storage, ImgProxy, Kong, Inbucket, Postgrest, Pgmeta, Studio,
  * EdgeRuntime, Logflare, Vector, Supavisor. This is NOT
@@ -53,7 +54,8 @@ export interface LegacyStartExcludePartition {
 }
 
 /**
- * Port of `validateExcludedContainers` (`apps/cli-go/cmd/start.go:16-36`). Go
+ * Port of `validateExcludedContainers` (`apps/cli-go/cmd/start.go:16-36`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3). Go
  * never fails the command over an unrecognized `--exclude` value — it prints a
  * `WARNING:` to stderr and `RunE` proceeds regardless. The valid-options list
  * in the warning is alphabetically sorted (`sort.Strings(validContainers)`),

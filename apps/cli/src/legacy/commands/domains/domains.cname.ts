@@ -79,7 +79,8 @@ const transportFailure = (cause: unknown): LegacyCnameFailure => ({
 /**
  * Verify that `customHostname` has a CNAME record pointing at the project's
  * Supabase subdomain before initializing a custom hostname. Mirrors
- * `apps/cli-go/internal/hostnames/common.go:14-22` + `cloudflare/api.go`:
+ * `apps/cli-go/internal/hostnames/common.go:14-22` (deleted in CLI-1970; last
+ * present at commit 7b469f5b3) + `cloudflare/api.go`:
  * queries `https://1.1.1.1/dns-query` (DNS-over-HTTPS, `accept: application/dns-json`,
  * 10s timeout) and compares the resolved CNAME to `<ref>.<projectHost>.`.
  *

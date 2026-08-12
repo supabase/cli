@@ -56,7 +56,8 @@ export class LegacySslEnforcementUpdateUnexpectedStatusError extends Data.Tagged
   }
 }
 
-// Verbatim Go string from `apps/cli-go/internal/ssl_enforcement/update/update.go:27`.
+// Verbatim Go string from `apps/cli-go/internal/ssl_enforcement/update/update.go:27`
+// (deleted in CLI-1970; last present at commit 7b469f5b3).
 export class LegacySslEnforcementNoEnableDisableFlagError extends Data.TaggedError(
   "LegacySslEnforcementNoEnableDisableFlagError",
 )<{
@@ -72,7 +73,8 @@ export class LegacySslEnforcementNoEnableDisableFlagError extends Data.TaggedErr
 }
 
 // Verbatim cobra string for parity with Go's `MarkFlagsMutuallyExclusive`
-// (`apps/cli-go/cmd/sslEnforcement.go:46`). Effect CLI has no built-in
+// (`apps/cli-go/cmd/sslEnforcement.go:46`, deleted in CLI-1970; last present
+// at commit 7b469f5b3). Effect CLI has no built-in
 // equivalent, so we enforce it at handler entry.
 export class LegacySslEnforcementMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacySslEnforcementMutuallyExclusiveFlagsError",

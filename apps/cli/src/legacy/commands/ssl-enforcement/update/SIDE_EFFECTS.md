@@ -47,7 +47,7 @@
 | ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`; `--enable-db-ssl-enforcement` / `--disable-db-ssl-enforcement` booleans pass through) |
 
-Matches `apps/cli-go/internal/sslenforcement/update/`. Go does not fire any custom telemetry event for this command.
+Matches `apps/cli-go/internal/sslenforcement/update/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
 
 ## Output
 

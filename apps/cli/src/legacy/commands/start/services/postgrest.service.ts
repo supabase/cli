@@ -1,6 +1,7 @@
 /**
  * Port of Go's "Start PostgREST" block
- * (`apps/cli-go/internal/start/start.go:960-992`).
+ * (`apps/cli-go/internal/start/start.go:960-992`, deleted in CLI-1966; last
+ * present at commit a253ccba2).
  *
  * Enabled gate: `config.api.enabled` (`utils.Config.Api.Enabled`,
  * `start.go:961`). Gating (this field, plus `!isContainerExcluded`) is the

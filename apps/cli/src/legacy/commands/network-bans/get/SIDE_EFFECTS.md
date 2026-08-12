@@ -48,7 +48,7 @@ The Management API exposes this read operation as `POST .../network-bans/retriev
 | ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/bans/get/`. Go does not fire any custom telemetry event for this command.
+Matches `apps/cli-go/internal/bans/get/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
 
 ## Output
 
@@ -62,7 +62,7 @@ Stderr heading followed by the banned IP array rendered as Go-compatible JSON (a
 
 Byte-identical to the Go CLI's encoders.
 
-- `json` and `pretty` — Go-compatible JSON of the IP array (`pretty` aliases to `json` per `apps/cli-go/internal/bans/get/get.go:21-23`).
+- `json` and `pretty` — Go-compatible JSON of the IP array (`pretty` aliases to `json` per `apps/cli-go/internal/bans/get/get.go:21-23`, deleted in CLI-1970; last present at commit 7b469f5b3).
 - `yaml` — `stringifyYaml(ipArray)`.
 - `toml` — `banned_ips = ["…", "…"]\n` (matches the Go struct tag `toml:"banned_ips"`).
 

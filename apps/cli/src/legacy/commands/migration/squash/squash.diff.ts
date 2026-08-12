@@ -1,6 +1,7 @@
 /**
  * Pure port of Go's `separatorComment` constant and `lineByLineDiff`
- * (`apps/cli-go/internal/migration/squash/squash.go:134-157`). No Effect, no
+ * (`apps/cli-go/internal/migration/squash/squash.go:134-157`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3). No Effect, no
  * services — just string in, string out — so this stays tightly unit-testable in
  * isolation from the Docker/shadow-database machinery `squash.handler.ts` composes.
  */

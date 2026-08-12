@@ -20,7 +20,8 @@ export class LegacyInspectReportMkdirError extends Data.TaggedError(
 
 /**
  * Writing one of the report CSV files failed. Mirrors Go's `copyToCSV`
- * (`apps/cli-go/internal/inspect/report.go:66-69`), which wraps an `OpenFile`
+ * (`apps/cli-go/internal/inspect/report.go:66-69`, deleted in CLI-1970; last
+ * present at commit 7b469f5b3), which wraps an `OpenFile`
  * failure as `failed to create output file: %w`. The TS port collects the COPY
  * bytes first and writes them afterwards, so a file-write failure surfaces here
  * with Go's matching text.

@@ -9,7 +9,8 @@ import {
 /**
  * No SQL was provided by any source. Byte-matches Go's
  * `"no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin"`
- * (`apps/cli-go/internal/db/query/query.go` `ResolveSQL`).
+ * (`apps/cli-go/internal/db/query/query.go` `ResolveSQL`, deleted in CLI-1970;
+ * last present at commit 7b469f5b3).
  */
 export class LegacyDbQueryNoSqlError extends Data.TaggedError("LegacyDbQueryNoSqlError")<{
   readonly message: string;

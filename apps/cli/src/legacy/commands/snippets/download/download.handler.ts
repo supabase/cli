@@ -62,7 +62,8 @@ function isUrnUuidPrefix(bytes: Uint8Array): boolean {
 /**
  * Faithful port of Go's `uuid.Parse` (google/uuid v1.6.0, `uuid.go:68-117`),
  * which `download.Run` uses to validate the snippet id
- * (`apps/cli-go/internal/snippets/download/download.go:15-17`). Accepts the
+ * (`apps/cli-go/internal/snippets/download/download.go:15-17`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3). Accepts the
  * same 4 forms Go does — hyphenated (36), `urn:uuid:`-prefixed (45), braced
  * `{…}` (38, where only the middle 36 bytes are examined — the trailing byte
  * is never validated, mirroring `s = s[1:]`), and raw 32-hex — and returns

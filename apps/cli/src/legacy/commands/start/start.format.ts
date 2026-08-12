@@ -10,7 +10,8 @@ import { legacyAqua, legacyYellow } from "../../shared/legacy-colors.ts";
 
 /**
  * Go's `fmt.Fprintln(os.Stderr, utils.Aqua("supabase start")+" is already
- * running.")` (`apps/cli-go/internal/start/start.go:55`) — printed when
+ * running.")` (`apps/cli-go/internal/start/start.go:55`, deleted in CLI-1966;
+ * last present at commit a253ccba2) — printed when
  * `AssertSupabaseDbIsRunning` finds the db container already present, before
  * `start` delegates entirely to `status`'s own rendering.
  */
@@ -20,7 +21,8 @@ export function legacyStartAlreadyRunningMessage(): string {
 
 /**
  * Go's `fmt.Fprintln(os.Stderr, "Starting containers...")`
- * (`apps/cli-go/internal/start/start.go:300`) — printed after Postgres itself
+ * (`apps/cli-go/internal/start/start.go:300`, deleted in CLI-1966; last
+ * present at commit a253ccba2) — printed after Postgres itself
  * has already started and health-checked, immediately before the other 13
  * services begin creating.
  */
@@ -28,7 +30,8 @@ export const LEGACY_START_STARTING_CONTAINERS_MESSAGE = "Starting containers...\
 
 /**
  * Go's `fmt.Fprintln(os.Stderr, "Waiting for health checks...")`
- * (`apps/cli-go/internal/start/start.go:1270`) — printed once every
+ * (`apps/cli-go/internal/start/start.go:1270`, deleted in CLI-1966; last
+ * present at commit a253ccba2) — printed once every
  * non-Postgres container has been created and started, immediately before the
  * shared health-check polling loop begins.
  */
@@ -36,7 +39,8 @@ export const LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE = "Waiting for healt
 
 /**
  * Go's `fmt.Fprintf(os.Stderr, "Started %s local development setup.\n\n",
- * utils.Aqua("supabase"))` (`apps/cli-go/internal/start/start.go:84`) —
+ * utils.Aqua("supabase"))` (`apps/cli-go/internal/start/start.go:84`, deleted
+ * in CLI-1966; last present at commit a253ccba2) —
  * printed on success (or an ignored unhealthy-timeout), immediately before the
  * status table renders to stdout.
  */
@@ -46,7 +50,8 @@ export function legacyStartCompletedMessage(): string {
 
 /**
  * Port of Go's `printSecurityNotice` (`apps/cli-go/internal/start/start.go:
- * 1503-1509`), byte-for-byte: 4 `fmt.Fprintln(os.Stderr, ...)` lines followed
+ * 1503-1509`, deleted in CLI-1966; last present at commit a253ccba2),
+ * byte-for-byte: 4 `fmt.Fprintln(os.Stderr, ...)` lines followed
  * by a bare `fmt.Fprintln(os.Stderr)` (a single trailing blank line). Only the
  * header is colored (Go's `utils.Yellow`); the remaining 3 lines are plain
  * text.

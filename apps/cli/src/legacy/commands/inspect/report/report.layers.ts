@@ -8,7 +8,8 @@ import { legacyInspectBaseLayer } from "../inspect.layers.ts";
  *
  * `inspect report` is a sibling of `inspect db` (a direct child of `inspect`, not
  * under `db`), so its command-runtime path is `["inspect", "report"]` — two levels,
- * matching Go's `cmd.CommandPath()` (`apps/cli-go/cmd/inspect.go:292`). It shares
+ * matching Go's `cmd.CommandPath()` (`apps/cli-go/cmd/inspect.go:292`, deleted
+ * in CLI-1970; last present at commit 7b469f5b3). It shares
  * the same `legacyInspectBaseLayer` (resolver + connection + CLI config + telemetry)
  * as the `db` leaves. `FileSystem` / `Path` / `Tty` / `RuntimeInfo` / `Clock` are
  * provided by the global run harness (`shared/cli/run.ts`), not here.

@@ -15,7 +15,8 @@ import { legacyVacuumStatsSpec } from "../db/vacuum-stats/vacuum-stats.query.ts"
 
 /**
  * The `unused_indexes` query, verbatim from
- * `apps/cli-go/internal/inspect/unused_indexes/unused_indexes.sql`. The `inspect db`
+ * `apps/cli-go/internal/inspect/unused_indexes/unused_indexes.sql` (deleted in
+ * CLI-1970; last present at commit 7b469f5b3). The `inspect db`
  * tree folds `unused-indexes` into a deprecated alias of `index-stats`, so this
  * distinct query (columns: `name`, `index`, `index_size`, `index_scans`) has no
  * existing `LegacyInspectQuerySpec`; the report still emits its own `unused_indexes.csv`

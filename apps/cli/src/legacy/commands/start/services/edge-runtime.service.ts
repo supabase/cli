@@ -1,6 +1,7 @@
 /**
  * Real bring-up for the Edge Runtime container — Go's "Start all functions"
- * block (`apps/cli-go/internal/start/start.go:1101-1108`):
+ * block (`apps/cli-go/internal/start/start.go:1101-1108`, deleted in
+ * CLI-1966; last present at commit a253ccba2):
  *
  * ```go
  * if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {

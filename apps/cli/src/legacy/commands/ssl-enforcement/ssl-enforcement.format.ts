@@ -10,7 +10,8 @@ interface SslEnforcementStatus {
 }
 
 /**
- * Reproduces `PrintSSLStatus` from `apps/cli-go/internal/ssl_enforcement/get/get.go:27-34`.
+ * Reproduces `PrintSSLStatus` from `apps/cli-go/internal/ssl_enforcement/get/get.go:27-34`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3).
  */
 export function printSslStatus(response: SslEnforcementStatus): string {
   if (response.currentConfig.database && response.appliedSuccessfully) {

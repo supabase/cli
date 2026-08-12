@@ -7,7 +7,8 @@ import type { LegacyInspectConnectionFlags } from "./legacy-inspect-query.ts";
 
 /**
  * The `inspect` persistent flag set, inherited by every `inspect db` subcommand
- * (`apps/cli-go/cmd/inspect.go:259-263`). Shared verbatim across all 25 commands
+ * (`apps/cli-go/cmd/inspect.go:259-263`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3). Shared verbatim across all 25 commands
  * so the flag names and descriptions live in one place. `Command.make` reads this
  * immutable descriptor without mutating it, so a single instance is safe to reuse.
  */

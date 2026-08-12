@@ -32,7 +32,8 @@ import {
 import type { LegacyProjectsListFlags } from "./list.command.ts";
 
 /**
- * Mirror of Go's `linkedProject` (`apps/cli-go/internal/projects/list/list.go`):
+ * Mirror of Go's `linkedProject` (`apps/cli-go/internal/projects/list/list.go`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * an embedded `api.V1ProjectWithDatabaseResponse` (fields inlined first, in
  * declaration order) plus the CLI-added `Linked bool` (CLI-1975).
  */

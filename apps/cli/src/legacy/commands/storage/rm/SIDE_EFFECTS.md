@@ -1,6 +1,6 @@
 # `supabase storage rm <file> ...`
 
-Native TypeScript port of `apps/cli-go/internal/storage/rm`. Removes objects by path.
+Native TypeScript port of `apps/cli-go/internal/storage/rm` (deleted in CLI-1970; last present at commit 7b469f5b3). Removes objects by path.
 Paths are grouped by bucket; each bucket is confirmed, its explicit prefixes are deleted
 (chunked at 1000), and any prefix that resolved to a directory is removed recursively
 when `-r` is set. With no paths and `-r`, every bucket is cleared and deleted.

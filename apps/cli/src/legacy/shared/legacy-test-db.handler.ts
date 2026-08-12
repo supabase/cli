@@ -25,7 +25,8 @@ import {
 } from "./legacy-test-db.errors.ts";
 import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
 
-// Go: `apps/cli-go/internal/db/test/test.go:24-25`.
+// Go: `apps/cli-go/internal/db/test/test.go:24-25` (deleted in CLI-1970; last
+// present at commit 7b469f5b3).
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
 // Go bakes this default into the Dockerfile (`pkg/config/templates/Dockerfile:20`).

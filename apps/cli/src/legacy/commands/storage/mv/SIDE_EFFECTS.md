@@ -1,6 +1,6 @@
 # `supabase storage mv <src> <dst>`
 
-Native TypeScript port of `apps/cli-go/internal/storage/mv`. Moves objects within a
+Native TypeScript port of `apps/cli-go/internal/storage/mv` (deleted in CLI-1970; last present at commit 7b469f5b3). Moves objects within a
 bucket. Both paths must be `ss://` and resolve to the same bucket. A direct move that
 returns `not_found` falls back to a recursive per-object move when `--recursive` is set.
 

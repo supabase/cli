@@ -11,7 +11,8 @@ import { mapLegacyHttpError } from "../../shared/legacy-http-errors.ts";
 /**
  * Transport-level failure talking to the Management API pgsodium endpoints.
  * Mirrors Go's `errors.Errorf("failed to <verb> pgsodium config: %w", err)`
- * (`apps/cli-go/internal/encryption/{get,update}`).
+ * (`apps/cli-go/internal/encryption/{get,update}`, deleted in CLI-1970; last
+ * present at commit 7b469f5b3).
  */
 export class LegacyEncryptionNetworkError extends Data.TaggedError("LegacyEncryptionNetworkError")<{
   readonly message: string;

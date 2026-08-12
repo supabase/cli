@@ -9,7 +9,8 @@ import {
 /**
  * Conflicting database-target flags. Reproduces cobra's
  * `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` error byte-for-byte
- * (`apps/cli-go/cmd/migration.go`). Shared by list / fetch / repair / up / down /
+ * (`apps/cli-go/cmd/migration.go`, deleted in CLI-1970; last present at commit
+ * 7b469f5b3). Shared by list / fetch / repair / up / down /
  * squash.
  */
 export class LegacyMigrationTargetFlagsError extends Data.TaggedError(

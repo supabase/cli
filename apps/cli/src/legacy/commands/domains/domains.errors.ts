@@ -11,7 +11,8 @@ import {
 /**
  * Transport-level failure talking to the Management API custom-hostname
  * endpoints. Mirrors Go's `errors.Errorf("failed to <verb> custom hostname: %w", err)`
- * (`apps/cli-go/internal/hostnames/*`).
+ * (`apps/cli-go/internal/hostnames/*`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3).
  */
 export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNetworkError")<{
   readonly message: string;
@@ -47,7 +48,8 @@ export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
 /**
  * The CNAME pre-check in `domains create` failed — either the DNS lookup did
  * not resolve to a CNAME, or it resolved to a host other than the expected
- * Supabase subdomain. Mirrors `apps/cli-go/internal/hostnames/common.go:14-22`.
+ * Supabase subdomain. Mirrors `apps/cli-go/internal/hostnames/common.go:14-22`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3).
  */
 export class LegacyDomainsCnameError extends Data.TaggedError("LegacyDomainsCnameError")<{
   readonly message: string;

@@ -46,7 +46,7 @@ linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Matches `apps/cli-go/internal/orgs/list/`. Go does not fire any custom telemetry event for this
+Matches `apps/cli-go/internal/orgs/list/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this
 command.
 
 ## Output
@@ -75,7 +75,7 @@ TOML document wrapping the array as `[[organizations]]` (Go parity).
 ### `--output env`
 
 Fails with `LegacyOrgsEnvNotSupportedError("--output env flag is not supported")`. Matches
-`apps/cli-go/internal/orgs/list/list.go:32-33`.
+`apps/cli-go/internal/orgs/list/list.go:32-33` (deleted in CLI-1970; last present at commit 7b469f5b3).
 
 ### `--output-format json`
 

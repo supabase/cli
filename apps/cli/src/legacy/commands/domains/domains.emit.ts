@@ -105,7 +105,8 @@ function terminateHumanStatus(status: string): string {
 
 /**
  * Emit a custom-hostname response across all output modes, mirroring the Go
- * subcommands (`apps/cli-go/internal/hostnames/{get,create,activate,reverify}`):
+ * subcommands (`apps/cli-go/internal/hostnames/{get,create,activate,reverify}`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  *
  *   - In `pretty`/text mode the human status text goes to **stderr** (Go's
  *     `PrintStatus`), and nothing goes to stdout. Unlike Go's no-newline

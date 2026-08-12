@@ -17,7 +17,8 @@ export interface ParsedCidr {
 /**
  * Parses a CIDR string the same way Go's `net.ParseCIDR` does for the inputs
  * accepted by `supabase network-restrictions update` (see
- * `apps/cli-go/internal/restrictions/update/update.go:21`).
+ * `apps/cli-go/internal/restrictions/update/update.go:21`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3).
  *
  * Returns `null` if the input is not a well-formed CIDR; callers translate
  * `null` into `LegacyNetworkRestrictionsInvalidCidrError`.
@@ -55,7 +56,8 @@ export function parseCidr(input: string): ParsedCidr | null {
 }
 
 /**
- * Mirrors Go's `net.IP.IsPrivate()` (`apps/cli-go/internal/restrictions/update/update.go:25`)
+ * Mirrors Go's `net.IP.IsPrivate()` (`apps/cli-go/internal/restrictions/update/update.go:25`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3)
  * for the address families accepted by `parseCidr`.
  *
  * - IPv4 (RFC 1918): `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`.
@@ -125,7 +127,8 @@ function parseFirstIpv6Byte(address: string): number | null {
 
 /**
  * Validate every input string and partition into IPv4 / IPv6 lists in the same
- * order Go does (`apps/cli-go/internal/restrictions/update/update.go:20-33`).
+ * order Go does (`apps/cli-go/internal/restrictions/update/update.go:20-33`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  *
  * Returns either the partitioned lists or a discriminated error describing
  * which input failed and why. Callers translate the discriminated error into
@@ -160,7 +163,8 @@ export function validateAndPartitionCidrs(
 /**
  * Splits the V2 PATCH response shape (`config.dbAllowedCidrs: Array<{address, type}>`)
  * into the two flat string arrays the Go output template expects. Order matches
- * `apps/cli-go/internal/restrictions/update/update.go:75-83`.
+ * `apps/cli-go/internal/restrictions/update/update.go:75-83` (deleted in
+ * CLI-1970; last present at commit 7b469f5b3).
  *
  * Lives next to `parseCidr` / `validateAndPartitionCidrs` because it performs
  * the same v4/v6 partitioning, just sourced from the response shape instead of

@@ -54,7 +54,7 @@ when no `--db-allow-cidr` was supplied), matching Go's `&[]string{}` initializat
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed or when flag parsing fails (malformed `--db-allow-cidr` CSV) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/restrictions/update/`. Go does not fire any custom telemetry event for this command.
+Matches `apps/cli-go/internal/restrictions/update/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
 
 ## CIDR Validation (runs locally before any HTTP call)
 
@@ -90,7 +90,7 @@ Restrictions applied successfully: true
 ### `--output {json,yaml,toml,env}` (Go flag, TS-only behavior here)
 
 Go's `restrictions/update` (`apps/cli-go/internal/restrictions/update/update.go:48-50`
-POST branch, `:86-88` PATCH branch) never reads `OutputFormat` — both branches always
+POST branch, `:86-88` PATCH branch; deleted in CLI-1970, last present at commit 7b469f5b3) never reads `OutputFormat` — both branches always
 print the same `fmt.Printf` three-line template shown above, whatever `-o` says, so
 there is no Go output here to be byte-identical to (and therefore no Go casing
 convention to match either — TS uses the generic map-shaped `encodeYaml`/`encodeToml`

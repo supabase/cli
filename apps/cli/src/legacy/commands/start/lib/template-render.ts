@@ -1,7 +1,8 @@
 /**
  * Pure renderer for the Go `text/template` sources transcribed under
  * `../templates/`. Mirrors `apps/cli-go/internal/start/start.go`'s use of
- * `text/template`: every placeholder is a bare `{{ .FieldName }}` reference
+ * `text/template` (deleted in CLI-1966; last present at commit a253ccba2):
+ * every placeholder is a bare `{{ .FieldName }}` reference
  * (no pipelines, functions, or control structures), and every one of the
  * three templates rendered here is executed with `Option("missingkey=error")`
  * (verified via `grep -n '\.Execute(' apps/cli-go/internal/start/start.go`,

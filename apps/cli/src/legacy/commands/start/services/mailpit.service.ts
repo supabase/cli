@@ -1,6 +1,7 @@
 /**
  * Port of Go's "Start Mailpit" block (`apps/cli-go/internal/start/start.go:
- * 853-901`), gated on `config.inbucket.enabled` (`utils.Config.Inbucket.Enabled`
+ * 853-901`, deleted in CLI-1966; last present at commit a253ccba2), gated on
+ * `config.inbucket.enabled` (`utils.Config.Inbucket.Enabled`
  * in Go) — the gate itself is `start.handler.ts`'s job (a later task), not
  * this module's; this file only builds the `docker create` spec.
  *

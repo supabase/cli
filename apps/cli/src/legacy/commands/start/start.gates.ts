@@ -11,7 +11,8 @@ import { LEGACY_START_SERVICES } from "./start.services.ts";
 
 /**
  * Pure port of every per-service `if` guard in Go's `run()`
- * (`apps/cli-go/internal/start/start.go:293-1268`), minus Postgres (`enabledGate:
+ * (`apps/cli-go/internal/start/start.go:293-1268`, deleted in CLI-1966; last
+ * present at commit a253ccba2), minus Postgres (`enabledGate:
  * "always"`, unconditional — handled directly by the caller, before any other
  * service). Each boolean is `<section>.enabled` (resolved through
  * {@link legacyEnvOverrideBool}, matching Go's generic Viper `SUPABASE_<SECTION>_

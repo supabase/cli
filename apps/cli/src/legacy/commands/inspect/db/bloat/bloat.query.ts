@@ -1,7 +1,7 @@
 import { legacyInspectText, type LegacyInspectQuerySpec } from "../legacy-inspect-query.ts";
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/bloat/bloat.sql`.
+// Verbatim from `apps/cli-go/internal/inspect/bloat/bloat.sql` (deleted in CLI-1970; last present at commit 7b469f5b3).
 const SQL = `WITH constants AS (
   SELECT current_setting('block_size')::numeric AS bs, 23 AS hdr, 4 AS ma
 ), bloat_info AS (
@@ -63,7 +63,8 @@ ORDER BY raw_waste DESC, bloat DESC`;
 
 /**
  * `inspect db bloat` — space allocated to relations full of dead tuples.
- * Port of `apps/cli-go/internal/inspect/bloat/bloat.go`. Go's markdown header is
+ * Port of `apps/cli-go/internal/inspect/bloat/bloat.go` (deleted in CLI-1970;
+ * last present at commit 7b469f5b3). Go's markdown header is
  * malformed (`|Type|Name|Bloat|Waste` — missing trailing pipe); this passes the
  * clean 4-header array so the table renders correctly.
  */

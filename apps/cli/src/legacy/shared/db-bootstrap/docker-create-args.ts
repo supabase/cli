@@ -20,7 +20,9 @@
  * mapping it emits.
  *
  * Surveyed call sites (every `container.Config{`/`network.NetworkingConfig{`
- * block across the Go source, per the task's "read every one" instruction):
+ * block across the Go source, per the task's "read every one" instruction).
+ * The `internal/start/start.go` lines below are deleted in CLI-1966; last
+ * present at commit a253ccba2:
  *   - `apps/cli-go/internal/start/start.go:350-394`   Logflare/analytics
  *   - `apps/cli-go/internal/start/start.go:396-484`   Vector
  *   - `apps/cli-go/internal/start/start.go:486-627`   Kong

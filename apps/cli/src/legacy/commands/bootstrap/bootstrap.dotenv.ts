@@ -6,7 +6,8 @@ import { type LegacyDbConfig, toPostgresUrl } from "./bootstrap.pgconfig.ts";
 type ApiKey = typeof ApiKeyResponse.Type;
 
 // Env-var keys bootstrap writes / derives. Mirrors the constants in
-// `apps/cli-go/internal/bootstrap/bootstrap.go:131-150`.
+// `apps/cli-go/internal/bootstrap/bootstrap.go:131-150` (deleted in CLI-1970;
+// last present at commit 7b469f5b3).
 const SUPABASE_SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY";
 const SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY";
 const SUPABASE_URL = "SUPABASE_URL";

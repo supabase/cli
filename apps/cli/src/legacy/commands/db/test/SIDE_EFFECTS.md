@@ -3,7 +3,8 @@
 `db test` is a **hidden Go-parity alias** for `supabase test db` — Go itself
 defines `db test`'s `RunE` first (`apps/cli-go/cmd/db.go:422-429`, `Hidden:
 true`) and then has `test db` borrow it verbatim
-(`apps/cli-go/cmd/test.go:19-20`: `RunE: dbTestCmd.RunE`). The native TS port
+(`apps/cli-go/cmd/test.go:19-20`, deleted in CLI-1970; last present at commit
+7b469f5b3: `RunE: dbTestCmd.RunE`). The native TS port
 mirrors that shape: `test.command.ts` reuses `test db`'s flag config and
 assembled handler verbatim (`../../../shared/legacy-test-db.command-handler.ts`'s
 `legacyTestDbConfig` / `legacyRunTestDbCommand`) rather than re-implementing
@@ -79,7 +80,8 @@ Identical to `test db`. See
   registered with `.pipe(Command.withHidden)` in `../db.command.ts`, matching
   cobra's `Hidden: true` on `dbTestCmd`.
 - `--local` defaults to `true` on both `db test` and `test db`
-  (`apps/cli-go/cmd/db.go:739`, `apps/cli-go/cmd/test.go:43`), matching cobra's
+  (`apps/cli-go/cmd/db.go:739`, `apps/cli-go/cmd/test.go:43` — the latter deleted
+  in CLI-1970, last present at commit 7b469f5b3), matching cobra's
   `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` group — bare
   `supabase db test` always targets the local stack. This resolves the
   proxy-only `--local` default-modelling caveat that existed while this

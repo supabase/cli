@@ -197,7 +197,8 @@ export interface StandardEnvsResult {
 }
 
 /**
- * Reproduces Go's `toStandardEnvs` (`apps/cli-go/internal/branches/get/get.go:84-105`):
+ * Reproduces Go's `toStandardEnvs` (`apps/cli-go/internal/branches/get/get.go:84-105`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  *
  *   - `POSTGRES_URL`: pooled URL on success, falls back to the direct URL with
  *     a stderr warning on parse failure.

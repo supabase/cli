@@ -4,7 +4,7 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/calls/calls.sql`.
+// Verbatim from `apps/cli-go/internal/inspect/calls/calls.sql` (deleted in CLI-1970; last present at commit 7b469f5b3).
 const SQL = `SELECT
   query,
   (interval '1 millisecond' * total_exec_time)::text AS total_exec_time,
@@ -34,7 +34,8 @@ LIMIT 10`;
 
 /**
  * `inspect db calls` — pg_stat_statements ordered by number of calls.
- * Port of `apps/cli-go/internal/inspect/calls/calls.go`. The `query` column is
+ * Port of `apps/cli-go/internal/inspect/calls/calls.go` (deleted in CLI-1970;
+ * last present at commit 7b469f5b3). The `query` column is
  * whitespace-collapsed and rendered first.
  */
 export const legacyCallsSpec: LegacyInspectQuerySpec = {

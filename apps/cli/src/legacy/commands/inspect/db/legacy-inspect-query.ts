@@ -17,7 +17,8 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 
 /**
  * The connection selector flags every `inspect db` subcommand inherits from the
- * `inspect` persistent flag set (`apps/cli-go/cmd/inspect.go:259-263`):
+ * `inspect` persistent flag set (`apps/cli-go/cmd/inspect.go:259-263`, deleted
+ * in CLI-1970; last present at commit 7b469f5b3):
  * `--db-url` / `--linked` / `--local`, mutually exclusive. `--linked` defaults to
  * `true` in Go; the runner derives that default from the absence of the others
  * while keeping the exclusivity check keyed off the raw (explicitly-set) flags.
@@ -57,7 +58,8 @@ export interface LegacyInspectQuerySpec {
 /**
  * Raised when more than one of `--db-url` / `--linked` / `--local` is explicitly
  * set, reproducing cobra's `MarkFlagsMutuallyExclusive` error
- * (`apps/cli-go/cmd/inspect.go:263`). The message byte-matches cobra's text.
+ * (`apps/cli-go/cmd/inspect.go:263`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3). The message byte-matches cobra's text.
  *
  * Not reusing `test db`'s identical error type: hoisting it would drag that
  * command's test surface into scope for a single shared string. Revisit if a
@@ -242,7 +244,8 @@ export const legacyRunInspectQuery = Effect.fnUntraced(function* (
  * `Command "%q" is deprecated, %s\n` where `%s` is the alias's `Deprecated` field
  * (`use "<target>" instead.`). Centralized so the single format string tracks Go's
  * `command.go` template rather than living as 12 independent literals.
- * See `apps/cli-go/cmd/inspect.go:139-245`.
+ * See `apps/cli-go/cmd/inspect.go:139-245` (deleted in CLI-1970; last present
+ * at commit 7b469f5b3).
  */
 export function legacyInspectDeprecationNotice(alias: string, target: string): string {
   return `Command "${alias}" is deprecated, use "${target}" instead.\n`;

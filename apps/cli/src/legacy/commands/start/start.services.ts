@@ -39,7 +39,8 @@ export interface LegacyStartServiceEntry
 /**
  * Source: the approved start-port plan's per-service table, cross-referenced
  * against `apps/cli-go/internal/start/start.go`'s per-service `if` blocks
- * (lines 293-1267) and `pkg/config/config.go`'s image field resolution.
+ * (lines 293-1267, deleted in CLI-1966; last present at commit a253ccba2) and
+ * `pkg/config/config.go`'s image field resolution.
  * Keyed by `LEGACY_SERVICE_CATALOG`'s `service` field.
  */
 const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, LegacyStartServiceMeta> = new Map([

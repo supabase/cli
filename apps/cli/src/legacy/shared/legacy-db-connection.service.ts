@@ -113,12 +113,14 @@ export interface LegacyDbSession {
    * detects pre-existence with this query before enabling. Querying by `extname`
    * only (not `extname` + `nspname`) matches Go: it must not drop a pgTAP the user
    * pre-installed in another schema such as `public`.
-   * See `apps/cli-go/internal/db/test/test.go:57-78`.
+   * See `apps/cli-go/internal/db/test/test.go:57-78` (deleted in CLI-1970;
+   * last present at commit 7b469f5b3).
    */
   readonly extensionExists: (name: string) => Effect.Effect<boolean, LegacyDbExecError>;
   /**
    * Run a server-side `COPY (...) TO STDOUT` and return its raw bytes. Mirrors
-   * Go's `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`), which
+   * Go's `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`, deleted
+   * in CLI-1970; last present at commit 7b469f5b3), which
    * streams `pgconn.CopyTo` into a file. `sql` is the already-wrapped COPY
    * statement (e.g. `COPY (<query>) TO STDOUT WITH CSV HEADER`); the driver does
    * not wrap it. Used by `inspect report` to produce byte-identical CSVs by
@@ -138,7 +140,8 @@ export interface LegacyDbSession {
   ) => Effect.Effect<Uint8Array, LegacyDbCopyError | LegacyDbConnectError>;
   /**
    * Run a SQL statement and return its full result metadata, mirroring Go's
-   * `pgx.Rows` surface used by `db query` (`apps/cli-go/internal/db/query/query.go`):
+   * `pgx.Rows` surface used by `db query` (`apps/cli-go/internal/db/query/query.go`,
+   * deleted in CLI-1970; last present at commit 7b469f5b3):
    * the ordered column names (`fields`), the row values **positionally** (so
    * duplicate column names survive — node-postgres `rowMode: "array"`), and the
    * raw command tag (`rows.CommandTag()`, e.g. `INSERT 0 1`, `CREATE TABLE`).

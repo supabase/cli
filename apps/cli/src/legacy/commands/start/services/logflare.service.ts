@@ -1,6 +1,7 @@
 /**
  * Port of Go's "Start Logflare" block (`apps/cli-go/internal/start/start.go:
- * 313-394`), gated on `config.analytics.enabled` — the gate itself is
+ * 313-394`, deleted in CLI-1966; last present at commit a253ccba2), gated on
+ * `config.analytics.enabled` — the gate itself is
  * `start.handler.ts`'s job (a later task), not this module's; this file only
  * builds the `docker create` spec.
  *

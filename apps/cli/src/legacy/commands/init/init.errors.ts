@@ -16,7 +16,8 @@ import {
  * `failed to create config file: open supabase\config.toml: The file exists.`
  * on Windows (`filepath.Join` separator + `ERROR_FILE_EXISTS` errno text) —
  * plus the `utils.CmdSuggestion` set in `apps/cli-go/internal/init/init.go:38-42`
- * (platform-independent, since `errors.Is(err, os.ErrExist)` matches
+ * (deleted in CLI-1970; last present at commit 7b469f5b3;
+ * platform-independent, since `errors.Is(err, os.ErrExist)` matches
  * `ERROR_FILE_EXISTS` too).
  */
 export class LegacyInitConfigExistsError extends Data.TaggedError("LegacyInitConfigExistsError")<{
@@ -31,7 +32,8 @@ export class LegacyInitConfigExistsError extends Data.TaggedError("LegacyInitCon
 /**
  * `--use-orioledb` without `--experimental`. Reproduces cobra's
  * `MarkFlagRequired("experimental")` PreRun error from
- * `apps/cli-go/cmd/init.go:32-36`, byte-for-byte
+ * `apps/cli-go/cmd/init.go:32-36` (deleted in CLI-1970; last present at
+ * commit 7b469f5b3), byte-for-byte
  * (`required flag(s) "experimental" not set`). No suggestion — Go's
  * `recoverAndExit` appends the generic `--debug` troubleshooting hint, which
  * the text output layer's `fail` already adds when `suggestion` is unset.

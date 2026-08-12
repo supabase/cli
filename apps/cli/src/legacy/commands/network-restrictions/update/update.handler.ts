@@ -27,7 +27,8 @@ import {
 import { printNetworkRestrictionsStatus } from "../network-restrictions.format.ts";
 import type { LegacyNetworkRestrictionsUpdateFlags } from "./update.command.ts";
 
-// Templates lifted verbatim from `apps/cli-go/internal/restrictions/update/update.go:42,45,68,71`.
+// Templates lifted verbatim from `apps/cli-go/internal/restrictions/update/update.go:42,45,68,71`
+// (deleted in CLI-1970; last present at commit 7b469f5b3).
 // Both POST `/apply` and PATCH `/network-restrictions` use the same Go message strings;
 // we route through one mapper and discriminate downstream by the tagged error class.
 const mapUpdateError = mapLegacyHttpError({

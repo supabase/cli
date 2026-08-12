@@ -155,7 +155,8 @@ const XMLFMT_INTERTAG_SPACES_RE = />\s+</g;
  * close tag rides the same line.
  *
  * Used to match Go's `xmlfmt.FormatXML(metadata_xml, "  ", "  ")` call in
- * `apps/cli-go/internal/sso/internal/render/render.go:155`.
+ * `apps/cli-go/internal/sso/internal/render/render.go:155` (deleted in
+ * CLI-1970; last present at commit 7b469f5b3).
  */
 export function formatSsoMetadataXml(xml: string, prefix = "  ", indent = "  "): string {
   // Collapse whitespace between adjacent tags so we control the layout.

@@ -1,6 +1,7 @@
 /**
  * Port of Go's "Start Storage" block
- * (`apps/cli-go/internal/start/start.go:994-1057`), plus the vector-bucket
+ * (`apps/cli-go/internal/start/start.go:994-1057`, deleted in CLI-1966; last
+ * present at commit a253ccba2), plus the vector-bucket
  * env helper `appendStorageVectorEnv` (`start.go:1487-1501`).
  *
  * Enabled gate: `isStorageEnabled` (`start.go:301`) —

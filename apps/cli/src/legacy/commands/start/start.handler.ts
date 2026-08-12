@@ -1627,8 +1627,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           configImage: postgresImage,
           rootKey: values.rootKey,
           // `fromBackup` stays unset: `supabase start` always calls `StartDatabase` with an
-          // empty `fromBackup` (`apps/cli-go/internal/start/start.go:295`) — only `db start`
-          // ever sets it.
+          // empty `fromBackup` (`apps/cli-go/internal/start/start.go:295`, deleted in
+          // CLI-1966; last present at commit a253ccba2) — only `db start` ever sets it.
         },
         // Already resolved as part of THIS run's own batched pre-pull (`resolvedImages`,
         // above) — `supabase start` has no per-container lazy resolve of its own, unlike

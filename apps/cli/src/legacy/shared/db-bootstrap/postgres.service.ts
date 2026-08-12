@@ -100,7 +100,8 @@ export interface LegacyPostgresStartServiceInput {
    * `<hostPath>:/etc/backup.sql:ro` bind Go's own `StartDatabase` appends
    * (`start.go:163`, via `utils.ToDockerPath` — {@link legacyToDockerPath} here). `undefined` for
    * `supabase start`, which always calls `StartDatabase` with an empty `fromBackup`
-   * (`apps/cli-go/internal/start/start.go:295`).
+   * (`apps/cli-go/internal/start/start.go:295`, deleted in CLI-1966; last present at
+   * commit a253ccba2).
    */
   readonly fromBackup?: string;
 }

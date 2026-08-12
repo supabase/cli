@@ -200,7 +200,7 @@ is a single-job operation; parallel shards would race on the shared
 
 ## Go binary version requirement
 
-The ts-legacy CLI proxies commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`). If you are testing commands that were added to the Go CLI after your system `supabase` binary was installed, `testBehaviour` tests for those commands will fail with "unknown command".
+The ts-legacy CLI proxies a fixed, small set of commands to a Go binary (`SUPABASE_GO_BINARY` → bundled package binary → system `supabase`) — as of CLI-1970, `apps/cli-go/` contains only that residual proxied subset, nothing else. If your system `supabase` binary predates a flag or subcommand change on one of these, `testBehaviour` tests for it will fail with "unknown command" or "unknown flag".
 
 Build the Go CLI from source and point `SUPABASE_GO_BINARY` at it:
 
@@ -218,4 +218,11 @@ SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
 
 `SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.
 
-Commands currently requiring this: `telemetry enable`, `telemetry disable`, `telemetry status`.
+Commands currently requiring this — the full proxied surface, nothing else needs a Go binary at all:
+
+- `db diff` (for `--use-pg-schema`)
+- `db pull` (for `--experimental`)
+- `db branch create`, `db branch delete`, `db branch list`, `db branch switch`
+- `db remote changes`, `db remote commit`
+- `gen keys`
+- `functions download` (for the hidden `--legacy-bundle` flag)

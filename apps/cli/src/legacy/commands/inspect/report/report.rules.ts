@@ -20,7 +20,8 @@ export interface LegacyInspectRule {
 
 /**
  * The default rules, ported verbatim from
- * `apps/cli-go/internal/inspect/templates/rules.toml`. Used when
+ * `apps/cli-go/internal/inspect/templates/rules.toml` (deleted in CLI-1970;
+ * last present at commit 7b469f5b3). Used when
  * `[experimental.inspect.rules]` is absent or empty in `config.toml`.
  */
 export const LEGACY_DEFAULT_INSPECT_RULES: ReadonlyArray<LegacyInspectRule> = [

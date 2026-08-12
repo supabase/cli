@@ -1,6 +1,7 @@
 /**
  * Port of Go's "Start Storage ImgProxy" block
- * (`apps/cli-go/internal/start/start.go:1059-1099`).
+ * (`apps/cli-go/internal/start/start.go:1059-1099`, deleted in CLI-1966;
+ * last present at commit a253ccba2).
  *
  * Enabled gate: `isStorageEnabled && isImgProxyEnabled` (`start.go:1060`) —
  * i.e. `config.storage.enabled && config.storage.image_transformation?.enabled

@@ -56,7 +56,7 @@
 | ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/secrets/unset/`. Go does not fire any custom telemetry event for this command.
+Matches `apps/cli-go/internal/secrets/unset/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
 
 ## Output
 

@@ -29,7 +29,8 @@ function getHostnameStatus(response: LegacyHostnameResponse): LegacyHostnameStat
 
 /**
  * Byte-for-byte port of Go's `hostnames.PrintStatus`
- * (`apps/cli-go/internal/hostnames/common.go:24-59`). Returns the exact string
+ * (`apps/cli-go/internal/hostnames/common.go:24-59`, deleted in CLI-1970;
+ * last present at commit 7b469f5b3). Returns the exact string
  * the Go CLI writes to stderr — mind the trailing-newline difference between
  * `Fprintln` (adds `\n`) and `Fprintf` (does not).
  */

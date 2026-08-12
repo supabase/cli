@@ -297,7 +297,8 @@ function explicitBooleanFlag(
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
 /**
- * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`): the eszip
+ * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`, deleted
+ * in CLI-1970; last present at commit 7b469f5b3): the eszip
  * bundler container receives only `NPM_CONFIG_REGISTRY` from the host
  * environment. `NPM_AUTH_TOKEN` is deliberately NOT forwarded — the Go-side PR
  * proposing it (supabase/cli#4933) was closed unmerged, and CLI-1985 ruled

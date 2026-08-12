@@ -50,7 +50,8 @@ interface CpSummary {
 
 /**
  * `supabase storage cp <src> <dst>` — copy objects between local paths and the
- * Storage service. Port of `apps/cli-go/internal/storage/cp/cp.go`. The scheme of
+ * Storage service. Port of `apps/cli-go/internal/storage/cp/cp.go` (deleted
+ * in CLI-1970; last present at commit 7b469f5b3). The scheme of
  * `src`/`dst` selects the operation: `ss://`→local download, local→`ss://`
  * upload, both `ss://` → error, both local → unsupported.
  */

@@ -38,7 +38,8 @@ export class LegacyPlatformAuthRequiredError extends Data.TaggedError(
  * credential from the OS keyring fails for a reason other than "entry not
  * found" (which is ignored). Mirrors `supabase unlink`'s behaviour of collecting
  * non-`ErrNotFound` / non-`ErrNotSupported` keyring errors
- * (`apps/cli-go/internal/unlink/unlink.go:36-40`).
+ * (`apps/cli-go/internal/unlink/unlink.go:36-40`, deleted in CLI-1970; last
+ * present at commit 7b469f5b3).
  */
 export class LegacyCredentialDeleteError extends Data.TaggedError("LegacyCredentialDeleteError")<{
   readonly message: string;

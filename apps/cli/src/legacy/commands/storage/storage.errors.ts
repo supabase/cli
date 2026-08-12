@@ -195,7 +195,8 @@ export class LegacyStorageFileError extends Data.TaggedError("LegacyStorageFileE
 
 /**
  * Both `--linked` and `--local` set, reproducing cobra's
- * `MarkFlagsMutuallyExclusive("linked", "local")` (`apps/cli-go/cmd/storage.go:99`).
+ * `MarkFlagsMutuallyExclusive("linked", "local")` (`apps/cli-go/cmd/storage.go:99`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  */
 export class LegacyStorageMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyStorageMutuallyExclusiveFlagsError",

@@ -6,7 +6,7 @@ import {
 } from "../legacy-inspect-query.ts";
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/index_stats/index_stats.sql`.
+// Verbatim from `apps/cli-go/internal/inspect/index_stats/index_stats.sql` (deleted in CLI-1970; last present at commit 7b469f5b3).
 const SQL = `-- Combined index statistics: size, usage percent, seq scans, mark unused, expose table + columns
 WITH idx_sizes AS (
   SELECT
@@ -68,7 +68,8 @@ ORDER BY s.index_size_bytes DESC`;
 
 /**
  * `inspect db index-stats` — combined index size, usage percent, scan counts,
- * and unused status. Port of `apps/cli-go/internal/inspect/index_stats/index_stats.go`.
+ * and unused status. Port of `apps/cli-go/internal/inspect/index_stats/index_stats.go`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3).
  * Also the routed query for the deprecated index/table aliases.
  */
 export const legacyIndexStatsSpec: LegacyInspectQuerySpec = {

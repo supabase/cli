@@ -45,7 +45,7 @@
 | ---------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/restrictions/get/`. Go does not fire any custom telemetry event for this command.
+Matches `apps/cli-go/internal/restrictions/get/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
 
 ## Output
 
@@ -68,7 +68,7 @@ Restrictions applied successfully: true
 
 ### `--output {json,yaml,toml,env}` (Go flag, TS-only behavior here)
 
-Go's `restrictions/get` (`apps/cli-go/internal/restrictions/get/get.go:21-23`) never
+Go's `restrictions/get` (`apps/cli-go/internal/restrictions/get/get.go:21-23`, deleted in CLI-1970; last present at commit 7b469f5b3) never
 reads `OutputFormat` — it always prints the three `fmt.Printf` lines above, whatever
 `-o` says, so there is no Go output here to be byte-identical to (and therefore no
 Go casing convention to match either — TS uses the generic map-shaped

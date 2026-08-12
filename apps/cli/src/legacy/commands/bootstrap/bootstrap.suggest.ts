@@ -1,7 +1,8 @@
 import { relative } from "node:path";
 
 /**
- * Reproduces Go's `suggestAppStart` (`apps/cli-go/internal/bootstrap/bootstrap.go`).
+ * Reproduces Go's `suggestAppStart` (`apps/cli-go/internal/bootstrap/bootstrap.go`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  *
  * Builds the "To start your app:" hint printed at the end of bootstrap. Go computes
  * the relative path from the original working directory (`utils.CurrentDirAbs`) to

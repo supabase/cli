@@ -2,7 +2,8 @@ import { Flag, GlobalFlag } from "effect/unstable/cli";
 
 /**
  * `--linked` / `--local` are declared on the `seed` GROUP as scoped global flags,
- * mirroring Go's `seedCmd.PersistentFlags()` (`apps/cli-go/cmd/seed.go:27-29`):
+ * mirroring Go's `seedCmd.PersistentFlags()` (`apps/cli-go/cmd/seed.go:27-29`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * cobra persistent flags are inherited by subcommands and accepted BEFORE or
  * AFTER the subcommand token, so both `supabase seed --linked buckets` and
  * `supabase seed buckets --linked` are valid. Effect CLI's scoped globals give

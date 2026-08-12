@@ -9,7 +9,8 @@ import {
 } from "./squash.diff.ts";
 
 /**
- * Ports Go's `TestLineByLine` (`apps/cli-go/internal/migration/squash/squash_test.go`).
+ * Ports Go's `TestLineByLine` (`apps/cli-go/internal/migration/squash/squash_test.go`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  * The `before.sql`/`after.sql`/`diff.sql` fixtures are read directly from the Go oracle's
  * own `testdata/` directory (same pattern as `legacy-pg-dump.env.unit.test.ts`'s
  * `goScriptsDir`) rather than hand-transcribed as template literals: `apps/cli` still

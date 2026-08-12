@@ -40,7 +40,7 @@ The parent directory `<workdir>/supabase/tests/` is created if missing.
 
 Prints `Created new <template> test at <bold relative-path>.` to stdout, where the
 path is the project-relative `supabase/tests/<name>_test.sql` (matches Go's
-`fmt.Printf` in `apps/cli-go/internal/test/new/new.go:31`).
+`fmt.Printf` in `apps/cli-go/internal/test/new/new.go:31`, deleted in CLI-1970; last present at commit 7b469f5b3).
 
 ### `--output-format json`
 

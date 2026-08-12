@@ -1,6 +1,7 @@
 /**
  * Port of Go's "Start Realtime" block
- * (`apps/cli-go/internal/start/start.go:903-958`).
+ * (`apps/cli-go/internal/start/start.go:903-958`, deleted in CLI-1966; last
+ * present at commit a253ccba2).
  *
  * Enabled gate: `config.realtime.enabled` (`utils.Config.Realtime.Enabled`,
  * `start.go:904`) — independent of `config.api.enabled` (PostgREST's own

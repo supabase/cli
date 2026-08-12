@@ -81,7 +81,8 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "fail-on",
   "type",
   // migration/db credential flag — Go's `StringVarP(&dbPassword, "password", "p", …)`
-  // consumes the next token as the value (`apps/cli-go/cmd/migration.go:115,127`).
+  // consumes the next token as the value (`apps/cli-go/cmd/migration.go:115,127`,
+  // deleted in CLI-1970; last present at commit 7b469f5b3).
   "password",
   // inspect report flag (StringVar, no short alias)
   "output-dir",
@@ -186,7 +187,8 @@ export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
  * Detects which of `--linked` / `--local` were explicitly set on the command
  * line, reproducing cobra's `pflag.Changed` for the `MarkFlagsMutuallyExclusive`
  * groups on `seedCmd` (`apps/cli-go/cmd/seed.go:32`) and `storageCmd`
- * (`apps/cli-go/cmd/storage.go:99`). Shared by `seed buckets` and
+ * (`apps/cli-go/cmd/storage.go:99`, both deleted in CLI-1970; last present at
+ * commit 7b469f5b3). Shared by `seed buckets` and
  * `storage ls/cp/mv/rm`.
  *
  * Effect CLI's parsed flags carry no `Changed` bit, so this re-derives it from

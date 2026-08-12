@@ -7,7 +7,8 @@ import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 
 /**
  * Assemble the `docker run` argv from run options. Pure (no Effect) so the
- * argument ordering — Go parity with `apps/cli-go/internal/db/test/test.go` +
+ * argument ordering — Go parity with `apps/cli-go/internal/db/test/test.go`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3) +
  * `utils.DockerRunOnceWithConfig` — is unit-testable in isolation.
  */
 export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<string> {

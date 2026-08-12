@@ -43,7 +43,8 @@ interface RmSummary {
 
 /**
  * `supabase storage rm <file>...` — remove objects by path. Port of
- * `apps/cli-go/internal/storage/rm/rm.go`. Paths are grouped by bucket; each
+ * `apps/cli-go/internal/storage/rm/rm.go` (deleted in CLI-1970; last present
+ * at commit 7b469f5b3). Paths are grouped by bucket; each
  * bucket is confirmed, its explicit prefixes are deleted (chunked at 1000), and
  * any prefix that resolved to a directory is removed recursively when `-r` is set.
  */

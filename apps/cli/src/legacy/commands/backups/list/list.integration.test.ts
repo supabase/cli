@@ -146,7 +146,8 @@ describe("legacy backups list integration", () => {
       yield* legacyBackupsList({ projectRef: Option.none() });
       // Byte-identical to Go's `encoding/json` output: alphabetical struct-field order,
       // and a nil Backups slice serializes as `null` (matches
-      // `apps/cli-go/internal/backups/list/list_test.go` fixture).
+      // `apps/cli-go/internal/backups/list/list_test.go` fixture, deleted in
+      // CLI-1970; last present at commit 7b469f5b3).
       expect(out.stdoutText).toBe(
         `{
   "backups": null,

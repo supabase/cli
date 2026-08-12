@@ -8,7 +8,8 @@ import {
 
 // ---------------------------------------------------------------------------
 // Bootstrap-specific tagged errors. Each maps to a Go `errors.New` / failure
-// site in `apps/cli-go/cmd/bootstrap.go` + `internal/bootstrap/bootstrap.go`.
+// site in `apps/cli-go/cmd/bootstrap.go` + `internal/bootstrap/bootstrap.go`
+// (deleted in CLI-1970; last present at commit 7b469f5b3).
 // Login / create / api-keys / link failures are surfaced by the extracted
 // shared cores (`legacy/shared/legacy-*`), so they are NOT redefined here.
 // ---------------------------------------------------------------------------

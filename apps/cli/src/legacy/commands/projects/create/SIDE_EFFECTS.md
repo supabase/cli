@@ -93,7 +93,7 @@ One `result` event on success.
   flags and the positional project name argument are required.
 - The `--size` flag, when provided, sets the `desired_instance_size` field in the request body.
 - The `--high-availability` flag, when provided, sets the `high_availability` field in the request body.
-  This is a TS-only flag with no Go CLI equivalent: `apps/cli-go/cmd/projects.go`'s `init()` (~line 133)
+  This is a TS-only flag with no Go CLI equivalent: `apps/cli-go/cmd/projects.go` (deleted in CLI-1970; last present at commit 7b469f5b3)'s `init()` (~line 133)
   never registers a `high-availability` flag, and the create command's `RunE` closure (~line 74) never sets
   `HighAvailability` on the request body, even though the underlying API field exists — matching how
   `--reveal` is disclosed on `projects api-keys`.

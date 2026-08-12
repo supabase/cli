@@ -36,7 +36,8 @@ import { LegacyServicesEnvNotSupportedError } from "./services.errors.ts";
 
 /**
  * Mirror of Go's hand-written `imageVersion`
- * (`apps/cli-go/internal/services/services.go`) — declaration order is
+ * (`apps/cli-go/internal/services/services.go`, deleted in CLI-1970; last
+ * present at commit 7b469f5b3) — declaration order is
  * Name, Local, Remote (not alphabetical), and `Remote` is always emitted
  * even when empty (CLI-1975).
  */

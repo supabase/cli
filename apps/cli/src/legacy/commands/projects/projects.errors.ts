@@ -8,7 +8,8 @@ import {
 
 // ---------------------------------------------------------------------------
 // HTTP-bound errors — one (Network + UnexpectedStatus) pair per Go errorf site.
-// Names trace back to `apps/cli-go/internal/projects/<sub>/` for grepability.
+// Names trace back to `apps/cli-go/internal/projects/<sub>/` for grepability
+// (deleted in CLI-1970; last present at commit 7b469f5b3).
 // Templates match Go's `errors.Errorf(...)` phrasing byte-for-byte.
 // ---------------------------------------------------------------------------
 

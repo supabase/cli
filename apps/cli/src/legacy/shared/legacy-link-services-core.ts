@@ -32,7 +32,8 @@ export interface LegacyLinkServicesInput {
 type WriteTempFile = (filePath: string, content: string) => Effect.Effect<void, PlatformError>;
 
 /**
- * Ports Go's `link.LinkServices` (`apps/cli-go/internal/link/link.go:71-103`): the
+ * Ports Go's `link.LinkServices` (`apps/cli-go/internal/link/link.go:71-103`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3): the
  * best-effort portion of linking that writes `supabase/.temp/{storage-migration,
  * pooler-url,rest-version,gotrue-version,storage-version}`. Every probe is
  * best-effort — a single unreachable service never fails the caller. This core

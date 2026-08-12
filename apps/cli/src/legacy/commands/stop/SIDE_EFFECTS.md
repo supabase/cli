@@ -96,7 +96,7 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Matches `apps/cli-go/internal/stop/`. Go does not fire any custom telemetry event for
+Matches `apps/cli-go/internal/stop/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for
 this command.
 
 ## Output

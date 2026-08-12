@@ -455,7 +455,8 @@ describe("legacy projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Go parity (`apps/cli-go/cmd/projects.go:34-55`): Go's --size EnumFlag is an
+  // Go parity (`apps/cli-go/cmd/projects.go:34-55`, deleted in CLI-1970; last
+  // present at commit 7b469f5b3): Go's --size EnumFlag is an
   // 18-value list that does not include "nano" (or "pico") and rejects any other
   // value at flag-parse time. TS previously listed "nano" as a valid choice,
   // silently succeeding where Go errors.

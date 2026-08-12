@@ -1,6 +1,7 @@
 /**
  * Port of Go's "Start pooler" block (`apps/cli-go/internal/start/start.go:
- * 1193-1268`), gated on `config.db.pooler.enabled` — the gate itself is
+ * 1193-1268`, deleted in CLI-1966; last present at commit a253ccba2), gated
+ * on `config.db.pooler.enabled` — the gate itself is
  * `start.handler.ts`'s job (a later task), not this module's; this file only
  * builds the `docker create` spec (plus the pure tenant-provisioning script it
  * embeds — see below).

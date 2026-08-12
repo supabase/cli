@@ -6,7 +6,8 @@ import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
 /**
  * `--linked` / `--local` mirror Go's `storageCmd.PersistentFlags()`
- * (`apps/cli-go/cmd/storage.go:96-99`): `--linked` defaults to `true`, `--local`
+ * (`apps/cli-go/cmd/storage.go:96-99`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3): `--linked` defaults to `true`, `--local`
  * to `false`, and the two are mutually exclusive. The routing reads the **value**
  * of `--local` (Go's `GetBool("local")`, `storage.go:21-32`): when true the
  * project ref is cleared (local stack), otherwise the linked path resolves it.
@@ -38,7 +39,8 @@ export function legacyStorageChangedTargetFlags(
 
 /**
  * Reproduce cobra's `MarkFlagsMutuallyExclusive("linked", "local")`
- * (`apps/cli-go/cmd/storage.go:99`). Go rejects this at flag validation — before
+ * (`apps/cli-go/cmd/storage.go:99`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3). Go rejects this at flag validation — before
  * `RunE`/`PersistentPostRun` — so it must NOT emit `cli_command_executed`; each
  * leaf calls this BEFORE `withLegacyCommandInstrumentation`.
  */

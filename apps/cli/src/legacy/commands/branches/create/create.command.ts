@@ -69,7 +69,8 @@ const config = {
   ),
   // Optional so the handler can distinguish "flag explicitly set false"
   // from "flag absent" — mirrors Go's `cmdFlags.Changed("persistent")` check
-  // in `apps/cli-go/cmd/branches.go:53`. Effect CLI surface: `--persistent`
+  // in `apps/cli-go/cmd/branches.go:53` (deleted in CLI-1970; last present at
+  // commit 7b469f5b3). Effect CLI surface: `--persistent`
   // sets `Option.some(true)`, `--no-persistent` sets `Option.some(false)`,
   // absent stays `Option.none()`.
   persistent: Flag.boolean("persistent").pipe(

@@ -123,7 +123,8 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
               // bind, like the pg-delta CA bundle (supabase/cli#5989). Disable label
               // separation for this helper container instead of relabeling the
               // user's project files — same as `db test`'s pg_prove run
-              // (`apps/cli-go/internal/db/test/test.go:81`); Bitbucket CI clears it
+              // (`apps/cli-go/internal/db/test/test.go:81`, deleted in
+              // CLI-1970; last present at commit 7b469f5b3); Bitbucket CI clears it
               // via `legacyApplyBitbucketDockerFilter`.
               securityOpt: ["label:disable"],
               extraHosts,

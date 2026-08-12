@@ -1,6 +1,7 @@
 /**
  * pg-meta container spec builder — port of Go's "Start pg-meta" block
- * (`apps/cli-go/internal/start/start.go:1110-1146`). Gated in Go by
+ * (`apps/cli-go/internal/start/start.go:1110-1146`, deleted in CLI-1966;
+ * last present at commit a253ccba2). Gated in Go by
  * `config.studio.enabled` (pg-meta has no `enabled` flag of its own — it only
  * exists to back Studio's schema browser) and
  * `!isContainerExcluded(config.studio.pgmeta_image, excluded)` — see

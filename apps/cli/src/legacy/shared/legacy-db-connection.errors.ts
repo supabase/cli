@@ -28,7 +28,8 @@ export class LegacyDbConnectError extends Data.TaggedError("LegacyDbConnectError
 
 /**
  * Executing a SQL statement against an open connection failed. Mirrors the Go
- * `conn.Exec` error sites in `apps/cli-go/internal/db/test/test.go`.
+ * `conn.Exec` error sites in `apps/cli-go/internal/db/test/test.go` (deleted
+ * in CLI-1970; last present at commit 7b469f5b3).
  */
 export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly message: string;
@@ -61,7 +62,8 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
 
 /**
  * A server-side `COPY (...) TO STDOUT` stream failed. Mirrors Go's
- * `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`), where
+ * `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3), where
  * `conn.CopyTo` returns `failed to copy output: %w`. Raised by the driver's
  * `copyToCsv`; the report handler maps a subsequent file-write failure to its
  * own `failed to create output file` error (Go raises that one first, when it

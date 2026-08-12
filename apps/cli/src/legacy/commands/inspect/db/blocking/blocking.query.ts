@@ -6,7 +6,7 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/blocking/blocking.sql`.
+// Verbatim from `apps/cli-go/internal/inspect/blocking/blocking.sql` (deleted in CLI-1970; last present at commit 7b469f5b3).
 const SQL = `SELECT
   bl.pid AS blocked_pid,
   ka.query AS blocking_statement,
@@ -25,7 +25,8 @@ WHERE NOT bl.granted`;
 
 /**
  * `inspect db blocking` — queries holding locks and the queries waiting on them.
- * Port of `apps/cli-go/internal/inspect/blocking/blocking.go`. Both statement
+ * Port of `apps/cli-go/internal/inspect/blocking/blocking.go` (deleted in
+ * CLI-1970; last present at commit 7b469f5b3). Both statement
  * columns are whitespace-collapsed; Go's row format (`blocking.go:56`,
  * `` |`%d`|`%s`|`%s`|`%d`|%s|`%s`|\n ``) backtick-wraps every column EXCEPT
  * `blocked_statement` (col 5), so `blocking_statement` (col 2) uses the

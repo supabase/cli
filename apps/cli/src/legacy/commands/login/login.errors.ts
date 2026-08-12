@@ -7,7 +7,8 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Go's `ErrMissingToken` (`apps/cli-go/cmd/login.go:16`). Go Aqua-styles the
+ * Go's `ErrMissingToken` (`apps/cli-go/cmd/login.go:16`, deleted in CLI-1970;
+ * last present at commit 7b469f5b3). Go Aqua-styles the
  * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the legacy port renders
  * styling as plain text (Go strips color on a non-TTY), so this is byte-exact.
  */

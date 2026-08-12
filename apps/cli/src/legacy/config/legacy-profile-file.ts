@@ -31,7 +31,8 @@ export function legacySupabaseHome(
 
 /** Raised when persisting the profile name fails — Go's `SaveProfileName` error,
  * which `login`'s PostRunE returns to block subsequent CI commands
- * (`apps/cli-go/cmd/login.go:42-46`). */
+ * (`apps/cli-go/cmd/login.go:42-46`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3). */
 export class LegacyProfileSaveError extends Data.TaggedError("LegacyProfileSaveError")<{
   readonly message: string;
 }> {

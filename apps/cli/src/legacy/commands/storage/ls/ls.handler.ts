@@ -16,7 +16,8 @@ import type { LegacyStorageLsFlags } from "./ls.command.ts";
 /**
  * `supabase storage ls [path]` — list objects by path prefix.
  *
- * Port of `apps/cli-go/internal/storage/ls/ls.go`. The default path is `ss:///`
+ * Port of `apps/cli-go/internal/storage/ls/ls.go` (deleted in CLI-1970; last
+ * present at commit 7b469f5b3). The default path is `ss:///`
  * (all buckets); `--recursive` walks the tree with BFS. Text mode prints one
  * entry per line to **stdout** (Go `fmt.Println`); json/stream-json emit a single
  * `{ paths }` result.

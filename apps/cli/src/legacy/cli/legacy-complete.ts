@@ -463,6 +463,7 @@ export function legacyResolveCommandPath(
 
 /**
  * Mirrors cobra's `MarkFlagFilename` calls in `apps/cli-go/cmd/sso.go:166,167,181,182`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3)
  * — 4 individually hardcoded lines in Go, not derived from anything generic,
  * so a small matching lookup table here is the right level of fidelity. Key =
  * `<space-joined resolved command path (excluding "supabase")>:<flag name>`.

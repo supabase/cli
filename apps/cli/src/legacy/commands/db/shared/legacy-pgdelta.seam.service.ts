@@ -56,7 +56,8 @@ interface LegacyDeclarativeSeamShape {
   }) => Effect.Effect<string, LegacyDeclarativeShadowDbError>;
   /**
    * Go's `ensureLocalDatabaseStarted` for the `--local` declarative paths
-   * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`): inspects the local
+   * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`, deleted in
+   * CLI-1970; last present at commit 7b469f5b3): inspects the local
    * Postgres container and, when it is not running, starts ONLY the database via
    * the bundled Go binary's own DB-only `db start` (`internal/db/start.Run`, the
    * same hidden path `supabase db start` uses) -- not the full `supabase start`

@@ -314,7 +314,8 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
 });
 
 /**
- * Go's `getSigningKey` (`apps/cli-go/internal/gen/bearerjwt/bearerjwt.go:35-84`), fully
+ * Go's `getSigningKey` (`apps/cli-go/internal/gen/bearerjwt/bearerjwt.go:35-84`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3), fully
  * assembled: resolves `[auth].signing_keys_path`'s config, then dispatches to Branch
  * A (unconfigured) or Branches B/C (configured, non-TTY/TTY).
  *

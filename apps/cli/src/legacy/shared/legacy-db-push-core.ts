@@ -55,7 +55,8 @@ const applyError = (message: string) => new LegacyDbPushApplyError({ message });
 
 /**
  * Everything Go's `push.Run` does once its target connection AND config are
- * already resolved (`apps/cli-go/internal/db/push/push.go`). Shared by two
+ * already resolved (`apps/cli-go/internal/db/push/push.go`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3). Shared by two
  * callers, matching Go's own structure exactly — Go's `push.Run` never
  * resolves the project ref or loads `config.toml` itself, it just uses
  * whatever its caller already resolved:

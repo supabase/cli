@@ -17,7 +17,8 @@ interface LegacyProjectRefResolverShape {
     never
   >;
   /**
-   * Resolution chain used by `supabase link` (`apps/cli-go/cmd/link.go:30` calls
+   * Resolution chain used by `supabase link` (`apps/cli-go/cmd/link.go:30`,
+   * deleted in CLI-1970; last present at commit 7b469f5b3 — calls
    * `flags.ParseProjectRef` with an **empty in-memory FS**, so the on-disk
    * `project-ref` file is deliberately skipped):
    *

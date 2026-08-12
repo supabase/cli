@@ -20,7 +20,8 @@ import {
 import { printSslStatus } from "../ssl-enforcement.format.ts";
 import type { LegacySslEnforcementGetFlags } from "./get.command.ts";
 
-// Templates lifted verbatim from `apps/cli-go/internal/ssl_enforcement/get/get.go:17,19`.
+// Templates lifted verbatim from `apps/cli-go/internal/ssl_enforcement/get/get.go:17,19`
+// (deleted in CLI-1970; last present at commit 7b469f5b3).
 const mapGetError = mapLegacyHttpError({
   networkError: LegacySslEnforcementGetNetworkError,
   statusError: LegacySslEnforcementGetUnexpectedStatusError,

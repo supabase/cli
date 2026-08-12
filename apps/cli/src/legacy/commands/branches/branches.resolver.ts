@@ -40,7 +40,8 @@ const mapGetError = mapLegacyHttpError({
 });
 
 /**
- * Reproduces `apps/cli-go/internal/branches/pause/pause.go:GetBranchProjectRef`:
+ * Reproduces `apps/cli-go/internal/branches/pause/pause.go:GetBranchProjectRef`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3):
  *
  * 1. If the input matches `^[a-z]{20}$`, it's already a project ref — return as-is.
  * 2. Else if the input is a UUID, call `V1GetABranchConfig` (`GET /v1/branches/{id}`)

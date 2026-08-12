@@ -1,6 +1,7 @@
 /**
  * Kong container spec builder — port of Go's "Start Kong" block
- * (`apps/cli-go/internal/start/start.go:486-627`), gated on
+ * (`apps/cli-go/internal/start/start.go:486-627`, deleted in CLI-1966; last
+ * present at commit a253ccba2), gated on
  * `!isContainerExcluded(config.api.kong_image, excluded)` (Kong has no
  * `enabled` flag of its own — it is the stack's mandatory gateway) — see
  * `legacy-service-catalog.ts`'s `kong` entry (`excludeKey: "kong"`). Gating and

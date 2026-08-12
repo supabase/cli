@@ -2,7 +2,8 @@
 /**
  * `lints.sql` embedded verbatim from
  * `apps/cli-go/internal/db/advisors/templates/lints.sql` (Go embeds it with
- * `//go:embed`). Stored as a JSON-encoded string literal so the bytes are
+ * `//go:embed`; deleted in CLI-1970, last present at commit 7b469f5b3).
+ * Stored as a JSON-encoded string literal so the bytes are
  * byte-identical to the Go embed and immune to formatter reflow.
  *
  * The advisors local query is split on the first `";\n\n"` into a setup

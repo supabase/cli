@@ -97,3 +97,17 @@ surface from a parity check it never needed.
 
 - [`apps/cli/AGENTS.md`](../../apps/cli/AGENTS.md)
 - [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md)
+
+## Addendum (2026-08-12): CLI-1970 outcome
+
+The residual Go surface this ADR anticipated shipped as decided: `apps/cli-go/` now contains only
+the commands `LegacyGoProxy` still proxies to (the remaining `wrapped` commands, plus the
+single-flag Go delegations on `db diff`, `db pull`, and `functions download`). Every other command's
+Go source — everything unreachable from that surface, directly or indirectly — was deleted outright
+rather than kept around unused. Commit `7b469f5b3` is the parity/provenance reference for any of that
+deleted code, the same role `a253ccba2` already played for `internal/start` (CLI-1966).
+
+The go-target e2e parity harness this ADR's Consequences section cites (`testParity`, `*.e2e.test.ts`
+coverage of output/behavior drift via a `go` `CLITarget`) was retired in the same change. `runParity`
+and the `go` harness target no longer exist in `packages/cli-test-helpers`; the shipped e2e suite now
+exercises `ts-legacy` only, and no longer runs the Go CLI to compare its output against TypeScript's.

@@ -54,7 +54,7 @@ flattens a single object into `ID=… NAME=… SLUG=…` env lines.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Matches `apps/cli-go/internal/orgs/create/`. Go does not fire any custom telemetry event for
+Matches `apps/cli-go/internal/orgs/create/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for
 this command.
 
 ## Output
@@ -86,7 +86,7 @@ Preamble line followed by a TOML document of the created organization object.
 
 Preamble line followed by `ID=…`, `NAME=…`, `SLUG=…` env lines — env IS supported here,
 unlike on `orgs list`. Matches the Go encoder behavior in
-`apps/cli-go/internal/orgs/create/create.go:27`.
+`apps/cli-go/internal/orgs/create/create.go:27` (deleted in CLI-1970; last present at commit 7b469f5b3).
 
 ### `--output-format json`
 

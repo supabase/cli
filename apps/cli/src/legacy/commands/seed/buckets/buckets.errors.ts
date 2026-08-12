@@ -31,7 +31,8 @@ export class LegacySeedConfigLoadError extends Data.TaggedError("LegacySeedConfi
 
 /**
  * Raised when `--local` and `--linked` are both passed, reproducing cobra's
- * `MarkFlagsMutuallyExclusive("local", "linked")` (`apps/cli-go/cmd/seed.go:32`).
+ * `MarkFlagsMutuallyExclusive("local", "linked")` (`apps/cli-go/cmd/seed.go:32`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  */
 export class LegacySeedMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacySeedMutuallyExclusiveFlagsError",

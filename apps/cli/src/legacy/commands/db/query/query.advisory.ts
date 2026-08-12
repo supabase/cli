@@ -2,7 +2,8 @@ import { Option } from "effect";
 import type { LegacyAdvisory } from "./query.format.ts";
 
 /**
- * RLS advisory, ported 1:1 from `apps/cli-go/internal/db/query/advisory.go`.
+ * RLS advisory, ported 1:1 from `apps/cli-go/internal/db/query/advisory.go`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3).
  * Agent mode only: a best-effort check for user-schema tables with Row Level
  * Security disabled, surfaced inside the JSON envelope.
  */

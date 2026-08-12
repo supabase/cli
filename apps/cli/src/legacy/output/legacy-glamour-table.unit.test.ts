@@ -4,7 +4,8 @@ import { renderGlamourTable } from "./legacy-glamour-table.ts";
 
 describe("renderGlamourTable", () => {
   // Byte-for-byte parity with the Go fixture in
-  // apps/cli-go/internal/backups/list/list_test.go (TestListBackup/lists PITR backup).
+  // apps/cli-go/internal/backups/list/list_test.go (TestListBackup/lists PITR
+  // backup; deleted in CLI-1970, last present at commit 7b469f5b3).
   it("matches the Go PITR-backup table fixture", () => {
     const out = renderGlamourTable(
       ["REGION", "WALG", "PITR", "EARLIEST TIMESTAMP", "LATEST TIMESTAMP"],
@@ -23,7 +24,8 @@ describe("renderGlamourTable", () => {
   });
 
   // Byte-for-byte parity with the Go fixture in
-  // apps/cli-go/internal/backups/list/list_test.go (TestListBackup/lists WALG backup).
+  // apps/cli-go/internal/backups/list/list_test.go (TestListBackup/lists WALG
+  // backup; deleted in CLI-1970, last present at commit 7b469f5b3).
   it("matches the Go logical-backup table fixture", () => {
     const out = renderGlamourTable(
       ["REGION", "BACKUP TYPE", "STATUS", "CREATED AT (UTC)"],

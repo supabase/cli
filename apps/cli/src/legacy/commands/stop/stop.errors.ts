@@ -24,7 +24,8 @@ export class LegacyStopWorkdirError extends Data.TaggedError("LegacyStopWorkdirE
 /**
  * `--project-id` and `--all` were both set. Best-effort match of cobra's
  * `MarkFlagsMutuallyExclusive` message shape (`stopCmd.MarkFlagsMutuallyExclusive("project-id",
- * "all")`, `apps/cli-go/cmd/stop.go`). Cobra isn't vendored in this repo, so the exact
+ * "all")`, `apps/cli-go/cmd/stop.go`, deleted in CLI-1970; last present at
+ * commit 7b469f5b3). Cobra isn't vendored in this repo, so the exact
  * wording could not be verified against source; this mirrors the same phrasing already
  * used for `gen types`'s mutually-exclusive flag groups (`types.handler.ts`).
  */

@@ -531,7 +531,8 @@ function readJsonStringToken(
  * `Object.keys` reorders integer-like keys numerically (`{"10":..,"2":..}` →
  * `["2","10"]`), which would swap columns for a linked query like
  * `select 1 as "10", 2 as "2"`. Go's `orderedKeys` walks `json.Decoder` tokens to keep
- * the raw source order (`apps/cli-go/internal/db/query/query.go:128-159`), so scan the
+ * the raw source order (`apps/cli-go/internal/db/query/query.go:128-159`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3), so scan the
  * first object's top-level keys textually rather than via `Object.keys`.
  */
 export function legacyOrderedKeys(body: string): ReadonlyArray<string> {
