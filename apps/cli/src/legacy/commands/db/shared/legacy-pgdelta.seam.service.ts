@@ -3,71 +3,37 @@ import { Context, type Effect } from "effect";
 import type { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 
 /**
- * Which shadow-database catalog the Go seam should produce.
- *
- * `"migrations"` was removed from this union under CLI-1959: both call sites
- * that used it (`db diff`'s explicit `--from/--to migrations`, and
- * `db schema declarative sync`'s migrations-catalog diff source) now resolve
- * natively — see `legacy-pgdelta.cache.ts`'s `legacyResolveMigrationsCatalogRef`
- * and `legacyGetMigrationsCatalogRef` respectively; CLI-1956 then ported the
- * shadow those two functions provision off the Go seam too (see
- * `legacy-pgdelta.cache.ts`'s `exportViaShadowCatalog`), so no TS-side caller
- * routes shadow provisioning through this seam any more. `"baseline"` and
- * `"declarative"` remain seam-backed because they need a shadow provisioned with
- * ONLY the platform baseline (no migrations) or with declarative files applied,
- * and the Go subprocess still provisions that shadow itself. The underlying
- * primitives ARE natively ported now (`legacySetupDatabase`,
- * `shared/db-bootstrap/db-setup.ts`, and `legacyApplyDeclarativePgDelta`,
- * `legacy-pgdelta.apply.ts` — both CLI-1956); what's left is composing the
- * baseline/declarative catalog export on top of them. CLI-1823 (native
- * pg-delta lib) and the remaining `db schema declarative` porting work are the
- * tracked next steps for retiring the rest of this seam.
+ * Which shadow-database catalog `exportCatalog` should produce: the Supabase platform baseline
+ * (auth/storage/realtime) with nothing else applied, or that same baseline with the declarative
+ * directory applied on top. Local migrations never go through this seam — `db diff`'s explicit
+ * `--from/--to migrations` and `db schema declarative sync`'s migrations-catalog diff source both
+ * resolve their own shadow natively (`legacy-pgdelta.cache.ts`'s `legacyResolveMigrationsCatalogRef`
+ * and `legacyGetMigrationsCatalogRef`).
  */
 export type LegacyCatalogMode = "baseline" | "declarative";
 
 interface LegacyDeclarativeSeamShape {
   /**
-   * Provisions the shadow-database platform baseline (and, for `declarative`,
-   * applies declarative files) via the bundled Go binary's hidden
-   * `db schema declarative __catalog` command, and returns the workdir-relative
-   * path of the exported pg-delta catalog (cached under `supabase/.temp/pgdelta/`).
-   * Go's progress is teed to stderr; only the catalog path is captured from stdout.
-   *
-   * The shadow-database provisioning this needs (`start.SetupDatabase`, the
-   * auth/storage/realtime service migrations) IS now natively ported
-   * (`legacySetupDatabase`, `shared/db-bootstrap/db-setup.ts`, CLI-1956) — `db diff`/
-   * `db pull` no longer go through this Go seam for their own shadow at all (see
-   * `commands/db/shared/legacy-shadow-source.ts`). This method stays Go-delegated
-   * only because `db schema declarative generate`/`sync` haven't been natively
-   * ported yet, not because the underlying shadow primitive is missing.
+   * Provisions a shadow database with the Supabase platform baseline (and, for `declarative`,
+   * applies the declarative directory on top), exports its pg-delta catalog, and returns the
+   * workdir-relative path of the persisted snapshot (cached under `supabase/.temp/pgdelta/`).
+   * Progress ("Creating shadow database...") is written to stderr.
    */
   readonly exportCatalog: (opts: {
     readonly mode: LegacyCatalogMode;
     readonly noCache: boolean;
     /**
-     * Resolved linked project ref for `generate --linked`. Passed to the `__catalog`
-     * subprocess as `SUPABASE_PROJECT_ID`, which viper's `AutomaticEnv` binds to
-     * `project_id` so `Config.Load` merges the matching `[remotes.<ref>]` override
-     * into the platform baseline — mirroring Go's monolith, which loads the remote-
-     * merged config before building the baseline catalog
-     * (`apps/cli-go/pkg/config/config.go:492-516`). Absent → base config only.
+     * Resolved linked project ref for `generate --linked`: the config read this builds the
+     * baseline/declarative catalog from merges the matching `[remotes.<ref>]` override when
+     * set. Absent → base config only.
      */
     readonly projectRef?: string;
   }) => Effect.Effect<string, LegacyDeclarativeShadowDbError>;
   /**
-   * Go's `ensureLocalDatabaseStarted` for the `--local` declarative paths
-   * (`apps/cli-go/cmd/db_schema_declarative.go:190,249,291`, deleted in
-   * CLI-1970; last present at commit 7b469f5b3): inspects the local
-   * Postgres container and, when it is not running, starts ONLY the database via
-   * the bundled Go binary's own DB-only `db start` (`internal/db/start.Run`, the
-   * same hidden path `supabase db start` uses) -- not the full `supabase start`
-   * stack, which was deleted outright as unreachable (CLI-1966); this also avoids
-   * failing on unavailable auth/storage/etc. ports or images. TS's own native
-   * `db start` (`legacy/commands/db/start/`) exists but is not yet
-   * in-process-callable either, so this seam shells out to the Go binary
-   * directly rather than to the TS handler. A no-op when the container is
-   * already running, so `db schema declarative generate --local` bootstraps a
-   * stopped stack instead of failing to connect, matching Go.
+   * For the `--local` declarative paths: when the local Postgres container is not already
+   * running, starts it (the same DB-only bring-up `db start` uses) so
+   * `db schema declarative generate --local`/`sync` can bootstrap a stopped stack instead of
+   * failing to connect. A no-op, silently, when the container is already running.
    */
   readonly ensureLocalDatabaseStarted: () => Effect.Effect<void, LegacyDeclarativeShadowDbError>;
   /**

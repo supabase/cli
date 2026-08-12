@@ -12,6 +12,8 @@ import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts
 import { LegacyPgDeltaSslProbe } from "./legacy-pgdelta-ssl-probe.service.ts";
 import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
 import {
+  LEGACY_NO_CACHE_BASELINE_CATALOG_NAME,
+  LEGACY_NO_CACHE_DECLARATIVE_CATALOG_NAME,
   type LegacySetupInputs,
   legacyBaselineCatalogFileName,
   legacyBaselineCatalogKey,
@@ -32,6 +34,7 @@ import {
   legacySanitizedCatalogPrefix,
   legacySetupInputsToken,
   legacyTryCacheMigrationsCatalog,
+  legacyWriteDeclarativeCatalogSnapshot,
   legacyWriteMigrationCatalogSnapshot,
 } from "./legacy-pgdelta.cache.ts";
 
@@ -398,6 +401,60 @@ describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {
           "catalog-local-declarative-h-200.json",
           "catalog-local-declarative-h-300.json",
         ]);
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
+});
+
+describe("no-cache catalog file names", () => {
+  it("matches Go's noCacheBaselineCatalogPath/noCacheDeclarativeCatalogPath literals", () => {
+    expect(LEGACY_NO_CACHE_BASELINE_CATALOG_NAME).toBe("catalog-nocache-baseline.json");
+    expect(LEGACY_NO_CACHE_DECLARATIVE_CATALOG_NAME).toBe("catalog-nocache-declarative.json");
+  });
+});
+
+describe("legacyWriteDeclarativeCatalogSnapshot + cleanup", () => {
+  it.effect(
+    "writes the snapshot and prunes older declarative catalogs past the retention count",
+    () => {
+      const dir = withTemp();
+      const tempDir = join(dir, "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      for (const ts of [100, 300, 200]) {
+        writeFileSync(join(tempDir, `catalog-local-declarative-h-${ts}.json`), "{}");
+      }
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const filePath = yield* legacyWriteDeclarativeCatalogSnapshot(
+            fs,
+            path,
+            tempDir,
+            "local",
+            "h",
+            '{"snapshot":true}',
+            400,
+          );
+          expect(filePath.endsWith("catalog-local-declarative-h-400.json")).toBe(true);
+          expect(yield* fs.readFileString(filePath)).toBe('{"snapshot":true}');
+          const remaining = (yield* fs.readDirectory(tempDir)).filter((n) =>
+            n.startsWith("catalog-local-declarative-"),
+          );
+          expect(remaining.sort()).toEqual([
+            "catalog-local-declarative-h-300.json",
+            "catalog-local-declarative-h-400.json",
+          ]);
+        }),
+      ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    },
+  );
+
+  it.effect("creates the temp dir when it doesn't exist yet", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        yield* legacyWriteDeclarativeCatalogSnapshot(fs, path, tempDir, "local", "h", "{}", 100);
+        expect(yield* fs.exists(join(tempDir, "catalog-local-declarative-h-100.json"))).toBe(true);
       }),
     ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
   });
