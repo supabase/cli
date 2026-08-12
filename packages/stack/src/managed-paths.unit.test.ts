@@ -1,3 +1,4 @@
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { assertManagedUuid } from "./managed/ids.ts";
 import { InvalidManagedIdentityError, UnsafeManagedStackPathError } from "./managed/model.ts";
@@ -83,6 +84,27 @@ describe("managed paths", () => {
         platform: "win32",
       }),
     ).toBe("C:\\Users\\user/AppData/Local/Supabase/managed");
+  });
+
+  it("anchors caller- and environment-supplied state roots to an absolute path", () => {
+    expect(resolveManagedStateRoot({ stateRoot: "relative/managed" })).toBe(
+      resolve("relative/managed"),
+    );
+    expect(resolveManagedStateRoot({ stateRoot: "/absolute/managed" })).toBe("/absolute/managed");
+    expect(
+      resolveManagedStateRoot({
+        env: { SUPABASE_HOME: "relative/supabase" },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe(join(resolve("relative/supabase"), "managed"));
+    expect(
+      resolveManagedStateRoot({
+        env: { XDG_STATE_HOME: "relative/state" },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe(join(resolve("relative/state"), "supabase", "managed"));
   });
 
   it("keys every mutable stack path by opaque stack ID", () => {

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
+import { resolve } from "node:path";
 import {
   DEFAULT_MANAGED_STACK_NAME,
   InvalidManagedStackNameError,
@@ -174,6 +175,9 @@ const processIsAlive = (pid: number): boolean => {
 export const makeManagedStackService = (
   options: ManagedStackServiceOptions,
 ): ManagedStackService => {
+  // Anchored once, at the boundary: a relative root injected here would be
+  // reinterpreted against the process' cwd at every later use.
+  const stateRoot = resolve(options.stateRoot);
   const idFactory = options.idFactory ?? randomUUID;
   const clock = options.clock ?? (() => new Date());
   const ownerPid = options.ownerPid ?? process.pid;
@@ -183,7 +187,7 @@ export const makeManagedStackService = (
   const now = (): string => clock().toISOString();
 
   const removeStackState = async (stack: ManagedStackRecord): Promise<void> => {
-    const root = assertManagedStackRoot(options.stateRoot, stack.id, stack.paths.root);
+    const root = assertManagedStackRoot(stateRoot, stack.id, stack.paths.root);
     await rm(root, { force: true, recursive: true });
   };
 
@@ -302,7 +306,7 @@ export const makeManagedStackService = (
       : updateStackRecord(stack.id, configuration);
 
   return {
-    stateRoot: options.stateRoot,
+    stateRoot,
     repository: options.repository,
     async provisionOrdinaryStack(provisionOptions) {
       const stackName = provisionOptions.stackName ?? DEFAULT_MANAGED_STACK_NAME;
@@ -318,7 +322,7 @@ export const makeManagedStackService = (
         locationId: createManagedUuid(idFactory, "checkout location id"),
         stackId,
         stackName,
-        paths: managedStackPaths(options.stateRoot, stackId),
+        paths: managedStackPaths(stateRoot, stackId),
         operationToken: createManagedUuid(idFactory, "operation token"),
         ownerPid,
         now: now(),

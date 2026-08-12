@@ -142,6 +142,18 @@ export class InvalidManagedStackNameError extends ManagedStackError {
   }
 }
 
+export class InvalidManagedPortError extends ManagedStackError {
+  readonly code = "MANAGED_INVALID_PORT";
+
+  constructor(
+    readonly port: number,
+    readonly key: string,
+  ) {
+    super(`Invalid managed port ${port} for ${key}`);
+    this.name = "InvalidManagedPortError";
+  }
+}
+
 export class ManagedStackNotFoundError extends ManagedStackError {
   readonly code = "MANAGED_STACK_NOT_FOUND";
 

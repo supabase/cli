@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { managedStackContractFixtures } from "./managed-stack-contract.ts";
@@ -23,6 +23,7 @@ import {
 import {
   DuplicateManagedIdentityError,
   InvalidManagedIdentityError,
+  InvalidManagedPortError,
   InvalidManagedStackNameError,
   ManagedOperationInProgressError,
   ManagedOperationOwnershipError,
@@ -525,6 +526,40 @@ describe("managed repository and lifecycle", () => {
       expect(created.outcome).toBe("create");
       expect(reused.outcome).toBe("reuse");
       expect(reused.selection).toEqual(created.selection);
+      service.close();
+    });
+  }
+
+  it("anchors an injected relative state root so a later chdir cannot split stack state", () => {
+    const service = makeManagedStackService({
+      repository: createInMemoryManagedStackRepository(),
+      stateRoot: "relative-managed-state",
+    });
+    expect(service.stateRoot).toBe(resolve("relative-managed-state"));
+    service.close();
+  });
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`rejects unusable port numbers with a coded failure for the ${adapter} adapter`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory" ? makeInMemoryService(root) : makePersistentService(root);
+      const workspace = makeWorkspace(root);
+
+      await expect(
+        service.provisionOrdinaryStack({
+          workspacePath: workspace,
+          configuration: { ports: [{ key: "api.port", port: 54_321.5, intent: "exact" }] },
+        }),
+      ).rejects.toBeInstanceOf(InvalidManagedPortError);
+
+      const created = await service.provisionOrdinaryStack({ workspacePath: workspace });
+      await expect(
+        service.updateStack(created.stack.id, {
+          ports: [{ key: "api.port", port: 70_000, intent: "exact" }],
+        }),
+      ).rejects.toBeInstanceOf(InvalidManagedPortError);
+      expect(service.inspectStack(created.stack.id)?.ports).toEqual([]);
       service.close();
     });
   }

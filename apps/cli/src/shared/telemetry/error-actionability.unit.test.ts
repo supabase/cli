@@ -598,6 +598,46 @@ describe("classifyCliErrorActionability", () => {
     expect(classifyCliErrorActionability(other).error_kind).toBe("unknown");
   });
 
+  // Managed registry errors are plain `Error` subclasses that rename themselves
+  // and carry no `_tag`, so `code` is the only thing routing them to their
+  // adapter. `managed-model.unit.test.ts` in `@supabase/stack` pins the real
+  // classes to the (name, code) pairs reproduced here.
+  it.each([
+    [
+      "InvalidManagedIdentityError",
+      "INVALID_MANAGED_IDENTITY",
+      "managed_identity",
+      "invalid_input",
+    ],
+    [
+      "ManagedOperationInProgressError",
+      "MANAGED_OPERATION_IN_PROGRESS",
+      "conflict",
+      "invalid_config",
+    ],
+    ["InvalidManagedPortError", "MANAGED_INVALID_PORT", "managed_port", "invalid_config"],
+    [
+      "UnsafeManagedStackPathError",
+      "UNSAFE_MANAGED_STACK_PATH",
+      "bad_argument",
+      "impossible_state",
+    ],
+  ])("classifies %s by its stable managed code", (name, code, suffix, category) => {
+    const error = new Error("managed registry failure");
+    error.name = name;
+    Object.defineProperty(error, "code", { value: code });
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_category).toBe(category);
+    expect(result.error_fingerprint).toBe(`error:ManagedStackError:${suffix}`);
+  });
+
+  it("leaves an unrecognized managed-shaped code unclassified", () => {
+    const unrecognized = new Error("managed failure");
+    unrecognized.name = "ManagedFutureError";
+    Object.defineProperty(unrecognized, "code", { value: "MANAGED_FUTURE_FAILURE" });
+    expect(classifyCliErrorActionability(unrecognized).error_kind).toBe("unknown");
+  });
+
   it("classifies the preserved tagged cause of a StackError wrapper", () => {
     const wrapped = new Error("stack failure");
     wrapped.name = "StackError";

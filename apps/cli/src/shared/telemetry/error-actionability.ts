@@ -105,6 +105,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_identity",
   "managed_identity_conflict",
   "managed_initialization",
+  "managed_port",
   "managed_recovery",
   "managed_stack_name",
   "managed_stack_running",
@@ -761,6 +762,80 @@ const effectCliActionabilityByTag = {
   UnrecognizedOption: () => actionability.invalidInput,
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
+/**
+ * `@supabase/stack` managed registry failures, keyed by the stable `code`
+ * literal each class declares. Every managed failure is a plain `Error`
+ * subclass of the single `ManagedStackError` root: none carries a `_tag`, and
+ * each subclass overwrites `name` with its own class name, so `code` is the
+ * only discriminator that both identifies the hierarchy and survives the
+ * identifier minification of release builds. This map is therefore the
+ * dispatch key as well as the classification table — see `classifyAtDepth`.
+ */
+const managedActionabilityByCode: Record<string, CliErrorActionabilityDeclaration> = {
+  INVALID_MANAGED_IDENTITY: {
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_identity",
+  },
+  DUPLICATE_MANAGED_IDENTITY: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "managed_identity_conflict",
+  },
+  MANAGED_INVALID_STACK_NAME: {
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_stack_name",
+  },
+  UNSUPPORTED_MANAGED_REGISTRY_VERSION: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "invalid_config",
+  },
+  MANAGED_STACK_NOT_FOUND: { ...actionability.invalidInput, fingerprint_suffix: "not_found" },
+  // Another caller owns the stack right now; the remediation is to settle that
+  // operation before retrying.
+  MANAGED_OPERATION_IN_PROGRESS: { ...actionability.stopStack, fingerprint_suffix: "conflict" },
+  MANAGED_OPERATION_OWNERSHIP_MISMATCH: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "conflict",
+  },
+  MANAGED_STACK_PUBLICATION_TIMEOUT: { ...actionability.stopStack, fingerprint_suffix: "conflict" },
+  MANAGED_OPERATION_REQUIRES_RECONCILIATION: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_recovery",
+  },
+  MANAGED_STACK_NOT_STOPPED: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_stack_running",
+  },
+  MANAGED_RUNNING_STACK_PORT_CHANGE: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_stack_running",
+  },
+  MANAGED_PORT_ALREADY_RESERVED: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "port_conflict",
+  },
+  // The port number itself is unusable (fractional or outside 1-65535), which
+  // is the user's own configured value rather than a conflict with a peer.
+  MANAGED_INVALID_PORT: { ...actionability.invalidConfig, fingerprint_suffix: "managed_port" },
+  // The registry derives every stack root itself, so a path that fails the
+  // containment check means the CLI passed a rejected argument.
+  UNSAFE_MANAGED_STACK_PATH: {
+    ...actionability.impossibleState,
+    fingerprint_suffix: "bad_argument",
+  },
+  MANAGED_STACK_INITIALIZATION_FAILED: {
+    ...actionability.startStack,
+    fingerprint_suffix: "managed_initialization",
+  },
+};
+
+function readManagedActionability(
+  error: ErrorRecord,
+): CliErrorActionabilityDeclaration | undefined {
+  const code = readString(error, "code");
+  if (code === undefined || !Object.hasOwn(managedActionabilityByCode, code)) return undefined;
+  return managedActionabilityByCode[code];
+}
+
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ...effectCliActionabilityByTag,
 
@@ -905,44 +980,10 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     return { ...actionability.stopStack, fingerprint_suffix: "daemon_transport" };
   },
 
-  // @supabase/stack managed registry — every managed failure is a plain
-  // `Error` subclass of the single `ManagedStackError` root, so the concrete
-  // failure is carried by the stable `code` field rather than by a tag.
-  ManagedStackError: (error) => {
-    switch (readString(error, "code")) {
-      case "INVALID_MANAGED_IDENTITY":
-        return { ...actionability.invalidInput, fingerprint_suffix: "managed_identity" };
-      case "DUPLICATE_MANAGED_IDENTITY":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "managed_identity_conflict" };
-      case "MANAGED_INVALID_STACK_NAME":
-        return { ...actionability.invalidInput, fingerprint_suffix: "managed_stack_name" };
-      case "UNSUPPORTED_MANAGED_REGISTRY_VERSION":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
-      case "MANAGED_STACK_NOT_FOUND":
-        return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
-      // Another caller owns the stack right now; the remediation is to settle
-      // that operation before retrying.
-      case "MANAGED_OPERATION_IN_PROGRESS":
-      case "MANAGED_OPERATION_OWNERSHIP_MISMATCH":
-      case "MANAGED_STACK_PUBLICATION_TIMEOUT":
-        return { ...actionability.stopStack, fingerprint_suffix: "conflict" };
-      case "MANAGED_OPERATION_REQUIRES_RECONCILIATION":
-        return { ...actionability.stopStack, fingerprint_suffix: "managed_recovery" };
-      case "MANAGED_STACK_NOT_STOPPED":
-      case "MANAGED_RUNNING_STACK_PORT_CHANGE":
-        return { ...actionability.stopStack, fingerprint_suffix: "managed_stack_running" };
-      case "MANAGED_PORT_ALREADY_RESERVED":
-        return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
-      // The registry derives every stack root itself, so a path that fails the
-      // containment check means the CLI passed a rejected argument.
-      case "UNSAFE_MANAGED_STACK_PATH":
-        return { ...actionability.impossibleState, fingerprint_suffix: "bad_argument" };
-      case "MANAGED_STACK_INITIALIZATION_FAILED":
-        return { ...actionability.startStack, fingerprint_suffix: "managed_initialization" };
-      default:
-        return actionability.unknown;
-    }
-  },
+  // @supabase/stack managed registry — see {@link managedActionabilityByCode}.
+  // Reached from `classifyAtDepth` by code, not by tag: managed failures have
+  // no `_tag`.
+  ManagedStackError: (error) => readManagedActionability(error) ?? actionability.unknown,
 
   // @supabase/process-compose — the CLI generates the process graph, so graph
   // invariants are internal bugs; runtime service failures are stack-state
@@ -1105,6 +1146,17 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     const classify = externalActionabilityByTag["StackError"];
     if (classify !== undefined) {
       return toActionability(classify(error), "error", "StackError");
+    }
+  }
+
+  // Managed registry failures are untagged, and each subclass renames itself,
+  // so a recognized `code` literal is what routes them to their adapter. They
+  // all report under the hierarchy root: the concrete failure is already
+  // carried by the declaration's fingerprint suffix.
+  if (isErrorRecord(error) && readManagedActionability(error) !== undefined) {
+    const classify = externalActionabilityByTag["ManagedStackError"];
+    if (classify !== undefined) {
+      return toActionability(classify(error), "error", "ManagedStackError");
     }
   }
 

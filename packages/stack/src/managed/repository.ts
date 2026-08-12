@@ -1,5 +1,6 @@
 import {
   DuplicateManagedIdentityError,
+  InvalidManagedPortError,
   ManagedOperationOwnershipError,
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
@@ -133,7 +134,7 @@ export const validateManagedPortAssignments = (
   const numbers = new Set<number>();
   for (const assignment of ports) {
     if (!Number.isInteger(assignment.port) || assignment.port < 1 || assignment.port > 65_535) {
-      throw new Error(`Invalid managed port ${assignment.port} for ${assignment.key}`);
+      throw new InvalidManagedPortError(assignment.port, assignment.key);
     }
     if (keys.has(assignment.key)) {
       throw new Error(`Duplicate managed port key ${assignment.key}`);
