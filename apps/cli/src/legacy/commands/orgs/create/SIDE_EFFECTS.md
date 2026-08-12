@@ -12,7 +12,7 @@
 
 | Path                         | Format | When                                                        |
 | ---------------------------- | ------ | ----------------------------------------------------------- |
-| `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command — Go parity |
+| `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
 
 `orgs create` is a user-level command — it does not resolve a `--project-ref`, so the legacy
 linked-project cache is never written.
@@ -34,7 +34,7 @@ linked-project cache is never written.
 | Variable                | Purpose                                                                                                                                                   | Required?                                               |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (Go parity — used by the cli-e2e harness) | no (defaults to `supabase`)                             |
+| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                             |
 
 ## Exit Codes
 
@@ -45,8 +45,8 @@ linked-project cache is never written.
 | `1`  | `LegacyOrgsCreateUnexpectedStatusError` — non-201 response from create endpoint |
 | `1`  | `LegacyOrgsCreateNetworkError` — transport-level network failure                |
 
-Unlike `orgs list`, there is no env-not-supported branch — Go's `EncodeOutput` happily
-flattens a single object into `ID=… NAME=… SLUG=…` env lines.
+Unlike `orgs list`, there is no env-not-supported branch — a single object flattens
+into `ID=… NAME=… SLUG=…` env lines.
 
 ## Telemetry Events Fired
 
@@ -54,22 +54,19 @@ flattens a single object into `ID=… NAME=… SLUG=…` env lines.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Matches `apps/cli-go/internal/orgs/create/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for
-this command.
-
 ## Output
 
-Every output mode (Go-compat and TS) starts by printing `Created organization: <id>\n` to
+Every output mode starts by printing `Created organization: <id>\n` to
 stdout, except `--output-format json` / `stream-json`, which emit a single structured event
-instead. `--output` (Go) wins over `--output-format` (TS) when both are supplied.
+instead. `--output` wins over `--output-format` when both are supplied.
 
-### `--output pretty` (Go default) / `--output-format text`
+### `--output pretty` (default) / `--output-format text`
 
 `Created organization: <id>` followed by a Glamour-styled markdown table with columns
 `ID`, `NAME` for the created organization. The rendered table always ends with a trailing
 newline (Glamour appends one).
 
-### `--output json` (Go-compat)
+### `--output json`
 
 Preamble line followed by indented JSON of the created `OrganizationResponseV1` object with
 alphabetical keys + trailing newline.
@@ -85,8 +82,7 @@ Preamble line followed by a TOML document of the created organization object.
 ### `--output env`
 
 Preamble line followed by `ID=…`, `NAME=…`, `SLUG=…` env lines — env IS supported here,
-unlike on `orgs list`. Matches the Go encoder behavior in
-`apps/cli-go/internal/orgs/create/create.go:27` (deleted in CLI-1970; last present at commit 7b469f5b3).
+unlike on `orgs list`.
 
 ### `--output-format json`
 
@@ -111,12 +107,12 @@ message. No preamble line.
 ## Security Notes
 
 - The `Created organization: <id>` preamble and the rendered Glamour table interpolate the
-  API-supplied `id` and `name` strings without ANSI / control-character sanitization. This
-  is strict Go parity — Go's `fmt.Println` and `glamour` both pass these through verbatim.
-  A malicious or compromised Management API could in principle return values containing
-  terminal escape sequences. If sanitization is added later it should land at the renderer
-  (and at any shared preamble helper) so both shells inherit the fix.
-- `--output env` values are escaped via `encodeEnv` (`\n`, `\r`, `\t` → backslash-escaped),
-  matching Go's `%q` semantics. ESC (`0x1b`) is not escaped — again Go parity.
+  API-supplied `id` and `name` strings without ANSI / control-character sanitization
+  (inherited from the old Go CLI's behavior). A malicious or compromised Management API
+  could in principle return values containing terminal escape sequences. If sanitization
+  is added later it should land at the renderer (and at any shared preamble helper) so
+  both shells inherit the fix.
+- `--output env` values are escaped via `encodeEnv` (`\n`, `\r`, `\t` → backslash-escaped).
+  ESC (`0x1b`) is not escaped.
 - Error response bodies embedded in `LegacyOrgsCreateUnexpectedStatusError` are sanitized
   by `mapLegacyHttpError` (control chars stripped, capped at 1024 bytes).

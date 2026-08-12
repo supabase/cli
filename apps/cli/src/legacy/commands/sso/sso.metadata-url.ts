@@ -22,10 +22,7 @@ const METADATA_URL_MAX_BYTES = 5 * 1024 * 1024;
  * `Accept: application/xml`, requiring HTTPS, refusing redirects, capping
  * the response body, and decoding it as strict UTF-8.
  *
- * Mirrors Go's `saml.ValidateMetadataURL`
- * (`apps/cli-go/internal/sso/internal/saml/files.go:62-93`, deleted in
- * CLI-1970; last present at commit 7b469f5b3) with two
- * defence-in-depth hardenings over the Go original:
+ * Two defence-in-depth hardenings beyond the base validation:
  *   1. **No redirects** — the underlying `fetch` is configured with
  *      `redirect: "error"` so a 3xx hop from the user's HTTPS URL to
  *      `http://169.254.169.254/`, `http://10.x`, or other private/metadata
@@ -34,7 +31,7 @@ const METADATA_URL_MAX_BYTES = 5 * 1024 * 1024;
  *      malicious or buggy endpoint cannot OOM the CLI.
  *
  * Callers add their own ` Use --skip-url-validation to suppress this
- * error[.]` suffix — the trailing punctuation differs between Go's `create`
+ * error[.]` suffix — the trailing punctuation differs between `create`
  * (no period) and `update` (period).
  */
 export const validateMetadataUrl = (
@@ -55,8 +52,8 @@ export const validateMetadataUrl = (
         }),
     });
 
-    // Go uses `strings.EqualFold(scheme, "https")`; URL.protocol is already
-    // lowercased so direct compare is safe.
+    // URL.protocol is already lowercased, so a direct compare against
+    // "https:" is safe.
     if (parsed.protocol !== "https:") {
       return yield* Effect.fail(
         new LegacySsoMetadataUrlInvalidError({

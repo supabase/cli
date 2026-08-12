@@ -7,7 +7,7 @@ import { isEphemeralIdentityRuntime } from "../../shared/telemetry/identity.ts";
 import { readExistingState } from "../telemetry/legacy-telemetry-state.layer.ts";
 
 /**
- * Session identity stitching, a 1:1 port of Go's `identityTransport` +
+ * Session identity stitching, a 1:1 port of `identityTransport` +
  * `StitchLogin` (`apps/cli-go/internal/utils/identity_transport.go`,
  * `cmd/root.go:146-154`, `internal/telemetry/service.go:132-155`).
  *
@@ -15,7 +15,7 @@ import { readExistingState } from "../telemetry/legacy-telemetry-state.layer.ts"
  * of a session that carries `X-Gotrue-Id` stamps the user id in memory and, on a
  * persistent machine, aliases the device id to the gotrue id and persists
  * `distinct_id` to `telemetry.json`. Crucially Go installs ONE `sync.Once` in the
- * root command context (`cmd/root.go:145-154`) shared across every transport, so
+ * root command context shared across every transport, so
  * the alias + persist happen at most once per command no matter how many
  * Management API responses (typed client, raw advisor GETs, linked-project cache)
  * flow through it.
@@ -104,8 +104,8 @@ const makeLegacyIdentityStitcher: Effect.Effect<
       const telemetryPath = path.join(runtime.configDir, "telemetry.json");
       const existing = yield* fs.readFileString(telemetryPath).pipe(Effect.option);
       // Reuses the same all-or-nothing decode as `loadOrCreateLegacyTelemetryState`
-      // (Go's `decodeState`, `state.go:87-115`) instead of a second tolerant
-      // per-field parser: Go's `StitchLogin` only ever mutates the state that
+      // (`decodeState`, `state.go:87-115`) instead of a second tolerant
+      // per-field parser: `StitchLogin` only ever mutates the state that
       // `LoadOrCreateState` already decoded, it never re-parses the file itself.
       // This also fixes a prior bug where a `consent: "denied"` file (no
       // `enabled` key) was treated as `enabled: true`.
@@ -167,7 +167,7 @@ interface LegacyIdentityStitchShape {
    * Returns the in-memory identity for this session — the gotrue id stamped from
    * the first authenticated response, or the startup-persisted `distinct_id`, or
    * `undefined` if neither exists yet. Read AFTER the command runs so the
-   * stitching transport has had a chance to stamp it (Go's `s.distinctID()` in
+   * stitching transport has had a chance to stamp it (`s.distinctID()` in
    * `internal/telemetry/service.go:203-207`, read by Execute() post-run in
    * `cmd/root.go:177`). Because stamping happens in every runtime (incl. CI), this
    * attributes the post-run `cli_command_executed` event to the real user even

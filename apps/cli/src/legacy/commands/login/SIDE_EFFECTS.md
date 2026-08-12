@@ -1,7 +1,7 @@
 # `supabase login`
 
-Native TypeScript port of Go's `internal/login`. Writes the access token, then
-stitches/clears the telemetry identity and captures `cli_login_completed`.
+Writes the access token, then stitches/clears the telemetry identity and
+captures `cli_login_completed`.
 
 ## Files Read
 
@@ -17,7 +17,7 @@ stitches/clears the telemetry identity and captures `cli_login_completed`.
 | OS keyring (`Supabase CLI` / profile)           | token string              | always on success when the keyring is available                                                                                        |
 | `~/.supabase/access-token`                      | plain text (mode `0600`)  | on success when the keyring is unavailable (WSL / `SUPABASE_NO_KEYRING`)                                                               |
 | `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON                      | always (PersistentPostRun flush); `distinct_id` set on stitch, removed on clear                                                        |
-| `~/.supabase/profile`                           | plain text (profile name) | on success only, when a profile is explicitly set (`--profile` ≠ default, else `SUPABASE_PROFILE`) — Go's `PostRunE`/`SaveProfileName` |
+| `~/.supabase/profile`                           | plain text (profile name) | on success only, when a profile is explicitly set (`--profile` ≠ default, else `SUPABASE_PROFILE`) |
 
 ## API Routes
 
@@ -44,9 +44,9 @@ stitches/clears the telemetry identity and captures `cli_login_completed`.
 | `1`  | invalid `--token` (`cannot save provided token: …`)                                         |
 | `1`  | non-TTY with no token (`Cannot use automatic login flow inside non-TTY environments. …`)    |
 | `1`  | keygen failure, verification retries exhausted, or decryption failure (browser path)        |
-| `1`  | failure to persist `~/.supabase/profile` (Go blocks subsequent CI commands on save failure) |
+| `1`  | failure to persist `~/.supabase/profile` (blocks subsequent commands on save failure)       |
 
-Browser-open failure is non-fatal (logged, ignored — `login.go:206-208`).
+Browser-open failure is non-fatal (logged, ignored).
 
 ## Telemetry Events Fired
 
@@ -57,7 +57,7 @@ Browser-open failure is non-fatal (logged, ignored — `login.go:206-208`).
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Token path (stdout): `You are now logged in. Happy coding!`
 
@@ -77,7 +77,7 @@ are suppressed. Interactive prompts (browser path) fail with `NonInteractiveErro
 ## Notes
 
 - Token resolution priority: `--token` → `SUPABASE_ACCESS_TOKEN` → piped stdin (non-TTY) → browser flow (TTY).
-- The login-session query string is built without URL-encoding, matching Go (`login.go:197-198`).
-- Telemetry stitch always replaces a stale `distinct_id` (Go's `StitchLogin`), independent of the platform-API auto-stitch. The stitch _aliases_ only — Go's login never calls `identify`.
-- On success, an explicitly-set profile is persisted to `~/.supabase/profile` (Go's `PostRunE`); `LegacyCliConfig` reads it back as the lowest-precedence profile source.
-- Aqua/Bold styling from Go renders as plain text (parity on a non-TTY).
+- The login-session query string is built without URL-encoding.
+- Telemetry stitch always replaces a stale `distinct_id`, independent of the platform-API auto-stitch. The stitch _aliases_ only — it never calls `identify`.
+- On success, an explicitly-set profile is persisted to `~/.supabase/profile`; `LegacyCliConfig` reads it back as the lowest-precedence profile source.
+- ANSI styling (Aqua/Bold) renders as plain text.

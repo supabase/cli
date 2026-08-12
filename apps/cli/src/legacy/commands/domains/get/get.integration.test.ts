@@ -102,8 +102,7 @@ describe("legacy domains get integration", () => {
       yield* legacyDomainsGet(baseFlags);
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain('"custom_hostname": "shop.acme.dev"');
-      // Structured -o output: human status is suppressed (Go's no-newline status
-      // is fused with + stripped alongside its version-update notice — see emit).
+      // Structured -o output: human status is suppressed entirely — see emit.
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });
@@ -238,7 +237,7 @@ describe("legacy domains get integration", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* legacyDomainsGet(baseFlags);
-      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name (CLI-1975).
       expect(out.stdoutText).toContain("customhostname: shop.acme.dev");
     }).pipe(Effect.provide(layer));
   });
@@ -247,7 +246,7 @@ describe("legacy domains get integration", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* legacyDomainsGet(baseFlags);
-      // BurntSushi emits PascalCase Go field names (CLI-1975).
+      // BurntSushi emits PascalCase field names (CLI-1975).
       expect(out.stdoutText).toContain('CustomHostname = "shop.acme.dev"');
     }).pipe(Effect.provide(layer));
   });

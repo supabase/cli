@@ -9,8 +9,7 @@ import {
 
 /**
  * `--db-url` could not be parsed as a Postgres connection string. Mirrors Go's
- * `pgconn.ParseConfig` failure in `flags.ParseDatabaseConfig`
- * (`apps/cli-go/internal/utils/flags/db_url.go:64`).
+ * `pgconn.ParseConfig` failure in `flags.ParseDatabaseConfig`.
  */
 export class LegacyDbConfigParseUrlError extends Data.TaggedError("LegacyDbConfigParseUrlError")<{
   readonly message: string;
@@ -112,7 +111,7 @@ export class LegacyDbConfigUnbanStatusError extends Data.TaggedError(
  * The linked project's direct database host is unreachable (IPv6-only) and no
  * connection pooler is configured. Byte-matches Go's
  * `"IPv6 is not supported on your current network"` with the `supabase link`
- * suggestion (`db_url.go:101-104`).
+ * suggestion.
  */
 export class LegacyDbConfigIpv6Error extends Data.TaggedError("LegacyDbConfigIpv6Error")<{
   readonly message: string;
@@ -132,8 +131,8 @@ export class LegacyDbConfigIpv6Error extends Data.TaggedError("LegacyDbConfigIpv
 
 /**
  * Failed to connect to the linked project as the temporary login role after the
- * pooler refresh backoff was exhausted. Mirrors Go's `initPoolerLogin` final
- * `backoff.RetryNotify` failure (`db_url.go:190-209`).
+ * pooler refresh backoff was exhausted. Mirrors `initPoolerLogin` final
+ * `backoff.RetryNotify` failure.
  */
 export class LegacyDbConfigConnectTempRoleError extends Data.TaggedError(
   "LegacyDbConfigConnectTempRoleError",
@@ -149,8 +148,7 @@ export class LegacyDbConfigConnectTempRoleError extends Data.TaggedError(
 /**
  * The configured pooler connection string does not match the linked project ref
  * or its domain falls outside the active profile (MITM guard). Mirrors the
- * `nil`-returning validation branches of Go's `GetPoolerConfig`
- * (`apps/cli-go/internal/utils/connect.go:65-107`).
+ * `nil`-returning validation branches of `GetPoolerConfig`.
  */
 export class LegacyDbConfigPoolerLoginError extends Data.TaggedError(
   "LegacyDbConfigPoolerLoginError",

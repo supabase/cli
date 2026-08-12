@@ -8,8 +8,8 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 | Path                                           | Format | When                                                                     |
 | ---------------------------------------------- | ------ | ------------------------------------------------------------------------ |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -43,12 +43,12 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Output
 
-Honors both `--output {pretty,json,yaml,toml,env}` (Go) and `--output-format {text,json,stream-json}` (TS).
+Honors both `--output {pretty,json,yaml,toml,env}` and `--output-format {text,json,stream-json}`.
 
-In **text mode**, the header `Updated preview branch:` writes to **stderr** (Go `fmt.Fprintln(os.Stderr, …)`) followed by the single-row Glamour list-table on stdout.
+In **text mode**, the header `Updated preview branch:` writes to **stderr** followed by the single-row Glamour list-table on stdout.
 
-In Go encoder modes, the header goes to stderr followed by the encoded payload on stdout. In `--output-format json` / `stream-json`, a `success` event carries the payload.
+For `--output {json,yaml,toml,env}`, the header goes to stderr followed by the encoded payload on stdout. In `--output-format json` / `stream-json`, a `success` event carries the payload.
 
 ## Notes
 
-The upgrade-suggest call uses the branch's own resolved project ref (`legacyResolveBranchProjectRef`), matching Go's `update.go:26` (`pause.GetBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.
+The upgrade-suggest call uses the branch's own resolved project ref (`legacyResolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.

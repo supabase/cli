@@ -209,7 +209,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("collapses . and .. in relative seed sql_paths like Go's path.Join", () => {
     // Go prefixes each relative pattern with `path.Join("supabase", pattern)`, which
-    // runs `path.Clean` (`config.go:881-886`). The cleaned path is the seed_files key.
+    // runs `path.Clean`. The cleaned path is the seed_files key.
     const dir = withConfig(
       ["[db.seed]", 'sql_paths = ["../seed.sql", "sub/../other.sql", "./plain.sql"]', ""].join(
         "\n",
@@ -378,15 +378,15 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "on Windows, resolves a leading-slash schema/seed path pattern under supabase/ instead of treating it as absolute (Go filepath.IsAbs parity)",
     () => {
-      // Go's `resolve()` gates the `supabase/`-join on `!filepath.IsAbs(pattern)`
-      // (`config.go:976-980`), and `filepath.IsAbs` on Windows requires a volume name —
+      // `resolve()` gates the `supabase/`-join on `!filepath.IsAbs(pattern)`,
+      // and `filepath.IsAbs` on Windows requires a volume name —
       // a drive letter (`C:\`) or UNC prefix (`\\server\share`) — before a path counts as
       // absolute (`internal/filepathlite/path_windows.go`'s `IsAbs`/`volumeNameLen`). A
       // bare leading `/` has no volume name, so Go treats `/schemas/*.sql` as RELATIVE and
       // joins it to `supabase/schemas/*.sql`. Node's `path.win32.isAbsolute`, backing the
       // injected `Path.Path` service on an actual Windows host, instead treats a leading
       // separator as rooted at the current drive — i.e. absolute — which would otherwise
-      // skip Go's `supabase/`-join entirely. Exercises `legacyResolveSeedSqlPath` (the
+      // skip `supabase/`-join entirely. Exercises `legacyResolveSeedSqlPath` (the
       // single function `[db.migrations].schema_paths` and `[db.seed].sql_paths` both
       // resolve through) directly with `BunPath.layerWin32`, rather than through the full
       // `legacyReadDbToml` pipeline: that pipeline's OWN config-file lookup also runs
@@ -413,7 +413,7 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "weakly coerces non-string db.migrations.schema_paths array elements (Go mapstructure parity)",
     () => {
-      // Go's `v.UnmarshalExact` never sets `WeaklyTypedInput: false`, so viper's
+      // `v.UnmarshalExact` never sets `WeaklyTypedInput: false`, so viper's
       // `defaultDecoderConfig` default of `true` stands — mapstructure's `decodeString`
       // coerces a bool to "1"/"0" and a number to its decimal string rather than
       // erroring or dropping the element. Verified empirically against `apps/cli-go`:
@@ -436,7 +436,7 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "formats a large numeric db.migrations.schema_paths entry as fixed decimal, not scientific notation (Go strconv.FormatFloat parity)",
     () => {
-      // Go's `decodeString` renders a weakly-converted float via
+      // `decodeString` renders a weakly-converted float via
       // `strconv.FormatFloat(v, 'f', -1, 64)` — format `'f'` is ALWAYS fixed decimal,
       // never scientific, regardless of magnitude. JS's bare `String(1e21)` switches to
       // exponential notation ("1e+21") once the magnitude crosses 1e21, which would
@@ -481,7 +481,7 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "weakly coerces a TOP-LEVEL scalar db.migrations.schema_paths (Go mapstructure weak-decode of a []string field)",
     () => {
-      // Go's `decodeSlice` wraps a non-array/non-string value into a synthetic
+      // `decodeSlice` wraps a non-array/non-string value into a synthetic
       // single-element `[]any{value}` and decodes it through the same per-element
       // rules as a real array entry — it does NOT fall back to the `[]` default the
       // way an absent key does. Verified empirically against `apps/cli-go`:
@@ -504,7 +504,7 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "treats a TOP-LEVEL empty-table db.migrations.schema_paths as no patterns (Go mapstructure zero-length-map special case)",
     () => {
-      // Go's `decodeSlice` special-cases a zero-length map BEFORE the generic weak-typing
+      // `decodeSlice` special-cases a zero-length map BEFORE the generic weak-typing
       // wrap above: it decodes straight to an empty slice. Verified empirically against
       // `apps/cli-go`: `schema_paths = {}` → `[]`.
       const dir = withConfig(["[db.migrations]", "schema_paths = {}", ""].join("\n"));
@@ -609,7 +609,7 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "aborts the whole config load on a TOP-LEVEL table db.migrations.schema_paths (Go mapstructure UnconvertibleTypeError, synthetic index 0)",
     () => {
-      // A non-empty map isn't weakly coercible, so Go's `decodeSlice` wraps it into
+      // A non-empty map isn't weakly coercible, so `decodeSlice` wraps it into
       // `[]any{value}` and fails decoding element 0 the same way a nested-array/table
       // ARRAY element does. Verified empirically against `apps/cli-go`:
       // `[db.migrations.schema_paths]\nfoo = "bar"` fails with this exact message.
@@ -726,15 +726,15 @@ describe("legacyReadDbToml", () => {
   it.effect(
     "aggregates unconvertible-entry issues from BOTH db.seed.sql_paths and db.migrations.schema_paths in one error (Go UnmarshalExact single-pass parity, review CLI-1958)",
     () => {
-      // Go's `UnmarshalExact` decodes the WHOLE config in a SINGLE mapstructure pass:
-      // `decodeStructFromMap`'s per-field loop never stops at the first field's error
-      // — it visits every field, collects every error, then joins them all together
+      // `UnmarshalExact` decodes the WHOLE config in a SINGLE mapstructure pass:
+      // `decodeStructFromMap`'s per-field loop never stops at the first field's error —
+      // it visits every field, collects every error, then joins them all together
       // at the end. So a config invalid in BOTH `Glob` fields reports BOTH, not just
       // whichever field is checked first. Verified empirically against `apps/cli-go`
       // (`config.Load` with `sql_paths = [[]]` + `schema_paths = [[]]`): the single
       // returned error contains both lines, `db.migrations.schema_paths[0]` BEFORE
-      // `db.seed.sql_paths[0]` — Go's `db` struct declares `Migrations` before `Seed`
-      // (`pkg/config/db.go:90-91`), so mapstructure visits (and therefore reports)
+      // `db.seed.sql_paths[0]` — `db` struct declares `Migrations` before `Seed`,
+      // so mapstructure visits (and therefore reports)
       // `schema_paths` first regardless of which field this reader happens to resolve
       // first internally.
       const dir = withConfig(
@@ -905,8 +905,8 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("collapses . and .. in relative db.migrations.schema_paths like Go's path.Join", () => {
-    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`
-    // (`config.go:976-978`), which runs `path.Clean` — same helper `db.seed.sql_paths`
+    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`,
+    // which runs `path.Clean` — same helper `db.seed.sql_paths`
     // uses above (`legacyResolveSeedSqlPath`), so `./schemas/a.sql` and `schemas/a.sql`
     // resolve to the identical string instead of aliasing as two different glob patterns.
     const dir = withConfig(
@@ -1518,7 +1518,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("rejects invalid [experimental.pgdelta] format_options JSON during load", () => {
     // Go's config.Validate aborts with this exact message when format_options is
-    // non-empty but not valid JSON (`apps/cli-go/pkg/config/config.go:1685-1686`),
+    // non-empty but not valid JSON,
     // before any shadow/catalog container runs.
     const dir = withConfig('[experimental.pgdelta]\nformat_options = "not-json"\n');
     return read(dir).pipe(
@@ -1549,9 +1549,9 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("rejects an invalid [storage.buckets.<name>] during load", () => {
-    // Go's config.Validate runs ValidateBucketName over every bucket key on load
-    // (`apps/cli-go/pkg/config/config.go:898-903`), aborting with this exact message
-    // (`config.go:1386`) before any db command — the trailing `(...)` is the regex
+    // Go's config.Validate runs ValidateBucketName over every bucket key on load,
+    // aborting with this exact message
+    // before any db command — the trailing `(...)` is the regex
     // source. `#` is outside bucketNamePattern, so this name is rejected.
     const dir = withConfig('[storage.buckets."bad#name"]\n');
     return read(dir).pipe(
@@ -1564,7 +1564,7 @@ describe("legacyReadDbToml", () => {
             expect(json).toContain("LegacyDbConfigLoadError");
             // Prose part is backslash-free, so safe to assert through JSON.stringify;
             // the trailing `(<regex source>)` is built from the pattern's `.source`,
-            // guaranteeing it byte-matches Go's `bucketNamePattern.String()`.
+            // guaranteeing it byte-matches `bucketNamePattern.String()`.
             expect(json).toContain(
               "Invalid Bucket name: bad#name. Only lowercase letters, numbers, dots, hyphens, and spaces are allowed.",
             );
@@ -1576,9 +1576,9 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect("rejects an invalid [functions.<slug>] during load", () => {
-    // Go's config.Validate runs ValidateFunctionSlug over every functions key on load
-    // (`apps/cli-go/pkg/config/config.go:993-998`), aborting with this exact message
-    // (`config.go:1376`). `123` starts with a digit → rejected by `^[A-Za-z][A-Za-z0-9_-]*$`.
+    // Go's config.Validate runs ValidateFunctionSlug over every functions key on load,
+    // aborting with this exact message.
+    // `123` starts with a digit → rejected by `^[A-Za-z][A-Za-z0-9_-]*$`.
     const dir = withConfig("[functions.123]\n");
     return read(dir).pipe(
       Effect.exit,
@@ -2294,8 +2294,8 @@ describe("legacyReadDbToml", () => {
 
   it.effect("fails when a project .env file exists but cannot be read", () => {
     // Go's loadEnvIfExists swallows only os.ErrNotExist; any other read error
-    // aborts rather than hiding a broken env-backed config. A directory at the
-    // .env path yields a non-NotFound read error.
+    // aborts rather than hiding a broken env-backed config. A directory at the.
+    // env path yields a non-NotFound read error.
     const dir = withConfig(["[db]", "port = 5000", ""].join("\n"));
     mkdirSync(join(dir, "supabase", ".env"), { recursive: true });
     return read(dir).pipe(
@@ -2367,7 +2367,7 @@ describe("legacyReadDbToml", () => {
     // Divergence #1 fix: this used to fall through to the generic
     // "Failed reading config: Invalid db.major_version: 0." message (the same branch that
     // catches an unsupported value like 16) — `legacyValidateResolvedConfig`'s dedicated `0` case
-    // now matches Go's `Missing required field in config: db.major_version`.
+    // now matches `Missing required field in config: db.major_version`.
     const dir = withConfig(["[db]", "major_version = 0", ""].join("\n"));
     return read(dir).pipe(
       Effect.exit,
@@ -3174,7 +3174,7 @@ describe("legacyReadDbToml encrypted secret decryption (Go DecryptSecretHookFunc
 });
 
 describe("legacyReadDbToml non-scalar config booleans (Go UnmarshalExact parity)", () => {
-  // Go's `UnmarshalExact` fails to decode a bool field given an array/inline-table value,
+  // `UnmarshalExact` fails to decode a bool field given an array/inline-table value,
   // aborting `LoadConfig` before any destructive work. A present non-scalar must not fall
   // through to the schema default (which would let `db reset` prompt + drop schemas).
   const failsInvalid = (lines: ReadonlyArray<string>, field: string) =>
@@ -3246,7 +3246,7 @@ describe("legacyReadDbToml [analytics] validation (Go config.Validate parity)", 
       rmSync(dir, { recursive: true, force: true });
     });
 
-  // `LogflareBackend.UnmarshalText` is a decode-time enum (`config.go:60-66`): it fires whenever
+  // `LogflareBackend.UnmarshalText` is a decode-time enum: it fires whenever
   // `backend` is set, even when analytics is disabled.
   it.effect("rejects an unknown analytics.backend regardless of enabled", () =>
     failsWith(
@@ -3381,9 +3381,9 @@ describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)
   it.effect(
     "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
     () => {
-      // Regression (review: PRRT_kwDOErm0O86XHGDL) — Go's `mergeRemoteConfig` installs the
-      // matched block's OWN `project_id` at viper's override tier, above `AutomaticEnv`
-      // (`apps/cli-go/pkg/config/config.go:718-724`); that block is selected BECAUSE its
+      // Regression (review: PRRT_kwDOErm0O86XHGDL) — `mergeRemoteConfig` installs the
+      // matched block's OWN `project_id` at viper's override tier, above `AutomaticEnv`;
+      // that block is selected BECAUSE its
       // `project_id` equals the resolved ref, so it must win even when an unrelated
       // `SUPABASE_PROJECT_ID` is set to something else entirely.
       const previous = process.env["SUPABASE_PROJECT_ID"];

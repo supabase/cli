@@ -260,7 +260,7 @@ const scenarios: ReadonlyArray<ParityScenario> = [
 // way by both — see the module header in `legacy-config-validate.ts` for the full explicitly
 // out-of-scope list):
 // - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
-//   validator (`LegacyConfigValidationInput` has no fields for these at all).
+// validator (`LegacyConfigValidationInput` has no fields for these at all).
 // - `api.tls`, `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections.
 describe("legacyValidateResolvedConfig cross-caller parity (D vs L)", () => {
   for (const scenario of scenarios) {

@@ -10,9 +10,7 @@ import {
 
 /**
  * Transport-level failure talking to the Management API custom-hostname
- * endpoints. Mirrors Go's `errors.Errorf("failed to <verb> custom hostname: %w", err)`
- * (`apps/cli-go/internal/hostnames/*`, deleted in CLI-1970; last present at
- * commit 7b469f5b3).
+ * endpoints. Message format: `failed to <verb> custom hostname: <err>`.
  */
 export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNetworkError")<{
   readonly message: string;
@@ -26,9 +24,9 @@ export class LegacyDomainsNetworkError extends Data.TaggedError("LegacyDomainsNe
 }
 
 /**
- * The custom-hostname endpoint returned a status the Go CLI does not treat as
- * success (201 for create/reverify/activate, 200 for get/delete). Mirrors Go's
- * `errors.Errorf("unexpected <verb> hostname status %d: %s", code, body)`.
+ * The custom-hostname endpoint returned a status that is not treated as
+ * success (201 for create/reverify/activate, 200 for get/delete). Message
+ * format: `unexpected <verb> hostname status <code>: <body>`.
  */
 export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
   "LegacyDomainsUnexpectedStatusError",
@@ -48,8 +46,7 @@ export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
 /**
  * The CNAME pre-check in `domains create` failed — either the DNS lookup did
  * not resolve to a CNAME, or it resolved to a host other than the expected
- * Supabase subdomain. Mirrors `apps/cli-go/internal/hostnames/common.go:14-22`
- * (deleted in CLI-1970; last present at commit 7b469f5b3).
+ * Supabase subdomain.
  */
 export class LegacyDomainsCnameError extends Data.TaggedError("LegacyDomainsCnameError")<{
   readonly message: string;
@@ -70,10 +67,10 @@ export class LegacyDomainsCnameError extends Data.TaggedError("LegacyDomainsCnam
 
 /**
  * Build the network/status error mapper for a custom-hostname subcommand. The
- * Go error strings differ only by verb, so each handler supplies its verb and
+ * error strings differ only by verb, so each handler supplies its verb and
  * shares the dispatch + body-truncation policy from `mapLegacyHttpError`.
  *
- * @param verb - the Go phrasing, e.g. `"create"`, `"get"`, `"re-verify"`.
+ * @param verb - the established phrasing, e.g. `"create"`, `"get"`, `"re-verify"`.
  */
 export function mapLegacyDomainsHttpError(verb: string) {
   return mapLegacyHttpError({

@@ -1,5 +1,5 @@
 /**
- * PostgreSQL statement splitter, ported 1:1 from Go's `pkg/parser`
+ * PostgreSQL statement splitter, ported 1:1 from `pkg/parser`
  * (`token.go` + `state.go`). A finite-state machine tracks string literals
  * (`'…'`, `"…"`), line/block comments, dollar-quoted bodies (`$tag$…$tag$`),
  * backslash escapes, and `BEGIN ATOMIC … END` / parenthesised bodies, so a `;`
@@ -184,7 +184,7 @@ function splitRaw(sql: string): RawToken[] {
 
 /**
  * Splits `sql` into raw statements (comments/whitespace preserved), then applies
- * the optional transforms to each. Mirrors Go's `parser.Split`.
+ * the optional transforms to each. Mirrors `parser.Split`.
  */
 export function legacySplitSql(
   sql: string,
@@ -199,10 +199,10 @@ export function legacySplitSql(
   return statements;
 }
 
-/** Go's `parser.SplitAndTrim`'s per-token transform: trim trailing `;` then surrounding whitespace. */
+/** `parser.SplitAndTrim`'s per-token transform: trim trailing `;` then surrounding whitespace. */
 const legacyTrimStatement = (token: string): string => token.replace(/;+$/u, "").trim();
 
-/** Mirrors Go's `parser.SplitAndTrim`: trim trailing `;` then surrounding whitespace. */
+/** Mirrors `parser.SplitAndTrim`: trim trailing `;` then surrounding whitespace. */
 export function legacySplitAndTrim(sql: string): string[] {
   return legacySplitSql(sql, legacyTrimStatement);
 }
@@ -217,7 +217,7 @@ export interface LegacySplitSqlToken {
    * `false` only for a trailing statement with no closing delimiter, emitted at
    * real EOF (`splitRaw`'s `acc.length > 0` fallback) — see {@link RawToken}.
    * `checkScannerBufferSize` (`legacy-migration-apply.ts`) needs this to decide
-   * `>` vs `>=` against the effective buffer limit: Go's `bufio.Scanner` can
+   * `>` vs `>=` against the effective buffer limit: `bufio.Scanner` can
    * only apply its too-long check (`len(s.buf) >= s.maxTokenSize`) once it has
    * given up looking for a delimiter and still needs more data — for a
    * delimiter-terminated token the delimiter is found (and the token emitted)
@@ -239,7 +239,7 @@ export interface LegacySplitSqlToken {
 /**
  * Same FSM traversal as {@link legacySplitAndTrim}, but pairs each statement's RAW
  * (pre-trim) text with its trimmed form instead of discarding the raw text once
- * emitted. Go's `bufio.Scanner`-based `parser.Split` (`pkg/parser/token.go:81-119`)
+ * emitted. `bufio.Scanner`-based `parser.Split`
  * enforces `SUPABASE_SCANNER_BUFFER_SIZE` against the untransformed
  * `scanner.Text()` — the RAW form — and its `bufio.ErrTooLong` message reports
  * that same raw text for the LAST successfully scanned statement, so a caller
@@ -247,7 +247,7 @@ export interface LegacySplitSqlToken {
  * needs both forms, not just the trimmed one `legacySplitAndTrim` returns.
  *
  * Unlike `legacySplitSql`/`legacySplitAndTrim`, this does NOT drop a statement
- * whose trimmed form is empty — callers that replicate Go's `len(stats)` counter
+ * whose trimmed form is empty — callers that replicate `len(stats)` counter
  * (which only increments for a non-empty trimmed statement) need to see every raw
  * token, including the ones `legacySplitAndTrim` itself would filter out.
  */
@@ -259,13 +259,13 @@ export function legacySplitSqlTokens(sql: string): ReadonlyArray<LegacySplitSqlT
   }));
 }
 
-// `(?i)drop\s+` — Go's `dropStatementPattern` (`internal/db/diff/diff.go:100`,
+// `(?i)drop\s+` — `dropStatementPattern` (`internal/db/diff/diff.go:100`,
 // also `internal/db/declarative/declarative.go:62`).
 const DROP_STATEMENT_PATTERN = /drop\s+/i;
 
 /**
  * Extracts DROP statements from a schema diff for the safety warning shown by
- * `db diff` / `db pull` / declarative `sync`. Mirrors Go's `findDropStatements`:
+ * `db diff` / `db pull` / declarative `sync`. Mirrors `findDropStatements`:
  * split the SQL into statements, then keep those matching `(?i)drop\s+`.
  */
 export function legacyFindDropStatements(sql: string): ReadonlyArray<string> {

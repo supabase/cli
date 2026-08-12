@@ -398,10 +398,9 @@ describe("legacyCredentialsLayer.saveAccessToken", () => {
   });
 });
 
-// Go's `utils.DeleteAccessToken` (`access_token.go:100-119`) collapses three
-// outcomes — logged out / not-logged-in / real failure — into the file +
-// legacy-keyring + profile-keyring sequence. These cases assert the TS port
-// reproduces that ordering and tri-state exactly (parity note 1).
+// `deleteAccessToken` collapses three outcomes — logged out / not-logged-in /
+// real failure — into the file + legacy-keyring + profile-keyring sequence.
+// These cases assert that ordering and tri-state exactly.
 describe("legacyCredentialsLayer.deleteAccessToken", () => {
   const seedTokenFile = (home: string, token = VALID_TOKEN) => {
     const supaDir = join(home, ".supabase");
@@ -448,7 +447,7 @@ describe("legacyCredentialsLayer.deleteAccessToken", () => {
           expect(JSON.stringify(exit.cause)).toContain("LegacyNotLoggedInError");
           expect(JSON.stringify(exit.cause)).toContain("You were not logged in, nothing to do.");
         }
-        // File is still removed first (Go's deliberate ordering).
+        // File removal happens before the profile-keyring check (deliberate ordering).
         expect(tokenFileExists(tempHome)).toBe(false);
       }).pipe(Effect.provide(makeLayer()));
     },

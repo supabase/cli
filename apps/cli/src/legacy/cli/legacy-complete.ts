@@ -23,8 +23,7 @@ import { legacyAnalyticsLayer } from "../telemetry/legacy-analytics.layer.ts";
 
 /**
  * Native TypeScript reimplementation of cobra's dynamic-completion protocol
- * (`spf13/cobra@v1.10.2/completions.go`), replacing the old Go-binary
- * passthrough (`complete-passthrough.ts`, deleted by CLI-1965). Cobra-generated
+ * (`spf13/cobra@v1.10.2/completions.go`). Cobra-generated
  * completion scripts (`supabase completion {bash,zsh,fish,powershell}`) call
  * back into `supabase __complete <args>` on every tab press — or
  * `supabase __completeNoDesc <args>` when the script was generated with
@@ -34,9 +33,7 @@ import { legacyAnalyticsLayer } from "../telemetry/legacy-analytics.layer.ts";
  * parser would reject) and instead reflects directly over `legacyRoot` — the
  * live Effect CLI command tree — to compute candidates.
  *
- * Deliberate, documented simplifications relative to real cobra (verified
- * empirically against a real `apps/cli-go` build during CLI-1965 review — see
- * that PR for the differential-testing detail):
+ * Deliberate, documented simplifications relative to real cobra:
  * - No `--help`-style multi-paragraph usage error for zero completion args
  *   (`MinimumNArgs(1)` failure) — real generated shell scripts always pass at
  *   least one arg, so this path is realistically unreachable by real
@@ -45,10 +42,9 @@ import { legacyAnalyticsLayer } from "../telemetry/legacy-analytics.layer.ts";
  *   diagnostics — both are cobra-side stderr-only text every real generated
  *   completion script discards (`2>/dev/null` or equivalent), so reproducing
  *   them has zero observable effect on any user.
- * - Mutually-exclusive flag-group hiding (cobra's `enforceFlagGroupsForCompletion`,
- *   ~45 `MarkFlagsMutuallyExclusive` call sites in `apps/cli-go/cmd/`) is not
- *   reproduced — there is no equivalent flag-group annotation anywhere in this
- *   TS tree to mirror, and hand-building a ~45-entry shadow table carries a
+ * - Mutually-exclusive flag-group hiding (cobra's `enforceFlagGroupsForCompletion`)
+ *   is not reproduced — there is no equivalent flag-group annotation anywhere in
+ *   this TS tree to mirror, and hand-building a shadow table carries a
  *   materially higher transcription-error risk than the small, stable tables
  *   below. Accepted as a documented gap.
  * - Deprecated commands/flags (cobra's `IsAvailableCommand()`/`MarkDeprecated`)
@@ -234,11 +230,10 @@ function legacyFlagDescriptorFromParam(param: Param.AnyFlag): LegacyFlagDescript
  * its own `--help`, root's own `--version`, and its own local flags, as a
  * SECOND, separately-sorted block) — pflag's `FlagSet.VisitAll` walks
  * `sortedFormalFlags`, which sorts strictly by each flag's canonical long
- * name (verified empirically against a real `apps/cli-go` build: `db dump -`
- * lists `--agent`, `--create-ticket`, `--debug`, ... alphabetically, THEN a
- * second alphabetical run starting `--data-only`, `--db-url`, `--dry-run`,
- * ... — not one merged alphabetical list and not this tree's own declaration
- * order — CLI-1965 review finding).
+ * name: `db dump -` lists `--agent`, `--create-ticket`, `--debug`, ...
+ * alphabetically, THEN a second alphabetical run starting `--data-only`,
+ * `--db-url`, `--dry-run`, ... — not one merged alphabetical list and not
+ * this tree's own declaration order.
  *
  * The resolved command's own local flags win on a canonical-name collision —
  * e.g. a command's own local `--output` (`db diff`'s file-path flag) must
@@ -356,11 +351,10 @@ function legacyResolveFlagFromToken(
  *   typed before that subcommand is reached (`--db-url`, local to `db
  *   dump`, typed before `db`): `stripFlags`'s `hasNoOptDefVal` returns
  *   `false` for a name it can't find yet, so `!hasNoOptDefVal(...)` is
- *   `true` and it optimistically consumes a value anyway (verified
- *   empirically against a real `apps/cli-go` build: `__complete --db-url
- *   postgres:// db dump --s` still offers `db dump`'s `--schema`, which
- *   requires descending past `--db-url postgres://` to reach `db dump` at
- *   all).
+ *   `true` and it optimistically consumes a value anyway: `__complete
+ *   --db-url postgres:// db dump --s` still offers `db dump`'s `--schema`,
+ *   which requires descending past `--db-url postgres://` to reach `db
+ *   dump` at all.
  * - Anything else flag-shaped — a multi-character shorthand cluster
  *   (`-rj`), a flag containing `=`, or a bare `--` — is skipped without
  *   consuming a value. A bare `--` additionally stops the descent
@@ -376,12 +370,11 @@ function legacyResolveFlagFromToken(
  *   critically — WITHOUT removing it from the leftover args the way a
  *   matched command name is (`argsMinusFirstX` only ever strips the exact
  *   matched name). It therefore must stay in `leftoverArgs` here too, while
- *   still letting the descent continue past it (verified empirically
- *   against a real `apps/cli-go` build: `db - dump --da` still descends
- *   past the bare `-` into `dump` and offers `--data-only`, while `sso -
- *   --debug a` returns zero candidates with the Default directive — the
- *   surviving `-` keeps the `len(finalArgs) == 0` subcommand-listing gate
- *   below closed — CLI-1965 review finding).
+ *   still letting the descent continue past it: `db - dump --da` still
+ *   descends past the bare `-` into `dump` and offers `--data-only`, while
+ *   `sso - --debug a` returns zero candidates with the Default directive —
+ *   the surviving `-` keeps the `len(finalArgs) == 0` subcommand-listing
+ *   gate below closed.
  *
  * Descent stops at the first non-flag token that doesn't match a subcommand,
  * or at a `--` sentinel; that token and everything after it becomes
@@ -462,10 +455,9 @@ export function legacyResolveCommandPath(
 /* ========================================================================== */
 
 /**
- * Mirrors cobra's `MarkFlagFilename` calls in `apps/cli-go/cmd/sso.go:166,167,181,182`
- * (deleted in CLI-1970; last present at commit 7b469f5b3)
- * — 4 individually hardcoded lines in Go, not derived from anything generic,
- * so a small matching lookup table here is the right level of fidelity. Key =
+ * File-extension filtering for a small, fixed set of file-path flags — not
+ * derived from anything generic, so a small matching lookup table here is
+ * the right level of fidelity. Key =
  * `<space-joined resolved command path (excluding "supabase")>:<flag name>`.
  */
 const LEGACY_COMPLETION_FLAG_FILE_EXTENSIONS: ReadonlyMap<string, ReadonlyArray<string>> = new Map([
@@ -476,17 +468,14 @@ const LEGACY_COMPLETION_FLAG_FILE_EXTENSIONS: ReadonlyMap<string, ReadonlyArray<
 ]);
 
 /**
- * Mirrors cobra's unconditional, `init()`-time `MarkFlagRequired` calls — the
- * ONLY ones active during `__complete`/`__completeNoDesc`, since cobra's
- * `getCompletions` never runs `PreRun`/`PersistentPreRunE`/`RunE`
- * (`completions.go` never calls `Execute()`). Several more `MarkFlagRequired`
- * calls exist in `apps/cli-go/cmd/` but are scoped inside those hooks
- * (conditional on other flags or TTY state) and therefore never apply to a
- * real completion request — deliberately excluded here: `db dump:data-only`
- * (`cmd/db.go:140`, inside `PreRun`), `init:experimental` (`cmd/init.go:34`,
- * inside `PreRun`), `projects create:{org-id,db-password,region}`
- * (`cmd/projects.go:64-66`, inside `PreRunE`), `link:project-ref`
- * (`cmd/link.go:25`, inside `PreRunE`).
+ * The set of flags cobra treats as unconditionally required during
+ * `__complete`/`__completeNoDesc`. A flag whose requirement is scoped inside
+ * a `PreRun`/`PreRunE` hook (conditional on other flags or TTY state) never
+ * applies to a real completion request, since completion never runs those
+ * hooks — deliberately excluded here for that reason: `db dump:data-only`
+ * (inside `PreRun`), `init:experimental` (inside `PreRun`), `projects
+ * create:{org-id,db-password,region}` (inside `PreRunE`), `link:project-ref`
+ * (inside `PreRunE`).
  *
  * Deliberately a hardcoded table, not derived from whether the TS flag is
  * `Flag.optional`-wrapped: several of these TS flags are intentionally
@@ -513,19 +502,16 @@ function legacyIsRequiredCompletionFlag(
 }
 
 /**
- * Mirrors cobra's `InitDefaultCompletionCmd` (`completions.go:769-928`),
- * which registers `ValidArgsFunction: NoFileCompletions` on the `completion`
- * group command itself and each of its `bash`/`zsh`/`fish`/`powershell`
- * leaves — the only `ValidArgsFunction`/`ValidArgs` usage anywhere relevant
- * to this tree (`apps/cli-go/cmd/`, `apps/cli-go/internal/` register none of
- * their own). `getCompletions` always calls a resolved command's own
+ * Mirrors cobra's `InitDefaultCompletionCmd`, which registers
+ * `ValidArgsFunction: NoFileCompletions` on the `completion` group command
+ * itself and each of its `bash`/`zsh`/`fish`/`powershell` leaves.
+ * `getCompletions` always calls a resolved command's own
  * `ValidArgsFunction` when one is registered, and that call OVERWRITES the
- * directive outright (`completions.go:564-579`) — for a leaf like
- * `completion bash`, which has no subcommands of its own to otherwise set
- * NoFileComp, this is the ONLY thing that sets it (verified empirically
- * against a real `apps/cli-go` build: `completion bash ""` returns the
- * NoFileComp directive with zero candidates, not Default — CLI-1965 review
- * finding). Key = space-joined `matchedPath` (excluding "supabase").
+ * directive outright — for a leaf like `completion bash`, which has no
+ * subcommands of its own to otherwise set NoFileComp, this is the ONLY
+ * thing that sets it: `completion bash ""` returns the NoFileComp directive
+ * with zero candidates, not Default. Key = space-joined `matchedPath`
+ * (excluding "supabase").
  */
 const LEGACY_COMPLETION_NO_FILE_COMP_PATHS: ReadonlySet<string> = new Set([
   "completion",
@@ -560,18 +546,16 @@ function legacyFlagNameCandidates(
  * Stops at a bare `--` the same way `legacyFindUnresolvedFlagToken` and
  * `legacyResolveCommandPath` do — pflag's end-of-flags sentinel means
  * nothing at or after it is ever parsed as a flag, so nothing past it can be
- * "changed" (verified empirically against a real `apps/cli-go` build: `sso
- * add -- --type --typ` still offers `--type`, since that token is
- * positional, past the terminator, and never reaches pflag's flag parser at
- * all — CLI-1965 review finding).
+ * "changed": `sso add -- --type --typ` still offers `--type`, since that
+ * token is positional, past the terminator, and never reaches pflag's flag
+ * parser at all.
  *
  * A LONG flag with no `=` that resolves to a non-boolean in-scope flag
  * consumes the immediately following token as its value — that token is
  * skipped here entirely, exactly like pflag's `parseLongArg`
  * (`pflag@v1.0.10/flag.go:1013-1023`), so a value that happens to look like a
  * flag (e.g. `--domains --type foo`, where `--type` is `--domains`'s value)
- * is never itself marked changed (CLI-1965 review finding, verified
- * empirically against a real `apps/cli-go` build).
+ * is never itself marked changed.
  *
  * A short-flag token walks its shorthand cluster exactly like
  * `pflag@v1.0.10`'s `parseSingleShortArg`: each character that resolves to a
@@ -579,20 +563,18 @@ function legacyFlagNameCandidates(
  * to the next character in the SAME token; the first non-boolean character
  * (or a `=value` suffix) is also marked changed but ends the walk there,
  * since the rest of the token (or the next arg) is that flag's value, not
- * another shorthand (verified empirically against a real `apps/cli-go`
- * build: after `storage cp -rj 2`, both `-r`/`--recursive` and `-j`/`--jobs`
- * are "changed" — `--r<TAB>` offers nothing further — whereas this function
- * used to record only the cluster's last character).
+ * another shorthand: after `storage cp -rj 2`, both `-r`/`--recursive` and
+ * `-j`/`--jobs` are "changed" — `--r<TAB>` offers nothing further — whereas
+ * this function used to record only the cluster's last character.
  *
  * `legacyClassifyCompletion`'s `--help`/`--version` short-circuit reads THIS
  * set (`changedFlagNames.has("help"/"version")`) rather than scanning raw
  * tokens for a reason beyond DRY: pflag's `boolValue.Set` marks the flag
  * `Changed` on an explicit-value spelling too (`--help=false`), and cobra's
- * `helpOrVersionFlagPresent` (`completions.go:530-537`) checks `.Changed`,
- * not the parsed value — so `--help=false`/`--version=false` short-circuit
- * exactly like a bare `--help`/`--version` (verified empirically against a
- * real `apps/cli-go` build: `--help=false --d` and `--version=false br` both
- * return zero candidates with the NoFileComp directive) — and this
+ * `helpOrVersionFlagPresent` checks `.Changed`, not the parsed value — so
+ * `--help=false`/`--version=false` short-circuit exactly like a bare
+ * `--help`/`--version`: `--help=false --d` and `--version=false br` both
+ * return zero candidates with the NoFileComp directive — and this
  * function's name-collection above already marks a flag changed on ANY
  * spelling, explicit-value included. A raw token scan misses the terminator-
  * and value-consumption cases this function already handles instead (see
@@ -666,13 +648,12 @@ function legacyMarkChangedShorthandCluster(
  * one already claimed as a preceding flag's value, so a consumed `--`
  * never disables later flag completion. A naive `trimmedArgs.includes("--")`
  * treats that consumed token as a terminator too, wrongly shutting off
- * flag-name/flag-value completion for the rest of the request (verified
- * empirically against a real `apps/cli-go` build: `db dump --file -- --s`
- * still offers `--schema`, not zero candidates, while `db dump -- --s` — no
- * preceding value flag to consume the `--` — correctly returns zero
- * candidates — CLI-1965 review finding). Walks the same long/short
- * consumption rules `legacyChangedFlagNames` does, reusing
- * `legacyResolveShortFlagCluster` for the short-flag case.
+ * flag-name/flag-value completion for the rest of the request: `db dump
+ * --file -- --s` still offers `--schema`, not zero candidates, while `db
+ * dump -- --s` — no preceding value flag to consume the `--` — correctly
+ * returns zero candidates. Walks the same long/short consumption rules
+ * `legacyChangedFlagNames` does, reusing `legacyResolveShortFlagCluster` for
+ * the short-flag case.
  */
 function legacyHasUnconsumedFlagTerminator(
   trimmedArgs: ReadonlyArray<string>,
@@ -706,22 +687,19 @@ function legacyHasUnconsumedFlagTerminator(
 }
 
 /**
- * Go registers `--jobs`/`--last` as `UintVarP`/`UintVar` pflag values
- * (`apps/cli-go/cmd/functions.go:161` — `functions deploy`;
- * `cmd/migration.go:152` — `migration down`; `cmd/db.go:717` — `db reset`;
- * `cmd/storage.go:107` — `storage cp`, the same bug class), which reject a
- * leading `-`/`+` outright (`strconv.ParseUint(s, 0, 64)`) — unlike this TS
- * tree's plain signed `Flag.integer("jobs"/"last")`. `legacyIsValidFlagValue`
- * checks this table BEFORE dispatching on `primitiveTag`, since it must
- * catch `storage cp --jobs` too, which is `Flag.string("jobs")` in TS (its
- * own handler already calls `legacyParseUintBase0` directly at parse time,
- * `cp.command.ts`) rather than `Flag.integer` — a bare `primitiveTag`
- * switch would never see it (verified empirically against a real
- * `apps/cli-go` build: `functions deploy --jobs -1 --p`, `migration down
- * --last -1 --d`, `db reset --last -1 --d`, and `storage cp --jobs -1 --r`
- * all return zero candidates with the Default directive — CLI-1965 review
- * finding). Key = `<matched command path>:<flag name>`, matching
- * `LEGACY_COMPLETION_REQUIRED_FLAGS`'s convention.
+ * `--jobs` (`functions deploy`, `storage cp`) and `--last` (`migration down`,
+ * `db reset`) are validated as `strconv.ParseUint(s, 0, 64)` values, which
+ * reject a leading `-`/`+` outright — unlike this TS tree's plain signed
+ * `Flag.integer("jobs"/"last")`. `legacyIsValidFlagValue` checks this table
+ * BEFORE dispatching on `primitiveTag`, since it must catch `storage cp
+ * --jobs` too, which is `Flag.string("jobs")` in TS (its own handler already
+ * calls `legacyParseUintBase0` directly at parse time, `cp.command.ts`)
+ * rather than `Flag.integer` — a bare `primitiveTag` switch would never see
+ * it: `functions deploy --jobs -1 --p`, `migration down --last -1 --d`, `db
+ * reset --last -1 --d`, and `storage cp --jobs -1 --r` all return zero
+ * candidates with the Default directive. Key = `<matched command
+ * path>:<flag name>`, matching `LEGACY_COMPLETION_REQUIRED_FLAGS`'s
+ * convention.
  */
 const LEGACY_COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
   "functions deploy:jobs",
@@ -731,15 +709,12 @@ const LEGACY_COMPLETION_UINT_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Go registers `--query-timeout` (`gen types`, `cmd/gen.go:161`) and
- * `--valid-for` (`gen bearer-jwt`, `cmd/gen.go:179`) as `DurationVar` pflag
- * values (`time.ParseDuration`), unlike this TS tree's plain
+ * `--query-timeout` (`gen types`) and `--valid-for` (`gen bearer-jwt`) are
+ * validated as `time.ParseDuration` values, unlike this TS tree's plain
  * `Flag.string("query-timeout"/"valid-for")` — same shape as
- * `LEGACY_COMPLETION_UINT_FLAGS` above, keyed the same way (verified
- * empirically against a real `apps/cli-go` build: `gen types
+ * `LEGACY_COMPLETION_UINT_FLAGS` above, keyed the same way: `gen types
  * --query-timeout bogus --l` and `gen bearer-jwt --role anon --valid-for
- * bogus --p` both return zero candidates with the Default directive —
- * CLI-1965 review finding).
+ * bogus --p` both return zero candidates with the Default directive.
  */
 const LEGACY_COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
   "gen types:query-timeout",
@@ -747,13 +722,11 @@ const LEGACY_COMPLETION_DURATION_FLAGS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Go registers `--exp` (`gen bearer-jwt`, `cmd/gen.go:178`) as a `TimeVar`
- * pflag value constrained to `time.RFC3339` (`time.Parse(time.RFC3339, s)`),
- * unlike this TS tree's plain `Flag.string("exp")` (verified empirically
- * against a real `apps/cli-go` build: `gen bearer-jwt --role anon --exp
- * bogus --p` returns zero candidates with the Default directive, while
- * `--exp 2024-01-02T15:04:05Z --p` still offers `--profile`/`--payload` —
- * CLI-1965 review finding).
+ * `--exp` (`gen bearer-jwt`) is validated as a `time.Parse(time.RFC3339, s)`
+ * value, unlike this TS tree's plain `Flag.string("exp")`: `gen bearer-jwt
+ * --role anon --exp bogus --p` returns zero candidates with the Default
+ * directive, while `--exp 2024-01-02T15:04:05Z --p` still offers
+ * `--profile`/`--payload`.
  */
 const LEGACY_COMPLETION_RFC3339_FLAGS: ReadonlySet<string> = new Set(["gen bearer-jwt:exp"]);
 
@@ -780,36 +753,36 @@ function legacyIsAsciiDigit(char: string | undefined): boolean {
 }
 
 /**
- * Faithful port of Go's `time.ParseDuration` (`time/format.go`) — the exact
+ * Faithful port of `time.ParseDuration` (`time/format.go`) — the exact
  * parser pflag runs for a `DurationVar` flag's `Set` — as a syntax-and-range
  * VERDICT (completion only needs a boolean, not the parsed `Duration`,
  * mirroring `legacyIsValidBase0Int64`'s own shape). An optional sign, then
  * either the literal `0` alone, or one or more `<int>[.<frac>]<unit>` terms
- * concatenated (`1h30m`, `1.5h`, `.5s`), accumulating nanoseconds as Go does:
- * `BigInt` for the integer/fraction accumulators (Go's `uint64`, which this
- * mirrors exactly — no JS `Number` precision loss), and a plain `Number`
- * multiply-then-`Math.trunc` for the one step Go itself does in `float64`
+ * concatenated (`1h30m`, `1.5h`, `.5s`), accumulating nanoseconds: `BigInt`
+ * for the integer/fraction accumulators (`uint64` semantics, mirrored
+ * exactly — no JS `Number` precision loss), and a plain `Number`
+ * multiply-then-`Math.trunc` for the one step done in `float64`
  * (`uint64(float64(f) * (float64(unit) / scale))`) — since a JS `number` IS
  * an IEEE-754 double, `Number(bigIntValue)` round-trips through the exact
- * same conversion Go's `float64(f)` does, so this step is bit-for-bit
- * identical to Go's, not merely an approximation of it.
+ * same conversion `float64(f)` does, so this step is bit-for-bit identical,
+ * not merely an approximation of it.
  *
  * This replaces an earlier regex-only grammar check whose own doc comment
  * dismissed the overflow bound as "unreachable through any realistic
- * completion input" — disputed and disproven on review (CLI-1965): Go's
- * `int64` nanosecond range caps out at ~292 years, so `--query-timeout
- * 2562048h` (one hour past the real max, a plausible fat-fingered value, not
- * a contrived ~20-digit magnitude) is exactly the kind of input real
+ * completion input" — disputed and disproven on review: the `int64`
+ * nanosecond range caps out at ~292 years, so `--query-timeout 2562048h`
+ * (one hour past the real max, a plausible fat-fingered value, not a
+ * contrived ~20-digit magnitude) is exactly the kind of input real
  * completion traffic can produce, and the old check silently accepted it.
- * Verified empirically against a real `apps/cli-go` build (`gen types
- * --query-timeout 2562048h --l` returns zero candidates with the Default
- * directive, matching `bogus`) and cross-checked this implementation against
- * go1.26 `time.ParseDuration` across sign/fraction/multi-term/overflow edge
- * cases, including the exact `int64` boundary (`2562047h47m16.854775807s` →
- * valid, one ns more → invalid) and its negative-side asymmetry
- * (`-2562047h47m16.854775808s`, `int64` min, valid — one ns more still
- * invalid) — same two's-complement asymmetry `legacyIsValidBase0Int64`
- * already encodes for `MAX_INT64_NEGATIVE_MAGNITUDE`.
+ * `gen types --query-timeout 2562048h --l` returns zero candidates with the
+ * Default directive, matching `bogus`. Cross-checked this implementation
+ * against go1.26 `time.ParseDuration` across sign/fraction/multi-term/overflow
+ * edge cases, including the exact `int64` boundary
+ * (`2562047h47m16.854775807s` → valid, one ns more → invalid) and its
+ * negative-side asymmetry (`-2562047h47m16.854775808s`, `int64` min, valid —
+ * one ns more still invalid) — same two's-complement asymmetry
+ * `legacyIsValidBase0Int64` already encodes for
+ * `MAX_INT64_NEGATIVE_MAGNITUDE`.
  */
 function legacyIsValidGoDuration(value: string): boolean {
   let rest = value;
@@ -887,42 +860,38 @@ function legacyIsValidGoDuration(value: string): boolean {
     if (total > GO_DURATION_UINT64_OVERFLOW_BOUND) return false;
   }
 
-  // Go's final range check only runs for the non-negative case — the
+  // The final range check only runs for the non-negative case — the
   // negative side already got the one-larger `1<<63` bound above, matching
   // `int64`'s two's-complement asymmetry (see the doc comment).
   return negative || total <= GO_DURATION_MAX_INT64;
 }
 
 /**
- * Mirrors Go's `time.Parse(time.RFC3339, s)` — `2006-01-02T15:04:05Z07:00`
+ * Mirrors `time.Parse(time.RFC3339, s)` — `2006-01-02T15:04:05Z07:00`
  * — exact 4/2/2/2/2/2-digit date-time fields, a literal (case-sensitive) `T`
  * separator, an optional fractional-seconds run of any length introduced by
- * EITHER `.` or `,` (Go's `time` package accepts both spellings of the
- * decimal mark per RFC 3339/ISO 8601 — verified empirically against go1.26
- * `time.Parse`: `"2024-01-02T15:04:05,5Z"` parses identically to
- * `"...05.5Z"`; a bare separator with no following digit, e.g. `",Z"`, still
- * fails, and mixing both separators in one timestamp, e.g. `".5,5Z"`, still
- * fails too — CLI-1965 review finding), and a `Z` or `±HH:MM` offset.
- * Hour/minute/second are bounded to `0-23`/`0-59`/`0-59` (Go rejects `":60"`
- * — no leap-second allowance — and `"25:"` — verified empirically). The
- * offset's own hour/minute fields are ALSO bounded, but not to that same
- * 0-23/0-59 range: Go's zone-offset parser independently caps the offset
- * hour at 24 (not 23) and the offset minute at 60 (not 59), each checked in
- * isolation rather than as a combined "total offset <= 24h" (re-verified
- * against go1.26 `time.Parse` after this was disputed on review: `"+24:00"`,
- * `"+23:59"`, `"+24:60"`, and `"+00:60"` all parse successfully; `"+25:00"`
- * and `"+00:61"` both fail with "time zone offset hour/minute out of range"
- * — CLI-1965 review finding; the earlier claim here that Go "never
- * range-checks the offset" was wrong). Month/day validity (including leap
- * years, and short months like April's 30 days) is checked by round-tripping
- * the parsed year/month/day through `Date#setUTCFullYear` and comparing what
- * comes back — that method (unlike the `Date` constructor or `Date.UTC`)
- * does NOT special-case a 0-99 year into 1900+year, so it stays correct for
- * Go's own accepted `"0000-01-02T15:04:05Z"`, and its normal
- * calendar-overflow behavior (Feb 29 rolling to Mar 1 in a non-leap year,
- * day 32 rolling into the next month, month 13 rolling into the next year)
- * exactly reproduces Go's own leap-year and day/month-bounds rejections
- * without hand-rolling the calendar math.
+ * EITHER `.` or `,` (the `time` package accepts both spellings of the
+ * decimal mark per RFC 3339/ISO 8601: `"2024-01-02T15:04:05,5Z"` parses
+ * identically to `"...05.5Z"`; a bare separator with no following digit,
+ * e.g. `",Z"`, still fails, and mixing both separators in one timestamp,
+ * e.g. `".5,5Z"`, still fails too), and a `Z` or `±HH:MM` offset.
+ * Hour/minute/second are bounded to `0-23`/`0-59`/`0-59` (rejects `":60"`
+ * — no leap-second allowance — and `"25:"`). The offset's own hour/minute
+ * fields are ALSO bounded, but not to that same 0-23/0-59 range: the
+ * zone-offset parser independently caps the offset hour at 24 (not 23) and
+ * the offset minute at 60 (not 59), each checked in isolation rather than as
+ * a combined "total offset <= 24h": `"+24:00"`, `"+23:59"`, `"+24:60"`, and
+ * `"+00:60"` all parse successfully; `"+25:00"` and `"+00:61"` both fail
+ * with "time zone offset hour/minute out of range". Month/day validity
+ * (including leap years, and short months like April's 30 days) is checked
+ * by round-tripping the parsed year/month/day through `Date#setUTCFullYear`
+ * and comparing what comes back — that method (unlike the `Date`
+ * constructor or `Date.UTC`) does NOT special-case a 0-99 year into
+ * 1900+year, so it stays correct for the accepted `"0000-01-02T15:04:05Z"`,
+ * and its normal calendar-overflow behavior (Feb 29 rolling to Mar 1 in a
+ * non-leap year, day 32 rolling into the next month, month 13 rolling into
+ * the next year) exactly reproduces the same leap-year and day/month-bounds
+ * rejections without hand-rolling the calendar math.
  */
 const GO_RFC3339_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:[.,]\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/;
@@ -969,10 +938,8 @@ const LEGACY_COMPLETION_NON_CSV_VARIADIC_FLAGS: ReadonlySet<string> = new Set([
  * Validates a CSV-per-occurrence (`isVariadic`, pflag `StringSliceVar`)
  * flag's value the same way `legacyParseStringSliceFlag` does at real parse
  * time — reused here directly rather than re-implemented, so the two never
- * drift (verified empirically against a real `apps/cli-go` build: `sso add
- * --domains 'a,"b' --type` — an unterminated quote — returns zero
- * candidates with the Default directive, not `--type` — CLI-1965 review
- * finding).
+ * drift: `sso add --domains 'a,"b' --type` — an unterminated quote — returns
+ * zero candidates with the Default directive, not `--type`.
  */
 function legacyIsValidCsvFlagValue(value: string): boolean {
   try {
@@ -984,18 +951,16 @@ function legacyIsValidCsvFlagValue(value: string): boolean {
 }
 
 /**
- * Go registers `--output`/`-o` as a command-scoped enum: the root persistent
- * flag accepts `env|pretty|json|toml|yaml` (`internal/utils/output.go:30-38`)
- * while `db query`'s own local flag accepts `json|table|csv` (`cmd/db.go:285-
- * 288`) — two value sets that only overlap on `json`, on what this TS tree
- * models as a single global `LegacyOutputFlag` whose `choiceKeys` is the
- * union of both (`legacy-go-output-flag.ts`), so `flag.choiceKeys` alone
- * can't tell which enum applies at the resolved command. This restores Go's
- * per-command validation (verified empirically against a real `apps/cli-go`
- * build: `--output table ""` outside `db query`, and `db query --output env
- * ""`, are BOTH rejected with zero candidates and the Default directive,
- * even though each value is accepted on the OTHER side — CLI-1965 review
- * finding).
+ * `--output`/`-o` is a command-scoped enum: the root persistent flag
+ * accepts `env|pretty|json|toml|yaml` while `db query`'s own local flag
+ * accepts `json|table|csv` — two value sets that only overlap on `json`, on
+ * what this TS tree models as a single global `LegacyOutputFlag` whose
+ * `choiceKeys` is the union of both (`legacy-go-output-flag.ts`), so
+ * `flag.choiceKeys` alone can't tell which enum applies at the resolved
+ * command. This restores per-command validation: `--output table ""`
+ * outside `db query`, and `db query --output env ""`, are BOTH rejected
+ * with zero candidates and the Default directive, even though each value is
+ * accepted on the OTHER side.
  */
 function legacyOutputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): ReadonlyArray<string> {
   return matchedPath.length === 2 && matchedPath[0] === "db" && matchedPath[1] === "query"
@@ -1008,19 +973,18 @@ function legacyOutputFlagChoiceKeys(matchedPath: ReadonlyArray<string>): Readonl
  * `finalCmd.ParseFlags()` — e.g. `-o not-a-format` (a `Choice`-typed
  * `--output`) or `--debug=maybe` (a `Boolean`-typed `--debug`) fail to parse
  * in real pflag, and cobra reports the parse error instead of generating any
- * completions (verified empirically against a real `apps/cli-go` build: both
- * return zero candidates with the Default directive, exactly like an
- * unresolved flag name). The command-dependent overrides
+ * completions: both return zero candidates with the Default directive,
+ * exactly like an unresolved flag name. The command-dependent overrides
  * (`LEGACY_COMPLETION_UINT_FLAGS`, `LEGACY_COMPLETION_DURATION_FLAGS`,
  * `LEGACY_COMPLETION_RFC3339_FLAGS`, `LEGACY_COMPLETION_NON_CSV_VARIADIC_FLAGS`)
  * are checked BEFORE the `primitiveTag` dispatch — a bare `LegacyFlagDescriptor`
  * can't express any of them on its own (all need `matchedPath`, and the uint
  * one specifically needs to catch a flag whose TS `primitiveTag` isn't
  * `"Integer"` at all, e.g. `storage cp --jobs`; the duration/RFC3339 ones
- * catch flags that are plain `Flag.string` in TS but a Go `Duration`/`Time`
+ * catch flags that are plain `Flag.string` in TS but a `Duration`/`Time`
  * pflag value). Every other primitive shape pflag can actually reject is
  * checked in the switch; `String`/`Path`/`Date`/etc. flags accept any string
- * in Go too, so the default case is unconditionally valid.
+ * there too, so the default case is unconditionally valid.
  */
 function legacyIsValidFlagValue(
   matchedPath: ReadonlyArray<string>,
@@ -1071,10 +1035,9 @@ function legacyIsValidFlagValue(
  * PRECEDING token mid-way through being value-completed" — not to strictly
  * parse a token that's already fully typed. This function mirrors the real
  * strict parser (`finalCmd.ParseFlags()`) instead, used by
- * `legacyFindUnresolvedFlagToken` (verified empirically against a real
- * `apps/cli-go` build: `functions deploy -j4 --p` still offers
+ * `legacyFindUnresolvedFlagToken`: `functions deploy -j4 --p` still offers
  * `--profile`/`--project-ref`/`--prune` — `-j4` is a fully valid, already-
- * resolved `--jobs=4`, not an unknown flag — CLI-1965 review finding).
+ * resolved `--jobs=4`, not an unknown flag.
  *
  * Returns `undefined` if any character in the cluster doesn't resolve to an
  * in-scope flag shorthand. Otherwise returns the flag that ultimately owns
@@ -1133,17 +1096,15 @@ function legacyResolveShortFlagCluster(
  * real `finalCmd.ParseFlags()` call (`completions.go:373-375`) fails
  * outright on it. Whether `toComplete` itself contains `=` is irrelevant:
  * that `=` only ever resolves `toComplete`'s own flag name, never rescues an
- * earlier dangling one (verified empirically against a real `apps/cli-go`
- * build: `__complete -o --d` returns zero candidates with the Default
- * directive — Go's `ParseFlags` error is "flag needs an argument: 'o' in
- * -o" — while `__complete -o ''` and `__complete -o pre` both instead fall
- * through to flag-VALUE completion for `--output`, per
+ * earlier dangling one: `__complete -o --d` returns zero candidates with
+ * the Default directive — the `ParseFlags` error is "flag needs an
+ * argument: 'o' in -o" — while `__complete -o ''` and `__complete -o pre`
+ * both instead fall through to flag-VALUE completion for `--output`, per
  * `legacyClassifyCompletion`'s Case 2; `__complete sso add --type saml
  * --metadata-file --attribute-mapping-file=` ALSO returns zero candidates
- * with the Default directive — Go's `ParseFlags` error is "flag needs an
+ * with the Default directive — the `ParseFlags` error is "flag needs an
  * argument: --metadata-file" — even though the current token has an `=` and
- * identifies a wholly separate flag, not `--metadata-file`'s value —
- * CLI-1965 review finding).
+ * identifies a wholly separate flag, not `--metadata-file`'s value.
  *
  * Long flags (`--foo`, `--foo=bar`) resolve via `legacyResolveFlagFromToken`
  * (no first/last-character ambiguity for a `--name` token). Short flags
@@ -1167,11 +1128,11 @@ function legacyResolveShortFlagCluster(
  * value parses — against the fully-resolved command's complete flag set, and
  * fails outright on the first one that doesn't (`completions.go:373-375`) — a
  * failure so early it wins even over the `--help`/`--version` short-circuit
- * below (verified empirically against a real `apps/cli-go` build: both
- * `__complete --bogus --help ""` and `__complete --help --bogus ""` report
- * the unknown flag, not help; a bare `__complete --bogus ""` returns zero
- * candidates with the Default directive, not the root subcommand list;
- * `__complete -- ""` is unaffected and still lists every root subcommand).
+ * below: both `__complete --bogus --help ""` and `__complete --help --bogus
+ * ""` report the unknown flag, not help; a bare `__complete --bogus ""`
+ * returns zero candidates with the Default directive, not the root
+ * subcommand list; `__complete -- ""` is unaffected and still lists every
+ * root subcommand.
  */
 function legacyFindUnresolvedFlagToken(
   trimmedArgs: ReadonlyArray<string>,
@@ -1225,10 +1186,8 @@ function legacyFindUnresolvedFlagToken(
     // validated BEFORE the boolean short-circuit below — pflag treats
     // `-f=value` as an explicit value for a boolean shorthand too
     // (`pflag@v1.0.10/flag.go:1005-1033`), so a boolean owner does not, on
-    // its own, mean "nothing to validate" (verified empirically against a
-    // real `apps/cli-go` build: `storage cp -r=maybe --j` returns zero
-    // candidates with the Default directive, not `--jobs` — CLI-1965 review
-    // finding).
+    // its own, mean "nothing to validate": `storage cp -r=maybe --j` returns
+    // zero candidates with the Default directive, not `--jobs`.
     if (cluster.attachedValue !== undefined) {
       if (!legacyIsValidFlagValue(matchedPath, cluster.flag, cluster.attachedValue)) return token;
       continue;
@@ -1277,10 +1236,9 @@ function legacyFlagValueCompletion(
  * token is left over — a token left over under any OTHER resolved command is
  * never an error there (subcommands "will always accept arbitrary
  * arguments"). On that error path cobra returns zero candidates, but still
- * with the NoFileComp directive, same as the success path (verified
- * empirically against a real `apps/cli-go` build: `help bogus d` -> no
- * candidates; `help db bogus d` -> still `db`'s subcommands, since `db` is
- * not root — CLI-1965 review finding).
+ * with the NoFileComp directive, same as the success path: `help bogus d`
+ * -> no candidates; `help db bogus d` -> still `db`'s subcommands, since
+ * `db` is not root.
  *
  * `root` here is always `finalCommand` from the outer resolution: `help` has
  * no node anywhere in this TS tree (it is a synthesized candidate, not a
@@ -1370,11 +1328,10 @@ export function legacyClassifyCompletion(
   // bare `-` (and an empty string) is dropped from consideration, NOT
   // counted as a genuine leftover positional, even though
   // `legacyResolveCommandPath` deliberately leaves a bare `-` IN
-  // `leftoverArgs` for other purposes (verified empirically against a real
-  // `apps/cli-go` build: `__complete - --d` still offers root's own
-  // `--debug`/`--dns-resolver`, since `stripFlags` drops the lone `-` and
-  // leaves zero real leftover commands to error on — CLI-1965 review
-  // finding, root cause shared with the `nosuch --d` finding below).
+  // `leftoverArgs` for other purposes: `__complete - --d` still offers
+  // root's own `--debug`/`--dns-resolver`, since `stripFlags` drops the lone
+  // `-` and leaves zero real leftover commands to error on — root cause
+  // shared with the `nosuch --d` case below.
   //
   // Exempts `trimmedArgs[0] === "help"`: real cobra's `help` is a REAL child
   // node of root (`InitDefaultHelpCmd`), so `Find(["help", ...])` resolves
@@ -1393,13 +1350,12 @@ export function legacyClassifyCompletion(
     // Mirrors cobra's `Command.Find` -> `legacyArgs` (`args.go:28-37`):
     // resolving to root itself (no descent at all) with a leftover
     // positional is an "unknown command" error there, unlike a leftover
-    // positional under any OTHER resolved command, which is never an error
-    // (verified empirically against a real `apps/cli-go` build: `nosuch
-    // --d` returns zero candidates with the Default directive — even ahead
-    // of the `--help`/`--version` short-circuit below, i.e. `nosuch --help`
-    // is ALSO zero candidates, not the help short-circuit's NoFileComp —
-    // while `db bogus --d`, where `db` itself resolves, still offers `db`'s
-    // own `--debug`/`--dns-resolver` normally — CLI-1965 review finding).
+    // positional under any OTHER resolved command, which is never an error:
+    // `nosuch --d` returns zero candidates with the Default directive —
+    // even ahead of the `--help`/`--version` short-circuit below, i.e.
+    // `nosuch --help` is ALSO zero candidates, not the help short-circuit's
+    // NoFileComp — while `db bogus --d`, where `db` itself resolves, still
+    // offers `db`'s own `--debug`/`--dns-resolver` normally.
     return { candidates: [], directive: LegacyCompletionDirective.Default };
   }
 
@@ -1407,13 +1363,11 @@ export function legacyClassifyCompletion(
   // already stops at a genuine, unconsumed `--` terminator and already skips
   // a token consumed as a PRECEDING non-boolean flag's value — exactly the
   // two cases pflag's own `Changed` tracking respects and a bare
-  // `trimmedArgs.some(...)` token scan does not (verified empirically against
-  // a real `apps/cli-go` build: `db dump -- --help ""` still offers `db
-  // dump`'s own completions, not the help short-circuit — `--help` is
-  // positional, past the terminator; `--workdir --version br` still
-  // completes `branches`, not the version short-circuit — `--version` is
-  // consumed as `--workdir`'s string value, never parsed as a flag at all —
-  // CLI-1965 review finding).
+  // `trimmedArgs.some(...)` token scan does not: `db dump -- --help ""`
+  // still offers `db dump`'s own completions, not the help short-circuit —
+  // `--help` is positional, past the terminator; `--workdir --version br`
+  // still completes `branches`, not the version short-circuit — `--version`
+  // is consumed as `--workdir`'s string value, never parsed as a flag at all.
   const changedFlagNames = legacyChangedFlagNames(trimmedArgs, inScopeFlags);
 
   // `version` is gated on `isAtRoot`: cobra's `--version` flag lives on the
@@ -1433,9 +1387,8 @@ export function legacyClassifyCompletion(
   const toCompleteEqualsIndex = toComplete.indexOf("=");
   // Once a genuine, unconsumed bare `--` sentinel has already appeared,
   // cobra never does flag-name or flag-value completion again for the rest
-  // of the request (verified empirically against a real `apps/cli-go`
-  // build: `db dump -- --s` returns zero candidates with the Default
-  // directive, not `--schema` — CLI-1965 review finding). See
+  // of the request: `db dump -- --s` returns zero candidates with the
+  // Default directive, not `--schema`. See
   // `legacyHasUnconsumedFlagTerminator`'s doc comment for why a raw
   // `trimmedArgs.includes("--")` over-triggers when a preceding value-taking
   // flag consumed that `--` as its own value instead.
@@ -1465,10 +1418,9 @@ export function legacyClassifyCompletion(
       // (including a boolean's) as flag-value completion — the "reset to
       // noun completion for a boolean" only applies in the separate no-`=`
       // two-token case handled by the `else` branch below
-      // (`completions.go`'s `!flagWithEqual` guard around that reset;
-      // verified empirically against a real `apps/cli-go` build:
+      // (`completions.go`'s `!flagWithEqual` guard around that reset):
       // `--debug=maybe` returns zero candidates with the Default directive,
-      // not the root command list — CLI-1965 review finding).
+      // not the root command list.
       const resolved = legacyResolveFlagFromToken(
         toComplete.slice(0, toCompleteEqualsIndex),
         inScopeFlags,
@@ -1482,10 +1434,9 @@ export function legacyClassifyCompletion(
       // A bare `-` is excluded — pflag's `isFlagArg` (`command.go:750-753`)
       // requires at least 2 characters, so real cobra's own equivalent
       // "preceding token is flag-shaped" check never fires for it either,
-      // and this must fall through to Case 3 instead of hard-stopping
-      // (verified empirically against a real `apps/cli-go` build: `help db
-      // - d` still lists `db`'s subcommands `diff`/`dump`, not zero
-      // candidates — CLI-1965 review finding).
+      // and this must fall through to Case 3 instead of hard-stopping:
+      // `help db - d` still lists `db`'s subcommands `diff`/`dump`, not
+      // zero candidates.
       precedingToken !== "-" &&
       !precedingToken.includes("=")
     ) {
@@ -1496,12 +1447,11 @@ export function legacyClassifyCompletion(
         // through to noun completion — an unresolved trailing flag (per
         // that function's OWN last-character heuristic, not
         // `legacyFindUnresolvedFlagToken`'s strict first-character parse)
-        // before an empty/non-flag toComplete is a hard stop (verified
-        // empirically against a real `apps/cli-go` build: `-ojson ""`
+        // before an empty/non-flag toComplete is a hard stop: `-ojson ""`
         // returns zero candidates with the Default directive, even though
         // `-ojson` is a perfectly valid `-o=json` under real pflag parsing
         // — cobra's own heuristic looks at `-ojson`'s LAST character, `n`,
-        // which resolves to nothing).
+        // which resolves to nothing.
         return { candidates: [], directive: LegacyCompletionDirective.Default };
       }
       if (!resolved.isBoolean) {
@@ -1523,7 +1473,7 @@ export function legacyClassifyCompletion(
   // trimmedArgs[0] === "help"` exactly identifies "this request is `help
   // ...`": `help` isn't a node anywhere in this tree, so the outer
   // `legacyResolveCommandPath` call always stops at root immediately when
-  // it's the first token (CLI-1965 review finding).
+  // it's the first token.
   if (isAtRoot && trimmedArgs[0] === "help") {
     return legacyHelpArgumentCandidates(finalCommand, trimmedArgs.slice(1), toComplete);
   }
@@ -1541,11 +1491,11 @@ export function legacyClassifyCompletion(
       );
       // Cobra's `InitDefaultHelpCmd` (`command.go:1100,1263-1266`) auto-registers a
       // `help` subcommand on whichever command `ExecuteC()` is called against —
-      // here, always the root — but never recursively on descendants (verified
-      // empirically against a real `apps/cli-go` build: `__complete db ""` does
-      // NOT surface it, only `__complete ""` does). This TS tree has no explicit
-      // `help` command node to walk, so synthesize the one candidate cobra would
-      // otherwise contribute, matching its literal `Short` text.
+      // here, always the root — but never recursively on descendants:
+      // `__complete db ""` does NOT surface it, only `__complete ""` does.
+      // This TS tree has no explicit `help` command node to walk, so
+      // synthesize the one candidate cobra would otherwise contribute,
+      // matching its literal `Short` text.
       if (isAtRoot) {
         subcommandCandidates.push({ name: "help", description: "Help about any command" });
       }
@@ -1650,7 +1600,7 @@ function legacyParseGoBool(value: string): boolean | undefined {
  * `argv[0] === "__completeNoDesc"` always wins; otherwise
  * `SUPABASE_COMPLETION_DESCRIPTIONS` (program-specific) is checked first,
  * falling back to the generic `COBRA_COMPLETION_DESCRIPTIONS` when unset or
- * empty. An unparseable value (per Go's `strconv.ParseBool` accepted
+ * empty. An unparseable value (per `strconv.ParseBool`'s accepted
  * spellings) is ignored, leaving the `argv[0]`-derived default in place.
  */
 export function legacyResolveIncludeDescriptions(
@@ -1700,29 +1650,29 @@ export function legacyFormatCompletionResponse(
 
 /**
  * The `cli_command_executed` capture for a `__complete`/`__completeNoDesc`
- * request, matching Go's `Execute()` (`apps/cli-go/cmd/root.go:168-204`),
- * which captures this event for every resolved command — including cobra's
- * hidden `__complete` — regardless of the handler's own outcome (CLI-1965
- * review finding: the deleted Go passthrough fired this on every tab press;
- * this native interceptor silently stopped firing it). `command` is always
- * the literal `"__complete"`, never `"__completeNoDesc"`: cobra registers
- * `__completeNoDesc` as an ALIAS of `__complete` (`completions.go:234`), and
- * Go's `commandName()` derives the recorded value from `cmd.Name()` — the
- * command's own primary name, not the alias it was invoked as. `output_format`
- * is the fixed literal `"text"`: `__complete` is `DisableFlagParsing: true`,
- * so there is no resolved `--output`/`-o` value to mirror here.
+ * request. This event fires for every resolved command, including cobra's
+ * hidden `__complete`, regardless of the handler's own outcome — this
+ * interceptor is the only thing that fires it for a completion request,
+ * since nothing else in the completion path runs a command handler.
+ * `command` is always the literal `"__complete"`, never
+ * `"__completeNoDesc"`: cobra registers `__completeNoDesc` as an ALIAS of
+ * `__complete` (`completions.go:234`), and the recorded value is derived
+ * from the command's own primary name, not the alias it was invoked as.
+ * `output_format` is the fixed literal `"text"`: `__complete` is
+ * `DisableFlagParsing: true`, so there is no resolved `--output`/`-o` value
+ * to mirror here.
  *
  * Deliberately narrower than `withLegacyCommandInstrumentation`
  * (`legacy/telemetry/legacy-command-instrumentation.ts`): that wrapper is
  * shaped for a real Effect `Command` handler running inside `runCli`'s full
  * runtime (`CommandRuntime`/`Output`/`ProcessControl`/`Stdio`), none of which
  * exist here — this interceptor runs before Effect's argv parser, before
- * `runCli` ever bootstraps. This also deliberately does NOT reproduce the
- * rest of Go's `Execute()`/`PersistentPreRunE` — profile loading, the workdir
- * change, or the GitHub upgrade check — none of that has any bearing on the
- * analytics contract, and real generated completion scripts discard this
- * process's stderr outright, so reproducing the upgrade message would be a
- * pure regression. Do not "fix" this back toward full `Execute()` parity.
+ * `runCli` ever bootstraps. This also deliberately does NOT reproduce
+ * profile loading, the workdir change, or the GitHub upgrade check — none of
+ * that has any bearing on the analytics contract, and real generated
+ * completion scripts discard this process's stderr outright, so reproducing
+ * the upgrade message would be a pure regression. Do not "fix" this back
+ * toward that fuller behavior.
  *
  * Only requires `Analytics` from context (not the concrete production
  * layer) so tests can provide `mockAnalytics()` directly instead of the

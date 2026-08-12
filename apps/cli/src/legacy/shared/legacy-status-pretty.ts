@@ -2,8 +2,8 @@ import { legacyAqua, legacyBold, legacyGreen, legacyYellow } from "./legacy-colo
 import type { LegacyStatusOutputNames } from "./legacy-status-values.ts";
 
 /**
- * Port of Go's `PrettyPrint` / `OutputGroup.printTable`
- * (`apps/cli-go/internal/status/status.go:236-392`), reproducing
+ * Port of `PrettyPrint` / `OutputGroup.printTable`,
+ * reproducing
  * `tablewriter.NewTable` with `tw.StyleRounded` byte-for-byte for the fixed
  * 5-group, 2-column layout `status` needs. This is not a general tablewriter
  * port — column sizing, wrapping, and merge behavior are only implemented to the
@@ -17,7 +17,7 @@ import type { LegacyStatusOutputNames } from "./legacy-status-values.ts";
  * defensive parity rather than an observed case.
  *
  * This does not reuse `legacy/output/legacy-glamour-table.ts` — that helper
- * byte-matches Go's `glamour.RenderTable(..., AsciiStyle)`, a single ASCII table
+ * byte-matches `glamour.RenderTable(..., AsciiStyle)`, a single ASCII table
  * with a different border style used by other commands. `status`'s Go source
  * renders with `tablewriter`/`tw.StyleRounded` into 5 separate grouped, colored,
  * Unicode-rounded-box tables, which is a different rendering contract entirely.
@@ -44,7 +44,7 @@ interface OutputGroup {
 const COLUMN_0_MAX_WIDTH = 16;
 
 /**
- * Builds the 5 fixed groups Go's `PrettyPrint` declares (`status.go:245-285`),
+ * Builds the 5 fixed groups `PrettyPrint` declares,
  * looking up each label's value by output KEY from the resolved value map —
  * `--override-name` remaps the KEY but never the group layout, matching Go
  * (`values[names.StudioURL]`, not a hardcoded default name).
@@ -150,8 +150,8 @@ export function legacyWrapStatusLabel(text: string, width: number): ReadonlyArra
 }
 
 /**
- * Value coloring, mirroring the `switch row.Type` in `printTable`
- * (`status.go:372-377`): `Link` → Aqua, `Key` → Yellow, `Text` → unstyled (the
+ * Value coloring, mirroring the `switch row.Type` in `printTable`:
+ * `Link` → Aqua, `Key` → Yellow, `Text` → unstyled (the
  * switch has no `Text` case, so `value` keeps its raw pre-switch assignment).
  */
 function colorValue(kind: OutputKind, value: string): string {
@@ -254,7 +254,7 @@ function renderGroupTable(group: OutputGroup): string | undefined {
 }
 
 /**
- * Port of Go's `PrettyPrint` (`status.go:236-294`): renders the 5 fixed groups
+ * Port of `PrettyPrint`: renders the 5 fixed groups
  * as rounded-border tables, skipping empty rows and empty groups, with a blank
  * line after every group (rendered or not — Go's loop always
  * `fmt.Fprintln(w)`s after a nil-error `printTable`, even when nothing rendered).

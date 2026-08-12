@@ -42,12 +42,12 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
  * `legacyHttpClientLayer` and `LegacyCredentials` are exposed at the top level so
  * handlers / helpers that bypass the typed Management API client can read them
  * directly:
- *   - `sso add` / `sso update` POST/PUT raw JSON to preserve arbitrary
- *     `attribute_mapping.keys.<x>.default` fields the typed input schema omits.
- *   - `legacySuggestUpgrade` GETs `/v1/projects/{ref}` and `/v1/organizations/{slug}/entitlements`
- *     directly because the typed `V1GetProjectOutput` decode rejects the
- *     `__PROJECT_REF__` placeholder cli-e2e replay fixtures embed in response bodies
- *     (`ref: isMinLength(20)` fails on the 15-char placeholder).
+ * - `sso add` / `sso update` POST/PUT raw JSON to preserve arbitrary
+ * `attribute_mapping.keys.<x>.default` fields the typed input schema omits.
+ * - `legacySuggestUpgrade` GETs `/v1/projects/{ref}` and `/v1/organizations/{slug}/entitlements`
+ * directly because the typed `V1GetProjectOutput` decode rejects the
+ * `__PROJECT_REF__` placeholder cli-e2e replay fixtures embed in response bodies
+ * (`ref: isMinLength(20)` fails on the 15-char placeholder).
  *
  * Layers are memoised by reference, so the merge + provide combos reuse the same
  * instance instead of building two debug-logging wrappers / two keyring readers.
@@ -72,7 +72,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
   // one root-context `sync.Once`, not one per transport.
   // `legacyDohFetchLayer` overrides `FetchHttpClient.Fetch` with a
   // DNS-over-HTTPS-aware fetch when `--dns-resolver https` is set — mirrors
-  // Go's `withFallbackDNS` hook (`apps/cli-go/internal/utils/api.go:85-104`).
+  // `withFallbackDNS` hook.
   const platformApiStack = legacyPlatformApiLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),
@@ -107,7 +107,7 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
     legacyIdentityStitchLayer,
     // Expose the same memoised instance already provided into cliConfig/httpClient/etc.
     // at the top level so handlers can log a swallowed, non-fatal error directly
-    // (Go's `fmt.Fprintln(utils.GetDebugLogger(), err)` pattern, e.g. `secrets set`).
+    // (`fmt.Fprintln(utils.GetDebugLogger(), err)` pattern, e.g. `secrets set`).
     legacyDebugLoggerLayer,
   );
 
@@ -115,11 +115,11 @@ export function legacyManagementApiRuntimeLayer(subcommand: ReadonlyArray<string
   // Management-API legacy handler is allowed to yield from its top-level
   // `Effect.fn` body. If a future handler yields a service NOT in this union,
   // either:
-  //   (a) the new service belongs in the runtime layer — add it to the merge
-  //       above AND to `LegacyManagementApiServices` below, or
-  //   (b) the service comes from the surrounding root layer (`Output`,
-  //       `LegacyOutputFlag`, `Analytics`, `Stdio`, `Tty`, …) and is therefore
-  //       already provided via `runCli` / `cliProgramFor` — no change here.
+  // (a) the new service belongs in the runtime layer — add it to the merge
+  // above AND to `LegacyManagementApiServices` below, or
+  // (b) the service comes from the surrounding root layer (`Output`,
+  // `LegacyOutputFlag`, `Analytics`, `Stdio`, `Tty`, …) and is therefore
+  // already provided via `runCli` / `cliProgramFor` — no change here.
   //
   // The assertion uses `unknown` for E and R so that the assertion ONLY fires
   // for missing exposed services; changes to the layer's internal error /

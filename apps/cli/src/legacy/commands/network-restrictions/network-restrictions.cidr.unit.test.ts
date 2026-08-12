@@ -103,9 +103,9 @@ describe("parseCidr", () => {
   });
 
   it("does not treat ::feff:1.2.3.4 as IPv4-mapped (only ::ffff: qualifies per RFC 4291)", () => {
-    // Go's `To4()` returns nil for `::feff:1.2.3.4`, so the address stays v6
-    // and isPrivateCidr falls through to the first-byte check (which yields
-    // 0 for `::`-leading addresses).
+    // `net.IP.To4()` returns nil for `::feff:1.2.3.4`, so the address stays
+    // v6 and isPrivateCidr falls through to the first-byte check (which
+    // yields 0 for `::`-leading addresses).
     expect(parseCidr("::feff:1.2.3.4/128")).toEqual({
       kind: "v6",
       address: "::feff:1.2.3.4",

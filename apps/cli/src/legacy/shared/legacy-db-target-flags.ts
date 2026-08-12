@@ -3,7 +3,7 @@
  * selection shared by `db lint`, `db advisors`, and `test db`.
  *
  * Go's cobra uses `pflag.Changed` to decide which selector was explicitly set by
- * the user (`apps/cli-go/internal/utils/flags/db_url.go:46-63`).  Effect CLI's
+ * the user. Effect CLI's
  * parsed flag values don't carry a `Changed` bit, so we re-derive it from the
  * raw `process.argv` slice.
  *
@@ -28,7 +28,7 @@ export interface LegacyDbTargetSelection {
   /** Alphabetically-sorted list of explicitly-set selector flags ("db-url", "linked", "local"). */
   readonly setFlags: ReadonlyArray<string>;
   /**
-   * Changed-first selection, matching Go's `ParseDatabaseConfig` precedence
+   * Changed-first selection, matching `ParseDatabaseConfig` precedence
    * (db_url.go:46-63): db-url > local > linked (if changed) > undefined (→ local default).
    *
    * `undefined` means no selector was explicitly set; callers default to "local".
@@ -80,7 +80,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "level",
   "fail-on",
   "type",
-  // migration/db credential flag — Go's `StringVarP(&dbPassword, "password", "p", …)`
+  // migration/db credential flag — `StringVarP(&dbPassword, "password", "p", …)`
   // consumes the next token as the value (`apps/cli-go/cmd/migration.go:115,127`,
   // deleted in CLI-1970; last present at commit 7b469f5b3).
   "password",
@@ -186,7 +186,7 @@ export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
 /**
  * Detects which of `--linked` / `--local` were explicitly set on the command
  * line, reproducing cobra's `pflag.Changed` for the `MarkFlagsMutuallyExclusive`
- * groups on `seedCmd` (`apps/cli-go/cmd/seed.go:32`) and `storageCmd`
+ * groups on `seedCmd` and `storageCmd`
  * (`apps/cli-go/cmd/storage.go:99`, both deleted in CLI-1970; last present at
  * commit 7b469f5b3). Shared by `seed buckets` and
  * `storage ls/cp/mv/rm`.
@@ -250,10 +250,10 @@ export function legacyChangedLinkedLocalFlags(args: ReadonlyArray<string>): Read
  * cobra's alphabetically-sorted output exactly.
  *
  * `connType` follows Go's Changed-first precedence (db_url.go:46-63):
- *   1. `--db-url` if changed → "db-url"
- *   2. `--local` if changed → "local"
- *   3. `--linked` if changed → "linked"
- *   4. none changed → `undefined` (callers default to "local")
+ * 1. `--db-url` if changed → "db-url"
+ * 2. `--local` if changed → "local"
+ * 3. `--linked` if changed → "linked"
+ * 4. none changed → `undefined` (callers default to "local")
  */
 export function resolveLegacyDbTargetFlags(args: ReadonlyArray<string>): LegacyDbTargetSelection {
   let dbUrlChanged = false;

@@ -1,7 +1,7 @@
 # `supabase link`
 
-Native TypeScript port of Go's `internal/link`. Writes flat state files under
-`<workdir>/supabase/.temp/` — it does **not** use the `next/` `.supabase/project.json` model.
+Writes flat state files under `<workdir>/supabase/.temp/` — it does **not** use
+the `next/` `.supabase/project.json` model.
 
 ## Files Read
 
@@ -10,8 +10,8 @@ Native TypeScript port of Go's `internal/link`. Writes flat state files under
 | `supabase/config.toml`     | TOML (`project_id`) | for ref resolution when `--project-ref` / `SUPABASE_PROJECT_ID` are unset (via `LegacyCliConfig`) |
 | `~/.supabase/access-token` | plain text          | when `SUPABASE_ACCESS_TOKEN` is unset and the keyring is unavailable                              |
 
-> The on-disk `supabase/.temp/project-ref` file is **not** read for ref resolution — Go passes an
-> empty in-memory FS to `ParseProjectRef` (`cmd/link.go:30`), so `link` never falls back to it.
+> The on-disk `supabase/.temp/project-ref` file is **not** read for ref resolution — `link`
+> never falls back to it.
 
 ## Files Written
 
@@ -48,9 +48,9 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | `GET`  | `/auth/v1/health`     | best-effort |
 | `GET`  | `/storage/v1/version` | best-effort |
 
-> The discarded Go config probes (`/config/database/postgres`, `/postgrest`, `/config/auth`,
-> `/network-restrictions`) are **omitted**: they only populated in-process config that standalone
-> `link` discards, and they emit nothing observable.
+> Certain config probes the old Go CLI made (`/config/database/postgres`, `/postgrest`,
+> `/config/auth`, `/network-restrictions`) are **omitted** here: they only populated in-process
+> config that standalone `link` discards, and they emit nothing observable.
 
 ## Environment Variables
 
@@ -58,7 +58,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | `SUPABASE_PROJECT_ID`   | project-ref resolution (flag → env → TTY prompt)                                                                             |
 | `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                      |
-| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but a no-op** for `link` (the DB-connection path that would consume it is dead code in Go) |
+| `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but a no-op** for `link` (there is no DB-connection path that consumes it) |
 
 ## Exit Codes
 
@@ -76,7 +76,7 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 
 ## Output
 
-### `--output-format text` (Go-compatible)
+### `--output-format text`
 
 - stderr: `Selected project: <ref>` (prompt path); `WARNING: Project status is <status> instead of Active Healthy. Some operations might fail.`; the dashboard unpause suggestion on a paused project.
 - stdout: `Finished supabase link.`
@@ -87,10 +87,10 @@ Emits a structured success (`{ project_ref }`) and suppresses the human `Finishe
 
 ## Known divergence
 
-- The cosmetic `WARNING: Local database version differs from the linked project.` message (Go's
-  `linkPostgresVersion`) is **not** reproduced: it requires loading the local `config.toml`
-  `[db].major_version` with CLI defaults, which the legacy shell does not surface. The
-  `postgres-version` file (the meaningful side effect) is still written.
-- The `Finished supabase link.` line is emitted as **plain text**; Go renders `supabase link` in
-  ANSI cyan via `utils.Aqua`. This matches the established legacy-port convention (color helpers are
-  rendered plain); ANSI-stripping scripts are unaffected.
+- The cosmetic `WARNING: Local database version differs from the linked project.` message is
+  **not** reproduced: it requires loading the local `config.toml` `[db].major_version` with CLI
+  defaults, which the legacy shell does not surface. The `postgres-version` file (the meaningful
+  side effect) is still written.
+- The `Finished supabase link.` line is emitted as **plain text**; the old Go CLI rendered
+  `supabase link` in ANSI cyan. This matches the established legacy-port convention (color
+  helpers are rendered plain); ANSI-stripping scripts are unaffected.

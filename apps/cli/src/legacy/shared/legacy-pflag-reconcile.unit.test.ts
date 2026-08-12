@@ -17,7 +17,7 @@ import {
   legacyResolvePflagProfile,
 } from "./legacy-pflag-reconcile.ts";
 
-// Go's SAML `nameid-format` enum (`cmd/sso.go:157-158,176`), reused here only
+// Go's SAML `nameid-format` enum, reused here only
 // as sample data for the generic enum-reconciliation helper under test.
 const NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",

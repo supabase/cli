@@ -77,7 +77,7 @@ describe("encodeGoJsonCompact", () => {
   });
 
   // `JSON.stringify(-0)` collapses to `"0"` (ECMA-262 prints no sign for negative
-  // zero), but Go's `encoding/json` marshals a `float64` negative zero as `-0` —
+  // zero), but `encoding/json` marshals a `float64` negative zero as `-0` —
   // reachable through `gen bearer-jwt --payload`'s `json.Unmarshal` into a real Go
   // map. Verified against the real binary (CLI-1961 Codex review finding): the
   // compiled Go CLI's signed token payload for `--payload '{"extra":-0}'` literally

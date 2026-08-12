@@ -153,13 +153,13 @@ describe("renderListProviders / renderSingleProvider markdown surface", () => {
   });
 
   // PARITY GUARD — do not "fix" this:
-  // Go's `apps/cli-go/internal/sso/internal/render/render.go:140-143` (deleted
-  // in CLI-1970; last present at commit 7b469f5b3) populates
-  // the `UPDATED AT (UTC)` row with `provider.CreatedAt`, not `provider.UpdatedAt`
-  // — almost certainly a Go-side bug, but the legacy shell is a strict 1:1 port.
+  // This intentionally populates the `UPDATED AT (UTC)` row with
+  // `provider.created_at`, not `provider.updated_at` — an established output
+  // contract, not a rendering bug.
   // If you find yourself reaching to change line 194 of sso.format.ts because
-  // "obviously UPDATED AT should use updated_at", this test will fail. Update
-  // Go first, then this test, then the renderer — in that order.
+  // "obviously UPDATED AT should use updated_at", this test will fail.
+  // Update the contract deliberately (renderer + this test) if that's ever
+  // truly desired.
   it("intentionally renders UPDATED AT using created_at (Go-bug parity guard)", () => {
     const out = renderSingleProvider({
       id: "abc",

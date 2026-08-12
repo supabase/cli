@@ -9,15 +9,15 @@ import {
  * Byte-faithful reproductions of the Go CLI's `-o yaml` / `-o toml` output for
  * **struct** payloads (CLI-1975).
  *
- * Go's `utils.EncodeOutput` (`apps/cli-go/internal/utils/output.go`) hands the
+ * `utils.EncodeOutput` (`apps/cli-go/internal/utils/output.go`) hands the
  * raw Go structs to `gopkg.in/yaml.v3` and `github.com/BurntSushi/toml`.
  * Neither library reads the `json:` tags, so the emitted keys are derived from
  * the Go **field names**, not the snake_case JSON the Management API returns:
  *
- *   - yaml.v3 lowercases the whole field name (`ProjectRef` → `projectref`)
- *     and renders nil pointers as explicit `null`.
- *   - BurntSushi keeps the PascalCase field name (`ProjectRef`), omits nil
- *     pointers entirely, and renders `time.Time` as a native TOML datetime.
+ * - yaml.v3 lowercases the whole field name (`ProjectRef` → `projectref`)
+ * and renders nil pointers as explicit `null`.
+ * - BurntSushi keeps the PascalCase field name (`ProjectRef`), omits nil
+ * pointers entirely, and renders `time.Time` as a native TOML datetime.
  *
  * Because the TypeScript CLI only ever sees the decoded snake_case JSON, each
  * payload family declares a {@link LegacyGoType} spec mirroring its Go struct
@@ -922,7 +922,7 @@ function goParseIntBase0(plain: string): boolean {
  */
 function yamlIsTimestamp(s: string): boolean {
   // Fraction separator is `.` OR `,` — yaml.v3 resolves timestamps through
-  // Go's `time.Parse`, which accepts either (`commaOrPeriod`; probed: Go
+  // `time.Parse`, which accepts either (`commaOrPeriod`; probed: Go
   // double-quotes the comma form exactly like the dot form,
   // review r3685767963).
   const match =
@@ -1053,7 +1053,7 @@ function yamlBlockLiteral(s: string, indent: number): string {
   const lines = s.split("\n");
   if (s.endsWith("\n")) lines.pop();
   // yaml.v3 merges a leading empty line's break with the header newline
-  // (verified empirically: "\nx" → `|4-\n    x\n`, "\n\nx" → `|4-\n\n    x\n`).
+  // (verified empirically: "\nx" → `|4-\n x\n`, "\n\nx" → `|4-\n\n x\n`).
   if (lines[0] === "") lines.shift();
   const body = lines.map((line) => (line.length === 0 ? "" : `${pad}${line}`)).join("\n");
   return ` |${indicator}${chomp}\n${body}\n`;

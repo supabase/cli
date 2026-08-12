@@ -20,7 +20,7 @@
 | -------- | --------------------------------- | ------------ | --------------------------------------------------- | ---------------------- |
 | `DELETE` | `/v1/projects/{ref}/network-bans` | Bearer token | `{ipv4_addresses: string[], requester_ip: boolean}` | none                   |
 
-`requester_ip` is `true` when no `--db-unban-ip` flags are passed (self-unban mode) and `false` otherwise — matching Go's `len(addrs) == 0` derivation in `apps/cli-go/internal/utils/flags/db_url.go:UnbanIP`.
+`requester_ip` is `true` when no `--db-unban-ip` flags are passed (self-unban mode) and `false` otherwise.
 
 ## Environment Variables
 
@@ -36,7 +36,7 @@
 | Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — network ban removed                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `1`  | malformed CSV in a `--db-unban-ip` value, e.g. unterminated quote — stderr byte-matches pflag's diagnostic (`invalid argument "\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field`; columns are 1-based byte offsets, per Go `encoding/csv`) — fails during flag parsing, before the `--experimental` gate, the handler, the `linked-project.json`/`telemetry.json` writes, and the `cli_command_executed` event |
+| `1`  | malformed CSV in a `--db-unban-ip` value, e.g. unterminated quote — stderr reproduces the fixed diagnostic text (`invalid argument "\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field`; columns are 1-based byte offsets) — fails during flag parsing, before the `--experimental` gate, the handler, the `linked-project.json`/`telemetry.json` writes, and the `cli_command_executed` event |
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before ref resolution/API/telemetry                                                                                                                                                                                                                                                                                                                             |
 | `1`  | invalid IP supplied via `--db-unban-ip` (`LegacyNetworkBansInvalidIpError`)                                                                                                                                                                                                                                                                                                                                                                                                 |
 | `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                                                                                                                                                                                                                                                                                                                                                     |
@@ -49,27 +49,25 @@
 | ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`, `--db-unban-ip` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/bans/update/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-Matches Go's `PostRun` hook — `Successfully removed network bans.\n` is always written to stdout regardless of the legacy `--output` flag (Go's `update.Run` does not read `OutputFormat`).
+`Successfully removed network bans.\n` is always written to stdout regardless of the `--output` flag.
 
-### `--output-format text` (default) — Go CLI compatible
+### `--output-format text` (default)
 
 Prints `Successfully removed network bans.\n` to stdout.
 
-### Go `--output {json,pretty,yaml,toml,env}`
+### `--output {json,pretty,yaml,toml,env}`
 
-Identical to text mode — Go's `update.Run` ignores `--output` and `PostRun` always prints the success line.
+Identical to text mode — this command ignores `--output` and always prints the success line.
 
 ### `--output-format json`
 
-Single `success` event emitted to stdout when the Go `--output` flag is unset. When Go `--output` is set, the raw text line is emitted instead (Go priority).
+Single `success` event emitted to stdout when the `--output` flag is unset. When `--output` is set, the raw text line is emitted instead.
 
 ### `--output-format stream-json`
 
-One `result` event on success when the Go `--output` flag is unset.
+One `result` event on success when the `--output` flag is unset.
 
 ```ndjson
 {"type":"result","data":{...}}
@@ -77,13 +75,12 @@ One `result` event on success when the Go `--output` flag is unset.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- The `--output` flag wins over `--output-format` when both are provided.
 - Requires `--db-unban-ip` flag to specify IP(s) to unban (repeatable). When omitted, the caller's own IP is unbanned (`requester_ip: true`).
 - Requires `--project-ref` or a linked project (`.supabase/config.json`).
-- `linked-project.json` is written **after** the project ref is resolved, regardless of whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
-- `telemetry.json` is written on every invocation that reaches the handler, including failures, but only once the `--experimental` gate is open. A malformed `--db-unban-ip` CSV value (e.g. an unterminated quote) fails during flag parsing — before the gate, the handler, both file writes, and the `cli_command_executed` event — even when `--experimental` is passed. This matches Go: pflag's `readAsCSV` error aborts cobra's `ParseFlags` before `PersistentPreRunE` ever creates the telemetry service (`root.go:131-142`), so `Execute()`'s post-run capture and `ensureProjectGroupsCached` (`root.go:171-181`) never fire.
-- `network-bans` is an experimental command (Go `root.go:63`, `bansCmd`): `remove` requires
-  `--experimental` (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE`
-  gate (`root.go:91-96`), which runs before the `IsManagementAPI` login check (`root.go:105-109`).
+- `linked-project.json` is written **after** the project ref is resolved, regardless of whether the subsequent API call succeeds.
+- `telemetry.json` is written on every invocation that reaches the handler, including failures, but only once the `--experimental` gate is open. A malformed `--db-unban-ip` CSV value (e.g. an unterminated quote) fails during flag parsing — before the gate, the handler, both file writes, and the `cli_command_executed` event — even when `--experimental` is passed.
+- `network-bans` is an experimental command: `remove` requires `--experimental` (or
+  `SUPABASE_EXPERIMENTAL`), checked before the login check.
   A closed gate exits 1 before project-ref resolution, the API call, the `linked-project.json`
   write, the `telemetry.json` write, and the `cli_command_executed` event.

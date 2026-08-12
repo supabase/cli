@@ -19,7 +19,7 @@ import { legacySnippetsDownload } from "./download.handler.ts";
 // ---------------------------------------------------------------------------
 
 const VALID_ID = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
-// Raw 32-hex form of VALID_ID, uppercase — a form Go's `uuid.Parse` accepts
+// Raw 32-hex form of VALID_ID, uppercase — a form `uuid.Parse` accepts
 // (google/uuid v1.6.0) that the old handler rejected before this fix.
 const UPPER_HEX32_ID = "0B0D48F6878B419088D72CA33ED800BC";
 const INVALID_ID = "not-a-uuid"; // length 10 → "invalid UUID length: 10"
@@ -49,9 +49,9 @@ const SNIPPET_RESPONSE: SnippetResponse = {
 // ---------------------------------------------------------------------------
 
 // `goOutput` is intentionally absent: the download handler does not consume
-// `LegacyOutputFlag` at all (matches Go's `download.Run`, which calls
-// `fmt.Println(resp.JSON200.Content.Sql)` unconditionally). Threading a value
-// through here would suggest a behaviour difference that does not exist.
+// `LegacyOutputFlag` at all — it always prints the raw SQL unconditionally.
+// Threading a value through here would suggest a behaviour difference that
+// does not exist.
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   status?: number;
@@ -93,10 +93,10 @@ describe("legacy snippets download integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Go's `download.Run` ignores `--output` entirely (download.go:25). The TS
-  // handler must reproduce that: no read of `LegacyOutputFlag`, no branching.
-  // This regression guards against a future refactor that adds branch-on-goOutput
-  // logic by mistake — if the flag is consumed, this assertion will diverge.
+  // `--output` is ignored entirely: no read of `LegacyOutputFlag`, no
+  // branching. This regression guards against a future refactor that adds
+  // branch-on-goOutput logic by mistake — if the flag is consumed, this
+  // assertion will diverge.
   it.live("text mode is unaffected by any Go `--output` value (Go parity)", () => {
     const out = mockOutput({ format: "text" });
     const telemetry = mockLegacyTelemetryStateTracked();
@@ -153,12 +153,12 @@ describe("legacy snippets download integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
           expect(dump).toContain("LegacySnippetsInvalidIdError");
-          // Go's `uuid.Parse` returns `invalid UUID length: 10` for "not-a-uuid"
-          // (length 10), wrapped by download.go:17 as `invalid snippet ID: %w`.
+          // `uuid.Parse` returns `invalid UUID length: 10` for "not-a-uuid"
+          // (length 10), wrapped as `invalid snippet ID: %w`.
           expect(dump).toContain("invalid snippet ID: invalid UUID length: 10");
         }
         expect(api.requests).toHaveLength(0);
-        // Go's PersistentPostRun + Execute both still fire on this error path.
+        // Telemetry flush and linked-project caching still fire on this error path.
         expect(telemetry.flushed).toBe(true);
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
@@ -189,7 +189,7 @@ describe("legacy snippets download integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("invalid snippet ID: invalid UUID format");
-        // The offending value must NOT be embedded (Go does not include it).
+        // The offending value must NOT be embedded in the error message.
         expect(dump).not.toContain(WRONG_FORMAT_ID);
       }
     }).pipe(Effect.provide(layer));
@@ -224,8 +224,7 @@ describe("legacy snippets download integration", () => {
     return Effect.gen(function* () {
       yield* legacySnippetsDownload({ snippetId: VALID_ID, projectRef: Option.some(flagRef) });
       // The download endpoint itself takes only the snippet ID, but the
-      // resolved project ref still flows into the linked-project cache write
-      // (Go's PersistentPostRun behaviour).
+      // resolved project ref still flows into the linked-project cache write.
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });

@@ -50,7 +50,7 @@ export type LegacyDbConfigError =
   // `LegacyPlatformApiFactory.make` (only when minting a temp login role), so the
   // auth-required / invalid-token / api-config errors surface from the resolver
   // effect — not a layer-build channel. `--linked --password` skips `make`
-  // entirely and never raises these (Go's `NewDbConfigWithPassword`).
+  // entirely and never raises these (`NewDbConfigWithPassword`).
   | LegacyPlatformApiFactoryError
   // The lazy linked runtime rebuilds `legacyCliConfigLayer`, whose strict
   // profile resolution can fail inside the resolver effect the same way.
@@ -68,7 +68,7 @@ interface LegacyDbConfigResolverShape {
   ) => Effect.Effect<LegacyResolvedDbConfig, LegacyDbConfigError>;
   /**
    * Resolves the IPv4 transaction pooler connection for a linked dump's
-   * container-level fallback (Go's `RunWithPoolerFallback` →
+   * container-level fallback (`RunWithPoolerFallback` →
    * `ResolvePoolerConfigForFallback`). Returns `None` when the path is not
    * pooler-eligible (`--linked` only) or no pooler URL is configured, so the
    * caller keeps the original error.
@@ -80,7 +80,7 @@ interface LegacyDbConfigResolverShape {
 
 /**
  * Resolves a Postgres connection from the `--db-url` / `--local` / `--linked`
- * flags, porting Go's `flags.ParseDatabaseConfig` + `NewDbConfigWithPassword`
+ * flags, porting `flags.ParseDatabaseConfig` + `NewDbConfigWithPassword`
  * (`apps/cli-go/internal/utils/flags/db_url.go`). Shared cross-command infra:
  * `db reset` / `db dump` will reuse it as they are ported.
  */

@@ -1,18 +1,11 @@
 /**
- * Transcribed verbatim from the former `apps/cli-go/internal/start/templates/kong.yml`
- * (Go `//go:embed templates/kong.yml`, parsed as a `text/template` named
- * `kongConfig`, `apps/cli-go/internal/start/start.go:106-109`). `internal/start`
- * (including this template) was deleted outright as unreachable from the TS CLI
- * (CLI-1966); the last commit with it intact is a253ccba25c21356ccd33044c4474aecb77d1ae4
- * (https://github.com/supabase/cli/blob/a253ccba25c21356ccd33044c4474aecb77d1ae4/apps/cli-go/internal/start/templates/kong.yml).
- * Do not hand-edit the YAML body — this is now the sole source of truth. Also
- * reused directly (not re-transcribed) by
+ * The canonical `kong.yml` template — this is the sole source of truth; do
+ * not hand-edit the YAML body. Also reused directly (not re-transcribed) by
  * `shared/functions/serve-main-offline.e2e.test.ts`'s offline Kong fixture.
  *
- * Placeholders (`{{ .Field }}`) were Go's `kongConfig` struct fields
- * (`start.go:90-104`): GotrueId, RestId, RealtimeId, StorageId, StudioId,
- * PgmetaId, EdgeRuntimeId, LogflareId, PoolerId, ApiHost, ApiPort, BearerToken,
- * QueryToken. Rendered by `lib/template-render.ts`.
+ * Placeholders (`{{ .Field }}`): GotrueId, RestId, RealtimeId, StorageId,
+ * StudioId, PgmetaId, EdgeRuntimeId, LogflareId, PoolerId, ApiHost, ApiPort,
+ * BearerToken, QueryToken. Rendered by `lib/template-render.ts`.
  */
 export const LEGACY_START_KONG_YML_TEMPLATE = `_format_version: "1.1"
 services:

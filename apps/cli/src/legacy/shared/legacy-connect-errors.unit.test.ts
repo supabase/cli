@@ -177,8 +177,8 @@ describe("legacyConnectFailureMessage", () => {
   });
 
   it("stages every documented X509 certificate-verification code as tls error", () => {
-    // pgconn stages by connection phase — ANY startTLS failure is `tls error (…)`
-    // (`pgconn.go:283-289`) — so the complete Node/OpenSSL verification family
+    // pgconn stages by connection phase — ANY startTLS failure is `tls error (…)` —
+    // so the complete Node/OpenSSL verification family
     // (Node tls docs "X509 certificate error codes") must keep the staged
     // rendering under sslmode=verify-ca / verify-full. Pinned code-by-code so a
     // future trim of the allowlist regresses loudly.
@@ -355,7 +355,7 @@ describe("legacyConnectSuggestion", () => {
   });
 
   it("maps an IPv6 no-route-to-host (EHOSTUNREACH) to the IPv6 pooler suggestion", () => {
-    // Go's `no route to host` counts as IPv6 when the message carries an IPv6
+    // `no route to host` counts as IPv6 when the message carries an IPv6
     // literal; node carries the dialed address as a structured field instead.
     const err = realSqlConnectError(dialError("EHOSTUNREACH", "2600:1f18::1", 5432));
     expect(legacyConnectSuggestion(err, ctx)).toBe(legacyIpv6Suggestion());
@@ -377,8 +377,8 @@ describe("legacyConnectSuggestion", () => {
 
   it("classifies only the LAST attempt of a mixed-family aggregate (pgconn last-fallback parity)", () => {
     // Go can never blame an abandoned attempt: pgconn's fallback loop keeps only
-    // the last error (`pgconn.go:171-203`) and `SetConnectSuggestion` classifies
-    // that same rendered string (`connect.go:317`). An earlier IPv6 EHOSTUNREACH
+    // the last error and `SetConnectSuggestion` classifies
+    // that same rendered string. An earlier IPv6 EHOSTUNREACH
     // followed by a final unclassified IPv4 timeout must NOT fire the IPv6 hint.
     // The parent carries `code` copied from errors[0] (node's `aggregateErrors`),
     // which must not leak into the wrong-profile branch either.
@@ -444,7 +444,7 @@ describe("legacyConnectSuggestion", () => {
   });
 
   it("sets no suggestion for a mid-handshake TLS disconnect, like Go", () => {
-    // Go's `SetConnectSuggestion` (`connect.go:313-335`) has no branch matching
+    // `SetConnectSuggestion` has no branch matching
     // resets or TLS failures — the staged `tls error (…)` rendering must not
     // change that.
     const midHandshake = Object.assign(

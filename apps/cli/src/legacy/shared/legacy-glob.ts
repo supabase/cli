@@ -4,16 +4,16 @@ import type { PlatformError } from "effect/PlatformError";
 import { legacyPathMatch } from "./legacy-path-match.ts";
 
 /**
- * Hoisted `Config.Glob` filesystem-matching primitives — Go's `io/fs.Glob` (per-pattern
+ * Hoisted `Config.Glob` filesystem-matching primitives — `io/fs.Glob` (per-pattern
  * matching) plus the workdir-relative-vs-absolute resolution `pkg/config/config.go`'s
  * loader applies to every glob-shaped config field. Originally private to
  * `legacy-seed.ts` (the first caller, `[db.seed] sql_paths`); hoisted here once
  * `legacy-migrate-and-seed.ts`'s declarative-schema-files branch (`[db.migrations]
- * schema_paths`, Go's `Glob.SQLFiles`) became a second caller — see `apps/cli/CLAUDE.md`'s
+ * schema_paths`, `Glob.SQLFiles`) became a second caller — see `apps/cli/CLAUDE.md`'s
  * "Hoist Before You Duplicate".
  */
 
-// Go's `io/fs.hasMeta` (`glob.go`): the magic-character set is `*`, `?`, `[`, and `\`
+// `io/fs.hasMeta` (`glob.go`): the magic-character set is `*`, `?`, `[`, and `\`
 // (escape) — `\` counts so a pattern whose only glob syntax is a backslash escape (e.g.
 // `foo\.sql`) is globbed via `legacyPathMatch` (which handles the escape) instead of being
 // treated as a literal filename and missing the real file. Go applies `filepath.ToSlash`
@@ -56,7 +56,7 @@ export const legacyGlobPattern = (
   pattern: string,
 ): Effect.Effect<ReadonlyArray<string>> =>
   Effect.gen(function* () {
-    // Go's `Glob.files` calls `fs.Glob(fsys, filepath.ToSlash(pattern))` (`config.go:143-145`,
+    // `Glob.files` calls `fs.Glob(fsys, filepath.ToSlash(pattern))` (`config.go:143-145`,
     // comment: "Glob expects / as path separator on windows") — a no-op on POSIX, where
     // `path.sep` is already `/`, but on Windows it replaces every `\` with `/` BEFORE any
     // meta-detection or directory-splitting happens. Without this, a Windows entry with
@@ -73,7 +73,7 @@ export const legacyGlobPattern = (
       return exists ? [normalized] : [];
     }
     const slash = normalized.lastIndexOf("/");
-    // Go's `path.Split`/`cleanGlobPath` (`io/fs/glob.go`) keep a root-only directory distinct
+    // `path.Split`/`cleanGlobPath` (`io/fs/glob.go`) keep a root-only directory distinct
     // from "no directory at all": splitting a POSIX-root pattern like `/*.sql` yields a bare
     // `/`, which Go still globs as the fsys root — NOT the workdir `afero.NewOsFs()` happens to
     // have `chdir`-ed into — and every match it returns stays `/`-prefixed. Collapsing that to
@@ -106,7 +106,7 @@ export const legacyGlobPattern = (
   });
 
 /**
- * Go's `sort.Strings` compares byte-wise over each string's UTF-8 encoding; JS's default
+ * `sort.Strings` compares byte-wise over each string's UTF-8 encoding; JS's default
  * `Array.prototype.sort()` instead compares UTF-16 CODE UNITS, which diverges from byte/codepoint
  * order for a supplementary-plane character (encoded as a surrogate pair, code units
  * `0xD800`-`0xDBFF` + `0xDC00`-`0xDFFF`) alongside a BMP private-use character (`0xE000`-
@@ -123,7 +123,7 @@ export function legacyCompareUtf8Bytes(a: string, b: string): number {
 }
 
 /**
- * Port of Go's `walkMatchedDir` (`pkg/config/config.go:194-207`, called by `Glob.SQLFiles` on
+ * Port of `walkMatchedDir` (`pkg/config/config.go:194-207`, called by `Glob.SQLFiles` on
  * every directory match) AND `afero.Walk` (`commands/db/shared/legacy-shadow-source.ts`'s
  * declared-schema walkers' own Go counterpart, `apps/cli-go/internal/db/diff/diff.go:65-76,
  * 86-96`) — both are `Lstat`-based and therefore never descend into a symlinked directory:
@@ -158,7 +158,7 @@ export function legacyCompareUtf8Bytes(a: string, b: string): number {
  * schema_paths`) once `legacy-seed.ts`'s `db.seed.sql_paths` resolution became a second
  * caller, and `legacy-shadow-source.ts`'s declared-schema walkers (a matched `schema_paths`
  * directory, or the `supabase/schemas`/pg-delta-declarative-dir fallbacks) became a third —
- * Go's `Glob.SQLFiles` (`pkg/config/config.go:122-128`) and `afero.Walk` are the SAME shape
+ * `Glob.SQLFiles` and `afero.Walk` are the SAME shape
  * (byte-sorted, no-follow, regular-`.sql`-file-filtered) every one of these config fields
  * resolves through, so a matched directory must expand to its sorted regular `.sql` files
  * identically regardless of which config field it came from.

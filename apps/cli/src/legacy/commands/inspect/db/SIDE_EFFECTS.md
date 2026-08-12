@@ -69,7 +69,8 @@ Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 `index-usage`/`total-index-size`/`index-sizes`/`unused-indexes`/`seq-scans`/`table-record-counts`→index-stats;
 `table-sizes`/`table-index-sizes`/`total-table-sizes`→table-stats;
 `role-configs`/`role-connections`→role-stats. (`table-record-counts` warns
-"table-stats" but runs index-stats — a Go inconsistency preserved verbatim.)
+"table-stats" but runs index-stats — an inconsistency inherited from the old
+Go CLI, preserved verbatim.)
 
 ## Exit Codes
 
@@ -84,23 +85,23 @@ Deprecated aliases run an active subcommand's query: `cache-hit`→db-stats;
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Go fires no custom `phtelemetry.*` events for inspect.
+No custom telemetry events beyond `cli_command_executed`.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-A Glamour ASCII table (byte-exact with Go's `glamour.RenderTable(..., AsciiStyle)`):
+A Glamour ASCII table (byte-exact using `glamour.RenderTable(..., AsciiStyle)`):
 a leading blank line, a decorative line, the header row, a dashes separator, then one
 row per result. Statement/query cells (locks, blocking, outliers, calls) have their
 whitespace runs collapsed to single spaces (long-running-queries' query is NOT
-collapsed, matching Go). The "Connecting to local/remote database..." diagnostic is
-written to **stderr** before the query runs (Go's `ConnectByConfig`).
+collapsed). The "Connecting to local/remote database..." diagnostic is
+written to **stderr** before the query runs.
 
 ### `--output-format json`
 
-A single object: `{ "rows": [ <raw driver rows, snake_case keys> ] }`. TS-extra —
-Go has no machine output for inspect.
+A single object: `{ "rows": [ <raw driver rows, snake_case keys> ] }`. Additive —
+there is no other machine output for inspect.
 
 ### `--output-format stream-json`
 
@@ -115,7 +116,7 @@ Emit one extra stderr line before the table:
 
 - The Management API stack is built lazily, only on the `--linked` path, so `--local`
   and `--db-url` never require an access token.
-- `--linked` defaults to `true` (Go's persistent flag default); the runner derives it
+- `--linked` defaults to `true`; the runner derives it
   from the absence of `--db-url` / `--local` while keeping the mutual-exclusivity check
   keyed off explicitly-set flags.
 - All queries are read-only `SELECT`s; the command performs no writes to the database.

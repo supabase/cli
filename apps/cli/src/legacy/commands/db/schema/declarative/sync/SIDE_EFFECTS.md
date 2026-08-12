@@ -39,7 +39,7 @@ as a new timestamped migration.
 | `PGDELTA_NPM_REGISTRY`       | private `@supabase` npm registry for pg-delta               | no        |
 | `PGDELTA_DEBUG`              | verbose pg-delta diagnostics                                | no        |
 | `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary                      | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate (Go `GetHostname`) | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                    | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback          | no        |
 
 ## Exit Codes
@@ -54,18 +54,17 @@ as a new timestamped migration.
 | `1`  | apply failure (when applied) — propagated from the native migration apply (`applyMigrationToLocal`) |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
-but the gate wins when both conditions apply simultaneously: Go's
-`PersistentPreRunE` runs before `ValidateFlagGroups()`
-(`cobra@v1.10.2/command.go:985,1010`), so a closed gate (missing `--experimental`)
-surfaces before an `--apply`/`--no-apply` conflict is ever checked.
+but the gate wins when both conditions apply simultaneously: the gate check runs
+first, so a closed gate (missing `--experimental`) surfaces before an
+`--apply`/`--no-apply` conflict is ever checked.
 
 ## Output
 
 Text mode only. The generated SQL, the created-migration path, drop-statement
 warnings, and apply status are written to stderr. The no-files bootstrap also
-prints `Declarative schema written to <dir>` (the relative declarative dir, Go's
-`GetDeclarativeDir()`) to stderr after generating, writing, and warming the
-catalog cache — on both the interactive-accept and `--yes` paths.
+prints `Declarative schema written to <dir>` (the relative declarative dir) to
+stderr after generating, writing, and warming the catalog cache — on both the
+interactive-accept and `--yes` paths.
 `--no-apply` writes the migration only (never prompts/applies); `--apply` applies
 without prompting; both override the global `--yes`. `--no-apply` and `--apply`
 are mutually exclusive.

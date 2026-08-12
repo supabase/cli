@@ -30,7 +30,7 @@ interface LegacyBucketSummary {
   readonly id: string;
 }
 
-/** A `/storage/v1/object/list/{bucket}` entry: a directory when Go's `Id == nil`. */
+/** A `/storage/v1/object/list/{bucket}` entry: a directory when `Id == nil`. */
 interface LegacyStorageObject {
   readonly name: string;
   readonly isDir: boolean;
@@ -38,7 +38,7 @@ interface LegacyStorageObject {
 
 export interface LegacyUpsertBucketProps {
   /**
-   * Tri-state to match Go's `Public *bool` with `json:"public,omitempty"`:
+   * Tri-state to match `Public *bool` with `json:"public,omitempty"`:
    * `undefined` when `public` is absent from the bucket's TOML (field omitted),
    * otherwise the explicit value.
    */
@@ -48,7 +48,7 @@ export interface LegacyUpsertBucketProps {
   readonly allowedMimeTypes: ReadonlyArray<string>;
 }
 
-/** Upload headers, mirroring Go's `FileOptions` (`pkg/storage/objects.go:60-64`). */
+/** Upload headers, mirroring `FileOptions`. */
 interface LegacyUploadObjectOptions {
   readonly contentType: string;
   readonly cacheControl: string;
@@ -126,7 +126,7 @@ export interface LegacyStorageGateway {
 }
 
 /**
- * Strict JSON decode mirroring Go's `fetcher.ParseJSON[T]`
+ * Strict JSON decode mirroring `fetcher.ParseJSON[T]`
  * (`pkg/fetcher/http.go` — `json.NewDecoder(r).Decode(&data)`): a body whose
  * shape doesn't match the typed target aborts. Only missing fields, `null`
  * (decoded as the zero value), empty arrays, and extra keys are tolerated; a
@@ -141,7 +141,7 @@ function failParse(detail: string): LegacyStorageGatewayNetworkError {
 }
 
 /**
- * Port for Go's `localGatewayHint` (`pkg/fetcher/http.go:117-143`): the
+ * Port for `localGatewayHint`: the
  * port-conflict hint fires only for a loopback host with a port, reporting THAT
  * URL's port (not `api.port`, which can differ when `api.external_url` is set).
  */
@@ -158,7 +158,7 @@ function localGatewayHintPort(baseUrl: string): string | undefined {
   return undefined;
 }
 
-/** Byte-identical to Go's `localGatewayHint` message. */
+/** Byte-identical to `localGatewayHint` message. */
 function legacyLocalGatewayHint(port: string): string {
   return (
     "The local Supabase API gateway did not return a valid HTTP response. " +
@@ -223,10 +223,10 @@ const decodeBucketSummaries = (
   });
 
 /**
- * Decode `[]ObjectResponse` (`pkg/storage/objects.go:26-33`): `Id` is a `*string`,
- * so an absent or `null` id marks a directory (Go's `o.Id == nil`,
+ * Decode `[]ObjectResponse`: `Id` is a `*string`,
+ * so an absent or `null` id marks a directory (`o.Id == nil`,
  * `internal/storage/ls/ls.go:67`); a present id (any non-null) marks a file. A
- * non-string non-null id fails the decode, matching Go's `*string` unmarshal.
+ * non-string non-null id fails the decode, matching `*string` unmarshal.
  */
 const decodeStorageObjects = (
   body: string,
@@ -346,8 +346,8 @@ const decodeAnalyticsBucketNames = (
   });
 
 /**
- * Build the create/update bucket body with Go's `omitempty` semantics
- * (`pkg/storage/buckets.go:29-54`): `public` (a `*bool`) is omitted when absent
+ * Build the create/update bucket body with `omitempty` semantics:
+ * `public` (a `*bool`) is omitted when absent
  * from the TOML, `file_size_limit` when 0, `allowed_mime_types` when empty.
  */
 export function legacyBucketBody(props: LegacyUpsertBucketProps): Record<string, unknown> {

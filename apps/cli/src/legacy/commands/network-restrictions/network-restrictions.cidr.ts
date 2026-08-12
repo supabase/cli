@@ -7,7 +7,7 @@ export interface ParsedCidr {
   /**
    * Set when the input was an IPv4-mapped IPv6 form (RFC 4291 §2.5.5.2,
    * e.g. `::ffff:10.0.0.1`). Holds the unwrapped IPv4 dotted-decimal so
-   * `isPrivateCidr` and partitioning use Go's `To4()`-driven semantics.
+   * `isPrivateCidr` and partitioning use `net.IP.To4()`-driven semantics.
    * `kind` is `"v4"` in this case; the original IPv6 mask range (0-128)
    * still applies, so we keep `mask` as the caller supplied it.
    */
@@ -15,10 +15,8 @@ export interface ParsedCidr {
 }
 
 /**
- * Parses a CIDR string the same way Go's `net.ParseCIDR` does for the inputs
- * accepted by `supabase network-restrictions update` (see
- * `apps/cli-go/internal/restrictions/update/update.go:21`, deleted in
- * CLI-1970; last present at commit 7b469f5b3).
+ * Parses a CIDR string the same way `net.ParseCIDR` does for the inputs
+ * accepted by `supabase network-restrictions update`.
  *
  * Returns `null` if the input is not a well-formed CIDR; callers translate
  * `null` into `LegacyNetworkRestrictionsInvalidCidrError`.
@@ -31,8 +29,8 @@ export function parseCidr(input: string): ParsedCidr | null {
   const address = input.slice(0, slashIdx);
   const maskStr = input.slice(slashIdx + 1);
   if (maskStr.length === 0 || !/^\d+$/.test(maskStr)) return null;
-  // `Number.parseInt(..., 10)` accepts leading zeros (`/024` → 24). Go's
-  // `net.ParseCIDR` does the same, so we keep parity intentionally.
+  // `Number.parseInt(..., 10)` accepts leading zeros (`/024` → 24).
+  // `net.ParseCIDR` does the same, so this is intentional.
   const mask = Number.parseInt(maskStr, 10);
 
   const family = isIP(address);
@@ -42,7 +40,7 @@ export function parseCidr(input: string): ParsedCidr | null {
   }
   if (family === 6) {
     if (mask < 0 || mask > 128) return null;
-    // Go's `net.IP.To4()` unwraps IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`)
+    // `net.IP.To4()` unwraps IPv4-mapped IPv6 addresses (`::ffff:a.b.c.d`)
     // to their v4 form before `IsPrivate()` and bucket classification. Mirror
     // that here so `::ffff:10.0.0.1/128` is rejected as private and routed to
     // `dbAllowedCidrs` (v4 list), not `dbAllowedCidrsV6`.
@@ -56,9 +54,8 @@ export function parseCidr(input: string): ParsedCidr | null {
 }
 
 /**
- * Mirrors Go's `net.IP.IsPrivate()` (`apps/cli-go/internal/restrictions/update/update.go:25`,
- * deleted in CLI-1970; last present at commit 7b469f5b3)
- * for the address families accepted by `parseCidr`.
+ * Mirrors `net.IP.IsPrivate()` for the address families accepted by
+ * `parseCidr`.
  *
  * - IPv4 (RFC 1918): `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`.
  * - IPv6 (RFC 4193): `fc00::/7` — top 7 bits equal `1111110` (first byte `0xFC` or `0xFD`).
@@ -66,7 +63,7 @@ export function parseCidr(input: string): ParsedCidr | null {
 export function isPrivateCidr(cidr: ParsedCidr): boolean {
   if (cidr.kind === "v4") {
     // IPv4-mapped IPv6 inputs surface here with `v4MappedAddress` set; check
-    // that unwrapped form so Go's `To4()` semantics apply.
+    // that unwrapped form so `net.IP.To4()` semantics apply.
     const octets = cidr.v4MappedAddress ?? cidr.address;
     const parts = octets.split(".");
     if (parts.length !== 4) return false;
@@ -90,7 +87,7 @@ export function isPrivateCidr(cidr: ParsedCidr): boolean {
  *
  * Supports the canonical short form (`::ffff:a.b.c.d`) and the fully-expanded
  * long form (`0:0:0:0:0:ffff:a.b.c.d`), which are the only forms Node's
- * `isIP` produces a "6" verdict for and that Go's `To4()` unwraps.
+ * `isIP` produces a "6" verdict for and that `net.IP.To4()` unwraps.
  */
 function extractIpv4MappedAddress(address: string): string | null {
   const lowered = address.toLowerCase();
@@ -119,21 +116,20 @@ function parseFirstIpv6Byte(address: string): number | null {
   if (!/^[0-9a-fA-F]+$/.test(firstHextet)) return null;
   // The first hextet is a big-endian 16-bit value. Left-padding to 4 hex
   // digits and slicing the first two gives the *high* byte (which is what
-  // Go's `ip[0]` corresponds to). For example `"fc"` represents `0x00fc`, so
+  // `net.IP`'s `ip[0]` corresponds to). For example `"fc"` represents `0x00fc`, so
   // the high byte is `0x00` — correctly NOT in `fc00::/7`.
   const padded = firstHextet.padStart(4, "0");
   return Number.parseInt(padded.slice(0, 2), 16);
 }
 
 /**
- * Validate every input string and partition into IPv4 / IPv6 lists in the same
- * order Go does (`apps/cli-go/internal/restrictions/update/update.go:20-33`,
- * deleted in CLI-1970; last present at commit 7b469f5b3).
+ * Validate every input string and partition into IPv4 / IPv6 lists in the
+ * expected order.
  *
  * Returns either the partitioned lists or a discriminated error describing
  * which input failed and why. Callers translate the discriminated error into
- * the appropriate `Data.TaggedError` so telemetry and stderr render Go's
- * verbatim message.
+ * the appropriate `Data.TaggedError` so telemetry and stderr render the
+ * established verbatim message.
  */
 export function validateAndPartitionCidrs(
   inputs: readonly string[],
@@ -162,9 +158,7 @@ export function validateAndPartitionCidrs(
 
 /**
  * Splits the V2 PATCH response shape (`config.dbAllowedCidrs: Array<{address, type}>`)
- * into the two flat string arrays the Go output template expects. Order matches
- * `apps/cli-go/internal/restrictions/update/update.go:75-83` (deleted in
- * CLI-1970; last present at commit 7b469f5b3).
+ * into the two flat string arrays the output template expects.
  *
  * Lives next to `parseCidr` / `validateAndPartitionCidrs` because it performs
  * the same v4/v6 partitioning, just sourced from the response shape instead of

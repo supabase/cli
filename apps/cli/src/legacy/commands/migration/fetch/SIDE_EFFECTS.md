@@ -5,7 +5,7 @@
 | Path                                          | Format     | When                                                               |
 | --------------------------------------------- | ---------- | ------------------------------------------------------------------ |
 | `~/.supabase/access-token`                    | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                  |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878; Go's `loadNestedEnv`) |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878) |
 
 ## Files Written
 
@@ -36,9 +36,9 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-Silent on success (Go prints nothing). Reads
+Silent on success. Reads
 `SELECT version, coalesce(name, '') as name, statements FROM
 supabase_migrations.schema_migrations` and writes each row to
 `<workdir>/supabase/migrations/<version>_<name>.sql` (statements joined with
@@ -64,14 +64,12 @@ Same structured `files` result delivered as an NDJSON `result` event.
 
 - `--linked` (default true), `--local`, and `--db-url` are mutually exclusive.
 - Fetches migration file contents from the `supabase_migrations.schema_migrations` history table.
-- **Empty-statements rows (Go parity):** a row whose `statements` array is empty
+- **Empty-statements rows:** a row whose `statements` array is empty
   (NULL/`{}` — possible on older projects or manually-inserted rows) is written as
-  exactly `;\n`, because Go does `strings.Join(statements, ";\n") + ";\n"`. The port
-  reproduces these bytes verbatim rather than emitting an empty file; changing this
-  would be a deliberate divergence from the Go CLI.
+  exactly `;\n`, not an empty file.
 - **Path-traversal hardening (TS-only):** before writing, each row's `version`/`name`
   is validated (`version` is all digits; `name` has no `/`, `\`, or `..` segment).
   A tampered/hostile remote could otherwise supply separators to escape the
-  migrations directory (CWE-22). Go has no such check; the guard is parity-neutral
-  for legitimate rows (real versions are digits and names are sanitized file stems)
-  and fails with `failed to write migration: invalid version/name in history table`.
+  migrations directory (CWE-22). This is a new check with no effect on legitimate
+  rows (real versions are digits and names are sanitized file stems); it
+  fails with `failed to write migration: invalid version/name in history table`.

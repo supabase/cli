@@ -24,7 +24,7 @@
 `POST /apply` is the default (replace mode). `PATCH` is used when `--append=true`.
 
 Both endpoints always receive the full `dbAllowedCidrs` / `dbAllowedCidrsV6` arrays (empty
-when no `--db-allow-cidr` was supplied), matching Go's `&[]string{}` initialization.
+when no `--db-allow-cidr` was supplied).
 
 ## Environment Variables
 
@@ -40,7 +40,7 @@ when no `--db-allow-cidr` was supplied), matching Go's `&[]string{}` initializat
 | Code | Condition                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
 | ---- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success — network restrictions updated and status printed to stdout                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `1`  | malformed CSV in a `--db-allow-cidr` value, e.g. unterminated quote — stderr byte-matches pflag's diagnostic (`invalid argument "\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field`; columns are 1-based byte offsets, per Go `encoding/csv`) — fails during flag parsing, before the `--experimental` gate, CIDR validation, the `linked-project.json`/`telemetry.json` writes, and the `cli_command_executed` event |
+| `1`  | malformed CSV in a `--db-allow-cidr` value, e.g. unterminated quote — stderr reproduces the fixed diagnostic text (`invalid argument "\"1.2.3.0/24" for "--db-allow-cidr" flag: parse error on line 1, column 12: extraneous or missing " in quoted-field`; columns are 1-based byte offsets) — fails during flag parsing, before the `--experimental` gate, CIDR validation, the `linked-project.json`/`telemetry.json` writes, and the `cli_command_executed` event |
 | `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) — checked before CIDR validation/ref/API                                                                                                                                                                                                                                                                                                                                              |
 | `1`  | CIDR parse failure — `LegacyNetworkRestrictionsInvalidCidrError` (`failed to parse IP: <input>`)                                                                                                                                                                                                                                                                                                                                                                                        |
 | `1`  | private-IP rejection — `LegacyNetworkRestrictionsPrivateIpError` (`private IP provided: <input>`)                                                                                                                                                                                                                                                                                                                                                                                       |
@@ -54,13 +54,11 @@ when no `--db-allow-cidr` was supplied), matching Go's `&[]string{}` initializat
 | ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed or when flag parsing fails (malformed `--db-allow-cidr` CSV) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/restrictions/update/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
-
 ## CIDR Validation (runs locally before any HTTP call)
 
 For each `--db-allow-cidr` value, in input order:
 
-1. Parse as CIDR (Go's `net.ParseCIDR` semantics). Failure → `failed to parse IP: <input>` and exit `1`.
+1. Parse as CIDR. Failure → `failed to parse IP: <input>` and exit `1`.
 2. If the parsed IP is private (RFC 1918 for IPv4 — `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`;
    RFC 4193 for IPv6 — `fc00::/7`) and `--bypass-cidr-checks=false`, fail with
    `private IP provided: <input>` and exit `1`.
@@ -71,13 +69,12 @@ touching `linked-project.json`; telemetry still flushes via the outermost `Effec
 
 ## Output
 
-### `--output-format text` (default) — Go CLI compatible
+### `--output-format text` (default)
 
 Same three-line template as `get`. In replace mode (POST `/apply`), the arrays come
-straight from `response.config.dbAllowedCidrs` / `dbAllowedCidrsV6` (`*[]string`, can render
+straight from `response.config.dbAllowedCidrs` / `dbAllowedCidrsV6` (can render
 as `<nil>` if the API omits a field). In append mode (PATCH), the V2 response shape is
-partitioned by `type` before being printed via Go's `&localSlice` pattern (always renders
-as `&[]` or `&[...]`, never `<nil>`).
+partitioned by `type` before being printed (always renders as `&[]` or `&[...]`, never `<nil>`).
 
 ```
 DB Allowed IPv4 CIDRs: &[1.2.3.0/24]
@@ -87,21 +84,18 @@ Restrictions applied successfully: true
 
 `applied successfully` is `true` iff `status === "applied"` in the response.
 
-### `--output {json,yaml,toml,env}` (Go flag, TS-only behavior here)
+### `--output {json,yaml,toml,env}`
 
-Go's `restrictions/update` (`apps/cli-go/internal/restrictions/update/update.go:48-50`
-POST branch, `:86-88` PATCH branch; deleted in CLI-1970, last present at commit 7b469f5b3) never reads `OutputFormat` — both branches always
-print the same `fmt.Printf` three-line template shown above, whatever `-o` says, so
-there is no Go output here to be byte-identical to (and therefore no Go casing
-convention to match either — TS uses the generic map-shaped `encodeYaml`/`encodeToml`
-helpers here, not the CLI-1975 struct-spec ones, since there is no real Go struct
-output for this command to mirror): JSON is alphabetical with trailing newline; env
-follows the standard Go flattening rules.
+This command's own text-mode output ignores `-o` entirely — both the POST and PATCH
+branches always print the same three-line template shown above. There is no real
+struct output for these formats to mirror, so they use the generic map-shaped
+`encodeYaml`/`encodeToml` helpers (not the CLI-1975 struct-spec ones): JSON is
+alphabetical with trailing newline; env follows the standard flattening rules.
 
 ### `--output pretty`
 
-`pretty` is Go's default `--output` value; TS renders it identically to
-`--output-format text` above — the only output Go's `restrictions update` ever produces.
+`pretty` is the default `--output` value; it renders identically to
+`--output-format text` above — the only output this command ever produces.
 
 ### `--output-format json`
 
@@ -114,17 +108,14 @@ One `result` event whose `data` is the full response object.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided
-  (a TS-internal precedence rule between the port's two flags — see `--output` above).
+- The `--output` flag wins over `--output-format` when both are provided
+  (see `--output` above).
 - `--append=true` switches the HTTP method (`POST /apply` → `PATCH`) and the request
   envelope (`{ dbAllowedCidrs, dbAllowedCidrsV6 }` → `{ add: { dbAllowedCidrs, dbAllowedCidrsV6 } }`).
 - `linked-project.json` writes after a successful project-ref resolution, regardless of
   whether the subsequent API call succeeds.
 - `telemetry.json` writes on every invocation past the `--experimental` gate, including
   CIDR validation failures, ref resolution failures, and API failures. A closed gate
-  writes nothing (Go's `PersistentPreRunE` fails before `PersistentPostRun` runs).
-  A malformed `--db-allow-cidr` CSV value (e.g. an unterminated quote) also writes nothing
-  and fires no telemetry, even with `--experimental` set — it fails during flag parsing,
-  before the gate and the handler. This matches Go: pflag's `readAsCSV` error aborts
-  cobra's `ParseFlags` before `PersistentPreRunE` ever creates the telemetry service
-  (`root.go:131-142`), so `Execute()`'s post-run capture (`root.go:171-181`) never fires.
+  writes nothing. A malformed `--db-allow-cidr` CSV value (e.g. an unterminated quote) also
+  writes nothing and fires no telemetry, even with `--experimental` set — it fails during
+  flag parsing, before the gate and the handler.

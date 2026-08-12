@@ -20,9 +20,7 @@ import {
 import { printNetworkRestrictionsStatus } from "../network-restrictions.format.ts";
 import type { LegacyNetworkRestrictionsGetFlags } from "./get.command.ts";
 
-// Templates lifted verbatim from `apps/cli-go/internal/restrictions/get/get.go:15,18`
-// (deleted in CLI-1970; last present at commit 7b469f5b3).
-// Note the *semicolon* in the status template — Go uses `; received: ` (vs the colon
+// Note the *semicolon* in the status template — `; received: ` (vs the colon
 // used in the update/patch templates).
 const mapGetError = mapLegacyHttpError({
   networkError: LegacyNetworkRestrictionsGetNetworkError,

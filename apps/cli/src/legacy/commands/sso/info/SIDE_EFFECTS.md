@@ -13,7 +13,7 @@
 | Path                                           | Format | When                                                                |
 | ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
 | `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves (Go `PersistentPostRun`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves |
 
 ## API Routes
 
@@ -46,13 +46,13 @@ The payload is `{acs_url, entity_id, relay_state}` where each URL is derived fro
 the project ref: `https://<ref>.supabase.co/auth/v1/sso/saml/{acs,metadata}` and
 `https://<ref>.supabase.co`.
 
-### `--output-format text` / Go `--output pretty`
+### `--output-format text` / `--output pretty`
 
 Glamour-styled 3-row property/value markdown table.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Encoded payload (Go-compatible alphabetised keys for JSON).
+Encoded payload (alphabetised keys for JSON).
 
 ### `--output env`
 
@@ -65,4 +65,4 @@ Single `success` event with the payload as data.
 ## Notes
 
 - All three URLs are deterministic functions of the project ref.
-- Go's markdown source at `render.go:170` includes a trailing space in the `Single sign-on URL (ACS URL) ` label, but Glamour collapses it when computing column widths. Our flat ASCII renderer would double it up against the cell padding, so the label is emitted without the trailing space to match Go's rendered output (which the cli-e2e parity harness compares against).
+- The old Go CLI's markdown source included a trailing space in the `Single sign-on URL (ACS URL) ` label, but Glamour collapses it when computing column widths. Our flat ASCII renderer would double it up against the cell padding, so the label is emitted without the trailing space to match that rendered output (which the cli-e2e parity harness compares against).

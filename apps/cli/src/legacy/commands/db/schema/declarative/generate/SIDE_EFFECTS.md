@@ -39,7 +39,7 @@ pg-delta catalog (source) against the target database's catalog (target).
 | `PGDELTA_NPM_REGISTRY`       | private `@supabase` npm registry for pg-delta      | no        |
 | `PGDELTA_DEBUG`              | verbose pg-delta diagnostics                       | no        |
 | `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary             | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local` (Go `GetHostname`)     | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                        | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback | no        |
 
 ## Exit Codes
@@ -53,10 +53,9 @@ pg-delta catalog (source) against the target database's catalog (target).
 | `1`  | shadow-database / edge-runtime / export failure                       |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
-but the gate wins when both conditions apply simultaneously: Go's
-`PersistentPreRunE` runs before `ValidateFlagGroups()`
-(`cobra@v1.10.2/command.go:985,1010`), so a closed gate (missing `--experimental`)
-surfaces before a `--db-url`/`--linked`/`--local` conflict is ever checked.
+but the gate wins when both conditions apply simultaneously: the gate check runs
+first, so a closed gate (missing `--experimental`) surfaces before a
+`--db-url`/`--linked`/`--local` conflict is ever checked.
 
 ## Output
 
@@ -64,7 +63,7 @@ Diagnostics (target resolution, prompts, `Declarative schema written to <dir>`)
 always go to stderr, in every `--output-format`. On success:
 
 - `text` mode prints `Finished supabase db schema declarative generate.` to
-  stdout (matches Go's PostRun `fmt.Println`, `cmd/db_schema_declarative.go:116-118`).
+  stdout.
 - `json`/`stream-json` mode instead emits a structured success envelope
   (`output.success("Finished supabase db schema declarative generate.")`) so
   the machine stdout payload isn't corrupted by a bare human line

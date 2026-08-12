@@ -76,7 +76,7 @@ Notes/Delegation section below).
 | `SUPABASE_DB_PASSWORD`                                                                | remote DB password (overridden by `-p`)                                                                | no        |
 | `SUPABASE_DB_SHADOW_PORT`                                                             | shadow container's host port (`db.shadow_port`) — NOT `SUPABASE_DB_PORT`, which the shadow never reads | no        |
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                       | no        |
-| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`)       | no        |
+| `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset`       | no        |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                    | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta diff engine                                                                             | no        |
 | `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated structured-dump branch (still delegates to Go, see below)                       | no        |
@@ -90,11 +90,11 @@ Notes/Delegation section below).
 | `1`  | target mutex; `--declarative`/`--use-pg-delta` with `--diff-engine`; migration-history conflict; **no schema changes ("No schema changes found")**; connection/shadow/engine failure; file IO error |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
-> exit** for `db pull` — Go returns `errInSync` as an error.
+> exit** for `db pull`.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Progress to stderr. Migration path: `Creating shadow database...`,
 `Diffing schemas[: <list>]`, `Schema written to <path>`. Declarative path:
@@ -114,11 +114,11 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 
 - `--declarative` / deprecated `--use-pg-delta` are mutually exclusive with
   `--diff-engine`; `--db-url` / `--linked` (default) / `--local` are a target group.
-- `--use-pg-delta` is hidden and emits the cobra deprecation line to stderr.
+- `--use-pg-delta` is hidden and emits a deprecation warning to stderr.
 - The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
   the remote schema into the migration file, then appends the migra diff. An empty
-  diff after a non-empty dump is swallowed (Go's `swallowInitialInSync`); an empty
-  dump + empty diff is "No schema changes found".
+  diff after a non-empty dump is swallowed; an empty dump + empty diff is "No schema
+  changes found".
 - The `--experimental` structured-dump branch (or the `SUPABASE_EXPERIMENTAL`
   project-`.env` equivalent) still rebuilds the argv and execs the bundled Go
   binary (its side effects are Go's — see Files Written above for what that

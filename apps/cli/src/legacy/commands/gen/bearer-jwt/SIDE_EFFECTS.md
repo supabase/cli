@@ -5,7 +5,7 @@
 | Path                                             | Format             | When                                                                                                                                                                                                     |
 | ------------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml` / `config.json` | TOML / JSON        | always when present in the active workdir; used to discover `[auth].enabled` and `[auth].signing_keys_path`                                                                                              |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*`    | dotenv             | always, mirroring Go's `flags.LoadConfig`/`Config.Load`'s `loadNestedEnv` step (no `--yes`-style prompt of this command's own reads it, but the load still runs and can itself fail on a malformed file) |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*`    | dotenv             | always (the load still runs and can itself fail on a malformed file, even though no `--yes`-style prompt of this command's own reads it) |
 | `<resolved signing_keys_path>`                   | JSON array of JWKs | when `[auth].signing_keys_path` is configured AND `[auth].enabled` is `true` (default) — see Notes for the `auth.enabled = false` quirk                                                                  |
 | stdin                                            | plain text / JSON  | interactive/piped prompt for a raw JWK (unconfigured `signing_keys_path`) or a signing-key `kid` (configured, non-TTY)                                                                                   |
 
@@ -44,7 +44,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints the signed JWT to stdout, followed by exactly one trailing newline — nothing
 else ever reaches stdout. Every prompt, echo, and error goes to stderr. Unconditional
@@ -64,12 +64,12 @@ Same as `text` above.
 - `--role` is **required** (Postgres role to embed in the token, e.g. `anon`,
   `authenticated`, `service_role`, or any custom role name — no validation against a
   fixed set).
-- `--sub` sets the `sub` (subject/user ID) claim. Its Go help text cosmetically shows
+- `--sub` sets the `sub` (subject/user ID) claim. Its help text cosmetically shows
   `(default "anonymous")`, but the real default is unset — an omitted `--sub` never
   puts a `sub` claim in the token at all.
 - When `--role authenticated` is used with no `--sub`, OR with `--sub ""` (an
-  explicitly-passed EMPTY value — Go's gate is `len(claims.Subject) == 0`, which an
-  empty string also satisfies), the token gets `is_anonymous: true`. Any other role,
+  explicitly-passed EMPTY value — the same check also treats an empty string as
+  unset), the token gets `is_anonymous: true`. Any other role,
   or `authenticated` with a NON-EMPTY `--sub`, never sets it.
 - `--exp` (RFC3339, e.g. `2030-01-01T00:00:00Z`) sets an explicit expiry; `iat` is then
   computed as `exp - --valid-for`. Without `--exp`, `iat` is "now" and `exp` is `iat +
@@ -77,10 +77,9 @@ Same as `text` above.
 - `--valid-for` (Go duration syntax, e.g. `30m`, `1h`) defaults to 30 minutes.
 - `--payload` (default `"{}"`) is arbitrary JSON merged ON TOP of the computed claims —
   any key it sets (including `role`, `exp`, `iat`) overrides the computed value.
-- The final claims object is a Go `jwt.MapClaims` (a real map), so its JSON keys are
-  serialized in **alphabetical order**, not flag/insertion order — byte-matches Go's
-  `encoding/json` map marshalling (including HTML-escaping `<`/`>`/`&`).
-- **Signing-key resolution** (Go's `getSigningKey`, fully local, no Docker/network):
+- The final claims object's JSON keys are serialized in **alphabetical order**, not
+  flag/insertion order (including HTML-escaping `<`/`>`/`&`).
+- **Signing-key resolution** (fully local, no Docker/network):
   - `[auth].signing_keys_path` **not configured**: prompts `Enter your signing key in
 JWK format (or leave blank to use local default): ` on stderr. A blank answer uses
     the built-in default ES256 dev key (kid `b81269f1-21d8-4f2e-b719-c2240a840d90`,
@@ -94,20 +93,19 @@ kid of your signing key (or leave blank to use the first one): ` on stderr, echo
 <kid>`.
   - `[auth].signing_keys_path` **configured**, **real TTY**: presents an interactive
     picker (`Select a signing key:`) built from each key's `kid`/`alg`/`key_ops`, then
-    prints `Selected key ID: <kid>` to stderr. Does not byte-match Go's bubbletea list
-    UI (an accepted divergence — see `legacy-project-ref.layer.ts` for the established
-    precedent of only matching the observable "Selected ..." line).
-  - **`[auth].enabled = false` quirk** (verified against the real binary): Go's
-    `Config.Validate` only reads the `signing_keys_path` file when `auth.enabled` is
-    `true` — but `getSigningKey` decides which prompt to show purely on whether the
-    path STRING is configured, independent of `auth.enabled`. So with auth disabled
-    and a path configured, the kid-prompt still runs, but the available keys stay the
-    built-in default (the file is never read) — a real kid from the file is reported
-    `signing key not found`.
-- Byte-matches Go's asymmetric-signing error family exactly: kty/curve failures wrap as
+    prints `Selected key ID: <kid>` to stderr. Does not byte-match the old interactive
+    picker UI (an accepted divergence — see `legacy-project-ref.layer.ts` for the
+    established precedent of only matching the observable "Selected ..." line).
+  - **`[auth].enabled = false` quirk:** the `signing_keys_path` file is only read
+    when `auth.enabled` is `true` — but which prompt is shown depends purely on
+    whether the path STRING is configured, independent of `auth.enabled`. So with
+    auth disabled and a path configured, the kid-prompt still runs, but the available
+    keys stay the built-in default (the file is never read) — a real kid from the
+    file is reported `signing key not found`.
+- Error messages for signing failures: kty/curve failures wrap as
   `failed to convert JWK to private key: ...`; an unsupported algorithm is unwrapped
   (`unsupported algorithm: ...`); a kty-vs-algorithm mismatch (e.g. an EC key signed as
   `RS256`) is caught at sign time and wraps as `failed to sign JWT: key is of invalid
-type: ...` — Go has no explicit cross-check between kty and algorithm; this failure
-  comes from golang-jwt's own signing method.
-- No network or Management API calls, no Docker — fully local, matching Go.
+type: ...` — there is no explicit cross-check between kty and algorithm; this failure
+  comes from the underlying signing library.
+- No network or Management API calls, no Docker — fully local.

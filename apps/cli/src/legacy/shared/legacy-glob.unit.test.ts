@@ -39,7 +39,7 @@ describe("legacyGlobPattern", () => {
   it.effect(
     "globs a root-anchored absolute pattern (/*.sql) against the filesystem root, not the workdir",
     () => {
-      // Go's `path.Split`/`cleanGlobPath` (`io/fs/glob.go`) reduce `/*.sql` to a bare `/`
+      // `path.Split`/`cleanGlobPath` (`io/fs/glob.go`) reduce `/*.sql` to a bare `/`
       // directory — confirmed empirically against the real Go CLI's own (unrooted)
       // `afero.NewOsFs()`: `config.Glob{"/*"}.Files(fsys)` lists the actual filesystem root's
       // entries, each still `/`-prefixed, never the process's cwd.
@@ -163,7 +163,7 @@ function fakeWalkFs(
 
 describe("legacyWalkSqlFiles", () => {
   it.effect("propagates a stat failure instead of silently treating the entry as absent", () => {
-    // Go's `fs.WalkDir` (`walkMatchedDir`, `pkg/config/config.go:194-207`) propagates a
+    // `fs.WalkDir` (`walkMatchedDir`, `pkg/config/config.go:194-207`) propagates a
     // per-entry stat/lstat error from its walk callback, aborting `Glob.SQLFiles` entirely —
     // a directory `readDirectory` can list but `stat` then fails to read (permission denied,
     // removed mid-walk, I/O error) must fail the whole walk, not silently resolve to "no file

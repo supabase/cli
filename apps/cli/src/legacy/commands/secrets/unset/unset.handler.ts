@@ -22,7 +22,7 @@ import type { LegacySecretsUnsetFlags } from "./unset.command.ts";
 type Secrets = typeof V1ListAllSecretsOutput.Type;
 
 // The empty-args path lists secrets first, so it shares the LIST error pair
-// with the `list` handler. Templates match Go's `list.go:46-50` phrasing.
+// with the `list` handler.
 const mapListErrorForUnset = mapLegacyHttpError({
   networkError: LegacySecretsListNetworkError,
   statusError: LegacySecretsListUnexpectedStatusError,
@@ -45,7 +45,7 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
   const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
+  // `--yes` OR `SUPABASE_YES` (mirrors viper's AutomaticEnv, root.go:318-320).
   const yes = yield* legacyResolveYes;
 
   const ref = yield* resolver.resolve(flags.projectRef);
@@ -54,8 +54,8 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
     let names: ReadonlyArray<string> = flags.names;
 
     if (names.length === 0) {
-      // Go fetches the full list and filters out SUPABASE_-prefixed entries
-      // (`unset.go:21-26`). Reuse the LIST error pair here.
+      // Fetches the full list and filters out SUPABASE_-prefixed entries.
+      // Reuse the LIST error pair here.
       const all: Secrets = yield* api.v1
         .listAllSecrets({ ref })
         .pipe(Effect.catch(mapListErrorForUnset));
@@ -69,11 +69,11 @@ export const legacySecretsUnset = Effect.fn("legacy.secrets.unset")(function* (
 
     const label = `Do you want to unset these function secrets?\n • ${names.join("\n • ")}\n\n`;
 
-    // Go's `PromptYesNo(msg, true)` (`unset.go:34`, `console.go:64-82`):
-    // `--yes`/`SUPABASE_YES` auto-confirms with the `<label> [Y/n] y` stderr
-    // echo; a non-TTY stdin still prints the label and scans one piped line
-    // (100ms), so `echo n | supabase secrets unset` declines like Go instead of
-    // hardcoding the Yes default (CLI-1974).
+    // `PromptYesNo(msg, true)` (`console.go:64-82`): `--yes`/`SUPABASE_YES`
+    // auto-confirms with the `<label> [Y/n] y` stderr echo; a non-TTY stdin
+    // still prints the label and scans one piped line (100ms), so `echo n |
+    // supabase secrets unset` declines instead of hardcoding the Yes default
+    // (CLI-1974).
     const confirmed = yield* legacyPromptYesNo(output, yes, label, true);
 
     if (!confirmed) {

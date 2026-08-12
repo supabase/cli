@@ -9,7 +9,7 @@ import {
 } from "./legacy-local-config-values.ts";
 
 /**
- * Port of Go's `status.CustomName` + `toValues()` (`internal/status/status.go:29-97`).
+ * Port of `status.CustomName` + `toValues()`.
  * Each field's Go `env:"..."` tag carries two things: the dotted key
  * `--override-name <key>=<name>` matches against (`fieldKey` below), and the
  * default output env-var name (`defaultName`). `deprecated` fields (`inbucket`,
@@ -177,7 +177,7 @@ export function legacyStatusContainerIds(projectId: string): LegacyStatusContain
 }
 
 /**
- * Port of Go's `utils.ShortContainerImageName` (`internal/utils/misc.go:33-39,75`):
+ * Port of `utils.ShortContainerImageName`:
  * extracts the repo name between the (first) `/` and the (last) `:`, falling back to
  * the full string when the image ref doesn't match (no slash, or no tag).
  */
@@ -186,8 +186,8 @@ export function legacyShortContainerImageName(imageName: string): string {
   return match?.[1] ?? imageName;
 }
 
-// Default image short names Go's `--exclude` also matches against
-// (`internal/status/status.go:55-61`), one per gated service. Sourced from the same
+// Default image short names `--exclude` also matches against,
+// one per gated service. Sourced from the same
 // embedded Dockerfile manifest Go parses (`dockerfileServiceImage`), so a version bump
 // there is picked up automatically. Pinned-version substitution
 // (`legacy-db-image.ts`'s `replaceImageTag`) only ever rewrites the portion after the
@@ -234,10 +234,10 @@ export interface LegacyStatusState {
  * The config-load/`Validate`-equivalent half of {@link LegacyStatusState} —
  * everything that can THROW, and none of it depends on `excluded`/
  * `containerIds`. Split out so `status.handler.ts` can resolve and validate
- * this before any Docker call, matching Go's `flags.LoadConfig` (config load
+ * this before any Docker call, matching `flags.LoadConfig` (config load
  * + `Validate`, `internal/utils/flags/config_path.go:12` ->
  * `pkg/config/config.go:882`) running entirely before `assertContainerHealthy`/
- * container listing (`internal/status/status.go:101-116`) — a bad
+ * container listing — a bad
  * `auth.jwt_secret` or malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED`
  * override must fail here, not be masked by a Docker/DB error when the local
  * stack happens to be unavailable.
@@ -256,7 +256,7 @@ export interface LegacyStatusLocalState {
 
 /**
  * Port of the throwing, non-Docker-dependent half of Go's
- * `(*CustomName).toValues(exclude...)` (`internal/status/status.go:50-97`):
+ * `(*CustomName).toValues(exclude...)`:
  * resolves local config values (URLs, keys — can throw, see
  * {@link legacyResolveLocalConfigValues}) and the per-service `.enabled` gates,
  * with NO reference to `excluded`/`containerIds` — see {@link legacyGateStatusState}
@@ -265,8 +265,8 @@ export interface LegacyStatusLocalState {
  * don't need to run validation before Docker calls).
  *
  * Each `.enabled` gate is read through {@link legacyEnvOverrideBool}, not the
- * raw decoded `config.<section>.enabled`, because Go's `status.toValues()`
- * (`status.go:55-61`) reads `utils.Config.*.Enabled` — a package-level struct
+ * raw decoded `config.<section>.enabled`, because `status.toValues()`
+ * reads `utils.Config.*.Enabled` — a package-level struct
  * Viper has already applied any `SUPABASE_<SECTION>_ENABLED` env/dotenv
  * override to (`SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` +
  * `ExperimentalBindStruct()`, `pkg/config/config.go:580-586`) — generically,
@@ -367,7 +367,7 @@ export function legacyResolveStatusLocalState(
 }
 
 /**
- * The Docker-dependent, non-throwing half of Go's `toValues()`: applies
+ * The Docker-dependent, non-throwing half of `toValues()`: applies
  * `excluded` (matching each gated service by its container id
  * (`legacyStatusContainerIds`) OR its default Docker image short name
  * (`legacyShortContainerImageName` above) — the 6 relevant Go config fields

@@ -52,9 +52,9 @@ describe("encodeGoJson", () => {
   });
 
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
-    // Matches Go's `apps/cli-go/internal/backups/list/list_test.go` "encodes json output" fixture
-    // (deleted in CLI-1970; last present at commit 7b469f5b3)
-    // — empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
+    // Matches `apps/cli-go/internal/backups/list/list_test.go` "encodes json output" fixture
+    // (deleted in CLI-1970; last present at commit 7b469f5b3) —
+    // empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
     const out = encodeGoJson(
       {
         region: "ap-southeast-1",
@@ -173,8 +173,8 @@ describe("encodeEnv", () => {
   });
 
   it("collapses arrays to a single empty leaf (Go viper does not descend into slices)", () => {
-    // Go output for `backups: [{...}]` is `BACKUPS=""`, not `BACKUPS_0_STATUS=...`
-    // — viper.AllKeys() stops at slice boundaries and GetString of a slice is "".
+    // Go output for `backups: [{...}]` is `BACKUPS=""`, not `BACKUPS_0_STATUS=...` —
+    // viper.AllKeys() stops at slice boundaries and GetString of a slice is "".
     const out = encodeEnv(SAMPLE_RESPONSE);
     const lines = out.split("\n");
     expect(lines).toContain('BACKUPS=""');

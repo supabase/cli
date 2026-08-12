@@ -100,8 +100,8 @@ describe("legacy secrets list integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      // Go's pipeline: markdown `\|` → glamour decodes to literal `|`. Our
-      // renderer skips the markdown step and emits the literal pipe directly.
+      // Reference pipeline: markdown `\|` → glamour decodes to literal `|`.
+      // Our renderer skips the markdown step and emits the literal pipe directly.
       expect(out.stdoutText).toContain("with|pipe");
     }).pipe(Effect.provide(layer));
   });
@@ -134,8 +134,8 @@ describe("legacy secrets list integration", () => {
     const { layer, out } = setup({ goOutput: "json", response: SAMPLE_SECRETS });
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
-      // Sorted (BAR before FOO) and alphabetical-key JSON; matches Go's struct
-      // declaration order for SecretResponse {Name, UpdatedAt, Value}.
+      // Sorted (BAR before FOO) and alphabetical-key JSON, matching the
+      // SecretResponse {Name, UpdatedAt, Value} field order.
       expect(out.stdoutText).toBe(
         `[
   {
@@ -167,7 +167,7 @@ describe("legacy secrets list integration", () => {
     return Effect.gen(function* () {
       yield* legacySecretsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("[[secrets]]");
-      // Go field names (PascalCase) with BurntSushi's 2-space indent (CLI-1975).
+      // PascalCase field names with BurntSushi's 2-space indent (CLI-1975).
       expect(out.stdoutText).toContain('  Name = "BAR"');
       expect(out.stdoutText).toContain('  Value = "digest-bar"');
     }).pipe(Effect.provide(layer));

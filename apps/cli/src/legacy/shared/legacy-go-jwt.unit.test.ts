@@ -49,7 +49,7 @@ describe("legacyGenerateGoJwt", () => {
     expect(payload).toBeDefined();
     const raw = decodeSegment(payload ?? "");
     // Byte-exact key order: iss, role, exp — ref/is_anonymous/iat are omitted
-    // entirely (Go's `omitempty`), matching status's no-ref, non-anonymous use.
+    // entirely (`omitempty`), matching status's no-ref, non-anonymous use.
     expect(raw).toBe('{"iss":"supabase-demo","role":"anon","exp":1983812996}');
 
     const parsed = JSON.parse(raw) as Record<string, unknown>;
@@ -99,7 +99,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
   });
 
   it("signs an RS256 token from an RSA JWK missing CRT exponents (dp/dq/qi), matching Go", async () => {
-    // Go's `jwkToRSAPrivateKey` (`apps/cli-go/pkg/config/apikeys.go:132-168`)
+    // `jwkToRSAPrivateKey`
     // never reads `dp`/`dq`/`qi` — it builds the key from `n`/`e`/`d`/`p`/`q`
     // alone, and Go's stdlib derives the CRT params itself when absent. A
     // hand-authored signing-keys file that omits them (common — RFC 7517 marks
@@ -160,7 +160,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
   // switch only validates `jwk.Algorithm` — a mismatched pair reaches
   // `token.SignedString(privateKey)` and fails INSIDE golang-jwt's own signing
   // method with "key is of invalid type: ...", wrapped as "failed to sign
-  // JWT: %w" (`apikeys.go:113`). These two tests previously asserted an
+  // JWT: %w". These two tests previously asserted an
   // "unsupported key type" message that Go never actually produces for this
   // input — corrected here.
   it("rejects an EC key forged with alg: RS256 instead of signing garbage", () => {
@@ -203,7 +203,7 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
   });
 
   it("rejects a padded EC coordinate instead of signing a token Go would refuse to produce (CLI-1961 Codex review finding)", () => {
-    // Go's `jwkToECDSAPrivateKey` decodes x/y/d with `base64.RawURLEncoding.DecodeString`,
+    // `jwkToECDSAPrivateKey` decodes x/y/d with `base64.RawURLEncoding.DecodeString`,
     // which genuinely rejects `=` padding — verified directly against the real binary:
     // the exact same padded x coordinate produces
     // "failed to convert JWK to private key: failed to decode x coordinate: illegal base64
@@ -247,7 +247,7 @@ describe("legacySignJwtWithJwk", () => {
   });
 
   it("HTML-escapes the kid in the header like Go's json.Marshal, unlike JSON.stringify (CLI-1961 Codex review finding)", () => {
-    // Go's `token.SignedString` marshals the protected header via `encoding/json`'s
+    // `token.SignedString` marshals the protected header via `encoding/json`'s
     // default `json.Marshal`, which HTML-escapes `<`/`>`/`&` — verified directly against
     // the Go standard library. A plain `JSON.stringify` leaves those characters literal,
     // which would sign different header bytes (and thus a different signature) than Go

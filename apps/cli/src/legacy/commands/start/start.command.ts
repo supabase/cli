@@ -41,8 +41,8 @@ const config = {
 
 export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `start` makes no Management API calls (Go's start needs no access token) and talks
-// directly to Docker, so it deliberately avoids `legacyManagementApiRuntimeLayer` —
+// `start` makes no Management API calls and talks directly to Docker, so it
+// deliberately avoids `legacyManagementApiRuntimeLayer` —
 // it provides only the services the handler + instrumentation consume, mirroring
 // `stop`/`status`'s runtime shape. `ChildProcessSpawner`/`ProcessControl`/`RuntimeInfo`
 // are not listed here: they come from `BunServices`/`processControlLayer`/

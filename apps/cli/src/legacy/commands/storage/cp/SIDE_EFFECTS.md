@@ -1,7 +1,6 @@
 # `supabase storage cp <src> <dst>`
 
-Native TypeScript port of `apps/cli-go/internal/storage/cp` (deleted in CLI-1970; last present at commit 7b469f5b3). Copies objects between
-local paths and the Storage service. The scheme of `src`/`dst` selects the operation:
+Copies objects between local paths and the Storage service. The scheme of `src`/`dst` selects the operation:
 `ss://`→local download, local→`ss://` upload, both `ss://` → error, both local → unsupported.
 
 ## Files Read
@@ -41,7 +40,7 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME` — same roles as `storage ls`.
 
-`storage` is an experimental command (Go `root.go:63`): `cp` requires `--experimental`
+`storage` is an experimental command: `cp` requires `--experimental`
 (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
 `must set the --experimental flag to run this command` before any other work.
 
@@ -54,11 +53,11 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 - Recursive download prints `Downloading: <remote> => <local>` per object (stderr).
 - Recursive upload prints `Uploading: <local> => <remote>` per file (stderr).
-- Single copies are silent (Go's `api.{Download,Upload}Object`).
+- Single copies are silent.
 - Empty recursive download → `Object not found: <remote>`.
 
 ### `--output-format json`
@@ -81,21 +80,20 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 
 ## Notes
 
-- Single upload does NOT send `x-upsert`; recursive upload sets it (Go's `Overwrite`).
+- Single upload does NOT send `x-upsert`; recursive upload sets it.
 - `--content-type` overrides the sniffed type; an explicit value is still refined when
-  it is a generic `text/plain` (Go's `ParseFileOptions` → `UploadObject`).
+  it is a generic `text/plain`.
 - `--cache-control` defaults to `max-age=3600`; an empty value resets to that default.
 - `--jobs`/`-j` bounds upload/download concurrency (default 1).
-- DQ-1: Go help shows `--content-type` DefValue `auto-detect`; the runtime default is
-  `""` (empty ⇒ auto-detect). Effect renders the real `""` (cosmetic help diff only).
-- Relative local paths resolve against the original cwd (Go's `utils.CurrentDirAbs`).
+- The runtime default for `--content-type` is `""` (empty ⇒ auto-detect).
+- Relative local paths resolve against the original cwd.
 - **Recursive download path traversal (accepted risk).** Recursive download writes
   to `path.join(localPath, relPath)` where `relPath` is derived from the
-  server-returned object name. Like Go's `filepath.Join` (`cp.go:72-73`),
-  `path.join` normalizes `..`, so a hostile or compromised endpoint returning a
-  name like `../../../etc/...` can resolve a write **outside** `localPath` — parent
-  dirs are `mkdir -p`'d and files open `O_TRUNC`, making it a write/overwrite
-  primitive. This matches the Go CLI exactly and is intentionally **not** guarded:
-  adding a containment check would diverge from Go's behavior. Blast radius is
-  gated behind `--experimental` + `cp -r` + remote→local + a hostile endpoint.
-  `downloadSingle` is unaffected (user-supplied path, `O_EXCL` `wx`).
+  server-returned object name. `path.join` normalizes `..`, so a hostile or
+  compromised endpoint returning a name like `../../../etc/...` can resolve a
+  write **outside** `localPath` — parent dirs are `mkdir -p`'d and files open
+  `O_TRUNC`, making it a write/overwrite primitive. This is inherited from the
+  old Go CLI's behavior and is intentionally **not** guarded, to preserve
+  behavioral parity. Blast radius is gated behind `--experimental` + `cp -r` +
+  remote→local + a hostile endpoint. `downloadSingle` is unaffected (user-supplied
+  path, `O_EXCL` `wx`).

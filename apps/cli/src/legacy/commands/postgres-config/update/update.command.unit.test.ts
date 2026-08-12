@@ -60,8 +60,8 @@ describe("legacy postgres-config update --config flag (pflag StringSlice parity)
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
-      // Byte-matches the Go CLI (`"max_connections=100` is 20 bytes → EOF at
-      // column 21).
+      // Matches pflag's own diagnostic (`"max_connections=100` is 20 bytes →
+      // EOF at column 21).
       expect(normalizeCause(exit.cause).message).toBe(
         'invalid argument "\\"max_connections=100" for "--config" flag: parse error on line 1, column 21: extraneous or missing " in quoted-field',
       );

@@ -12,12 +12,12 @@
  * the RAW flag token (instead of a pre-normalized number) is load-bearing for
  * parity:
  *
- *  - every sign prefix is rejected, including `-0` and `+1` (a numeric
- *    normalization turns `-0` into negative zero, for which `value < 0` is
- *    false, silently accepting what Go rejects);
- *  - error messages carry the ORIGINAL spelling (`-01`, not `-1`);
- *  - base 0 enables Go's prefix/underscore forms: `0x10` → 16, `0o10`/`010` →
- *    8 (octal!), `0b10` → 2, and `1_0` → 10 — all of which Go accepts.
+ * - every sign prefix is rejected, including `-0` and `+1` (a numeric
+ * normalization turns `-0` into negative zero, for which `value < 0` is
+ * false, silently accepting what Go rejects);
+ * - error messages carry the ORIGINAL spelling (`-01`, not `-1`);
+ * - base 0 enables Go's prefix/underscore forms: `0x10` → 16, `0o10`/`010` →
+ * 8 (octal!), `0b10` → 2, and `1_0` → 10 — all of which Go accepts.
  *
  * All verdicts below are verified against go1.26 (`strconv.ParseUint(s, 0, 64)`):
  * `-0`/`-01`/`+1`/`3.5`/`abc`/`09`/`0x`/`_1`/`1_`/`1__0`/` 1` → invalid
@@ -153,7 +153,7 @@ export function legacyIsValidBase0Int64(token: string): boolean {
 }
 
 /**
- * Go's `underscoreOK` (`strconv/atoi.go`): underscores must sit between
+ * `underscoreOK` (`strconv/atoi.go`): underscores must sit between
  * digits, or between the base prefix and the first digit (`0x_10` is valid).
  * The sign skip is unreachable through `legacyParseUintBase0` (a sign already
  * fails the digit loop before `underscoreOk` is ever reached) but IS reachable

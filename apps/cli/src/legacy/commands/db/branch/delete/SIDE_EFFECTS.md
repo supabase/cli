@@ -34,7 +34,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints a confirmation message to stdout on success.
 
@@ -48,5 +48,5 @@ Not applicable.
 
 ## Notes
 
-- Deprecated in the Go CLI: use `branches delete <branch-id>` instead.
+- Deprecated: use `branches delete <branch-id>` instead.
 - Requires exactly one positional argument: the branch name.

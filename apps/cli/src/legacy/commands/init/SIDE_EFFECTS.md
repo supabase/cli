@@ -53,7 +53,7 @@ In interactive mode (`-i`/`--interactive`), may prompt for IDE settings preferen
 
 Success is emitted as raw text even when the legacy shell is invoked with non-text output modes.
 
-When `supabase/config.toml` already exists and `--force` is not set (stderr, byte-matching Go's wrapped `O_EXCL` open error and `CmdSuggestion`; the platform check selects Go's exact per-OS path separator and errno text):
+When `supabase/config.toml` already exists and `--force` is not set (stderr; the platform check selects the exact per-OS path separator and errno text):
 
 On Linux/macOS:
 
@@ -69,7 +69,7 @@ failed to create config file: open supabase\config.toml: The file exists.
 Run supabase init --force to overwrite existing config file.
 ```
 
-When `--use-orioledb` is passed without `--experimental` (stderr, byte-matching cobra's required-flag message from Go's `PreRun` `MarkFlagRequired("experimental")`; the second line is the generic debug hint Go's `recoverAndExit` appends):
+When `--use-orioledb` is passed without `--experimental` (stderr; the second line is the generic debug hint appended on error):
 
 ```
 required flag(s) "experimental" not set
@@ -84,5 +84,5 @@ Try rerunning the command with --debug to troubleshoot the error.
 - The `--interactive` / `-i` flag enables IDE settings prompts (only effective in TTY).
 - The `--with-vscode-settings` and `--with-vscode-workspace` flags are hidden backward-compat aliases for the same VS Code helper and both write `.vscode/settings.json` and `.vscode/extensions.json`.
 - The `--with-intellij-settings` flag is a hidden backward-compat alias for generating `.idea/deno.xml`.
-- An existing `.vscode/settings.json` / `.vscode/extensions.json` is parsed tolerantly through a JSONC boundary that strips line/block comments and trailing commas (matching Go's `jsonc.ToJSONInPlace`), then the template is merged on top (template keys win). An empty file is treated as absent and the template is written verbatim. A non-empty file that is not valid JSON(C) aborts the command with `InitParseSettingsError` and is left untouched rather than being overwritten.
+- An existing `.vscode/settings.json` / `.vscode/extensions.json` is parsed tolerantly through a JSONC boundary that strips line/block comments and trailing commas, then the template is merged on top (template keys win). An empty file is treated as absent and the template is written verbatim. A non-empty file that is not valid JSON(C) aborts the command with `InitParseSettingsError` and is left untouched rather than being overwritten.
 - No authentication required - purely local file creation.

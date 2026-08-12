@@ -152,7 +152,7 @@ export function legacyCollectText(stream: Stream.Stream<Uint8Array, unknown>) {
  * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect` — Docker's
  * "No such container"/"No such object" (either casing depending on daemon version/CLI path) or
  * Podman's own differently worded "no container with name or ID ... found: no such container" —
- * the subprocess equivalent of Go's `errdefs.IsNotFound` for a CLI-shelled-out (rather than
+ * the subprocess equivalent of `errdefs.IsNotFound` for a CLI-shelled-out (rather than
  * Engine-API) caller. Case-insensitive and covers all three shapes so a lowercase Podman message
  * is tolerated exactly like an uppercase Docker one — the same distinction
  * `legacy-docker-image-resolve.ts`'s `isImageNotFoundMessage` draws for `image inspect`, and the
@@ -216,7 +216,7 @@ export function legacyRunContainerCliExpectSuccess<E>(
 /**
  * Like {@link containerCliExitCode}, but also collecting the child's stdout —
  * for callers that need the CLI's own report of what it did (e.g. the `docker
- * … prune` deleted-ID lists backing Go's `--debug` "Pruned …" reports in
+ * … prune` deleted-ID lists backing `--debug` "Pruned …" reports in
  * `DockerRemoveAll`, `docker.go:123-143`). Collecting (i.e. reading) stdout
  * also sidesteps the unread-pipe hang that `stdout: "ignore"` callers avoid by
  * discarding it. stderr is discarded, matching the exit-code-only helper.
@@ -260,7 +260,7 @@ export const legacyContainerCliExitCodeAndStdout = (
   );
 
 /**
- * Mirrors Go's `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`,
+ * Mirrors `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`,
  * used by `apps/cli-go/internal/utils/docker.go:128`): splits each version on
  * `.` and compares the parts numerically, component by component — not a
  * naive string/float compare, which would misorder e.g. `"1.9"` vs `"1.10"`.
@@ -279,12 +279,12 @@ function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean
 /**
  * Docker CLI's own `volume prune --all` flag is annotated `version: "1.42"`
  * (vendored `docker/cli@v28.5.2` `cli/command/volume/prune.go:53`) and
- * enforced by Cobra's `Args` validator *before* `RunE` runs
- * (`cmd/docker/docker.go:659-660`): against a daemon with a lower negotiated
+ * enforced by Cobra's `Args` validator *before* `RunE` runs:
+ * against a daemon with a lower negotiated
  * API version, `docker volume prune --all ...` exits nonzero without pruning
  * anything at all, rather than degrading gracefully. Go avoids ever hitting
  * that by gating the equivalent `all=true` filter on
- * `Docker.ClientVersion() >= "1.42"` (`docker.go:126-133`); there is no
+ * `Docker.ClientVersion() >= "1.42"`; there is no
  * persistent Engine API client here to ask, so this asks the `docker` CLI
  * itself via `docker version`.
  *

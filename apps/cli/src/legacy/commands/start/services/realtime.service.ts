@@ -1,15 +1,12 @@
 /**
- * Port of Go's "Start Realtime" block
- * (`apps/cli-go/internal/start/start.go:903-958`, deleted in CLI-1966; last
- * present at commit a253ccba2).
+ * Builds the Realtime container spec.
  *
- * Enabled gate: `config.realtime.enabled` (`utils.Config.Realtime.Enabled`,
- * `start.go:904`) — independent of `config.api.enabled` (PostgREST's own
- * gate, `api.go:961`); the two are never conflated in Go. Gating (this field,
- * plus `!isContainerExcluded`) is the caller's responsibility — see
- * `start.services.ts`'s `realtime` catalog entry (`enabledGate:
- * "realtime.enabled"`) — this module only builds the container spec once
- * called.
+ * Enabled gate: `config.realtime.enabled` — independent of
+ * `config.api.enabled` (PostgREST's own gate); the two are never conflated.
+ * Gating (this field, plus `!isContainerExcluded`) is the caller's
+ * responsibility — see `start.services.ts`'s `realtime` catalog entry
+ * (`enabledGate: "realtime.enabled"`) — this module only builds the
+ * container spec once called.
  */
 
 import type { ProjectConfig } from "@supabase/config";
@@ -23,7 +20,7 @@ import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/dock
 import { legacyStartInternalDbPassword } from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 export interface LegacyRealtimeContainerSpecInput {
-  /** Go's `Config.ProjectId`, already sanitized — see `legacyServiceContainerName`'s callers. */
+  /** The sanitized project id — see `legacyServiceContainerName`'s callers. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
   readonly networkId: string;
@@ -38,10 +35,9 @@ export interface LegacyRealtimeContainerSpecInput {
 }
 
 /**
- * Builds the `docker create` spec for the Realtime container
- * (`start.go:903-958`). No `ports` (host-published) entry — Realtime, like
- * GoTrue, only ever `ExposedPorts` its port on the Docker network
- * (`nat.PortSet{"4000/tcp": {}}`, `start.go:930`).
+ * Builds the `docker create` spec for the Realtime container. No `ports`
+ * (host-published) entry — Realtime, like GoTrue, only ever exposes its port
+ * on the Docker network.
  */
 export function legacyBuildRealtimeContainerSpec(
   input: LegacyRealtimeContainerSpecInput,
@@ -62,8 +58,8 @@ export function legacyBuildRealtimeContainerSpec(
     binds: [],
     exposedPorts: [{ containerPort: "4000" }],
     healthcheck: {
-      // Podman splits command by spaces unless quoted, but curl's header can't be quoted
-      // (`start.go:932`, reproduced verbatim as this exec-form `test` array).
+      // Podman splits command by spaces unless quoted, but curl's header can't be
+      // quoted, hence this exec-form `test` array.
       test: [
         "CMD",
         "curl",
@@ -81,7 +77,7 @@ export function legacyBuildRealtimeContainerSpec(
     },
     restartPolicy: "unless-stopped",
     networkId: input.networkId,
-    // `utils.RealtimeAliases = []string{"realtime", Config.Realtime.TenantId}` (`utils/config.go:40`).
+    // Network aliases: `realtime` plus the tenant id.
     networkAliases: ["realtime", LEGACY_REALTIME_TENANT_ID],
     labels: {},
   };

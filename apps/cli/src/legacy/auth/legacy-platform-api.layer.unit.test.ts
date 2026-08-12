@@ -280,9 +280,9 @@ describe("legacyPlatformApiLayer", () => {
   it.effect(
     "fails with the invalid-token error when the env token is malformed (Go parity)",
     () => {
-      // Go's GetSupabase() → LoadAccessTokenFS validates the env token against the
-      // sbp_ pattern before any API call; a malformed SUPABASE_ACCESS_TOKEN must
-      // fail with ErrInvalidToken, not be sent to the API.
+      // The env token is validated against the sbp_ pattern before any API
+      // call; a malformed SUPABASE_ACCESS_TOKEN must fail with the
+      // invalid-token error, not be sent to the API.
       const http = captureRequests();
       const layer = legacyPlatformApiLayer.pipe(
         Layer.provide(mockCliConfig({ accessToken: "sbp_not_a_valid_token" })),
@@ -529,10 +529,10 @@ describe("legacyPlatformApiLayer", () => {
 });
 
 // The lazy factory underpins the `--linked` db-config resolver's auth-free
-// `--password` path (CLI port of Go's `NewDbConfigWithPassword`, which only calls
-// `GetSupabase` — and thus loads a token — when no password is supplied). Building
-// the factory must therefore resolve NO token; the friendly auth error must still
-// surface when a command branch actually reaches `make` (e.g. minting a temp role).
+// `--password` path, which only loads a token when no password is supplied.
+// Building the factory must therefore resolve NO token; the friendly auth
+// error must still surface when a command branch actually reaches `make`
+// (e.g. minting a temp role).
 describe("legacyPlatformApiFactoryLayer (lazy token)", () => {
   it.effect("builds without resolving an access token even when none is configured", () => {
     const layer = legacyPlatformApiFactoryLayer.pipe(

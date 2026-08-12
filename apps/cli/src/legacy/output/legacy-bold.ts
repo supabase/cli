@@ -1,6 +1,5 @@
 /**
- * Reproduces Go's `utils.Bold` (`apps/cli-go/internal/utils/colors.go:26`), which
- * renders a string with lipgloss `Bold(true)`.
+ * Renders a string bold, reproducing lipgloss's `Bold(true)` behavior.
  *
  * lipgloss emits ANSI only when its output stream is detected as a TTY (termenv's
  * color profile is `Ascii` — no escapes — when stdout is not a terminal, e.g. when

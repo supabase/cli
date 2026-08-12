@@ -5,8 +5,8 @@
 | Path                                                                                                                       | Format     | When                                                                                                                                                                                                                                                                                                                          |
 | -------------------------------------------------------------------------------------------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/config.toml`                                                                                           | TOML       | on every startup / restart when the project config exists                                                                                                                                                                                                                                                                     |
-| `<workdir>/supabase/{.env,.env.local,.env.<SUPABASE_ENV>,.env.<SUPABASE_ENV>.local}` and the same four at the project root | dotenv     | on every startup / restart, a SECOND, independent read from the `env()`-interpolation one below — Go-parity project dotenv (`legacyResolveProjectEnvironmentValues`) feeding the `SUPABASE_*` overrides (network-id, deno-version, registry) and the `Config.Validate` pipeline, same one `start`/`stop`/`status` already use |
-| `<workdir>/supabase/<auth.signing_keys_path>`, `[api.tls]` cert/key paths, email template `content_path` — when configured | varies     | on every startup / restart, as part of the `Config.Validate` pipeline above, unconditionally, matching Go's `Config.Load` — read even though `serve` doesn't otherwise use their contents                                                                                                                                     |
+| `<workdir>/supabase/{.env,.env.local,.env.<SUPABASE_ENV>,.env.<SUPABASE_ENV>.local}` and the same four at the project root | dotenv     | on every startup / restart, a SECOND, independent read from the `env()`-interpolation one below — project dotenv (`legacyResolveProjectEnvironmentValues`) feeding the `SUPABASE_*` overrides (network-id, deno-version, registry) and the `Config.Validate` pipeline, same one `start`/`stop`/`status` already use |
+| `<workdir>/supabase/<auth.signing_keys_path>`, `[api.tls]` cert/key paths, email template `content_path` — when configured | varies     | on every startup / restart, as part of the `Config.Validate` pipeline above, unconditionally — read even though `serve` doesn't otherwise use their contents                                                                                                                                     |
 | `<workdir>/supabase/.temp/edge-runtime-version`                                                                            | plain text | when present, to override the bundled edge-runtime image tag                                                                                                                                                                                                                                                                  |
 | `<workdir>/supabase/functions/.env`                                                                                        | dotenv     | when `--env-file` is unset and the fallback env file exists                                                                                                                                                                                                                                                                   |
 | `<env-file>`                                                                                                               | dotenv     | when `--env-file` is set; relative paths resolve from the caller cwd                                                                                                                                                                                                                                                          |
@@ -39,8 +39,7 @@ enabled, two outbound HTTPS GETs are made per start to build `SUPABASE_JWKS`:
 | `GET`  | `<jwks_uri>` (from discovery)                   | none | `—`          | `keys`                 |
 
 Both fetches use a 10s timeout and are best-effort: failure logs nothing and falls
-back to local keys (matching the Go CLI, which ignores the error). No scheme/host
-validation is performed on the discovered URLs, also matching the Go CLI.
+back to local keys. No scheme/host validation is performed on the discovered URLs.
 
 ## Environment Variables
 
@@ -54,7 +53,7 @@ validation is performed on the discovered URLs, also matching the Go CLI.
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`            | overrides the edge-runtime Docker registry mirror; read from the ambient shell **or** project dotenv; unset resolves ECR->GHCR->Docker-Hub candidates in order instead of a single URL                                                                                                  | no (defaults to `public.ecr.aws`)    |
 | `SUPABASE_NETWORK_ID`                         | overrides the generated `supabase_network_<project>` Docker network name when `--network-id` isn't passed; read from the ambient shell or project dotenv                                                                                                                                | no                                   |
 | `SUPABASE_EDGE_RUNTIME_DENO_VERSION`          | overrides `edge_runtime.deno_version` (which image tag to pull) when set, from the ambient shell or project dotenv — takes effect even with no `config.toml` on disk                                                                                                                    | no                                   |
-| `BITBUCKET_CLONE_DIR`                         | when set, skips creating the named Deno-cache volume and omits its bind mount from the edge-runtime `docker run` (Bitbucket's restricted Docker environment rejects both); a project-dotenv-only value is installed into `process.env` by config loading, matching Go's `loadNestedEnv` | no                                   |
+| `BITBUCKET_CLONE_DIR`                         | when set, skips creating the named Deno-cache volume and omits its bind mount from the edge-runtime `docker run` (Bitbucket's restricted Docker environment rejects both); a project-dotenv-only value is installed into `process.env` by config loading | no                                   |
 
 ## Exit Codes
 
@@ -74,7 +73,7 @@ validation is performed on the discovered URLs, also matching the Go CLI.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Writes lifecycle text to stderr / stdout while the command is running:
 
@@ -94,15 +93,15 @@ Long-running raw log / error events only; there is no terminal `result` event on
 
 ## Notes
 
-- The hidden `--all` flag is still parsed but ignored; the native port always serves every discovered function, matching the Go command.
+- The hidden `--all` flag is still parsed but ignored; the native port always serves every discovered function.
 - Each restart re-reads config, rebuilds per-function bind mounts, recreates the `supabase_edge_runtime_<project>` container, and best-effort reloads Kong afterwards.
 - The command creates or reuses Docker resources derived from the resolved project id:
   - container: `supabase_edge_runtime_<project>`
   - named volume: `supabase_edge_runtime_<project>`
   - network: `supabase_network_<project>` unless `--network-id` overrides it
-- Inspector mode exposes the configured `edge_runtime.inspector_port` on the host and sets `SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0`, matching the Go serve path.
-- Config `env()` interpolation uses a project environment resolved by the command itself (ambient `process.env` layered under `.env.<env>.local` / `.env.local` / `.env.<env>` / `.env`, matching Go) and passed into `loadProjectConfig`. The command does not move/hide any project files. One `process.env` mutation exists: the Go-parity config pipeline (`legacyLoadLocalProjectContext`, shared with `deploy`/`download`/`start`) installs a project-dotenv-only `BITBUCKET_CLONE_DIR` into `process.env`, matching Go's `loadNestedEnv` `os.Setenv` behavior.
+- Inspector mode exposes the configured `edge_runtime.inspector_port` on the host and sets `SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=0`.
+- Config `env()` interpolation uses a project environment resolved by the command itself (ambient `process.env` layered under `.env.<env>.local` / `.env.local` / `.env.<env>` / `.env`) and passed into `loadProjectConfig`. The command does not move/hide any project files. One `process.env` mutation exists: the shared config pipeline (`legacyLoadLocalProjectContext`, shared with `deploy`/`download`/`start`) installs a project-dotenv-only `BITBUCKET_CLONE_DIR` into `process.env`.
 - Before each container (re)start, resolves the edge-runtime image through the same registry-candidate pull-with-retry every native `functions` Docker path uses: `docker image inspect <candidate>` (ECR, then GHCR, then Docker Hub) to check the local cache, then `docker pull <candidate>` with 2 retries (4s/8s backoff) on a miss, after `assertLocalDbRunning` — resolving it earlier would hijack the down-daemon error message that DB-inspect step is responsible for producing.
-- Runs the full `Config.Validate` pipeline (`legacyResolveLocalConfigValues`, same one `start`/`stop`/`status` use) on every startup/restart, before `assertLocalDbRunning` — an invalid config now fails `serve` up front even for fields this command never otherwise reads (e.g. a bad `db.major_version` or malformed auth hook), matching Go's `flags.LoadConfig` -> `Config.Validate`.
-- A container crash terminates the command with a non-zero exit; only a watched-file change restarts the container. The Go CLI never auto-restarts a crashed container.
+- Runs the full `Config.Validate` pipeline (`legacyResolveLocalConfigValues`, same one `start`/`stop`/`status` use) on every startup/restart, before `assertLocalDbRunning` — an invalid config now fails `serve` up front even for fields this command never otherwise reads (e.g. a bad `db.major_version` or malformed auth hook).
+- A container crash terminates the command with a non-zero exit; only a watched-file change restarts the container — a crashed container is never auto-restarted.
 - The worker bootstrap template (`serve.main.ts`) is bundled into a single self-contained module with `jose` and the local path/status helpers inlined, so the edge-runtime worker boots without any network access (supabase/supabase#45570). The bundle is embedded at build time for shipped binaries and produced on demand (esbuild) when running from source.

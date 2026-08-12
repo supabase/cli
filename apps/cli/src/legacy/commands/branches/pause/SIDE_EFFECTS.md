@@ -8,8 +8,8 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 | Path                                             | Format | When                                                                     |
 | ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -40,4 +40,4 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Output
 
-Silent on success in every mode (Go parity — no stdout / stderr emission inside the handler). The prompt helper may write `Selected branch ID: <ref>` to stderr in text mode if the TTY picker was used.
+Silent on success in every mode (no stdout / stderr emission inside the handler). The prompt helper may write `Selected branch ID: <ref>` to stderr in text mode if the TTY picker was used.

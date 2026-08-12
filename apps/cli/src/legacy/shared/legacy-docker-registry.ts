@@ -1,6 +1,6 @@
 /**
  * Resolve a Docker image through the configured registry, a 1:1 port of Go's
- * `utils.GetRegistryImageUrl` / `GetRegistry` (`apps/cli-go/internal/utils/docker.go:185-203`).
+ * `utils.GetRegistryImageUrl` / `GetRegistry`.
  *
  * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (Go's viper `INTERNAL_IMAGE_REGISTRY`)
  * overrides the registry; an unset value uses the default ECR mirror. A value of
@@ -36,9 +36,9 @@ function getLastImageSegment(imageName: string): string {
  * values in scope (currently `start`, via `legacyGetRegistryImageUrlCandidates`)
  * need to pass it so a `SUPABASE_INTERNAL_IMAGE_REGISTRY` set only in
  * `supabase/.env`/project-root dotenv (not the ambient shell) is honored,
- * matching Go's `Config.Load` loading dotenv files into the process env
+ * matching `Config.Load` loading dotenv files into the process env
  * (`loadNestedEnv`, `pkg/config/config.go:789,1220-1258`) before `GetRegistry()`
- * (`internal/utils/docker.go:221-227`) ever reads it.
+ * ever reads it.
  */
 function legacyGetRegistryOverride(
   projectEnvValues?: Readonly<Record<string, string>>,

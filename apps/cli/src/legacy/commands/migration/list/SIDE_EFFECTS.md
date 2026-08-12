@@ -36,12 +36,12 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-Prints a Glamour ASCII table `|Local|Remote|Time (UTC)|` to stdout (byte-matching
-Go's `glamour.RenderTable` with `AsciiStyle`; cells are backtick-wrapped inline
-code). Queries `SELECT version FROM supabase_migrations.schema_migrations ORDER BY
-version` (a missing table → empty Remote column).
+Prints a Glamour ASCII table `|Local|Remote|Time (UTC)|` to stdout (`AsciiStyle`
+rendering; cells are backtick-wrapped inline code). Queries `SELECT version FROM
+supabase_migrations.schema_migrations ORDER BY version` (a missing table → empty
+Remote column).
 
 ### `--output-format json`
 

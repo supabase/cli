@@ -71,7 +71,7 @@ const unbanErrorMapper = mapLegacyHttpError({
   statusMessage: (status, body) => `unexpected remove bans status ${status}: ${body}`,
 });
 
-/** `utils.IsLocalDatabase` (`connect.go:230`). Compares against the resolved local
+/** `utils.IsLocalDatabase`. Compares against the resolved local
  * services hostname (`utils.Config.Hostname`), not a hard-coded loopback. */
 function isLocalDatabase(
   host: string,
@@ -102,7 +102,7 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
 // The Management API client is built lazily via `LegacyPlatformApiFactory.make`
 // (not the eager `LegacyPlatformApi` stack), so the access token is resolved
 // only here — when a temp role is actually minted. `--linked --password` returns
-// before reaching this, so it stays auth-free (Go's `NewDbConfigWithPassword`);
+// before reaching this, so it stays auth-free (`NewDbConfigWithPassword`);
 // `--local` / `--db-url` never build this layer at all.
 const initLoginRole = Effect.fnUntraced(function* (ref: string, conn: LegacyPgConnInput) {
   const output = yield* Output;
@@ -127,7 +127,7 @@ const listAndUnban = Effect.fnUntraced(function* (ref: string) {
 });
 
 // Verify-connect with backoff while the pooler refreshes the temp password
-// (Go's `initPoolerLogin` → `backoff.RetryNotify`). On attempt ≥ 3, clear any
+// (`initPoolerLogin` → `backoff.RetryNotify`). On attempt ≥ 3, clear any
 // network ban on the requester (Go's notify callback).
 const waitForTempRole = Effect.fnUntraced(function* (
   ref: string,
@@ -139,11 +139,11 @@ const waitForTempRole = Effect.fnUntraced(function* (
   const attempt = (n: number): Effect.Effect<void, LegacyDbConfigError, LegacyPlatformApiFactory> =>
     // The temp-role probe always targets the remote Supavisor pooler, so it
     // connects with TLS (Go's pooler path goes through `ConnectByUrl`) and
-    // honors `--dns-resolver` (Go's `ConnectByConfigStream` installs the DoH
+    // honors `--dns-resolver` (`ConnectByConfigStream` installs the DoH
     // resolver for this remote connect too).
     Effect.scoped(dbConn.connect(conn, { isLocal: false, dnsResolver }).pipe(Effect.asVoid)).pipe(
       Effect.catch((cause) => {
-        // Go's `backoff.WithMaxRetries(b, 8)` allows 8 retries after the
+        // `backoff.WithMaxRetries(b, 8)` allows 8 retries after the
         // initial attempt → 9 total attempts. `n` is 1-based, so give up only
         // after attempt 9 (`n > MAX_RETRIES`), not at attempt 8.
         if (n > MAX_RETRIES) {
@@ -156,8 +156,8 @@ const waitForTempRole = Effect.fnUntraced(function* (
         }
         // Mirrors Go's notify callback: from the 3rd failure onward, clear any
         // network ban on the requester. NOTE: Go's exponential backoff applies
-        // ±50% jitter (RandomizationFactor=0.5); we use a deterministic curve
-        // — intentional, jitter only matters under concurrent pooler refreshes.
+        // ±50% jitter (RandomizationFactor=0.5); we use a deterministic curve —
+        // intentional, jitter only matters under concurrent pooler refreshes.
         const unban = n >= 3 ? listAndUnban(ref) : Effect.void;
         const delayMs = Math.min(
           Duration.toMillis(BACKOFF_INITIAL) * 1.5 ** (n - 1),
@@ -166,7 +166,7 @@ const waitForTempRole = Effect.fnUntraced(function* (
         return Effect.gen(function* () {
           // Go runs the unban inside `backoff.RetryNotify`'s notify callback,
           // which cannot abort the retry — `NewErrorCallback` only logs a callback
-          // error and continues (`internal/utils/retry.go:28-29`). So a transient
+          // error and continues. So a transient
           // ban-list/unban failure must NOT propagate out of the retry loop; log it
           // to --debug like Go, then discard.
           yield* unban.pipe(
@@ -185,7 +185,7 @@ const waitForTempRole = Effect.fnUntraced(function* (
 /**
  * Parse + validate the configured pooler connection string. Returns `None`
  * (treated as "no pooler", → IPv6 error) on any validation failure, matching
- * Go's `GetPoolerConfig`, which logs and returns `nil`.
+ * `GetPoolerConfig`, which logs and returns `nil`.
  */
 const poolerConfigFrom = Effect.fnUntraced(function* (
   ref: string,
@@ -223,7 +223,7 @@ const resolveDbPassword = Effect.fnUntraced(function* (
 /**
  * Resolve the IPv4 transaction pooler connection for `ref` (Go's
  * `GetPoolerConfig` + `initPoolerLogin`). Returns `None` when no pooler URL is
- * configured or it fails validation (Go's `GetPoolerConfig` returns nil), so the
+ * configured or it fails validation (`GetPoolerConfig` returns nil), so the
  * caller can keep the original error. With a password, uses it directly; without
  * one, mints a temp login role and verify-connects through the pooler.
  *
@@ -235,7 +235,7 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
   poolerHost: string,
   dnsResolver: "native" | "https",
   password: string,
-  // Go's `ResolvePoolerConfigForFallback` (container-fallback only) falls back to
+  // `ResolvePoolerConfigForFallback` (container-fallback only) falls back to
   // the Management API's primary pooler config when no `.temp/pooler-url` is saved;
   // the resolve-time IPv6 path (`NewDbConfigWithPassword` → `GetPoolerConfig`) uses
   // the saved URL only and errors otherwise, so this defaults off.
@@ -263,7 +263,7 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
   if (connectionString === undefined) {
     if (!fetchFromApi) return Option.none<LegacyPgConnInput>();
     // No saved pooler URL → fetch the primary pooler config from the Management
-    // API (Go's `GetPoolerConfigPrimary`, `connect.go:51-65`). Any API failure
+    // API (`GetPoolerConfigPrimary`, `connect.go:51-65`). Any API failure
     // means "no fallback" (Go returns ok=false), so swallow it to `None`.
     const api = yield* (yield* LegacyPlatformApiFactory).make;
     const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
@@ -305,7 +305,7 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
  * Resolves the linked project's connection: dial the direct host, and — when
  * unreachable (the common case, since new Supabase projects have IPv6-only
  * direct DB hosts) — transparently fall back to the project's IPv4 transaction
- * pooler (Go's `flags.NewDbConfigWithPassword`, `db_url.go:132-172`).
+ * pooler (`flags.NewDbConfigWithPassword`, `db_url.go:132-172`).
  *
  * `workdir`/`projectHost`/`poolerHost` are explicit parameters rather than read
  * from `LegacyCliConfig` so this is safely callable from a context whose real
@@ -404,7 +404,7 @@ export const legacyDbConfigLayer = Layer.effect(
       Layer.succeed(LegacyDbConnection, dbConn),
     );
 
-    // Profile context for the connect-failure suggestion (Go's `SetConnectSuggestion`
+    // Profile context for the connect-failure suggestion (`SetConnectSuggestion`
     // reads the ambient `CurrentProfile`). Snapshot it once
     // and attach it to every resolved connection so the driver layer can render Go's
     // hint on a refused/auth/IPv6 connect error.
@@ -469,7 +469,7 @@ export const legacyDbConfigLayer = Layer.effect(
         // …) before the ref is known, failing a linked run Go accepts (Go validates
         // the merged config after LoadProjectRef). Only `--db-url`/`--local` read base
         // config — Go's direct/local `LoadConfig`, which never merges a remote block.
-        // Go's `utils.Config.Hostname` (`GetHostname()`): honors
+        // `utils.Config.Hostname` (`GetHostname()`): honors
         // `SUPABASE_SERVICES_HOSTNAME` / a tcp `DOCKER_HOST` in dev-container or
         // remote-Docker setups, defaulting to 127.0.0.1.
         const localHost = legacyGetHostname();
@@ -479,8 +479,8 @@ export const legacyDbConfigLayer = Layer.effect(
           const tomlValues = yield* legacyReadDbToml(fs, path, cliConfig.workdir, undefined, {
             resolveVaultSecrets,
           });
-          // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`
-          // (`internal/utils/flags/db_url.go:59-68`), so the project `.env*` files
+          // Go's direct path runs `LoadConfig` before `pgconn.ParseConfig`,
+          // so the project `.env*` files
           // populate the environment that the libpq `PG*` fallbacks read. Layer the
           // project env under the shell env (`legacyLoadProjectEnv` already excludes
           // shell-set keys, so the shell still wins) and feed it to the parser.
@@ -504,8 +504,8 @@ export const legacyDbConfigLayer = Layer.effect(
             tomlValues.port,
             tomlValues.shadowPort,
           );
-          // Go routes a local direct URL through `ConnectLocalPostgres`
-          // (`connect.go:137`), which fills an empty password from the local
+          // Go routes a local direct URL through `ConnectLocalPostgres`,
+          // which fills an empty password from the local
           // `[db].password` config so a passwordless local DSL like
           // `postgresql://postgres@127.0.0.1:54322/postgres` still authenticates.
           return {
@@ -525,8 +525,8 @@ export const legacyDbConfigLayer = Layer.effect(
         if (flags.connType === "linked") {
           const linked = yield* Effect.gen(function* () {
             const projectRef = yield* LegacyProjectRefResolver;
-            // Go's ParseDatabaseConfig resolves the linked ref via the HARD `LoadProjectRef`
-            // (`apps/cli-go/internal/utils/flags/db_url.go:88`) — load-or-fail with no
+            // Go's ParseDatabaseConfig resolves the linked ref via the HARD `LoadProjectRef` —
+            // load-or-fail with no
             // prompt, format validation, and `failed to load project ref` on a real
             // `.temp/project-ref` read error. Use `loadProjectRef` (not the soft
             // `resolveOptional`, which swallows that read error to None): an unlinked
@@ -534,8 +534,8 @@ export const legacyDbConfigLayer = Layer.effect(
             // unreadable ref file surfaces the filesystem problem — matching Go for every
             // caller of this resolver (`test db --linked`, dump, declarative).
             const ref = yield* projectRef.loadProjectRef(flags.linkedProjectRef ?? Option.none());
-            // Go's `ParseDatabaseConfig` runs `LoadProjectRef` → `LoadConfig` →
-            // `NewDbConfigWithPassword` (`internal/utils/flags/db_url.go:81-92`), so
+            // `ParseDatabaseConfig` runs `LoadProjectRef` → `LoadConfig` →
+            // `NewDbConfigWithPassword`, so
             // the `[remotes.<ref>]`-merged config (e.g. an unsupported remote
             // `db.major_version` / `edge_runtime.deno_version`) is validated as a pure
             // config error BEFORE any network work. The base read in `resolve` above
@@ -594,11 +594,11 @@ export const legacyDbConfigLayer = Layer.effect(
         };
       });
 
-    // Go's `RunWithPoolerFallback` (`internal/db/dump/pooler_fallback.go`): when a
+    // `RunWithPoolerFallback` (`internal/db/dump/pooler_fallback.go`): when a
     // linked dump's pg_dump container fails with an IPv6 connectivity error (the
     // direct host is reachable from the CLI process but not from inside Docker), it
     // resolves the project's IPv4 transaction pooler and retries once. This exposes
-    // that pooler resolution (Go's `ResolvePoolerConfigForFallback`) for the dump
+    // that pooler resolution (`ResolvePoolerConfigForFallback`) for the dump
     // handler to invoke on demand. Returns `None` when the path is not pooler-eligible
     // (`--linked` only) or no pooler URL is configured, so the caller keeps the
     // original container error.
@@ -616,7 +616,7 @@ export const legacyDbConfigLayer = Layer.effect(
             ? (Option.getOrUndefined(flags.password ?? Option.none()) ?? "")
             : yield* resolveDbPassword(flags.password ?? Option.none(), cliConfig.workdir);
           // Container-fallback: fetch the primary pooler config from the Management API
-          // when no `.temp/pooler-url` is saved (Go's `ResolvePoolerConfigForFallback`).
+          // when no `.temp/pooler-url` is saved (`ResolvePoolerConfigForFallback`).
           return yield* resolvePoolerConn(
             ref,
             cliConfig.workdir,
@@ -639,7 +639,7 @@ export const legacyDbConfigLayer = Layer.effect(
 
     // Attach the connect-failure suggestion context to every resolved connection in
     // one place (Go sets it ambiently via `CurrentProfile`), so each connecting
-    // command inherits Go's `SetConnectSuggestion` hint without per-call-site wiring.
+    // command inherits `SetConnectSuggestion` hint without per-call-site wiring.
     const withSuggestion = (conn: LegacyPgConnInput): LegacyPgConnInput => ({
       ...conn,
       suggestionContext,

@@ -17,14 +17,14 @@ import {
 
 /**
  * Resolves the Storage gateway base URL + service-role key (+ local Kong CA),
- * mirroring Go's `client.NewStorageAPI` (`internal/storage/client/api.go:15-46`).
+ * mirroring `client.NewStorageAPI`.
  * Shared by `seed buckets` and `storage ls/cp/mv/rm`.
  *
- *  - `projectRef === ""` (local): base URL from `api.external_url` (else
- *    `<scheme>://<host>:<api.port>`), service-role key derived from
- *    `auth.{service_role_key,jwt_secret}`, and the Kong CA when the URL is https.
- *  - remote: base URL `https://<ref>.<projectHost>`; key from
- *    `SUPABASE_AUTH_SERVICE_ROLE_KEY` else `tenant.GetApiKeys`.
+ * - `projectRef === ""` (local): base URL from `api.external_url` (else
+ * `<scheme>://<host>:<api.port>`), service-role key derived from
+ * `auth.{service_role_key,jwt_secret}`, and the Kong CA when the URL is https.
+ * - remote: base URL `https://<ref>.<projectHost>`; key from
+ * `SUPABASE_AUTH_SERVICE_ROLE_KEY` else `tenant.GetApiKeys`.
  *
  * Requires `LegacyCliConfig` (workdir, projectHost) and — only on the remote
  * branch — `LegacyPlatformApiFactory` (lazy, so the local path never touches the
@@ -65,7 +65,7 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
   if (opts.projectRef !== "") {
     const baseUrl = `https://${opts.projectRef}.${cliConfig.projectHost}`;
     // Go: `viper.IsSet("AUTH_SERVICE_ROLE_KEY")` → use the env-provided key and
-    // skip the tenant lookup (`api.go:19-21`).
+    // skip the tenant lookup.
     const envKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
     if (envKey !== undefined && envKey.length > 0) {
       return { baseUrl, apiKey: envKey, localKongCa: undefined } satisfies LegacyStorageCredentials;
@@ -83,8 +83,8 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
         ),
       ),
     );
-    // Go's `tenant.GetApiKeys` fails with `errMissingKey` ("Anon key not found.")
-    // when the response yields nothing (`client.go:24-26,80-82`).
+    // `tenant.GetApiKeys` fails with `errMissingKey` ("Anon key not found.")
+    // when the response yields nothing.
     if (keys.anon === "" && keys.serviceRole === "") {
       return yield* new LegacyStorageMissingApiKeyError({ message: "Anon key not found." });
     }
@@ -102,8 +102,8 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
 
   // Go installs `status.NewKongClient` unconditionally for the local client; its
   // embedded CA only matters for https. `(*api).Validate` resolves cert_path /
-  // key_path and validates the pairing only when `api.enabled && api.tls.enabled`
-  // (`config.go:795,841-861`). Inject a CA whenever the resolved URL is https
+  // key_path and validates the pairing only when `api.enabled && api.tls.enabled`.
+  // Inject a CA whenever the resolved URL is https
   // (Go derives the scheme from `api.tls.enabled` alone, `config.go:639-642`).
   let localKongCa: string | undefined;
   const validatedCa =
@@ -132,12 +132,12 @@ function resolveLocalBaseUrl(config: LegacyStorageConfigView): string {
 
 /**
  * Resolve the service-role key for the local Storage gateway, mirroring Go's
- * `(*auth).generateAPIKeys` (`pkg/config/apikeys.go:43-63`) + the Viper
- * `AutomaticEnv`/`SUPABASE_` prefix precedence (`config.go:492-497`):
- *  - jwt secret: `SUPABASE_AUTH_JWT_SECRET` → `auth.jwt_secret` → `defaultJwtSecret`;
- *    a resolved secret shorter than 16 chars is rejected;
- *  - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` → `auth.service_role_key`
- *    → sign from the resolved secret.
+ * `(*auth).generateAPIKeys` + the Viper
+ * `AutomaticEnv`/`SUPABASE_` prefix precedence:
+ * - jwt secret: `SUPABASE_AUTH_JWT_SECRET` → `auth.jwt_secret` → `defaultJwtSecret`;
+ * a resolved secret shorter than 16 chars is rejected;
+ * - service-role key: `SUPABASE_AUTH_SERVICE_ROLE_KEY` → `auth.service_role_key`
+ * → sign from the resolved secret.
  *
  * Empty checks use length, so an explicit `service_role_key = ""` is regenerated
  * like Go (not sent as the empty string).
@@ -169,8 +169,8 @@ const resolveLocalServiceRoleKey = Effect.fnUntraced(function* (auth: {
 });
 
 /**
- * Validate + resolve the local Kong TLS config, mirroring Go's `(*api).Validate`
- * (`pkg/config/config.go:845-861`): cert without key (or vice-versa) errors; both
+ * Validate + resolve the local Kong TLS config, mirroring `(*api).Validate`:
+ * cert without key (or vice-versa) errors; both
  * present and readable returns the cert PEM; neither returns the embedded CA.
  *
  * Only called when `api.enabled && api.tls.enabled` (Go gates both path
@@ -230,7 +230,7 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
 /**
  * Builds a `typeof globalThis.fetch` that injects `tls.ca` into every request,
  * trusting the provided CA PEM for HTTPS connections to the local Kong gateway.
- * Mirrors Go's `newLocalClient` (`internal/storage/client/api.go:30-37`).
+ * Mirrors `newLocalClient`.
  *
  * Bun's fetch accepts `{ tls: { ca: string } }` via `BunFetchRequestInit`, which
  * extends `RequestInit`; no `as` cast is needed.

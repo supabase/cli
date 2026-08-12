@@ -15,7 +15,7 @@
 | Path                                           | Format | When                                                                |
 | ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
 | `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves (Go `PersistentPostRun`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves |
 
 ## API Routes
 
@@ -51,7 +51,7 @@ Only `content.sql` is rendered in text mode. The full payload is exposed via `--
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 The raw SQL `content.sql` followed by a trailing `\n`.
 
@@ -79,6 +79,6 @@ NDJSON `success` event with the same full payload as `--output-format json`.
 
 ## Notes
 
-- Go's `--output` flag is **ignored** by `download.Run` — `fmt.Println(resp.JSON200.Content.Sql)` runs regardless of `pretty|json|yaml|toml|env`. The TS port mirrors this exactly: Go-style `--output` values do not change text-mode rendering. Only the TS-extension `--output-format json|stream-json` produces a structured payload.
-- UUID validation runs **after** project-ref resolution but **before** the API call, matching Go's lifecycle: `PersistentPreRunE` resolves the ref first, then `download.Run` validates via `uuid.Parse`. Error messages mirror google/uuid v1.6.0: `invalid snippet ID: invalid UUID length: N` for malformed lengths, `invalid snippet ID: invalid UUID format` for length-36 inputs with wrong dash positions or hex chars.
-- The linked-project cache fires after project-ref resolves (Go `PersistentPostRun`); the telemetry state always flushes (Go `Execute`). Both run on success and on every error path — including invalid-UUID early-exit — via the two `Effect.ensuring` blocks in the handler.
+- The `--output` flag has **no effect** on this command — Go-style `--output` values (`pretty|json|yaml|toml|env`) do not change text-mode rendering. Only the TS-extension `--output-format json|stream-json` produces a structured payload.
+- UUID validation runs **after** project-ref resolution but **before** the API call. Error messages: `invalid snippet ID: invalid UUID length: N` for malformed lengths, `invalid snippet ID: invalid UUID format` for length-36 inputs with wrong dash positions or hex chars.
+- The linked-project cache fires after project-ref resolves; the telemetry state always flushes. Both run on success and on every error path — including invalid-UUID early-exit — via the two `Effect.ensuring` blocks in the handler.

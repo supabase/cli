@@ -5,7 +5,7 @@ import { Effect, FileSystem, Option } from "effect";
 import { legacyDetectContentType } from "./legacy-detect-content-type.ts";
 
 /**
- * Upload content-type resolution, ported from Go's `pkg/storage/objects.go`
+ * Upload content-type resolution, ported from `pkg/storage/objects.go`
  * (`ParseFileOptions` + `UploadObject`) and shared by `seed buckets` and
  * `storage cp`: run `http.DetectContentType` on the first ≤512 bytes (the bytes
  * decide), then refine a generic `text/plain` by file extension. So a PNG named
@@ -18,7 +18,7 @@ const LEGACY_SNIFF_LEN = 512;
 
 /**
  * Read ONLY the first ≤512 bytes of a file for content-type sniffing, mirroring
- * Go's `io.LimitReader(f, 512)` (`pkg/storage/objects.go:78-79`) — the file is
+ * `io.LimitReader(f, 512)` — the file is
  * NOT fully buffered. Returns an empty buffer on EOF or any read error (an
  * unreadable file then fails at the streaming upload open, so the sniff is moot).
  */
@@ -39,9 +39,9 @@ export const legacyReadSniffBytes = Effect.fnUntraced(function* (
 
 /**
  * Refine a content-type by file extension, but only when it is a generic
- * `text/plain` (Go's `if strings.Contains(fo.ContentType, "text/plain")` gate,
+ * `text/plain` (`if strings.Contains(fo.ContentType, "text/plain")` gate,
  * `objects.go:105-108`). Applied to both the sniffed type and an explicit
- * `--content-type` value, matching Go's `ParseFileOptions` → `UploadObject` flow.
+ * `--content-type` value, matching `ParseFileOptions` → `UploadObject` flow.
  */
 export function legacyRefineUploadContentType(contentType: string, filePath: string): string {
   if (contentType.includes("text/plain")) {

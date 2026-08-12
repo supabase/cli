@@ -28,7 +28,7 @@
 | Variable                | Purpose                                                                                                                                                                                                                                                                                              | Required?                                                                  |
 | ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                                 | no (falls back to keyring → `~/.supabase/access-token`)                    |
-| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (Go parity — used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
+| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
 | `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                                   | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
 | `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                                    | no (walks up from CWD looking for `supabase/config.toml`)                  |
 
@@ -50,17 +50,17 @@
 | ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------ |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` / `--timestamp` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/backups/restore/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-Go's `restore` command ignores `--output` entirely (`apps/cli-go/internal/backups/restore/restore.go:22`, deleted in CLI-1970; last present at commit 7b469f5b3) and always writes the success line to **stderr**. The legacy port mirrors that for every Go `--output` value. The `--output-format` (TS-only) JSON modes get a structured payload — non-breaking because Go has no JSON for restore.
+This command ignores `--output` entirely and always writes the success line to
+**stderr**, for every `--output` value. The `--output-format` JSON modes get a
+structured payload.
 
-### `--output pretty|yaml|toml|env` (Go-compat) / `--output-format text`
+### `--output pretty|yaml|toml|env` / `--output-format text`
 
-Writes `"Started PITR restore: <ref>\n"` to **stderr** (byte-identical to Go).
+Writes `"Started PITR restore: <ref>\n"` to **stderr**.
 
-### `--output json` (Go-compat)
+### `--output json`
 
 Indented JSON object on stdout: `{ "message": "Started PITR restore", "project_ref": "<ref>" }`.
 
@@ -75,7 +75,7 @@ One `result` NDJSON event on success with the project ref payload.
 ## Notes
 
 - `--timestamp` / `-t` accepts seconds since Unix epoch (int64). Defaults to `0`, which the API interprets as "now".
-- Known Go-parity gap: the generated `V1RestorePitrBackupInput` schema enforces `recovery_time_target_unix >= 0`. Go's `int64` has no lower bound, so a negative value is rejected locally with a schema decode error instead of being forwarded to the API. Resolving this requires an upstream OpenAPI spec change.
+- Known gap: the generated `V1RestorePitrBackupInput` schema enforces `recovery_time_target_unix >= 0`, so a negative value is rejected locally with a schema decode error instead of being forwarded to the API (the underlying field has no lower bound). Resolving this requires an upstream OpenAPI spec change.
 - Requires `--project-ref`, `SUPABASE_PROJECT_ID`, a populated `<workdir>/supabase/.temp/project-ref` file, or a TTY for the interactive project picker.
-- The interactive picker calls `GET /v1/projects` and writes `"Selected project: <ref>"` to stderr in text mode (matches Go `project_ref.go:50`). It does **not** persist the choice; only `supabase link` and `supabase bootstrap` write the temp file.
-- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers — Go parity.
+- The interactive picker calls `GET /v1/projects` and writes `"Selected project: <ref>"` to stderr in text mode. It does **not** persist the choice; only `supabase link` and `supabase bootstrap` write the temp file.
+- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

@@ -18,7 +18,7 @@ import {
 import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
 import { legacySplitAndTrim } from "./legacy-sql-split.ts";
 
-/** Applying a seed file failed (Go's `SeedData` / `ExecBatchWithCache` errors). */
+/** Applying a seed file failed (`SeedData` / `ExecBatchWithCache` errors). */
 export class LegacyMigrationSeedError extends Data.TaggedError("LegacyMigrationSeedError")<{
   readonly message: string;
 }> {
@@ -34,7 +34,7 @@ export interface LegacySeedConfig {
 }
 
 // Only metadata is kept during the pending scan — the decoded statements are NOT
-// retained. Go's `SeedFile` (`pkg/migration/file.go:178-182`) holds just
+// retained. `SeedFile` holds just
 // `{Path, Hash, Dirty}` and re-parses each file individually inside the apply loop
 // ("Parse each file individually to reduce memory usage", `file.go:198-203`), so a
 // large/many-file seed set never has every file's statements in memory at once.
@@ -45,12 +45,12 @@ interface LegacyPendingSeed {
 }
 
 /**
- * Resolves `[db.seed].sql_paths` to existing files, porting Go's `config.Glob.SQLFiles`
+ * Resolves `[db.seed].sql_paths` to existing files, porting `config.Glob.SQLFiles`
  * (`pkg/migration/seed.go:35`, via the shared {@link legacySqlFilesGlob} traversal —
  * also used by `legacyGetPendingSeeds` (`legacy-seed-ops.ts`) for the same Go field on
  * the `db push`/`db reset` path, and by `legacyApplySchemaFiles` (`legacy-migration-apply.ts`)
- * for `[db.migrations].schema_paths`). Go's `GetPendingSeeds` prints a single unconditional
- * `WARN: <joined>` line for any glob problem (`seed.go:36-38`) — unlike the schema-files
+ * for `[db.migrations].schema_paths`). `GetPendingSeeds` prints a single unconditional
+ * `WARN: <joined>` line for any glob problem — unlike the schema-files
  * apply path, which only warns when NO pattern matched anything at all.
  */
 const resolveSeedFiles = (
@@ -67,7 +67,7 @@ const resolveSeedFiles = (
   });
 
 /**
- * Applies pending seed files, port of Go's `applySeedFiles` + `GetPendingSeeds` +
+ * Applies pending seed files, port of `applySeedFiles` + `GetPendingSeeds` +
  * `SeedData` (`internal/migration/apply/apply.go:40`, `pkg/migration/seed.go`):
  * gated on `db.seed.enabled`; a new seed runs its statements + records its hash;
  * a changed seed only updates the recorded hash (Go's "dirty" → skip statements);
@@ -136,8 +136,8 @@ export const legacyApplySeedFiles = (
         "stderr",
       );
       // Read + split this seed's statements here (not up front) so only one file's
-      // statements are in memory at a time, matching Go's `ExecBatchWithCache` →
-      // `parseFile` inside the apply loop (`file.go:198-203`). A dirty seed only
+      // statements are in memory at a time, matching `ExecBatchWithCache` →
+      // `parseFile` inside the apply loop. A dirty seed only
       // updates its recorded hash, so Go never re-reads it — skip the read.
       let statements: ReadonlyArray<string> = [];
       if (!seed.dirty) {
@@ -151,7 +151,7 @@ export const legacyApplySeedFiles = (
             ),
           ),
         );
-        // Go's `SeedFile.ExecBatchWithCache` parses through the same `parseFile` every
+        // `SeedFile.ExecBatchWithCache` parses through the same `parseFile` every
         // other caller does, so it enforces `SUPABASE_SCANNER_BUFFER_SIZE` here too —
         // see `checkScannerBufferSize`'s own doc comment.
         yield* checkScannerBufferSize(

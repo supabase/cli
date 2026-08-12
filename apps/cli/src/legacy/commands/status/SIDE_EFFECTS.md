@@ -36,9 +36,9 @@ resolved from local `config.toml` and the local Docker daemon.
 | `SUPABASE_AUTH_ANON_KEY`         | overrides `auth.anon_key`                               | no                                                                      |
 | `SUPABASE_AUTH_SERVICE_ROLE_KEY` | overrides `auth.service_role_key`                       | no                                                                      |
 
-The `SUPABASE_AUTH_*` vars mirror Go's Viper `AutomaticEnv` (`SetEnvPrefix("SUPABASE")` +
-`.`→`_` key replacer, `pkg/config/config.go:529-535`) and take precedence over the corresponding
-`config.toml` value, matching Viper's real precedence order.
+The `SUPABASE_AUTH_*` vars follow the same `SUPABASE_`-prefixed, `.`→`_` env-var naming
+convention used elsewhere in config loading, and take precedence over the corresponding
+`config.toml` value.
 
 `docker` (or `podman` as a fallback) must be on `PATH`.
 
@@ -49,15 +49,15 @@ The `SUPABASE_AUTH_*` vars mirror Go's Viper `AutomaticEnv` (`SetEnvPrefix("SUPA
 | `0`  | success — status displayed                                                                                                                                                                                                                                                                                                                                     |
 | `0`  | **`--ignore-health-check` is set** — skips the health assertion below entirely, so an unhealthy/not-running db never fails the command                                                                                                                                                                                                                         |
 | `1`  | `supabase/config.toml` missing or malformed                                                                                                                                                                                                                                                                                                                    |
-| `1`  | malformed CSV in an `--override-name`/`--exclude` value — fails during flag parsing, before the handler and telemetry, with pflag's exact diagnostic on stderr (e.g. `invalid argument "\"api.url=FOO" for "--override-name" flag: parse error on line 1, column 13: extraneous or missing " in quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
+| `1`  | malformed CSV in an `--override-name`/`--exclude` value — fails during flag parsing, before the handler and telemetry, with the exact diagnostic text on stderr (e.g. `invalid argument "\"api.url=FOO" for "--override-name" flag: parse error on line 1, column 13: extraneous or missing " in quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
 | `1`  | a malformed `--override-name` entry                                                                                                                                                                                                                                                                                                                            |
 | `1`  | listing running containers failed (Docker daemon unreachable, etc.)                                                                                                                                                                                                                                                                                            |
 | `1`  | the db container inspect call failed (including "not found") — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                                      |
 | `1`  | the db container is present but not in the `running` state — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                                        |
 | `1`  | the db container is running but its Docker health check isn't `healthy` — health assertion, skipped by `--ignore-health-check` above                                                                                                                                                                                                                           |
-| `1`  | `auth.jwt_secret` is configured but shorter than 16 characters (Go's `Config.Validate` rejects this at config-load time)                                                                                                                                                                                                                                       |
+| `1`  | `auth.jwt_secret` is configured but shorter than 16 characters (rejected at config-load time)                                                                                                                                                                                                                                       |
 | `1`  | `auth.signing_keys_path` is configured but the file is missing/malformed, or its first key's algorithm is not `RS256`/`ES256`                                                                                                                                                                                                                                  |
-| `1`  | `api.enabled` and `api.tls.enabled` are true and only one of `api.tls.cert_path`/`key_path` is set (Go's `Config.Validate` rejects this at config-load time)                                                                                                                                                                                                   |
+| `1`  | `api.enabled` and `api.tls.enabled` are true and only one of `api.tls.cert_path`/`key_path` is set (rejected at config-load time)                                                                                                                                                                                                   |
 | `1`  | `api.enabled` and `api.tls.enabled` are true, both `cert_path` and `key_path` are set, but one of the files can't be read                                                                                                                                                                                                                                      |
 
 ## Telemetry Events Fired
@@ -68,7 +68,7 @@ The `SUPABASE_AUTH_*` vars mirror Go's Viper `AutomaticEnv` (`SetEnvPrefix("SUPA
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Default (`-o` unset or `-o pretty`): a stderr banner, then 5 grouped rounded-border tables on
 stdout. Empty rows (a value with nothing resolved) and entirely empty groups are skipped; a
@@ -120,9 +120,9 @@ supabase local development setup is running.
 Group table cells are colored on a TTY (Aqua for links, Yellow for keys, Green for labels, bold
 headers); colors are stripped on non-TTY/piped output.
 
-`Stopped services: [<container-id> ...]` is written to stderr (Go slice format, e.g.
-`[supabase_storage_test supabase_studio_test]`) whenever one of the 13 expected service
-containers isn't in the running set.
+`Stopped services: [<container-id> ...]` is written to stderr (space-separated
+bracketed list, e.g. `[supabase_storage_test supabase_studio_test]`) whenever one of
+the 13 expected service containers isn't in the running set.
 
 ### `-o env`
 
@@ -146,9 +146,8 @@ key — see `legacy-go-output.encoders.ts`'s `encodeEnv`.
 }
 ```
 
-Top-level keys sorted alphabetically, 2-space indent, trailing newline (Go `encoding/json`
-parity). Fields whose owning service is disabled or excluded are omitted entirely (not emitted
-as `null`/`""`).
+Top-level keys sorted alphabetically, 2-space indent, trailing newline. Fields whose owning
+service is disabled or excluded are omitted entirely (not emitted as `null`/`""`).
 
 ### `-o yaml` / `-o toml`
 
@@ -162,44 +161,42 @@ Additive — no Go CLI equivalent. Emits the same resolved value map via
 ## Notes
 
 - `-o`/`--output` (`env|pretty|json|toml|yaml`) takes priority over `--output-format` whenever
-  it is set, matching the Go-parity checklist's dual-output-flag rule. `-o pretty` (or `-o`
+  it is set. `-o pretty` (or `-o`
   unset) falls through to `--output-format`'s text/json/stream-json handling.
 - `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` remaps a single field's output KEY; the
   value and group layout are unaffected. An unknown key or a malformed (non `KEY=VALUE`) entry
   fails with `LegacyStatusOverrideParseError`. This only affects the `env`/`json`/`toml`/`yaml`
-  (`printStatus`) output path — matching Go, the pretty table (`-o pretty` or unset) always
-  renders with un-overridden names, since Go's `PrettyPrint` unmarshals a fresh, empty `EnvSet{}`
-  rather than reusing the CLI-supplied, override-populated `CustomName` (`status.go:236-243`).
+  (`printStatus`) output path — the pretty table (`-o pretty` or unset) always
+  renders with un-overridden names.
 - When neither `docker` nor `podman` can be spawned at all, the error message names the actual
   root cause (e.g. "docker: command not found (podman also not found) — install Docker Desktop or
   Podman and ensure it is on PATH") rather than a generic "failed to ..." string.
 - `--exclude <value>` (hidden) omits a service from the value map when `value` matches either its
-  container id or its default Docker image short name (Go's `ShortContainerImageName`, e.g.
+  container id or its default Docker image short name (e.g.
   `storage-api` for the storage service, `edge-runtime` for edge functions) — the default image
-  is read from the same embedded Dockerfile manifest Go parses, so a version bump there is picked
-  up automatically without needing to read the `.temp/<service>-version` pin file.
+  is read from the same embedded Dockerfile manifest the old Go CLI parsed, so a version bump
+  there is picked up automatically without needing to read the `.temp/<service>-version` pin file.
 - `--ignore-health-check` (hidden) skips the db container health assertion entirely and always
-  exits `0`, matching Go's early-return in `Run()`.
+  exits `0`.
 - Default `auth.anon_key`/`auth.service_role_key`/`auth.jwt_secret` values are generated via a
   Go-byte-exact HS256 signer (`legacy-go-jwt.ts`), not `@supabase/stack`'s `generateJwt` — the
-  latter uses a different issuer, expiry, and claim order that would not match what Go prints
-  for local dev keys. A configured `auth.jwt_secret` shorter than 16 characters fails the command
-  (`LegacyStatusInvalidConfigError`), matching Go's `Config.Validate` rejecting it at config-load
-  time before any command can render output.
+  latter uses a different issuer, expiry, and claim order that would not match the old Go CLI's
+  local dev keys. A configured `auth.jwt_secret` shorter than 16 characters fails the command
+  (`LegacyStatusInvalidConfigError`) at config-load time before any command can render output.
 - When `auth.signing_keys_path` is set and resolves to a non-empty JWK array, `anon_key`/
-  `service_role_key` are instead signed asymmetrically (RS256/ES256) with the file's first key,
-  matching Go's `generateJWT` (`pkg/config/apikeys.go:76-113`) — a relative path resolves against
+  `service_role_key` are instead signed asymmetrically (RS256/ES256) with the file's first key —
+  a relative path resolves against
   `<workdir>/supabase`. This path is skipped entirely when `auth.anon_key`/`auth.service_role_key`
   are explicitly configured. A missing/malformed file, or a first key with an algorithm other than
   `RS256`/`ES256`, fails the command (`LegacyStatusInvalidConfigError`).
 - `SUPABASE_AUTH_JWT_SECRET`/`SUPABASE_AUTH_PUBLISHABLE_KEY`/`SUPABASE_AUTH_SECRET_KEY`/
   `SUPABASE_AUTH_ANON_KEY`/`SUPABASE_AUTH_SERVICE_ROLE_KEY` override the corresponding
-  `config.toml` value at higher precedence, matching Go's Viper `AutomaticEnv` — an empty env var
+  `config.toml` value at higher precedence — an empty env var
   is treated as unset. This is scoped to exactly the 5 auth fields `status` reads; it is not a
   general `@supabase/config` port of Viper's `AutomaticEnv` (which applies to every config field).
 - `db.password` and the `storage.s3_credentials` triple have no `@supabase/config` schema field;
-  Go hardcodes both (`"postgres"` and the S3 access key/secret/region seen above), reproduced
-  identically in `legacy-local-config-values.ts`.
+  the old Go CLI hardcoded both (`"postgres"` and the S3 access key/secret/region seen above),
+  reproduced identically in `legacy-local-config-values.ts`.
 - No e2e test is planned for this command: there is no Docker-daemon-free golden path, and the
   e2e harness (`runSupabase()`) does not provision a real local stack. This is a scope reduction
   relative to the Linear issue's "E2E compatibility test added" checkbox; see the port plan for

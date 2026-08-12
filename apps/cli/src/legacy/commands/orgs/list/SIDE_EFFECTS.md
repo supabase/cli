@@ -12,7 +12,7 @@
 
 | Path                         | Format | When                                                        |
 | ---------------------------- | ------ | ----------------------------------------------------------- |
-| `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command — Go parity |
+| `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
 
 `orgs list` is a user-level command — it does not resolve a `--project-ref`, so the legacy
 linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never written.
@@ -28,7 +28,7 @@ linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never
 | Variable                | Purpose                                                                                                                                                   | Required?                                               |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (Go parity — used by the cli-e2e harness) | no (defaults to `supabase`)                             |
+| `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                             |
 
 ## Exit Codes
 
@@ -46,21 +46,18 @@ linked-project cache (`~/.supabase/<workdir-hash>/linked-project.json`) is never
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Matches `apps/cli-go/internal/orgs/list/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for this
-command.
-
 ## Output
 
-The legacy `--output {pretty,json,yaml,toml,env}` flag (Go-compatible) and the new global
-`--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both
-are supplied. `pretty` and `text` map to the same Glamour render.
+The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,json,stream-json}`
+flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the
+same Glamour render.
 
-### `--output pretty` (Go default) / `--output-format text`
+### `--output pretty` (default) / `--output-format text`
 
-Prints a Glamour-styled markdown table with columns `ID`, `NAME`. Byte-matched against the
-Go CLI. The rendered table always ends with a trailing newline (Glamour appends one).
+Prints a Glamour-styled markdown table with columns `ID`, `NAME`. The rendered table always
+ends with a trailing newline (Glamour appends one).
 
-### `--output json` (Go-compat)
+### `--output json`
 
 Indented JSON of the `OrganizationResponseV1[]` array with alphabetical keys + trailing newline.
 
@@ -70,12 +67,11 @@ YAML document of the organizations array.
 
 ### `--output toml`
 
-TOML document wrapping the array as `[[organizations]]` (Go parity).
+TOML document wrapping the array as `[[organizations]]`.
 
 ### `--output env`
 
-Fails with `LegacyOrgsEnvNotSupportedError("--output env flag is not supported")`. Matches
-`apps/cli-go/internal/orgs/list/list.go:32-33` (deleted in CLI-1970; last present at commit 7b469f5b3).
+Fails with `LegacyOrgsEnvNotSupportedError("--output env flag is not supported")`.
 
 ### `--output-format json`
 
@@ -93,9 +89,9 @@ One `result` NDJSON event with `{organizations: [...]}`.
 ## Security Notes
 
 - API-supplied `id` and `name` strings are rendered to stdout without ANSI / control-character
-  sanitization. This is strict Go parity — the Go CLI uses `glamour` which has the same
-  pass-through behaviour. A malicious or compromised Management API could in principle return
-  org names containing terminal escape sequences. If sanitization is added later it should
-  land at the renderer (`legacy-glamour-table.ts`) so both shells inherit the fix.
+  sanitization (inherited from the old Go CLI's rendering behavior). A malicious or
+  compromised Management API could in principle return org names containing terminal
+  escape sequences. If sanitization is added later it should land at the renderer
+  (`legacy-glamour-table.ts`) so both shells inherit the fix.
 - Error response bodies embedded in `LegacyOrgsListUnexpectedStatusError` are sanitized by
   `mapLegacyHttpError` (control chars stripped, capped at 1024 bytes).

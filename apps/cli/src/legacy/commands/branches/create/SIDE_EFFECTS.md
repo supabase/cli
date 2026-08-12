@@ -14,8 +14,8 @@
 
 | Path                                             | Format | When                                                                     |
 | ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -52,14 +52,12 @@
 | `cli_command_executed`  | post-run, success or failure (via wrapper)      | `exit_code`, `duration_ms`, `flags` (`--project-ref` whitelisted) |
 | `cli_upgrade_suggested` | on 4xx with `branching_limit` entitlement gated | `{feature_key: "branching_limit", org_slug}`                      |
 
-Matches `apps/cli-go/internal/branches/create/` (deleted in CLI-1970; last present at commit 7b469f5b3).
-
 ## Output
 
-Honors both `--output {pretty,json,yaml,toml,env}` (Go) and `--output-format {text,json,stream-json}` (TS). `--output` wins when both are supplied.
+Honors both `--output {pretty,json,yaml,toml,env}` and `--output-format {text,json,stream-json}`. `--output` wins when both are supplied.
 
-In **text mode** (default / `--output pretty`), the header `Created preview branch:` writes to **stdout** (Go `fmt.Println`) followed by the single-row Glamour-styled list-table.
+In **text mode** (default / `--output pretty`), the header `Created preview branch:` writes to **stdout** followed by the single-row Glamour-styled list-table.
 
-In Go encoder modes, the same header writes to stdout followed by the encoded `V1CreateABranchOutput` payload.
+For `--output {json,yaml,toml,env}`, the same header writes to stdout followed by the encoded `V1CreateABranchOutput` payload.
 
 In `--output-format json` / `stream-json`, a `success` event carries the response payload.

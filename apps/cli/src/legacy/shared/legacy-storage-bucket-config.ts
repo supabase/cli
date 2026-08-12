@@ -56,12 +56,12 @@ interface LegacyBucketConfigEntry {
 }
 
 /**
- * Resolve a bucket's create/update props, mirroring Go's `config.resolve()`
- * (`pkg/config/config.go:753-756`) + the `sizeInBytes` decode at config-load:
- *  - an omitted or zero `file_size_limit` inherits the (already-parsed)
- *    storage-level limit;
- *  - `public` is the explicit value only when the TOML declares it, else
- *    `undefined` (Go's `*bool` nil → omitted from the request body).
+ * Resolve a bucket's create/update props, mirroring `config.resolve()`
+ * + the `sizeInBytes` decode at config-load:
+ * - an omitted or zero `file_size_limit` inherits the (already-parsed)
+ * storage-level limit;
+ * - `public` is the explicit value only when the TOML declares it, else
+ * `undefined` (`*bool` nil → omitted from the request body).
  *
  * Throws on an unparseable bucket `file_size_limit` (the caller maps it to a
  * config-load error). `storageFileSizeLimitBytes` must already be parsed.

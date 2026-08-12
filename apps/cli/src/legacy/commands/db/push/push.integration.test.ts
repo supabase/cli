@@ -421,9 +421,9 @@ describe("legacy db push", () => {
         yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(out.stderrText).not.toContain("failed to cache migrations catalog");
         expect(edgeRunCalls).toHaveLength(1);
-        // Go's `Config.ProjectId` resolves config.toml's `project_id` (here "test")
-        // once no `SUPABASE_PROJECT_ID` env override wins — the pg-delta Deno-cache
-        // volume must key off that same id, not fall through to an empty/shared name.
+        // `project_id` resolves from config.toml (here "test") once no
+        // `SUPABASE_PROJECT_ID` env override wins — the pg-delta Deno-cache volume
+        // must key off that same id, not fall through to an empty/shared name.
         expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_test:/root/.cache/deno:rw");
       });
     },
@@ -454,12 +454,11 @@ describe("legacy db push", () => {
   it.live(
     "falls back to the linked project ref for the pg-delta volume when config.toml has no project_id",
     () => {
-      // Go's `flags.LoadConfig` (`internal/utils/flags/config_path.go:11`) seeds
-      // `Config.ProjectId = ProjectRef` BEFORE `Config.Load` runs, so on the
+      // The linked ref seeds `project_id` before config load runs, so on the
       // linked path (the default target here — no `--local`/`--db-url`) an
       // absent `project_id` retains the linked ref rather than falling to the
       // workdir basename; only `--local`/`--db-url` (the previous test, where
-      // `ProjectRef` is never seeded) fall through to the basename.
+      // the ref is never seeded) fall through to the basename.
       const { layer, out, edgeRunCalls } = setup(tmp.current, {
         toml: "[experimental.pgdelta]\nenabled = true\n",
         args: ["db", "push", "--linked"],
@@ -495,10 +494,10 @@ describe("legacy db push", () => {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).not.toContain("failed to cache migrations catalog");
       expect(edgeRunCalls).toHaveLength(1);
-      // Go's `Config.Validate` (`config.go:992-995`) sanitizes an invalid
-      // `project_id` (replacing the disallowed run with `_`) once at
-      // config-load time, so every later reader — including `EdgeRuntimeId` —
-      // sees the sanitized form, never the raw `"my app"`.
+      // Config validation sanitizes an invalid `project_id` (replacing the
+      // disallowed run with `_`) once at config-load time, so every later
+      // reader — including `EdgeRuntimeId` — sees the sanitized form, never
+      // the raw `"my app"`.
       expect(edgeRunCalls[0]?.binds).toContain("supabase_edge_runtime_my_app:/root/.cache/deno:rw");
     });
   });
@@ -597,14 +596,13 @@ describe("legacy db push", () => {
   it.live(
     "prints the DRY RUN heads-up line after the connection resolves, not before (Go's push.Run order)",
     () => {
-      // Go's actual order (verified against apps/cli-go): the connection-resolution
-      // phase (`flags.ParseDatabaseConfig` → `NewDbConfigWithPassword`, which prints
-      // "Initialising login role..." when minting a temp role, `db_url.go:204`) runs
-      // BEFORE `push.Run` is even invoked — and "DRY RUN: …" is the literal first line
-      // of `push.Run` itself (`push.go:22-24`), so it prints AFTER that resolution
-      // output, never before. `simulateInitialisingLoginRole` stands in for the real
-      // resolver's stderr line (the fake resolver is otherwise silent) so this
-      // asserts on actual accumulated stderr text ordering, not internal call timing.
+      // The connection-resolution phase (which prints "Initialising login
+      // role..." when minting a temp role) runs BEFORE the push itself runs —
+      // and "DRY RUN: …" is the literal first line the push prints, so it
+      // prints AFTER that resolution output, never before.
+      // `simulateInitialisingLoginRole` stands in for the real resolver's
+      // stderr line (the fake resolver is otherwise silent) so this asserts on
+      // actual accumulated stderr text ordering, not internal call timing.
       const { layer, out } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         simulateInitialisingLoginRole: true,
@@ -720,9 +718,9 @@ describe("legacy db push", () => {
   });
 
   it.live("expands a directory in [db.seed].sql_paths to its sorted .sql children", () => {
-    // Go's `GetPendingSeeds` (`Glob.SQLFiles`) walks a matched directory and seeds its
-    // regular `.sql` files recursively; non-.sql files are skipped. Without dir expansion
-    // the directory path reached `readFileString(<dir>)` and failed.
+    // A matched directory is walked and its regular `.sql` files seeded
+    // recursively; non-.sql files are skipped. Without dir expansion the
+    // directory path reached `readFileString(<dir>)` and failed.
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n\n[db.seed]\nsql_paths = ["seeds"]\n',
       files: {
@@ -756,10 +754,11 @@ describe("legacy db push", () => {
   });
 
   it.live("hashes a non-UTF-8 seed file by its raw bytes (Go's io.Copy parity)", () => {
-    // Go's `NewSeedFile` hashes the raw stream; a UTF-8 string decode would replace the
-    // invalid bytes and change the hash. Write invalid UTF-8 and pre-seed the remote with
-    // the RAW-byte sha256 — the push must treat it as already-applied (byte hash matches),
-    // not re-run it. A string-decoded hash here would differ and mark the seed dirty.
+    // The seed file hashes the raw byte stream; a UTF-8 string decode would
+    // replace the invalid bytes and change the hash. Write invalid UTF-8 and
+    // pre-seed the remote with the RAW-byte sha256 — the push must treat it as
+    // already-applied (byte hash matches), not re-run it. A string-decoded hash
+    // here would differ and mark the seed dirty.
     const raw = Buffer.from([0x2d, 0x2d, 0x20, 0xff, 0xfe, 0x00, 0x01, 0x0a]);
     const rawHash = createHash("sha256").update(raw).digest("hex");
     const { layer, out } = setup(tmp.current, {
@@ -800,8 +799,9 @@ describe("legacy db push", () => {
   });
 
   it.live("--include-roles without a roles.sql pushes migrations and skips globals", () => {
-    // Go's push only globs supabase/roles.sql when it exists; an absent file is
-    // silently skipped (no error, no "Seeding globals" line) and the rest pushes.
+    // `supabase/roles.sql` is only globbed when it exists; an absent file is
+    // silently skipped (no error, no "Seeding globals" line) and the rest
+    // pushes.
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: migrationFile("20240101000000"),
@@ -1000,8 +1000,9 @@ describe("legacy db push", () => {
 
   it.live("decrypts an encrypted vault secret keyed by the project .env (not process.env)", () => {
     // Regression: the old point-of-use vault decryption keyed only on `process.env`, so a
-    // `DOTENV_PRIVATE_KEY` present only in the project `.env` failed to decrypt. Go's config
-    // load merges the project `.env` into the key set (`legacyCheckDbToml`), so it resolves.
+    // `DOTENV_PRIVATE_KEY` present only in the project `.env` failed to decrypt. The
+    // config load merges the project `.env` into the key set (`legacyCheckDbToml`), so
+    // it resolves.
     const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
     const ENCRYPTED =
       "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -1045,16 +1046,16 @@ describe("legacy db push", () => {
     });
     return Effect.gen(function* () {
       const error = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.flip);
-      // A server error without position/detail keeps Go's plain ExecBatch layout.
+      // A server error without position/detail keeps the plain error layout.
       expect(error._tag).toBe("LegacyDbPushApplyError");
       expect(error.message).toBe("ERROR: boom (SQLSTATE 42601)\nAt statement: 0\nBOOM");
     });
   });
 
   it.live("renders Go's caret, Detail line, and 42704 extension hint on a failed migration", () => {
-    // Byte-match of Go's `(*MigrationFile).ExecBatch` failure rendering
-    // (`pkg/migration/file.go:88-113`): the `^` caret under the server-reported
-    // error position, the `Detail` line, and the undefined-object extension hint.
+    // Established failure-rendering format: the `^` caret under the
+    // server-reported error position, the `Detail` line, and the
+    // undefined-object extension hint.
     const stat = "CREATE TABLE test (path ltree NOT NULL)";
     const { layer } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
@@ -1102,7 +1103,7 @@ describe("legacy db push", () => {
         includeRoles: true,
         includeSeed: true,
       }).pipe(Effect.provide(layer));
-      // The roles path is wrapped in Bold (ANSI), matching Go's utils.Bold.
+      // The roles path is wrapped in Bold (ANSI).
       expect(out.stderrText).toContain("Would create custom roles");
       expect(out.stderrText).toContain("roles.sql");
       expect(out.stderrText).toContain("Would push these migrations:");
@@ -1139,8 +1140,9 @@ describe("legacy db push", () => {
   });
 
   it.live("auto-confirms pending migrations via SUPABASE_YES set only in the project .env", () => {
-    // Go's loadNestedEnv sets project-.env keys before PromptYesNo reads viper YES, so a
-    // `SUPABASE_YES` in supabase/.env auto-confirms without any interactive answer.
+    // The project `.env` is applied before the history prompt reads
+    // `SUPABASE_YES`, so a `SUPABASE_YES` in supabase/.env auto-confirms without
+    // any interactive answer.
     const { layer, out } = setup(tmp.current, {
       toml: 'project_id = "test"\n',
       files: { ...migrationFile("20240101000000"), "supabase/.env": "SUPABASE_YES=true\n" },
@@ -1158,9 +1160,10 @@ describe("legacy db push", () => {
       const exit = yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       if (Exit.isFailure(exit)) {
-        // Config now loads through the Go-parity reader (`legacyCheckDbToml`), so a malformed
-        // config aborts with Go's `failed to load config` message (the reader path), same as
-        // the other db commands (diff/dump/pull/migration).
+        // Config loads through the shared reader (`legacyCheckDbToml`), so a
+        // malformed config aborts with the established `failed to load config`
+        // message (the reader path), same as the other db commands
+        // (diff/dump/pull/migration).
         expect(JSON.stringify(exit.cause)).toContain("failed to load config");
       }
     });

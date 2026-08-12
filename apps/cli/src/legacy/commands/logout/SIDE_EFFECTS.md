@@ -1,7 +1,7 @@
 # `supabase logout`
 
-Native TypeScript port of Go's `internal/logout`. Deletes the access token and
-sweeps all stored project credentials. Makes no API calls.
+Deletes the access token and sweeps all stored project credentials. Makes no
+API calls.
 
 ## Files Read
 
@@ -47,7 +47,7 @@ sweeps all stored project credentials. Makes no API calls.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 stdout (success): `Access token deleted successfully. You are now logged out.`
 
@@ -61,11 +61,11 @@ with `NonInteractiveError` in these modes.
 
 ## Notes
 
-- **Deliberate Go quirk (parity):** `deleteAccessToken` removes the file first, but the
+- **Deliberate quirk:** `deleteAccessToken` removes the file first, but the
   outcome is decided solely by the profile-keyring delete. On a no-keyring host
   (WSL / `SUPABASE_NO_KEYRING`) or when the token lived only in the file, the file is
   removed yet logout still reports `You were not logged in, nothing to do.` and exits 0.
 - The legacy `access-token` keyring entry delete is best-effort — its failure never
   changes the outcome.
 - Project DB-password credentials are swept only after a successful token delete; the
-  sweep is best-effort and never fails (Go's `StoreProvider.DeleteAll`).
+  sweep is best-effort and never fails.

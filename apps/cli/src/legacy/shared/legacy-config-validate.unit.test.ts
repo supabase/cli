@@ -98,8 +98,8 @@ describe("LEGACY_CLERK_DOMAIN_PATTERN", () => {
 
 /**
  * A trivially-passing full input. Every test below spreads/overrides only the field(s) its
- * check cares about, matching the fixture-building style of `legacy-local-config-values.unit
- * .test.ts`'s own `baseConfig()` helper.
+ * check cares about, matching the fixture-building style of `legacy-local-config-values.unit.
+ * test.ts`'s own `baseConfig()` helper.
  */
 function minimalInput(
   overrides: Partial<LegacyConfigValidationInput> = {},

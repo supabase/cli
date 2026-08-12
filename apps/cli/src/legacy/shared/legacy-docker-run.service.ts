@@ -30,9 +30,9 @@ export interface LegacyDockerRunOpts {
   readonly extraHosts: ReadonlyArray<string>;
   readonly network: LegacyDockerNetwork;
   /**
-   * Docker labels (`--label k=v`) applied to the container. Go's `DockerStart`
+   * Docker labels (`--label k=v`) applied to the container. `DockerStart`
    * unconditionally sets `com.supabase.cli.project`/`com.docker.compose.project`
-   * on every container it starts (`apps/cli-go/internal/utils/docker.go:371-376`),
+   * on every container it starts,
    * including one-shot jobs — omitted here (defaults to none) for callers whose
    * container is always synchronously reaped by the SAME process before it could
    * ever need project-label-based discovery (e.g. `db dump`/`pg_prove`/edge-runtime
@@ -60,9 +60,8 @@ export interface LegacyDockerRunOpts {
 /**
  * The result of a captured `docker run`: the container's exit code, its full
  * stdout as raw bytes (so binary-safe SQL dumps survive intact), and its stderr
- * decoded as text for failure classification. Mirrors Go's `dockerExec`, which
- * streams stdout to the caller's writer and tees stderr into a buffer
- * (`apps/cli-go/internal/db/dump/dump.go:50-90`).
+ * decoded as text for failure classification. Mirrors `dockerExec`, which
+ * streams stdout to the caller's writer and tees stderr into a buffer.
  */
 interface LegacyDockerRunCaptureResult {
   readonly exitCode: number;
@@ -91,8 +90,8 @@ interface LegacyDockerRunShape {
   /**
    * Runs `docker run --rm ...` streaming container stdout to `onStdout` chunk-by-chunk
    * as it arrives (instead of buffering), while collecting stderr for classification.
-   * Mirrors Go's `DockerStreamLogs` → `stdcopy.StdCopy(stdout, stderr, logs)` with
-   * `Follow:true` (`apps/cli-go/internal/utils/docker.go:374,394`): the destination is
+   * Mirrors `DockerStreamLogs` → `stdcopy.StdCopy(stdout, stderr, logs)` with
+   * `Follow:true`: the destination is
    * the real sink, so a large `db dump` streams to `--file`/stdout at constant memory
    * and a piped consumer sees output incrementally.
    *

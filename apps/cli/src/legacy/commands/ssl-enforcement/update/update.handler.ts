@@ -22,9 +22,7 @@ import {
 import { printSslStatus } from "../ssl-enforcement.format.ts";
 import type { LegacySslEnforcementUpdateFlags } from "./update.command.ts";
 
-// Templates lifted verbatim from `apps/cli-go/internal/ssl_enforcement/update/update.go:19,21`
-// (deleted in CLI-1970; last present at commit 7b469f5b3).
-// (Lowercase `ssl` in the network message is intentional Go fidelity.)
+// (Lowercase `ssl` in the network message is intentional.)
 const mapUpdateError = mapLegacyHttpError({
   networkError: LegacySslEnforcementUpdateNetworkError,
   statusError: LegacySslEnforcementUpdateUnexpectedStatusError,

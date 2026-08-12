@@ -70,20 +70,17 @@ describe("supabase sso (legacy)", () => {
     },
   );
 
-  // CLI-1901: `add`'s `--type` has no `Flag.optional` (see `add.command.ts`)
-  // — Go marks it required via `MarkFlagRequired("type")` (`cmd/sso.go:65`)
-  // — so a missing/invalid `--type` used to dump the full help doc to
-  // stdout AND print the error twice on stderr. No auth/network call ever
-  // happens for either case: flag parsing fails before the handler runs.
+  // `add`'s `--type` has no `Flag.optional` (see `add.command.ts`) — it is a
+  // required flag — so a missing/invalid `--type` used to dump the full help
+  // doc to stdout AND print the error twice on stderr. No auth/network call
+  // ever happens for either case: flag parsing fails before the handler runs.
   //
   // A missing required flag and an invalid choice value get different
-  // treatment, matching the real `apps/cli-go/supabase-go` binary (verified
-  // directly against it): Go's `PersistentPreRunE` sets `SilenceUsage = true`
-  // (`cmd/root.go:97`) BEFORE `ValidateRequiredFlags` runs, so a missing
-  // `--type` is a single clean stderr line with no usage block — but
-  // `Flag.choice` validation happens during `ParseFlags`, BEFORE that point,
-  // so Go still shows a usage block for an invalid `--type` value, always on
-  // stderr, never stdout.
+  // treatment: usage-silencing is set BEFORE required-flag validation runs,
+  // so a missing `--type` is a single clean stderr line with no usage
+  // block — but `Flag.choice` validation happens during parsing, BEFORE
+  // that point, so an invalid `--type` value still shows a usage block,
+  // always on stderr, never stdout.
   test(
     "add without --type: stdout stays clean, stderr is a single Go-parity line (no usage block)",
     { timeout: E2E_TIMEOUT_MS },

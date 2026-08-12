@@ -26,8 +26,8 @@ import { legacyValidateWorkdirIsDirectory } from "./legacy-workdir-validation.ts
  */
 
 /**
- * Go's `ChangeWorkDir` (`internal/utils/misc.go:238-257`), run from the root
- * `PersistentPreRunE` (`cmd/root.go:104`) — after `ParseFlags` and
+ * `ChangeWorkDir`, run from the root
+ * `PersistentPreRunE` — after `ParseFlags` and
  * `ValidateArgs`, before `ValidateRequiredFlags`, `ValidateFlagGroups`, and
  * `RunE` — so a missing workdir directory aborts with no API call ever made.
  * Emulated for the pflag/viper-effective `--workdir`/`SUPABASE_WORKDIR` the
@@ -100,7 +100,7 @@ export function legacyPflagSliceValue(
 }
 
 /**
- * The workdir Go's `ChangeWorkDir` (`internal/utils/misc.go:238-257`) would
+ * The workdir `ChangeWorkDir` would
  * `os.Chdir` to: `viper.GetString("WORKDIR")` resolves the pflag-effective
  * `--workdir` first (a changed flag wins even when its value is empty —
  * `--workdir=` falls through to the always-existing project-root walk-up,
@@ -110,16 +110,16 @@ export function legacyPflagSliceValue(
  * Resolution order (binary-verified against `apps/cli-go`, PR #5974 review
  * round 6):
  * - the scan's last `--workdir` occurrence wins — pflag consumes flag-shaped
- *   tokens the Effect parser refuses (`--workdir --metadata-file` binds
- *   `"--metadata-file"`), so the parsed flag cannot be trusted;
+ * tokens the Effect parser refuses (`--workdir --metadata-file` binds
+ * `"--metadata-file"`), so the parsed flag cannot be trusted;
  * - when the `--workdir` token itself was consumed as another flag's value
- *   (`--domains --workdir`), pflag never marks it changed and viper falls to
- *   the env var — the parsed flag (which read the following token as a
- *   normal value) must be ignored;
+ * (`--domains --workdir`), pflag never marks it changed and viper falls to
+ * the env var — the parsed flag (which read the following token as a
+ * normal value) must be ignored;
  * - otherwise the Effect-parsed value covers what the anchored scan cannot
- *   see: `--workdir` placed before the command path (`supabase --workdir x
- *   sso add …`), which cobra's `Find`/`stripFlags` routes to the same
- *   persistent flag.
+ * see: `--workdir` placed before the command path (`supabase --workdir x
+ * sso add …`), which cobra's `Find`/`stripFlags` routes to the same
+ * persistent flag.
  */
 export function legacyPflagWorkdirValue(
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
@@ -153,7 +153,7 @@ export function legacyPflagWorkdirValue(
 }
 
 /**
- * Emulates Go's `ChangeWorkDir` (`cmd/root.go:104`, `internal/utils/
+ * Emulates `ChangeWorkDir` (`cmd/root.go:104`, `internal/utils/
  * misc.go:238-257`) for the workdir {@link legacyPflagWorkdirValue}
  * resolves: `os.Chdir` on a missing path or a non-directory aborts the
  * command from the root `PersistentPreRunE` — after `ParseFlags` and
@@ -193,20 +193,20 @@ export const legacyValidatePflagWorkdir = Effect.fnUntraced(function* (
  * Resolution order mirrors {@link legacyPflagWorkdirValue} (same viper
  * semantics, binary-verified for `--profile` in PR #5974 review round 7):
  * - the scan's last `--profile` occurrence wins — pflag consumes flag-shaped
- *   tokens the Effect parser refuses (`--profile --metadata-url` binds
- *   `"--metadata-url"`), is last-wins where the parser is first-wins, and a
- *   scanned occurrence marks the flag changed even when its value is the
- *   `supabase` default or empty;
+ * tokens the Effect parser refuses (`--profile --metadata-url` binds
+ * `"--metadata-url"`), is last-wins where the parser is first-wins, and a
+ * scanned occurrence marks the flag changed even when its value is the
+ * `supabase` default or empty;
  * - when the `--profile` token itself was consumed as another flag's value
- *   (`--domains --profile alternate.yml`), pflag never marks it changed and
- *   viper falls to `SUPABASE_PROFILE` — the parsed flag (which read the
- *   following token as a normal value) must be ignored;
+ * (`--domains --profile alternate.yml`), pflag never marks it changed and
+ * viper falls to `SUPABASE_PROFILE` — the parsed flag (which read the
+ * following token as a normal value) must be ignored;
  * - otherwise the Effect-parsed value covers pre-command-path placement
- *   (`supabase --profile x sso add …`) the anchored scan cannot see. The
- *   parsed flag cannot distinguish an explicit `--profile supabase` from the
- *   flag's default, so that value is treated as unset (the config layer
- *   closes the same gap with its own argv scan,
- *   `legacy-cli-config.layer.ts`).
+ * (`supabase --profile x sso add …`) the anchored scan cannot see. The
+ * parsed flag cannot distinguish an explicit `--profile supabase` from the
+ * flag's default, so that value is treated as unset (the config layer
+ * closes the same gap with its own argv scan,
+ * `legacy-cli-config.layer.ts`).
  */
 export function legacyPflagProfileValue(
   scan: Pick<PflagArgvScan, "occurrences" | "consumedFlagNames" | "prePathOccurrences">,
@@ -241,7 +241,7 @@ export function legacyPflagProfileValue(
 }
 
 /**
- * Emulates Go's `LoadProfile` (`cmd/root.go:98-102`, `profile.go:94-118`) for
+ * Emulates `LoadProfile` (`cmd/root.go:98-102`, `profile.go:94-118`) for
  * the pflag/viper-effective profile, returning the API URL the request must
  * target when it differs from the one the Effect config layer resolved —
  * `Option.none` means the layer's `LegacyCliConfig.apiUrl` already matches
@@ -341,7 +341,7 @@ export const legacyResolvePflagProfile = Effect.fnUntraced(function* (
   return Option.some(yield* legacyLoadProfile(goToken, fs.value));
 });
 
-/** Go's `strconv.ParseBool` accepted literals (`strconv/atob.go:10-19`). */
+/** Go's `strconv.ParseBool` accepted literals. */
 const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
   ["1", true],
   ["t", true],
@@ -370,8 +370,8 @@ const GO_PARSE_BOOL: ReadonlyMap<string, boolean> = new Map([
  * This cannot be read off the Effect-parsed boolean for two reasons
  * (binary-verified against `apps/cli-go`, PR #5974 review round 4):
  * - the Effect parser resolves repeated flags first-wins while pflag is
- *   last-wins (`--skip-url-validation=false --skip-url-validation` is `true`
- *   to Go, `false` to the parser), and
+ * last-wins (`--skip-url-validation=false --skip-url-validation` is `true`
+ * to Go, `false` to the parser), and
  * - the Effect parser accepts `yes`/`no`, which `strconv.ParseBool` rejects.
  *
  * The scan records a *bare* occurrence as pflag's `NoOptDefVal` `"true"`
@@ -408,8 +408,8 @@ export function legacyPflagBoolValue(
  * Like `legacyPflagStringValue`, but for Go enum-valued flags
  * (`ssoProviderType`, `ssoNameIDFormat` — `cmd/sso.go:157-158,176`), whose
  * `Value.Set` rejects anything outside the allowed set. pflag Sets every
- * occurrence in argv order and aborts `ParseFlags` on the first invalid one
- * — reachable here because the Effect parser resolves repeats first-wins and
+ * occurrence in argv order and aborts `ParseFlags` on the first invalid one —
+ * reachable here because the Effect parser resolves repeats first-wins and
  * never validates later occurrences (`--type saml --type bogus` parses).
  * The last occurrence wins; an absent flag is `Option.none`.
  *

@@ -28,9 +28,8 @@ export const legacySnippetsDownloadCommand = Command.make("download", config).pi
   ]),
   Command.withHandler((flags) =>
     legacySnippetsDownload(flags).pipe(
-      // No `safeFlags` — Go's `cmd/snippets.go` does not call
-      // `markFlagTelemetrySafe` for `--project-ref`, so the telemetry payload
-      // redacts the value.
+      // No `safeFlags` — `--project-ref` is not on the telemetry-safe list,
+      // so the telemetry payload redacts the value.
       withLegacyCommandInstrumentation({ flags }),
       withJsonErrorHandling,
     ),

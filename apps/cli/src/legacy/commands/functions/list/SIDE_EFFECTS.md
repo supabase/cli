@@ -43,7 +43,7 @@
 | `1`  | API error (non-2xx response)          |
 | `1`  | authentication error (no token found) |
 | `1`  | network / connection failure          |
-| `1`  | unsupported Go output mode (`env`)    |
+| `1`  | unsupported `--output` mode (`env`)    |
 
 ## Telemetry Events Fired
 
@@ -53,7 +53,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints a Glamour-style ASCII table with columns `ID`, `NAME`, `SLUG`, `STATUS`, `VERSION`, and `UPDATED_AT (UTC)`.
 
@@ -69,7 +69,7 @@ Prints a structured success result shaped as `{ "functions": [...] }`.
 
 - Requires a linked project (`--project-ref`, `SUPABASE_PROJECT_ID`, or `<workdir>/supabase/.temp/project-ref`).
 - Native TypeScript port using the Management API.
-- Go `--output` parity:
+- `--output` behavior:
   - `json` emits the raw array.
   - `yaml` emits the raw array.
   - `toml` emits `{ functions = [...] }`.

@@ -36,11 +36,10 @@ The parent directory `<workdir>/supabase/tests/` is created if missing.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints `Created new <template> test at <bold relative-path>.` to stdout, where the
-path is the project-relative `supabase/tests/<name>_test.sql` (matches Go's
-`fmt.Printf` in `apps/cli-go/internal/test/new/new.go:31`, deleted in CLI-1970; last present at commit 7b469f5b3).
+path is the project-relative `supabase/tests/<name>_test.sql`.
 
 ### `--output-format json`
 
@@ -53,6 +52,6 @@ Emits the same success payload as a final NDJSON `result` event.
 ## Notes
 
 - Creates a new pgTAP test file scaffold from the embedded template (109 bytes,
-  byte-identical to Go's `templates/pgtap.sql`).
+  byte-identical to the original Go template).
 - `--template` / `-t` selects the template framework (only `pgtap` is supported; default `pgtap`).
 - Native TypeScript port (Phase 1+); no Go proxy.

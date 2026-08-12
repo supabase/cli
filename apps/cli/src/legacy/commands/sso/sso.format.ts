@@ -3,19 +3,15 @@ import { Result } from "effect";
 import { renderGlamourTable } from "../../output/legacy-glamour-table.ts";
 import { LegacySsoInvalidUuidError } from "./sso.errors.ts";
 
-// Go's `uuid.Parse` accepts both lower- and upper-case hex digits, and the
-// `cmd/sso.go` UUID guards (lines 79, 91, 123) use `utils.UUIDPattern` which is
-// declared as `[0-9a-f]` but matched against argv that's already been lowercased
-// by Cobra's argument handling. Mirroring the user-facing behaviour, we match
-// case-insensitively so callers passing `B5AE62F9-…` succeed.
+// UUIDs are matched case-insensitively so callers passing
+// `B5AE62F9-…` (mixed- or upper-case) succeed.
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * Permissive shape that covers both the typed-client output
  * (`V1GetASsoProviderOutput` / list items) and arbitrary JSON returned by the
  * raw POST/PUT path. `attribute_mapping` is left as `unknown` so we can render
- * provider responses that carry user-defined keys (Go preserves these via its
- * inline struct with `default *any`).
+ * provider responses that carry user-defined keys.
  */
 export interface LegacySsoProviderView {
   readonly id: string;
@@ -78,7 +74,7 @@ export function toLegacySsoProviderView(value: unknown): LegacySsoProviderView {
 
 /**
  * Validates a positional provider-id argument as a canonical UUID.
- * Failure message uses Go's `%q` quoting (JSON.stringify wraps the raw input).
+ * Failure message uses `%q`-style quoting (JSON.stringify wraps the raw input).
  */
 export function validateUuid(input: string): Result.Result<string, LegacySsoInvalidUuidError> {
   if (UUID_PATTERN.test(input)) {
@@ -96,8 +92,6 @@ const pad2 = (n: number): string => String(n).padStart(2, "0");
 
 /**
  * RFC3339 → `YYYY-MM-DD HH:MM:SS` (UTC, no timezone label).
- * Mirrors Go's `utils.FormatTimestamp` (which composes `time.Parse(RFC3339, …)`
- * with `FormatTime` → `t.UTC().Format("2006-01-02 15:04:05")`).
  */
 export function formatSsoTimestamp(input?: string): string {
   if (input === undefined || input === null) return "";
@@ -148,15 +142,11 @@ const XMLFMT_INTERTAG_SPACES_RE = />\s+</g;
  * Pretty-prints an XML document by inserting newlines and indentation between
  * tags. Behaviour-compatible port of `github.com/go-xmlfmt/xmlfmt@v1.1.3`
  * `FormatXML(xml, prefix, indent)` (without the nested-tags-in-comments
- * branch, which Go's SSO render never enables). Each tag boundary becomes
- * `\n + prefix + indent.repeat(depth) + <tag>`; opening tags increment depth
- * after emission, closing tags decrement before. Text content between
+ * branch, which the SSO render call site never enables). Each tag boundary
+ * becomes `\n + prefix + indent.repeat(depth) + <tag>`; opening tags increment
+ * depth after emission, closing tags decrement before. Text content between
  * adjacent open/close tags (e.g. `<b>text</b>`) is preserved inline so the
  * close tag rides the same line.
- *
- * Used to match Go's `xmlfmt.FormatXML(metadata_xml, "  ", "  ")` call in
- * `apps/cli-go/internal/sso/internal/render/render.go:155` (deleted in
- * CLI-1970; last present at commit 7b469f5b3).
  */
 export function formatSsoMetadataXml(xml: string, prefix = "  ", indent = "  "): string {
   // Collapse whitespace between adjacent tags so we control the layout.
@@ -197,11 +187,11 @@ export function formatSsoMetadataXml(xml: string, prefix = "  ", indent = "  "):
   return prefix + replaced;
 }
 
-// Go's markdown source writes the header as `SAML 2.0 \`EntityID\``; Glamour
-// renders the backticks as an inline-code span which is stripped to plain text
-// under AsciiStyle. `renderGlamourTable` is a flat ASCII renderer with no
-// markdown awareness, so we drop the backticks here at the source for byte
-// parity with Glamour's rendered output.
+// The markdown header is `SAML 2.0 \`EntityID\``; Glamour renders the
+// backticks as an inline-code span which is stripped to plain text under
+// AsciiStyle. `renderGlamourTable` is a flat ASCII renderer with no markdown
+// awareness, so we drop the backticks here at the source for byte parity
+// with the established rendered output.
 const LIST_HEADERS = [
   "TYPE",
   "IDENTITY PROVIDER ID",
@@ -235,9 +225,9 @@ export function renderListProviders(items: ReadonlyArray<LegacySsoProviderView>)
  * sections.
  *
  * The optional sections are emitted as plain markdown (heading + fenced code
- * block); we don't run them through Glamour, so visual styling will differ
- * from Go. Tests assert on substring presence (`toContain`) rather than full
- * byte equality. Documented in each subcommand's `SIDE_EFFECTS.md`.
+ * block); we don't run them through Glamour, so visual styling differs from
+ * the table above. Tests assert on substring presence (`toContain`) rather
+ * than full byte equality. Documented in each subcommand's `SIDE_EFFECTS.md`.
  */
 export function renderSingleProvider(provider: LegacySsoProviderView): string {
   const rows: Array<readonly [string, string]> = [
@@ -252,8 +242,8 @@ export function renderSingleProvider(provider: LegacySsoProviderView): string {
     rows.push(["NAMEID FORMAT", formatNameIdFormat(provider.saml)]);
   }
   rows.push(["CREATED AT (UTC)", formatSsoTimestamp(provider.created_at)]);
-  // Go's `render.go:140-143` uses `provider.CreatedAt` for both rows.
-  // Replicating the upstream byte-for-byte; documented in SIDE_EFFECTS.
+  // Both CREATED AT and UPDATED AT rows use provider.created_at — an
+  // established output contract documented in SIDE_EFFECTS.md.
   rows.push(["UPDATED AT (UTC)", formatSsoTimestamp(provider.created_at)]);
 
   const table = renderGlamourTable(["PROPERTY", "VALUE"], rows);
@@ -273,7 +263,6 @@ export function renderSingleProvider(provider: LegacySsoProviderView): string {
   if (provider.saml?.metadata_xml !== undefined && provider.saml.metadata_xml.length > 0) {
     sections.push("## SAML 2.0 Metadata XML\n");
     sections.push("```xml\n");
-    // Go's `render.go:155` pretty-prints via `xmlfmt.FormatXML(..., "  ", "  ")`.
     sections.push(formatSsoMetadataXml(provider.saml.metadata_xml, "  ", "  ") + "\n");
     sections.push("```\n");
   }
@@ -307,13 +296,12 @@ export function renderInfoMarkdown(ref: string): string {
   return renderGlamourTable(
     ["PROPERTY", "VALUE"],
     [
-      // The Go markdown source at `render.go:170` includes a trailing space
-      // ("Single sign-on URL (ACS URL) "), but Glamour collapses it when
-      // computing column widths so the rendered output has a single space
-      // between the label and the column separator. Our flat ASCII renderer
-      // would preserve the trailing space and double it up against the cell
-      // padding — so we drop it here. The cli-e2e parity harness compares
-      // against Go's rendered output (not the markdown source).
+      // The markdown label is "Single sign-on URL (ACS URL) " (trailing
+      // space), but Glamour collapses it when computing column widths so the
+      // rendered output has a single space between the label and the column
+      // separator. Our flat ASCII renderer would preserve the trailing space
+      // and double it up against the cell padding — so we drop it here to
+      // match the established rendered output.
       ["Single sign-on URL (ACS URL)", payload.acs_url],
       ["Audience URI (SP Entity ID)", payload.entity_id],
       ["Default Relay State", payload.relay_state],

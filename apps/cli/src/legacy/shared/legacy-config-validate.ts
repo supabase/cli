@@ -9,15 +9,15 @@ import {
 import { legacyGoUrlParse } from "./legacy-storage-url.ts";
 
 /**
- * Single home for Go's `Config.Validate` parity (`apps/cli-go/pkg/config/config.go:989-1192`),
+ * Single home for `Config.Validate` parity,
  * consolidating the two independent TypeScript ports of that logic:
  *
  * - **D** = `legacy-db-config.toml-read.ts` — raw smol-toml document + `EnvLookup`,
- *   Effect-based, fails with `LegacyDbConfigLoadError`. Feeds ~15 db/migration commands via
- *   `legacy-db-config.layer.ts`.
+ * Effect-based, fails with `LegacyDbConfigLoadError`. Feeds ~15 db/migration commands via
+ * `legacy-db-config.layer.ts`.
  * - **L** = `legacy-local-config-values.ts` — decoded `@supabase/config` `ProjectConfig`,
- *   synchronous `node:fs`, throws plain `Error`. Feeds `legacy-status-values.ts` and
- *   `stop/stop.handler.ts`.
+ * synchronous `node:fs`, throws plain `Error`. Feeds `legacy-status-values.ts` and
+ * `stop/stop.handler.ts`.
  *
  * **This file is the SINGLE home for `Config.Validate` parity going forward.
  * Per-command reimplementations of any branch below are forbidden** — hoist here instead,
@@ -37,39 +37,39 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  *
  * ## Full eventual scope: every `Config.Validate` branch this module owns
  *
- * In Go's exact `Validate()` order (`config.go:989-1192`), first-failure-wins:
+ * In Go's exact `Validate()` order, first-failure-wins:
  *
- * | Go line(s)                    | Check |
+ * | Go line(s) | Check |
  * |--------------------------------|-------|
- * | 990-991                        | `project_id` required |
- * | 1006-1027                      | `api.port` / `api.tls.{cert,key}_path` presence (the actual file reads stay per-caller I/O) |
- * | 1031-1062                      | `db.port`, `db.major_version` (0 / 12 / 13-17 switch) |
+ * | 990-991 | `project_id` required |
+ * | 1006-1027 | `api.port` / `api.tls.{cert,key}_path` presence (the actual file reads stay per-caller I/O) |
+ * | 1031-1062 | `db.port`, `db.major_version` (0 / 12 / 13-17 switch) |
  * | 1064-1068, pattern @ 1549-1554 | `storage.buckets.*` names vs `LEGACY_BUCKET_NAME_PATTERN` |
- * | 1070-1079                      | `studio.port` / `studio.api_url` (L-only — D has no studio section) |
- * | 1081-1085                      | `local_smtp.port` (L-only) |
- * | 1087-1153                      | `auth.*` sub-sequence, in order: site_url (1088-1090); captcha enum + presence (1099-1109, enum itself decode-time per `auth.go:58-71`); signing_keys read (1110-1116, caller-side I/O); passkey/webauthn (1117-1134); hooks (1136-1138, checks @ 1453-1521, vs `LEGACY_HOOK_SECRET_PATTERN`); mfa (1139-1141, checks @ 1523-1534); email template/notification content-vs-content_path (1293-1323, caller-side I/O) + smtp (1325-1344); third_party (1151-1153, checks @ 1635-1683, vs `LEGACY_CLERK_DOMAIN_PATTERN`) |
+ * | 1070-1079 | `studio.port` / `studio.api_url` (L-only — D has no studio section) |
+ * | 1081-1085 | `local_smtp.port` (L-only) |
+ * | 1087-1153 | `auth.*` sub-sequence, in order: site_url (1088-1090); captcha enum + presence (1099-1109, enum itself decode-time per `auth.go:58-71`); signing_keys read (1110-1116, caller-side I/O); passkey/webauthn (1117-1134); hooks (1136-1138, checks @ 1453-1521, vs `LEGACY_HOOK_SECRET_PATTERN`); mfa (1139-1141, checks @ 1523-1534); email template/notification content-vs-content_path (1293-1323, caller-side I/O) + smtp (1325-1344); third_party (1151-1153, checks @ 1635-1683, vs `LEGACY_CLERK_DOMAIN_PATTERN`) |
  * | 1159-1163, pattern @ 1539-1544 | `functions.*` slugs vs `LEGACY_FUNCTION_SLUG_PATTERN` |
- * | 1164-1173                      | `edge_runtime.deno_version` (0 / 1 / 2 switch) |
- * | (decode-time enum)             | `analytics.backend` must be `postgres`/`bigquery` |
- * | 1175-1187                      | `analytics.gcp_*` fields, gated on `backend === "bigquery"` |
- * | 1846-1854                      | `experimental.webhooks` / `experimental.pgdelta.format_options` |
+ * | 1164-1173 | `edge_runtime.deno_version` (0 / 1 / 2 switch) |
+ * | (decode-time enum) | `analytics.backend` must be `postgres`/`bigquery` |
+ * | 1175-1187 | `analytics.gcp_*` fields, gated on `backend === "bigquery"` |
+ * | 1846-1854 | `experimental.webhooks` / `experimental.pgdelta.format_options` |
  *
  * ## Explicitly OUT of scope forever (D-only, NEVER part of this module)
  *
  * - `remotes[*].project_id` pattern (`config.go:997-1001`, vs `LEGACY_PROJECT_REF_PATTERN`) —
- *   D's own remote-merge-phase check (`findInvalidRemoteProjectId`), never shared with L.
+ * D's own remote-merge-phase check (`findInvalidRemoteProjectId`), never shared with L.
  * - `auth.sms` (`config.go:1145-1147`/`1348-1417`) — stays 100% inline in D; L instead relies on
- *   `@supabase/config`'s `sms` schema enforcing the same provider-switch priority at decode time
- *   (`packages/config/src/auth/sms.ts`), since L decodes through that schema and D doesn't.
+ * `@supabase/config`'s `sms` schema enforcing the same provider-switch priority at decode time
+ * (`packages/config/src/auth/sms.ts`), since L decodes through that schema and D doesn't.
  * - `auth.external` (`config.go:1148-1150`/`1419-1451`) — inline in BOTH D
- *   (`legacy-db-config.toml-read.ts`'s "B5: external providers") and L
- *   ({@link legacyResolveLocalConfigValues}'s `validateAuthExternalProviders`, called after this
- *   module's shared check, same ordering tradeoff as sms below) — never routed through this
- *   shared module, since it needs the RAW pre-decode document to see provider names
- *   `@supabase/config`'s schema doesn't model.
+ * (`legacy-db-config.toml-read.ts`'s "B5: external providers") and L
+ * ({@link legacyResolveLocalConfigValues}'s `validateAuthExternalProviders`, called after this
+ * module's shared check, same ordering tradeoff as sms below) — never routed through this
+ * shared module, since it needs the RAW pre-decode document to see provider names
+ * `@supabase/config`'s schema doesn't model.
  * - `auth.jwt_secret` length check (`apikeys.go:43-73`, `generateAPIKeys`) — each caller's own
- *   key-generation flow (D and L both already implement this separately), not part of
- *   `Config.Validate`'s pure-check set.
+ * key-generation flow (D and L both already implement this separately), not part of
+ * `Config.Validate`'s pure-check set.
  *
  * `legacyExpandEnv` also stays in D (env-substitution machinery, not a validation leaf).
  *
@@ -104,37 +104,37 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  * this has zero effect on any real test.
  */
 
-// Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:470`): exactly 20 lowercase
+// Go's project-ref pattern: exactly 20 lowercase
 // ASCII letters. Exported from this module (was private in D before this relocation) as the
 // canonical home; D's `findInvalidRemoteProjectId` is today the only consumer — the
 // `remotes[*].project_id` check itself stays D-only forever, see the module header above.
 export const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
-// Go's storage bucket-name pattern (`apps/cli-go/pkg/config/config.go:1382`).
+// Go's storage bucket-name pattern.
 // `config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]` key
-// during config load (`config.go:898-903`), aborting before any db command when a
+// during config load, aborting before any db command when a
 // name does not match. The source string is reused verbatim in the error message via
-// `.source` so it byte-matches Go's `bucketNamePattern.String()`. Used by both D
+// `.source` so it byte-matches `bucketNamePattern.String()`. Used by both D
 // (`legacy-db-config.toml-read.ts`) and L (`legacy-local-config-values.ts`), and internally by
-// {@link legacyValidateResolvedConfig}'s storage-bucket-names step (`config.go:1064-1068`).
+// {@link legacyValidateResolvedConfig}'s storage-bucket-names step.
 export const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
 
-// Go's function-slug pattern (`apps/cli-go/pkg/config/config.go:1372`). `config.Validate`
-// runs `ValidateFunctionSlug` over every `[functions.*]` key during config load
-// (`config.go:993-998`), rejecting the config before any db command. `.source` is reused
-// in the message so it byte-matches Go's `funcSlugPattern.String()`. Used by both D and L
+// Go's function-slug pattern. `config.Validate`
+// runs `ValidateFunctionSlug` over every `[functions.*]` key during config load,
+// rejecting the config before any db command. `.source` is reused
+// in the message so it byte-matches `funcSlugPattern.String()`. Used by both D and L
 // (same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above), and internally by
-// {@link legacyValidateResolvedConfig}'s function-slugs step (`config.go:1159-1163`).
+// {@link legacyValidateResolvedConfig}'s function-slugs step.
 export const LEGACY_FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-// Go's `hookSecretPattern` (`apps/cli-go/pkg/config/config.go:1436`). Used by both D and L
+// `hookSecretPattern`. Used by both D and L
 // (same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above), and internally by
-// {@link legacyValidateResolvedConfig}'s hooks step (`config.go:1453-1521`).
+// {@link legacyValidateResolvedConfig}'s hooks step.
 export const LEGACY_HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 
-// Go's `clerkDomainPattern` (`apps/cli-go/pkg/config/config.go:1553`). Used by both D and L
+// `clerkDomainPattern`. Used by both D and L
 // (same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above), and internally by
-// {@link legacyValidateResolvedConfig}'s third_party step (`config.go:1635-1683`).
+// {@link legacyValidateResolvedConfig}'s third_party step.
 export const LEGACY_CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
@@ -198,7 +198,7 @@ export interface LegacyStudioInput {
   readonly apiUrl: string;
 }
 
-/** `[local_smtp]` (Go's `Inbucket`), post-env-override. L-only. */
+/** `[local_smtp]` (`Inbucket`), post-env-override. L-only. */
 export interface LegacyLocalSmtpInput {
   readonly enabled: boolean;
   readonly port: number;
@@ -225,7 +225,7 @@ export interface LegacyPasskeyInput {
 }
 
 /** One enabled `[auth.hook.<type>]` entry. Caller pre-filters to enabled-only and pre-orders
- * per Go's fixed hook-type iteration order (`config.go:1453-1485`). */
+ * per Go's fixed hook-type iteration order. */
 export interface LegacyHookInput {
   readonly type:
     | "mfa_verification_attempt"
@@ -269,7 +269,7 @@ export interface LegacyThirdPartyInput {
 }
 
 /** `[auth]`. Present in {@link LegacyConfigValidationInput} iff auth is enabled — matches Go's
- * `if c.Auth.Enabled` gate wrapping this entire sub-sequence (`config.go:1087-1153`). */
+ * `if c.Auth.Enabled` gate wrapping this entire sub-sequence. */
 export interface LegacyAuthInput {
   readonly siteUrl: string;
   readonly captcha?: LegacyCaptchaInput;
@@ -481,7 +481,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
           `Missing required field in config: auth.hook.${hook.type}.uri`,
         );
       }
-      // Go calls `url.Parse` before the scheme switch (`config.go:1497-1499`) and fails the
+      // Go calls `url.Parse` before the scheme switch and fails the
       // whole load on a malformed URI (e.g. an unterminated IPv6 host like `http://[::1`) —
       // a bare scheme-prefix regex would accept that. Reuse `legacyGoUrlParse` (the same
       // `net/url.Parse` port already used for `studio.api_url` above) instead of re-deriving

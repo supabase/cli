@@ -610,10 +610,10 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch A: rejects a pasted JWK with a duplicate alg where the earlier occurrence fails the allowlist, even though the later one is allowed (CLI-1961 Codex review finding)",
     () => {
-      // Verified against the real binary: `config.Algorithm`'s `UnmarshalText` (the
-      // RS256/ES256 allowlist) returning an error for the FIRST `alg` occurrence
-      // ("HS256") stops Go's decoder from ever attempting the second ("ES256") — the
-      // overall `json.Unmarshal` still fails with the allowlist error, even though
+      // `config.Algorithm`'s `UnmarshalText` (the RS256/ES256 allowlist)
+      // returning an error for the FIRST `alg` occurrence ("HS256") stops
+      // the decoder from ever attempting the second ("ES256") — the
+      // overall decode still fails with the allowlist error, even though
       // `JSON.parse` alone would keep only the later, individually-valid "ES256".
       const { layer } = setup({
         pipedAnswer: '{"kty":"oct","alg":"HS256","alg":"ES256"}',

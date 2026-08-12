@@ -14,14 +14,14 @@
 import type { LegacyProfileName } from "../config/legacy-cli-config.service.ts";
 
 interface LegacyProfileEndpoints {
-  /** Management API base URL (Go's `Profile.APIURL`, `profile.go:19`). */
+  /** Management API base URL (`Profile.APIURL`, `profile.go:19`). */
   readonly apiUrl: string;
   readonly projectHost: string;
   readonly dashboardUrl: string;
   /**
    * eTLD+1 the connection pooler hostname must belong to (Go's
    * `Profile.PoolerHost`, `profile.go:24`). Empty string means "no pooler-domain
-   * assertion" (Go's `supabase-local`). Used by the linked db-config resolver's
+   * assertion" (`supabase-local`). Used by the linked db-config resolver's
    * MITM domain check.
    */
   readonly poolerHost: string;
@@ -56,7 +56,7 @@ const BUILT_IN: Readonly<Record<string, LegacyProfileEndpoints>> = {
 
 /**
  * Exact-match (case-sensitive) built-in profile-name guard. Go matches
- * built-in names with `strings.EqualFold` (`profile.go:96-99`); callers that
+ * built-in names with `strings.EqualFold`; callers that
  * need Go's fold semantics lower-case the candidate first (all four built-in
  * names are already lower-case).
  */

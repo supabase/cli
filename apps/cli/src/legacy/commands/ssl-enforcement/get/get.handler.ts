@@ -20,8 +20,6 @@ import {
 import { printSslStatus } from "../ssl-enforcement.format.ts";
 import type { LegacySslEnforcementGetFlags } from "./get.command.ts";
 
-// Templates lifted verbatim from `apps/cli-go/internal/ssl_enforcement/get/get.go:17,19`
-// (deleted in CLI-1970; last present at commit 7b469f5b3).
 const mapGetError = mapLegacyHttpError({
   networkError: LegacySslEnforcementGetNetworkError,
   statusError: LegacySslEnforcementGetUnexpectedStatusError,
@@ -39,9 +37,9 @@ export const legacySslEnforcementGet = Effect.fn("legacy.ssl-enforcement.get")(f
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
-  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): telemetry must flush
-  // whether ref resolution, the API call, or output emission fails. `linkedProjectCache.cache`
-  // requires a resolved ref, so it wraps the inner sub-effect only.
+  // Telemetry must flush whether ref resolution, the API call, or output
+  // emission fails. `linkedProjectCache.cache` requires a resolved ref, so
+  // it wraps the inner sub-effect only.
   yield* Effect.gen(function* () {
     const ref = yield* resolver.resolve(flags.projectRef);
 
@@ -76,7 +74,7 @@ export const legacySslEnforcementGet = Effect.fn("legacy.ssl-enforcement.get")(f
       }
 
       // goFmt is undefined or "pretty" — defer to TS --output-format for JSON/stream-json,
-      // otherwise print the Go text-mode status line (Go --output pretty parity).
+      // otherwise print the text-mode status line.
       if (output.format === "json" || output.format === "stream-json") {
         yield* output.success("", response);
         return;

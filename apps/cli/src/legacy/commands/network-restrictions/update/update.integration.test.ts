@@ -360,8 +360,8 @@ describe("legacy network-restrictions update integration", () => {
   it.live("rejects an IPv4-mapped private IPv6 input (security regression guard)", () => {
     // Without IPv4-mapped detection, ::ffff:10.0.0.0/104 would slip past the
     // private check because the IPv6 first-byte is 0, not 0xfc. parseCidr now
-    // reclassifies these as v4 via Go's To4() semantics; the v4 path catches
-    // 10.0.0.0/8.
+    // reclassifies these as v4 via `net.IP.To4()` semantics; the v4 path
+    // catches 10.0.0.0/8.
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(

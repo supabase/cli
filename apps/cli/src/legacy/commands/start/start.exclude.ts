@@ -2,15 +2,12 @@ import { legacyAqua, legacyYellow } from "../../shared/legacy-colors.ts";
 import { LEGACY_SERVICE_CATALOG } from "../../shared/legacy-service-catalog.ts";
 
 /**
- * Go's real `ExcludableContainers()` order (`apps/cli-go/internal/start/start.go:
- * 1297-1303`, deleted in CLI-1966; last present at commit a253ccba2), which
- * walks `config.Images.Services()`
- * (`apps/cli-go/pkg/config/constants.go:60-76`) in this exact sequence — Gotrue,
- * Realtime, Storage, ImgProxy, Kong, Inbucket, Postgrest, Pgmeta, Studio,
- * EdgeRuntime, Logflare, Vector, Supavisor. This is NOT
- * `LEGACY_SERVICE_CATALOG`'s stored order, which is Go's *start* sequence
- * (Postgres first, Kong before Gotrue, etc). Expressed here as `service` keys
- * so the actual `excludeKey` strings stay single-sourced from the catalog.
+ * The `--exclude` values' canonical order: Gotrue, Realtime, Storage,
+ * ImgProxy, Kong, Inbucket, Postgrest, Pgmeta, Studio, EdgeRuntime, Logflare,
+ * Vector, Supavisor. This is NOT `LEGACY_SERVICE_CATALOG`'s stored order,
+ * which is the actual container *start* sequence (Postgres first, Kong before
+ * Gotrue, etc). Expressed here as `service` keys so the actual `excludeKey`
+ * strings stay single-sourced from the catalog.
  */
 const EXCLUDABLE_SERVICE_KEYS_IN_GO_ORDER: ReadonlyArray<string> = [
   "gotrue",
@@ -33,10 +30,10 @@ const EXCLUDE_KEY_BY_SERVICE = new Map(
 );
 
 /**
- * The 13 valid `--exclude` values, in Go's `ExcludableContainers()` order.
- * Postgres has no `excludeKey` (it is never excludable), so it is deliberately
- * absent — matching Go, which rejects `db`/`postgres` as invalid `--exclude`
- * values the same as any other unrecognized string.
+ * The 13 valid `--exclude` values, in the canonical order above. Postgres has
+ * no `excludeKey` (it is never excludable), so it is deliberately absent —
+ * `db`/`postgres` are rejected as invalid `--exclude` values the same as any
+ * other unrecognized string.
  */
 export const LEGACY_START_EXCLUDABLE_KEYS: ReadonlyArray<string> =
   EXCLUDABLE_SERVICE_KEYS_IN_GO_ORDER.map((service) => EXCLUDE_KEY_BY_SERVICE.get(service) ?? "");
@@ -47,20 +44,17 @@ export interface LegacyStartExcludePartition {
   /** Raw `--exclude` values that matched nothing, in input order. */
   readonly invalid: ReadonlyArray<string>;
   /**
-   * Go's exact stderr `WARNING:` text (`cmd/start.go:16-36`'s
-   * `validateExcludedContainers`), present only when `invalid` is non-empty.
+   * The stderr `WARNING:` text, present only when `invalid` is non-empty.
    */
   readonly warning?: string;
 }
 
 /**
- * Port of `validateExcludedContainers` (`apps/cli-go/cmd/start.go:16-36`,
- * deleted in CLI-1970; last present at commit 7b469f5b3). Go
- * never fails the command over an unrecognized `--exclude` value — it prints a
- * `WARNING:` to stderr and `RunE` proceeds regardless. The valid-options list
- * in the warning is alphabetically sorted (`sort.Strings(validContainers)`),
- * unlike `LEGACY_START_EXCLUDABLE_KEYS`'s Go-start-order sequence used for the
- * flag's help text.
+ * Partitions raw `--exclude` values into valid and invalid. An unrecognized
+ * `--exclude` value never fails the command — it prints a `WARNING:` to
+ * stderr and the command proceeds regardless. The valid-options list in the
+ * warning is alphabetically sorted, unlike `LEGACY_START_EXCLUDABLE_KEYS`'s
+ * canonical-order sequence used for the flag's help text.
  */
 export function legacyPartitionStartExcludeFlags(
   rawValues: ReadonlyArray<string>,

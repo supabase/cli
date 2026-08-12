@@ -6,7 +6,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * Opening a Postgres connection failed. Mirrors Go's `pgx`/`pgconn` connect
+ * Opening a Postgres connection failed. Mirrors `pgx`/`pgconn` connect
  * failures surfaced by `utils.ConnectByConfig`
  * (`apps/cli-go/internal/utils/connect.go`). The `suggestion` carries Go's
  * `utils.CmdSuggestion` text when the connect path sets one.
@@ -41,16 +41,15 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
    */
   readonly code?: string;
   /**
-   * Postgres `Detail` field of a server ErrorResponse (Go's `pgErr.Detail`).
+   * Postgres `Detail` field of a server ErrorResponse (`pgErr.Detail`).
    * Only set for server errors that carry a non-empty detail; the migration-apply
-   * error context renders it on its own line, matching Go's `ExecBatch`
-   * (`pkg/migration/file.go:99-101`).
+   * error context renders it on its own line, matching `ExecBatch`.
    */
   readonly detail?: string;
   /**
-   * Postgres error cursor of a server ErrorResponse (Go's `pgErr.Position`): a
+   * Postgres error cursor of a server ErrorResponse (`pgErr.Position`): a
    * 1-based index into the failing statement. Only set when the server reported a
-   * position > 0. The migration-apply error context uses it to render Go's `^`
+   * position > 0. The migration-apply error context uses it to render `^`
    * caret under the error position (`pkg/migration/file.go:98`, `markError`).
    */
   readonly position?: number;

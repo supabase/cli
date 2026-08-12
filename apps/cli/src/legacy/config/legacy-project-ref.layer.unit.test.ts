@@ -290,10 +290,10 @@ describe("legacyProjectRefLayer", () => {
     });
 
     it.effect("fails fast with LegacyProjectNotLinkedError and never prompts on a TTY", () => {
-      // The crux of the parity fix: even on an interactive TTY with projects
-      // available, loadProjectRef must NOT open the picker (that is `resolve`'s
-      // job). Go's `db lint`/`db advisors --linked` use LoadProjectRef, which
-      // returns ErrNotLinked instead of prompting.
+      // Even on an interactive TTY with projects available, loadProjectRef
+      // must NOT open the picker (that is `resolve`'s job). `db
+      // lint`/`db advisors --linked` use loadProjectRef, which fails with
+      // LegacyProjectNotLinkedError instead of prompting.
       const { layer, out } = makeLayer({
         workdir: tempRoot,
         stdinIsTty: true,

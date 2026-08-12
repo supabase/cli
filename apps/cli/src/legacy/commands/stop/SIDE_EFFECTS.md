@@ -1,9 +1,9 @@
 # `supabase stop`
 
-Native TypeScript port of Go's `internal/stop`. Talks directly to Docker via subprocess
-(`docker`/`podman`), replicating Go's label-filtering and container-naming scheme
-byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestration model
-(see the CLI-1324 plan's "Critical architectural finding" for why).
+Talks directly to Docker via subprocess
+(`docker`/`podman`), replicating the old Go CLI's label-filtering and container-naming
+scheme byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestration
+model (see the CLI-1324 plan's "Critical architectural finding" for why).
 
 ## Files Read
 
@@ -15,12 +15,12 @@ byte-for-byte — it does not go through `@supabase/stack/effect`'s orchestratio
 
 | Path                                                                | Format              | When                                                                                    |
 | ------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command — Go parity                             |
+| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                             |
 | `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory |
 
 The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartSecrets`,
-`legacy/shared/legacy-start-secrets-cleanup.ts`) — Go never stages secrets on host disk in
-the first place, so it has nothing to clean up here. Only Edge Runtime's own
+`legacy/shared/legacy-start-secrets-cleanup.ts`) — the old Go CLI never staged secrets on
+host disk in the first place, so it has nothing to clean up here. Only Edge Runtime's own
 JWT/service-role-key/secret env artifacts (`shared/functions/serve.ts`'s
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) still
 land on host disk this way, because that container is a `docker run` this port shells out
@@ -60,8 +60,7 @@ real deletion error does not fail the command.
 | ------ | ---- | ---- | ------------ | ---------------------- |
 | —      | —    | —    | —            | —                      |
 
-Neither `stop` nor its Go counterpart make any Management API call. Everything is local
-Docker + local `config.toml`.
+No Management API calls. Everything is local Docker + local `config.toml`.
 
 ## Environment Variables
 
@@ -96,26 +95,18 @@ and ensure it is on PATH") rather than a generic "failed to ..." string.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-Matches `apps/cli-go/internal/stop/` (deleted in CLI-1970; last present at commit 7b469f5b3). Go does not fire any custom telemetry event for
-this command.
-
 ## Output
 
-Go's `stop.RunE` never reads `-o`/`--output` itself, but the flag is still registered
-on the root command as a `PersistentFlags()` enum (`cmd/root.go:330`,
-`env|pretty|json|toml|yaml`) that every subcommand inherits, so `stop -o csv`/`-o table`
-is rejected by pflag at parse time, before `RunE` runs — Go never reaches this command's
-body with an unsupported value. `stop.command.ts` matches this: it wraps the handler
-with `withLegacyCommandInstrumentation`, whose default `outputFormats`
-(`LEGACY_RESOURCE_OUTPUT_FORMATS`, same `env|pretty|json|toml|yaml` set) validates and
-rejects the flag before the handler runs — not a divergence, just enforced one layer up
-rather than read inside this handler. Only the TS-native `--output-format` is consulted
-by this handler's own logic below.
+The `-o`/`--output` flag is never read by this command's own handler logic, but it is
+still validated: `stop.command.ts` wraps the handler with
+`withLegacyCommandInstrumentation`, whose default `outputFormats`
+(`LEGACY_RESOURCE_OUTPUT_FORMATS`, the `env|pretty|json|toml|yaml` set) validates and
+rejects an unsupported `-o` value (e.g. `csv`/`table`) before the handler runs. Only
+the TS-native `--output-format` is consulted by this handler's own logic below.
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-- stdout: `Stopping containers...` (printed unconditionally before any Docker call,
-  matching Go's `fmt.Fprintln` — see `docker.go:97`)
+- stdout: `Stopping containers...` (printed unconditionally before any Docker call)
 - stdout: `Stopped supabase local development setup.` (`supabase` rendered in Aqua/cyan
   when the output stream is a TTY, plain otherwise)
 - stderr (conditional): when any Docker volume still carries the project's
@@ -140,29 +131,28 @@ Same payload as `json`, delivered as a `result` NDJSON event.
 - `--project-id` and `--all` are **directory-independent** pure Docker-label filters —
   neither reads `config.toml`. Only the no-flags default path resolves the project id
   from `LegacyCliConfig.workdir` (env → config.toml `project_id` → workdir basename).
-- The hidden `--backup` flag exists only for Go CLI surface parity — it has **no effect**.
-  Go declares it via `flags.Bool("backup", true, ...)` (`cmd/stop.go:26`) but never binds
-  the return value to a variable, so `RunE` always passes `!noBackup` to `stop.Run`
-  regardless of `--backup`. The TS port matches this exactly: `deleteVolumes =
+- The hidden `--backup` flag exists only for CLI surface parity with the old Go CLI — it
+  has **no effect**. The old Go CLI declared it but never wired its value into anything,
+  so it always deleted volumes based on `!noBackup` regardless of `--backup`. The TS port
+  matches this exactly: `deleteVolumes =
 flags.noBackup`. `--backup=false` alone does **not** delete volumes; only
   `--no-backup` does.
 - Volume prune gates `--all` on the Docker daemon's API version (`legacy-container-cli.ts`'s
   `legacyDockerSupportsVolumePruneAllFlag`, checked via `docker version --format
-'{{.Server.APIVersion}}'`), matching Go's `Docker.ClientVersion() >= "1.42"` check
-  (`docker.go:126-133`) exactly. This isn't cosmetic: Docker CLI's own `--all` flag on
-  `volume prune` is annotated `version: "1.42"` and enforced by Cobra's `Args` validator
-  _before_ pruning runs, so sending it unconditionally on a pre-1.42 daemon hard-fails the
-  whole call instead of just pruning a narrower set. On the Podman fallback, `--all` is
-  omitted unconditionally instead: no released Podman `volume prune` (checked v4.3 through
-  the current v5.7) accepts that flag, and Podman already prunes every unused volume by
-  default, so dropping it there is lossless. Podman itself is a TS-only fallback (Go never
-  shells out to a `docker`/`podman` binary), so this has no Go-parity implication either way.
-- Containers are stopped concurrently (`Effect.all(..., { concurrency: "unbounded" })`),
-  mirroring Go's `WaitAll` goroutine fan-out. Every container's failure is checked before
-  failing the command (rather than stopping at the first failure), matching Go's
-  `errors.Join` over the full result set — though the surfaced message is a single fixed
-  string rather than a joined list of per-container errors, since Docker CLI subprocess
-  stderr isn't captured per-container the way Go's SDK error is.
+'{{.Server.APIVersion}}'`) — Docker requires server API version >= 1.42. This isn't
+  cosmetic: Docker CLI's own `--all` flag on `volume prune` is annotated `version: "1.42"`
+  and enforced before pruning runs, so sending it unconditionally on a pre-1.42 daemon
+  hard-fails the whole call instead of just pruning a narrower set. On the Podman fallback,
+  `--all` is omitted unconditionally instead: no released Podman `volume prune` (checked
+  v4.3 through the current v5.7) accepts that flag, and Podman already prunes every unused
+  volume by default, so dropping it there is lossless. Podman itself is a TS-only fallback
+  (the old Go CLI talked to the Docker Engine API directly rather than shelling out to a
+  `docker`/`podman` binary), so there's no parity concern here either way.
+- Containers are stopped concurrently (`Effect.all(..., { concurrency: "unbounded" })`).
+  Every container's failure is checked before failing the command (rather than stopping
+  at the first failure) — though the surfaced message is a single fixed string rather
+  than a joined list of per-container errors, since Docker CLI subprocess stderr isn't
+  captured per-container the way a direct SDK error would be.
 - No e2e test is planned: there is no Docker-daemon-free golden path for this command,
   and the e2e harness (`runSupabase()`) does not provision a real local stack. See the
   CLI-1324 plan's "E2e tests" section for the full justification.

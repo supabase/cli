@@ -8,8 +8,8 @@ Same auth fallback chain (env / keyring / `~/.supabase/access-token`) and projec
 
 | Path                                             | Format | When                                                                     |
 | ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -43,7 +43,7 @@ Same auth fallback chain (env / keyring / `~/.supabase/access-token`) and projec
 
 ## Output
 
-### `--output pretty` (Go default) / `--output-format text`
+### `--output pretty` (default) / `--output-format text`
 
 Glamour-styled 7-column table: `HOST`, `PORT`, `USER`, `PASSWORD`, `JWT SECRET`, `POSTGRES VERSION`, `STATUS`. Missing `db_user` / `db_pass` / `jwt_secret` render as `******`.
 

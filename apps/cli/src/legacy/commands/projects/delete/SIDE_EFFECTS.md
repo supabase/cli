@@ -13,11 +13,12 @@
 | --------------------------- | ------- | -------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/` | removed | when the deleted ref matches the linked ref file (best-effort) |
 
-> Go best-effort deletes the per-ref keyring credential, but it only ever stores
-> the profile-scoped access token in the keyring (never a per-ref entry), so the
-> delete always targets a non-existent entry — a no-op for both CLIs. Go's
-> "Keyring is not supported on WSL" stderr line (system keyring unavailable, e.g.
-> headless CI) is keyring-backend noise normalized away in the parity harness.
+> This command best-effort deletes the per-ref keyring credential, but it only
+> ever stores the profile-scoped access token in the keyring (never a per-ref
+> entry), so the delete always targets a non-existent entry — a no-op. The
+> "Keyring is not supported on WSL" stderr line (system keyring unavailable,
+> e.g. headless CI) is keyring-backend noise normalized away in the parity
+> harness.
 
 ## API Routes
 
@@ -57,7 +58,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prompts `Do you want to delete project <ref>? This action is irreversible.` (default
 **No**, honours the global `--yes`), then on success prints `Deleted project: <name>`

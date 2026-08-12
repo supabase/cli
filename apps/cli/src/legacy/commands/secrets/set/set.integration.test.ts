@@ -331,10 +331,10 @@ LITERAL = "plain-value"
   it.live(
     "skips an empty [edge_runtime.secrets] value instead of overwriting a remote secret (Go set.go:48-52 parity)",
     () => {
-      // Go's `DecryptSecretHookFunc` (`pkg/config/secret.go:98`) leaves `SHA256`
-      // empty for an empty value, and `ListSecrets` only includes entries with
-      // `len(secret.SHA256) > 0` — so a literal `EMPTY = ""` in config.toml is
-      // never sent, which prevents it from silently overwriting a same-named
+      // `DecryptSecretHookFunc` (`pkg/config/secret.go:98`) leaves `SHA256`
+      // empty for an empty value, and only entries with a non-empty SHA256
+      // are included — so a literal `EMPTY = ""` in config.toml is never
+      // sent, which prevents it from silently overwriting a same-named
       // remote secret with an empty string.
       writeConfig(
         `[edge_runtime.secrets]
@@ -510,7 +510,7 @@ FOO = "literal-foo"
     "recovers [edge_runtime.secrets] when an unrelated field fails schema decode (CLI-1867 Go parity)",
     () => {
       // Valid TOML syntax throughout, but `analytics.port` has the wrong type
-      // for its schema field. Go's viper+mapstructure decode
+      // for its schema field. The viper+mapstructure decode
       // (`pkg/config/config.go:749`) mutates the target struct field-by-field,
       // so an unrelated type error doesn't stop `EdgeRuntime.Secrets` from
       // landing on `utils.Config` — `secrets set` still reads it. Effect
@@ -582,12 +582,11 @@ FROM_CONFIG = "config-value"
       // `loadProjectConfig` resolves `env(VAR)` references against
       // `supabase/.env`/`.env.local` *before* schema decode, so a malformed
       // dotenv line fails with `ProjectEnvParseError` rather than
-      // `ProjectConfigParseError`. Go's `Load()` (`pkg/config/config.go:788-791`)
-      // calls `loadNestedEnv` first too and swallows any error the same way
-      // `flags.LoadConfig` does in `internal/secrets/set/set.go:20-24` — so this
-      // must not abort the command either. `.env` is only read once a
-      // `supabase/config.toml`/`.json` is found (`findProjectPaths`), so a
-      // config.toml must exist here too.
+      // `ProjectConfigParseError`. `Load()` (`pkg/config/config.go:788-791`)
+      // calls `loadNestedEnv` first too and swallows any error the same
+      // non-fatal way — so this must not abort the command either. `.env`
+      // is only read once a `supabase/config.toml`/`.json` is found
+      // (`findProjectPaths`), so a config.toml must exist here too.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
@@ -678,7 +677,7 @@ port = "not-a-number"
     "does not fabricate a secret named 0 when [edge_runtime.secrets] is an array (CLI-1867 Go parity)",
     () => {
       // `edge_runtime.secrets` as an array (instead of a table) is not
-      // recoverable structure: Go's mapstructure decoder never sets
+      // recoverable structure: the mapstructure decoder never sets
       // `WeaklyTypedInput`, so a slice source for a map-typed field hits
       // `UnconvertibleTypeError` in `decodeMap` rather than the index-as-key
       // `decodeMapFromSlice` path, and the whole field is left empty. Before
@@ -756,7 +755,7 @@ FROM_CONFIG = "remote-value"
   it.live(
     "prints the remote override notice to stderr when [remotes.*] matches the resolved ref (Go parity: pkg/config/config.go:605)",
     () => {
-      // No decode error here — the plain success path. Go's `loadFromFile`
+      // No decode error here — the plain success path. `loadFromFile`
       // prints `Loading config override: [remotes.<name>]` to stderr
       // unconditionally whenever a `[remotes.*]` block's `project_id` matches
       // `Config.ProjectId`, before `mapstructure` ever runs. `mockLegacyCliConfig`
@@ -813,12 +812,11 @@ FROM_CONFIG = "config-value"
   it.live(
     "tolerates two [remotes.*] blocks sharing the target project_id, logs it, and still sets CLI-arg secrets (CLI-1867 Go parity)",
     () => {
-      // Go's `flags.LoadConfig` swallows *any* `Load()` error non-fatally
-      // (`internal/secrets/set/set.go:22-24`), including the duplicate-
-      // `project_id` error `loadFromFile` raises before `mapstructure` ever
-      // runs (`pkg/config/config.go:601`). There is no parsed document to
-      // recover a subtree from, so config-sourced secrets are dropped
-      // entirely — only CLI-arg secrets survive.
+      // `flags.LoadConfig` swallows *any* `Load()` error non-fatally,
+      // including the duplicate-`project_id` error `loadFromFile` raises
+      // before `mapstructure` ever runs (`pkg/config/config.go:601`). There
+      // is no parsed document to recover a subtree from, so config-sourced
+      // secrets are dropped entirely — only CLI-arg secrets survive.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"
@@ -847,14 +845,14 @@ project_id = "dupe-project-id"
   it.live(
     "tolerates a [remotes.*] block with a malformed project_id and still sets CLI-arg secrets (Go parity)",
     () => {
-      // Go's `flags.LoadConfig` swallows *any* `Load()` error non-fatally
-      // (`internal/secrets/set/set.go:22-24`), including the invalid-format
-      // error `Config.Validate` raises for every `[remotes.*].project_id`
-      // that doesn't match Go's ref pattern (`pkg/config/config.go:996-1001`),
-      // which runs inside the same `Config.Load()` call (`config.go:882`) as
-      // the duplicate check above. There is no parsed document to recover a
-      // subtree from, so config-sourced secrets are dropped entirely — only
-      // CLI-arg secrets survive.
+      // `flags.LoadConfig` swallows *any* `Load()` error non-fatally,
+      // including the invalid-format error `Config.Validate` raises for
+      // every `[remotes.*].project_id` that doesn't match the ref pattern
+      // (`pkg/config/config.go:996-1001`), which runs inside the same
+      // `Config.Load()` call (`config.go:882`) as the duplicate check
+      // above. There is no parsed document to recover a subtree from, so
+      // config-sourced secrets are dropped entirely — only CLI-arg secrets
+      // survive.
       writeConfig(
         `[edge_runtime.secrets]
 FROM_CONFIG = "config-value"

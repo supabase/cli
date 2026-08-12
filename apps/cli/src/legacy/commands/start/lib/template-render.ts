@@ -1,16 +1,11 @@
 /**
- * Pure renderer for the Go `text/template` sources transcribed under
- * `../templates/`. Mirrors `apps/cli-go/internal/start/start.go`'s use of
- * `text/template` (deleted in CLI-1966; last present at commit a253ccba2):
- * every placeholder is a bare `{{ .FieldName }}` reference
- * (no pipelines, functions, or control structures), and every one of the
- * three templates rendered here is executed with `Option("missingkey=error")`
- * (verified via `grep -n '\.Execute(' apps/cli-go/internal/start/start.go`,
- * lines 399, 489, 1203) — so a placeholder with no matching field always
- * throws, never silently renders Go's `<no value>`.
+ * Pure renderer for the `text/template`-style sources under `../templates/`:
+ * every placeholder is a bare `{{ .FieldName }}` reference (no pipelines,
+ * functions, or control structures), and a placeholder with no matching
+ * field always throws — it never silently renders as empty.
  *
- * `custom_nginx.template` is deliberately NOT rendered here: it is not a Go
- * `text/template` at all (see the comment on
+ * `custom_nginx.template` is deliberately NOT rendered here: it is not one of
+ * these templates at all (see the comment on
  * `LEGACY_START_CUSTOM_NGINX_TEMPLATE`) and is injected byte-for-byte, with
  * its `${{VAR}}` placeholders substituted by Kong itself at container boot.
  * Callers needing that file should import `LEGACY_START_CUSTOM_NGINX_TEMPLATE`
@@ -24,9 +19,8 @@ const GO_TEMPLATE_FIELD_PATTERN = /\{\{\s*\.(\w+)\s*\}\}/g;
 
 /**
  * Substitutes every `{{ .FieldName }}` occurrence in `template` with the
- * matching value from `fields`, replicating Go's `text/template` rendered
- * with `Option("missingkey=error")`: a placeholder referencing a field not
- * present in `fields` throws instead of rendering `<no value>`.
+ * matching value from `fields`: a placeholder referencing a field not
+ * present in `fields` throws instead of silently rendering as empty.
  */
 export function legacyRenderGoTemplate(
   template: string,
@@ -58,7 +52,7 @@ export interface LegacyStartKongYmlFields {
   readonly queryToken: string;
 }
 
-/** Renders `kong.yml` from Go's `kongConfig` struct (`start.go:90-104`). */
+/** Renders `kong.yml` from {@link LegacyStartKongYmlFields}. */
 export function legacyRenderStartKongYml(fields: LegacyStartKongYmlFields): string {
   return legacyRenderGoTemplate(LEGACY_START_KONG_YML_TEMPLATE, {
     GotrueId: fields.gotrueId,
@@ -90,7 +84,7 @@ export interface LegacyStartVectorYamlFields {
   readonly dbId: string;
 }
 
-/** Renders `vector.yaml` from Go's `vectorConfig` struct (`start.go:118-129`). */
+/** Renders `vector.yaml` from {@link LegacyStartVectorYamlFields}. */
 export function legacyRenderStartVectorYaml(fields: LegacyStartVectorYamlFields): string {
   return legacyRenderGoTemplate(LEGACY_START_VECTOR_YAML_TEMPLATE, {
     ApiKey: fields.apiKey,
@@ -117,7 +111,7 @@ export interface LegacyStartPoolerExsFields {
   readonly defaultPoolSize: number;
 }
 
-/** Renders `pooler.exs` from Go's `poolerTenant` struct (`start.go:144-153`). */
+/** Renders `pooler.exs` from {@link LegacyStartPoolerExsFields}. */
 export function legacyRenderStartPoolerExs(fields: LegacyStartPoolerExsFields): string {
   return legacyRenderGoTemplate(LEGACY_START_POOLER_EXS_TEMPLATE, {
     DbHost: fields.dbHost,

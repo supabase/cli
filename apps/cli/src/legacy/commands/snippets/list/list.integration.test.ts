@@ -45,7 +45,7 @@ const PIPE_RESPONSE: SnippetsResponse = {
   data: [
     {
       ...SNIPPET_BASE,
-      // Go's `strings.ReplaceAll(value, "|", "\\|")` is a markdown-intermediate
+      // `strings.ReplaceAll(value, "|", "\\|")` is a markdown-intermediate
       // escape that glamour decodes back to literal `|` in the rendered ASCII
       // bytes. `renderGlamourTable` bypasses glamour, so we pass raw values —
       // any `|` in `name` / `owner.username` must appear literally in stdout.
@@ -133,7 +133,7 @@ describe("legacy snippets list integration", () => {
       yield* legacySnippetsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("name|with|pipes");
       expect(out.stdoutText).toContain("user|name");
-      // No `\|` escape — Go's intermediate escape is round-tripped by glamour.
+      // No `\|` escape — the intermediate escape is round-tripped by glamour.
       expect(out.stdoutText).not.toContain("\\|");
     }).pipe(Effect.provide(layer));
   });
@@ -179,10 +179,9 @@ describe("legacy snippets list integration", () => {
     const { layer, out } = setup({ goOutput: "json", response: EMPTY_RESPONSE });
     return Effect.gen(function* () {
       yield* legacySnippetsList({ projectRef: Option.none() });
-      // The API returns `{"data": []}`; Go's `encoding/json` round-trip
-      // preserves nil-vs-empty (real responses always send `[]`, never null).
-      // Our raw-HTTP bypass means we faithfully echo whatever the API sent —
-      // no `nullForEmptyArrays` coercion.
+      // The API returns `{"data": []}`; our raw-HTTP bypass means we
+      // faithfully echo whatever the API sent — no `nullForEmptyArrays`
+      // coercion (real responses always send `[]`, never null).
       expect(out.stdoutText).toBe(`{
   "data": []
 }
@@ -200,10 +199,10 @@ describe("legacy snippets list integration", () => {
   });
 
   it.live("Go --output=toml fails like Go when a snippet carries a description", () => {
-    // Go's BurntSushi encoder refuses the `nullable.Nullable[string]`
-    // description field (`map[bool]string`) — `snippets list -o toml` fails
-    // with this exact message whenever any snippet has a `description` key
-    // (present-with-value or explicit null), verified against apps/cli-go.
+    // BurntSushi refuses the `nullable.Nullable[string]` description field
+    // (`map[bool]string`) — `snippets list -o toml` fails with this exact
+    // message whenever any snippet has a `description` key (present-with-value
+    // or explicit null).
     const { layer } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacySnippetsList({ projectRef: Option.none() }));
@@ -262,12 +261,10 @@ describe("legacy snippets list integration", () => {
         if (Exit.isFailure(exit)) {
           const dump = JSON.stringify(exit.cause);
           expect(dump).toContain("LegacySnippetsEnvNotSupportedError");
-          // Byte-exact match against Go's `ErrEnvNotSupported`
-          // (apps/cli-go/internal/utils/output.go:41).
           expect(dump).toContain("--output env flag is not supported");
         }
         expect(api.requests).toHaveLength(0);
-        // Go's PersistentPostRun + Execute both fire on this error path.
+        // Telemetry flush and linked-project caching still fire on this error path.
         expect(telemetry.flushed).toBe(true);
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));

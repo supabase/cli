@@ -1,5 +1,5 @@
 /**
- * Local Docker resource id derivation, ported from Go's `utils.GetId` /
+ * Local Docker resource id derivation, ported from `utils.GetId` /
  * `utils.NetId` / `utils.DbId` (`apps/cli-go/internal/utils/config.go`). Hoisted
  * to `legacy/shared` so both `gen types` and the declarative seam derive the same
  * `supabase_db_<projectId>` / `supabase_network_<projectId>` names when checking
@@ -14,8 +14,8 @@ import { basename } from "node:path";
  * with `SUPABASE_PROJECT_ID`; when both are absent Go falls back to the working
  * directory basename (`utils.Config.ProjectId` default) — UNLESS a `--project-ref`
  * was resolved for this invocation, in which case `flags.LoadConfig` pre-sets
- * `Config.ProjectId = ProjectRef` before ever merging the file
- * (`pkg/config/config.go:561-570`), so `Eject` only reaches the basename fallback
+ * `Config.ProjectId = ProjectRef` before ever merging the file,
+ * so `Eject` only reaches the basename fallback
  * when that default is itself empty. `projectRefDefault` is `undefined` for
  * `start`/`stop`/`status`, which have no such flag. So the full precedence is
  * `SUPABASE_PROJECT_ID` → config.toml `project_id` → `--project-ref` → workdir basename.
@@ -40,11 +40,11 @@ function truncateText(text: string, maxLength: number) {
 }
 
 /**
- * Go's `GetId` sanitisation: replace invalid runs with `_`, strip leading
+ * `GetId` sanitisation: replace invalid runs with `_`, strip leading
  * `_.-`, and cap at 40 chars.
  *
  * Exported because it is not only a container-*naming* concern: Go's
- * `Config.Validate` (`pkg/config/config.go:938-944`) rewrites `c.ProjectId`
+ * `Config.Validate` rewrites `c.ProjectId`
  * to this same sanitized form **in place, once, at config-load time** (every
  * `flags.LoadConfig` call ends in `Load` -> `Validate`), and every later use
  * of `Config.ProjectId` — including the Docker LABEL value written by `start`
@@ -90,7 +90,7 @@ export function localNetworkId(projectId: string) {
 // doc comment); `start`/`db start` now call the shared helper directly
 // (review round on CLI-1963).
 
-/** Go's `utils.CliProjectLabel` (`apps/cli-go/internal/utils/docker.go:59`) — the
+/** `utils.CliProjectLabel` — the
  * Docker label every container/volume/network created by `supabase start` carries. */
 export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
 
@@ -110,7 +110,7 @@ export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
 export const LEGACY_CLI_WORKDIR_LABEL = "com.supabase.cli.workdir";
 
 /**
- * Go's `utils.GetDockerIds()` (`apps/cli-go/internal/utils/config.go:82-98`) — the
+ * `utils.GetDockerIds()` — the
  * 13 service container ids (excludes `db`, `network`, and the `differ` shadow
  * container, which are not part of the "expected running services" set). Order and
  * alias-name strings are taken verbatim from `config.go:36-49,61-79`.
@@ -134,14 +134,14 @@ export function legacyServiceContainerIds(projectId: string): ReadonlyArray<stri
 }
 
 /**
- * Go's `utils.CliProjectFilter` (`apps/cli-go/internal/utils/docker.go:148-156`) —
+ * `utils.CliProjectFilter` —
  * the value that follows `--filter label=` on the `docker`/`podman` CLI. An empty
- * `projectId` (Go's `--all` path) filters on the bare label across every project.
+ * `projectId` (`--all` path) filters on the bare label across every project.
  *
  * This function itself does not sanitize — by design, it's a pure pass-through.
  * The caller is responsible for sanitizing `projectId` with
  * {@link legacySanitizeProjectId} on the config/env-derived (default) path
- * BEFORE calling this, matching Go's `Config.Validate` sanitizing the
+ * BEFORE calling this, matching `Config.Validate` sanitizing the
  * `Config.ProjectId` singleton once at config-load time so every later
  * reader — including the Docker LABEL `start` writes — sees the same
  * sanitized string. An explicit `--project-id <value>` (where one exists,

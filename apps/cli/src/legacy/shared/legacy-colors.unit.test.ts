@@ -9,7 +9,7 @@ import { legacyAqua, legacyBold, legacyGreen, legacyRed, legacyYellow } from "./
 // order Go's lipgloss default renderer uses (`termenv@v0.16.0`
 // `termenv.go:68-115`). These tests pin that gate deterministically with fake
 // streams and stubbed env vars; a piped stream (no `hasColors`) must yield
-// PLAIN text, exactly like Go's `utils.Aqua` under `go test`'s piped stdout.
+// PLAIN text, exactly like `utils.Aqua` under `go test`'s piped stdout.
 const colorTty: LegacyColorStream = { hasColors: () => true };
 const monoTty: LegacyColorStream = { hasColors: () => false };
 const piped: LegacyColorStream = {};

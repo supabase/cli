@@ -310,8 +310,8 @@ describe("legacy network-restrictions get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
-      // Linked-project cache wraps the inner effect, so it still fires after ref
-      // resolution succeeded — matches Go's PersistentPostRun once ref is known.
+      // Linked-project cache wraps the inner effect, so it still fires after
+      // ref resolution succeeded, once ref is known.
       expect(cache.cached).toBe(true);
     });
   });

@@ -88,10 +88,10 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
   });
 
   test("--domains= (explicit empty value) parses to an empty array, not a missing flag", async () => {
-    // Backs the "changed vs truthy" mutex-check fix (CLI-1902): the handler's
-    // `hasExplicitLongFlag` reads raw argv rather than this parsed value
-    // precisely because `--domains=` collapses to `[]` here, indistinguishable
-    // from the flag never being passed at all if you only looked at `.length`.
+    // The handler's `hasExplicitLongFlag` reads raw argv rather than this
+    // parsed value precisely because `--domains=` collapses to `[]` here,
+    // indistinguishable from the flag never being passed at all if you only
+    // looked at `.length`.
     const [, domains] = await Effect.runPromise(
       legacySsoUpdateDomainsFlag
         .parse({
@@ -105,9 +105,9 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
   });
 
   test("keeps only the first CSV record of a multiline value (pflag reads ONE record)", async () => {
-    // Go-verified (CLI-2005): `sso update <id> --domains $'a.com\nb"c'` raises
-    // no parse error — pflag calls `csv.Reader.Read()` once, so the malformed
-    // second line is silently dropped.
+    // `sso update <id> --domains $'a.com\nb"c'` raises no parse error —
+    // pflag calls `csv.Reader.Read()` once, so the malformed second line is
+    // silently dropped.
     const [, domains] = await Effect.runPromise(
       legacySsoUpdateDomainsFlag
         .parse({
@@ -133,7 +133,6 @@ describe("legacy sso update domain flags (pflag StringSlice parity)", () => {
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
-      // Byte-matches the Go CLI (bare quote at byte 8 of `example"com`).
       expect(normalizeCause(exit.cause).message).toBe(
         'invalid argument "example\\"com" for "--domains" flag: parse error on line 1, column 8: bare " in non-quoted-field',
       );

@@ -21,7 +21,7 @@ export interface LegacyPgConnInput {
    * Additional HA failover hosts beyond the primary `host`/`port`, in order.
    * pgconn accepts libpq multi-host connection strings
    * (`postgres://h1:5432,h2:5433/db` or `host=h1,h2 port=5432,5433`) and dials
-   * each in turn (`config.go:326-362`). `host`/`port` are the *primary*
+   * each in turn. `host`/`port` are the *primary*
    * (`config.Host`/`config.Port`, used for `IsLocalDatabase` and `.pgpass`); these
    * are the remaining `config.Fallbacks`. Absent for the common single-host case.
    */
@@ -59,8 +59,8 @@ export interface LegacyPgConnInput {
    * libpq client-certificate auth (Go's `pgconn.Config` `TLSConfig.Certificates`,
    * from the DSN or `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`). `sslcert`/`sslkey` are
    * file paths loaded by the driver layer into the client cert; `sslpassword`
-   * decrypts an encrypted key. pgconn requires both `sslcert` and `sslkey` together
-   * (`config.go:710-711`), so the parser only ever sets them as a pair.
+   * decrypts an encrypted key. pgconn requires both `sslcert` and `sslkey` together,
+   * so the parser only ever sets them as a pair.
    */
   readonly sslcert?: string;
   readonly sslkey?: string;
@@ -73,7 +73,7 @@ export interface LegacyPgConnInput {
    */
   readonly connectTimeoutSeconds?: number;
   /**
-   * Profile context for the connect-failure suggestion (Go's `SetConnectSuggestion`,
+   * Profile context for the connect-failure suggestion (`SetConnectSuggestion`,
    * which reads the ambient `CurrentProfile` in `ConnectByUrl`). The resolver attaches
    * it so the driver layer can map a refused/auth/IPv6 connect error to Go's actionable
    * hint. Absent → the driver omits the suggestion (callers fall back to the generic one).
@@ -91,11 +91,11 @@ export interface LegacyDbSession {
   /**
    * Run a parameterized SQL query and return the result rows as plain objects
    * keyed by the query's column names (snake_case is preserved — the driver
-   * layer applies no row-name transform, mirroring Go's `pgxv5.CollectRows`).
+   * layer applies no row-name transform, mirroring `pgxv5.CollectRows`).
    *
    * Used by the `inspect db` subcommands, which each embed a SQL file and render
    * the rows as a Glamour table. `params` are bound positionally (`$1`, `$2`, …),
-   * matching Go's `conn.Query(ctx, sql, args...)`.
+   * matching `conn.Query(ctx, sql, args...)`.
    */
   readonly query: (
     sql: string,
@@ -119,7 +119,7 @@ export interface LegacyDbSession {
   readonly extensionExists: (name: string) => Effect.Effect<boolean, LegacyDbExecError>;
   /**
    * Run a server-side `COPY (...) TO STDOUT` and return its raw bytes. Mirrors
-   * Go's `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`, deleted
+   * `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`, deleted
    * in CLI-1970; last present at commit 7b469f5b3), which
    * streams `pgconn.CopyTo` into a file. `sql` is the already-wrapped COPY
    * statement (e.g. `COPY (<query>) TO STDOUT WITH CSV HEADER`); the driver does
@@ -180,7 +180,7 @@ export interface LegacyQueryResult {
 /** Per-connection options the driver layer cannot infer from `cfg` alone. */
 export interface LegacyDbConnectOptions {
   /**
-   * Whether the target is the local stack (Go's `utils.IsLocalDatabase`). Drives
+   * Whether the target is the local stack (`utils.IsLocalDatabase`). Drives
    * TLS, mirroring Go (`apps/cli-go/internal/utils/connect.go`): local connections
    * set `cc.TLSConfig = nil` (`ConnectLocalPostgres`) → no TLS, while remote
    * connections go through `ConnectByUrl`, where pgx defaults to `sslmode=prefer`
@@ -189,10 +189,10 @@ export interface LegacyDbConnectOptions {
    */
   readonly isLocal: boolean;
   /**
-   * The active `--dns-resolver` value (Go's `utils.DNSResolver.Value`). When
+   * The active `--dns-resolver` value (`utils.DNSResolver.Value`). When
    * `"https"` and the connection is remote, the driver resolves the host via
    * Cloudflare DNS-over-HTTPS before dialing, mirroring Go's
-   * `cc.LookupFunc = FallbackLookupIP` (`connect.go:211-213`). `"native"` (the
+   * `cc.LookupFunc = FallbackLookupIP`. `"native"` (the
    * default) uses the OS resolver. Ignored for local connections, matching Go.
    */
   readonly dnsResolver: "native" | "https";

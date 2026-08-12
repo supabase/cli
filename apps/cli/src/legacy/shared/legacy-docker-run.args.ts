@@ -25,7 +25,7 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     "run",
     "--rm",
     ...networkArgs,
-    // Go's `HostConfig.ExtraHosts` (DockerStart) → docker CLI `--add-host`.
+    // `HostConfig.ExtraHosts` (DockerStart) → docker CLI `--add-host`.
     ...extraHosts.flatMap((h) => ["--add-host", h]),
     ...binds.flatMap((b) => ["-v", b]),
     // Emit the key-only `-e KEY` form so values (e.g. PGPASSWORD) never appear
@@ -37,7 +37,7 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     ...Object.keys(env).flatMap((k) => ["-e", k]),
     ...securityOpt.flatMap((s) => ["--security-opt", s]),
     ...(Option.isSome(workingDir) ? ["-w", workingDir.value] : []),
-    // Go's `DockerStart` unconditionally sets `com.supabase.cli.project` and
+    // `DockerStart` unconditionally sets `com.supabase.cli.project` and
     // `com.docker.compose.project` on `config.Labels` for EVERY container it
     // starts, one-shot jobs included (`apps/cli-go/internal/utils/docker.go:
     // 371-376`) — `supabase stop` and this shell's own rollback both discover
@@ -56,8 +56,8 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
 }
 
 /**
- * Mirror Go's `DockerStart` Bitbucket Pipelines handling
- * (`apps/cli-go/internal/utils/docker.go:275-304`): when `BITBUCKET_CLONE_DIR` is set,
+ * Mirror `DockerStart` Bitbucket Pipelines handling:
+ * when `BITBUCKET_CLONE_DIR` is set,
  * that runner disallows named volumes and `--security-opt`, so Go drops named-volume
  * binds and clears `SecurityOpt` before starting any container. Applied globally to
  * every legacy docker run (matching Go's placement) — e.g. the pg-delta Deno-cache

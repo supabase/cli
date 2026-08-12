@@ -1,7 +1,6 @@
 # `supabase storage ls [path]`
 
-Native TypeScript port of `apps/cli-go/internal/storage/ls` (deleted in CLI-1970; last present at commit 7b469f5b3). Lists objects/buckets
-by path prefix against the Storage gateway (local stack or linked project).
+Lists objects/buckets by path prefix against the Storage gateway (local stack or linked project).
 
 ## Files Read
 
@@ -40,7 +39,7 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 | `SUPABASE_SERVICES_HOSTNAME`     | local baseUrl host                                   | no (→ Docker host → `127.0.0.1`)   |
 | `SUPABASE_EXPERIMENTAL`          | experimental gate: `--experimental` equivalent       | yes, unless `--experimental` given |
 
-`storage` is an experimental command (Go `root.go:63`): every subcommand requires
+`storage` is an experimental command: every subcommand requires
 `--experimental` (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
 `must set the --experimental flag to run this command` before any other work.
 
@@ -53,9 +52,9 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-One entry per line to **stdout** (`fmt.Println`); directory entries get a trailing `/`.
+One entry per line to **stdout**; directory entries get a trailing `/`.
 Pagination prints `Loading page: <N>` to **stderr**.
 
 ### `--output-format json`
@@ -76,7 +75,7 @@ Pagination prints `Loading page: <N>` to **stderr**.
 | ---------------------- | ------------------------------------------ | -------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `flags` (recursive/linked/local) |
 
-No custom storage telemetry events (verified against `internal/storage/ls`).
+No custom storage telemetry events.
 
 ## Notes
 
@@ -87,5 +86,5 @@ No custom storage telemetry events (verified against `internal/storage/ls`).
   otherwise the linked project is used. They are declared **per-leaf** (not as
   `storage`-group scoped globals) because Effect CLI requires global-flag names to be
   unique tree-wide and `seed` already owns `linked`/`local`; the only behavioural cost
-  vs Go's persistent flags is that they must follow the subcommand token
+  is that they must follow the subcommand token
   (`storage ls --local`, not `storage --local ls`) — the same shape the `db` family uses.

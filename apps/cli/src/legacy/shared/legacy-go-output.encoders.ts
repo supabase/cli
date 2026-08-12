@@ -5,15 +5,15 @@ import { encodeGoJsonCompact, encodeGoJsonIndented } from "./legacy-go-json.ts";
 import { goStringCompare } from "./legacy-go-struct-output.encoders.ts";
 
 /**
- * Reproduces Go's `json.Encoder` output (`utils.EncodeOutput` with `-o json`):
- *   - Top-level and nested struct fields serialize in alphabetical key order.
- *   - Go string escaping, including the default HTML escapes (`<` / `>` / `&`
- *     become `\u003c` / `\u003e` / `\u0026` — Go never calls
- *     `SetEscapeHTML(false)` on this path), `\u0008`/`\u000c` for
- *     backspace/form feed, and escaped U+2028/U+2029.
- *   - Trailing newline (matches `json.Encoder.Encode`).
+ * Reproduces `json.Encoder` output (`utils.EncodeOutput` with `-o json`):
+ * - Top-level and nested struct fields serialize in alphabetical key order.
+ * - Go string escaping, including the default HTML escapes (`<` / `>` / `&`
+ * become `\u003c` / `\u003e` / `\u0026` — Go never calls
+ * `SetEscapeHTML(false)` on this path), `\u0008`/`\u000c` for
+ * backspace/form feed, and escaped U+2028/U+2029.
+ * - Trailing newline (matches `json.Encoder.Encode`).
  *
- * The optional `nullForEmptyArrays` option mirrors Go's `null` serialization for nil
+ * The optional `nullForEmptyArrays` option mirrors `null` serialization for nil
  * slices: when the schema decodes both `null` and `[]` to `[]` upstream, the caller can
  * list array keys that should re-substitute `null` for empty arrays so the JSON bytes
  * match Go's output. Used by `backups list` to preserve its PITR-only `"backups": null`
@@ -78,7 +78,7 @@ function sortKeysDeep(value: unknown): unknown {
 }
 
 /**
- * Serialize an outbound API request body the way Go's `json.Marshal` would
+ * Serialize an outbound API request body the way `json.Marshal` would
  * for a struct: keys sorted alphabetically (the `@supabase/api`-generated
  * structs declare fields alphabetically, and `json.Marshal` serializes in
  * field-declaration order), Go string escaping (HTML characters included,
@@ -123,18 +123,18 @@ export function encodeToml(value: unknown): string {
 }
 
 /**
- * Reproduces Go's `utils.ToEnvMap` + `godotenv.Marshal` byte shape for the
+ * Reproduces `utils.ToEnvMap` + `godotenv.Marshal` byte shape for the
  * Supabase CLI's `--output env` mode (see `apps/cli-go/internal/utils/output.go:86-107`).
  *
- *   - Viper's `AllKeys()` descends into nested maps using dotted paths; the loop
- *     then `strings.ToUpper(strings.ReplaceAll(k, ".", "_"))` produces SCREAMING_SNAKE_CASE keys.
- *   - Viper does **not** descend into slices. An array value lands as a single
- *     leaf whose `GetString` rendering is the empty string — so e.g.
- *     `{backups: [{...}, {...}]}` becomes one `BACKUPS=""` entry, not indexed leaves.
- *   - Integer-parseable values are emitted unquoted (`KEY=123`), matching
- *     `godotenv.Marshal`'s `strconv.Atoi` branch. Everything else is double-quoted
- *     with `"` / `\\` escaped, matching the `fmt.Sprintf("%q", ...)` branch.
- *   - Lines are sorted lexicographically by key, then joined with `\n`.
+ * - Viper's `AllKeys()` descends into nested maps using dotted paths; the loop
+ * then `strings.ToUpper(strings.ReplaceAll(k, ".", "_"))` produces SCREAMING_SNAKE_CASE keys.
+ * - Viper does **not** descend into slices. An array value lands as a single
+ * leaf whose `GetString` rendering is the empty string — so e.g.
+ * `{backups: [{...}, {...}]}` becomes one `BACKUPS=""` entry, not indexed leaves.
+ * - Integer-parseable values are emitted unquoted (`KEY=123`), matching
+ * `godotenv.Marshal`'s `strconv.Atoi` branch. Everything else is double-quoted
+ * with `"` / `\\` escaped, matching the `fmt.Sprintf("%q", ...)` branch.
+ * - Lines are sorted lexicographically by key, then joined with `\n`.
  */
 export function encodeEnv(value: unknown): string {
   const flat = flatten(value);
@@ -199,7 +199,7 @@ function formatEnvValue(value: string): string {
       return String(parsed);
     }
   }
-  // Match Go's `fmt.Sprintf("%q", ...)` escaping: backslash, double-quote, and the
+  // Match `fmt.Sprintf("%q", ...)` escaping: backslash, double-quote, and the
   // common C-style control characters \n / \r / \t. Without the control-character
   // escapes a multi-line string value could become multiple KEY=VALUE assignments
   // when a downstream shell `eval`s or `source`s the output.

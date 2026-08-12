@@ -23,7 +23,7 @@ const NS_PER_HOUR = 60 * NS_PER_MINUTE;
 const NS_PER_MS = 1_000_000;
 const NS_PER_US = 1_000;
 
-// `legacyParseGoDuration`'s own accumulator needs exact integer arithmetic near Go's `int64`
+// `legacyParseGoDuration`'s own accumulator needs exact integer arithmetic near `int64`
 // nanosecond ceiling (~9.223e18) — that magnitude is already ~1000x past `Number.MAX_SAFE_INTEGER`
 // (2^53 ≈ 9.007e15), so a plain `number` accumulator (as used by `legacyFormatGoDuration` below,
 // which never approaches this magnitude for real durations) silently rounds to the nearest
@@ -35,12 +35,12 @@ const NS_PER_HOUR_BIG = 60n * NS_PER_MINUTE_BIG;
 const NS_PER_MS_BIG = 1_000_000n;
 const NS_PER_US_BIG = 1_000n;
 
-// Go's `time.Duration` ceiling (`math.MaxInt64` nanoseconds, ~292.47 years) — `time.ParseDuration`
+// `time.Duration` ceiling (`math.MaxInt64` nanoseconds, ~292.47 years) — `time.ParseDuration`
 // rejects any POSITIVE value whose accumulated nanosecond count would exceed this. Go's real max
 // parseable duration is `2562047h47m16.854775807s`.
 const MAX_INT64_NS = 9223372036854775807n;
 
-// Go's `time.ParseDuration` (`src/time/format.go`) accumulates into a `uint64`, checking
+// `time.ParseDuration` (`src/time/format.go`) accumulates into a `uint64`, checking
 // `d > 1<<63` (NOT `1<<63-1`, i.e. `MAX_INT64_NS`) both per-term and on the running total, and
 // only applies the STRICTER `d > 1<<63-1` check afterwards, and only when the parsed value is NOT
 // negated. A magnitude of exactly `1<<63` therefore survives parsing when the input is negative —
@@ -114,7 +114,7 @@ export function legacyParseGoDuration(value: string): number {
       }
       hasFracDigits = i > fracStart;
     }
-    // Go's `pre`/`post` guard: a lone `.` with no digits on either side
+    // `pre`/`post` guard: a lone `.` with no digits on either side
     // (`".s"`, `"."`, `"-."`) is invalid — the leading `[0-9.]` check above lets
     // `.` through (it's the first character of a valid fraction like `".5s"`),
     // but a `.` that consumes zero digits before AND after it must still fail.
@@ -129,7 +129,7 @@ export function legacyParseGoDuration(value: string): number {
       unitNs = 1n;
       s = s.slice(2);
     } else if (s.startsWith("us") || s.startsWith("µs") || s.startsWith("μs")) {
-      // Go's `unitMap` (`time/format.go:1615-1622`) has THREE microsecond spellings:
+      // `unitMap` has THREE microsecond spellings:
       // "us", "µs" (U+00B5 MICRO SIGN), and "μs" (U+03BC GREEK SMALL LETTER MU) — verified
       // directly against the Go standard library: `time.ParseDuration("1μs")` succeeds
       // identically to `"1µs"`. The Greek-mu spelling was previously missing here
@@ -245,20 +245,20 @@ export function legacyFormatGoDuration(nanoseconds: number): string {
   return `${sign}${ns}ns`;
 }
 
-/** Formats `totalNs / unitNs` with trailing zeros (and a trailing `.`) trimmed, matching Go's `fmtFrac`. */
+/** Formats `totalNs / unitNs` with trailing zeros (and a trailing `.`) trimmed, matching `fmtFrac`. */
 function formatFraction(totalNs: number, unitNs: number): string {
   return (totalNs / unitNs).toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
 }
 
 /**
- * Go's `Db.HealthTimeout` (`apps/cli-go/internal/db/start/start.go:180`) — a duration STRING
+ * `Db.HealthTimeout` — a duration STRING
  * (`"2m"` default, `packages/config/src/db.ts`) decoded via `mapstructure.
  * StringToTimeDurationHookFunc()` inside the same `v.UnmarshalExact` call every `SUPABASE_*`
- * override goes through (`pkg/config/config.go:749-756,775-784`) — a malformed value hard-fails
+ * override goes through — a malformed value hard-fails
  * `Config.Load` (`"failed to parse config: %w"`) before either `start`/`db start` ever runs; it is
  * never silently replaced with a default. A valid-but-degenerate value (e.g. `"0s"`) isn't
  * special-cased either: Go's backoff policy computes `uint64(timeout.Seconds())` as the retry
- * count (`internal/db/start/start.go:192-198`), and the backoff library returns `Stop` immediately
+ * count, and the backoff library returns `Stop` immediately
  * when that count is `0` — i.e. exactly one immediate health probe with no wait, not a 30s
  * fallback. Throws on a malformed value, matching `legacyParseGoDuration`; the caller wraps that
  * into its own typed config-load-failure error so rollback/cleanup still fires (a plain throw here

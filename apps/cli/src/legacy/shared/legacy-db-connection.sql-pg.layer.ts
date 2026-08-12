@@ -58,7 +58,7 @@ const SET_SESSION_ROLE = "SET SESSION ROLE postgres";
 // decode these into a JS `Date`, which is millisecond-resolution and applies the
 // local timezone — losing the microseconds that Go's pgx `time.Time` keeps (and
 // risking a date shift for `date`). For `db query` we keep the raw Postgres text so
-// the formatter can render Go's `time.Time` layout faithfully (microseconds intact).
+// the formatter can render `time.Time` layout faithfully (microseconds intact).
 const PG_DATE_OID = 1082;
 const PG_TIMESTAMP_OID = 1114;
 const PG_TIMESTAMPTZ_OID = 1184;
@@ -143,7 +143,7 @@ interface LegacyPgServerError {
  * `@effect/sql` `SqlError` wraps its reason on `cause`, and the reason wraps the
  * node-postgres `DatabaseError` the same way; a `DatabaseError` is identified by
  * its string `severity` plus a SQLSTATE-shaped `code` (never a node system error).
- * `detail` and `position` mirror Go's `pgErr.Detail`/`pgErr.Position`
+ * `detail` and `position` mirror `pgErr.Detail`/`pgErr.Position`
  * (node-postgres carries `position` as a decimal string): `detail` only when
  * non-empty, `position` only when > 0, matching Go's gates in `ExecBatch`
  * (`pkg/migration/file.go:98-101` — `markError` no-ops on 0 anyway).
@@ -197,7 +197,7 @@ export function legacyToExecError(error: unknown): LegacyDbExecError {
  * Whether a dial host is a libpq unix-socket path. pgconn skips TLS/DNS entirely for
  * a unix `NetworkAddress` regardless of `sslmode` (jackc/pgconn `configTLS`), so a
  * socket DSN connects in plaintext — mirrored here. Matches pgconn v1.14.3
- * `isAbsolutePath` (`config.go:112-129`): a forward-slash prefix (POSIX) OR a Windows
+ * `isAbsolutePath`: a forward-slash prefix (POSIX) OR a Windows
  * absolute path — an **uppercase** drive letter `A`-`Z`, then `:`, then `\`
  * (lowercase `c:\…` is NOT a socket in pgconn, so it stays TCP here too).
  */
@@ -219,7 +219,7 @@ export function legacyIsUnixSocketHost(host: string): boolean {
  * The URL carries no `sslmode`, so the explicit `ssl` config wins.
  *
  * An IPv6 literal host is wrapped in brackets so `new URL()` accepts it, matching
- * Go's `ToPostgresURL` (which formats the host via `net.JoinHostPort`). This
+ * `ToPostgresURL` (which formats the host via `net.JoinHostPort`). This
  * covers a direct IPv6 `--db-url` carrying `?options=…` and the DoH path when a
  * Supavisor URL resolves to an AAAA address.
  *
@@ -275,18 +275,18 @@ export function legacyBuildConnectionUrl(
  * `apps/cli-go/internal/utils/connect.go`:
  *
  * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS;
- *   return `false` so `pg` stays in plaintext mode even when `PGSSLMODE` is set
- *   in the environment. `sslmode` is ignored, matching Go, which overwrites the
- *   local config unconditionally.
+ * return `false` so `pg` stays in plaintext mode even when `PGSSLMODE` is set
+ * in the environment. `sslmode` is ignored, matching Go, which overwrites the
+ * local config unconditionally.
  * - **Remote** maps the URL's `sslmode` to the *primary* config pgconn would try
- *   (`config.go:772-780`'s fallback list), since the `pg` driver carries a single
- *   `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
- *   - `disable` and `allow` → plaintext (`ssl: false`). pgconn's `allow` list is
- *     `{nil, tlsConfig}`, i.e. a **non-TLS primary** with a TLS fallback, so an
- *     `allow` DSN to a plaintext endpoint must connect without TLS.
- *   - `verify-ca` / `verify-full` → TLS **with** certificate verification;
- *   - `prefer` (and pgconn's default) / `require` / unset → TLS **without**
- *     verification (their primary is the TLS config).
+ * (`config.go:772-780`'s fallback list), since the `pg` driver carries a single
+ * `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
+ * - `disable` and `allow` → plaintext (`ssl: false`). pgconn's `allow` list is
+ * `{nil, tlsConfig}`, i.e. a **non-TLS primary** with a TLS fallback, so an
+ * `allow` DSN to a plaintext endpoint must connect without TLS.
+ * - `verify-ca` / `verify-full` → TLS **with** certificate verification;
+ * - `prefer` (and pgconn's default) / `require` / unset → TLS **without**
+ * verification (their primary is the TLS config).
  *
  * `servername` (the original hostname) is carried for **every** TLS mode, not
  * just the verifying ones. Go enables `sslsni` by default (`pgconn`'s
@@ -316,8 +316,8 @@ export function legacySslOptionFor(
   // it only affects the verifying modes.
   const ca = caCert !== undefined ? { ca: caCert } : {};
   // pgconn attaches the client `sslcert`/`sslkey` (and optional `sslpassword`) to the
-  // single shared `tlsConfig.Certificates` regardless of verification mode
-  // (`config.go:710-762`), so carry it on every TLS config.
+  // single shared `tlsConfig.Certificates` regardless of verification mode,
+  // so carry it on every TLS config.
   const clientCertOpts: ConnectionOptions =
     clientCert !== undefined
       ? {
@@ -350,8 +350,8 @@ export function legacySslOptionFor(
 
 /**
  * The ordered list of `ssl` configs to try for a connection. pgconn's raw
- * `configTLS` fallback list (`config.go:772-780`) is **post-processed** by Go's
- * `ConnectByUrl` (`apps/cli-go/internal/utils/connect.go:156-168`), which strips
+ * `configTLS` fallback list is **post-processed** by Go's
+ * `ConnectByUrl`, which strips
  * every non-TLS fallback whenever the primary config uses TLS ("No fallback from
  * TLS to unsecure connection"). The `pg` driver carries a single `ssl` option and
  * cannot replay pgconn's internal fallback, so `connect` retries across the
@@ -359,11 +359,11 @@ export function legacySslOptionFor(
  *
  * - `disable` → `[plaintext]` (primary is plaintext; nothing stripped)
  * - `allow` → `[plaintext, TLS]` (`{nil, tlsConfig}` — non-TLS primary, so the
- *   TLS fallback survives the strip)
+ * TLS fallback survives the strip)
  * - `prefer` / unset (pgconn's default) → `[TLS]`. pgconn's raw list is
- *   `{tlsConfig, nil}`, but the primary is TLS, so `ConnectByUrl` drops the
- *   plaintext fallback. Go therefore **fails** rather than downgrading a default
- *   remote connection to plaintext, and so must this port.
+ * `{tlsConfig, nil}`, but the primary is TLS, so `ConnectByUrl` drops the
+ * plaintext fallback. Go therefore **fails** rather than downgrading a default
+ * remote connection to plaintext, and so must this port.
  * - `require` / `verify-ca` / `verify-full` → `[TLS]` (TLS only)
  *
  * `servername` (the original hostname) is per dial host — set when a DoH-resolved
@@ -433,15 +433,15 @@ export function legacyBuildRawPgConfig(
  * config with the two pool controls this layer depends on:
  *
  * - `max: 1` — a single physical connection, so a session-scoped `SET SESSION ROLE`
- *   (the remote step-down) and any session GUCs persist across `exec`/`query` calls.
+ * (the remote step-down) and any session GUCs persist across `exec`/`query` calls.
  * - `idleTimeoutMillis: 0` — node-postgres documents `0` as disabling auto-reaping of
- *   idle connections. `PgClient.make` leaves this unset (→ node-postgres default
- *   10_000ms), which during a long-idle `db pull` (shadow-DB provisioning + diff +
- *   interactive confirm prompt) reaps the stepped-down connection after 10s idle and
- *   transparently redials a fresh one for the final migration-table write; that fresh
- *   connection never ran the step-down, so the DDL executes as the bare `cli_login_*`
- *   role and fails with `permission denied` (42501). Disabling the reaper keeps the
- *   single stepped-down connection alive for the whole session.
+ * idle connections. `PgClient.make` leaves this unset (→ node-postgres default
+ * 10_000ms), which during a long-idle `db pull` (shadow-DB provisioning + diff +
+ * interactive confirm prompt) reaps the stepped-down connection after 10s idle and
+ * transparently redials a fresh one for the final migration-table write; that fresh
+ * connection never ran the step-down, so the DDL executes as the bare `cli_login_*`
+ * role and fails with `permission denied` (42501). Disabling the reaper keeps the
+ * single stepped-down connection alive for the whole session.
  *
  * `application_name` mirrors `PgClient.make`'s default so the server-side session name
  * is unchanged from the previous `PgClient.make` path.
@@ -480,7 +480,7 @@ interface LegacyPoolErrorSource {
 
 /**
  * pg-pool `verify` hook that re-runs the remote role step-down on EVERY new
- * physical connection, matching Go's `AfterConnect` (`connect.go:355-361`) —
+ * physical connection, matching `AfterConnect` —
  * including the silent redial after a dropped connection, which the post-connect
  * one-shot in `connect` can't reach. pg-pool invokes `verify` for a brand-new
  * client BEFORE resolving the pending checkout (`pg-pool/index.js`
@@ -489,7 +489,7 @@ interface LegacyPoolErrorSource {
  * pg-pool's own synchronous dispatch of the checked-out query — node-postgres'
  * "Calling client.query() when the client is already executing a query"
  * deprecation, whose internal queueing pg@9 removes.) A failure propagates to
- * the checkout and fails the caller's query, like Go's `AfterConnect` failing
+ * the checkout and fails the caller's query, like `AfterConnect` failing
  * the connect.
  */
 export function legacyPoolStepDownVerify(
@@ -585,11 +585,11 @@ const connect = (
   { isLocal, dnsResolver }: LegacyDbConnectOptions,
 ): Effect.Effect<LegacyDbSession, LegacyDbConnectError, Scope.Scope> =>
   Effect.gen(function* () {
-    // pgconn dials the primary host then each HA fallback in order
-    // (`config.go:326-362`); `cfg.fallbacks` carries the extras parsed from a
+    // pgconn dials the primary host then each HA fallback in order;
+    // `cfg.fallbacks` carries the extras parsed from a
     // libpq multi-host connection string. Go installs the Cloudflare DoH resolver
-    // for remote connections when `--dns-resolver https` is set
-    // (`connect.go:211-213`): it resolves each host to **all** its IPs
+    // for remote connections when `--dns-resolver https` is set:
+    // it resolves each host to **all** its IPs
     // (`FallbackLookupIP`) and dials them in order, so we resolve every config host
     // up front and retry each. We dial a resolved IP but keep the original hostname
     // for the TLS `servername` (carried in the `ssl` option) so verification still
@@ -608,9 +608,9 @@ const connect = (
         dialTargets.push({ dialHost, port, servername: dialHost === host ? undefined : host });
       }
     }
-    // Connect timeout parity: Go's `ToPostgresURL` always sets `connect_timeout`,
-    // defaulting to 10s (`connect.go:24-28`); `ConnectLocalPostgres` uses 2s for
-    // local (`connect.go:143-145`). A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
+    // Connect timeout parity: `ToPostgresURL` always sets `connect_timeout`,
+    // defaulting to 10s; `ConnectLocalPostgres` uses 2s for
+    // local. A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
     // both. Without this a black-holed host would hang to the OS/driver default.
     const connectTimeoutSeconds = cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10);
     // Whether the remote step-down runs on this connection. Go installs the
@@ -649,11 +649,11 @@ const connect = (
       return PgClient.fromPool({ acquire }).pipe(Effect.provide(Reactivity.layer));
     };
 
-    // Go's `ConnectByUrl` calls `SetConnectSuggestion(err)` on every connect failure
-    // (`connect.go:187`), mapping the driver error to an actionable hint that replaces
+    // `ConnectByUrl` calls `SetConnectSuggestion(err)` on every connect failure,
+    // mapping the driver error to an actionable hint that replaces
     // the generic "--debug" suggestion. The resolver attaches the profile context to
     // `cfg.suggestionContext`; map it here so the suggestion travels on the error.
-    // The message mirrors Go's `pgxv5.Connect` wrap of pgconn's `connectError`
+    // The message mirrors `pgxv5.Connect` wrap of pgconn's `connectError`
     // (`pkg/pgxv5/connect.go:33`, pgconn `errors.go:66-72`): the `failed to connect
     // to postgres:` prefix plus the `host=… user=… database=…` identity and the
     // underlying driver cause — not the bare `SqlError` toString, which drops all
@@ -739,10 +739,10 @@ const connect = (
     // every attempt with `select 1` to force the connection, falling through to the
     // next on failure. pgconn retries fallbacks only for connection-establishment
     // errors; a server-side auth/authorization/catalog/privilege error terminates the
-    // chain (`pgconn.go:159-192`), so a terminal SQLSTATE re-raises instead of masking
+    // chain, so a terminal SQLSTATE re-raises instead of masking
     // the primary's failure behind a later host. The final attempt is probed too (not
     // left lazy): Go always dials eagerly — the main path via `pgx.ConnectConfig` and
-    // the temp-role wait via `pgconn.ConnectConfig` (`db_url.go:192`) — so `connect`
+    // the temp-role wait via `pgconn.ConnectConfig` — so `connect`
     // must return a live session for callers like `waitForTempRole` that don't run a
     // follow-up query. The winning attempt's `rawConfig` is carried out so `copyToCsv`
     // can reuse the exact dial target the primary connection succeeded against.
@@ -803,7 +803,7 @@ const connect = (
     // COPY protocol needs the raw client (which `@effect/sql-pg` does not surface),
     // so the session opens ONE dedicated raw connection against the winning dial
     // target and reuses it for every copy — matching Go, which runs all copies on a
-    // single `pgconn` (`report.go:35-59`). It is created lazily on first copy (so
+    // single `pgconn`. It is created lazily on first copy (so
     // `test db` / `inspect db`, which never copy, never open it) and closed by a
     // scope finalizer when the session's scope closes. The step-down runs once, here,
     // so every COPY executes with the same privileges as the primary session.

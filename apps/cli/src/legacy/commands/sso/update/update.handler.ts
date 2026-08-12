@@ -81,11 +81,10 @@ const mapGetStatusOrNetwork = mapLegacyHttpError({
 const SSO_UPDATE_COMMAND_PATH = ["sso", "update"] as const;
 
 /**
- * Registration order mirrors Go's `cmd/sso.go:178-180` — three independent
- * `MarkFlagsMutuallyExclusive` groups (`metadata-file`/`metadata-url` plus two
- * 2-element groups sharing `--domains`, not one 3-way group). Cobra checks
- * groups in `sort.Strings`-order of the joined group key (`flag_groups.go:189`),
- * which happens to match registration order here: "domains add-domains" <
+ * Three independent mutual-exclusion groups (`metadata-file`/`metadata-url`
+ * plus two 2-element groups sharing `--domains`, not one 3-way group).
+ * Groups are checked in alphabetical order of the joined group key, which
+ * happens to match declaration order here: "domains add-domains" <
  * "domains remove-domains" < "metadata-file metadata-url" alphabetically.
  */
 const SSO_UPDATE_MUTEX_GROUPS = [
@@ -101,8 +100,8 @@ const SSO_UPDATE_MUTEX_GROUPS = [
  * token as their value (and therefore which tokens are pflag-effective
  * positionals). `--skip-url-validation` is this command's only boolean flag
  * and is deliberately excluded; booleans never consume a following token.
- * `sso update` declares no shorthands of its own (`cmd/sso.go:170-176`), so
- * only the persistent `-o` is mapped.
+ * `sso update` declares no shorthands of its own, so only the persistent
+ * `-o` is mapped.
  */
 const SSO_UPDATE_SCAN_SPEC = {
   valueFlagNames: new Set([
@@ -180,10 +179,9 @@ function mergeDomains(
   add: ReadonlyArray<string>,
   remove: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  // Mirrors Go's `update.go:84-109` — seed from current domains, apply
-  // removals, then add new entries. Go uses a `map[string]bool`, so iteration
-  // order is unspecified; integration tests sort before asserting. Go's seed
-  // check is nil-ness only (`domain.Domain != nil`), so an empty-string domain
+  // Seed from current domains, apply removals, then add new entries. Uses a
+  // Set, so iteration order is unspecified; integration tests sort before
+  // asserting. The seed check is nil-ness only, so an empty-string domain
   // from the GET response is kept, not filtered.
   const set = new Set<string>();
   if (existing !== undefined) {
@@ -214,19 +212,17 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
   const rawArgs = yield* stdio.args;
 
   yield* Effect.gen(function* () {
-    // cobra runs `ValidateArgs` (`command.go:968`, before every hook), then
-    // `ValidateFlagGroups` (`command.go:1010`), before `RunE`
-    // (`command.go:1015`), and Go's provider-ID format check lives inside
-    // `RunE` (`cmd/sso.go:90-91`) — so an arity violation must win over a
-    // mutex violation, and both must win over an invalid provider ID. Keep
-    // this block ahead of `validateUuid` below to match that precedence.
+    // Arity validation, then flag-group validation, then the handler body,
+    // and the provider-ID format check runs inside the handler — so an
+    // arity violation must win over a mutex violation, and both must win
+    // over an invalid provider ID. Keep this block ahead of `validateUuid`
+    // below to match that precedence.
     //
-    // "Set" follows cobra's `pflag.Changed` — whether the flag was passed at
-    // all — not the resulting value. `--domains`/`--add-domains`/
-    // `--remove-domains` all default to `[]`, so `--domains=` (parses to an
-    // empty array) must still count as "set"; gating on `.length > 0` would
-    // miss it, the same "changed vs truthy" gap CLI-1860 fixed for
-    // `functions download`'s `--use-docker`.
+    // "Set" means the flag was passed at all — not the resulting value.
+    // `--domains`/`--add-domains`/`--remove-domains` all default to `[]`,
+    // so `--domains=` (parses to an empty array) must still count as "set";
+    // gating on `.length > 0` would miss it — the same "changed vs truthy"
+    // gap `functions download`'s `--use-docker` had.
     //
     // The scan is pflag-faithful: a bare `--metadata-file --metadata-url` is
     // pflag consuming `--metadata-url` as `metadata-file`'s (oddly named)
