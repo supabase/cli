@@ -370,7 +370,13 @@ Flag divergences from the Go reference:
   `--project-ref` flag additionally accepts a branch name. A value matching the 20-lowercase-letter
   project ref shape is always treated as a ref; any other non-empty value is resolved to its
   parent-project's branch project ref via the Management API before linking proceeds exactly as
-  today (CLI-2167).
+  today (CLI-2167). On the 404 (branch) link path, `link` also best-effort maintains
+  `linked-project.json`'s PARENT evidence (PR #6168 review, TS-only, no Go equivalent — Go never
+  writes this cache for a branch ref at all): a name/UUID-resolved branch link persists its known
+  parent ref (a ref-only record when no richer cache exists yet); a raw ref-shaped branch link
+  whose existing cache names a different project best-effort correlates the two via one extra
+  `listAllBranches` call and deletes the cache only on a verified mismatch. Both are best-effort and
+  never affect `link`'s own outcome — see `link/SIDE_EFFECTS.md`.
   Behavioral divergences from the Go reference:
 
 - `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref

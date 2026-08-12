@@ -21,7 +21,11 @@ import {
   PropLinkedVia,
   PropParentProjectRef,
 } from "../../../shared/telemetry/event-catalog.ts";
-import { legacyResolveLinkedParentRef } from "../../shared/legacy-parent-project-ref.ts";
+import {
+  type LegacyCachedLinkedProject,
+  legacyParseCachedLinkedProject,
+  legacyResolveLinkedParentRef,
+} from "../../shared/legacy-parent-project-ref.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
 import {
@@ -257,46 +261,59 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  // Normalize inputs: an empty-string positional or flag value is absent,
-  // mirroring the resolver's own treatment of an empty `--project-ref`.
-  const refArg = Option.filter(flags.refOrBranch, (value) => value.length > 0);
-  const projectRefFlag = Option.filter(flags.projectRef, (value) => value.length > 0);
-
-  if (Option.isSome(refArg) && Option.isSome(projectRefFlag)) {
-    return yield* Effect.fail(
-      new LegacyLinkRefArgConflictError({
-        message:
-          "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
-      }),
-    );
-  }
-
-  const requested = Option.isSome(refArg) ? refArg : projectRefFlag;
-
-  // A ref-shaped value (20 lowercase letters) is always treated as a ref and
-  // never looked up as a branch name (see `resolveLegacyLinkBranchRef`).
-  const branchResolution =
-    Option.isSome(requested) && !PROJECT_REF_PATTERN.test(requested.value)
-      ? Option.some(yield* resolveLegacyLinkBranchRef(requested.value))
-      : Option.none<LegacyLinkBranchResolution>();
-
-  const resolvedRefOrBranch = Option.isSome(branchResolution)
-    ? Option.some(branchResolution.value.projectRef)
-    : requested;
-
-  const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
-  const paths = legacyTempPaths(path, cliConfig.workdir);
-
-  const writeTempFile: WriteTempFile = (filePath, content) =>
-    fs
-      .makeDirectory(path.dirname(filePath), { recursive: true })
-      .pipe(Effect.andThen(() => fs.writeFileString(filePath, content)));
+  // Captured as soon as ref/branch resolution succeeds (mirrors `projects
+  // delete`'s `resolvedRef` pattern, `delete.handler.ts:52`) — everything
+  // from ref resolution onward now sits inside the `Effect.ensuring` wrapper
+  // below (PR #6168 review): previously, a branch-name resolution failure
+  // (not found, not ready, not linked, a parent-list failure) — or even the
+  // `--project-ref`/positional conflict check — exited BEFORE that wrapper
+  // was ever reached, so telemetry state was silently never flushed for
+  // those failures. This is a strict improvement (TS-only feature, no Go
+  // behavior to preserve here); `undefined` still means "never resolved a
+  // ref at all", so the post-run cache fill correctly stays a no-op for it.
+  let resolvedRef: string | undefined;
 
   // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): persist the
   // linked-project cache and telemetry state whether the link succeeds or fails.
   // `link` itself writes `linked-project.json` on success (below), so `cache`
   // only fires for the failure / 404 paths.
   yield* Effect.gen(function* () {
+    // Normalize inputs: an empty-string positional or flag value is absent,
+    // mirroring the resolver's own treatment of an empty `--project-ref`.
+    const refArg = Option.filter(flags.refOrBranch, (value) => value.length > 0);
+    const projectRefFlag = Option.filter(flags.projectRef, (value) => value.length > 0);
+
+    if (Option.isSome(refArg) && Option.isSome(projectRefFlag)) {
+      return yield* Effect.fail(
+        new LegacyLinkRefArgConflictError({
+          message:
+            "Cannot use both the [ref-or-branch] argument and the --project-ref flag. Specify the project ref or branch name once.",
+        }),
+      );
+    }
+
+    const requested = Option.isSome(refArg) ? refArg : projectRefFlag;
+
+    // A ref-shaped value (20 lowercase letters) is always treated as a ref and
+    // never looked up as a branch name (see `resolveLegacyLinkBranchRef`).
+    const branchResolution =
+      Option.isSome(requested) && !PROJECT_REF_PATTERN.test(requested.value)
+        ? Option.some(yield* resolveLegacyLinkBranchRef(requested.value))
+        : Option.none<LegacyLinkBranchResolution>();
+
+    const resolvedRefOrBranch = Option.isSome(branchResolution)
+      ? Option.some(branchResolution.value.projectRef)
+      : requested;
+
+    const ref = yield* resolver.resolveForLink(resolvedRefOrBranch);
+    resolvedRef = ref;
+    const paths = legacyTempPaths(path, cliConfig.workdir);
+
+    const writeTempFile: WriteTempFile = (filePath, content) =>
+      fs
+        .makeDirectory(path.dirname(filePath), { recursive: true })
+        .pipe(Effect.andThen(() => fs.writeFileString(filePath, content)));
+
     // 1. Check remote project status (404 tolerated for branch projects).
     const project = yield* api.v1
       .getProject({ ref })
@@ -389,22 +406,75 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       yield* analytics
         .capture(EventProjectLinked, linkedViaProperties)
         .pipe(withAnalyticsContext({ groups }));
-    } else if (Option.isSome(branchResolution)) {
-      // TS-only event extension (CLI-2167): a branch name/UUID was resolved to
-      // `ref` above, so we know definitively this is a branch link — fire the
-      // same event with `linked_via`/`parent_project_ref` so branch links are
-      // no longer telemetry-invisible. Only refs go out (never the branch
-      // name, which is user-created content); no `groupIdentify` here since we
-      // have no org/name metadata for the branch, just the group association
-      // on the capture itself. The plain 404-ref path (no name resolution)
-      // intentionally still emits nothing — a 404 is only *assumed* to be a
-      // branch, never confirmed.
-      yield* analytics
-        .capture(EventProjectLinked, {
-          [PropLinkedVia]: "branch",
-          [PropParentProjectRef]: branchResolution.value.parentRef,
-        })
-        .pipe(withAnalyticsContext({ groups: { project: ref } }));
+    } else {
+      // 404 path: `ref` is a branch (assumed, or confirmed when
+      // `branchResolution` resolved it by name/UUID). The plain-project arm
+      // above never writes `linked-project.json` for THIS ref, and the
+      // post-run `LegacyLinkedProjectCache.cache(ref)` fill (`Effect.ensuring`
+      // below) GETs `ref` itself — a branch ref 404s there too — so without
+      // this, the PARENT evidence `legacyResolveLinkedParentRef`'s chain
+      // depends on can be lost forever or silently go stale (PR #6168 review,
+      // two confirmed gaps). Both arms are best-effort — `Effect.ignore` —
+      // and never affect `link`'s own outcome.
+      const cachedParent = yield* fs.readFileString(paths.linkedProjectCache).pipe(
+        Effect.map(legacyParseCachedLinkedProject),
+        Effect.orElseSucceed(() => Option.none<LegacyCachedLinkedProject>()),
+      );
+
+      if (Option.isSome(branchResolution)) {
+        // (a) The branch was resolved by name/UUID, so its parent is KNOWN
+        // here — persist it durably so it survives even when the existing
+        // cache is missing or malformed (previously: never written at all
+        // for this ref, so a missing/malformed cache stayed that way
+        // forever). Leave an already-agreeing cache untouched — it may be
+        // richer (name/org) than the ref-only record below, e.g. from a
+        // real `link <parent-ref>` run.
+        const parentRef = branchResolution.value.parentRef;
+        if (Option.isNone(cachedParent) || cachedParent.value.ref !== parentRef) {
+          yield* writeTempFile(paths.linkedProjectCache, JSON.stringify({ ref: parentRef })).pipe(
+            Effect.ignore,
+          );
+        }
+
+        // TS-only event extension (CLI-2167): a branch name/UUID was resolved
+        // to `ref` above, so we know definitively this is a branch link —
+        // fire the same event with `linked_via`/`parent_project_ref` so
+        // branch links are no longer telemetry-invisible. Only refs go out
+        // (never the branch name, which is user-created content); no
+        // `groupIdentify` here since we have no org/name metadata for the
+        // branch, just the group association on the capture itself.
+        yield* analytics
+          .capture(EventProjectLinked, {
+            [PropLinkedVia]: "branch",
+            [PropParentProjectRef]: parentRef,
+          })
+          .pipe(withAnalyticsContext({ groups: { project: ref } }));
+      } else if (
+        Option.isSome(cachedParent) &&
+        cachedParent.value.ref !== ref &&
+        PROJECT_REF_PATTERN.test(cachedParent.value.ref)
+      ) {
+        // (b) A raw ref-shaped branch link (no name resolution attempted, so
+        // its parent is unknown here) whose cache names a DIFFERENT project —
+        // best-effort correlate the two: if `cachedParent`'s own branches
+        // verifiably still include `ref`, the cache is still accurate, keep
+        // it; if they verifiably do NOT, the cache is stale for a different
+        // project (e.g. cache = A, this link = a raw branch ref of B) —
+        // delete it, since a wrong parent claim silently misdirects every
+        // parent-scoped command onto A. Any lookup failure (network, decode,
+        // 403, 404) means "can't verify" — leave the cache exactly as it was.
+        // One extra API call, only on this path, only when a cache exists and
+        // diverges from `ref`. The plain 404-ref path with no cache at all,
+        // or a cache that already agrees with `ref`, needs no correlation.
+        yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
+          Effect.flatMap((branches) =>
+            branches.some((branch) => branch.project_ref === ref)
+              ? Effect.void
+              : fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore),
+          ),
+          Effect.catch(() => Effect.void),
+        );
+      }
     }
 
     // 6. PostRun: `Finished supabase link.` to stdout (text), structured success
@@ -424,5 +494,12 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
           : {}),
       });
     }
-  }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
+  }).pipe(
+    Effect.ensuring(
+      Effect.suspend(() =>
+        resolvedRef === undefined ? Effect.void : linkedProjectCache.cache(resolvedRef),
+      ),
+    ),
+    Effect.ensuring(telemetryState.flush),
+  );
 });

@@ -283,11 +283,18 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // only an ABSENT -o defers to --output-format for json/stream-json.
     //
     // Every non-pretty branch below folds in the linked-state fields resolved
-    // above: additive snake_case keys appended AFTER `values`'s own keys (TS-only
-    // QoL, CLI-2167 follow-up) — absent entirely when not linked (no `linked: false`
-    // noise in these machine formats). The pretty table never sees them; it reads
-    // its own separately-resolved `pretty.values` by known name only.
-    const valuesWithLinkedState = { ...values, ...legacyLinkedStateGoFields(linkedState) };
+    // above (TS-only QoL, CLI-2167 follow-up) — absent entirely when not linked
+    // (no `linked: false` noise in these machine formats). The pretty table
+    // never sees them; it reads its own separately-resolved `pretty.values` by
+    // known name only.
+    //
+    // `values` spreads LAST so its own keys always win a collision (PR #6168
+    // review): `--override-name` lets a user rename any of the 18 known
+    // fields to an arbitrary output key — `--override-name api.url=linked_project_ref`
+    // would otherwise silently overwrite our additive field with the API URL,
+    // or vice versa depending on spread order. The existing/overridden payload
+    // always takes priority over this extension, never the other way round.
+    const valuesWithLinkedState = { ...legacyLinkedStateGoFields(linkedState), ...values };
 
     if (goFmt === "env") {
       yield* output.raw(encodeEnv(valuesWithLinkedState) + "\n");
@@ -313,11 +320,13 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // goFmt is undefined — defer to TS --output-format for json/stream-json,
     // otherwise render the grouped rounded-table (Go's `-o pretty` default).
     if (output.format === "json" || output.format === "stream-json") {
-      // `linked_project` is additive and can't collide with an existing key —
-      // `null` when not linked (TS-only QoL, CLI-2167 follow-up).
+      // `null` when not linked (TS-only QoL, CLI-2167 follow-up). `values`
+      // spreads LAST so an `--override-name`-renamed field named literally
+      // `linked_project` always wins over this extension (PR #6168 review) —
+      // same existing-payload-always-wins rule as `valuesWithLinkedState` above.
       yield* output.success("", {
-        ...values,
         linked_project: legacyLinkedStateJsonField(linkedState),
+        ...values,
       });
       return;
     }

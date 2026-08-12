@@ -31,9 +31,12 @@ which branch they linked) can discover which project/branch it's on without a se
 Everything else is resolved from local `config.toml` and the local Docker daemon — `status` never
 required a Management API call before CLI-2167's linked-state follow-up, and still doesn't need
 one to succeed. The one route above is part of the shared, best-effort `legacyResolveLinkedState`
-helper: it fires when `linked-project.json` confirms a genuinely different parent (the
-branch-linked state), and — when that cache is absent — as a query attempt against
-`legacyResolveLinkedParentRef`'s ref-only env/file fallback candidate.
+helper: it fires ONLY when `linked-project.json` names a genuinely different parent than the
+currently linked ref — with no cache at all, the plain project shape renders with zero API calls
+(there is no ref-only env/file fallback query anymore — PR #6168 review). When the linked ref came
+from `SUPABASE_PROJECT_ID` (env) rather than the `project-ref` file, the route still fires the
+same way, but a no-match/failure/timeout result degrades all the way to the plain shape instead of
+keeping the cache's parent claim — see `legacyResolveLinkedState`'s doc comment.
 
 The Management API client is acquired LAZILY: `status`'s runtime layer wires up
 `LegacyPlatformApiFactory` (not the eager `LegacyPlatformApi`), which resolves NO access token and
@@ -130,13 +133,18 @@ best-effort API lookup.
     name+ref otherwise; a bare ref (no parentheses) when the name isn't known.
   - `Branch:` shows the resolved name+ref when the best-effort lookup found a match, or a bare ref
     when it didn't (unresolved/degraded) — the user must still see they're on a branch even when
-    the lookup can't run (no token, offline, API error): this is the fix for the bug this whole
-    block format shipped to fix (a prior release's degraded state silently looked identical to a
-    plain project link).
-  - When `linked-project.json` is absent entirely, the ref-only env/file parent-chain fallback is
-    used ONLY to attempt the branch lookup — it is never enough on its own to claim a branch link.
-    If that lookup doesn't positively confirm a match, the block shows only `Project: <bare linked
-ref>` (no `Org:`, no `Branch:`).
+    the lookup can't run (no token, offline, API error, 5s timeout): this is the fix for the bug
+    this whole block format shipped to fix (a prior release's degraded state silently looked
+    identical to a plain project link).
+  - When `linked-project.json` is absent entirely, the block always renders the plain
+    `Project: <bare linked ref>` line (no `Org:`, no `Branch:`) with ZERO API calls — there is no
+    fallback lookup against the env/file chain anymore (PR #6168 review).
+  - When the linked ref came from `SUPABASE_PROJECT_ID` (env) rather than the `project-ref` file,
+    and a cache exists but names a DIFFERENT project than the env override, the branch lookup still
+    runs, but a `Branch:` line (and the cache's `Org:`/parent name) only appears when that lookup
+    POSITIVELY confirms the override is a branch of the cached project — otherwise the block
+    degrades all the way to the plain bare-ref line above, never asserting a parent relationship on
+    nothing but the cache's mere presence (PR #6168 review).
 
 Default (`-o` unset or `-o pretty`): a stderr banner, then 5 grouped rounded-border tables on
 stdout. Empty rows (a value with nothing resolved) and entirely empty groups are skipped; a
@@ -270,8 +278,10 @@ branch-linked state:
 A degraded/unresolved branch-linked lookup emits the same object minus `branch` only — every
 other field the cache knows is still present, matching the machine-format guarantee above.
 
-`linked_project` can never collide with an existing top-level key (`values` only ever holds the
-Go-parity `CustomName` field names, all upper-case-derived).
+`--override-name` CAN rename one of the 18 known fields to literally `linked_project` (or, for
+`-o env|json|toml|yaml`, to one of the `linked_*` keys below) — the existing/overridden `values`
+key always wins that collision, never this extension (PR #6168 review; see `valuesWithLinkedState`
+and the structured-payload `output.success` call in `status.handler.ts`).
 
 **The same `linked_project` object is carried on the FAILURE envelope too** (CLI-2167 follow-up,
 TS-only) — the agent-discovery use case matters most when `status` fails to reach the
@@ -320,7 +330,17 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   `Effect.serviceOption(LegacyPlatformApi)` first (the cheapest path, and what tests provide
   directly), then falls back to `Effect.serviceOption(LegacyPlatformApiFactory)` → `factory.make`
   with every failure caught — `status`'s runtime layer only ever wires up the lazy factory (see
-  API Routes above), never the eager client.
+  API Routes above), never the eager client. The branch-name lookup (acquisition + the
+  `listAllBranches` call together) is hard-bounded to 5 seconds (`Effect.timeout`, PR #6168
+  review) — this is decoration on an interactive command, and the generated client's own retry
+  policy would otherwise let a single blackholed API stall every `status` run for minutes; a
+  timeout degrades exactly like any other lookup failure.
+- Every string in the human-text block — names, org slug/id, AND the refs themselves — is
+  sanitized (`legacySanitizeInlineName`) before rendering: `project-ref`/`linked-project.json`
+  are worktree files accepted without `PROJECT_REF_PATTERN` validation, so a malicious/corrupted
+  one could otherwise inject ANSI/OSC/newline controls into `status`'s stdout (PR #6168 review).
+  Machine payloads stay data-faithful — JSON/YAML/TOML/env encoding already neutralizes control
+  characters there.
 - `-o`/`--output` (`env|pretty|json|toml|yaml`) takes priority over `--output-format` whenever
   it is set, matching the Go-parity checklist's dual-output-flag rule. `-o pretty` (or `-o`
   unset) falls through to `--output-format`'s text/json/stream-json handling.
@@ -330,6 +350,9 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   (`printStatus`) output path — matching Go, the pretty table (`-o pretty` or unset) always
   renders with un-overridden names, since Go's `PrettyPrint` unmarshals a fresh, empty `EnvSet{}`
   rather than reusing the CLI-supplied, override-populated `CustomName` (`status.go:236-243`).
+  An override that renames a field to collide with one of the additive `linked_*`/`linked_project`
+  keys never loses to this extension — see the `-o json`/`--output-format json` callouts above
+  (PR #6168 review).
 - When neither `docker` nor `podman` can be spawned at all, the error message names the actual
   root cause (e.g. "docker: command not found (podman also not found) — install Docker Desktop or
   Podman and ensure it is on PATH") rather than a generic "failed to ..." string.

@@ -1648,6 +1648,133 @@ project_id = "short"
       },
     );
 
+    describe("env-override guard (PR #6168 review)", () => {
+      // SUPABASE_PROJECT_ID (env) always wins before the project-ref FILE is
+      // ever read, so none of these write a project-ref file — the cache
+      // below belongs to the WORKDIR (an unrelated project A), not
+      // necessarily to whatever the env override happens to point at (B).
+      it.live(
+        "SUPABASE_PROJECT_ID overriding an unrelated workdir's cache: no positive lookup match degrades to the plain project line, no parent claim on cache presence alone",
+        () => {
+          const { layer, out, workdir } = setup({
+            projectId: Option.some(LINKED_BRANCH_REF),
+            branches: { ok: [{ ...LINKED_BRANCH, project_ref: "unrelatedbranchrefaaaa" }] },
+          });
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            expect(
+              out.stdoutText.startsWith(`Linked Project:\n  Project: ${LINKED_BRANCH_REF}\n`),
+            ).toBe(true);
+            expect(out.stdoutText).not.toContain("\n  Branch:");
+            expect(out.stdoutText).not.toContain("\n  Org:");
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "--output-format json, SUPABASE_PROJECT_ID override with no positive match: linked_project has only project_ref, no parent/org fields leaking from the unrelated cache",
+        () => {
+          const { layer, out, workdir } = setup({
+            format: "json",
+            projectId: Option.some(LINKED_BRANCH_REF),
+            branches: { ok: [{ ...LINKED_BRANCH, project_ref: "unrelatedbranchrefaaaa" }] },
+          });
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            const success = out.messages.find((m) => m.type === "success");
+            const linkedProject = (success?.data as { linked_project?: Record<string, unknown> })
+              ?.linked_project;
+            expect(linkedProject).toEqual({ project_ref: LINKED_BRANCH_REF });
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "SUPABASE_PROJECT_ID pointing at a real branch of the cached parent: the lookup's POSITIVE confirmation still renders the full branch block (env-override CI workflow)",
+        () => {
+          const { layer, out, workdir } = setup({
+            projectId: Option.some(LINKED_BRANCH_REF),
+            branches: { ok: [LINKED_BRANCH] },
+          });
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            expect(
+              out.stdoutText.startsWith(
+                `Linked Project:\n` +
+                  `  Org: acme (org_1)\n` +
+                  `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                  `  Branch: feature-x (${LINKED_BRANCH_REF})\n`,
+              ),
+            ).toBe(true);
+          }).pipe(Effect.provide(layer));
+        },
+      );
+    });
+
+    it.live(
+      "a branch lookup that never resolves times out and degrades to the RICH block (real 5s wait — LEGACY_LINKED_STATE_LOOKUP_TIMEOUT is a module-private constant in legacy-linked-state.ts, not monkey-patchable; accepted as a real-time test for this one scenario, PR #6168 review)",
+      () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        const neverApi = mockLegacyPlatformApiService({
+          v1: { listAllBranches: () => Effect.never },
+        });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: ${LINKED_BRANCH_REF}\n`,
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(Layer.mergeAll(layer, neverApi.layer)));
+      },
+      10_000,
+    );
+
+    it.live(
+      "sanitizes control chars/ANSI in a project-ref file before rendering the linked block (PR #6168 review)",
+      () => {
+        const DIRTY_REF = "\x1b[31mmalicious\x1b[0m";
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, DIRTY_REF);
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).not.toContain("\x1b");
+          expect(out.stdoutText.startsWith("Linked Project:\n  Project: [31mmalicious[0m\n")).toBe(
+            true,
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "-o json, --override-name collides with the linked_project_ref field name: the overridden base value wins, the linked field never clobbers it (PR #6168 review)",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("json"),
+          branches: { ok: [LINKED_BRANCH] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags({ overrideName: ["api.url=linked_project_ref"] }));
+          const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+          // `values` (the override-renamed field) spreads LAST over
+          // `legacyLinkedStateGoFields`, so the API URL — not the branch ref —
+          // is what ends up under this key.
+          expect(parsed.linked_project_ref).toBe("http://127.0.0.1:54321");
+          expect(parsed.API_URL).toBeUndefined();
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
     describe("org line variants", () => {
       it.live(
         "slug and id differ: renders `<slug> (<id>)` (Colum's default real-world state)",

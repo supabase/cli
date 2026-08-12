@@ -26,10 +26,15 @@ counterpart exists for this behavior.
 > deliberately does NOT reuse `LegacyProjectRefResolver.resolveOptional` — that resolves the
 > FINAL linked ref, which right after linking a branch would be the branch's own ref, breaking a
 > second `link <other-branch>` (CLI-2167 follow-up). `linked-project.json` works as the parent
-> candidate because `link` only writes it for a real (non-404) project — the branch/404 path
-> leaves it untouched — and `LegacyLinkedProjectCache.cache` never overwrites an existing file, so
-> it reliably holds the last real parent project even after subsequent branch links. This parent
-> resolution is hoisted into `legacy/shared/legacy-parent-project-ref.ts`
+> candidate because `link`'s plain-project arm writes it for a real (non-404) project, and the 404
+> (branch) arm ALSO best-effort maintains it now (PR #6168 review — see Files Written below for the
+> two 404-path cases): without this, a `link <branch-name>` whose parent was resolved from the
+> `project-ref` FILE (env/cache absent or malformed) would never persist that parent evidence
+> anywhere — the branch ref 404s at `LegacyLinkedProjectCache.cache`'s own GET too — so it would be
+> lost until a real (non-404) `link` run. `LegacyLinkedProjectCache.cache` (the post-run
+> PersistentPostRun-parity fill) never overwrites an EXISTING file either way, so between the two,
+> the cache reliably tracks the last known-good parent project even across subsequent branch links.
+> This parent resolution is hoisted into `legacy/shared/legacy-parent-project-ref.ts`
 > (`legacyResolveLinkedParentRef`), shared with the `branches` command family, which is
 > PARENT-scoped for the same reason — see `branches/list/SIDE_EFFECTS.md`.
 
@@ -37,29 +42,50 @@ counterpart exists for this behavior.
 
 All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as needed):
 
-| Path                  | When                                                                                                  |
-| --------------------- | ----------------------------------------------------------------------------------------------------- |
-| `project-ref`         | always, after services link (mandatory — a write failure fails the command)                           |
-| `postgres-version`    | when the project status is 200 and `database.version` is non-empty                                    |
-| `storage-migration`   | best-effort — storage config `migrationVersion`                                                       |
-| `pooler-url`          | best-effort — processed PRIMARY pooler connection string; **removed** when `--skip-pooler`            |
-| `rest-version`        | best-effort — PostgREST swagger `info.version`, prefixed `v`                                          |
-| `gotrue-version`      | best-effort — GoTrue `/auth/v1/health` version                                                        |
-| `storage-version`     | best-effort — Storage `/storage/v1/version` body, prefixed `v`                                        |
-| `linked-project.json` | best-effort — `{ref,name,organization_id,organization_slug}` (only for a resolvable, non-404 project) |
+| Path                  | When                                                                                                                                                                                                                                                                                                                                                                                     |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `project-ref`         | always, after services link (mandatory — a write failure fails the command)                                                                                                                                                                                                                                                                                                              |
+| `postgres-version`    | when the project status is 200 and `database.version` is non-empty                                                                                                                                                                                                                                                                                                                       |
+| `storage-migration`   | best-effort — storage config `migrationVersion`                                                                                                                                                                                                                                                                                                                                          |
+| `pooler-url`          | best-effort — processed PRIMARY pooler connection string; **removed** when `--skip-pooler`                                                                                                                                                                                                                                                                                               |
+| `rest-version`        | best-effort — PostgREST swagger `info.version`, prefixed `v`                                                                                                                                                                                                                                                                                                                             |
+| `gotrue-version`      | best-effort — GoTrue `/auth/v1/health` version                                                                                                                                                                                                                                                                                                                                           |
+| `storage-version`     | best-effort — Storage `/storage/v1/version` body, prefixed `v`                                                                                                                                                                                                                                                                                                                           |
+| `linked-project.json` | best-effort — `{ref,name,organization_id,organization_slug}` for a resolvable, non-404 project; on the 404 (branch) path, best-effort WRITTEN as a ref-only `{ref}` record when a name/UUID-resolved branch's parent isn't already cached (PR #6168 review), or best-effort DELETED when a raw ref-shaped branch link's existing cache is verifiably for a different project (see below) |
+
+> **404-path cache maintenance is TS-only (PR #6168 review) — Go never writes or deletes this file
+> for a branch ref at all.** Two cases, both best-effort (`Effect.ignore`/caught, never affect
+> `link`'s outcome, no new exit code):
+>
+> - `link <branch-name-or-uuid>` (name resolution ran, so the parent is KNOWN): if the existing
+>   cache doesn't already agree with that parent, write `{"ref": "<parentRef>"}` — a
+>   richer cache (with `name`/org fields, e.g. from a real `link <parent-ref>` run) is left
+>   untouched rather than downgraded to the ref-only shape.
+> - `link <raw-ref-shaped-branch-ref>` (no name resolution — the parent is unknown here): when an
+>   existing cache names a DIFFERENT project than this ref, best-effort correlate the two (one
+>   extra `GET /v1/projects/{cachedRef}/branches` call, see API Routes below) — if `ref` is
+>   verifiably among that project's branches, the cache is still accurate and is left alone; if
+>   it's verifiably NOT, the cache is stale for a different project and is deleted (better no
+>   parent claim than silently misdirecting every parent-scoped command at the wrong project). Any
+>   lookup failure means "can't verify" — the cache is left exactly as it was.
+>
+> This diverges from Go's filesystem behavior on the branch/404 link path (Go never touches this
+> file there at all) — flag if the cli-e2e parity harness's filesystem-comparison dimension
+> exercises a branch/404 `link` scenario.
 
 ## API Routes
 
 Management API (base `LegacyCliConfig.apiUrl`, `Authorization: Bearer <access-token>`):
 
-| Method | Path                                        | When                                                                                            |
-| ------ | ------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/projects/{ref}`                        | always (404 tolerated for branch projects)                                                      |
-| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`   | always                                                                                          |
-| `GET`  | `/v1/projects/{ref}/config/storage`         | best-effort                                                                                     |
-| `GET`  | `/v1/projects/{ref}/config/database/pooler` | best-effort (unless `--skip-pooler`)                                                            |
-| `GET`  | `/v1/projects`                              | only when prompting on a TTY                                                                    |
-| `GET`  | `/v1/projects/{parentRef}/branches`         | only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value is given (CLI-2167, TS-only) |
+| Method | Path                                        | When                                                                                                                                                                       |
+| ------ | ------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/projects/{ref}`                        | always (404 tolerated for branch projects)                                                                                                                                 |
+| `GET`  | `/v1/projects/{ref}/api-keys?reveal=true`   | always                                                                                                                                                                     |
+| `GET`  | `/v1/projects/{ref}/config/storage`         | best-effort                                                                                                                                                                |
+| `GET`  | `/v1/projects/{ref}/config/database/pooler` | best-effort (unless `--skip-pooler`)                                                                                                                                       |
+| `GET`  | `/v1/projects`                              | only when prompting on a TTY                                                                                                                                               |
+| `GET`  | `/v1/projects/{parentRef}/branches`         | only when a non-ref-shaped `[ref-or-branch]`/`--project-ref` value is given (CLI-2167, TS-only)                                                                            |
+| `GET`  | `/v1/projects/{cachedRef}/branches`         | 404-path stale-cache correlation only: a RAW ref-shaped branch link whose existing `linked-project.json` names a different project (PR #6168 review, TS-only, best-effort) |
 
 Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` + `Authorization: Bearer <service-key>`):
 

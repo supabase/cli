@@ -463,7 +463,11 @@ export const jsonOutputLayer = Layer.effect(
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
         Effect.gen(function* () {
           const extra = yield* readMachineErrorContext();
-          yield* writeStdout(JSON.stringify({ _tag: "Error", error: err, ...extra }) + "\n");
+          // `extra` spreads FIRST so the envelope's own `_tag`/`error` can
+          // never be clobbered by a context field of the same name (PR #6168
+          // review) — this is opt-in, command-contributed data; the envelope
+          // shape it's decorating always wins.
+          yield* writeStdout(JSON.stringify({ ...extra, _tag: "Error", error: err }) + "\n");
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
         stream === "stderr" ? writeStderr(text) : writeStdout(text),
@@ -568,7 +572,10 @@ export const streamJsonOutputLayer = Layer.effect(
             error: err,
             timestamp: new Date().toISOString(),
           };
-          yield* writeStdout(JSON.stringify({ ...event, ...extra }) + "\n");
+          // `extra` spreads FIRST — same reasoning as the json layer's `fail`
+          // above: the event's own `type`/`error`/`timestamp` must always win
+          // over an opt-in context field of the same name (PR #6168 review).
+          yield* writeStdout(JSON.stringify({ ...extra, ...event }) + "\n");
         }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
         stream === "stderr" ? writeStderr(text) : writeStdout(text),

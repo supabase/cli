@@ -751,6 +751,32 @@ describe("Output", () => {
         expect(Object.keys(parsed).sort()).toEqual(["_tag", "error"]);
       }).pipe(Effect.provide(layer));
     });
+
+    // PR #6168 review: `extra` spreads FIRST in `fail`, so a context field
+    // sharing a name with the envelope's own keys (`_tag`/`error`) can never
+    // clobber them — a non-colliding field alongside it still merges fine.
+    it.effect(
+      "fail: a MachineErrorContext field named _tag or error cannot clobber the envelope",
+      () => {
+        const mock = mockStdio();
+        const layer = Layer.mergeAll(
+          jsonOutputLayer.pipe(Layer.provide(mock.layer)),
+          machineErrorContextLayer,
+        );
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const context = yield* MachineErrorContext;
+          yield* context.set({ _tag: "Hacked", error: "Hacked", safe_field: "ok" });
+          yield* out.fail({ code: "E_TEST", message: "failed" });
+          const parsed = JSON.parse(mock.stdout[0]!);
+          expect(parsed).toEqual({
+            _tag: "Error",
+            error: { code: "E_TEST", message: "failed" },
+            safe_field: "ok",
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("stream-json layer", () => {
@@ -1008,6 +1034,37 @@ describe("Output", () => {
         expect(Object.keys(parsed).sort()).toEqual(["error", "timestamp", "type"]);
       }).pipe(Effect.provide(layer));
     });
+
+    // PR #6168 review: same reasoning as the json layer's equivalent test —
+    // `extra` spreads FIRST, so a context field named `type`/`error`/`timestamp`
+    // can never clobber the event's own keys; a non-colliding field still merges.
+    it.effect(
+      "fail: a MachineErrorContext field named type, error, or timestamp cannot clobber the event",
+      () => {
+        const mock = mockStdio();
+        const layer = Layer.mergeAll(
+          streamJsonOutputLayer.pipe(Layer.provide(mock.layer)),
+          machineErrorContextLayer,
+        );
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const context = yield* MachineErrorContext;
+          yield* context.set({
+            type: "hacked",
+            error: "hacked",
+            timestamp: "hacked",
+            safe_field: "ok",
+          });
+          yield* out.fail({ code: "E_FAIL", message: "boom" });
+          const parsed = JSON.parse(mock.stdout[0]!);
+          expect(parsed.type).toBe("error");
+          expect(parsed.error).toEqual({ code: "E_FAIL", message: "boom" });
+          expect(typeof parsed.timestamp).toBe("string");
+          expect(parsed.timestamp).not.toBe("hacked");
+          expect(parsed.safe_field).toBe("ok");
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("layerFor", () => {

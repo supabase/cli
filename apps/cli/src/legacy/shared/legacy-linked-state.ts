@@ -1,5 +1,5 @@
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Duration, Effect, FileSystem, Option, Path } from "effect";
 
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
@@ -47,7 +47,9 @@ export type LegacyLinkedState =
  * without depending on that service, so `legacyResolveLinkedState` stays
  * usable from a runtime (e.g. `status`'s) that never wires up the resolver —
  * this shape only ever needs the flagless (env → file) tail of that chain
- * anyway, so the reproduction can't drift out of sync with it.
+ * anyway, so the reproduction can't drift out of sync with it. Also reports
+ * WHICH candidate won, since an env override sitting on top of an unrelated
+ * workdir's cache needs different trust rules than the workdir's own file.
  */
 const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
   const cliConfig = yield* LegacyCliConfig;
@@ -55,11 +57,12 @@ const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
   const path = yield* Path.Path;
 
   if (Option.isSome(cliConfig.projectId)) {
-    return cliConfig.projectId;
+    return { ref: cliConfig.projectId, source: "env" as const };
   }
-  return yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
+  const fileRef = yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
+  return { ref: fileRef, source: "file" as const };
 });
 
 /**
@@ -94,6 +97,13 @@ const legacyAcquireLinkedStateApi = Effect.fnUntraced(function* () {
   );
 });
 
+// `status` is an interactive command; this lookup is pure decoration and must
+// never dominate its latency. The generated client's own retry policy (60s
+// attempts × 5 transport retries — `packages/api/src/internal/client.ts:208-229`)
+// would otherwise let a single blackholed API stall every `status` run for
+// ~6 minutes (PR #6168 review).
+const LEGACY_LINKED_STATE_LOOKUP_TIMEOUT = Duration.seconds(5);
+
 /**
  * Best-effort branch-name lookup against `parentRef`'s branches, returning
  * the matching branch's `name` (or `undefined` on no match/any failure —
@@ -101,6 +111,13 @@ const legacyAcquireLinkedStateApi = Effect.fnUntraced(function* () {
  * site relies on). Shows the `Checking linked branch...` spinner in text
  * mode, but only once an API client is actually available — an acquisition
  * failure degrades silently, before ever touching the spinner.
+ *
+ * The WHOLE acquisition-and-listing attempt is hard-bounded by
+ * {@link LEGACY_LINKED_STATE_LOOKUP_TIMEOUT}; a timeout degrades exactly like
+ * any other failure. The spinner's cleanup runs via `Effect.ensuring` (not a
+ * plain sequential `yield*`) so it's guaranteed to fire even when the timeout
+ * interrupts the in-flight listing call, not just on its normal
+ * success/failure completion.
  */
 const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
   parentRef: string,
@@ -108,21 +125,22 @@ const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
 ) {
   const output = yield* Output;
 
-  const apiOption = yield* legacyAcquireLinkedStateApi();
-  if (Option.isNone(apiOption)) return undefined;
-  const api = apiOption.value;
+  const branchesOption: Option.Option<LegacyLinkedStateBranches> = yield* Effect.gen(function* () {
+    const apiOption = yield* legacyAcquireLinkedStateApi();
+    if (Option.isNone(apiOption)) return Option.none<LegacyLinkedStateBranches>();
+    const api = apiOption.value;
 
-  const task =
-    output.format === "text" ? yield* output.task("Checking linked branch...") : undefined;
-  const branchesOption: Option.Option<LegacyLinkedStateBranches> = yield* api.v1
-    .listAllBranches({ ref: parentRef })
-    .pipe(
-      Effect.map(Option.some),
-      // Best-effort: any transport/status/decode failure degrades below —
-      // this helper must never fail on a flaky lookup.
-      Effect.catch(() => Effect.succeed(Option.none<LegacyLinkedStateBranches>())),
-    );
-  yield* task?.clear() ?? Effect.void;
+    const task =
+      output.format === "text" ? yield* output.task("Checking linked branch...") : undefined;
+    return yield* api.v1
+      .listAllBranches({ ref: parentRef })
+      .pipe(Effect.map(Option.some), Effect.ensuring(task?.clear() ?? Effect.void));
+  }).pipe(
+    Effect.timeout(LEGACY_LINKED_STATE_LOOKUP_TIMEOUT),
+    // Best-effort: any transport/status/decode failure OR the timeout above
+    // degrades below — this helper must never fail on a flaky/slow lookup.
+    Effect.catch(() => Effect.succeed(Option.none<LegacyLinkedStateBranches>())),
+  );
 
   return Option.isSome(branchesOption)
     ? branchesOption.value.find((branch) => branch.project_ref === linkedRef)?.name
@@ -139,14 +157,30 @@ const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
  *   - Not linked at all → `{ linked: false }`.
  *   - `linked-project.json` CONFIRMS the linked ref is its own `ref` → a
  *     plain project link (its `name`/org fields, when known); zero API calls.
- *   - `linked-project.json` CONFIRMS a genuinely DIFFERENT parent → a branch
- *     link. Always renders the branch-linked shape (parent ref + whatever
- *     name/org the cache knows), attempting the best-effort branch-name
- *     lookup ({@link legacyFindLinkedBranchName}) and degrading to the bare
+ *   - `linked-project.json` CONFIRMS a genuinely DIFFERENT parent, and the
+ *     linked ref came from the `project-ref` FILE → a branch link. Always
+ *     renders the branch-linked shape (parent ref + whatever name/org the
+ *     cache knows), attempting the best-effort branch-name lookup
+ *     ({@link legacyFindLinkedBranchName}) and degrading to the bare
  *     "assumed branch, name unknown" shape — NOT to a plain/bare project
  *     line — on any acquisition or API failure. This is the fix for the real
  *     bug this feature shipped to fix: the user must still see they're on a
  *     branch even when the lookup can't run (no token, offline, API error).
+ *     The cache lifecycle invariants `link`/`legacyResolveLinkedParentRef`
+ *     maintain are what let a file-sourced ref trust the cache through a
+ *     lookup failure.
+ *   - Same cache/ref divergence, but the linked ref came from `SUPABASE_PROJECT_ID`
+ *     (env) → the cache belongs to the WORKDIR, not necessarily to whatever
+ *     `SUPABASE_PROJECT_ID` happens to point at (e.g. workdir linked to
+ *     project A, `SUPABASE_PROJECT_ID=B` for an unrelated project B) — an env
+ *     override carries none of those invariants. The lookup still runs, but
+ *     the parent claim requires it to have POSITIVELY found `B` among `A`'s
+ *     branches; on no-match, failure, or timeout, degrade all the way to the
+ *     plain `{ linked: true, projectRef }` shape (no parent, no branch line,
+ *     no cache-sourced name/org) rather than asserting "B is a branch of A"
+ *     on nothing but the cache's mere presence (PR #6168 review). An
+ *     env-override CI workflow that DOES link a real branch still renders
+ *     correctly, since that lookup positively confirms.
  *   - No cache at all (missing/unreadable/malformed) → the plain
  *     `{ linked: true, projectRef }` shape, with ZERO API calls (PR #6168
  *     review). `legacyResolveLinkedParentRef`'s own env/file chain is now
@@ -162,7 +196,8 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  const linkedRef = yield* legacyResolveSoftLinkedRef();
+  const soft = yield* legacyResolveSoftLinkedRef();
+  const linkedRef = soft.ref;
   if (Option.isNone(linkedRef)) {
     return { linked: false } as const;
   }
@@ -187,10 +222,19 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
       return { linked: true, projectRef: linkedRef.value, ...cacheFields } as const;
     }
 
-    // The cache confirms a genuinely DIFFERENT parent — always the
-    // branch-linked shape, degrading only the `branch` name.
+    // The cache names a genuinely DIFFERENT parent than the linked ref.
     const parentRef = cached.value.ref;
     const branch = yield* legacyFindLinkedBranchName(parentRef, linkedRef.value);
+    if (branch === undefined && soft.source === "env") {
+      // An env override's lookup didn't POSITIVELY confirm a branch, and the
+      // cache carries none of the file-sourced trust invariants (it belongs
+      // to the WORKDIR, not necessarily to whatever `SUPABASE_PROJECT_ID`
+      // points at) — make no parent claim at all (PR #6168 review).
+      return { linked: true, projectRef: linkedRef.value } as const;
+    }
+    // Either file-sourced (the cache's trust invariants apply) or
+    // env-sourced with a POSITIVE lookup confirmation — always the
+    // branch-linked shape, degrading only the `branch` name.
     return {
       linked: true,
       projectRef: linkedRef.value,
@@ -213,10 +257,18 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
   return { linked: true, projectRef: linkedRef.value } as const;
 });
 
-// Both label helpers render API-derived strings (branch/project names, org
-// slug/id from linked-project.json) straight to the terminal, so they apply
-// the same control-char sanitization as error bodies — a hostile name must
-// not be able to inject ANSI/OSC/newline controls (PR #6168 review).
+// Every string in this human-text block is untrusted display data — not just
+// API-derived names/org slug/id, but the refs themselves. `projectRef` and
+// `parentRef` are both sourced from worktree files (`.temp/project-ref` via
+// `legacyResolveSoftLinkedRef`, and `linked-project.json`'s `ref` via
+// `legacyParseCachedLinkedProject`) that are accepted as any non-empty string
+// with no `PROJECT_REF_PATTERN` validation — a malicious/corrupted worktree
+// file could inject ANSI/OSC/newline controls into `supabase status` stdout
+// via the ref itself, not just a branch/org name (PR #6168 review). Apply the
+// same control-char sanitization as error bodies to every rendered value.
+// Machine payloads (`-o`/`--output-format`) stay data-faithful — JSON/YAML/
+// TOML/env encoding already neutralizes control chars there; this
+// sanitization is for the human text block only.
 function legacyFormatOrgLabel(slug: string | undefined, id: string | undefined): string {
   if (slug !== undefined && id !== undefined) {
     return slug === id
@@ -227,7 +279,8 @@ function legacyFormatOrgLabel(slug: string | undefined, id: string | undefined):
 }
 
 function legacyFormatNamedRef(name: string | undefined, ref: string): string {
-  return name === undefined ? ref : `${legacySanitizeInlineName(name)} (${ref})`;
+  const safeRef = legacySanitizeInlineName(ref);
+  return name === undefined ? safeRef : `${legacySanitizeInlineName(name)} (${safeRef})`;
 }
 
 /**

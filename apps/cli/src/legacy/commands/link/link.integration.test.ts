@@ -681,7 +681,7 @@ describe("legacy link integration", () => {
     it.live(
       "fails with LegacyLinkRefArgConflictError when both the positional and --project-ref are set",
       () => {
-        const { layer } = setup();
+        const { layer, telemetry, linkedCache } = setup();
         return Effect.gen(function* () {
           const exit = yield* Effect.exit(
             legacyLink(flags({ refOrBranch: Option.some(LEGACY_VALID_REF) })),
@@ -694,6 +694,11 @@ describe("legacy link integration", () => {
               "Cannot use both the [ref-or-branch] argument and the --project-ref flag.",
             );
           }
+          // PR #6168 review: this check now sits INSIDE the `Effect.ensuring`
+          // wrapper too — previously the earliest possible failure in the
+          // handler, exiting before telemetry's finalizer was ever reached.
+          expect(telemetry.flushed).toBe(true);
+          expect(linkedCache.cached).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -959,6 +964,110 @@ describe("legacy link integration", () => {
     );
   });
 
+  describe("branch-name resolution: 404-path cache write/invalidation (PR #6168 review)", () => {
+    it.live(
+      "name-resolved branch link with no cache file (P1 fix): persists {ref: parentRef}, and a follow-up branch resolution proves the parent chain survives",
+      () => {
+        const { layer, workdir, apiMock } = setup({
+          branches: { ok: [LINK_BRANCH, LINK_BRANCH_OTHER] },
+          project: { fail: legacyStatusCodeFailure(404) },
+        });
+        writeLinkedParentRef(workdir, PARENT_REF);
+        return Effect.gen(function* () {
+          yield* legacyLink(
+            flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
+          );
+          expect(readTemp(workdir, "linked-project.json")).toBe(
+            JSON.stringify({ ref: PARENT_REF }),
+          );
+
+          // Follow-up: a second branch-name link must still resolve via the
+          // parent this write just persisted — proving it's real parent-chain
+          // evidence, not a dead write. `project-ref` was overwritten to the
+          // first branch's own ref by the first call, so this also proves the
+          // cache (not the file) is what a second resolution actually used.
+          yield* legacyLink(
+            flags({ refOrBranch: Option.some("other-branch"), projectRef: Option.none() }),
+          );
+          const branchCalls = apiMock.requests.filter((r) => r.method === "listAllBranches");
+          expect(branchCalls.at(-1)?.input).toMatchObject({ ref: PARENT_REF });
+          expect(readTemp(workdir, "project-ref")).toBe(OTHER_BRANCH_PROJECT_REF);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "name-resolved branch link whose cache already agrees with the parent: cache left byte-identical (richer record not clobbered by the ref-only write)",
+      () => {
+        const { layer, workdir } = setup({
+          branches: { ok: [LINK_BRANCH] },
+          project: { fail: legacyStatusCodeFailure(404) },
+        });
+        writeLinkedParentRef(workdir, PARENT_REF);
+        const richCache = linkedProjectCacheJson(PARENT_REF);
+        writeLinkedProjectCacheFile(workdir, richCache);
+        return Effect.gen(function* () {
+          yield* legacyLink(
+            flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
+          );
+          expect(readTemp(workdir, "linked-project.json")).toBe(richCache);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "raw ref-shaped 404 link whose ref IS among the stale cache's branches: keeps the cache, link still succeeds",
+      () => {
+        const { layer, workdir, apiMock } = setup({
+          project: { fail: legacyStatusCodeFailure(404) },
+          branches: { ok: [LINK_BRANCH] },
+        });
+        const cacheContent = linkedProjectCacheJson(CACHE_ONLY_REF);
+        writeLinkedProjectCacheFile(workdir, cacheContent);
+        return Effect.gen(function* () {
+          yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(readTemp(workdir, "linked-project.json")).toBe(cacheContent);
+          const branchCall = apiMock.requests.find((r) => r.method === "listAllBranches");
+          expect(branchCall?.input).toMatchObject({ ref: CACHE_ONLY_REF });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "raw ref-shaped 404 link whose ref is NOT among the stale cache's branches: deletes the cache, link still succeeds",
+      () => {
+        const { layer, workdir } = setup({
+          project: { fail: legacyStatusCodeFailure(404) },
+          branches: { ok: [LINK_BRANCH_OTHER] },
+        });
+        writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(CACHE_ONLY_REF));
+        return Effect.gen(function* () {
+          yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(existsSync(tempFile(workdir, "linked-project.json"))).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "raw ref-shaped 404 link where the correlation lookup itself fails: keeps the cache untouched, link still succeeds",
+      () => {
+        const { layer, workdir } = setup({
+          project: { fail: legacyStatusCodeFailure(404) },
+          branches: { fail: legacyStatusCodeFailure(500) },
+        });
+        const cacheContent = linkedProjectCacheJson(CACHE_ONLY_REF);
+        writeLinkedProjectCacheFile(workdir, cacheContent);
+        return Effect.gen(function* () {
+          yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
+          expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+          expect(readTemp(workdir, "linked-project.json")).toBe(cacheContent);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+  });
+
   describe("branch-name resolution: matching and safety", () => {
     it.live(
       "resolves a positional branch name via the parent linked in the project-ref temp file",
@@ -1131,7 +1240,7 @@ describe("legacy link integration", () => {
     });
 
     it.live("lists sorted available branch names when the branch is not found", () => {
-      const { layer, workdir } = setup({
+      const { layer, workdir, telemetry, linkedCache } = setup({
         branches: { ok: [LINK_BRANCH_ZETA, LINK_BRANCH_ALPHA] },
       });
       writeLinkedParentRef(workdir, PARENT_REF);
@@ -1149,6 +1258,14 @@ describe("legacy link integration", () => {
             `Branch \\"missing-branch\\" not found for project ${PARENT_REF}. Available branches: alpha, zeta`,
           );
         }
+        // PR #6168 review: a branch-name resolution failure now sits INSIDE the
+        // `Effect.ensuring` wrapper, so telemetry still flushes even though the
+        // link itself never reached ref resolution — previously this failure
+        // exited before the wrapper was ever reached, and telemetry silently
+        // never flushed. `ref` itself never resolved, so the linked-project
+        // cache fill correctly stays a no-op.
+        expect(telemetry.flushed).toBe(true);
+        expect(linkedCache.cached).toBe(false);
       }).pipe(Effect.provide(layer));
     });
 
