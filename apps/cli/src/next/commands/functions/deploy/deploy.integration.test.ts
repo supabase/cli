@@ -1333,6 +1333,49 @@ describe("functions deploy", () => {
   });
 
   it.live(
+    "skips an unreferenced `/`-suffixed import-map target that resolves through a file, on the default API deploy path",
+    () => {
+      // Regression: a spec-valid `/`-suffixed import-map value (which SHOULD
+      // end in "/") pointing at a real FILE used to crash `uploadScopeTarget`
+      // with a raw, unhandled ENOTDIR — independent of whether the
+      // entrypoint even references the key, since `forEachLocalImportMapTarget`
+      // walks every import-map value unconditionally.
+      const tempDir = makeTempDir();
+
+      return Effect.gen(function* () {
+        yield* Effect.promise(() => writeProjectConfig(tempDir));
+        yield* Effect.promise(() => writeLocalFunction(tempDir, "hello-world"));
+        yield* Effect.promise(() =>
+          writeFile(
+            join(tempDir, "supabase", "functions", "hello-world", "vendor.mjs"),
+            "export const x = 1;\n",
+          ),
+        );
+        yield* Effect.promise(() =>
+          writeFile(
+            join(tempDir, "supabase", "functions", "hello-world", "deno.json"),
+            JSON.stringify({ imports: { "@x/": "./vendor.mjs/" } }),
+          ),
+        );
+
+        const { out, api, layer } = setup(tempDir, {
+          rawArgs: ["functions", "deploy", "hello-world"],
+        });
+
+        yield* functionsDeploy({
+          ...BASE_FLAGS,
+          functionNames: ["hello-world"],
+        }).pipe(Effect.provide(layer));
+
+        expect(api.multiparts).toHaveLength(1);
+        expect(out.stderrText).toContain(
+          "WARN: Skipping import map target that is not a directory:",
+        );
+      }).pipe(Effect.ensuring(cleanupTempDir(tempDir)));
+    },
+  );
+
+  it.live(
     "rejects a git-root workspace import that escapes the workdir with a `..` segment",
     () => {
       // Go parity (CLI-1985): names are anchored at the workdir like Go's

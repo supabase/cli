@@ -1,4 +1,5 @@
 import { Effect, FileSystem, Path } from "effect";
+import type { PlatformError } from "effect/PlatformError";
 
 export interface ProjectPaths {
   readonly projectRoot: string;
@@ -8,6 +9,18 @@ export interface ProjectPaths {
   readonly envLocalPath: string;
 }
 
+// A stat failure (e.g. ENOTDIR when this root has a FILE named `supabase`)
+// means "no config here" — Go's getProjectRoot keeps climbing on any stat
+// error (apps/cli-go/internal/utils/misc.go:216-231). The failed probe is
+// logged at Debug as a structured hook for future diagnostics — the CLI does
+// not currently lower its minimum log level for `--debug`, so this is not
+// yet Go-parity debug visibility.
+const probeExists = (self: Effect.Effect<boolean, PlatformError>) =>
+  self.pipe(
+    Effect.tapError((error) => Effect.logDebug("config probe failed", error)),
+    Effect.orElseSucceed(() => false),
+  );
+
 const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -15,11 +28,8 @@ const findConfigInRoot = Effect.fnUntraced(function* (root: string) {
   const jsonPath = path.join(supabaseDir, "config.json");
   const tomlPath = path.join(supabaseDir, "config.toml");
 
-  // A stat failure (e.g. ENOTDIR when this root has a FILE named `supabase`)
-  // means "no config here" — Go's getProjectRoot keeps climbing on any stat
-  // error (apps/cli-go/internal/utils/misc.go:216-231).
-  const jsonExists = yield* fs.exists(jsonPath).pipe(Effect.orElseSucceed(() => false));
-  const tomlExists = yield* fs.exists(tomlPath).pipe(Effect.orElseSucceed(() => false));
+  const jsonExists = yield* probeExists(fs.exists(jsonPath));
+  const tomlExists = yield* probeExists(fs.exists(tomlPath));
 
   if (!jsonExists && !tomlExists) {
     return null;

@@ -1,6 +1,6 @@
 import { Effect, FileSystem, Layer, Option, Path } from "effect";
 import { ProjectContext } from "./project-context.service.ts";
-import { ProjectHome } from "./project-home.service.ts";
+import { ProjectHome, ProjectHomeNotDirectoryError } from "./project-home.service.ts";
 import { RuntimeInfo } from "../../shared/runtime/runtime-info.service.ts";
 
 const PROJECT_HOME_DIR_NAME = ".supabase";
@@ -45,9 +45,19 @@ const makeProjectHome = Effect.gen(function* () {
   const projectLinkPath = path.join(projectHomeDir, "project.json");
   const projectLocalVersionsPath = path.join(projectHomeDir, "local-versions.json");
 
-  const ensureProjectHomeDir = Effect.gen(function* () {
-    yield* fs.makeDirectory(projectHomeDir, { recursive: true, mode: 0o700 });
-  }).pipe(Effect.orDie);
+  const ensureProjectHomeDir = fs
+    .makeDirectory(projectHomeDir, { recursive: true, mode: 0o700 })
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "AlreadyExists" || error.reason._tag === "BadResource"
+          ? Effect.die(
+              new ProjectHomeNotDirectoryError({
+                message: `${projectHomeDir} could not be created: a file (or a symlink loop) exists at that path or on one of its parent directories. Remove or rename it so the Supabase CLI can store project state there.`,
+              }),
+            )
+          : Effect.die(error),
+      ),
+    );
 
   const stackDir = (name: string) => path.join(projectHomeDir, "stacks", name);
 
