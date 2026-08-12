@@ -46,6 +46,7 @@ export interface LegacyMigrationRepairInput {
   readonly dbUrl: Option.Option<string>;
   readonly linked: boolean;
   readonly local: boolean;
+  readonly projectRef: Option.Option<string>;
   readonly password: Option.Option<string>;
 }
 
@@ -142,6 +143,18 @@ const runRepair = Effect.fnUntraced(function* (
   const repairAll = input.versions.length === 0;
   const connType = target.connType ?? "linked"; // repair defaults to `--linked` (Go: `Bool("linked", true)`).
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(input.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   // Resolve the DB config (and, for the linked default, the project ref) BEFORE the
   // version parse and any prompt — mirroring Go's cobra order: root `PersistentPreRunE`
   // runs `ParseDatabaseConfig` (`apps/cli-go/cmd/root.go:118`) before `repair.Run`'s
@@ -153,6 +166,7 @@ const runRepair = Effect.fnUntraced(function* (
     connType,
     dnsResolver,
     password: input.password,
+    linkedProjectRef: input.projectRef,
   });
 
   // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
@@ -173,7 +187,7 @@ const runRepair = Effect.fnUntraced(function* (
       ? yield* Effect.gen(function* () {
           const projectRef = yield* LegacyProjectRefResolver;
           const linkedProjectCache = yield* LegacyLinkedProjectCache;
-          const ref = yield* projectRef.loadProjectRef(Option.none());
+          const ref = yield* projectRef.loadProjectRef(input.projectRef);
           return linkedProjectCache.cache(ref);
         })
       : undefined;

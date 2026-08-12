@@ -229,6 +229,18 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
 
     const connType = target.connType ?? "local";
 
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbResetTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
     // Go's ParseDatabaseConfig runs LoadProjectRef BEFORE the fallible linked
     // resolution (db_url.go:87-95), and Execute() writes the linked-project cache
     // even when a later step errors (root.go:171-181). Pre-load the ref so the
@@ -236,10 +248,15 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // config, temp-role mint, connection) — mirrors push.handler.
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
-      linkedRefForCache = yield* refResolver.loadProjectRef(Option.none());
+      linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
     }
 
-    const cfg = yield* resolver.resolve({ dbUrl: flags.dbUrl, connType, dnsResolver });
+    const cfg = yield* resolver.resolve({
+      dbUrl: flags.dbUrl,
+      connType,
+      dnsResolver,
+      linkedProjectRef: flags.projectRef,
+    });
 
     // Local target → native local reset. Mirrors `internal/db/reset/reset.go:57-77`;
     // the actual composition (running check, container recreate, storage-health gate,

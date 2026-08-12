@@ -119,6 +119,18 @@ const runLint = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyDbLintMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const level = Option.getOrElse(flags.level, () => "warning");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
 
@@ -136,6 +148,7 @@ const runLint = Effect.fnUntraced(function* (
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
       dnsResolver,
+      linkedProjectRef: flags.projectRef,
     });
 
     const results = yield* Effect.scoped(
@@ -214,7 +227,7 @@ const runLint = Effect.fnUntraced(function* (
   if (target.connType === "linked") {
     const projectRef = yield* LegacyProjectRefResolver;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const ref = yield* projectRef.loadProjectRef(Option.none());
+    const ref = yield* projectRef.loadProjectRef(flags.projectRef);
     return yield* lintBody.pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
   }
   return yield* lintBody;

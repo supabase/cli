@@ -111,6 +111,7 @@ const runLocal = Effect.fnUntraced(function* (
 /** Go's root `PersistentPreRunE` (`cmd/root.go:118`) + advisors `PreRunE` +
  *  `RunLinked` (`cmd/db.go:355-371`, `advisors.go:79-100`). */
 const runLinked = Effect.fnUntraced(function* (
+  flags: LegacyDbAdvisorsFlags,
   dnsResolver: "native" | "https",
   advisorType: string,
   level: string,
@@ -133,7 +134,7 @@ const runLinked = Effect.fnUntraced(function* (
   // when the DB-config resolve below fails (e.g. the IPv6 error). Load the ref
   // first (non-prompting `LoadProjectRef`; ErrNotLinked → empty ref → nothing to
   // cache, matching Go) and wrap everything after it in the cache finalizer.
-  const ref = yield* projectRefResolver.loadProjectRef(Option.none());
+  const ref = yield* projectRefResolver.loadProjectRef(flags.projectRef);
 
   return yield* Effect.gen(function* () {
     // Root PersistentPreRunE's `ParseDatabaseConfig` host probe / login-role mint
@@ -141,7 +142,12 @@ const runLinked = Effect.fnUntraced(function* (
     // the resolved config (`advisors.go:79-100`), so resolve-and-discard — purely
     // for the side effects and early-failure ordering (before the token gate,
     // matching root PersistentPreRunE → advisors PreRunE).
-    yield* resolver.resolve({ dbUrl: Option.none(), connType: "linked", dnsResolver });
+    yield* resolver.resolve({
+      dbUrl: Option.none(),
+      connType: "linked",
+      dnsResolver,
+      linkedProjectRef: flags.projectRef,
+    });
 
     // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
     // the token (env/keyring/file) against the `sbp_` pattern and fails with
@@ -233,6 +239,19 @@ const runAdvisors = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // for the full TS-only rationale. advisors defaults to the local/db-url path
+  // (`runLocal`) whenever `--linked` isn't the resolved target selector.
+  if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyDbAdvisorsMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const advisorType = Option.getOrElse(flags.type, () => "all");
   const level = Option.getOrElse(flags.level, () => "warn");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
@@ -241,7 +260,7 @@ const runAdvisors = Effect.fnUntraced(function* (
   // linked → Management API; otherwise local / `--db-url`.
   const filtered =
     target.connType === "linked"
-      ? yield* runLinked(dnsResolver, advisorType, level)
+      ? yield* runLinked(flags, dnsResolver, advisorType, level)
       : yield* runLocal(flags, dnsResolver, advisorType, level, target);
 
   yield* outputAndCheck(filtered, failOn);

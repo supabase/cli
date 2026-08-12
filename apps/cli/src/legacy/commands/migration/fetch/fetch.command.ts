@@ -21,6 +21,11 @@ const config = {
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Fetches migration history from the local database."),
   ),
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
 } as const;
 
 export type LegacyMigrationFetchFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -35,7 +40,11 @@ export const legacyMigrationFetchCommand = Command.make("fetch", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
         },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
       }),
       withJsonErrorHandling,
     ),

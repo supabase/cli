@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Option } from "effect";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
 import {
@@ -24,6 +24,7 @@ function mvFlags(opts: {
     recursive: opts.recursive ?? false,
     linked: true,
     local: opts.local ?? true,
+    projectRef: Option.none(),
   };
 }
 
@@ -255,6 +256,49 @@ describe("legacy storage mv", () => {
       expect(telemetry.flushed).toBe(true);
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live("moves within the project given via --project-ref, overriding LEGACY_VALID_REF", () => {
+    // `opts.projectRef` (the fake's own fallback) is left at its default
+    // (LEGACY_VALID_REF) — the flag must win over it and drive the gateway host.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+      routes: [{ method: "POST", match: MOVE, body: { message: "Successfully moved" } }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageMv({
+        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
+        local: false,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
+      expect(requests.some((r) => r.url.includes(LEGACY_VALID_REF))).toBe(false);
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(FLAG_REF);
+    });
+  });
+
+  it.live("rejects --project-ref combined with --local", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageMv({
+        ...mvFlags({ src: "ss:///private/a", dst: "ss:///private/b" }),
+        local: true,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      );
+      // The guard fires before any network call or cache write.
+      expect(requests).toHaveLength(0);
+      expect(linkedCache.cached).toBe(false);
     });
   });
 

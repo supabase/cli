@@ -43,7 +43,7 @@ interface MockRoute {
   readonly transportDescription?: string;
 }
 
-const DEFAULT_FLAGS: LegacyBucketsFlags = { linked: false, local: true };
+const DEFAULT_FLAGS: LegacyBucketsFlags = { linked: false, local: true, projectRef: Option.none() };
 
 function setupLegacySeedBuckets(
   workdir: string,
@@ -150,14 +150,19 @@ function setupLegacySeedBuckets(
           )
         : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
-    loadProjectRef: () =>
-      opts.linkedFails === true
-        ? Effect.fail(
-            new LegacyProjectNotLinkedError({
-              message: "Cannot find project ref. Have you run supabase link?",
-            }),
-          )
-        : Effect.succeed(projectRefRef),
+    // Gives an explicit `--project-ref` flag top precedence, same as Go's
+    // `flags.LoadProjectRef` — short-circuits BEFORE `linkedFails`, so a test
+    // can prove the flag resolves a ref even for an "unlinked" workdir.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed(flagValue.value)
+        : opts.linkedFails === true
+          ? Effect.fail(
+              new LegacyProjectNotLinkedError({
+                message: "Cannot find project ref. Have you run supabase link?",
+              }),
+            )
+          : Effect.succeed(projectRefRef),
     promptProjectRef: () => Effect.succeed(projectRefRef),
   });
 
@@ -654,7 +659,7 @@ describe("legacy seed buckets", () => {
     // with no config file Go still builds the remote client, fetches the
     // service-role key, and lists buckets — failures surface instead of a silent
     // success. With no configured buckets the remote LIST must still happen.
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       projectRef: LEGACY_VALID_REF,
       apiKeys: [
@@ -977,10 +982,11 @@ describe("legacy seed buckets", () => {
       routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
     });
@@ -1560,7 +1566,7 @@ describe("legacy seed buckets", () => {
   // ---------------------------------------------------------------------------
 
   it.live("--linked seeds the remote storage project", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: LEGACY_VALID_REF,
@@ -1589,6 +1595,64 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live(
+    "--project-ref --linked seeds the project given by the flag, overriding LEGACY_VALID_REF",
+    () => {
+      // `opts.projectRef` (the fake's own fallback) is left at its default
+      // (LEGACY_VALID_REF) — the flag must win over it and drive the storage
+      // gateway host.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, out, requests, linkedCache } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        args: ["seed", "buckets", "--linked"],
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets({
+          linked: true,
+          local: false,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("Creating Storage bucket: test");
+        expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(
+          true,
+        );
+        expect(requests.some((r) => r.url.includes(LEGACY_VALID_REF))).toBe(false);
+        expect(linkedCache.cached).toBe(true);
+        expect(linkedCache.cachedRef).toBe(FLAG_REF);
+      });
+    },
+  );
+
+  it.live("rejects --project-ref on the default local target", () => {
+    // seed buckets defaults to local when no target flag is set — the guard
+    // must fire from the flag alone, with no explicit --local needed.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, requests, linkedCache } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets({
+        linked: false,
+        local: true,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        );
+      }
+      // The guard fires before any HTTP request or cache write.
+      expect(requests).toEqual([]);
+      expect(linkedCache.cached).toBe(false);
+    });
+  });
+
   it.live("--linked=false still takes the linked path (Go flag.Changed, not value)", () => {
     // Go selects the target from flag.Changed: `--linked=false` is still linked.
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
@@ -1601,10 +1665,11 @@ describe("legacy seed buckets", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: false, local: true }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: false,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // Remote URL → the linked path ran despite the parsed value being false.
       expect(
@@ -1623,10 +1688,11 @@ describe("legacy seed buckets", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: false, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: false,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // Local path (not the remote https host) — `--local` changed selects local.
       // Asserting "not remote" keeps this independent of the loopback host env.
@@ -1645,10 +1711,11 @@ describe("legacy seed buckets", () => {
       routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       // Go's tenant.GetApiKeys → errMissingKey, before NewStorageAPI.
       expect(JSON.stringify(exit)).toContain("Anon key not found.");
@@ -1669,10 +1736,11 @@ describe("legacy seed buckets", () => {
       routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const json = JSON.stringify(exit);
       expect(json).toContain("LegacyStorageAuthTokenError");
@@ -1704,7 +1772,7 @@ describe("legacy seed buckets", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* legacySeedBuckets({ linked: true, local: false }).pipe(
+      yield* legacySeedBuckets({ linked: true, local: false, projectRef: Option.none() }).pipe(
         Effect.provide(linked.layer),
         Effect.exit,
       );
@@ -1719,7 +1787,7 @@ describe("legacy seed buckets", () => {
   it.live("--linked uses SUPABASE_AUTH_SERVICE_ROLE_KEY env var when set", () => {
     const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
     process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = "env-service-role-key";
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: LEGACY_VALID_REF,
@@ -1747,7 +1815,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("upserts analytics buckets when analytics.enabled and --linked", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         "[storage.analytics]",
@@ -1798,7 +1866,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("prunes a stale analytics bucket when the prompt is accepted", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         "[storage.analytics]",
@@ -1837,7 +1905,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("--linked fails when the project is not linked", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       linkedFails: true,
@@ -1950,7 +2018,7 @@ describe("legacy seed buckets", () => {
     // appear after the merge (Go's mergeRemoteConfig merges subtrees recursively;
     // it does not wholesale replace [storage.buckets]).
     const remoteRef = LEGACY_VALID_REF; // "abcdefghijklmnopqrst"
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         'project_id = "test"',

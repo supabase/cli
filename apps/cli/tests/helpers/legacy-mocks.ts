@@ -797,14 +797,44 @@ const LEGACY_SHADOW_STARTING_STATE =
  * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
  * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
  * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
+ *
+ * `failCreate`/`failRemove` (both default `false`) make `docker create`/`docker rm` exit
+ * non-zero instead — hoisted from `migration squash`'s own scoped-down copy of this mock
+ * (CLI-1969 review), which needed these two extra failure knobs `db diff`/`db pull`'s own
+ * scenarios never exercised. Defaulting both to `false` keeps every existing caller
+ * (`pull.integration.test.ts`, `declarative.orchestrate.integration.test.ts`,
+ * `diff.integration.test.ts`) byte-identical.
+ *
+ * `dbNotRunning`/`dbInspectFailsWith` (CLI-1968) fake the SEPARATE `docker container inspect
+ * supabase_db_<projectId>` probe `legacyIsLocalDbRunning` issues before `--use-pgadmin`
+ * provisions anything — distinguished from the shadow's own `container inspect <64-hex-id>`
+ * health probe by the target id's `supabase_db_` prefix, so both options leave the shadow's
+ * own health check on its normal (healthy/never-healthy) path. `dbNotRunning` reports the
+ * Go/Docker "container doesn't exist" shape (`legacyIsContainerNotFoundMessage`); mutually
+ * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
+ * (`legacyIsDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
+ * that sets both throws immediately, rather than one option silently winning).
  */
 export function mockLegacyShadowContainerCliSpawner(
-  opts: { readonly neverHealthy?: boolean } = {},
+  opts: {
+    readonly neverHealthy?: boolean;
+    readonly failCreate?: boolean;
+    readonly failRemove?: boolean;
+    readonly dbNotRunning?: boolean;
+    readonly dbInspectFailsWith?: string;
+  } = {},
 ): {
   readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
   readonly spawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
 } {
+  if (opts.dbNotRunning === true && opts.dbInspectFailsWith !== undefined) {
+    throw new Error(
+      "mockLegacyShadowContainerCliSpawner: dbNotRunning and dbInspectFailsWith are mutually exclusive",
+    );
+  }
   const neverHealthy = opts.neverHealthy ?? false;
+  const failCreate = opts.failCreate ?? false;
+  const failRemove = opts.failRemove ?? false;
   const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
   const encoder = new TextEncoder();
 
@@ -826,20 +856,58 @@ export function mockLegacyShadowContainerCliSpawner(
             ),
           );
         }
+        const isLocalDbInspect =
+          args[0] === "container" &&
+          args[1] === "inspect" &&
+          (args[2] ?? "").startsWith("supabase_db_");
+        if (
+          isLocalDbInspect &&
+          (opts.dbNotRunning === true || opts.dbInspectFailsWith !== undefined)
+        ) {
+          const stderrText =
+            opts.dbInspectFailsWith ?? `Error response from daemon: No such container: ${args[2]}`;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+            stdout: Stream.empty,
+            stderr: Stream.fromIterable([encoder.encode(stderrText)]),
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }
         let stdoutLines: ReadonlyArray<string> = [];
+        let stderrLines: ReadonlyArray<string> = [];
+        let exitCode = 0;
         if (args[0] === "create") {
-          stdoutLines = [LEGACY_FAKE_SHADOW_CONTAINER_ID];
+          if (failCreate) {
+            exitCode = 1;
+            stderrLines = ["network error"];
+          } else {
+            stdoutLines = [LEGACY_FAKE_SHADOW_CONTAINER_ID];
+          }
         } else if (args[0] === "container" && args[1] === "inspect") {
           stdoutLines = [neverHealthy ? LEGACY_SHADOW_STARTING_STATE : LEGACY_SHADOW_HEALTHY_STATE];
+        } else if (args[0] === "rm") {
+          if (failRemove) {
+            exitCode = 1;
+            stderrLines = ["boom removing container"];
+          }
         }
-        // "image inspect", "network create", "start", "rm -f -v" all succeed with no output.
+        // "image inspect", "network create", "start" (and "rm -f -v" when not `failRemove`)
+        // all succeed with no output.
         const stdoutBytes = stdoutLines.map((line) => encoder.encode(`${line}\n`));
+        const stderrBytes = stderrLines.map((line) => encoder.encode(`${line}\n`));
         return ChildProcessSpawner.makeHandle({
           pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
           stdout: Stream.fromIterable(stdoutBytes),
-          stderr: Stream.empty,
+          stderr: Stream.fromIterable(stderrBytes),
           all: Stream.empty,
-          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
           isRunning: Effect.succeed(false),
           stdin: Sink.drain,
           kill: () => Effect.void,

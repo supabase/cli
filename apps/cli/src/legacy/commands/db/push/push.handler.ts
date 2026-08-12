@@ -61,13 +61,29 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
     // Go's push defaults `--linked` to true, so no target flag → linked.
     const connType = target.connType ?? "linked";
 
+    // TS-only guard: `--project-ref` never implies `--linked` and must not be
+    // silently discarded on a non-linked target. Deliberately STRICTER than the
+    // `SUPABASE_PROJECT_ID` env var, which Go's `loadProjectRef` equivalent
+    // reads unconditionally but which simply goes unused (no error) on a
+    // `--local`/`--db-url` target — an explicitly typed `--project-ref` flag
+    // silently doing nothing on e.g. `db push --local` is a footgun the env var
+    // doesn't share, so this errors instead.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbPushTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
     // The linked path resolves the project ref before loading config so a matching
     // `[remotes.<ref>]` block merges (Go's ParseDatabaseConfig → LoadConfig). For
     // `--local` / `--db-url`, Go leaves `flags.ProjectRef` empty.
     let projectRef = "";
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
-      projectRef = yield* refResolver.loadProjectRef(Option.none());
+      projectRef = yield* refResolver.loadProjectRef(flags.projectRef);
       linkedRefForCache = projectRef;
     }
 
@@ -98,6 +114,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       dnsResolver,
       password: flags.password,
       resolveVaultSecrets: !flags.skipVault,
+      linkedProjectRef: flags.projectRef,
     });
 
     yield* legacyDbPushCore({

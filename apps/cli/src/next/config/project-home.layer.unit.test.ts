@@ -4,13 +4,13 @@ import { mkdtempSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Effect, Layer, Option } from "effect";
+import { Cause, Effect, Exit, Layer, Option, Result } from "effect";
 import { mockRuntimeInfo, processEnvLayer } from "../../../tests/helpers/mocks.ts";
 import { cliConfigLayer } from "./cli-config.layer.ts";
 import { projectContextLayer } from "./project-context.layer.ts";
 import { projectHomeLayer } from "./project-home.layer.ts";
 import { ProjectContext } from "./project-context.service.ts";
-import { ProjectHome } from "./project-home.service.ts";
+import { ProjectHome, ProjectHomeNotDirectoryError } from "./project-home.service.ts";
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), "supabase-project-home-"));
@@ -155,4 +155,82 @@ describe("projectHomeLayer", () => {
       Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
     );
   });
+
+  it.live("dies with ProjectHomeNotDirectoryError when a FILE occupies the .supabase path", () => {
+    const tempDir = makeTempDir();
+    const projectRoot = join(tempDir, "repo");
+
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() => mkdir(projectRoot, { recursive: true }));
+      yield* Effect.tryPromise(() =>
+        writeFile(join(projectRoot, ".supabase"), "not a directory\n"),
+      );
+
+      const layer = buildLayer({
+        cwd: projectRoot,
+        env: { SUPABASE_HOME: join(tempDir, "supabase-home") },
+      });
+      const projectHome = yield* Effect.gen(function* () {
+        return yield* ProjectHome;
+      }).pipe(Effect.provide(layer));
+
+      const exit = yield* projectHome.ensureProjectHomeDir.pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const defect = Cause.findDefect(exit.cause);
+        expect(Result.isSuccess(defect)).toBe(true);
+        if (Result.isSuccess(defect)) {
+          expect(defect.success).toBeInstanceOf(ProjectHomeNotDirectoryError);
+          expect(defect.success).toMatchObject({ _tag: "ProjectHomeNotDirectoryError" });
+          expect((defect.success as ProjectHomeNotDirectoryError).message).toContain(
+            "could not be created",
+          );
+        }
+      }
+    }).pipe(
+      Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.live(
+    "dies with ProjectHomeNotDirectoryError (BadResource) when a FILE occupies an ancestor of the project home path",
+    () => {
+      // Distinct from the AlreadyExists case above: here `.supabase` itself
+      // doesn't exist, but a FILE sits on one of ITS OWN parent directories
+      // (`<tempDir>/proj`), so `mkdir(..., { recursive: true })` fails with
+      // ENOTDIR (-> PlatformError reason "BadResource") while trying to
+      // traverse through it, rather than EEXIST on the leaf itself.
+      const tempDir = makeTempDir();
+      const fileAsDir = join(tempDir, "proj");
+      const cwd = join(fileAsDir, "child");
+
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() => writeFile(fileAsDir, "not a directory\n"));
+
+        const layer = buildLayer({
+          cwd,
+          env: { SUPABASE_HOME: join(tempDir, "supabase-home") },
+        });
+        const projectHome = yield* Effect.gen(function* () {
+          return yield* ProjectHome;
+        }).pipe(Effect.provide(layer));
+
+        const exit = yield* projectHome.ensureProjectHomeDir.pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          const defect = Cause.findDefect(exit.cause);
+          expect(Result.isSuccess(defect)).toBe(true);
+          if (Result.isSuccess(defect)) {
+            expect(defect.success).toBeInstanceOf(ProjectHomeNotDirectoryError);
+            expect(defect.success).toMatchObject({ _tag: "ProjectHomeNotDirectoryError" });
+            expect((defect.success as ProjectHomeNotDirectoryError).message).toContain(
+              "could not be created",
+            );
+          }
+        }
+      }).pipe(
+        Effect.ensuring(Effect.tryPromise(() => rm(tempDir, { recursive: true, force: true }))),
+      );
+    },
+  );
 });

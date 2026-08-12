@@ -162,6 +162,7 @@ const flags = (over: Partial<LegacyInspectReportFlags> = {}): LegacyInspectRepor
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none<string>(),
   outputDir: over.outputDir ?? ".",
 });
 
@@ -303,6 +304,44 @@ describe("legacy inspect report", () => {
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base, linked: true }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports on the project given via --project-ref on the default linked path", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const base = tempDir("supabase-report-out-");
+    const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    return Effect.gen(function* () {
+      yield* legacyInspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
+      // `inspect report` never caches the ref — the resolver call it threads the
+      // flag into is the strongest observable this harness offers.
+      const resolveInput = resolver.resolveInput as {
+        connType: string;
+        linkedProjectRef: Option.Option<string>;
+      };
+      expect(resolveInput.connType).toBe("linked");
+      expect(resolveInput.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver } = setupLegacyReport({
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyInspectReport(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection resolution.
+      expect(resolver.resolveInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
