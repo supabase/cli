@@ -633,13 +633,19 @@ const readCheckoutIdentity = async (
  * The git directory always exists by the time this runs — inspection found it —
  * so the marker needs no directory created for it.
  */
+interface CheckoutIdentityClaim {
+  readonly checkoutId: string;
+  /** Whether this call published the marker, rather than adopting a winner's. */
+  readonly created: boolean;
+}
+
 const ensureCheckoutIdentity = async (
   gitDirectory: string,
   idFactory: () => string,
-): Promise<string> => {
+): Promise<CheckoutIdentityClaim> => {
   const existing = await readCheckoutIdentity(gitDirectory);
   if (existing !== undefined) {
-    return existing.checkoutId;
+    return { checkoutId: existing.checkoutId, created: false };
   }
 
   const identity: GitCheckoutIdentity = {
@@ -655,7 +661,7 @@ const ensureCheckoutIdentity = async (
     },
   );
   if (outcome === "claimed") {
-    return identity.checkoutId;
+    return { checkoutId: identity.checkoutId, created: true };
   }
 
   const winner = await readCheckoutIdentity(gitDirectory);
@@ -664,7 +670,7 @@ const ensureCheckoutIdentity = async (
       message: "Checkout identity publication raced without a winning marker",
     });
   }
-  return winner.checkoutId;
+  return { checkoutId: winner.checkoutId, created: false };
 };
 
 export interface EnsureGitCheckoutIdentityResult {
@@ -674,6 +680,12 @@ export interface EnsureGitCheckoutIdentityResult {
   readonly projectIdentityLocation: string;
   /** This checkout's git directory, which holds its checkout identity. */
   readonly checkoutIdentityLocation: string;
+  /**
+   * Whether this call published the checkout identity marker, as opposed to
+   * adopting one a racing sibling had already claimed. Exactly one caller
+   * racing on the same git directory sees `true`.
+   */
+  readonly checkoutIdentityCreated: boolean;
 }
 
 export interface GitCheckoutIdentityState {
@@ -706,15 +718,16 @@ export const ensureGitCheckoutIdentity = (
         "projectId",
         idFactory,
       );
-      const checkoutId = yield* Effect.tryPromise({
+      const checkoutClaim = yield* Effect.tryPromise({
         try: () => ensureCheckoutIdentity(inspection.gitDirectory, idFactory),
         catch: asRaised,
       });
       return {
         projectId,
-        checkoutId,
+        checkoutId: checkoutClaim.checkoutId,
         projectIdentityLocation: inspection.commonDirectory,
         checkoutIdentityLocation: inspection.gitDirectory,
+        checkoutIdentityCreated: checkoutClaim.created,
       };
     }),
   );

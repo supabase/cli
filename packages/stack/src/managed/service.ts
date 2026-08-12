@@ -834,8 +834,10 @@ export class ManagedStackService extends Context.Service<
               };
             }
 
-            // Read before claiming, so this call can report whether it was the
-            // one that published this checkout's identity.
+            // Read so a non-claiming `status` still has an identity to report;
+            // a claiming `start` reports whether it published this checkout's
+            // identity from the claim's own outcome, not from this read, which
+            // two racing claimants can both see as absent.
             const stored = yield* withWorkspaceServices(readGitCheckoutIdentity(inspection));
             const claimed = claim
               ? yield* withWorkspaceServices(ensureGitCheckoutIdentity(inspection, idFactory))
@@ -869,7 +871,7 @@ export class ManagedStackService extends Context.Service<
                     ? yield* detachedContextId(checkoutId, claim)
                     : yield* branchContextId(inspection, head.branch, claim),
               },
-              identityMarkerCreated: claim && stored.checkoutId === undefined,
+              identityMarkerCreated: claimed?.checkoutIdentityCreated ?? false,
             };
           });
 

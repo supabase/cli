@@ -380,6 +380,26 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(await service.listStacks()).toHaveLength(1);
   });
 
+  it("reports exactly one racing start as having published the checkout identity", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await openService(root);
+
+    // Neither caller can see the other's checkout marker before it lands, so
+    // both race `ensureGitCheckoutIdentity` on the same unclaimed checkout; the
+    // atomic claim settles which one actually published it.
+    const [first, second] = await Promise.all([
+      service.resolveStack({ workspacePath: repository, operation: "start" }),
+      service.resolveStack({ workspacePath: repository, operation: "start" }),
+    ]);
+
+    expect(second.identity).toEqual(first.identity);
+    expect(second.stack.id).toBe(first.stack.id);
+    expect([first.identityMarkerCreated, second.identityMarkerCreated].filter(Boolean)).toEqual([
+      true,
+    ]);
+  });
+
   it("reuses a branch's stack when the branch comes back, renamed or not", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);

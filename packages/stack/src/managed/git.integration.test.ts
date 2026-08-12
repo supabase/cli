@@ -375,4 +375,21 @@ describe("git-stored identity", () => {
       expect(new Set(stored.map((state) => state.checkoutId)).size).toBe(checkouts.length);
     }).pipe(Effect.provide(gitLayer)),
   );
+
+  it.live("reports exactly one claimant as having published a racing checkout's identity", () =>
+    Effect.gen(function* () {
+      const checkout = yield* inspectCheckout(makeRepository(makeRoot()));
+
+      const claims = yield* Effect.all(
+        Array.from({ length: 8 }, () => ensureGitCheckoutIdentity(checkout)),
+        { concurrency: "unbounded" },
+      );
+
+      // Every racing claimant settles on the same checkout identity, but only
+      // the one that actually published the marker may report having created
+      // it — the others adopted the winner's marker instead.
+      expect(new Set(claims.map((claim) => claim.checkoutId)).size).toBe(1);
+      expect(claims.filter((claim) => claim.checkoutIdentityCreated).length).toBe(1);
+    }).pipe(Effect.provide(gitLayer)),
+  );
 });
