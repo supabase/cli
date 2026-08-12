@@ -32,10 +32,12 @@ const onlyPostgresConfig = {
 
 const dockerContainerNameFor = (apiPort: string) => `supabase-postgres-${apiPort}`;
 
-const runningContainerIds = (apiPort: string): string =>
+const runningContainerIds = (apiPort: string): ReadonlyArray<string> =>
   execSync(`docker ps -q --filter name=${dockerContainerNameFor(apiPort)}`)
     .toString()
-    .trim();
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
 
 async function queryMarkerRows(dbPort: number): Promise<ReadonlyArray<{ note: string }>> {
   const sql = new Bun.SQL(`postgresql://supabase_admin:postgres@127.0.0.1:${dbPort}/postgres`);
@@ -71,6 +73,7 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
   describe("phase 1: native postgres writes a marker row", () => {
     let stack: StackHandle;
     let apiPort: string;
+    let containerIdsBeforeStart: ReadonlySet<string>;
 
     beforeAll(async () => {
       stack = await createStack({
@@ -79,14 +82,16 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
         postgres: { dataDir },
       });
 
+      apiPort = new URL(stack.url).port;
+      // Only containers introduced by this stack say anything about its runtime mode.
+      containerIdsBeforeStart = new Set(runningContainerIds(apiPort));
+
       try {
         await stack.start();
       } catch (startError) {
         await stack.dispose().catch(() => {});
         throw startError;
       }
-
-      apiPort = new URL(stack.url).port;
 
       const dbPort = parseInt(new URL(stack.dbUrl).port);
       const sql = new Bun.SQL(`postgresql://supabase_admin:postgres@127.0.0.1:${dbPort}/postgres`);
@@ -110,7 +115,9 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
       "runs postgres as a native process, not a Docker container",
       { timeout: TEST_TIMEOUT_MS },
       () => {
-        expect(runningContainerIds(apiPort)).toBe("");
+        expect(
+          runningContainerIds(apiPort).filter((id) => !containerIdsBeforeStart.has(id)),
+        ).toEqual([]);
       },
     );
   });
@@ -179,7 +186,7 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
     }, TEARDOWN_TIMEOUT_MS);
 
     test("runs postgres as a Docker container this time", { timeout: TEST_TIMEOUT_MS }, () => {
-      expect(runningContainerIds(apiPort)).not.toBe("");
+      expect(runningContainerIds(apiPort)).not.toEqual([]);
     });
 
     // This is the assertion this whole file exists to make: the row written while
