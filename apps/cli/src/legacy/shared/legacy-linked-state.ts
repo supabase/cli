@@ -9,7 +9,7 @@ import {
   type LegacyCachedLinkedProject,
   legacyParseCachedLinkedProject,
 } from "./legacy-parent-project-ref.ts";
-import { sanitizeLegacyErrorBody } from "./legacy-http-errors.ts";
+import { legacySanitizeInlineName } from "./legacy-http-errors.ts";
 import { legacyReadProjectRefFile, legacyTempPaths } from "./legacy-temp-paths.ts";
 
 type LegacyLinkedStateBranches = typeof V1ListAllBranchesOutput.Type;
@@ -220,14 +220,14 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
 function legacyFormatOrgLabel(slug: string | undefined, id: string | undefined): string {
   if (slug !== undefined && id !== undefined) {
     return slug === id
-      ? sanitizeLegacyErrorBody(slug)
-      : `${sanitizeLegacyErrorBody(slug)} (${sanitizeLegacyErrorBody(id)})`;
+      ? legacySanitizeInlineName(slug)
+      : `${legacySanitizeInlineName(slug)} (${legacySanitizeInlineName(id)})`;
   }
-  return sanitizeLegacyErrorBody(slug ?? id ?? "");
+  return legacySanitizeInlineName(slug ?? id ?? "");
 }
 
 function legacyFormatNamedRef(name: string | undefined, ref: string): string {
-  return name === undefined ? ref : `${sanitizeLegacyErrorBody(name)} (${ref})`;
+  return name === undefined ? ref : `${legacySanitizeInlineName(name)} (${ref})`;
 }
 
 /**

@@ -24,7 +24,11 @@ import {
 import { legacyResolveLinkedParentRef } from "../../shared/legacy-parent-project-ref.ts";
 import { legacyDashboardUrl } from "../../shared/legacy-profile.ts";
 import { legacyMapTenantApiKeysError } from "../../shared/legacy-get-tenant-api-keys.ts";
-import { mapLegacyHttpError, sanitizeLegacyErrorBody } from "../../shared/legacy-http-errors.ts";
+import {
+  legacySanitizeInlineName,
+  mapLegacyHttpError,
+  sanitizeLegacyErrorBody,
+} from "../../shared/legacy-http-errors.ts";
 import { legacyLinkServicesCore } from "../../shared/legacy-link-services-core.ts";
 import { legacyExtractServiceKeys } from "../../shared/legacy-tenant-keys.ts";
 import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
@@ -142,7 +146,7 @@ function legacyLinkBranchNotFoundMessage(
   const remaining = sortedNames.length - shown.length;
   // Branch names are API-provided; sanitize the same way response bodies are
   // before embedding them in an error message (module policy).
-  const shownSanitized = sanitizeLegacyErrorBody(shown.join(", "));
+  const shownSanitized = legacySanitizeInlineName(shown.join(", "));
   const namesList =
     remaining > 0
       ? `${shownSanitized}, … (${remaining} more — run supabase branches list)`
@@ -153,7 +157,7 @@ function legacyLinkBranchNotFoundMessage(
   // Sanitized like the list above — an API-provided name must not be able to
   // inject ANSI/OSC/newline controls into the terminal (PR #6168 review).
   const didYouMean =
-    nearMiss !== undefined ? ` Did you mean "${sanitizeLegacyErrorBody(nearMiss.name)}"?` : "";
+    nearMiss !== undefined ? ` Did you mean "${legacySanitizeInlineName(nearMiss.name)}"?` : "";
 
   return (
     `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}` +
@@ -231,12 +235,12 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
       new LegacyLinkBranchNotReadyError({
         branch: found.name,
         status: found.status,
-        message: `Branch "${sanitizeLegacyErrorBody(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
+        message: `Branch "${legacySanitizeInlineName(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
       }),
     );
   }
 
-  const line = `Resolved branch "${sanitizeLegacyErrorBody(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
+  const line = `Resolved branch "${legacySanitizeInlineName(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
   yield* output.format === "text" ? output.raw(`${line}\n`, "stderr") : output.info(line);
 
   return { projectRef: found.project_ref, branchName: found.name, parentRef };
