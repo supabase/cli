@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Duration, Effect, Layer, Schedule, Schema } from "effect";
 import {
   DuplicateManagedIdentityError,
+  DuplicateManagedPortKeyError,
   InvalidManagedOwnerPidError,
   InvalidManagedPortError,
   MANAGED_REGISTRY_SCHEMA_VERSION,
@@ -1023,6 +1024,7 @@ const createSqliteManagedStackRepository = (
             () => prepareOrdinaryStack(database, input),
             failsWith<PrepareOrdinaryStackFailure>(
               DuplicateManagedIdentityError,
+              DuplicateManagedPortKeyError,
               InvalidManagedPortError,
               ManagedOperationOwnershipError,
               ManagedPortReservationError,
@@ -1072,6 +1074,7 @@ const createSqliteManagedStackRepository = (
           database,
           () => updateStack(database, input),
           failsWith<UpdateManagedStackFailure>(
+            DuplicateManagedPortKeyError,
             InvalidManagedPortError,
             ManagedOperationOwnershipError,
             ManagedPendingStackUpdateError,
@@ -1087,6 +1090,7 @@ const createSqliteManagedStackRepository = (
           database,
           () => reconcileOperation(database, stackId, operationToken, lifecycle, now),
           failsWith<ReconcileManagedOperationFailure>(
+            DuplicateManagedPortKeyError,
             InvalidManagedPortError,
             ManagedOperationOwnershipError,
             ManagedPortReservationError,

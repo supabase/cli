@@ -76,6 +76,7 @@ describe("@supabase/stack entrypoints", () => {
     expect(Object.keys(managed).sort()).toEqual([
       "DEFAULT_MANAGED_STACK_NAME",
       "DuplicateManagedIdentityError",
+      "DuplicateManagedPortKeyError",
       "InvalidManagedIdentityError",
       "InvalidManagedOwnerPidError",
       "InvalidManagedPortError",

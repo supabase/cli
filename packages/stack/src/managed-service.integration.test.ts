@@ -24,6 +24,7 @@ import {
 } from "./managed/paths.ts";
 import {
   DuplicateManagedIdentityError,
+  DuplicateManagedPortKeyError,
   InvalidManagedIdentityError,
   MANAGED_REGISTRY_SCHEMA_VERSION,
   InvalidManagedOwnerPidError,
@@ -902,6 +903,43 @@ describe("managed repository and lifecycle", () => {
           ports: [{ key: "api.port", port: 70_000, intent: "exact" }],
         }),
       ).rejects.toBeInstanceOf(InvalidManagedPortError);
+      expect((await service.inspectStack(created.stack.id))?.ports).toEqual([]);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`rejects duplicate port keys with a coded failure for the ${adapter} adapter`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root)
+          : await makePersistentService(root);
+      const workspace = makeWorkspace(root);
+      const duplicateKeyPorts = [
+        { key: "api.port", port: 54_401, intent: "automatic" as const },
+        { key: "api.port", port: 54_402, intent: "automatic" as const },
+      ];
+
+      const provisionFailure = await service
+        .provisionOrdinaryStack({
+          workspacePath: workspace,
+          configuration: { ports: duplicateKeyPorts },
+        })
+        .catch((error: unknown) => error);
+      expect(provisionFailure).toBeInstanceOf(DuplicateManagedPortKeyError);
+      expect((provisionFailure as DuplicateManagedPortKeyError).code).toBe(
+        "MANAGED_DUPLICATE_PORT_KEY",
+      );
+
+      const created = await service.provisionOrdinaryStack({ workspacePath: workspace });
+      const updateFailure = await service
+        .updateStack(created.stack.id, { ports: duplicateKeyPorts })
+        .catch((error: unknown) => error);
+      expect(updateFailure).toBeInstanceOf(DuplicateManagedPortKeyError);
+      expect((updateFailure as DuplicateManagedPortKeyError).code).toBe(
+        "MANAGED_DUPLICATE_PORT_KEY",
+      );
       expect((await service.inspectStack(created.stack.id))?.ports).toEqual([]);
       await service.close();
     });

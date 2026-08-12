@@ -1,5 +1,6 @@
 import { Context, type Effect } from "effect";
 import {
+  DuplicateManagedPortKeyError,
   InvalidManagedOwnerPidError,
   InvalidManagedPortError,
   ManagedPendingStackUpdateError,
@@ -77,6 +78,7 @@ export type ReconcileManagedOperationResult =
 /** Failures both adapters raise while registering an ordinary workspace stack. */
 export type PrepareOrdinaryStackFailure =
   | DuplicateManagedIdentityError
+  | DuplicateManagedPortKeyError
   | InvalidManagedOwnerPidError
   | InvalidManagedPortError
   | ManagedOperationOwnershipError
@@ -91,6 +93,7 @@ export type ClaimManagedOperationFailure =
 
 /** Failures both adapters raise while reconfiguring a published stack. */
 export type UpdateManagedStackFailure =
+  | DuplicateManagedPortKeyError
   | InvalidManagedPortError
   | ManagedOperationOwnershipError
   | ManagedPendingStackUpdateError
@@ -104,6 +107,7 @@ export type UpdateManagedStackFailure =
  * fails the reconciliation rather than stealing the lease.
  */
 export type ReconcileManagedOperationFailure =
+  | DuplicateManagedPortKeyError
   | InvalidManagedPortError
   | ManagedOperationOwnershipError
   | ManagedPortReservationError
@@ -240,7 +244,7 @@ export const validateManagedPortAssignments = (
       throw new InvalidManagedPortError({ port: assignment.port, key: assignment.key });
     }
     if (keys.has(assignment.key)) {
-      throw new Error(`Duplicate managed port key ${assignment.key}`);
+      throw new DuplicateManagedPortKeyError({ key: assignment.key });
     }
     if (numbers.has(assignment.port)) {
       throw new ManagedPortReservationError({ port: assignment.port, ownerStackId: stackId });

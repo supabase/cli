@@ -130,6 +130,16 @@ export class DuplicateManagedIdentityError extends Data.TaggedError(
   }
 }
 
+export class DuplicateManagedPortKeyError extends Data.TaggedError("DuplicateManagedPortKeyError")<{
+  readonly key: string;
+}> {
+  readonly code = "MANAGED_DUPLICATE_PORT_KEY" as const;
+
+  override get message(): string {
+    return `Duplicate managed port key ${this.key}`;
+  }
+}
+
 export class InvalidManagedStackNameError extends Data.TaggedError("InvalidManagedStackNameError")<{
   readonly stackName: string;
 }> {
@@ -315,6 +325,7 @@ export class ManagedAbandonedOperationError extends Data.TaggedError(
  */
 export type ManagedStackError =
   | DuplicateManagedIdentityError
+  | DuplicateManagedPortKeyError
   | InvalidManagedIdentityError
   | InvalidManagedOwnerPidError
   | InvalidManagedPortError
@@ -349,6 +360,7 @@ export type ManagedStackError =
 export const MANAGED_ERROR_CODES = [
   "DUPLICATE_MANAGED_IDENTITY",
   "INVALID_MANAGED_IDENTITY",
+  "MANAGED_DUPLICATE_PORT_KEY",
   "MANAGED_INVALID_OWNER_PID",
   "MANAGED_INVALID_PORT",
   "MANAGED_INVALID_STACK_NAME",
@@ -376,11 +388,12 @@ export type ManagedErrorCode = (typeof MANAGED_ERROR_CODES)[number];
  * dispatch) and `code` is the stable wire-level contract. Consumers that key a
  * table by one and dispatch on the other — the CLI's telemetry classifier is
  * the motivating case — derive it from this map instead of restating all
- * seventeen pairs by hand.
+ * eighteen pairs by hand.
  */
 export const MANAGED_ERROR_TAG_BY_CODE = {
   DUPLICATE_MANAGED_IDENTITY: "DuplicateManagedIdentityError",
   INVALID_MANAGED_IDENTITY: "InvalidManagedIdentityError",
+  MANAGED_DUPLICATE_PORT_KEY: "DuplicateManagedPortKeyError",
   MANAGED_INVALID_OWNER_PID: "InvalidManagedOwnerPidError",
   MANAGED_INVALID_PORT: "InvalidManagedPortError",
   MANAGED_INVALID_STACK_NAME: "InvalidManagedStackNameError",

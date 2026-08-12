@@ -116,6 +116,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_pending_update",
   "managed_port",
   "managed_port_change",
+  "managed_port_duplicate_key",
   "managed_publication_timeout",
   "managed_recovery",
   "managed_stack_name",
@@ -848,6 +849,12 @@ const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionability
   // The port number itself is unusable (fractional or outside 1-65535), which
   // is the user's own configured value rather than a conflict with a peer.
   MANAGED_INVALID_PORT: { ...actionability.invalidConfig, fingerprint_suffix: "managed_port" },
+  // Two of the user's own port assignments name the same key, which is the
+  // user's configured value rather than a conflict with another stack.
+  MANAGED_DUPLICATE_PORT_KEY: {
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "managed_port_duplicate_key",
+  },
   // The registry derives every stack root itself, so a path that fails the
   // containment check means the CLI passed a rejected argument.
   UNSAFE_MANAGED_STACK_PATH: {
@@ -863,7 +870,7 @@ const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionability
 /**
  * The managed table above, re-keyed by the `_tag` of the class that declares
  * each code. Generated from `@supabase/stack`'s own tag/code map so the
- * seventeen managed tags are classified without restating a single verdict:
+ * eighteen managed tags are classified without restating a single verdict:
  * {@link managedActionabilityByCode} stays the one place a managed failure is
  * classified, and a tag/code pair the package renames cannot silently fall
  * through to `unknown`.

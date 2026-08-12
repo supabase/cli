@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import {
   DuplicateManagedIdentityError,
+  DuplicateManagedPortKeyError,
   InvalidManagedOwnerPidError,
   InvalidManagedPortError,
   ManagedOperationOwnershipError,
@@ -474,6 +475,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         try: () => prepareOrdinaryStack(input),
         catch: failsWith<PrepareOrdinaryStackFailure>(
           DuplicateManagedIdentityError,
+          DuplicateManagedPortKeyError,
           InvalidManagedOwnerPidError,
           InvalidManagedPortError,
           ManagedOperationOwnershipError,
@@ -530,6 +532,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       Effect.try({
         try: () => updateStack(input),
         catch: failsWith<UpdateManagedStackFailure>(
+          DuplicateManagedPortKeyError,
           InvalidManagedPortError,
           ManagedOperationOwnershipError,
           ManagedPendingStackUpdateError,
@@ -559,6 +562,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       Effect.try({
         try: () => reconcileOperation(stackId, operationToken, lifecycle, now),
         catch: failsWith<ReconcileManagedOperationFailure>(
+          DuplicateManagedPortKeyError,
           InvalidManagedPortError,
           ManagedOperationOwnershipError,
           ManagedPortReservationError,
