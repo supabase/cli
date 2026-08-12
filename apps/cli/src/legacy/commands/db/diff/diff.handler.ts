@@ -32,6 +32,7 @@ import {
   legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
   legacyRemoveShadowDatabase,
+  legacyShadowRunInputFromLocalContainerInputs,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -54,10 +55,7 @@ import {
   legacyIsPgDeltaDebugEnabled,
   legacyResolvePgDeltaProjectId,
 } from "../../../shared/legacy-pgdelta.ts";
-import {
-  legacyPrepareShadowSource,
-  legacyShadowRunInputFromLocalContainerInputs,
-} from "../shared/legacy-shadow-source.ts";
+import { legacyPrepareShadowSource } from "../shared/legacy-shadow-source.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyClassifyExplicitRef, legacyUnknownTargetMessage } from "./diff.explicit.ts";
 import {

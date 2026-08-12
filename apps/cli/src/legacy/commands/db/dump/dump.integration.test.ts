@@ -526,6 +526,33 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
+    () => {
+      // Go's `dockerExec` sets host networking by default (dump.go:91-93), but
+      // `DockerStart` overrides it with `viper.GetString("network-id")` whenever that
+      // resolves non-empty (docker.go:379-380) — a value sourced only from
+      // `supabase/.env` (after `loadNestedEnv`'s `os.Setenv`) still wins over host.
+      const prev = process.env["SUPABASE_NETWORK_ID"];
+      delete process.env["SUPABASE_NETWORK_ID"];
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
+      const { layer, docker } = setup({ isLocal: true, workdir: tmp.current });
+      return Effect.gen(function* () {
+        yield* legacyDbDump(flags({ local: Option.some(true) }));
+        expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "dotenv-net" });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+            else process.env["SUPABASE_NETWORK_ID"] = prev;
+          }),
+        ),
+        Effect.provide(layer),
+      );
+    },
+  );
+
   it.live("defaults to the linked connection when neither --local nor --db-url is set", () => {
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {

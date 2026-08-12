@@ -47,7 +47,7 @@ import { LEGACY_COMPOSE_PROJECT_LABEL } from "../../../shared/db-bootstrap/conta
 import { LEGACY_CLI_PROJECT_LABEL } from "../../../shared/legacy-docker-ids.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyTrimGoSpace } from "../shared/legacy-go-string.ts";
-import { LEGACY_INTERNAL_SCHEMAS } from "../shared/legacy-pg-dump.env.ts";
+import { LEGACY_INTERNAL_SCHEMAS } from "../../../shared/legacy-pg-dump.env.ts";
 import { LegacyDbDiffPgAdminError } from "./diff.errors.ts";
 
 /** Go's `config.Images.Differ` (`pkg/config/templates/Dockerfile:18`, `FROM … AS differ`). */

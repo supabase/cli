@@ -32,14 +32,14 @@ import {
   legacyBuildRoleDumpEnv,
   legacyBuildSchemaDumpEnv,
   legacyExpandScript,
-} from "../shared/legacy-pg-dump.env.ts";
-import { legacyStreamPgDump } from "../shared/legacy-pg-dump.run.ts";
+} from "../../../shared/legacy-pg-dump.env.ts";
+import { legacyStreamPgDump } from "../../../shared/legacy-pg-dump.run.ts";
 import { legacyRunWithPoolerFallback } from "../shared/legacy-pooler-fallback.ts";
 import {
   legacyDumpDataScript,
   legacyDumpRoleScript,
   legacyDumpSchemaScript,
-} from "../shared/legacy-pg-dump.scripts.ts";
+} from "../../../shared/legacy-pg-dump.scripts.ts";
 
 /**
  * Mutually-exclusive flag groups, in cobra's check order (it sorts the joined
@@ -82,7 +82,8 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
     // image), reverted when this scope closes. Go's `loadNestedEnv` `os.Setenv`s the
     // project `.env`; the pure `legacyLoadProjectEnv` no longer does that as a side
     // effect of `resolveDbPassword`, so `db dump` opts in explicitly here.
-    yield* legacyApplyProjectEnv(yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir));
+    const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
+    yield* legacyApplyProjectEnv(projectEnv);
 
     // The grouped boolean flags are modelled as `Option` (presence = pflag `Changed`)
     // for the mutex/target checks; resolve their effective values here for the places
@@ -307,6 +308,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
                       env,
                       onStdout: (chunk) =>
                         file.writeAll(chunk).pipe(Effect.mapError(toOpenFileError)),
+                      projectEnvValues: projectEnv,
                     });
                   }),
                 ),
@@ -320,6 +322,7 @@ export const legacyDbDump = Effect.fn("legacy.db.dump")(function* (flags: Legacy
             script: mode.script,
             env,
             onStdout: (chunk) => output.rawBytes(chunk),
+            projectEnvValues: projectEnv,
           });
 
     // 7b. Container-level IPv6 → IPv4-pooler retry (Go's `RunWithPoolerFallback`,

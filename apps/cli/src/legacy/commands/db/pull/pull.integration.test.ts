@@ -35,7 +35,10 @@ import type { OutputFormat } from "../../../../shared/output/types.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
-import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
+import {
+  LegacyDockerRun,
+  type LegacyDockerRunOpts,
+} from "../../../shared/legacy-docker-run.service.ts";
 import { LegacyEdgeRuntimeScriptError } from "../../../shared/legacy-edge-runtime-script.errors.ts";
 import {
   type LegacyEdgeRuntimeRunOpts,
@@ -148,7 +151,11 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   // `runStream`; deliver the configured bytes to `onStdout` (as Go's StdCopy would),
   // then report the exit code + stderr. `dumpFailFirstWith` fails the first attempt
   // so the pooler retry runs.
-  const dumpCalls: Array<{ env: Readonly<Record<string, string>>; image: string }> = [];
+  const dumpCalls: Array<{
+    env: Readonly<Record<string, string>>;
+    image: string;
+    network: LegacyDockerRunOpts["network"];
+  }> = [];
   let dumpRunCount = 0;
   const docker = Layer.succeed(LegacyDockerRun, {
     run: () => Effect.die("run unused"),
@@ -165,7 +172,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
           return { exitCode: 0, stderr: "" };
         }
         dumpRunCount += 1;
-        dumpCalls.push({ env: runOpts.env, image: runOpts.image });
+        dumpCalls.push({ env: runOpts.env, image: runOpts.image, network: runOpts.network });
         if (opts.dumpFailFirstWith !== undefined && dumpRunCount === 1) {
           if (opts.dumpFailFirstPartialBytes !== undefined) {
             const partial = new TextEncoder().encode(opts.dumpFailFirstPartialBytes);
@@ -1249,6 +1256,39 @@ describe("legacy db pull", () => {
           Effect.sync(() => {
             if (prev === undefined) delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
             else process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = prev;
+          }),
+        ),
+        Effect.provide(s.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
+    () => {
+      // Go's `dockerExec` sets host networking by default (dump.go:91-93), but
+      // `DockerStart` overrides it with `viper.GetString("network-id")` whenever that
+      // resolves non-empty (docker.go:379-380) — a value sourced only from
+      // `supabase/.env` (after `loadNestedEnv`'s `os.Setenv`) still wins over host.
+      const prev = process.env["SUPABASE_NETWORK_ID"];
+      delete process.env["SUPABASE_NETWORK_ID"];
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
+      const s = setup(tmp.current, {
+        remoteVersions: [], // no remote history → initial-migra pg_dump path
+        dumpStdout: "create table dumped ();\n",
+        edgeStdout: "",
+        yes: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbPull(flags());
+        expect(s.dumpCalls.length).toBeGreaterThanOrEqual(1);
+        expect(s.dumpCalls[0]?.network).toEqual({ _tag: "named", name: "dotenv-net" });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+            else process.env["SUPABASE_NETWORK_ID"] = prev;
           }),
         ),
         Effect.provide(s.layer),
