@@ -3,6 +3,7 @@ import { mkdir, rm } from "node:fs/promises";
 import { resolve } from "node:path";
 import {
   DEFAULT_MANAGED_STACK_NAME,
+  InvalidManagedOwnerPidError,
   InvalidManagedStackNameError,
   ManagedAbandonedOperationError,
   ManagedOperationInProgressError,
@@ -11,6 +12,7 @@ import {
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
+  UnsafeManagedStackPathError,
   type ManagedCheckoutLocation,
   type ManagedOperationKind,
   type ManagedOperationRecord,
@@ -27,6 +29,7 @@ import {
 } from "./identity.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { assertManagedStackRoot, managedStackPaths } from "./paths.ts";
+import { errorCode } from "./error-code.ts";
 import type { ManagedStackRepository } from "./repository.ts";
 
 export interface ManagedStackServiceOptions {
@@ -111,6 +114,13 @@ export interface ManagedOperationRecoveryFailure {
 export interface ReconcileAbandonedOperationsResult {
   readonly recovered: ReadonlyArray<ManagedStackRecord>;
   readonly abortedStackIds: ReadonlyArray<string>;
+  /**
+   * Tombstoned stacks whose abandoned deletion recovery finished. The registry
+   * tombstone is deliberately preserved so repeated deletion stays idempotent;
+   * only the leaked stack directory was reclaimed, and a reclamation failure is
+   * reported under `failures` with the `state-reclamation` phase.
+   */
+  readonly reclaimedStackIds: ReadonlyArray<string>;
   readonly retained: ReadonlyArray<RetainedManagedOperation>;
   readonly skippedOperationIds: ReadonlyArray<string>;
   readonly failures: ReadonlyArray<ManagedOperationRecoveryFailure>;
@@ -153,16 +163,19 @@ const selectionForStack = (stack: ManagedStackRecord): ManagedStackSelection => 
 const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
+/** Ceiling for {@link makeManagedStackService}'s publication poll backoff. */
+const MAX_PUBLICATION_POLL_MS = 250;
+
 const stackNamePattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
-const errorCode = (error: unknown): string | undefined => {
-  if (typeof error !== "object" || error === null) {
-    return undefined;
-  }
-  const code = Reflect.get(error, "code");
-  return typeof code === "string" ? code : undefined;
-};
-
+/**
+ * Deliberately conservative: only a definite `ESRCH` proves the owner is gone,
+ * so a permission error (`EPERM`) keeps the claim rather than stealing it. It
+ * must never be asked about a value that is not a pid — `kill(0, 0)` signals
+ * the caller's own process group, and a fractional pid throws, either of which
+ * would report a dead owner as alive and wedge recovery forever. Callers
+ * therefore filter pids through {@link isUsableOwnerPid} first.
+ */
 const processIsAlive = (pid: number): boolean => {
   try {
     process.kill(pid, 0);
@@ -172,15 +185,38 @@ const processIsAlive = (pid: number): boolean => {
   }
 };
 
+const isUsableOwnerPid = (ownerPid: number): boolean =>
+  Number.isSafeInteger(ownerPid) && ownerPid > 0;
+
+const requireOwnerPid = (ownerPid: number): number => {
+  if (!isUsableOwnerPid(ownerPid)) {
+    throw new InvalidManagedOwnerPidError(ownerPid);
+  }
+  return ownerPid;
+};
+
+/**
+ * The state root is a required option here, so a blank one is a caller bug
+ * rather than a request for the default: silently resolving it would anchor
+ * every managed path to the process' working directory.
+ */
+const requireManagedStateRoot = (stateRoot: string): string => {
+  const trimmed = stateRoot.trim();
+  if (trimmed.length === 0) {
+    throw new UnsafeManagedStackPathError(stateRoot);
+  }
+  return resolve(trimmed);
+};
+
 export const makeManagedStackService = (
   options: ManagedStackServiceOptions,
 ): ManagedStackService => {
   // Anchored once, at the boundary: a relative root injected here would be
   // reinterpreted against the process' cwd at every later use.
-  const stateRoot = resolve(options.stateRoot);
+  const stateRoot = requireManagedStateRoot(options.stateRoot);
   const idFactory = options.idFactory ?? randomUUID;
   const clock = options.clock ?? (() => new Date());
-  const ownerPid = options.ownerPid ?? process.pid;
+  const ownerPid = options.ownerPid === undefined ? process.pid : requireOwnerPid(options.ownerPid);
   const publicationTimeoutMs = options.publicationTimeoutMs ?? 10_000;
   const publicationPollMs = options.publicationPollMs ?? 10;
   const isProcessAlive = options.isProcessAlive ?? processIsAlive;
@@ -256,6 +292,10 @@ export const makeManagedStackService = (
 
   const awaitPublication = async (pending: ManagedStackRecord): Promise<ManagedStackRecord> => {
     const deadline = performance.now() + publicationTimeoutMs;
+    // Publication normally lands within the first poll, so start tight and back
+    // off: a slow publisher must not be polled hundreds of times per second for
+    // the whole timeout window.
+    let pollMs = publicationPollMs;
     while (performance.now() <= deadline) {
       const current = options.repository.getStack(pending.id);
       if (current === undefined) {
@@ -267,7 +307,8 @@ export const makeManagedStackService = (
       if (current.status === "tombstoned") {
         throw new ManagedStackNotFoundError(current.id);
       }
-      await wait(publicationPollMs);
+      await wait(pollMs);
+      pollMs = Math.min(pollMs * 2, MAX_PUBLICATION_POLL_MS);
     }
     throw new ManagedStackPublicationTimeoutError(pending.id);
   };
@@ -475,6 +516,7 @@ export const makeManagedStackService = (
     async reconcileAbandonedOperations(reconcileOptions) {
       const recovered: Array<ManagedStackRecord> = [];
       const abortedStackIds: Array<string> = [];
+      const reclaimedStackIds: Array<string> = [];
       const retained: Array<RetainedManagedOperation> = [];
       const skippedOperationIds: Array<string> = [];
       const failures: Array<ManagedOperationRecoveryFailure> = [];
@@ -494,7 +536,14 @@ export const makeManagedStackService = (
               operation.token === forcedOperation.operationToken),
         );
       for (const operation of operations) {
-        if (forcedOperation === undefined && operation.ownerPid !== undefined) {
+        // A persisted pid that is not a usable pid is treated as no owner at
+        // all: asking the liveness probe about it could report a live owner and
+        // wedge this claim forever, which is the failure recovery exists to fix.
+        if (
+          forcedOperation === undefined &&
+          operation.ownerPid !== undefined &&
+          isUsableOwnerPid(operation.ownerPid)
+        ) {
           try {
             if (await isProcessAlive(operation.ownerPid)) {
               retained.push({ operation, reason: "owner-alive" });
@@ -530,8 +579,17 @@ export const makeManagedStackService = (
             lifecycle,
             now(),
           );
-          if (reconciled === undefined) {
-            abortedStackIds.push(stack.id);
+          if (reconciled.outcome === "recovered") {
+            recovered.push(reconciled.stack);
+          } else {
+            // Both remaining outcomes leave state on disk that no registry row
+            // will ever point at again: a discarded pending stack's partial
+            // provisioning, or the data a crashed deletion never got to remove.
+            if (reconciled.outcome === "discarded") {
+              abortedStackIds.push(stack.id);
+            } else {
+              reclaimedStackIds.push(stack.id);
+            }
             try {
               await removeStackState(stack);
             } catch (error: unknown) {
@@ -542,8 +600,6 @@ export const makeManagedStackService = (
                 error,
               });
             }
-          } else {
-            recovered.push(reconciled);
           }
         } catch (error: unknown) {
           if (
@@ -561,7 +617,14 @@ export const makeManagedStackService = (
           });
         }
       }
-      return { recovered, abortedStackIds, retained, skippedOperationIds, failures };
+      return {
+        recovered,
+        abortedStackIds,
+        reclaimedStackIds,
+        retained,
+        skippedOperationIds,
+        failures,
+      };
     },
     async pruneCheckoutLocations(shouldPrune) {
       const stale: Array<string> = [];

@@ -609,18 +609,59 @@ describe("classifyCliErrorActionability", () => {
       "managed_identity",
       "invalid_input",
     ],
-    [
-      "ManagedOperationInProgressError",
-      "MANAGED_OPERATION_IN_PROGRESS",
-      "conflict",
-      "invalid_config",
-    ],
     ["InvalidManagedPortError", "MANAGED_INVALID_PORT", "managed_port", "invalid_config"],
     [
       "UnsafeManagedStackPathError",
       "UNSAFE_MANAGED_STACK_PATH",
       "bad_argument",
       "impossible_state",
+    ],
+    // The operation pid and the pending-update guard are both internal
+    // invariants: the CLI supplies the pid, and only repository misuse can
+    // update an unpublished row.
+    [
+      "InvalidManagedOwnerPidError",
+      "MANAGED_INVALID_OWNER_PID",
+      "managed_owner_pid",
+      "impossible_state",
+    ],
+    [
+      "ManagedPendingStackUpdateError",
+      "MANAGED_PENDING_STACK_UPDATE",
+      "managed_pending_update",
+      "impossible_state",
+    ],
+    // Each of these five used to share a suffix with an unrelated failure, so
+    // distinct defects grouped together as repeats (CLI-2106).
+    [
+      "ManagedOperationInProgressError",
+      "MANAGED_OPERATION_IN_PROGRESS",
+      "managed_operation_in_progress",
+      "invalid_config",
+    ],
+    [
+      "ManagedOperationOwnershipError",
+      "MANAGED_OPERATION_OWNERSHIP_MISMATCH",
+      "managed_operation_ownership",
+      "invalid_config",
+    ],
+    [
+      "ManagedStackPublicationTimeoutError",
+      "MANAGED_STACK_PUBLICATION_TIMEOUT",
+      "managed_publication_timeout",
+      "invalid_config",
+    ],
+    [
+      "ManagedStackNotStoppedError",
+      "MANAGED_STACK_NOT_STOPPED",
+      "managed_stack_not_stopped",
+      "invalid_config",
+    ],
+    [
+      "ManagedRunningStackPortChangeError",
+      "MANAGED_RUNNING_STACK_PORT_CHANGE",
+      "managed_port_change",
+      "invalid_config",
     ],
   ])("classifies %s by its stable managed code", (name, code, suffix, category) => {
     const error = new Error("managed registry failure");
@@ -636,6 +677,48 @@ describe("classifyCliErrorActionability", () => {
     unrecognized.name = "ManagedFutureError";
     Object.defineProperty(unrecognized, "code", { value: "MANAGED_FUTURE_FAILURE" });
     expect(classifyCliErrorActionability(unrecognized).error_kind).toBe("unknown");
+  });
+
+  // ManagedStackInitializationError wraps the real provisioning failure in
+  // `cause`; reporting the generic initialization verdict would lose it.
+  it("classifies the provisioning cause of a managed initialization failure", () => {
+    const wrapped = new Error("managed stack initialization failed");
+    wrapped.name = "ManagedStackInitializationError";
+    Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
+    Object.defineProperty(wrapped, "cause", {
+      value: { _tag: "DockerPullError", image: "postgres", daemonDown: true },
+    });
+    expect(classifyCliErrorActionability(wrapped)).toEqual(
+      classifyCliErrorActionability({
+        _tag: "DockerPullError",
+        image: "postgres",
+        daemonDown: true,
+      }),
+    );
+  });
+
+  it("falls back to the managed initialization verdict for an opaque cause", () => {
+    const wrapped = new Error("managed stack initialization failed");
+    wrapped.name = "ManagedStackInitializationError";
+    Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
+    Object.defineProperty(wrapped, "cause", { value: { detail: "opaque" } });
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.suggested_command).toBe("supabase start");
+    expect(result.error_fingerprint).toBe("error:ManagedStackError:managed_initialization");
+  });
+
+  it("classifies a managed cause nested inside a stack wrapper", () => {
+    const managed = new Error("port already reserved");
+    managed.name = "ManagedPortReservationError";
+    Object.defineProperty(managed, "code", { value: "MANAGED_PORT_ALREADY_RESERVED" });
+    const result = classifyCliErrorActionability({
+      _tag: "StackBuildError",
+      detail: "x",
+      cause: managed,
+    });
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.error_fingerprint).toBe("error:ManagedStackError:port_conflict");
   });
 
   it("classifies the preserved tagged cause of a StackError wrapper", () => {

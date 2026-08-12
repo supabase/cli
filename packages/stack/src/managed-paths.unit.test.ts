@@ -107,6 +107,30 @@ describe("managed paths", () => {
     ).toBe(join(resolve("relative/state"), "supabase", "managed"));
   });
 
+  it("treats a blank explicit state root as unset", () => {
+    // `resolve("")` silently yields the process' cwd, which would scatter
+    // managed state across whatever directory the caller happened to run in.
+    for (const stateRoot of ["", "   ", "\t"]) {
+      expect(
+        resolveManagedStateRoot({ stateRoot, env: {}, homeDir: "/home/user", platform: "linux" }),
+      ).toBe("/home/user/.local/state/supabase/managed");
+    }
+    expect(
+      resolveManagedStateRoot({
+        stateRoot: "",
+        env: { SUPABASE_HOME: "/configured/supabase" },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe("/configured/supabase/managed");
+  });
+
+  it("trims surrounding whitespace from an explicit state root", () => {
+    expect(resolveManagedStateRoot({ stateRoot: "  /absolute/managed  " })).toBe(
+      "/absolute/managed",
+    );
+  });
+
   it("keys every mutable stack path by opaque stack ID", () => {
     expect(managedStackPaths("/state", "018f8b4e-8e5c-7e32-a956-6f297fd05a2d")).toEqual({
       root: "/state/stacks/018f8b4e-8e5c-7e32-a956-6f297fd05a2d",

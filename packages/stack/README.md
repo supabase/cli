@@ -60,7 +60,7 @@ managed.close();
 Managed state uses opaque project, checkout, context, and stack UUIDs. A non-Git workspace stores
 only its three identity UUIDs in `.supabase/identity.json`; mutable state, logs, runtime metadata,
 ports, and lifecycle ownership live under the user-level managed state root. Callers can inject an
-in-memory repository or an isolated state root for tests. Stopped stacks keep sticky port
+isolated state root for tests, or the in-memory repository from `@supabase/stack/testing`. Stopped stacks keep sticky port
 assignments without holding a host-wide lease; exact configuration takes precedence when a stopped
 or failed stack is updated. A stack may change port numbers as part of one transition out of a
 port-occupying lifecycle; intent-only updates never count as runtime port drift.

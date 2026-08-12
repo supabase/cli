@@ -23,8 +23,11 @@ import {
 import {
   DuplicateManagedIdentityError,
   InvalidManagedIdentityError,
+  MANAGED_REGISTRY_SCHEMA_VERSION,
+  InvalidManagedOwnerPidError,
   InvalidManagedPortError,
   InvalidManagedStackNameError,
+  ManagedPendingStackUpdateError,
   ManagedOperationInProgressError,
   ManagedOperationOwnershipError,
   ManagedPortReservationError,
@@ -37,16 +40,15 @@ import {
   UnsupportedManagedRegistryVersionError,
   type ManagedStackConfiguration,
 } from "./managed/model.ts";
-import {
-  createInMemoryManagedStackRepository,
-  type ManagedStackRepository,
-} from "./managed/repository.ts";
+import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
+import type { ManagedStackRepository } from "./managed/repository.ts";
 import {
   makeManagedStackService,
   type ManagedStackService,
   type ManagedStackServiceOptions,
 } from "./managed/service.ts";
 import { openBunSqliteManagedStackRepository } from "./managed/sqlite-bun.ts";
+import { createManagedStackService } from "./managed-bun.ts";
 
 const temporaryRoots: Array<string> = [];
 
@@ -106,6 +108,19 @@ const makePersistentService = (
     publicationPollMs: 1,
     ...overrides,
   });
+};
+
+/**
+ * Valid managed UUIDs whose lexicographic order is the reverse of the order
+ * they are handed out in, so a repository that returns insertion order instead
+ * of sorting cannot accidentally pass an ordering assertion.
+ */
+const descendingIdFactory = (): (() => string) => {
+  let next = 0xff_ff_ff_00;
+  return () => {
+    next -= 1;
+    return `${next.toString(16).padStart(8, "0")}-0000-7000-8000-000000000000`;
+  };
 };
 
 const fixture = (id: string) => {
@@ -510,7 +525,95 @@ describe("ordinary-folder managed stack contract", () => {
   });
 });
 
+describe("managed service options", () => {
+  it.each([
+    ["empty", ""],
+    ["whitespace", "   "],
+    ["tab", "\t"],
+  ])(
+    "refuses an %s state root instead of falling back to the working directory",
+    (_case, stateRoot) => {
+      expect(() =>
+        makeManagedStackService({
+          repository: createInMemoryManagedStackRepository(),
+          stateRoot,
+        }),
+      ).toThrow(UnsafeManagedStackPathError);
+    },
+  );
+
+  it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    "refuses %s as an operation owner pid",
+    (ownerPid) => {
+      const root = makeRoot();
+      expect(() =>
+        makeManagedStackService({
+          repository: createInMemoryManagedStackRepository(),
+          stateRoot: join(root, "managed"),
+          ownerPid,
+        }),
+      ).toThrow(InvalidManagedOwnerPidError);
+    },
+  );
+
+  it("validates owner pids on the shared entrypoint options path too", () => {
+    const root = makeRoot();
+    expect(() =>
+      createManagedStackService({
+        repository: createInMemoryManagedStackRepository(),
+        stateRoot: join(root, "managed"),
+        ownerPid: 0,
+      }),
+    ).toThrow(InvalidManagedOwnerPidError);
+
+    const service = createManagedStackService({
+      repository: createInMemoryManagedStackRepository(),
+      stateRoot: join(root, "managed"),
+      ownerPid: 4321,
+    });
+    expect(service.stateRoot).toBe(join(root, "managed"));
+    service.close();
+  });
+});
+
 describe("managed repository and lifecycle", () => {
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`orders records identically byte-for-byte with the ${adapter} adapter`, async () => {
+      // Both adapters must agree on ordering: SQLite sorts `created_at, id`
+      // with BINARY collation, so the in-memory repository may not use
+      // `localeCompare`, whose case-insensitive collation disagrees on
+      // mixed-case paths. Descending IDs make insertion order the wrong answer.
+      const root = makeRoot();
+      const overrides = {
+        clock: () => new Date("2026-08-11T00:00:00.000Z"),
+        idFactory: descendingIdFactory(),
+      };
+      const service =
+        adapter === "in-memory"
+          ? makeInMemoryService(root, overrides)
+          : makePersistentService(root, overrides);
+      const first = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root, "Projects"),
+      });
+      const second = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root, "apps"),
+      });
+
+      expect(first.stack.createdAt).toBe(second.stack.createdAt);
+      expect(second.stack.id < first.stack.id).toBe(true);
+      expect(service.listStacks().map((stack) => stack.id)).toEqual(
+        [first.stack.id, second.stack.id].sort(),
+      );
+
+      const paths = service.repository
+        .listCheckoutLocations()
+        .map((location) => location.canonicalPath);
+      expect(paths).toEqual([...paths].sort());
+      expect(paths).toHaveLength(2);
+      service.close();
+    });
+  }
+
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
     it(`keeps repository decisions storage-agnostic for the ${adapter} adapter`, async () => {
       const contract = fixture("api-boundary.repository-contract-is-storage-agnostic");
@@ -1453,6 +1556,105 @@ describe("managed repository and lifecycle", () => {
   }
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    for (const runtime of ["running", "stopped"] as const) {
+      it(`finishes a crashed delete without resurrecting its tombstone with ${adapter} (${runtime} runtime)`, async () => {
+        // A tombstoned row under a claimed operation is a delete that died
+        // between tombstoning and releasing its claim. Recovery must finish the
+        // deletion, never revive the row into a lifecycle — whatever the
+        // runtime inspection reports about the dead owner's processes.
+        const root = makeRoot();
+        const overrides = { isProcessAlive: () => false };
+        const service =
+          adapter === "in-memory"
+            ? makeInMemoryService(root, overrides)
+            : makePersistentService(root, overrides);
+        const created = await service.provisionOrdinaryStack({
+          workspacePath: makeWorkspace(root),
+        });
+        writeFileSync(join(created.stack.paths.data, "database"), "leaked");
+        const claimed = service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: created.stack.id,
+          kind: "delete",
+          ownerPid: 987_680,
+          now: "2026-08-11T00:00:00.000Z",
+        });
+        if (!claimed.acquired) {
+          throw new Error("Expected the delete operation to be claimed");
+        }
+        service.repository.tombstoneStack(
+          created.stack.id,
+          claimed.operation.token,
+          "2026-08-11T00:00:01.000Z",
+        );
+
+        const reconciled = await service.reconcileAbandonedOperations({
+          inspectRuntime: async () => runtime,
+        });
+
+        expect(reconciled.reclaimedStackIds).toEqual([created.stack.id]);
+        expect(reconciled.recovered).toEqual([]);
+        expect(reconciled.abortedStackIds).toEqual([]);
+        expect(reconciled.failures).toEqual([]);
+        expect(reconciled.retained).toEqual([]);
+        expect(service.repository.listActiveOperations()).toEqual([]);
+        // The tombstone itself survives: idempotent deletion depends on it.
+        expect(service.inspectStack(created.stack.id)).toMatchObject({
+          status: "tombstoned",
+          lifecycle: "stopped",
+          ports: [],
+        });
+        expect(existsSync(created.stack.paths.root)).toBe(false);
+
+        const repeated = await service.reconcileAbandonedOperations({
+          inspectRuntime: async () => runtime,
+        });
+
+        expect(repeated).toEqual({
+          recovered: [],
+          abortedStackIds: [],
+          reclaimedStackIds: [],
+          retained: [],
+          skippedOperationIds: [],
+          failures: [],
+        });
+        expect(service.inspectStack(created.stack.id)?.status).toBe("tombstoned");
+        await expect(service.deleteStack(created.stack.id)).resolves.toMatchObject({
+          outcome: "no-op",
+        });
+        service.close();
+      });
+    }
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`refuses to reconfigure an unpublished pending stack with ${adapter}`, async () => {
+      // A pending row belongs to its publisher's provisioning flow. Letting a
+      // holder of the claim mutate its lifecycle would give a stack that no
+      // reader can see a port-occupying lease.
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory" ? makeInMemoryService(root) : makePersistentService(root);
+      const pending = await prepareAbandonedStack(service, makeWorkspace(root), process.pid);
+
+      expect(() =>
+        service.repository.updateStack({
+          stackId: pending.stack.id,
+          operationToken: pending.operation.token,
+          now: "2026-08-11T00:00:02.000Z",
+          lifecycle: "running",
+        }),
+      ).toThrow(ManagedPendingStackUpdateError);
+
+      expect(service.inspectStack(pending.stack.id)).toMatchObject({
+        status: "pending",
+        lifecycle: "stopped",
+      });
+      service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
     it(`refuses to delete a running stack without a stop path with ${adapter}`, async () => {
       const root = makeRoot();
       const service =
@@ -1751,15 +1953,29 @@ describe("managed repository and lifecycle", () => {
     );
   });
 
-  it("fails clearly instead of opening the obsolete development schema", () => {
+  it.each([1, 2])("fails clearly instead of opening obsolete development schema v%i", (version) => {
     const root = makeRoot();
-    const databasePath = join(root, "obsolete.sqlite3");
+    const databasePath = join(root, `obsolete-v${version}.sqlite3`);
     const database = new Database(databasePath, { create: true });
-    database.exec("PRAGMA user_version = 1");
+    database.exec(`PRAGMA user_version = ${version}`);
     database.close();
 
     expect(() => openBunSqliteManagedStackRepository(databasePath)).toThrow(
       UnsupportedManagedRegistryVersionError,
     );
+  });
+
+  it("writes the current schema version into a fresh registry", () => {
+    const root = makeRoot();
+    const databasePath = managedRegistryPath(join(root, "fresh"));
+    const repository = openBunSqliteManagedStackRepository(databasePath);
+    repository.close();
+
+    const database = new Database(databasePath, { readonly: true });
+    expect(database.query("PRAGMA user_version").get()).toEqual({
+      user_version: MANAGED_REGISTRY_SCHEMA_VERSION,
+    });
+    database.close();
+    expect(databasePath.endsWith("registry-v3.sqlite3")).toBe(true);
   });
 });

@@ -45,6 +45,7 @@ describe("@supabase/stack entrypoints", () => {
         bun: "./src/managed-bun.ts",
         default: "./src/managed-node.ts",
       },
+      "./managed-model": "./src/managed/model.ts",
       "./testing": "./src/testing.ts",
       "./daemon-bun": "./src/daemon-bun.ts",
     });
@@ -65,6 +66,48 @@ describe("@supabase/stack entrypoints", () => {
     expect(managed).toHaveProperty("makeManagedStackService");
     expect(managed).toHaveProperty("openBunSqliteManagedStackRepository");
     expect(nodeRoot).not.toHaveProperty("createManagedStackService");
+  });
+
+  it("pins the managed runtime surface so internals cannot leak into it", () => {
+    // The in-memory repository is a test seam and belongs to `./testing` only;
+    // the adapters' shared port and update guards stay module-internal.
+    expect(Object.keys(managed).sort()).toEqual([
+      "DEFAULT_MANAGED_STACK_NAME",
+      "DuplicateManagedIdentityError",
+      "InvalidManagedIdentityError",
+      "InvalidManagedOwnerPidError",
+      "InvalidManagedPortError",
+      "InvalidManagedStackNameError",
+      "MANAGED_ERROR_CODES",
+      "MANAGED_REGISTRY_SCHEMA_VERSION",
+      "ManagedAbandonedOperationError",
+      "ManagedOperationInProgressError",
+      "ManagedOperationOwnershipError",
+      "ManagedPendingStackUpdateError",
+      "ManagedPortReservationError",
+      "ManagedRunningStackPortChangeError",
+      "ManagedStackError",
+      "ManagedStackInitializationError",
+      "ManagedStackNotFoundError",
+      "ManagedStackNotStoppedError",
+      "ManagedStackPublicationTimeoutError",
+      "ORDINARY_WORKSPACE_IDENTITY_VERSION",
+      "UnsafeManagedStackPathError",
+      "UnsupportedManagedRegistryVersionError",
+      "assertManagedStackRoot",
+      "assertManagedUuid",
+      "canonicalizeOrdinaryWorkspacePath",
+      "createManagedStackService",
+      "createManagedUuid",
+      "ensureOrdinaryWorkspaceIdentity",
+      "makeManagedStackService",
+      "managedRegistryPath",
+      "managedStackPaths",
+      "openBunSqliteManagedStackRepository",
+      "ordinaryWorkspaceIdentityPath",
+      "readOrdinaryWorkspaceIdentity",
+      "resolveManagedStateRoot",
+    ]);
   });
 
   it("binds consumer Effect layers without exposing implementation tags", () => {

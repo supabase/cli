@@ -1,4 +1,4 @@
-export const MANAGED_REGISTRY_SCHEMA_VERSION = 2;
+export const MANAGED_REGISTRY_SCHEMA_VERSION = 3;
 export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
 export const DEFAULT_MANAGED_STACK_NAME = "default";
 
@@ -142,6 +142,15 @@ export class InvalidManagedStackNameError extends ManagedStackError {
   }
 }
 
+export class InvalidManagedOwnerPidError extends ManagedStackError {
+  readonly code = "MANAGED_INVALID_OWNER_PID";
+
+  constructor(readonly ownerPid: number) {
+    super(`Invalid managed operation owner pid ${ownerPid}`);
+    this.name = "InvalidManagedOwnerPidError";
+  }
+}
+
 export class InvalidManagedPortError extends ManagedStackError {
   readonly code = "MANAGED_INVALID_PORT";
 
@@ -169,6 +178,17 @@ export class ManagedStackNotStoppedError extends ManagedStackError {
   constructor(readonly stackId: string) {
     super(`Managed stack ${stackId} must be safely stopped before deletion`);
     this.name = "ManagedStackNotStoppedError";
+  }
+}
+
+export class ManagedPendingStackUpdateError extends ManagedStackError {
+  readonly code = "MANAGED_PENDING_STACK_UPDATE";
+
+  constructor(readonly stackId: string) {
+    super(
+      `Managed stack ${stackId} is still pending publication and cannot be reconfigured through an update`,
+    );
+    this.name = "ManagedPendingStackUpdateError";
   }
 }
 
@@ -253,3 +273,40 @@ export class ManagedAbandonedOperationError extends ManagedStackError {
     this.name = "ManagedAbandonedOperationError";
   }
 }
+
+/**
+ * Every `code` literal declared by a {@link ManagedStackError} subclass.
+ *
+ * Managed failures are plain `Error` subclasses: none carries a `_tag`, and
+ * identifier minification renames the constructors, so `code` is the only
+ * discriminator consumers can dispatch on. This list is the machine-readable
+ * form of that contract. `managed-model.unit.test.ts` keeps it exhaustive
+ * against the exported classes, and the CLI's telemetry classifier types its
+ * dispatch table as `Record<ManagedErrorCode, ...>` so a new code cannot be
+ * added here without classifying it there.
+ *
+ * This module must stay free of runtime-specific imports: it is published as
+ * `@supabase/stack/managed-model` precisely so consumers can import the codes
+ * under Bun and Node alike, without pulling in a SQLite driver.
+ */
+export const MANAGED_ERROR_CODES = [
+  "DUPLICATE_MANAGED_IDENTITY",
+  "INVALID_MANAGED_IDENTITY",
+  "MANAGED_INVALID_OWNER_PID",
+  "MANAGED_INVALID_PORT",
+  "MANAGED_INVALID_STACK_NAME",
+  "MANAGED_OPERATION_IN_PROGRESS",
+  "MANAGED_OPERATION_OWNERSHIP_MISMATCH",
+  "MANAGED_OPERATION_REQUIRES_RECONCILIATION",
+  "MANAGED_PENDING_STACK_UPDATE",
+  "MANAGED_PORT_ALREADY_RESERVED",
+  "MANAGED_RUNNING_STACK_PORT_CHANGE",
+  "MANAGED_STACK_INITIALIZATION_FAILED",
+  "MANAGED_STACK_NOT_FOUND",
+  "MANAGED_STACK_NOT_STOPPED",
+  "MANAGED_STACK_PUBLICATION_TIMEOUT",
+  "UNSAFE_MANAGED_STACK_PATH",
+  "UNSUPPORTED_MANAGED_REGISTRY_VERSION",
+] as const;
+
+export type ManagedErrorCode = (typeof MANAGED_ERROR_CODES)[number];

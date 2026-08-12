@@ -311,16 +311,19 @@ stack UUID:
 
 ```text
 <managedStateRoot>/
-  registry-v2.sqlite3
+  registry-v3.sqlite3
   stacks/<stackId>/
     data/
     logs/
     runtime/
 ```
 
-Schema v2 intentionally has no migration path for this unreleased POC. Before first use of v2,
-developers with `registry-v1.sqlite3` must remove the old managed state root, including its shared
-`stacks/` directory; v1 and v2 state must not be kept side by side. Recovery can also leave an
+Schema v3 intentionally has no migration path for this unreleased POC. Before first use of v3,
+developers holding any earlier `registry-v*.sqlite3` must remove the old managed state root,
+including its shared `stacks/` directory; registry generations must not be kept side by side.
+The state root is required to be a non-empty path wherever it is passed explicitly, so a blank
+value fails instead of silently anchoring managed state to the process' working directory.
+Recovery can also leave an
 unregistered UUID stack root when a provisioner writes after its pending row was concurrently
 aborted. The provision error reports the failed ownership cleanup, but there is no automatic orphan
 garbage collection; remove that root only after independently confirming its runtime is stopped.
@@ -330,6 +333,11 @@ directories and caller-supplied initialization are validated, then becomes `acti
 Concurrent callers resolve the published record rather than creating aliases. Recovery first
 retains claims whose owner process is still alive. Once an owner is gone, runtime inspection either
 publishes a running pending stack or aborts a stopped pending stack so the same identity can retry.
+An abandoned claim over an already tombstoned row is a deletion that died before releasing it:
+recovery finishes that deletion instead of reconciling a lifecycle. It never revives the row and
+never drops the tombstone, since idempotent deletion depends on it; it releases the claim and
+reclaims the leaked stack directory, reporting a failed removal like any other reclamation failure.
+Reconciliation is therefore repeatable: a second pass over the same crashed deletion is a no-op.
 Ownership races are isolated per operation so one completed claim does not stop the recovery pass.
 PID liveness is deliberately conservative and assumes the managed root stays within one host PID
 namespace. Because a PID is not a permanent process identity, callers can request forced recovery
@@ -337,8 +345,8 @@ after trustworthy runtime inspection; this is also the required integration path
 shared across PID namespaces. Forced recovery requires an exact stack ID and operation token,
 processes only that claim, and bypasses only its PID gate—never runtime inspection. Forced recovery
 and the `startedBefore` age filter are mutually exclusive. Recovery results distinguish live owners,
-unknown or failed liveness/runtime inspection, concurrent skips, reconciliation failures, and
-post-abort data-reclamation failures. A failed reconciliation of an active stack marks its lifecycle
+unknown or failed liveness/runtime inspection, concurrent skips, reconciliation failures,
+reclaimed tombstones from finished deletions, and post-abort data-reclamation failures. A failed reconciliation of an active stack marks its lifecycle
 `failed` before best-effort claim release, preserving the requirement for an explicit stop path
 before deletion. A failed pending-stack adoption retains its claim so a later pass can retry without
 losing potentially live unpublished data. That claim blocks other mutations, including deletion,
@@ -401,7 +409,14 @@ not be used for new managed records.
 - `effect-bun.ts` and `effect-node.ts` are Effect export-condition targets. They bind foreground,
   daemon, and Unix-socket layers without exposing raw platform factories or bootstrap paths.
 - `managed-bun.ts` and `managed-node.ts` bind the same storage-independent managed service to the
-  runtime's built-in SQLite implementation.
+  runtime's built-in SQLite implementation. Both delegate to one shared factory
+  (`managed/create-service.ts`) parameterized by how a registry file is opened, so their option
+  surfaces cannot drift apart. The in-memory repository is not part of this entrypoint; it is a test
+  seam published through `@supabase/stack/testing`.
+- `managed/model.ts` is exported as `@supabase/stack/managed-model` because it has no runtime
+  imports: consumers can read `MANAGED_ERROR_CODES` under either runtime without pulling in a SQLite
+  driver. The CLI's telemetry classifier types its managed dispatch table against that union, so a
+  new managed error code cannot be added without classifying it.
 - `daemon-bun.ts` is exported as `@supabase/stack/daemon-bun` so the compiled CLI can dispatch to
   it in-process.
 - `daemon-node.ts` is intentionally not a package export. The internal Node platform Adapter

@@ -26,13 +26,16 @@ import type {
   ManagedStackRepository,
   PrepareOrdinaryStackInput,
   PrepareOrdinaryStackResult,
+  ReconcileManagedOperationResult,
   UpdateManagedStackInput,
 } from "./repository.ts";
 import {
+  assertManagedStackUpdatable,
   managedStackOccupiesPorts,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
 } from "./repository.ts";
+import { errorCode } from "./error-code.ts";
 
 type SqliteValue = null | number | string;
 
@@ -161,16 +164,8 @@ const managedPortIntent = (value: string): ManagedPortIntent => {
   throw new Error(`Unknown managed port intent ${value}`);
 };
 
-const sqliteErrorCode = (error: unknown): string | undefined => {
-  if (typeof error !== "object" || error === null) {
-    return undefined;
-  }
-  const code = Reflect.get(error, "code");
-  return typeof code === "string" ? code : undefined;
-};
-
 const isSqliteBusy = (error: unknown): boolean => {
-  const code = sqliteErrorCode(error);
+  const code = errorCode(error);
   if (code === "SQLITE_BUSY" || code === "SQLITE_LOCKED") {
     return true;
   }
@@ -242,9 +237,6 @@ const initializeSchema = (database: ManagedSqliteDatabase): void => {
       CREATE TABLE contexts (
         id TEXT PRIMARY KEY,
         checkout_id TEXT NOT NULL REFERENCES checkouts(id),
-        kind TEXT NOT NULL CHECK (kind IN ('workspace', 'branch', 'detached')),
-        locator TEXT,
-        status TEXT NOT NULL CHECK (status IN ('active', 'orphaned')),
         created_at TEXT NOT NULL
       );
 
@@ -330,6 +322,12 @@ const readTransaction = <A>(database: ManagedSqliteDatabase, run: () => A): A =>
   }
 };
 
+const decodePort = (row: unknown): ManagedPortAssignment => ({
+  key: getString(row, "key"),
+  port: getNumber(row, "port"),
+  intent: managedPortIntent(getString(row, "intent")),
+});
+
 const queryPorts = (
   database: ManagedSqliteDatabase,
   stackId: string,
@@ -337,13 +335,44 @@ const queryPorts = (
   database
     .prepare("SELECT key, port, intent FROM ports WHERE stack_id = ? ORDER BY key")
     .all([stackId])
-    .map((row) => ({
-      key: getString(row, "key"),
-      port: getNumber(row, "port"),
-      intent: managedPortIntent(getString(row, "intent")),
-    }));
+    .map(decodePort);
 
-const decodeStack = (database: ManagedSqliteDatabase, row: unknown): ManagedStackRecord => {
+/**
+ * Ports for many stacks in one statement, so listing N stacks costs two queries
+ * instead of N + 1.
+ */
+const queryPortsByStack = (
+  database: ManagedSqliteDatabase,
+  stackIds: ReadonlyArray<string>,
+): Map<string, Array<ManagedPortAssignment>> => {
+  const byStack = new Map<string, Array<ManagedPortAssignment>>();
+  if (stackIds.length === 0) {
+    return byStack;
+  }
+  const placeholders = stackIds.map(() => "?").join(", ");
+  const rows = database
+    .prepare(
+      `SELECT stack_id, key, port, intent FROM ports
+       WHERE stack_id IN (${placeholders})
+       ORDER BY stack_id, key`,
+    )
+    .all([...stackIds]);
+  for (const row of rows) {
+    const stackId = getString(row, "stack_id");
+    const assignments = byStack.get(stackId);
+    if (assignments === undefined) {
+      byStack.set(stackId, [decodePort(row)]);
+      continue;
+    }
+    assignments.push(decodePort(row));
+  }
+  return byStack;
+};
+
+const decodeStackWithPorts = (
+  row: unknown,
+  ports: ReadonlyArray<ManagedPortAssignment>,
+): ManagedStackRecord => {
   const id = getString(row, "id");
   const paths: ManagedStackPaths = {
     root: getString(row, "root_path"),
@@ -362,7 +391,7 @@ const decodeStack = (database: ManagedSqliteDatabase, row: unknown): ManagedStac
     runtimeRequest: managedRuntimeRequest(getString(row, "runtime_request")),
     runtime: managedRuntime(getOptionalString(row, "runtime")),
     paths,
-    ports: queryPorts(database, id),
+    ports,
     serviceVersions: decodeStringRecord(parseJson(getString(row, "service_versions_json"))),
     runtimeMetadata: decodeRuntimeMetadata(parseJson(getString(row, "runtime_metadata_json"))),
     configFingerprint: getOptionalString(row, "config_fingerprint"),
@@ -372,6 +401,9 @@ const decodeStack = (database: ManagedSqliteDatabase, row: unknown): ManagedStac
     tombstonedAt: getOptionalString(row, "tombstoned_at"),
   };
 };
+
+const decodeStack = (database: ManagedSqliteDatabase, row: unknown): ManagedStackRecord =>
+  decodeStackWithPorts(row, queryPorts(database, getString(row, "id")));
 
 const decodeOperation = (row: unknown): ManagedOperationRecord => ({
   token: getString(row, "token"),
@@ -530,7 +562,6 @@ export const createSqliteManagedStackRepository = (
   initializeSchema(database);
 
   return {
-    kind: "sqlite",
     prepareOrdinaryStack(input): PrepareOrdinaryStackResult {
       return transaction(database, () => {
         database
@@ -568,11 +599,7 @@ export const createSqliteManagedStackRepository = (
           );
         }
         database
-          .prepare(
-            `INSERT OR IGNORE INTO contexts
-              (id, checkout_id, kind, locator, status, created_at)
-             VALUES (?, ?, 'workspace', NULL, 'active', ?)`,
-          )
+          .prepare(`INSERT OR IGNORE INTO contexts (id, checkout_id, created_at) VALUES (?, ?, ?)`)
           .run([input.identity.contextId, input.identity.checkoutId, input.now]);
 
         const checkoutLocation = database
@@ -672,17 +699,6 @@ export const createSqliteManagedStackRepository = (
     getStack(stackId) {
       return readTransaction(database, () => getStack(database, stackId));
     },
-    getStackByIdentity(checkoutId, contextId, stackName) {
-      return readTransaction(database, () => {
-        const row = database
-          .prepare(
-            `SELECT * FROM stacks
-             WHERE checkout_id = ? AND context_id = ? AND name = ? AND status != 'tombstoned'`,
-          )
-          .get([checkoutId, contextId, stackName]);
-        return row === undefined ? undefined : decodeStack(database, row);
-      });
-    },
     listStacks(options) {
       return readTransaction(database, () => {
         const rows =
@@ -693,7 +709,13 @@ export const createSqliteManagedStackRepository = (
                   "SELECT * FROM stacks WHERE status != 'tombstoned' ORDER BY created_at, id",
                 )
                 .all();
-        return rows.map((row) => decodeStack(database, row));
+        const portsByStack = queryPortsByStack(
+          database,
+          rows.map((row) => getString(row, "id")),
+        );
+        return rows.map((row) =>
+          decodeStackWithPorts(row, portsByStack.get(getString(row, "id")) ?? []),
+        );
       });
     },
     claimOperation(input) {
@@ -715,11 +737,7 @@ export const createSqliteManagedStackRepository = (
       return transaction(database, () => {
         requireOwnedOperation(database, input.stackId, input.operationToken);
         const current = requireStack(database, input.stackId);
-        if (current.status === "tombstoned") {
-          // A tombstone is deleted state: a caller holding a stale ID must
-          // never resurrect it into a port-occupying lifecycle.
-          throw new ManagedStackNotFoundError(input.stackId);
-        }
+        assertManagedStackUpdatable(current);
         const runtimeRequest = input.runtimeRequest ?? current.runtimeRequest;
         const runtime = input.runtime ?? current.runtime;
         const lifecycle = input.lifecycle ?? current.lifecycle;
@@ -765,13 +783,27 @@ export const createSqliteManagedStackRepository = (
               .all([startedBefore]);
       return rows.map(decodeOperation);
     },
-    reconcileOperation(stackId, operationToken, lifecycle, now) {
+    reconcileOperation(stackId, operationToken, lifecycle, now): ReconcileManagedOperationResult {
       return transaction(database, () => {
         requireOwnedOperation(database, stackId, operationToken);
         const current = requireStack(database, stackId);
+        if (current.status === "tombstoned") {
+          // A tombstoned row under a live claim is a deletion that died before
+          // releasing it. Registry state is already final, so recovery only
+          // releases the claim; reviving a lifecycle here would resurrect a
+          // deleted stack, and dropping the row would break idempotent deletion.
+          database
+            .prepare(
+              `UPDATE operations SET
+                status = 'failed', finished_at = ?, error = ?
+               WHERE token = ? AND stack_id = ?`,
+            )
+            .run([now, "Recovered after an abandoned deletion", operationToken, stackId]);
+          return { outcome: "tombstoned", stack: current };
+        }
         if (current.status === "pending" && lifecycle === "stopped") {
           database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
-          return undefined;
+          return { outcome: "discarded" };
         }
         replacePorts(database, stackId, current.ports, lifecycle);
         database
@@ -794,7 +826,7 @@ export const createSqliteManagedStackRepository = (
             operationToken,
             stackId,
           ]);
-        return requireStack(database, stackId);
+        return { outcome: "recovered", stack: requireStack(database, stackId) };
       });
     },
     tombstoneStack(stackId, operationToken, now) {

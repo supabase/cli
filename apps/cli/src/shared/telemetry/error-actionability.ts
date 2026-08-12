@@ -1,3 +1,4 @@
+import type { ManagedErrorCode } from "@supabase/stack/managed-model";
 import { Cause, Option } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
@@ -105,10 +106,16 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_identity",
   "managed_identity_conflict",
   "managed_initialization",
+  "managed_operation_in_progress",
+  "managed_operation_ownership",
+  "managed_owner_pid",
+  "managed_pending_update",
   "managed_port",
+  "managed_port_change",
+  "managed_publication_timeout",
   "managed_recovery",
   "managed_stack_name",
-  "managed_stack_running",
+  "managed_stack_not_stopped",
   "network",
   "not_found",
   "plan_limit",
@@ -770,8 +777,12 @@ const effectCliActionabilityByTag = {
  * only discriminator that both identifies the hierarchy and survives the
  * identifier minification of release builds. This map is therefore the
  * dispatch key as well as the classification table — see `classifyAtDepth`.
+ *
+ * Keyed by the package's exported {@link ManagedErrorCode} union, so the table
+ * is exhaustive by construction: a new managed failure cannot be added in
+ * `@supabase/stack` without being classified here.
  */
-const managedActionabilityByCode: Record<string, CliErrorActionabilityDeclaration> = {
+const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionabilityDeclaration> = {
   INVALID_MANAGED_IDENTITY: {
     ...actionability.invalidInput,
     fingerprint_suffix: "managed_identity",
@@ -791,23 +802,41 @@ const managedActionabilityByCode: Record<string, CliErrorActionabilityDeclaratio
   MANAGED_STACK_NOT_FOUND: { ...actionability.invalidInput, fingerprint_suffix: "not_found" },
   // Another caller owns the stack right now; the remediation is to settle that
   // operation before retrying.
-  MANAGED_OPERATION_IN_PROGRESS: { ...actionability.stopStack, fingerprint_suffix: "conflict" },
+  MANAGED_OPERATION_IN_PROGRESS: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_operation_in_progress",
+  },
   MANAGED_OPERATION_OWNERSHIP_MISMATCH: {
     ...actionability.stopStack,
-    fingerprint_suffix: "conflict",
+    fingerprint_suffix: "managed_operation_ownership",
   },
-  MANAGED_STACK_PUBLICATION_TIMEOUT: { ...actionability.stopStack, fingerprint_suffix: "conflict" },
+  MANAGED_STACK_PUBLICATION_TIMEOUT: {
+    ...actionability.stopStack,
+    fingerprint_suffix: "managed_publication_timeout",
+  },
   MANAGED_OPERATION_REQUIRES_RECONCILIATION: {
     ...actionability.stopStack,
     fingerprint_suffix: "managed_recovery",
   },
   MANAGED_STACK_NOT_STOPPED: {
     ...actionability.stopStack,
-    fingerprint_suffix: "managed_stack_running",
+    fingerprint_suffix: "managed_stack_not_stopped",
   },
   MANAGED_RUNNING_STACK_PORT_CHANGE: {
     ...actionability.stopStack,
-    fingerprint_suffix: "managed_stack_running",
+    fingerprint_suffix: "managed_port_change",
+  },
+  // The operation owner pid comes from the CLI process itself, never from user
+  // input, so a rejected pid is a broken internal invariant.
+  MANAGED_INVALID_OWNER_PID: {
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_owner_pid",
+  },
+  // Only internal misuse of the repository can call `updateStack` on a still
+  // unpublished (pending) row; nothing a user does reaches this.
+  MANAGED_PENDING_STACK_UPDATE: {
+    ...actionability.impossibleState,
+    fingerprint_suffix: "managed_pending_update",
   },
   MANAGED_PORT_ALREADY_RESERVED: {
     ...actionability.invalidConfig,
@@ -828,12 +857,28 @@ const managedActionabilityByCode: Record<string, CliErrorActionabilityDeclaratio
   },
 };
 
+// String-keyed projection of the union-keyed table above: an arbitrary error's
+// `code` is only ever a `string`, and narrowing it by hand would mean either a
+// cast or duplicating the code list.
+const managedActionabilityLookup = new Map<string, CliErrorActionabilityDeclaration>(
+  Object.entries(managedActionabilityByCode),
+);
+
 function readManagedActionability(
   error: ErrorRecord,
 ): CliErrorActionabilityDeclaration | undefined {
   const code = readString(error, "code");
-  if (code === undefined || !Object.hasOwn(managedActionabilityByCode, code)) return undefined;
-  return managedActionabilityByCode[code];
+  return code === undefined ? undefined : managedActionabilityLookup.get(code);
+}
+
+/**
+ * Whether a `@supabase/stack` managed error code has a classification in
+ * {@link managedActionabilityByCode}. Used by the coverage test to keep the
+ * table exhaustive against the managed subclasses, which carry no `_tag` and
+ * therefore never reach {@link isClassifiedExternalErrorTag}.
+ */
+export function isClassifiedManagedErrorCode(code: string): boolean {
+  return managedActionabilityLookup.has(code);
 }
 
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
@@ -981,8 +1026,10 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   },
 
   // @supabase/stack managed registry — see {@link managedActionabilityByCode}.
-  // Reached from `classifyAtDepth` by code, not by tag: managed failures have
-  // no `_tag`.
+  // Production dispatch never reaches this entry: `classifyAtDepth` routes
+  // managed failures by `code` (they carry no `_tag`). It stays because the
+  // hierarchy root is itself a plain Error subclass, which the coverage test's
+  // tag scan does pick up and requires an adapter for.
   ManagedStackError: (error) => readManagedActionability(error) ?? actionability.unknown,
 
   // @supabase/process-compose — the CLI generates the process graph, so graph
@@ -1007,8 +1054,10 @@ export function isClassifiedExternalErrorTag(tag: string): boolean {
 
 /**
  * A wrapper's preserved `cause`, but only when classifying it cannot degrade
- * the result: the cause must carry its own declaration or a known external
- * adapter tag, otherwise the wrapper's own classification is more truthful.
+ * the result: the cause must carry its own declaration, a known external
+ * adapter tag, or a recognized managed `code` (managed failures have neither a
+ * declaration nor a `_tag`), otherwise the wrapper's own classification is more
+ * truthful.
  */
 function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
   const cause = error["cause"];
@@ -1016,6 +1065,7 @@ function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
   if (readDeclaration(cause) !== undefined) return cause;
   const causeTag = readErrorTag(cause);
   if (causeTag !== undefined && Object.hasOwn(externalActionabilityByTag, causeTag)) return cause;
+  if (readManagedActionability(cause) !== undefined) return cause;
   return undefined;
 }
 
@@ -1150,13 +1200,21 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
   }
 
   // Managed registry failures are untagged, and each subclass renames itself,
-  // so a recognized `code` literal is what routes them to their adapter. They
-  // all report under the hierarchy root: the concrete failure is already
-  // carried by the declaration's fingerprint suffix.
-  if (isErrorRecord(error) && readManagedActionability(error) !== undefined) {
-    const classify = externalActionabilityByTag["ManagedStackError"];
-    if (classify !== undefined) {
-      return toActionability(classify(error), "error", "ManagedStackError");
+  // so a recognized `code` literal is what routes them to their declaration.
+  if (isErrorRecord(error)) {
+    const managed = readManagedActionability(error);
+    if (managed !== undefined) {
+      // ManagedStackInitializationError is only a wrapper: the real
+      // provisioning failure (a Docker pull, a config parse, ...) is preserved
+      // in `cause`, and the generic initialization verdict would hide the
+      // actionable one.
+      if (readString(error, "code") === "MANAGED_STACK_INITIALIZATION_FAILED") {
+        const cause = classifiableCause(error);
+        if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
+      }
+      // Everything else reports under the hierarchy root: the concrete failure
+      // is already carried by the declaration's fingerprint suffix.
+      return toActionability(managed, "error", "ManagedStackError");
     }
   }
 

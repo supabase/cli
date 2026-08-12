@@ -22,10 +22,15 @@ const nonEmpty = (value: string | undefined): string | undefined => {
  * chdir would split persisted stack state across directories and make
  * {@link assertManagedStackRoot} accept a same-shaped path under the new cwd.
  * `homedir()` is absolute by definition and needs no anchoring.
+ *
+ * A blank explicit root is treated as unset rather than resolved: `resolve("")`
+ * silently yields the process' working directory, which would scatter managed
+ * state across whatever directory a caller happened to start in.
  */
 export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): string => {
-  if (options.stateRoot !== undefined) {
-    return resolve(options.stateRoot);
+  const requested = nonEmpty(options.stateRoot);
+  if (requested !== undefined) {
+    return resolve(requested);
   }
 
   const env = options.env ?? process.env;
@@ -57,7 +62,7 @@ export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): 
 };
 
 export const managedRegistryPath = (stateRoot: string): string =>
-  join(stateRoot, "registry-v2.sqlite3");
+  join(stateRoot, "registry-v3.sqlite3");
 
 export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
   assertManagedUuid(stackId, "stackId");

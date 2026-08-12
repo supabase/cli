@@ -10,6 +10,7 @@ declare global {
     readonly glob: (patterns: ReadonlyArray<string>) => Record<string, () => Promise<unknown>>;
   }
 }
+import { MANAGED_ERROR_CODES } from "@supabase/stack/managed-model";
 import {
   CliErrorCategory,
   CliErrorKind,
@@ -17,6 +18,7 @@ import {
   ErrorActionabilityFingerprintId,
   ErrorActionabilityId,
   isClassifiedExternalErrorTag,
+  isClassifiedManagedErrorCode,
 } from "./error-actionability.ts";
 
 /**
@@ -193,6 +195,37 @@ describe("workspace package error tags have external adapters", () => {
       }
     });
   }
+});
+
+// Managed failures are `class X extends ManagedStackError` and carry no `_tag`,
+// so ERROR_DEFINITION_PATTERN only ever sees the `ManagedStackError` root and
+// none of its subclasses. They also have no per-class adapter — the CLI
+// dispatches them by their `code` literal — so the guard has to scan for the
+// (class, code) pairs and check the code side instead of the class name.
+const MANAGED_SUBCLASS_PATTERN =
+  /class\s+([A-Za-z0-9_]+)\s+extends\s+ManagedStackError\s*\{\s*readonly\s+code\s*=\s*"([A-Z0-9_]+)"/gs;
+
+describe("managed registry error codes are classified", () => {
+  it("packages/stack/src/managed/model.ts", () => {
+    const modelPath = resolve(repoRoot, "packages/stack/src/managed/model.ts");
+    const matches = [...readFileSync(modelPath, "utf8").matchAll(MANAGED_SUBCLASS_PATTERN)];
+    // One match per declared code: a subclass written in a shape this regex
+    // cannot see would otherwise pass vacuously instead of failing loudly.
+    expect(matches.length).toBe(MANAGED_ERROR_CODES.length);
+    const declaredCodes = new Set<string>(MANAGED_ERROR_CODES);
+    for (const match of matches) {
+      const className = match[1] ?? "";
+      const code = match[2] ?? "";
+      expect(
+        declaredCodes.has(code),
+        `${className}'s code "${code}" is missing from MANAGED_ERROR_CODES`,
+      ).toBe(true);
+      expect(
+        isClassifiedManagedErrorCode(code),
+        `${className} ("${code}") has no entry in managedActionabilityByCode in error-actionability.ts`,
+      ).toBe(true);
+    }
+  });
 });
 
 describe("Effect CLI parser errors have exhaustive handling", () => {

@@ -1,30 +1,35 @@
 import { describe, expect, it } from "vitest";
-import {
-  DuplicateManagedIdentityError,
-  InvalidManagedIdentityError,
-  InvalidManagedPortError,
-  InvalidManagedStackNameError,
-  ManagedAbandonedOperationError,
-  ManagedOperationInProgressError,
-  ManagedOperationOwnershipError,
-  ManagedPortReservationError,
-  ManagedRunningStackPortChangeError,
-  ManagedStackError,
-  ManagedStackInitializationError,
-  ManagedStackNotFoundError,
-  ManagedStackNotStoppedError,
-  ManagedStackPublicationTimeoutError,
-  UnsafeManagedStackPathError,
-  UnsupportedManagedRegistryVersionError,
-} from "./managed/model.ts";
+import * as model from "./managed/model.ts";
+import { MANAGED_ERROR_CODES, ManagedStackError } from "./managed/model.ts";
 
-const operation = {
-  token: "018f8b4e-8e5c-7e32-a956-6f297fd05a2d",
-  stackId: "stack-id",
-  kind: "start",
-  status: "active",
-  startedAt: "2026-08-11T00:00:00.000Z",
-} as const;
+interface ManagedErrorCase {
+  readonly exportName: string;
+  readonly error: Error;
+  readonly code: unknown;
+}
+
+/**
+ * Every exported strict subclass of {@link ManagedStackError}, discovered by
+ * reflection rather than by hand: a subclass added without a registered code
+ * must fail here instead of silently classifying as `unknown` downstream.
+ * `prototype instanceof ManagedStackError` is false for the root itself, which
+ * is exactly the set we want. Each class is probed with placeholder
+ * constructor arguments because `code` is a field initializer rather than a
+ * parameter: only the message interpolation reads them.
+ */
+const CONSTRUCTOR_PROBE = [{}, {}, {}];
+
+const managedErrorCases: ReadonlyArray<ManagedErrorCase> = Object.entries(model).flatMap(
+  ([exportName, value]) => {
+    if (typeof value !== "function") return [];
+    const prototype: unknown = value.prototype;
+    if (typeof prototype !== "object" || prototype === null) return [];
+    if (!(prototype instanceof ManagedStackError)) return [];
+    const error: unknown = Reflect.construct(value, CONSTRUCTOR_PROBE);
+    if (!(error instanceof Error)) return [];
+    return [{ exportName, error, code: Reflect.get(error, "code") }];
+  },
+);
 
 /**
  * Consumers cannot discriminate managed failures by class: they are plain
@@ -34,29 +39,22 @@ const operation = {
  * are a published contract rather than an implementation detail.
  */
 describe("managed error contract", () => {
-  it.each([
-    [new InvalidManagedIdentityError("bad id"), "INVALID_MANAGED_IDENTITY"],
-    [new UnsupportedManagedRegistryVersionError(3, 2), "UNSUPPORTED_MANAGED_REGISTRY_VERSION"],
-    [new DuplicateManagedIdentityError("id", "a", "b"), "DUPLICATE_MANAGED_IDENTITY"],
-    [new InvalidManagedStackNameError("Bad Name"), "MANAGED_INVALID_STACK_NAME"],
-    [new InvalidManagedPortError(70_000, "api.port"), "MANAGED_INVALID_PORT"],
-    [new ManagedStackNotFoundError("stack-id"), "MANAGED_STACK_NOT_FOUND"],
-    [new ManagedStackNotStoppedError("stack-id"), "MANAGED_STACK_NOT_STOPPED"],
-    [new ManagedOperationInProgressError("stack-id", operation), "MANAGED_OPERATION_IN_PROGRESS"],
-    [new ManagedOperationOwnershipError("stack-id"), "MANAGED_OPERATION_OWNERSHIP_MISMATCH"],
-    [new ManagedPortReservationError(54_321, "stack-id"), "MANAGED_PORT_ALREADY_RESERVED"],
-    [new ManagedRunningStackPortChangeError("stack-id"), "MANAGED_RUNNING_STACK_PORT_CHANGE"],
-    [new UnsafeManagedStackPathError("/tmp/escaped"), "UNSAFE_MANAGED_STACK_PATH"],
-    [
-      new ManagedStackInitializationError("stack-id", new Error("boom")),
-      "MANAGED_STACK_INITIALIZATION_FAILED",
-    ],
-    [new ManagedStackPublicationTimeoutError("stack-id"), "MANAGED_STACK_PUBLICATION_TIMEOUT"],
-    [new ManagedAbandonedOperationError("stack-id"), "MANAGED_OPERATION_REQUIRES_RECONCILIATION"],
-  ])("exposes a stable code and class name on $name", (error, code) => {
-    expect(error).toBeInstanceOf(ManagedStackError);
-    expect(error.code).toBe(code);
-    expect(error.name).toBe(error.constructor.name);
-    expect(error).not.toHaveProperty("_tag");
+  it("keeps MANAGED_ERROR_CODES exhaustive against the exported subclasses", () => {
+    expect(managedErrorCases.length).toBe(MANAGED_ERROR_CODES.length);
+    expect(managedErrorCases.map(({ code }) => code).sort()).toEqual(
+      [...MANAGED_ERROR_CODES].sort(),
+    );
+  });
+
+  it.each(managedErrorCases)("exposes a stable code and class name on $exportName", (testCase) => {
+    expect(testCase.error).toBeInstanceOf(ManagedStackError);
+    expect(typeof testCase.code).toBe("string");
+    expect(MANAGED_ERROR_CODES).toContain(testCase.code);
+    expect(testCase.error.name).toBe(testCase.exportName);
+    expect(testCase.error).not.toHaveProperty("_tag");
+  });
+
+  it.each([...MANAGED_ERROR_CODES])("declares %s on exactly one subclass", (code) => {
+    expect(managedErrorCases.filter((testCase) => testCase.code === code)).toHaveLength(1);
   });
 });
