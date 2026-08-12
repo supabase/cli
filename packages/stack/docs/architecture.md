@@ -480,7 +480,10 @@ the caller's bound on the entire wait and is applied as a timeout around the rep
 the poll instead of being checked between polls. Both shipped adapters answer synchronously, so a look
 at the pending row always completes; with an embedder-supplied asynchronous repository that timeout can
 preempt a look that is still in flight. That is safe — a look has no side effects — but it means the
-option bounds the wait, not the number of looks that finish.
+option bounds the wait, not the number of looks that finish. The answer the repeat stops on is checked
+rather than asserted through a type refinement: a recurrence bound added to that schedule later would
+hand back the final still-pending answer, and the check turns that into a defect instead of an
+unpublished stack presented as a published one.
 
 Interruption is part of the contract, not an afterthought. Provisioning owns a pending row, an
 operation claim, and the directories it created, so its create path runs under
@@ -490,7 +493,16 @@ releases its claim the same way. An interrupted call stays interrupted rather th
 failure of the work — a caller's own timeout is not a `ManagedStackInitializationError` — and recovery
 re-raises interruption instead of recording a retained claim or a reconciliation failure that never
 happened, so the operation the next pass should still recover does not look like one recovery already
-gave up on.
+gave up on. That rule covers the steps whose exits recovery absorbs one at a time — the liveness probe,
+the runtime inspection, the state reclamation — not just the pass as a whole.
+
+The single deliberate exception is the claim release on a failed operation's way out: it discards
+whatever it raises, its own interruption included, because the caller's outcome is the failure the
+operation actually suffered and a release reporting interruption would replace it. The mask itself
+begins after the pending row and its claim exist, which is sound only because both shipped adapters
+decide synchronously and offer no suspension point during that write. An asynchronous embedder
+repository interrupted mid-prepare would leave a pending row and a claim nothing compensates, so the
+mask has to be extended over row creation before asynchronous repositories become real.
 
 An Effect consumer provides the composed layer, which is the primary API:
 
@@ -545,7 +557,9 @@ alongside those interruptions rather than after them, a statement already on its
 race the close and fail against a closed handle: a caller that closes while work is outstanding must
 read those rejections as "did not complete", not as evidence about the registry. A call made after
 `close()` rejects with an `Error` saying the handle is closed, rather than with the runtime's own bare
-internal string. The handle is also an `AsyncDisposable`, so
+internal string. That diagnosis comes from the handle's own closed state, never from what a rejection
+says, so a caller's callback that refuses with a string mentioning disposal still reaches the caller
+as itself. The handle is also an `AsyncDisposable`, so
 `await using service = await createManagedStackService()` closes it on every path out of the block. The
 facade hands back the very repository the service uses, so an embedder can read the registry without
 opening a second handle on it.

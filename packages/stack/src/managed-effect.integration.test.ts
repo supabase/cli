@@ -310,6 +310,78 @@ describe("managed stack Effect surface", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("keeps a delete's own failure when releasing its claim reports interruption", () => {
+    // Releasing the claim on the way out is best effort in the strongest sense.
+    // An embedder repository whose `finishOperation` is cancelled must not turn
+    // the failure the caller actually suffered into an interruption the caller
+    // never asked for — the release has no outcome of its own to report.
+    const root = makeRoot();
+    const stateRoot = join(root, "managed");
+    const workspace = makeWorkspace(root);
+    const repository = createInMemoryManagedStackRepository();
+    let releaseIsCancelled = false;
+    const cancelling: ManagedStackRepositoryShape = {
+      ...repository,
+      finishOperation: (stackId, operationToken, outcome, at, error) =>
+        releaseIsCancelled
+          ? Effect.interrupt
+          : repository.finishOperation(stackId, operationToken, outcome, at, error),
+    };
+    const layer = managedLayer(stateRoot, { repository: cancelling });
+    class StopRefused {
+      readonly _tag = "StopRefused";
+    }
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      yield* managed.updateStack(stack.id, { lifecycle: "running" });
+      releaseIsCancelled = true;
+
+      const exit = yield* managed
+        .deleteStack(stack.id, { stop: () => Effect.fail(new StopRefused()) })
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(false);
+      expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined).toBeInstanceOf(
+        StopRefused,
+      );
+      expect((yield* managed.inspectStack(stack.id))?.status).toBe("active");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("propagates an interrupted runtime inspection instead of retaining the operation", () => {
+    // The absorbed steps inside a recovery pass follow the same rule as the pass
+    // itself: an interrupted inspection has no answer about the runtime, so
+    // retaining the operation on its behalf would report a decision recovery
+    // never made.
+    const { workspace, layer } = setupInMemory();
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const repository = yield* ManagedStackRepository;
+      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      const claimed = yield* repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: stack.id,
+        kind: "start",
+        now: "2026-08-11T00:00:00.000Z",
+      });
+      if (!claimed.acquired) {
+        return yield* Effect.die(new Error("Expected to stage an abandoned operation"));
+      }
+
+      const exit = yield* managed
+        .reconcileAbandonedOperations({ inspectRuntime: () => Effect.interrupt })
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      // The claim survives for the next pass, exactly as it would had the pass
+      // never looked at it.
+      expect(
+        (yield* repository.listActiveOperations()).map((operation) => operation.token),
+      ).toEqual([claimed.operation.token]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("propagates an interrupted recovery pass instead of recording it as a failure", () => {
     // Recovery reports rather than fails, but an interrupted step has no outcome
     // to report: recording one would mark a stack failed and release a claim on

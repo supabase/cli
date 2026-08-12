@@ -835,6 +835,30 @@ describe("managed service options", () => {
     await expect(service.listStacks()).rejects.toThrow(/closed/i);
   });
 
+  it("reports a callback's own rejection as itself even when it mentions disposal", async () => {
+    // Whether the handle is closed is the handle's own state, never something
+    // read back out of what a rejection happens to say: a caller's callback that
+    // refuses with a string mentioning disposal must reach that caller unchanged.
+    const root = makeRoot();
+    const service = await makePersistentService(root);
+    const { stack } = await service.provisionOrdinaryStack({ workspacePath: makeWorkspace(root) });
+    await service.updateStack(stack.id, { lifecycle: "running" });
+
+    let rejection: unknown;
+    try {
+      await service.deleteStack(stack.id, {
+        stop: () => Promise.reject("the container was disposed"),
+      });
+    } catch (error: unknown) {
+      rejection = error;
+    }
+
+    expect(String(rejection)).toContain("the container was disposed");
+    expect(String(rejection)).not.toContain("handle is closed");
+    expect(await service.inspectStack(stack.id)).toMatchObject({ status: "active" });
+    await service.close();
+  });
+
   it("closes a service acquired with await using when its block ends", async () => {
     const root = makeRoot();
     let acquired: ManagedStackServiceHandle | undefined;

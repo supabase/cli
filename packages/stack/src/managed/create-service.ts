@@ -122,16 +122,28 @@ const managedStackServiceHandle = async <ER>(
   const repository = Context.get(context, ManagedStackRepository);
 
   /**
-   * Every method's run, so a call that arrives after `close` is reported as one.
-   *
-   * A disposed `ManagedRuntime` answers by dying with a bare string, which would
-   * reach the caller as a rejection with no name, message, or stack. Anything
-   * else is the failure itself and passes through untouched.
+   * Whether this handle has been closed, tracked here rather than read back out
+   * of the rejection a closed run produces: a disposed `ManagedRuntime` answers
+   * by dying with a bare string, and deciding from that string's contents would
+   * misreport a caller's own callback rejecting with a string that happens to
+   * mention disposal.
+   */
+  let closed = false;
+  const dispose = (): Promise<void> => {
+    closed = true;
+    return runtime.dispose();
+  };
+
+  /**
+   * Every method's run, so a call that arrives after `close` is reported as one:
+   * the runtime's bare string reaches the caller as a rejection with no name,
+   * message, or stack. While the handle is open, every failure is the failure
+   * itself and passes through untouched.
    */
   const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
     runtime.runPromise(effect).catch((error: unknown) => {
-      throw typeof error === "string" && error.includes("disposed")
-        ? new Error(`The managed stack service handle is closed (${error})`)
+      throw closed
+        ? new Error(`The managed stack service handle is closed (${String(error)})`)
         : error;
     });
 
@@ -188,8 +200,8 @@ const managedStackServiceHandle = async <ER>(
           fromCallback(() => shouldPrune(location), isBooleanAnswer),
         ),
       ),
-    close: () => runtime.dispose(),
-    [Symbol.asyncDispose]: () => runtime.dispose(),
+    close: dispose,
+    [Symbol.asyncDispose]: dispose,
   };
 };
 
