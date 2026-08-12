@@ -344,20 +344,45 @@ export type ManagedStackError =
   | UnsupportedManagedRegistryVersionError;
 
 /**
- * Every `code` literal declared by a managed failure.
+ * Every `code` literal declared by a managed failure, and every `_tag`
+ * declared alongside it.
+ *
+ * Both are derived from {@link ManagedStackError} itself — indexing a
+ * property on a union type distributes over its members — so adding, removing,
+ * or renaming a failure class's `code`/`_tag` changes these unions without any
+ * hand-maintained list to fall out of sync. What compile-time indexing cannot
+ * catch is two different classes declaring the *same* `code` literal: the
+ * union would just collapse to one member, so that particular mistake still
+ * needs a runtime guard (or review) rather than the type checker.
+ */
+export type ManagedErrorCode = ManagedStackError["code"];
+export type ManagedErrorTag = ManagedStackError["_tag"];
+
+/**
+ * Requires `array` to contain every member of the string-literal union `T`,
+ * order and duplicates aside. If `T` has a member missing from the supplied
+ * array, `[T] extends [U[number]]` resolves to `never`, which makes the
+ * parameter type `never` and turns any array literal into a type error at the
+ * call site — so `MANAGED_ERROR_CODES` below cannot silently drop a code.
+ */
+function exhaustiveArrayOf<T extends string>() {
+  return <U extends ReadonlyArray<T>>(array: U & ([T] extends [U[number]] ? unknown : never)): U =>
+    array;
+}
+
+/**
+ * Every `code` literal declared by a managed failure, checked exhaustive
+ * against {@link ManagedErrorCode} at compile time by {@link exhaustiveArrayOf}.
  *
  * `code` is the wire-level contract: identifier minification renames the
  * constructors, so a release build's telemetry and any cross-runtime consumer
- * need a value the bundler cannot touch. `managed-model.unit.test.ts` keeps
- * this list exhaustive against the exported classes, and the CLI's telemetry
- * classifier types its dispatch table as `Record<ManagedErrorCode, ...>` so a
- * new code cannot be added here without classifying it there.
+ * need a value the bundler cannot touch.
  *
  * This module must stay free of runtime-specific imports: it is published as
  * `@supabase/stack/managed-model` precisely so consumers can import the codes
  * under Bun and Node alike, without pulling in a SQLite driver.
  */
-export const MANAGED_ERROR_CODES = [
+export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "DUPLICATE_MANAGED_IDENTITY",
   "INVALID_MANAGED_IDENTITY",
   "MANAGED_DUPLICATE_PORT_KEY",
@@ -376,9 +401,7 @@ export const MANAGED_ERROR_CODES = [
   "MANAGED_STACK_PUBLICATION_TIMEOUT",
   "UNSAFE_MANAGED_STACK_PATH",
   "UNSUPPORTED_MANAGED_REGISTRY_VERSION",
-] as const;
-
-export type ManagedErrorCode = (typeof MANAGED_ERROR_CODES)[number];
+] as const);
 
 /**
  * The single source of truth linking each managed `code` to the `_tag` of the
@@ -388,7 +411,9 @@ export type ManagedErrorCode = (typeof MANAGED_ERROR_CODES)[number];
  * dispatch) and `code` is the stable wire-level contract. Consumers that key a
  * table by one and dispatch on the other — the CLI's telemetry classifier is
  * the motivating case — derive it from this map instead of restating all
- * eighteen pairs by hand.
+ * eighteen pairs by hand. Typing this `satisfies Record<ManagedErrorCode,
+ * ManagedErrorTag>` requires every code to be present with a valid tag, so a
+ * new error class that is not registered here is a compile error.
  */
 export const MANAGED_ERROR_TAG_BY_CODE = {
   DUPLICATE_MANAGED_IDENTITY: "DuplicateManagedIdentityError",
@@ -409,7 +434,7 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_STACK_PUBLICATION_TIMEOUT: "ManagedStackPublicationTimeoutError",
   UNSAFE_MANAGED_STACK_PATH: "UnsafeManagedStackPathError",
   UNSUPPORTED_MANAGED_REGISTRY_VERSION: "UnsupportedManagedRegistryVersionError",
-} as const satisfies Record<ManagedErrorCode, ManagedStackError["_tag"]>;
+} as const satisfies Record<ManagedErrorCode, ManagedErrorTag>;
 
 const MANAGED_ERROR_TAGS: ReadonlySet<string> = new Set(Object.values(MANAGED_ERROR_TAG_BY_CODE));
 

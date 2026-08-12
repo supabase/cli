@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { CliError } from "effect/unstable/cli";
 
@@ -31,195 +32,87 @@ import {
  * forgot to classify".
  */
 
-// Matches every way an error class is defined in this workspace: direct
-// `Data.TaggedError("Tag")`, any local `*Error(...)` factory whose heritage
-// call carries the tag literal (`CliError("Tag")`, `LoginError("Tag")`, ...),
-// and plain `extends Error` classes (identified by class name). Error
-// factories must therefore be named `<Something>Error` to stay guarded —
-// which also keeps `Data.TaggedClass` event types out of the scan.
-const ERROR_DEFINITION_PATTERN =
-  /TaggedError\(\s*"([A-Za-z0-9_]+)"|class\s+[A-Za-z0-9_]+\s+extends\s+[A-Za-z0-9_.]*Error\(\s*"([A-Za-z0-9_]+)"|class\s+([A-Za-z0-9_]+)\s+extends\s+Error\b/gs;
+// The scan below recognizes every way an error class is defined in this
+// workspace: direct `Data.TaggedError("Tag")`, any local `*Error(...)` factory
+// whose heritage call carries the tag literal (`CliError("Tag")`,
+// `LoginError("Tag")`, ...), and plain `extends Error` classes (identified by
+// class name). Error factories must therefore be named `<Something>Error` to
+// stay guarded — which also keeps `Data.TaggedClass` event types out of the
+// scan. It runs on a real TypeScript AST rather than on text, so a definition
+// merely *mentioned* in a comment, a string, or a template literal is
+// structurally invisible and needs no special casing.
 
-// Removes `//` line comments and `/* */` block comments from a source string
-// so the regex-based scan below never mistakes a comment merely mentioning
-// `class X extends Error` (or a TaggedError example) for a real definition.
-// String and template literals are masked too — literal TEXT (single-quoted
-// string bodies and the literal runs of a template literal) can never
-// contain a real definition, so it is blanked to spaces just like a
-// comment: `'class Fake extends Error'` must extract nothing, and neither
-// must `` `class Fake extends Error` ``. Double-quoted strings get the same
-// treatment UNLESS they are the direct argument of an `...Error(` call
-// (`TaggedError("Tag")`, `CliError("Tag")`, ...) — that is the one shape
-// ERROR_DEFINITION_PATTERN's own capturing groups read their tag out of, so
-// masking it would blind the scan to every real definition. Template-literal
-// INTERPOLATIONS (`${...}`) are the other exception — they are live code, so
-// they are scanned recursively as code again (comments stripped, nested
-// strings/templates masked, further nested interpolations handled the same
-// way), with brace depth tracked so the interpolation's own `{`/`}` don't get
-// confused with the `}` that closes it. Stripped/masked bytes are replaced
-// with spaces (newlines are preserved) so line numbers and any line-based
-// logic elsewhere stay unaffected. This is a compact scanner, not a full
-// tokenizer: it does not special-case regex literals.
-//
-// A double-quoted string counts as an `...Error(` call argument when the
-// (bounded) text immediately preceding its opening quote ends with
-// `Error(` — optionally followed by whitespace, mirroring the `\(\s*"` the
-// pattern itself requires before the tag.
-const ERROR_CALL_ARGUMENT_LOOKBEHIND = /Error\(\s*$/;
-const ERROR_CALL_ARGUMENT_LOOKBEHIND_WINDOW = 120;
-function stripComments(source: string): string {
-  return scanCode(source, 0, false).out;
+// The simple name of a call's callee: `TaggedError` for both `TaggedError(...)`
+// and `Data.TaggedError(...)`.
+function calleeName(expression: ts.Expression): string {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  return "";
 }
 
-// Scans a run of *code* starting at `start`. When `stopAtInterpolationClose`
-// is true, this call represents the inside of a `${...}` and returns as soon
-// as it sees the matching top-level `}` (braces opened inside this same
-// region, e.g. an object literal or block, are tracked and do not trigger an
-// early return). `end` is the index of that terminating `}` (or the source
-// length if the interpolation was left unterminated).
-function scanCode(
-  source: string,
-  start: number,
-  stopAtInterpolationClose: boolean,
-): { out: string; end: number } {
-  let out = "";
-  let i = start;
-  const n = source.length;
-  let braceDepth = 0;
-  while (i < n) {
-    const c = source[i];
-    const next = source[i + 1];
-
-    if (stopAtInterpolationClose && c === "}" && braceDepth === 0) {
-      return { out, end: i };
-    }
-    if (c === "{") {
-      braceDepth += 1;
-      out += c;
-      i += 1;
-      continue;
-    }
-    if (c === "}") {
-      braceDepth -= 1;
-      out += c;
-      i += 1;
-      continue;
-    }
-
-    if (c === '"' || c === "'") {
-      const precedingWindow = source.slice(
-        Math.max(0, i - ERROR_CALL_ARGUMENT_LOOKBEHIND_WINDOW),
-        i,
-      );
-      const preserveContent = c === '"' && ERROR_CALL_ARGUMENT_LOOKBEHIND.test(precedingWindow);
-      const string = scanQuotedString(source, i, c, preserveContent);
-      out += string.out;
-      i = string.end;
-      continue;
-    }
-
-    if (c === "`") {
-      const template = scanTemplateLiteral(source, i);
-      out += template.out;
-      i = template.end;
-      continue;
-    }
-
-    if (c === "/" && next === "/") {
-      out += "  ";
-      i += 2;
-      while (i < n && source[i] !== "\n") {
-        out += " ";
-        i += 1;
-      }
-      continue;
-    }
-
-    if (c === "/" && next === "*") {
-      out += "  ";
-      i += 2;
-      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) {
-        out += source[i] === "\n" ? "\n" : " ";
-        i += 1;
-      }
-      out += "  ";
-      i += 2;
-      continue;
-    }
-
-    out += c;
-    i += 1;
-  }
-  return { out, end: i };
+// The value of a plain string literal, seeing through an `as const` assertion
+// (`readonly code = "X" as const`). A computed or interpolated string cannot be
+// resolved statically, and none exists in this workspace.
+function stringLiteralText(expression: ts.Expression | undefined): string | undefined {
+  const inner =
+    expression !== undefined && ts.isAsExpression(expression) ? expression.expression : expression;
+  return inner !== undefined && ts.isStringLiteral(inner) ? inner.text : undefined;
 }
 
-// Scans a single/double-quoted string, keeping the quote characters so
-// overall structure survives. Unless `preserveContent` is set (the string is
-// the direct argument of an `...Error(` call — see the note above
-// `stripComments`), the body is masked to spaces so it can never be
-// mistaken for a real definition; an escape sequence (`\x`) is blanked as a
-// pair so line/column-preserving length is unaffected either way.
-function scanQuotedString(
-  source: string,
-  start: number,
-  quote: string,
-  preserveContent: boolean,
-): { out: string; end: number } {
-  let out = quote;
-  let i = start + 1;
-  const n = source.length;
-  while (i < n) {
-    const ch = source[i];
-    if (ch === "\\" && i + 1 < n) {
-      out += preserveContent ? source.slice(i, i + 2) : "  ";
-      i += 2;
-      continue;
-    }
-    if (ch === quote) {
-      out += ch;
-      i += 1;
-      break;
-    }
-    out += preserveContent ? ch : ch === "\n" ? "\n" : " ";
-    i += 1;
-  }
-  return { out, end: i };
+function extendsExpression(node: ts.ClassLikeDeclaration): ts.Expression | undefined {
+  const clause = node.heritageClauses?.find((c) => c.token === ts.SyntaxKind.ExtendsKeyword);
+  return clause?.types[0]?.expression;
 }
 
-// Masks the literal-text runs of a template literal while re-entering code
-// mode for every `${...}` interpolation, recursively.
-function scanTemplateLiteral(source: string, start: number): { out: string; end: number } {
-  let out = "`";
-  let i = start + 1;
-  const n = source.length;
-  while (i < n) {
-    const ch = source[i];
-    if (ch === "\\" && i + 1 < n) {
-      out += "  ";
-      i += 2;
-      continue;
-    }
-    if (ch === "`") {
-      out += ch;
-      i += 1;
-      break;
-    }
-    if (ch === "$" && source[i + 1] === "{") {
-      out += "${";
-      const interpolation = scanCode(source, i + 2, true);
-      out += interpolation.out;
-      if (interpolation.end < n && source[interpolation.end] === "}") {
-        out += "}";
-        i = interpolation.end + 1;
-      } else {
-        i = interpolation.end;
+function parse(fileName: string, source: string): ts.SourceFile {
+  return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+}
+
+// Extracts the error identifiers a source file defines: the tag literal of
+// every `class X extends <Something>Error("Tag")` heritage call and of every
+// free-standing `TaggedError("Tag")` factory call, plus the class name of
+// every plain `class X extends Error` (untagged classes are fingerprinted by
+// name). A tagged class contributes its tag once — the heritage call is
+// claimed by the class rule so the factory rule does not count it again.
+function extractErrorTags(source: string, fileName = "scan.ts"): Array<string> {
+  const tags: Array<string> = [];
+  const claimed = new Set<ts.Node>();
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassLike(node)) {
+      const heritage = extendsExpression(node);
+      if (heritage !== undefined && ts.isCallExpression(heritage)) {
+        const tag = calleeName(heritage.expression).endsWith("Error")
+          ? stringLiteralText(heritage.arguments[0])
+          : undefined;
+        if (tag !== undefined) {
+          tags.push(tag);
+          claimed.add(heritage);
+        }
+      } else if (
+        heritage !== undefined &&
+        ts.isIdentifier(heritage) &&
+        heritage.text === "Error" &&
+        node.name !== undefined
+      ) {
+        tags.push(node.name.text);
       }
-      continue;
     }
-    out += ch === "\n" ? "\n" : " ";
-    i += 1;
-  }
-  return { out, end: i };
+
+    if (
+      ts.isCallExpression(node) &&
+      !claimed.has(node) &&
+      calleeName(node.expression).endsWith("TaggedError")
+    ) {
+      const tag = stringLiteralText(node.arguments[0]);
+      if (tag !== undefined) tags.push(tag);
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  ts.forEachChild(parse(fileName, source), visit);
+  return tags;
 }
 
 function scanErrorTags(root: string): Map<string, Array<string>> {
@@ -232,9 +125,7 @@ function scanErrorTags(root: string): Map<string, Array<string>> {
         continue;
       }
       if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
-      const tags = [
-        ...stripComments(readFileSync(path, "utf8")).matchAll(ERROR_DEFINITION_PATTERN),
-      ].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
+      const tags = extractErrorTags(readFileSync(path, "utf8"), path);
       if (tags.length > 0) tagsByFile.set(path, tags);
     }
   };
@@ -242,79 +133,38 @@ function scanErrorTags(root: string): Map<string, Array<string>> {
   return tagsByFile;
 }
 
-// Extracts the error tags a snippet of source would contribute to the scan,
-// mirroring the comment-stripping + matching pipeline `scanErrorTags` runs
-// against real files, without touching the filesystem.
-function extractErrorTags(source: string): Array<string> {
-  return [...stripComments(source).matchAll(ERROR_DEFINITION_PATTERN)].map(
-    (match) => match[1] ?? match[2] ?? match[3] ?? "",
-  );
-}
-
-describe("stripComments", () => {
-  it("removes a line comment mentioning a fake error class", () => {
-    const source = "// class Fake extends Error\nconst x = 1;";
-    expect(extractErrorTags(source)).toEqual([]);
-  });
-
-  it("removes a block comment mentioning a fake TaggedError example", () => {
-    const source = '/* e.g. Data.TaggedError("FakeTag") */\nconst x = 1;';
-    expect(extractErrorTags(source)).toEqual([]);
-  });
-
-  it("removes a block comment spanning multiple lines", () => {
+describe("extractErrorTags", () => {
+  it("finds tagged, factory-tagged and plain error class definitions", () => {
     const source = [
-      "/*",
-      " * class AlsoFake extends Error",
-      ' * Data.TaggedError("AlsoFakeTag")',
-      " */",
+      'export class TaggedThingError extends Data.TaggedError("TaggedThingError") {}',
+      'export class FactoryThingError extends CliError("FactoryTag") {}',
+      "export class PlainThingError extends Error {}",
+      'const Base = Data.TaggedError("FreeStandingTag");',
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual([
+      "TaggedThingError",
+      "FactoryTag",
+      "PlainThingError",
+      "FreeStandingTag",
+    ]);
+  });
+
+  it("ignores definitions that only appear in comments", () => {
+    const source = [
+      "// class Fake extends Error",
+      '/* e.g. Data.TaggedError("FakeTag") */',
       "const x = 1;",
     ].join("\n");
     expect(extractErrorTags(source)).toEqual([]);
   });
 
-  it("keeps a string literal containing `//` intact and still finds a real definition after it", () => {
+  it("ignores definitions that only appear inside string and template literals", () => {
     const source = [
-      'const url = "https://example.com/foo";',
-      "export class RealError extends Error {}",
+      'const a = "class Fake extends Error";',
+      'const b = `Data.TaggedError("FakeTag")`;',
+      "const c = 'class AlsoFake extends Error';",
     ].join("\n");
-    expect(extractErrorTags(source)).toEqual(["RealError"]);
-  });
-
-  it("keeps a template literal containing `//` intact and still finds a real definition after it", () => {
-    const source = [
-      "const url = `https://example.com/${path}`;",
-      'export class TemplateError extends Data.TaggedError("TemplateError") {}',
-    ].join("\n");
-    expect(extractErrorTags(source)).toEqual(["TemplateError"]);
-  });
-
-  it("still finds a real definition that follows a comment about a fake one", () => {
-    const source = [
-      "// This looks like a class Fake extends Error but is not",
-      'export class RealTaggedError extends Data.TaggedError("RealTaggedError") {}',
-    ].join("\n");
-    expect(extractErrorTags(source)).toEqual(["RealTaggedError"]);
-  });
-
-  it("masks a double-quoted string literal so a fake class mentioned inside it is not extracted", () => {
-    const source = 'const x = "class Fake extends Error";';
     expect(extractErrorTags(source)).toEqual([]);
-  });
-
-  it("masks a single-quoted string literal so a fake class mentioned inside it is not extracted", () => {
-    const source = "const x = 'class Fake extends Error';";
-    expect(extractErrorTags(source)).toEqual([]);
-  });
-
-  it("still strips comments inside a template literal interpolation", () => {
-    const source = "const x = `${/* class Fake extends Error */ value}`;";
-    expect(extractErrorTags(source)).toEqual([]);
-  });
-
-  it("still finds a real definition written inside a template literal interpolation", () => {
-    const source = "const x = `${(class Boom extends Error {}).name}`;";
-    expect(extractErrorTags(source)).toEqual(["Boom"]);
   });
 });
 
@@ -461,22 +311,51 @@ describe("workspace package error tags have external adapters", () => {
 // what keeps the two halves of the contract joined — the (class, tag, code)
 // triples in the model must agree with the exported map, the code list, and the
 // code-keyed classification table.
-const MANAGED_TAGGED_CLASS_PATTERN =
-  /class\s+([A-Za-z0-9_]+)\s+extends\s+Data\.TaggedError\(\s*"([A-Za-z0-9_]+)",?\s*\)[\s\S]*?readonly\s+code\s*=\s*"([A-Z0-9_]+)"/g;
+interface ManagedErrorClass {
+  readonly className: string;
+  readonly tag: string;
+  readonly code: string;
+}
+
+// Collects the (class, tag, code) triples of every `class X extends
+// Data.TaggedError("Tag")` that also declares a string-literal `code` member.
+function scanManagedErrorClasses(path: string): Array<ManagedErrorClass> {
+  const classes: Array<ManagedErrorClass> = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassDeclaration(node) && node.name !== undefined) {
+      const heritage = extendsExpression(node);
+      const tag =
+        heritage !== undefined &&
+        ts.isCallExpression(heritage) &&
+        calleeName(heritage.expression) === "TaggedError"
+          ? stringLiteralText(heritage.arguments[0])
+          : undefined;
+      const code = stringLiteralText(
+        node.members
+          .filter(ts.isPropertyDeclaration)
+          .find((member) => ts.isIdentifier(member.name) && member.name.text === "code")
+          ?.initializer,
+      );
+      if (tag !== undefined && code !== undefined) {
+        classes.push({ className: node.name.text, tag, code });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(parse(path, readFileSync(path, "utf8")), visit);
+  return classes;
+}
 
 describe("managed registry error codes are classified", () => {
   it("packages/stack/src/managed/model.ts", () => {
     const modelPath = resolve(repoRoot, "packages/stack/src/managed/model.ts");
-    const matches = [...readFileSync(modelPath, "utf8").matchAll(MANAGED_TAGGED_CLASS_PATTERN)];
-    // One match per declared code: a class written in a shape this regex cannot
+    const scanned = scanManagedErrorClasses(modelPath);
+    // One class per declared code: a class written in a shape this scan cannot
     // see would otherwise pass vacuously instead of failing loudly.
-    expect(matches.length).toBe(MANAGED_ERROR_CODES.length);
+    expect(scanned.length).toBe(MANAGED_ERROR_CODES.length);
     const declaredCodes = new Set<string>(MANAGED_ERROR_CODES);
     const scannedCodes = new Set<string>();
-    for (const match of matches) {
-      const className = match[1] ?? "";
-      const tag = match[2] ?? "";
-      const code = match[3] ?? "";
+    for (const { className, tag, code } of scanned) {
       scannedCodes.add(code);
       expect(tag, `${className} is tagged "${tag}" rather than its own export name`).toBe(
         className,
