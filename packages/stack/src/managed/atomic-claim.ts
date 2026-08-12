@@ -50,7 +50,9 @@ const createExclusively = async (
  *
  * A `SIGKILL` between the temporary write and its removal strands a
  * `.tmp.<id>` sibling. Nothing ever reads those, so a stranded one is junk
- * rather than a claim anybody can observe.
+ * rather than a claim anybody can observe, and a retry that reuses the same
+ * temporary id overwrites it — which is why the temporary write is not
+ * exclusive.
  */
 export const claimFileAtomically = async (
   targetPath: string,
@@ -59,7 +61,7 @@ export const claimFileAtomically = async (
 ): Promise<FileClaimOutcome> => {
   const linkFile = options.linkFile ?? link;
   const temporaryPath = `${targetPath}.tmp.${options.temporaryId ?? randomUUID()}`;
-  await writeFile(temporaryPath, content, { flag: "wx", mode: options.mode });
+  await writeFile(temporaryPath, content, { mode: options.mode });
   try {
     await linkFile(temporaryPath, targetPath);
     return "claimed";

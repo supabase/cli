@@ -88,6 +88,19 @@ describe("atomic file claim", () => {
     expect(readdirSync(root)).toEqual([]);
   });
 
+  it("claims over a temporary file stranded by a killed run that reused the same id", async () => {
+    const root = makeRoot();
+    const target = join(root, "claim.json");
+    writeFileSync(`${target}.tmp.fixed-id`, "stranded\n");
+
+    await expect(claimFileAtomically(target, "mine\n", { temporaryId: "fixed-id" })).resolves.toBe(
+      "claimed",
+    );
+
+    expect(readFileSync(target, "utf8")).toBe("mine\n");
+    expect(strayTemporaryFiles(root)).toEqual([]);
+  });
+
   it("names the temporary file from an injected identifier so a run stays reproducible", async () => {
     const root = makeRoot();
     const target = join(root, "claim.json");
