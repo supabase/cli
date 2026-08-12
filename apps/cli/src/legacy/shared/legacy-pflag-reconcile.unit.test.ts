@@ -335,7 +335,7 @@ describe("legacyPflagProfileValue", () => {
   it("ignores the parsed flag when the --profile token was consumed by another flag, falling to the env var", () => {
     // `--domains --profile alternate.yml`: pflag hands `--profile` to
     // `--domains` and never marks profile changed, so viper falls to
-    // SUPABASE_PROFILE (binary-verified against apps/cli-go, PR #5974
+    // SUPABASE_PROFILE (binary-verified, PR #5974
     // round 7 — the demonstrated divergent input).
     expect(
       legacyPflagProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), "env.yml"),

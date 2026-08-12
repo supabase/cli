@@ -152,7 +152,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
   it("rejects a configured jwt_secret shorter than 16 characters", () => {
     // Go's Config.Validate fails this at config-load time, before any command
-    // can render output (pkg/config/apikeys.go:45-47) — reproduced as a thrown
+    // can render output — reproduced as a thrown
     // error here rather than silently signing with the too-short secret.
     const config = baseConfig({ auth: { jwt_secret: "a".repeat(15) } });
     expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -161,7 +161,7 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 
   describe("encrypted auth secrets", () => {
-    // Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext
+    // A known-good test vector: this ciphertext
     // decrypts to "value" under the keypair below.
     const VAULT_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
     const VAULT_ENCRYPTED =
@@ -190,8 +190,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
     it("fails config loading for an encrypted: secret with no private key, matching Go", () => {
       // Go aborts the whole command with `failed to parse config: <error>` rather
-      // than silently using the ciphertext as literal key material
-      // (`secret.go:30-73`, `config.go:704`).
+      // than silently using the ciphertext as literal key material.
       const config = baseConfig({ auth: { publishable_key: VAULT_ENCRYPTED } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
         "failed to parse config: missing private key",
@@ -226,8 +225,8 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 
   it("rejects an explicit empty project_id, matching Go's Config.Validate", () => {
-    // Go's Config.Validate checks ProjectId first, before any other field
-    // (pkg/config/config.go:990-991). The workdir-basename default is merged
+    // Go's Config.Validate checks ProjectId first, before any other field.
+    // The workdir-basename default is merged
     // in as a viper default BEFORE config.toml is merged, so an explicit
     // `project_id = ""` in the file overwrites that default with the literal
     // empty string rather than being treated as absent — Go fails outright.
@@ -244,7 +243,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
   it("rejects an absent project_id when the workdir basename sanitizes to empty, matching Go", () => {
     // `mergeDefaultValues` merges `sanitizeProjectId(filepath.Base(cwd))` in as a viper
-    // DEFAULT before config.toml is merged (config.go:690-699, via Eject at config.go:561-570) —
+    // DEFAULT before config.toml is merged —
     // so `c.ProjectId` is never Go's zero value by the time `Validate` runs. A workdir whose
     // basename sanitizes to `""` (every character invalid, e.g. `!!!`) therefore still fails
     // config loading in Go even with no `project_id` key in the file at all.
@@ -265,7 +264,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
   it("lets SUPABASE_PROJECT_ID override an explicit empty project_id", () => {
     // Viper's AutomaticEnv binds SUPABASE_PROJECT_ID with higher precedence
-    // than config.toml (config.go:529-535), so a non-empty env override must
+    // than config.toml, so a non-empty env override must
     // win even when the file's project_id is explicitly empty.
     const config = baseConfig({ project_id: "" });
     expect(() =>
@@ -288,8 +287,8 @@ describe("legacyResolveLocalConfigValues", () => {
   describe("SUPABASE_AUTH_* env overrides", () => {
     const tempRoot = useLegacyTempWorkdir("supabase-signing-keys-env-override-test-");
 
-    // Go's Config.Load binds Viper with SetEnvPrefix("SUPABASE") + AutomaticEnv()
-    // (pkg/config/config.go:529-535) — env vars take precedence over config.toml.
+    // Go's Config.Load binds Viper with SetEnvPrefix("SUPABASE") + AutomaticEnv() —
+    // env vars take precedence over config.toml.
     const ENV_KEYS = [
       "SUPABASE_AUTH_JWT_SECRET",
       "SUPABASE_AUTH_PUBLISHABLE_KEY",
@@ -436,8 +435,8 @@ describe("legacyResolveLocalConfigValues", () => {
 
   describe("non-auth SUPABASE_* env overrides", () => {
     // Go's Config.Load binds Viper with SetEnvPrefix("SUPABASE") + AutomaticEnv()
-    // generically across the whole config struct (pkg/config/config.go:529-535),
-    // not just auth fields — config_test.go:351,1061 exercise this against
+    // generically across the whole config struct,
+    // not just auth fields — this is also exercised against
     // auth.site_url, and status.go's toValues() reads the already-overridden
     // utils.Config.* directly, so every port/URL status derives must honor the
     // same override.
@@ -499,7 +498,7 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     // Go's Config.Load decodes `SUPABASE_*_PORT` overrides as `uint16` via
-    // Viper's UnmarshalExact (pkg/config/config.go:749-756, WeaklyTypedInput
+    // Viper's UnmarshalExact (WeaklyTypedInput
     // decodes the override string with strconv.ParseUint and hard-fails on a
     // malformed value) rather than silently producing a `NaN`-laced URL.
     it.each([
@@ -561,8 +560,7 @@ describe("legacyResolveLocalConfigValues", () => {
     // Unlike the malformed/out-of-range cases above (a decode-time hard-fail,
     // uniform across all four SUPABASE_*_PORT fields), db.port=0 is a
     // Config.Validate-time hard-fail specific to db.port: it has no `enabled`
-    // gate in Go, unlike api.port/studio.port/local_smtp.port
-    // (pkg/config/config.go:1006-1009,1031-1032,1070-1073,1081-1084).
+    // gate in Go, unlike api.port/studio.port/local_smtp.port.
     it("rejects a zero SUPABASE_DB_PORT override, matching Go's required-field check", () => {
       process.env["SUPABASE_DB_PORT"] = "0";
       const config = baseConfig();
@@ -571,8 +569,8 @@ describe("legacyResolveLocalConfigValues", () => {
       );
     });
 
-    // Unlike db.port, Go gates the api.port===0 rejection on api.enabled
-    // (pkg/config/config.go:1006-1008) — api.enabled defaults to true, so a
+    // Unlike db.port, Go gates the api.port===0 rejection on api.enabled —
+    // api.enabled defaults to true, so a
     // configured or env-overridden zero port is rejected by default.
     it("rejects a configured api.port of 0 when api is enabled", () => {
       const config = baseConfig({ api: { port: 0 } });
@@ -594,8 +592,8 @@ describe("legacyResolveLocalConfigValues", () => {
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).not.toThrow();
     });
 
-    // Go gates the studio.port===0 rejection on studio.enabled
-    // (pkg/config/config.go:1070-1073), same pattern as api.port above.
+    // Go gates the studio.port===0 rejection on studio.enabled,
+    // same pattern as api.port above.
     // studio.enabled defaults to true, so a configured or env-overridden zero
     // port is rejected by default.
     it("rejects a configured studio.port of 0 when studio is enabled", () => {
@@ -619,8 +617,7 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     // Go's Config.Validate parses studio.api_url with net/url.Parse right
-    // after the port check, still inside `if c.Studio.Enabled`
-    // (pkg/config/config.go:1074-1078).
+    // after the port check, still inside `if c.Studio.Enabled`.
     it("rejects a malformed studio.api_url (unterminated IPv6 literal) when studio is enabled", () => {
       const config = baseConfig({ studio: { api_url: "http://[::1" } });
       expect(() => legacyResolveLocalConfigValues(config, "127.0.0.1", WORKDIR)).toThrow(
@@ -648,7 +645,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
     // Go gates the local_smtp.port===0 rejection on local_smtp.enabled (Go's
     // struct field is still named `Inbucket` for the `[local_smtp]` TOML
-    // section, pkg/config/config.go:235,1081-1083), same pattern as api.port/
+    // section), same pattern as api.port/
     // studio.port above. local_smtp.enabled defaults to true, so a configured
     // or env-overridden zero port is rejected by default.
     it("rejects a configured local_smtp.port of 0 when local_smtp is enabled", () => {
@@ -758,8 +755,8 @@ describe("legacyResolveLocalConfigValues", () => {
 
     it("rejects a non-string root_key (e.g. a bare TOML integer), matching Go's Secret decode failure", () => {
       // `db.root_key` isn't modeled in `@supabase/config`'s schema, so Go's own
-      // decode failure (mapstructure rejecting a scalar into the `Secret` struct,
-      // `config.go:748-751`) must be reproduced here rather than letting the raw
+      // decode failure (mapstructure rejecting a scalar into the `Secret` struct)
+      // must be reproduced here rather than letting the raw
       // number flow unguarded into `envOverride`/`legacyDecryptAuthSecret`.
       const config = baseConfig();
       const document = { db: { root_key: 12345 } };
@@ -773,14 +770,13 @@ describe("legacyResolveLocalConfigValues", () => {
 
   // Go's Config.Validate runs ValidateBucketName over every [storage.buckets.*]
   // key right after db.major_version, unconditionally — there is no
-  // storage.enabled-style gate (pkg/config/config.go:1063-1068).
+  // storage.enabled-style gate.
   //
   // Moved to `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig`
   // calls) — this section has no L-specific derivation or env-override mechanics of its own.
 
   // Go's Config.Validate rejects an invalid edge_runtime.deno_version
-  // unconditionally — NOT gated on edge_runtime.enabled
-  // (pkg/config/config.go:1164-1173).
+  // unconditionally — NOT gated on edge_runtime.enabled.
   describe("edge_runtime.deno_version (required field in config)", () => {
     // The pure 0/1/2/generic-invalid/disabled assertions moved to
     // `legacy-config-validate.unit.test.ts` (direct `legacyValidateResolvedConfig` calls) —
@@ -901,7 +897,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
     // `experimental.webhooks.enabled`/`experimental.pgdelta.format_options` are Viper-bound like
     // any other leaf field once `[experimental]` is present (`ExperimentalBindStruct`/
-    // `AutomaticEnv`, `config.go:581-586`) — same SUPABASE_*-env-override MECHANICS split as
+    // `AutomaticEnv`) — same SUPABASE_*-env-override MECHANICS split as
     // `auth.captcha`/`auth.passkey` above: the required-field/JSON-shape checks themselves live in
     // `legacy-config-validate.unit.test.ts`, only the env-override wiring is exercised here.
     afterEach(() => {
@@ -970,8 +966,8 @@ describe("legacyResolveLocalConfigValues", () => {
   });
 
   describe("SUPABASE_API_TLS_ENABLED env override", () => {
-    // Go applies the Viper-bound `api.tls.enabled` override (config.go:582-586)
-    // BEFORE deriving the default `api.external_url` scheme (config.go:799-809),
+    // Go applies the Viper-bound `api.tls.enabled` override
+    // BEFORE deriving the default `api.external_url` scheme,
     // so an ambient/dotenv override flips http/https even when config.toml says
     // otherwise.
     afterEach(() => {
@@ -2248,9 +2244,9 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     describe("SUPABASE_AUTH_ENABLED env override", () => {
-      // `c.Auth.Enabled` is Viper-bound like any other field
-      // (config.go:582-586), so `Validate`'s `if c.Auth.Enabled` gate
-      // (config.go:1036,1059-1065) reads the POST-override value, not raw
+      // `c.Auth.Enabled` is Viper-bound like any other field,
+      // so `Validate`'s `if c.Auth.Enabled` gate
+      // reads the POST-override value, not raw
       // TOML — a stale/missing signing_keys_path must be skipped when auth is
       // disabled only via env/dotenv, and read when auth is enabled only via
       // env/dotenv despite TOML saying otherwise.
@@ -2408,7 +2404,7 @@ describe("legacyResolveLocalConfigValues", () => {
 
   describe("auth.captcha env overrides", () => {
     // `auth.captcha.*` is Viper-bound like any other nested field once `[auth.captcha]` is
-    // present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`).
+    // present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`).
     afterEach(() => {
       delete process.env["SUPABASE_AUTH_CAPTCHA_ENABLED"];
       delete process.env["SUPABASE_AUTH_CAPTCHA_PROVIDER"];
@@ -3549,7 +3545,7 @@ describe("legacyResolveLocalConfigValues", () => {
     }
 
     it("does not throw when tls.enabled with neither cert_path nor key_path set", () => {
-      // Go's Validate only rejects the "exactly one set" case (config.go:1010-1027);
+      // Go's Validate only rejects the "exactly one set" case;
       // tls.enabled with nothing configured still loads.
       const config = baseConfig({ api: { tls: { enabled: true } } });
       expect(() =>
@@ -3593,7 +3589,7 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     it("resolves cert_path/key_path against <workdir>/supabase unconditionally, no isAbsolute guard", () => {
-      // `path.Join` (config.go:961-965) absorbs a leading "/" — unlike
+      // `path.Join` absorbs a leading "/" — unlike
       // signing_keys_path, which Go DOES guard with filepath.IsAbs.
       writeTlsFile(tempRoot.current, "cert.pem");
       writeTlsFile(tempRoot.current, "key.pem");
@@ -3611,8 +3607,8 @@ describe("legacyResolveLocalConfigValues", () => {
       ).not.toThrow();
     });
 
-    // `Validate` nests the whole TLS branch inside `if c.Api.Enabled`
-    // (config.go:1006,1010) — a disabled api section never validates cert/key,
+    // `Validate` nests the whole TLS branch inside `if c.Api.Enabled` —
+    // a disabled api section never validates cert/key,
     // however invalid the pairing.
     it("skips TLS validation entirely when api is disabled", () => {
       const config = baseConfig({
@@ -4622,7 +4618,7 @@ describe("legacyResolveLocalJwks", () => {
   // Go quirk this reproduces: `a.SigningKeysPath` is resolved to an absolute path
   // unconditionally, but the FILE is only read into
   // `a.SigningKeys` when auth is enabled (`Config.Validate`'s file read is nested inside
-  // `if c.Auth.Enabled`, `config.go:1087,1110-1116`) — so a disabled-auth config with a
+  // `if c.Auth.Enabled`) — so a disabled-auth config with a
   // configured `signing_keys_path` never reads the file, and `a.SigningKeys` stays at its
   // unconditional `NewConfig()` default (the single ES256 key) rather than becoming empty.
   // The oct fallback is still skipped (`len(a.SigningKeysPath) == 0` is false), so the
@@ -4788,8 +4784,7 @@ describe("legacyResolveLocalJwks", () => {
 
     // The key divergence from `shared/functions/serve.ts`'s own (unrelated)
     // `finalizeAuthArtifacts`: `start` treats a remote-JWKS fetch failure as a hard,
-    // command-failing error (formerly `internal/start/start.go:274-277`, deleted as unreachable
-    // in CLI-1966; last present at commit a253ccba2) — `legacyResolveLocalJwks`
+    // command-failing error — `legacyResolveLocalJwks`
     // must propagate it too, not swallow it and continue with zero remote keys.
     it("fails the whole resolution when the remote JWKS fetch fails, unlike functions serve's leniency", async () => {
       vi.spyOn(globalThis, "fetch").mockImplementation(async () => {

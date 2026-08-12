@@ -87,13 +87,13 @@ describe("legacySqlFilesGlob", () => {
   it.effect(
     "surfaces a stat failure on a matched file as a warning instead of treating it as a regular file (Go parity)",
     () => {
-      // Go: `if info, err := fs.Stat(fsys, fp); err != nil { allErrors = append(allErrors,
-      // errors.Errorf("failed to stat matched file: %w", err)); continue }` (config.go:157-161) —
+      // `if info, err := fs.Stat(fsys, fp); err != nil { allErrors = append(allErrors,
+      // errors.Errorf("failed to stat matched file: %w", err)); continue }` —
       // a match that disappears (or is a broken symlink) between the glob and this stat
       // becomes a warning and is skipped entirely, never silently treated as a regular file.
       //
       // `fsys` here is always `afero.NewOsFs()` with the process cwd already the
-      // workdir (`ChangeWorkDir`, `cmd/root.go`), so `fs.Stat(fsys, fp)`'s embedded path
+      // workdir, so `fs.Stat(fsys, fp)`'s embedded path
       // in the resulting error is the workdir-RELATIVE `fp` (verified directly against
       // `os.Stat`/`afero.OsFs.Stat`, which pass the name through to `os.Stat` unchanged).
       // This module never `process.chdir`s, so the real stat needs an absolute path — but
@@ -127,8 +127,8 @@ describe("legacySqlFilesGlob", () => {
       // symlink — so a LITERAL pattern naming a broken symlink still Lstat-succeeds (the
       // link itself exists) and is reported as a match; the follow-up `fs.Stat` above is
       // what then fails with `failed to stat matched file: ...`, exactly like the
-      // wildcard-pattern case the previous test covers. Verified empirically against
-      // `apps/cli-go` (`afero.Glob`/`fs.Stat` scratch probe): a literal broken-symlink
+      // wildcard-pattern case the previous test covers. Verified empirically
+      // (`afero.Glob`/`fs.Stat` scratch probe): a literal broken-symlink
       // pattern always Globs to a match and always fails the follow-up Stat — never
       // "no files matched pattern".
       const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-literal-symlink-"));
@@ -156,7 +156,7 @@ describe("legacySqlFilesGlob", () => {
       // `afero.IOFS.Glob` (it implements `fs.GlobFS`), which delegates to `afero.Glob`
       // (`match.go`): `filepath.Split` followed by a switch that leaves a bare
       // `filepath.Separator` alone — every OTHER trailing separator is chopped, but the
-      // root one is deliberately preserved. Verified empirically against `apps/cli-go`:
+      // root one is deliberately preserved. Verified empirically:
       // with cwd elsewhere, a pattern rooted at "/" with a metacharacter in the first
       // component after the root slash still resolves against the filesystem ROOT, not
       // cwd. A canary file placed in the WORKDIR (never the real "/") proves this native
@@ -355,7 +355,7 @@ describe("legacySqlFilesGlob", () => {
       // doubled `/`. A literal (no-metacharacter) `schema_paths`/`sql_paths` entry like
       // `"schemas/"` resolves via `fs.Glob`'s fast path to the pattern VERBATIM, trailing
       // slash and all — so the walk over its children must not produce `schemas//a.sql`.
-      // Verified empirically against `apps/cli-go`: a scratch probe calling
+      // Verified empirically: a scratch probe calling
       // `config.Glob{"<dir>/"}.SQLFiles(...)` on a real trailing-slash directory returns
       // the single-slash path, not a doubled one.
       const dir = mkdtempSync(join(tmpdir(), "legacy-sql-glob-trailing-slash-"));
@@ -561,10 +561,10 @@ describe("legacySqlFilesGlob", () => {
       // treat every vanished child the same way: for a DIRECTORY `DirEntry`, it unconditionally
       // attempts a second `ReadDir` to recurse into it; when that child is gone, the second
       // `ReadDir` fails, and `walkMatchedDir`'s callback propagates the error unchanged
-      // (`if err != nil { return err }`, `config.go:198-199`) — `fs.WalkDir` returns it, and
+      // (`if err != nil { return err }`) — `fs.WalkDir` returns it, and
       // `walkMatchedDir` wraps it as `failed to walk matched directory: <cause>`, discarding
       // every file already collected. Verified empirically with a
-      // scratch `fs.WalkDir` probe against `apps/cli-go`'s real `walkMatchedDir`: removing a
+      // scratch `fs.WalkDir` probe against the real `walkMatchedDir`: removing a
       // nested subdirectory between the parent's `ReadDir` and the subdirectory's own `ReadDir`
       // reproduces exactly this — zero files, `failed to walk matched directory: open...
       // /nested: no such file or directory` — never a silent skip. This port's `stat` call
@@ -640,11 +640,11 @@ describe("legacySqlFilesGlob", () => {
       // `fs.WalkDir` returns the `ReadDir` error from its walkFn unchanged, which
       // stops the walk immediately; `walkMatchedDir` then wraps it as `failed to walk
       // matched directory: ...` and discards every file already found — never an empty
-      // (successful) match. Verified empirically against `apps/cli-go`: an unreadable
+      // (successful) match. Verified empirically: an unreadable
       // matched directory makes `Glob.SQLFiles` return that error with zero files.
       //
-      // `fsys` here is always `afero.OsFs` with the process cwd already the workdir
-      // (`ChangeWorkDir`, `cmd/root.go`), so the `ReadDir` error's embedded path is the
+      // `fsys` here is always `afero.OsFs` with the process cwd already the workdir,
+      // so the `ReadDir` error's embedded path is the
       // workdir-relative matched directory (`schemas`), never an absolute one. This
       // module never `process.chdir`s, so the real read needs an absolute path, but the
       // warning must still report the relative form.
@@ -800,7 +800,7 @@ describe("legacySqlFilesGlob", () => {
   it.effect(
     "sorts direct wildcard matches by UTF-8 byte order, not UTF-16 code units (Go sort.Strings parity)",
     () => {
-      // `sort.Strings` (`Glob.SQLFiles`, `config.go:155`) orders the raw UTF-8 bytes
+      // `sort.Strings` (`Glob.SQLFiles`) orders the raw UTF-8 bytes
       // of each match. A supplementary-plane character (here, an emoji — 4-byte UTF-8,
       // lead byte 0xF0) always sorts AFTER a 3-byte-encoded BMP character (here, a
       // fullwidth exclamation mark — lead byte 0xEF) in Go, because 0xF0 > 0xEF. JS's

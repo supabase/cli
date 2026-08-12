@@ -52,8 +52,7 @@ describe("encodeGoJson", () => {
   });
 
   it("emits backups: null and an empty physical_backup_data object for a PITR-only response", () => {
-    // Matches `apps/cli-go/internal/backups/list/list_test.go` "encodes json output" fixture
-    // (deleted in CLI-1970; last present at commit 7b469f5b3) —
+    // Matches the established "encodes json output" fixture —
     // empty backups slice serializes as null, omitempty physical_backup_data fields drop out.
     const out = encodeGoJson(
       {
@@ -182,7 +181,7 @@ describe("encodeEnv", () => {
   });
 
   it("matches Go's full env output for the sample backup response", () => {
-    // Verified byte-for-byte against `apps/cli-go` invoking utils.EncodeOutput("env", ...).
+    // Verified byte-for-byte against `utils.EncodeOutput("env", ...)`.
     expect(encodeEnv(SAMPLE_RESPONSE)).toBe(
       [
         'BACKUPS=""',
@@ -221,7 +220,7 @@ describe("encodeEnv", () => {
   });
 
   it("matches Go for the PITR-only response shape with empty physical_backup_data", () => {
-    // Verified byte-for-byte against `apps/cli-go` invoking utils.EncodeOutput("env", ...)
+    // Verified byte-for-byte against `utils.EncodeOutput("env", ...)`
     // with a JSON-decoded V1BackupsResponse whose physical_backup_data is `{}`.
     expect(
       encodeEnv({
