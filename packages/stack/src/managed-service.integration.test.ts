@@ -199,6 +199,21 @@ describe("ordinary-folder managed stack contract", () => {
     expect(modeOf(stack.paths.runtime)).toBe(0o700);
   });
 
+  it("retightens managed state permissions left loose by an earlier build", async () => {
+    const root = makeRoot();
+    const stateRoot = join(root, "managed");
+    const registryPath = managedRegistryPath(stateRoot);
+    mkdirSync(stateRoot, { recursive: true, mode: 0o755 });
+    writeFileSync(registryPath, "", { mode: 0o644 });
+
+    const service = makePersistentService(root);
+    service.close();
+
+    const modeOf = (path: string): number => statSync(path).mode & 0o777;
+    expect(modeOf(stateRoot)).toBe(0o700);
+    expect(modeOf(registryPath)).toBe(0o600);
+  });
+
   it("keeps read-only discovery registration-free", async () => {
     const root = makeRoot();
     const workspace = makeWorkspace(root);
