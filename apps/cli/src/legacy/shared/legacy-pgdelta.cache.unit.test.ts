@@ -400,6 +400,33 @@ describe("legacyHashDeclarativeSchemas", () => {
     );
   });
 
+  // Retention removal failures must propagate — a silently-failing cleanup would let
+  // snapshots accumulate forever while every run reports success (codex review, PR #6162).
+  it.effect("cleanup fails when an old snapshot cannot be removed", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    mkdirSync(tempDir, { recursive: true });
+    for (const ts of [100, 200, 300]) {
+      writeFileSync(join(tempDir, `catalog-local-declarative-h-${ts}.json`), "{}");
+    }
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const err = yield* fs.readDirectory(join(dir, "does-not-exist")).pipe(Effect.flip);
+        const failing: FileSystem.FileSystem = { ...fs, remove: () => Effect.fail(err) };
+        return yield* legacyCleanupOldDeclarativeCatalogs(failing, path, tempDir, "local").pipe(
+          Effect.exit,
+        );
+      }),
+    ).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   // A root-level failure that isn't not-found (permissions, I/O) must propagate rather
   // than be treated as an empty tree — an empty-tree hash could cache an empty catalog
   // and let sync emit destructive drops (codex review, PR #6162).

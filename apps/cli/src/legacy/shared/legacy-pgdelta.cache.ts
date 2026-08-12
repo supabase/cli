@@ -465,10 +465,10 @@ const cleanupOldCatalogsByFamily = Effect.fnUntraced(function* (
     .sort((a, b) =>
       b.timestamp === a.timestamp ? (a.name > b.name ? -1 : 1) : b.timestamp - a.timestamp,
     );
+  // Removal failures propagate: retention silently not being enforced would let
+  // snapshots accumulate indefinitely while every run reports a successful write.
   for (let index = CATALOG_RETENTION_COUNT; index < files.length; index++) {
-    yield* fs
-      .remove(path.join(tempDir, files[index]!.name))
-      .pipe(Effect.orElseSucceed(() => undefined));
+    yield* fs.remove(path.join(tempDir, files[index]!.name));
   }
 });
 
