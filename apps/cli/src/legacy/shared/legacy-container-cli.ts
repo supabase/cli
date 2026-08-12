@@ -217,7 +217,7 @@ export function legacyRunContainerCliExpectSuccess<E>(
  * Like {@link containerCliExitCode}, but also collecting the child's stdout —
  * for callers that need the CLI's own report of what it did (e.g. the `docker
  * … prune` deleted-ID lists backing `--debug` "Pruned …" reports in
- * `DockerRemoveAll`, `docker.go:123-143`). Collecting (i.e. reading) stdout
+ * `DockerRemoveAll`). Collecting (i.e. reading) stdout
  * also sidesteps the unread-pipe hang that `stdout: "ignore"` callers avoid by
  * discarding it. stderr is discarded, matching the exit-code-only helper.
  * `podmanArgs` has the same meaning as on {@link containerCliExitCode}.
@@ -260,8 +260,8 @@ export const legacyContainerCliExitCodeAndStdout = (
   );
 
 /**
- * Mirrors `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`,
- * used by `apps/cli-go/internal/utils/docker.go:128`): splits each version on
+ * Mirrors `versions.GreaterThanOrEqualTo` (`docker/api/types/versions`):
+ * splits each version on
  * `.` and compares the parts numerically, component by component — not a
  * naive string/float compare, which would misorder e.g. `"1.9"` vs `"1.10"`.
  */
@@ -278,12 +278,12 @@ function isDockerApiVersionAtLeast(version: string, minVersion: string): boolean
 
 /**
  * Docker CLI's own `volume prune --all` flag is annotated `version: "1.42"`
- * (vendored `docker/cli@v28.5.2` `cli/command/volume/prune.go:53`) and
+ * (vendored `docker/cli@v28.5.2`) and
  * enforced by Cobra's `Args` validator *before* `RunE` runs:
  * against a daemon with a lower negotiated
  * API version, `docker volume prune --all ...` exits nonzero without pruning
- * anything at all, rather than degrading gracefully. Go avoids ever hitting
- * that by gating the equivalent `all=true` filter on
+ * anything at all, rather than degrading gracefully. This gates the equivalent
+ * `all=true` filter on
  * `Docker.ClientVersion() >= "1.42"`; there is no
  * persistent Engine API client here to ask, so this asks the `docker` CLI
  * itself via `docker version`.

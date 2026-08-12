@@ -36,7 +36,7 @@ export interface LegacySeedConfig {
 // Only metadata is kept during the pending scan — the decoded statements are NOT
 // retained. `SeedFile` holds just
 // `{Path, Hash, Dirty}` and re-parses each file individually inside the apply loop
-// ("Parse each file individually to reduce memory usage", `file.go:198-203`), so a
+// ("Parse each file individually to reduce memory usage"), so a
 // large/many-file seed set never has every file's statements in memory at once.
 interface LegacyPendingSeed {
   readonly path: string;
@@ -46,8 +46,8 @@ interface LegacyPendingSeed {
 
 /**
  * Resolves `[db.seed].sql_paths` to existing files, porting `config.Glob.SQLFiles`
- * (`pkg/migration/seed.go:35`, via the shared {@link legacySqlFilesGlob} traversal —
- * also used by `legacyGetPendingSeeds` (`legacy-seed-ops.ts`) for the same Go field on
+ * (via the shared {@link legacySqlFilesGlob} traversal —
+ * also used by `legacyGetPendingSeeds` (`legacy-seed-ops.ts`) for the same field on
  * the `db push`/`db reset` path, and by `legacyApplySchemaFiles` (`legacy-migration-apply.ts`)
  * for `[db.migrations].schema_paths`). `GetPendingSeeds` prints a single unconditional
  * `WARN: <joined>` line for any glob problem — unlike the schema-files
@@ -68,9 +68,9 @@ const resolveSeedFiles = (
 
 /**
  * Applies pending seed files, port of `applySeedFiles` + `GetPendingSeeds` +
- * `SeedData` (`internal/migration/apply/apply.go:40`, `pkg/migration/seed.go`):
+ * `SeedData`:
  * gated on `db.seed.enabled`; a new seed runs its statements + records its hash;
- * a changed seed only updates the recorded hash (Go's "dirty" → skip statements);
+ * a changed seed only updates the recorded hash ("dirty" → skip statements);
  * an unchanged seed is skipped entirely.
  */
 export const legacyApplySeedFiles = (
@@ -109,8 +109,8 @@ export const legacyApplySeedFiles = (
       const previous = applied.get(relativePath);
       if (previous === hash) continue; // unchanged → skip entirely
       // Keep only metadata; the statements are read + split per-file in the apply loop
-      // below (Go hashes each file up front via io.Copy in `NewSeedFile` but does not
-      // retain its contents, `file.go:184-196`).
+      // below (each file is hashed up front via io.Copy in `NewSeedFile` but does not
+      // retain its contents).
       pending.push({
         path: relativePath,
         hash,

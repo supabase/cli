@@ -190,7 +190,7 @@ describe("legacy inspect db query runner", () => {
       expect(connection.querySql).toBe(legacyDbStatsSpec.sql);
       expect(connection.queryParams?.[1]).toBe("postgres");
       expect(Array.isArray(connection.queryParams?.[0])).toBe(true);
-      // stdout is byte-exact the Go-parity glamour table.
+      // stdout is byte-exact with the rendered glamour table.
       const expected = renderGlamourTable(legacyDbStatsSpec.headers, [
         legacyDbStatsSpec.project(DB_STATS_ROW, { conn: LOCAL_CONN, isLocal: true }),
       ]);
@@ -213,10 +213,9 @@ describe("legacy inspect db query runner", () => {
   });
 
   it.live("renders an empty backtick-wrapped cell as two literal backticks (role-stats)", () => {
-    // Go wraps every role-stats cell in `` `%s` `` (role_stats.go:43); the postgres
+    // Every role-stats cell wraps in `` `…` ``; the postgres
     // row has no custom config, so glamour emits an empty code span as the two
-    // literal backtick characters. The TS port must byte-match, including the
-    // resulting column width.
+    // literal backtick characters, including the resulting column width.
     const ROLE_ROW = {
       role_name: "postgres",
       active_connections: 3,
@@ -287,7 +286,7 @@ describe("legacy inspect db query runner", () => {
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW] });
     return Effect.gen(function* () {
       yield* legacyInspectDbDbStats(flags());
-      // Go's `--linked` defaults to true; the runner derives connType="linked" from absence.
+      // `--linked` is the default; the runner derives connType="linked" from absence.
       expect(resolver.resolveInput?.connType).toBe("linked");
       expect(Option.isNone(resolver.resolveInput?.dbUrl ?? Option.some("x"))).toBe(true);
     }).pipe(Effect.provide(layer));
@@ -328,7 +327,7 @@ describe("legacy inspect db query runner", () => {
   });
 
   it.live("--local=false is Changed and routes to local (not linked)", () => {
-    // Go's pflag treats `--local=false` as Changed regardless of value; value-based
+    // `--local=false` is explicitly passed regardless of value; value-based
     // detection would miss it and fall through to the linked default. This test guards
     // that regression.
     const { layer, resolver } = setup({ rows: [DB_STATS_ROW], cliArgs: ["--local=false"] });

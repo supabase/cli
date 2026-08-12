@@ -21,8 +21,7 @@ export class LegacyProjectRefReadError extends Data.TaggedError("LegacyProjectRe
 }
 
 /**
- * Absolute paths to the files the Go CLI writes under `<workdir>/supabase/.temp/`.
- * Mirrors the `utils.*Path` constants in `apps/cli-go/internal/utils/misc.go:84-98`.
+ * Absolute paths to the established files written under `<workdir>/supabase/.temp/`.
  *
  * `supabase link` / `supabase unlink` are the authoritative writers and remover
  * of this directory, but several layers (`legacy-project-ref.layer.ts`,

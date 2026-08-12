@@ -68,10 +68,8 @@ const config = {
     Flag.optional,
   ),
   // Optional so the handler can distinguish "flag explicitly set false"
-  // from "flag absent" — mirrors Go's `cmdFlags.Changed("persistent")` check
-  // in `apps/cli-go/cmd/branches.go:53` (deleted in CLI-1970; last present at
-  // commit 7b469f5b3). Effect CLI surface: `--persistent`
-  // sets `Option.some(true)`, `--no-persistent` sets `Option.some(false)`,
+  // from "flag absent". Effect CLI surface: `--persistent` sets
+  // `Option.some(true)`, `--no-persistent` sets `Option.some(false)`,
   // absent stays `Option.none()`.
   persistent: Flag.boolean("persistent").pipe(
     Flag.withDescription("Whether to create a persistent branch."),
@@ -103,7 +101,7 @@ export const legacyBranchesCreateCommand = Command.make("create", config).pipe(
     ),
   ),
   // `stdinLayer`: the confirmation prompt reads piped stdin via `legacyPromptYesNo`
-  // (Go's `Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
+  // on a non-TTY stdin.
   Command.provide(
     Layer.mergeAll(legacyManagementApiRuntimeLayer(["branches", "create"]), stdinLayer),
   ),

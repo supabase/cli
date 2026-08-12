@@ -7,7 +7,7 @@ const E2E_TIMEOUT_MS = 30_000;
 // A definitely-closed local port: resolution succeeds (the `--db-url` is parsed
 // directly, no config.toml / running stack needed), then the native handler dials
 // and fails fast with a connection error. This exercises the real subprocess path
-// — flag parse → resolution → native query run — without the Go binary and without
+// — flag parse → resolution → native query run — without
 // depending on a live database in CI.
 const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
 
@@ -28,7 +28,7 @@ describe("supabase inspect db (legacy)", () => {
         { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
-      // The native handler writes the connection diagnostic to stderr (Go parity)
+      // The native handler writes the connection diagnostic to stderr
       // and then surfaces the connection failure.
       expect(stderr).toContain("Connecting to remote database...");
       expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);

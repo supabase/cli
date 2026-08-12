@@ -20,12 +20,10 @@ export class LegacyDbConfigParseUrlError extends Data.TaggedError("LegacyDbConfi
 }
 
 /**
- * `supabase/config.toml` exists but could not be read or parsed. Mirrors Go's
- * `flags.LoadConfig` → `config.Load` → `mergeFileConfig` returning the read/decode
- * error and aborting, rather than silently running against the default local database
- * (`apps/cli-go/internal/utils/flags/config_path.go:10`, `pkg/config/config.go:528`).
+ * `supabase/config.toml` exists but could not be read or parsed: the read/decode
+ * error aborts the load, rather than silently running against the default local database.
  * A missing file (`os.ErrNotExist` / `PlatformError` reason `"NotFound"`) is not an
- * error — defaults apply, matching Go.
+ * error — defaults apply.
  */
 export class LegacyDbConfigLoadError extends Data.TaggedError("LegacyDbConfigLoadError")<{
   readonly message: string;

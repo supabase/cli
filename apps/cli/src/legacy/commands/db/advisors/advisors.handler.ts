@@ -37,10 +37,10 @@ import {
 import { legacyFetchPerformanceAdvisors, legacyFetchSecurityAdvisors } from "./advisors.linked.ts";
 import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
 
-/** Go's advisors PreRunE `utils.CmdSuggestion` (`cmd/db.go`). */
+/** Established output-contract suggestion for a missing/invalid access token. */
 const loginSuggestion = (): string => `Run ${legacyAqua("supabase login")} first.`;
 
-/** Go's `queryLints` body, minus the transaction the caller owns (`advisors.go:102-152`). */
+/** Queries and scans the lints, minus the transaction the caller owns. */
 const queryLints = Effect.fnUntraced(function* (session: LegacyDbSession) {
   const [setupSql, querySql] = splitLegacyLintsSql();
   yield* session.exec(setupSql).pipe(
@@ -62,7 +62,7 @@ const queryLints = Effect.fnUntraced(function* (session: LegacyDbSession) {
   return rows.map(scanLegacyAdvisorLintRow);
 });
 
-/** Go's `RunLocal` lint gathering (`advisors.go:63-77`). */
+/** Gathers lints from a local (or `--db-url`) database connection. */
 const runLocal = Effect.fnUntraced(function* (
   flags: LegacyDbAdvisorsFlags,
   dnsResolver: "native" | "https",
@@ -108,8 +108,7 @@ const runLocal = Effect.fnUntraced(function* (
   return filterLegacyAdvisorLints(lints, advisorType, level);
 });
 
-/** Go's root `PersistentPreRunE` (`cmd/root.go:118`) + advisors `PreRunE` +
- *  `RunLinked` (`cmd/db.go:355-371`, `advisors.go:79-100`). */
+/** Gathers lints from the Management API for the linked project. */
 const runLinked = Effect.fnUntraced(function* (
   dnsResolver: "native" | "https",
   advisorType: string,
@@ -119,35 +118,28 @@ const runLinked = Effect.fnUntraced(function* (
   const credentials = yield* LegacyCredentials;
   const projectRefResolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  // Go wraps every Management API response in identityTransport for session
-  // identity stitching (`internal/utils/api.go:128`); the raw-HTTP advisor GETs
-  // run the same stitch. One stitcher shared across both endpoint calls so it
-  // fires at most once per session, matching Go's NeedsIdentityStitch gate.
+  // Every Management API response is wrapped in identity stitching; the
+  // raw-HTTP advisor GETs run the same stitch. One stitcher shared across both
+  // endpoint calls so it fires at most once per session.
   const { stitch } = yield* LegacyIdentityStitch;
 
-  // Go's `ParseDatabaseConfig` linked branch loads the project ref
-  // (`internal/utils/flags/db_url.go:88`) BEFORE the host probe (`:95`), and
-  // `Execute` runs `ensureProjectGroupsCached` after the command — INCLUDING the
-  // error path (`cmd/root.go:176`, before the `err != nil` panic at `:185`) — so
-  // the linked-project cache is written whenever `flags.ProjectRef` was set, even
-  // when the DB-config resolve below fails (e.g. the IPv6 error). Load the ref
-  // first (non-prompting `LoadProjectRef`; ErrNotLinked → empty ref → nothing to
-  // cache, matching Go) and wrap everything after it in the cache finalizer.
+  // The linked-project cache is written whenever the project ref was resolved,
+  // even when the DB-config resolve below fails (e.g. the IPv6 error). Load
+  // the ref first (non-prompting `loadProjectRef`; not-linked → empty ref →
+  // nothing to cache) and wrap everything after it in the cache finalizer.
   const ref = yield* projectRefResolver.loadProjectRef(Option.none());
 
   return yield* Effect.gen(function* () {
-    // Root PersistentPreRunE's `ParseDatabaseConfig` host probe / login-role mint
-    // ("Initialising login role...") / pooler / IPv6 fallback. `RunLinked` ignores
-    // the resolved config (`advisors.go:79-100`), so resolve-and-discard — purely
-    // for the side effects and early-failure ordering (before the token gate,
-    // matching root PersistentPreRunE → advisors PreRunE).
+    // The host probe / login-role mint ("Initialising login role...") / pooler
+    // / IPv6 fallback. The linked lint-gathering path ignores the resolved
+    // config, so resolve-and-discard — purely for the side effects and
+    // early-failure ordering (before the token gate).
     yield* resolver.resolve({ dbUrl: Option.none(), connType: "linked", dnsResolver });
 
-    // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
-    // the token (env/keyring/file) against the `sbp_` pattern and fails with
-    // `ErrInvalidToken` before calling the API (`internal/utils/access_token.go:24-33`).
-    // `LegacyCredentials.getAccessToken` is the validating equivalent: map a
-    // malformed token to the invalid-token error and an absent token to missing.
+    // The access token is validated (env/keyring/file) against the `sbp_`
+    // pattern and fails before calling the API. `LegacyCredentials.getAccessToken`
+    // is the validating equivalent: map a malformed token to the invalid-token
+    // error and an absent token to missing.
     const tokenOpt = yield* credentials.getAccessToken.pipe(
       Effect.catchTag("LegacyInvalidAccessTokenError", (cause) =>
         Effect.fail(
@@ -182,7 +174,7 @@ const runLinked = Effect.fnUntraced(function* (
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));
 });
 
-/** Go's `outputAndCheck` (`advisors.go:241-262`). */
+/** Prints the lints (or the empty-result message) and applies `--fail-on`. */
 const outputAndCheck = Effect.fnUntraced(function* (
   lints: ReadonlyArray<LegacyAdvisorLint>,
   failOn: string,
@@ -208,7 +200,7 @@ const outputAndCheck = Effect.fnUntraced(function* (
 
   const failOnLevel = LEGACY_ADVISORS_LEVEL_ENUM.toEnum(failOn);
   if (legacyFailsOn(lints, (lint) => lint.level, failOnLevel, LEGACY_ADVISORS_LEVEL_ENUM)) {
-    // advisors echoes the raw `--fail-on` flag value (Go `advisors.go:257`).
+    // Echoes the raw `--fail-on` flag value.
     const message = `fail-on is set to ${failOn}, non-zero exit`;
     if (output.format === "text") {
       return yield* Effect.fail(new LegacyDbAdvisorsFailOnError({ message }));
@@ -222,8 +214,8 @@ const runAdvisors = Effect.fnUntraced(function* (
   dnsResolver: "native" | "https",
   target: LegacyDbTargetSelection,
 ) {
-  // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local"), keyed off the
-  // explicitly-set flags (cobra's `Changed`), not the `--local` default value.
+  // Mutually-exclusive db-url/linked/local group, keyed off the
+  // explicitly-set flags, not the `--local` default value.
   const setFlags = target.setFlags;
   if (setFlags.length > 1) {
     return yield* Effect.fail(
@@ -237,8 +229,8 @@ const runAdvisors = Effect.fnUntraced(function* (
   const level = Option.getOrElse(flags.level, () => "warn");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
 
-  // Go branches on whether `--linked` was explicitly set (`cmd/db.go` RunE):
-  // linked → Management API; otherwise local / `--db-url`.
+  // Branches on whether `--linked` was explicitly set: linked → Management
+  // API; otherwise local / `--db-url`.
   const filtered =
     target.connType === "linked"
       ? yield* runLinked(dnsResolver, advisorType, level)
@@ -254,7 +246,7 @@ export const legacyDbAdvisors = Effect.fn("legacy.db.advisors")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const cliArgs = yield* CliArgs;
   const target = resolveLegacyDbTargetFlags(cliArgs.args);
-  // Flush telemetry on success and failure (Go PersistentPostRun). Command-level
-  // instrumentation / JSON error handling are applied by `advisors.command.ts`.
+  // Flush telemetry on success and failure. Command-level instrumentation /
+  // JSON error handling are applied by `advisors.command.ts`.
   yield* runAdvisors(flags, dnsResolver, target).pipe(Effect.ensuring(telemetryState.flush));
 });

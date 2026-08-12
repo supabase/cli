@@ -21,7 +21,6 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Repairs the migration history of the linked project."),
-    // Go: `repairFlags.Bool("linked", true, …)`.
     Flag.withDefault(true),
   ),
   local: Flag.boolean("local").pipe(
@@ -56,7 +55,7 @@ export const legacyMigrationRepairCommand = Command.make("repair", config).pipe(
           password: flags.password,
         },
         // --status is Flag.choice and is auto-detected as safe via `config`
-        // below (Go's isEnumFlag, cmd/root_analytics.go:110-116); password stays redacted.
+        // below; password stays redacted.
         config,
         aliases: { p: "password" },
       }),

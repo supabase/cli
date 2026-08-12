@@ -6,7 +6,6 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/locks/locks.sql` (deleted in CLI-1970; last present at commit 7b469f5b3).
 const SQL = `SELECT
   pg_stat_activity.pid,
   COALESCE(pg_class.relname, 'null') AS relname,
@@ -22,9 +21,7 @@ ORDER BY query_start`;
 
 /**
  * `inspect db locks` — queries holding an exclusive lock on a relation.
- * Port of `apps/cli-go/internal/inspect/locks/locks.go` (deleted in CLI-1970;
- * last present at commit 7b469f5b3). The `stmt` column is
- * whitespace-collapsed; the rest render via their `fmt` verbs.
+ * The `stmt` column is whitespace-collapsed; the rest render as-is.
  */
 export const legacyLocksSpec: LegacyInspectQuerySpec = {
   name: "locks",

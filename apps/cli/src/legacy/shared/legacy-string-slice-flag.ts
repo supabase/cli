@@ -287,24 +287,23 @@ export function legacyParseStringSliceFlag(
  * Builds a legacy flag that ports a pflag `StringSliceVar`/`StringSliceVarP`:
  * repeatable, CSV-split per occurrence, accumulated across repeats.
  *
- * On malformed CSV it fails at parse time — matching Go, where pflag's
- * `readAsCSV` error aborts cobra's `ParseFlags` before `PersistentPreRunE`
- * (so before the `--experimental` gate, telemetry, and the handler) — with
- * pflag's exact diagnostic: `invalid argument %q for %q flag: %v`
- * (pflag v1.0.10 `errors.go:116`, wrapped per occurrence in `flag.go:493`).
- * The full Go message is emitted as the failure's `expected` text so the
+ * On malformed CSV it fails at parse time — matching pflag's
+ * `readAsCSV` error aborting flag parsing before the `--experimental` gate,
+ * telemetry, and the handler — with
+ * pflag's exact diagnostic: `invalid argument %q for %q flag: %v`.
+ * The full established message is emitted as the failure's `expected` text so the
  * renderer's pflag passthrough (`formatInvalidValueMessage`) prints it
- * verbatim, byte-matching the Go CLI's stderr line. `JSON.stringify` mirrors
+ * verbatim, byte-matching the established stderr line. `JSON.stringify` mirrors
  * `%q` for the ASCII/printable-Unicode values these flags carry —
  * including `\n`/`\r` escapes in multiline values (same precedent as
  * `sso.format.ts`).
  *
  * `options.alias` ports the `StringSliceVarP` shorthand (e.g. `start`'s
  * `-x`). pflag then frames the diagnostic with BOTH spellings — `invalid
- * argument %q for "-x, --exclude" flag: ...` (`errors.go:108-117` branches on
+ * argument %q for "-x, --exclude" flag: ...` (branches on
  * `flag.Shorthand`) — regardless of which one the user typed, so the alias
  * must be registered here (not piped on afterwards) for the framing to
- * stay byte-identical to Go.
+ * stay byte-identical.
  */
 export function legacyStringSliceFlag(
   name: string,

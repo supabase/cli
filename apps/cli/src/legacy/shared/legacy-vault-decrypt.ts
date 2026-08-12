@@ -2,16 +2,13 @@ import { Buffer } from "node:buffer";
 import { decrypt, PrivateKey } from "eciesjs";
 
 /**
- * dotenvx vault-secret decryption — a port of `config.Secret.Decrypt`.
- * Go decrypts with
- * `github.com/ecies/go/v2`: ECIES over secp256k1 (uncompressed ephemeral key,
+ * dotenvx vault-secret decryption: ECIES over secp256k1 (uncompressed ephemeral key,
  * HKDF-SHA256 with no salt/info, AES-256-GCM with a 16-byte nonce). dotenvx
  * itself encrypts with the JS `eciesjs` library, whose defaults match that wire
  * format byte-for-byte, so we decrypt with `eciesjs` here. Validated against
- * Go's test vector (`pkg/config/secret_test.go`).
+ * a known-good test vector.
  *
- * Go runs this inside `config.Load` (the `DecryptSecretHookFunc` decode hook),
- * so an `encrypted:` value that cannot be decrypted aborts the whole command
+ * An `encrypted:` value that cannot be decrypted aborts the whole command
  * with `failed to parse config: <error>` — it is never silently skipped. The
  * caller maps a non-`ok` result into that error.
  */

@@ -8,10 +8,8 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 // ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per Go errorf site.
-// Names trace back to `apps/cli-go/internal/branches/<sub>/` for grepability
-// (deleted in CLI-1970; last present at commit 7b469f5b3).
-// Templates match Go's `errors.Errorf(...)` phrasing byte-for-byte.
+// HTTP-bound errors — one (Network + UnexpectedStatus) pair per error site.
+// Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
 // ---------------------------------------------------------------------------
 
 export class LegacyBranchesListNetworkError extends Data.TaggedError(
@@ -359,10 +357,9 @@ export class LegacyBranchesBranchingDisabledError extends Data.TaggedError(
 )<{
   readonly message: string;
   /**
-   * Mirrors Go's `utils.CmdSuggestion = "Create your first branch with: supabase
-   * branches create"` (`apps/cli-go/cmd/branches.go:252`, deleted in CLI-1970;
-   * last present at commit 7b469f5b3). Picked up by
-   * `normalizeCliError` and printed after the error message in text mode.
+   * Established suggestion text: "Create your first branch with: supabase
+   * branches create". Picked up by `normalizeCliError` and printed after the
+   * error message in text mode.
    */
   readonly suggestion: string;
 }> {

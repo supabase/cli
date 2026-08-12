@@ -7,8 +7,8 @@ import type { LegacyDbConnType } from "./legacy-db-target-flags.ts";
  * (and later `db reset` / `db dump`).
  *
  * `connType` encodes which selector flag was explicitly set by the user, derived
- * from raw argv via `resolveLegacyDbTargetFlags` (Changed-first, matching Go's
- * `ParseDatabaseConfig` at `apps/cli-go/internal/utils/flags/db_url.go:46-63`):
+ * from raw argv via `resolveLegacyDbTargetFlags` (Changed-first, matching
+ * `ParseDatabaseConfig`'s precedence):
  * - "db-url" → `--db-url` was changed (read `dbUrl.value`)
  * - "linked" → `--linked` was changed (Management API path)
  * - "local" → `--local` was changed (explicit local path)
@@ -30,10 +30,9 @@ export interface LegacyDbConfigFlags {
    */
   readonly resolveVaultSecrets?: boolean;
   /**
-   * The `--password` / `-p` flag value (`viper.GetString("DB_PASSWORD")`,
-   * bound via `viper.BindPFlag` in `apps/cli-go/cmd/db.go`). When `Some`, it
+   * The `--password` / `-p` flag value. When `Some`, it
    * takes precedence over the `SUPABASE_DB_PASSWORD` env var on the linked path,
-   * matching viper's flag-over-env precedence. Commands without a `--password`
+   * matching the established flag-over-env precedence. Commands without a `--password`
    * flag (e.g. `test db`) omit it; the resolver then falls back to env only.
    */
   readonly password?: Option.Option<string>;

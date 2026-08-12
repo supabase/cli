@@ -15,8 +15,7 @@ export interface LegacyMigrateAndSeedConfig {
   readonly migrationsEnabled: boolean;
   readonly seed: LegacySeedConfig;
   /**
-   * `--experimental`/`SUPABASE_EXPERIMENTAL` (`viper.GetBool("EXPERIMENTAL")`,
-   * `internal/migration/apply/apply.go:19`) — together with an empty `version` and
+   * `--experimental`/`SUPABASE_EXPERIMENTAL` — together with an empty `version` and
    * `pgDeltaEnabled === false`, switches the branch below from applying migration files to
    * applying `schemaPaths`'s declarative schema files instead. `migration down` (the other
    * caller of this function) always passes a concrete `version`, so `len(version) == 0`

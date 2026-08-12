@@ -31,7 +31,6 @@ import {
   LegacyMigrationMissingRemoteError,
 } from "./up.errors.ts";
 
-/** Go's `suggestIgnoreFlag` (`internal/migration/up/up.go:63`). */
 const suggestIgnoreFlag = (paths: ReadonlyArray<string>): string =>
   "\nRerun the command with --include-all flag to apply these migrations:\n" +
   `${legacyBold(paths.join("\n"))}\n`;
@@ -59,7 +58,7 @@ const runUp = Effect.fnUntraced(function* (
   const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
-    // up defaults to `--local` (Go: `Bool("local", true)`).
+    // up defaults to `--local`.
     const cfg = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
@@ -70,8 +69,8 @@ const runUp = Effect.fnUntraced(function* (
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
-        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        // The connect diagnostic prints to stderr before dialing,
+        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -106,8 +105,8 @@ const runUp = Effect.fnUntraced(function* (
               }),
             );
           }
-          // Go's `--include-all`: the out-of-order set + everything after the
-          // applied prefix (`up.go:47`). Slices the same version-ordered list
+          // `--include-all`: the out-of-order set + everything after the
+          // applied prefix. Slices the same version-ordered list
           // `result.paths` was taken from — indexing a name-ordered list with a
           // version-ordered offset would skip a pending migration and re-apply
           // an already-applied one.

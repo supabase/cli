@@ -17,17 +17,16 @@ import { legacySplitAndTrim } from "./legacy-sql-split.ts";
  * single home for the migration-history DDL/DML and the read/reconcile helpers
  * shared by `db diff/pull`, `migration *`, and the declarative generate/sync
  * handlers. SQL is verbatim from `pkg/migration/history.go`; the helpers
- * port `pkg/migration/list.go`, `internal/migration/list/list.go`, and
- * `internal/db/pull/pull.go`.
+ * port the established list/reconcile logic.
  */
 
 // Migration-history DDL/DML, verbatim from `pkg/migration/history.go`.
 // `SET LOCAL` (not bare `SET`) scopes the timeout to the wrapping transaction so it
-// reverts on `COMMIT` — reproducing Go, where `CreateMigrationTable`/`CreateSeedTable`
-// run through `pgconn.ExecBatch` (an implicit transaction whose `SET` reverts when the
-// batch ends; `history.go:32-33`, `file.go:87`). A bare session-level `SET` would leak
+// reverts on `COMMIT` — reproducing `CreateMigrationTable`/`CreateSeedTable`
+// running through `pgconn.ExecBatch` (an implicit transaction whose `SET` reverts when the
+// batch ends). A bare session-level `SET` would leak
 // the 4s timeout into a caller's real work (e.g. `migration repair`'s TRUNCATE/UPSERT
-// or seed SQL), which Go never does.
+// or seed SQL), which this must never do.
 const SET_LOCAL_LOCK_TIMEOUT = "SET LOCAL lock_timeout = '4s'";
 const CREATE_VERSION_SCHEMA = "CREATE SCHEMA IF NOT EXISTS supabase_migrations";
 const CREATE_VERSION_TABLE =
@@ -427,10 +426,10 @@ export const legacyReadMigrationTable = (session: LegacyDbSession) =>
  * Resolves the local migration file for a version by globbing `<version>_*.sql`
  * against the migrations dir. Mirrors `repair.GetMigrationFile`:
  * `afero.Glob` reads the
- * directory then byte-sorts entries (`sort.Strings`, `afero/match.go:91`) before
- * matching, so ties resolve to the byte-ordered (Go `sort.Strings`) first match,
+ * directory then byte-sorts entries (`sort.Strings`) before
+ * matching, so ties resolve to the byte-ordered first match,
  * not JS's default UTF-16-code-unit order — or `None` when nothing matches (the
- * caller raises the not-found error so the exact Go message can be assembled). A
+ * caller raises the not-found error so the exact message can be assembled). A
  * missing directory is treated as no match.
  */
 export const legacyResolveMigrationFile = (

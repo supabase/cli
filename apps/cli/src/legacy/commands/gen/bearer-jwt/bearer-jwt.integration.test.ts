@@ -103,11 +103,11 @@ async function writeSigningKeys(contents: string) {
 }
 
 /**
- * Writes `supabase/.env.development` — a file Go's `loadNestedEnv` reads (selected by
- * `SUPABASE_ENV`, defaulting to `"development"`) but `@supabase/config`'s OWN default
- * env resolution does NOT (`legacyResolveSigningKeysConfigPaths` must resolve a
- * Go-accurate `ProjectEnvironment` and thread it through explicitly — CLI-1961 Codex
- * review finding).
+ * Writes `supabase/.env.development` — a file the dotenv cascade reads
+ * (selected by `SUPABASE_ENV`, defaulting to `"development"`) but
+ * `@supabase/config`'s OWN default env resolution does NOT
+ * (`legacyResolveSigningKeysConfigPaths` must resolve an accurate
+ * `ProjectEnvironment` and thread it through explicitly).
  */
 async function writeSupabaseEnvDevelopment(contents: string) {
   await mkdir(join(tempRoot.current, "supabase"), { recursive: true });
@@ -263,10 +263,8 @@ describe("legacy gen bearer-jwt integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Go marks --role required (`cmd/gen.go:175`) but cobra validates required flags only
-  // AFTER `PersistentPreRunE` (`cobra@v1.10.2/command.go:985,1007`) — which is where Go's
-  // telemetry service is constructed and later flushed to `telemetry.json`. Verified
-  // against the real binary (CLI-1961 e2e parity run): a missing `--role` still writes
+  // `--role` is required, but required-flag validation runs only AFTER the
+  // telemetry context is installed. A missing `--role` still writes
   // `telemetry.json`, so the handler enforces the flag itself (after the telemetry-flushing
   // wrapper is already active) instead of relying on the framework's parse-time rejection.
   it.live(
@@ -290,16 +288,15 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "ignores an ancestor project's signing_keys_path when the resolved workdir has no config.toml of its own (CLI-1961)",
     () => {
-      // Go's `Config.Load("")` (`pkg/config/utils.go:43-48`) resolves ONLY
-      // `<workdir>/supabase/config.toml` — no ancestor climb (once `cliConfig.workdir`
-      // is already resolved, matching an explicit `--workdir` pointing at a
-      // subdirectory below another project's root — Go's own `ChangeWorkDir` does not
-      // climb when `--workdir`/`SUPABASE_WORKDIR` is explicit either,
-      // `internal/utils/misc.go:246-249`). Verified against the real binary (Codex
-      // review finding, CLI-1961): without `{ tomlOnly: true, search: false }` in
-      // `gen.signing-keys-config.ts`, the TS port picked up the PARENT directory's
-      // `signing_keys_path` and prompted for a kid instead of falling back to the
-      // unconfigured-default branch, like Go does.
+      // Config resolution must resolve ONLY `<workdir>/supabase/config.toml`
+      // — no ancestor climb (once `cliConfig.workdir` is already resolved,
+      // matching an explicit `--workdir` pointing at a subdirectory below
+      // another project's root — the workdir change does not climb when
+      // `--workdir`/`SUPABASE_WORKDIR` is explicit either). Without
+      // `{ tomlOnly: true, search: false }` in `gen.signing-keys-config.ts`,
+      // the TS port picked up the PARENT directory's `signing_keys_path`
+      // and prompted for a kid instead of falling back to the
+      // unconfigured-default branch.
       const nestedWorkdir = join(tempRoot.current, "nested", "deeper");
       const { layer, out } = setup({ workdir: nestedWorkdir, pipedAnswer: "" });
       return Effect.gen(function* () {
@@ -365,7 +362,7 @@ describe("legacy gen bearer-jwt integration", () => {
   });
 
   it.live("Branch A: on a real TTY, still prompts via stdin but does not echo the answer", () => {
-    // Go's Branch A ALWAYS uses plain `PromptText` regardless of TTY-ness — only
+    // Branch A ALWAYS uses plain `PromptText` regardless of TTY-ness — only
     // Branches B/C (a configured `signing_keys_path`) fork on interactivity. On a
     // real TTY the terminal's own line-editing already echoes what was typed, so
     // `legacyConsolePromptText` must not double-echo it itself.
@@ -450,9 +447,9 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch A: a literal 'null' pasted at the stdin JWK prompt is rejected, NOT the default key",
     () => {
-      // Verified against the real binary (CLI-1961): Go's `json.Unmarshal([]byte("null"),
-      // &key)` is a documented no-op for a non-pointer struct target — it leaves `key` at
-      // its zero value rather than erroring, and rather than falling back to the default
+      // `json.Unmarshal([]byte("null"), &key)` is a documented no-op for a
+      // non-pointer struct target — it leaves `key` at its zero value
+      // rather than erroring, and rather than falling back to the default
       // key. That zero-value JWK (empty `kty`) then fails downstream at SIGN time.
       const { layer } = setup({ pipedAnswer: "null" });
       return Effect.gen(function* () {
@@ -490,9 +487,8 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch A: rejects a pasted JWK with an unsupported alg at decode time, not sign time",
     () => {
-      // Go's `config.Algorithm.UnmarshalText` (`pkg/config/auth.go:80-86`) rejects
-      // anything other than RS256/ES256 DURING JSON decode, before the JWK ever
-      // reaches signing — verified against the real binary (CLI-1961).
+      // `config.Algorithm.UnmarshalText` rejects anything other than
+      // RS256/ES256 DURING JSON decode, before the JWK ever reaches signing.
       const { layer } = setup({ pipedAnswer: JSON.stringify({ kty: "oct", alg: "HS256" }) });
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(legacyGenBearerJwt(baseFlags));
@@ -526,10 +522,10 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch A: rejects a pasted JWK with a non-string key_ops element (CLI-1961 Codex review finding)",
     () => {
-      // Verified against the real binary: `{"kty":"oct","alg":"ES256","key_ops":["sign",1]}`
-      // exits 1 with this exact message — Go's `json.Unmarshal` into `config.JWK`'s
-      // `KeyOps []string` field fails outright on a non-string element rather than
-      // silently dropping the field the way this normalizer previously did.
+      // `{"kty":"oct","alg":"ES256","key_ops":["sign",1]}` must exit 1 with
+      // this exact message — decoding into `config.JWK`'s `KeyOps []string`
+      // field fails outright on a non-string element rather than silently
+      // dropping the field the way this normalizer previously did.
       const { layer } = setup({
         pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", key_ops: ["sign", 1] }),
       });
@@ -550,9 +546,9 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch A: rejects a pasted JWK with ext given as a string instead of a bool (CLI-1961 Codex review finding)",
     () => {
-      // Verified against the real binary: `{"kty":"oct","alg":"ES256","ext":"true"}`
-      // exits 1 with this exact message — Go's `json.Unmarshal` into `config.JWK`'s
-      // `Extractable *bool` field fails outright rather than silently dropping it.
+      // `{"kty":"oct","alg":"ES256","ext":"true"}` must exit 1 with this
+      // exact message — decoding into `config.JWK`'s `Extractable *bool`
+      // field fails outright rather than silently dropping it.
       const { layer } = setup({
         pipedAnswer: JSON.stringify({ kty: "oct", alg: "ES256", ext: "true" }),
       });
@@ -633,9 +629,10 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch A: accepts a pasted JWK with a duplicate alg where EVERY occurrence is individually valid and allowed",
     () => {
-      // Contrast with the previous test: Go's decoder only stops attempting later
-      // occurrences once an EARLIER one fails — when every occurrence independently
-      // succeeds, the LAST one wins normally, same as any other duplicated field.
+      // Contrast with the previous test: the decoder only stops attempting
+      // later occurrences once an EARLIER one fails — when every occurrence
+      // independently succeeds, the LAST one wins normally, same as any
+      // other duplicated field.
       const { layer, out } = setup({
         pipedAnswer: JSON.stringify({ ...generateEcJwk("dup-alg-kid"), alg: "ES256" }).replace(
           '"alg":"ES256"',
@@ -658,12 +655,12 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch A: accepts a pasted JWK with Go-decodable case-variant field names (CLI-1961 Codex review finding)",
     () => {
-      // Go's `encoding/json` matches `config.JWK`'s struct fields case-insensitively —
-      // verified against the real binary: `{"KTY":"EC","ALG":"ES256",...}` decodes
+      // `encoding/json`-style matching resolves `config.JWK`'s struct fields
+      // case-insensitively: `{"KTY":"EC","ALG":"ES256",...}` decodes
       // identically to the all-lowercase spelling, including `alg` despite its extra
       // `encoding.TextUnmarshaler` allowlist hook. A previous version of this
       // normalizer only read exact lowercase property names, silently treating a
-      // case-variant field as absent and rejecting a key Go's real decode accepts.
+      // case-variant field as absent and rejecting a key the established decoder accepts.
       const jwk = generateEcJwk("case-variant-kid");
       const caseVariantJwk = {
         KTY: jwk.kty,
@@ -693,11 +690,11 @@ describe("legacy gen bearer-jwt integration", () => {
     () => {
       // Same mechanism as the exact-case duplicate-kid test above, but the earlier
       // malformed occurrence spells the field "KID" while the later, valid one spells
-      // it "kid" — Go's case-insensitive struct-field matching means both feed the
+      // it "kid" — case-insensitive struct-field matching means both feed the
       // SAME `config.JWK.KeyID` field, so the earlier malformed occurrence still fails
-      // the overall decode, exactly like a same-case duplicate does. Verified against
-      // the real binary: `{"kty":"oct","alg":"ES256","KID":1,"kid":"k1"}` fails with
-      // this exact message even though `kid`'s own later, valid occurrence is "k1".
+      // the overall decode, exactly like a same-case duplicate does.
+      // `{"kty":"oct","alg":"ES256","KID":1,"kid":"k1"}` fails with this
+      // exact message even though `kid`'s own later, valid occurrence is "k1".
       const { layer } = setup({
         pipedAnswer: '{"kty":"oct","alg":"ES256","KID":1,"kid":"k1"}',
       });
@@ -846,7 +843,7 @@ describe("legacy gen bearer-jwt integration", () => {
       // `signing_keys_path` file entry — `normalizeStoredJwk`'s field lookups go
       // through the SAME case-insensitive `resolveJwkFieldValue` helper, and the
       // `alg` allowlist pre-check in `legacyReadSigningKeysFile` needs the identical
-      // fix (CLI-1961 Codex review finding).
+      // fix.
       const jwk = generateEcJwk("case-variant-stored-kid");
       const caseVariantJwk = {
         KTY: jwk.kty,
@@ -879,10 +876,10 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch B: resolves signing_keys_path = env(KEYS_PATH) from supabase/.env.development, a file @supabase/config's own default env resolution doesn't read (CLI-1961 Codex review finding)",
     () => {
-      // Go's `Config.Load` runs `loadNestedEnv` (which selects `.env.<SUPABASE_ENV>`,
-      // defaulting to "development") BEFORE its TOML decoder ever resolves `env(...)`
+      // The dotenv cascade (which selects `.env.<SUPABASE_ENV>`, defaulting
+      // to "development") runs BEFORE the TOML decoder ever resolves `env(...)`
       // references — so a `KEYS_PATH` set only in `supabase/.env.development` is visible
-      // to Go's `signing_keys_path = "env(KEYS_PATH)"` resolution. `@supabase/config`'s
+      // to the `signing_keys_path = "env(KEYS_PATH)"` resolution. `@supabase/config`'s
       // own default env loader (used whenever no `projectEnv` is explicitly threaded
       // through) only reads plain `supabase/.env`/`.env.local` and would otherwise leave
       // the literal string "env(KEYS_PATH)" unexpanded, and this call would fail trying
@@ -948,9 +945,9 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch B: rejects a configured signing key with an unsupported alg at decode time, not sign time",
     () => {
-      // Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) decodes straight
-      // into `[]config.JWK`, running `config.Algorithm.UnmarshalText`'s RS256/ES256
-      // allowlist DURING that decode — verified against the real binary (CLI-1961).
+      // Decoding straight into `[]config.JWK` runs
+      // `config.Algorithm.UnmarshalText`'s RS256/ES256 allowlist DURING that
+      // decode.
       const { layer } = setup();
       return Effect.gen(function* () {
         yield* Effect.tryPromise(() =>
@@ -1007,21 +1004,21 @@ describe("legacy gen bearer-jwt integration", () => {
     "Branch B: accepts a null entry AFTER a valid key in signing_keys_path, signing with an exact kid match (CLI-1961 Codex review finding)",
     () => {
       // Distinct from the earlier-rejected null-BEFORE-valid-key finding on this PR:
-      // there, `SigningKeys[0]` is the null-decoded zero-value JWK, so Go's own
+      // there, `SigningKeys[0]` is the null-decoded zero-value JWK, so
       // `generateAPIKeys` fails signing before kid selection is ever reached. Here
       // the valid key is FIRST, so `generateAPIKeys` succeeds — but a BLANK kid
-      // answer still fails, because Go's own exact-KeyID-match loop runs BEFORE the
+      // answer still fails, because the exact-KeyID-match loop runs BEFORE the
       // blank-input fallback and the null-decoded second entry's OWN kid is `""`,
       // an exact match for a blank answer (same quirk this file's "an exact kid
       // match on a key with an empty kid wins ahead of the blank-input
-      // fallback-to-first" test already covers) — verified against the real binary:
-      // a blank answer against `[validKey, null]` fails identically to this port
-      // with `"failed to convert JWK to private key: unsupported key type: "`. An
+      // fallback-to-first" test already covers): a blank answer against
+      // `[validKey, null]` fails identically to this port with
+      // `"failed to convert JWK to private key: unsupported key type: "`. An
       // EXPLICIT exact-kid answer for the valid key still signs successfully in
       // both, which is what the finding's "a non-TTY user can still select
-      // validKey" actually depends on. Verified against the real binary:
-      // `json.Unmarshal` accepts `[validKey, null]`, decoding the trailing `null`
-      // into a zero-value `config.JWK` rather than failing the whole array.
+      // validKey" actually depends on. `json.Unmarshal` accepts
+      // `[validKey, null]`, decoding the trailing `null` into a zero-value
+      // `config.JWK` rather than failing the whole array.
       const validKey = generateEcJwk("valid-kid");
       const { layer, out } = setup({ pipedAnswer: "valid-kid" });
       return Effect.gen(function* () {
@@ -1045,11 +1042,11 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch B: ignores trailing bytes after the first JSON value in signing_keys_path, matching Go's single Decode (CLI-1961 Codex review finding)",
     () => {
-      // Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) is a single
-      // `json.Decoder.Decode` call, which reads exactly one JSON value and never
-      // checks for trailing bytes. Verified against the real binary: a
+      // Decoding is a single `json.Decoder.Decode`-style call, which reads
+      // exactly one JSON value and never checks for trailing bytes: a
       // `signing_keys_path` file containing a valid array followed by a second,
-      // syntactically-valid JSON value still lets Go sign with the first array's key.
+      // syntactically-valid JSON value still lets signing succeed with the
+      // first array's key.
       const validKey = generateEcJwk("valid-kid");
       const { layer, out } = setup();
       return Effect.gen(function* () {
@@ -1073,11 +1070,10 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch B: accepts a stored signing key with a null key_ops element, matching Go's zero-value decode (CLI-1961 Codex review finding)",
     () => {
-      // `key_ops` is never read by Go's `GenerateAsymmetricJWT` (it only inspects
+      // `key_ops` is never read by signing (it only inspects
       // `kty`/`Algorithm`/the key-material fields), and `json.Unmarshal` decodes a
       // `null` element of a `[]string` as that element's zero value (`""`), not a
-      // type mismatch — verified against the real binary (CLI-1961 Codex review
-      // finding).
+      // type mismatch.
       const jwk = { ...generateEcJwk("null-key-ops-kid"), key_ops: ["sign", null] };
       const { layer, out } = setup();
       return Effect.gen(function* () {
@@ -1101,10 +1097,9 @@ describe("legacy gen bearer-jwt integration", () => {
   it.live(
     "Branch C: TTY with zero configured signing keys fails with Go's exact 'user aborted' text",
     () => {
-      // Go's bubbletea `PromptChoice` (`internal/utils/prompt.go:110-140`), given a
-      // zero-item list, quits immediately without ever letting the user select
-      // anything — verified against the real binary (CLI-1961). Previously this
-      // crashed with an unhandled `TypeError` instead of failing gracefully.
+      // A zero-item list quits immediately without ever letting the user
+      // select anything. Previously this crashed with an unhandled
+      // `TypeError` instead of failing gracefully.
       const { layer } = setup({ stdinIsTty: true });
       return Effect.gen(function* () {
         yield* Effect.tryPromise(() =>
@@ -1203,10 +1198,9 @@ describe("legacy gen bearer-jwt integration", () => {
         const token = tokenFrom(out);
         const [header] = token.split(".");
         expect(decodeSegment(header ?? "")).toEqual({ alg: "RS256", kid: "rsa-kid", typ: "JWT" });
-        // Go: `fmt.Fprintln(os.Stderr, "Selected key ID:", choice.Summary)` (`bearerjwt.go:82`)
-        // — this command's own stdout is the signed-token payload even in text mode, so the
+        // This command's own stdout is the signed-token payload even in text mode, so the
         // line must land on stderr (`output.raw(..., "stderr")`), not via `output.info`
-        // (clack's `log.info`, which defaults to stdout — Codex review finding, CLI-1961).
+        // (clack's `log.info`, which defaults to stdout).
         expect(out.stderrText).toContain("Selected key ID: rsa-kid");
       }).pipe(Effect.provide(layer));
     },
@@ -1270,8 +1264,8 @@ describe("legacy gen bearer-jwt integration", () => {
         yield* legacyGenBearerJwt(baseFlags);
         const token = tokenFrom(out);
         const [header] = token.split(".");
-        // The default key's kid, NOT the file's key — the file is never read when
-        // auth.enabled is false (verified against the real binary, CLI-1961).
+        // The default key's kid, NOT the file's key — the file is never read
+        // when auth.enabled is false.
         expect(decodeSegment(header ?? "")).toEqual({
           alg: "ES256",
           kid: "b81269f1-21d8-4f2e-b719-c2240a840d90",

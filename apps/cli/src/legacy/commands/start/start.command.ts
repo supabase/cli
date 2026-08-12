@@ -17,8 +17,8 @@ import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { legacyStart } from "./start.handler.ts";
 
-// Go registers `--exclude`/`-x` as a pflag `StringSliceVarP` (`cmd/start.go:58`), which
-// CSV-splits each occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
+// `--exclude`/`-x` is a pflag-style string-slice flag, which CSV-splits each
+// occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
 // across repeats — matching `status`'s own `--exclude`/`--override-name` handling.
 // Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005); the
 // shorthand makes pflag frame it as `"-x, --exclude"` (see `legacyStringSliceFlag`).

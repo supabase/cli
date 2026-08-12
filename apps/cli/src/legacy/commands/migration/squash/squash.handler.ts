@@ -84,16 +84,15 @@ import {
 type Spawner = ChildProcessSpawnerType["Service"];
 
 /**
- * Port of Go's `squashMigrations` (`apps/cli-go/internal/migration/squash/squash.go:81-132`,
- * deleted in CLI-1970; last present at commit 7b469f5b3):
- * shadow create -> health-wait -> connect -> `start.SetupDatabase` DIRECTLY (Go's `squash.go:96`
- * — NOT `setupShadowConn`, so NO `CREATE DATABASE contrib_regression` template) -> dump the
+ * `squashMigrations`:
+ * shadow create -> health-wait -> connect -> `start.SetupDatabase` DIRECTLY
+ * (NOT `setupShadowConn`, so NO `CREATE DATABASE contrib_regression` template) -> dump the
  * auth/storage schema before migrating -> apply every migration -> dump auth/storage again ->
  * write the target file as the FULL (unrestricted) dump + the separator + the auth/storage
  * line diff. `acquire` is only shadow creation (brief, Docker-API-bound); the health-wait/
  * connect/setup/dump/apply sequence runs in the interruptible `use` phase, matching the CLI-1956
  * review ruling `shadow-database.ts`/`diff.handler.ts` already established (a SIGINT during the
- * health-wait must land immediately, same as Go's single cancellable `ctx`).
+ * health-wait must land immediately, from a single cancellable scope).
  */
 const squashMigrations = Effect.fnUntraced(function* (
   spawner: Spawner,
@@ -119,7 +118,7 @@ const squashMigrations = Effect.fnUntraced(function* (
     password: toml.password,
     database: "postgres",
   };
-  // Go's `utils.Config.Db.Image` — the pin-resolved (not yet registry-mapped) image every
+  // The pin-resolved (not yet registry-mapped) image every
   // `pg_dump` container below uses; `legacySquashDumpSchema` applies the registry mirror itself.
   const image = localInputs.bootstrapConfig.postgresImage;
 
@@ -175,11 +174,9 @@ const squashMigrations = Effect.fnUntraced(function* (
           const targetRel = path.relative(workdir, targetPath);
           yield* Effect.scoped(
             Effect.gen(function* () {
-              // Go's `OpenFile(path, O_WRONLY|O_CREATE|O_TRUNC, 0644)` (`squash.go:121`) — ONE
-              // call that both truncates (or creates) the target file AND opens it for the
+              // One open call that both truncates (or creates) the target file AND opens it for the
               // writes below, matching `new.handler.ts:87`'s identical `{ flag: "w" }` precedent.
-              // There is no separate truncate-then-reopen step to diverge from Go's single
-              // `OpenFile`.
+              // There is no separate truncate-then-reopen step.
               const file = yield* fs.open(targetPath, { flag: "w", mode: 0o644 }).pipe(
                 Effect.mapError(
                   (cause) =>
@@ -188,11 +185,10 @@ const squashMigrations = Effect.fnUntraced(function* (
                     }),
                 ),
               );
-              // The full dump — NO schema restriction (Go's `migration.DumpSchema(ctx, config,
-              // f, dump.DockerExec)`, no `opt`, `squash.go:126`) — streamed straight into the
-              // already-truncated file at constant memory. Go's underlying failure here is
-              // `stdcopy.StdCopy`'s own write into `f` (`DockerStreamLogs`, `docker.go:574-576`),
-              // not `lineByLineDiff`'s own writer below, so it byte-matches "failed to copy
+              // The full dump — NO schema restriction — streamed straight into the
+              // already-truncated file at constant memory. The underlying failure here is
+              // the docker-log-stream write into the file handle,
+              // not the line-diff writer below, so it byte-matches "failed to copy
               // docker logs:" rather than "failed to write line:".
               yield* legacySquashDumpSchema({
                 image,
@@ -209,9 +205,8 @@ const squashMigrations = Effect.fnUntraced(function* (
                     ),
                   ),
               });
-              // Go writes the separator (`fmt.Fprint`, `squash.go:130` — its error return is
-              // discarded, unchecked) then the auth/storage line diff (`lineByLineDiff`,
-              // `squash.go:131`) sequentially to the SAME handle, with nothing observable
+              // The separator and the auth/storage line diff write sequentially to the
+              // SAME handle, with nothing observable
               // between the two writes — combined into one `writeAll` here.
               const tail =
                 LEGACY_SQUASH_SEPARATOR_COMMENT + legacySquashLineByLineDiff(before, after);
@@ -234,7 +229,7 @@ const squashMigrations = Effect.fnUntraced(function* (
 /** Outcome of {@link squashToVersion} — feeds the machine-mode payload. */
 interface LegacySquashToVersionResult {
   readonly alreadyEarliest: boolean;
-  /** Workdir-relative path of the migration everything squashed into (Go's bold `local`). */
+  /** Workdir-relative path of the migration everything squashed into. */
   readonly target: string;
   /** Workdir-relative paths of the merged files that were successfully removed. */
   readonly removed: ReadonlyArray<string>;
@@ -243,11 +238,9 @@ interface LegacySquashToVersionResult {
 }
 
 /**
- * Port of Go's `squashToVersion` (`apps/cli-go/internal/migration/squash/squash.go:54-79`,
- * deleted in CLI-1970; last present at commit 7b469f5b3):
- * loads the local migrations up to `version` (all when empty), squashes every one but the
- * last into the shadow-produced dump, then removes the merged files — a removal failure is
- * NON-FATAL (Go only prints it to stderr and continues).
+ * `squashToVersion`: loads the local migrations up to `version` (all when empty), squashes
+ * every one but the last into the shadow-produced dump, then removes the merged files — a
+ * removal failure is NON-FATAL (only printed to stderr, then continues).
  */
 const squashToVersion = Effect.fnUntraced(function* (
   spawner: Spawner,
@@ -313,17 +306,15 @@ const squashToVersion = Effect.fnUntraced(function* (
 });
 
 /**
- * Port of Go's `baselineMigrations` (`apps/cli-go/internal/migration/squash/squash.go:159-190`,
- * deleted in CLI-1970; last present at commit 7b469f5b3):
- * re-derives an empty `version` from the (POST-file-removal) local version listing, prints the
- * "Baselining…" banner BEFORE connecting, then deletes every history row `<= version` and
- * inserts the target migration's row in one transaction.
+ * `baselineMigrations`: re-derives an empty `version` from the (POST-file-removal) local
+ * version listing, prints the "Baselining…" banner BEFORE connecting, then deletes every
+ * history row `<= version` and inserts the target migration's row in one transaction.
  *
  * The re-list runs AFTER `squashToVersion`'s file removals (this function is only ever called
  * once that has fully completed) — so when a merged-file removal failed non-fatally, this
  * baselines to the surviving OLDER version, not the squash target. Do not "optimise" this by
  * passing the already-known target version through instead; that would silently diverge from
- * Go on exactly that path.
+ * the established behavior on exactly that path.
  */
 const baselineMigrations = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
@@ -339,7 +330,7 @@ const baselineMigrations = Effect.fnUntraced(function* (
 
   let resolvedVersion = version;
   if (resolvedVersion.length === 0) {
-    // Go's `list.LoadLocalVersions` — a read failure only logs via `utils.GetDebugLogger()`
+    // A read failure only logs via the debug logger
     // and leaves `version` empty; it never aborts the baseline.
     const local = yield* legacyLoadLocalVersions(fs, path, migrationsDir).pipe(
       Effect.catch((cause) =>
@@ -349,17 +340,16 @@ const baselineMigrations = Effect.fnUntraced(function* (
     if (local.length > 0) resolvedVersion = local[0]!;
   }
 
-  // Go prints this BEFORE connecting (`squash.go:165`, ahead of `utils.ConnectByConfig` at
-  // `squash.go:166`) — the opposite order from every other prompting migration subcommand.
+  // Printed BEFORE connecting — the opposite order from every other prompting migration
+  // subcommand.
   yield* output.raw(`Baselining migration history to ${resolvedVersion}\n`, "stderr");
 
   yield* Effect.scoped(
     Effect.gen(function* () {
       // Always remote: `runSquash` already returned on the local target (step 9) before
       // `baselineMigrations` is ever called, so `cfg.isLocal` is necessarily `false` here —
-      // matching Go's own unconditional "Connecting to remote database..." on this path
-      // (`ConnectByConfigStream`, `connect.go:331-336`; the `IsLocalDatabase` branch right
-      // above it is unreachable from `baselineMigrations`'s only caller).
+      // the unconditional "Connecting to remote database..." on this path is the only
+      // reachable branch from `baselineMigrations`'s only caller.
       yield* output.raw("Connecting to remote database...\n", "stderr");
       const session = yield* connection.connect(cfg.conn, { isLocal: cfg.isLocal, dnsResolver });
       yield* legacyCreateMigrationTable(session);
@@ -379,7 +369,7 @@ const baselineMigrations = Effect.fnUntraced(function* (
       }
       const m = yield* legacyReadMigrationFile(fs, path, resolvedFile.value);
 
-      // Go's `pgx.Batch` (`squash.go:183-186`) — data statements only, no schema mutation, so
+      // Data statements only, no schema mutation, so
       // (matching `migration repair`'s own `updateMigrationTable`) wrapped in an explicit
       // transaction for atomicity between the DELETE and the INSERT.
       const txn = Effect.gen(function* () {
@@ -420,13 +410,12 @@ const runSquash = Effect.fnUntraced(function* (
   const networkIdFlag = yield* LegacyNetworkIdFlag;
 
   // Resolved linked ref, captured so the post-run finalizer caches the project
-  // (GET /v1/projects/{ref}) — Go's `ensureProjectGroupsCached` (cmd/root.go:214).
+  // (GET /v1/projects/{ref}).
   let linkedRefForCache: string | undefined;
 
   yield* Effect.gen(function* () {
-    // 1. Flag groups — cobra's parse-time `MarkFlagsMutuallyExclusive`, ahead of the root
-    // `PersistentPreRunE` (`apps/cli-go/cmd/migration.go:66-75`, deleted in
-    // CLI-1970; last present at commit 7b469f5b3).
+    // 1. Flag groups — parse-time mutual-exclusivity check, ahead of the root
+    // pre-run.
     if (target.setFlags.length > 1) {
       return yield* Effect.fail(
         new LegacyMigrationTargetFlagsError({
@@ -449,15 +438,13 @@ const runSquash = Effect.fnUntraced(function* (
     }
 
     const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
-    // squash defaults to `--local` (Go: `Bool("local", true)`), same as `up`/`down`.
+    // squash defaults to `--local`, same as `up`/`down`.
     const connType = target.connType ?? "local";
 
     // 2/3. Linked pre-resolution (mirrors `db diff --linked`, `diff.handler.ts:400-430`):
     // resolve + cache the project ref, and read the remote-merged config, BEFORE
-    // `resolver.resolve()` below — matching Go's stateful pre-run (`LoadProjectRef` -> the
-    // remote-merged `LoadConfig` -> only THEN `NewDbConfigWithPassword`'s actual connection
-    // work). Read unconditionally (base config when not linked) since the shadow is provisioned
-    // locally regardless of the remote/local target.
+    // `resolver.resolve()` below. Read unconditionally (base config when not linked) since the
+    // shadow is provisioned locally regardless of the remote/local target.
     let linkedRef: string | undefined;
     if (connType === "linked") {
       const projectRefResolver = yield* LegacyProjectRefResolver;
@@ -470,8 +457,8 @@ const runSquash = Effect.fnUntraced(function* (
     }
 
     // 4. The shadow's own container spec — always built, and built BEFORE `resolver.resolve()`
-    // below, matching Go's config-load-then-connect ordering (`diff.handler.ts`'s identical
-    // rationale: all config load/validation happens ahead of `NewDbConfigWithPassword`).
+    // below, matching `diff.handler.ts`'s identical
+    // rationale: all config load/validation happens ahead of the actual connection resolution.
     const localInputs = yield* legacyBuildLocalDbContainerInputs(
       spawner,
       cliConfig.workdir,
@@ -495,26 +482,24 @@ const runSquash = Effect.fnUntraced(function* (
     }
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
 
-    // 6. Go loads the project `.env` via `loadNestedEnv` INSIDE `ParseDatabaseConfig`, after the
+    // 6. The project `.env` loads after the
     // flag-group validation above — so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
     // the remote-baseline prompt, but a flag conflict still surfaces before any `.env` read.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader in `legacyGetRegistryImageUrl`, reverted
-    // when this scope closes. Go's `loadNestedEnv` `os.Setenv`s the project `.env`
-    // (config.go:789) before any container starts, and each of squash's three
-    // pg_dump containers resolves its image through `DockerStart` ->
-    // `GetRegistryImageUrl`/`GetRegistryImageUrls` (docker.go:221-246,326-348,
-    // 363-371) — so a dotenv-only mirror override reaches all three dumps below.
+    // when this scope closes. The project `.env` is applied
+    // before any container starts, and each of squash's three
+    // pg_dump containers resolves its image through the same registry-mirror lookup —
+    // so a dotenv-only mirror override reaches all three dumps below.
     yield* legacyApplyProjectEnv(projectEnv);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
-    // 7. `--version` validation — inside Go's `squash.Run`, i.e. AFTER db-config resolution.
+    // 7. `--version` validation happens AFTER db-config resolution.
     const version = Option.getOrElse(flags.version, () => "");
     if (version.length > 0) {
       if (legacyParseMigrationVersion(version) === undefined) {
-        // Bare message — squash does NOT inherit repair's "failed to parse <v>: " prefix
-        // (`squash.go:30` is `errors.New(repair.ErrInvalidVersion)`, no `Errorf` wrap).
+        // Bare message — squash does NOT inherit repair's "failed to parse <v>: " prefix.
         return yield* Effect.fail(
           new LegacyMigrationInvalidVersionError({ message: "invalid version number" }),
         );
@@ -563,7 +548,7 @@ const runSquash = Effect.fnUntraced(function* (
     }
 
     // 10. Remote target: prompt before touching the remote history table. A DECLINED prompt is
-    // still a SUCCESS path in Go (`squash.go:47` returns `nil`, not `context.Canceled`) — unlike
+    // still a SUCCESS path here (returns cleanly, not a cancellation) — unlike
     // repair/fetch/down, so this never raises `LegacyOperationCanceledError`.
     const confirmed = yield* legacyMigrationConfirm("Update remote migration history table?", {
       defaultValue: true,

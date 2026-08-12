@@ -15,7 +15,6 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Fetches migration history from the linked project."),
-    // Go: `fetchFlags.Bool("linked", true, …)`.
     Flag.withDefault(true),
   ),
   local: Flag.boolean("local").pipe(

@@ -123,12 +123,12 @@ export function encodeToml(value: unknown): string {
 }
 
 /**
- * Reproduces `utils.ToEnvMap` + `godotenv.Marshal` byte shape for the
- * Supabase CLI's `--output env` mode (see `apps/cli-go/internal/utils/output.go:86-107`).
+ * Reproduces the established `godotenv.Marshal` byte shape for the
+ * `--output env` mode.
  *
- * - Viper's `AllKeys()` descends into nested maps using dotted paths; the loop
+ * - Nested maps flatten using dotted paths; the loop
  * then `strings.ToUpper(strings.ReplaceAll(k, ".", "_"))` produces SCREAMING_SNAKE_CASE keys.
- * - Viper does **not** descend into slices. An array value lands as a single
+ * - Flattening does **not** descend into slices. An array value lands as a single
  * leaf whose `GetString` rendering is the empty string — so e.g.
  * `{backups: [{...}, {...}]}` becomes one `BACKUPS=""` entry, not indexed leaves.
  * - Integer-parseable values are emitted unquoted (`KEY=123`), matching

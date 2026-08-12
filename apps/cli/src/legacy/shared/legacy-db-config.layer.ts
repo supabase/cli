@@ -107,8 +107,7 @@ const tcpReachable = (host: string, port: number): Effect.Effect<boolean> =>
 const initLoginRole = Effect.fnUntraced(function* (ref: string, conn: LegacyPgConnInput) {
   const output = yield* Output;
   const api = yield* (yield* LegacyPlatformApiFactory).make;
-  // Go writes this to stderr unconditionally (not gated on --debug):
-  // `apps/cli-go/internal/utils/flags/db_url.go` initLoginRole.
+  // Written to stderr unconditionally (not gated on --debug).
   yield* output.raw("Initialising login role...\n", "stderr");
   const role = yield* api.v1
     .createLoginRole({ ref, read_only: false })
@@ -263,8 +262,8 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
   if (connectionString === undefined) {
     if (!fetchFromApi) return Option.none<LegacyPgConnInput>();
     // No saved pooler URL → fetch the primary pooler config from the Management
-    // API (`GetPoolerConfigPrimary`, `connect.go:51-65`). Any API failure
-    // means "no fallback" (Go returns ok=false), so swallow it to `None`.
+    // API (`GetPoolerConfigPrimary`). Any API failure
+    // means "no fallback", so swallow it to `None`.
     const api = yield* (yield* LegacyPlatformApiFactory).make;
     const configsOpt = yield* api.v1.getPoolerConfig({ ref }).pipe(Effect.option);
     if (Option.isNone(configsOpt)) return Option.none<LegacyPgConnInput>();
@@ -305,7 +304,7 @@ const resolvePoolerConn = Effect.fnUntraced(function* (
  * Resolves the linked project's connection: dial the direct host, and — when
  * unreachable (the common case, since new Supabase projects have IPv6-only
  * direct DB hosts) — transparently fall back to the project's IPv4 transaction
- * pooler (`flags.NewDbConfigWithPassword`, `db_url.go:132-172`).
+ * pooler (`flags.NewDbConfigWithPassword`).
  *
  * `workdir`/`projectHost`/`poolerHost` are explicit parameters rather than read
  * from `LegacyCliConfig` so this is safely callable from a context whose real
@@ -557,8 +556,8 @@ export const legacyDbConfigLayer = Layer.effect(
               resolveVaultSecrets,
             );
             // NB: the linked-project telemetry cache (GET /v1/projects/{ref}) is NOT
-            // issued here. Go caches it in `PersistentPostRun`
-            // (`ensureProjectGroupsCached`, cmd/root.go:214-234) — i.e. AFTER the
+            // issued here. The reference caches it in a post-run hook
+            // (`ensureProjectGroupsCached`) — i.e. AFTER the
             // command's own API calls — so each linked command owns that GET in its
             // post-run finalizer (see e.g. advisors/query handlers). Issuing it mid-
             // resolve reordered the request log ahead of the command's GETs.
@@ -574,7 +573,7 @@ export const legacyDbConfigLayer = Layer.effect(
             ),
           );
           // Surface the resolved ref so the caller can re-read config with a matching
-          // `[remotes.<ref>]` override applied (Go merges it into the linked config).
+          // `[remotes.<ref>]` override applied (merged into the linked config).
           return { conn: linked.conn, isLocal: false, ref: Option.some(linked.ref) };
         }
 
@@ -594,7 +593,7 @@ export const legacyDbConfigLayer = Layer.effect(
         };
       });
 
-    // `RunWithPoolerFallback` (`internal/db/dump/pooler_fallback.go`): when a
+    // `RunWithPoolerFallback`: when a
     // linked dump's pg_dump container fails with an IPv6 connectivity error (the
     // direct host is reachable from the CLI process but not from inside Docker), it
     // resolves the project's IPv4 transaction pooler and retries once. This exposes

@@ -69,8 +69,8 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
       })
       .pipe(
         Effect.tapError(() => patching?.fail() ?? Effect.void),
-        // Mirrors Go's `update.go:26` — pass the resolved branch's project
-        // ref so the entitlements check is scoped to the branch's org.
+        // Pass the resolved branch's project ref so the entitlements check
+        // is scoped to the branch's org.
         Effect.catch(
           legacyGateMapError(
             { projectRef: branchRef, featureKey: "branching_persistent" },

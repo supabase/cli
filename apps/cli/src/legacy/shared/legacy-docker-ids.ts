@@ -1,6 +1,6 @@
 /**
  * Local Docker resource id derivation, ported from `utils.GetId` /
- * `utils.NetId` / `utils.DbId` (`apps/cli-go/internal/utils/config.go`). Hoisted
+ * `utils.NetId` / `utils.DbId`. Hoisted
  * to `legacy/shared` so both `gen types` and the declarative seam derive the same
  * `supabase_db_<projectId>` / `supabase_network_<projectId>` names when checking
  * whether the local stack is running.
@@ -43,12 +43,12 @@ function truncateText(text: string, maxLength: number) {
  * `GetId` sanitisation: replace invalid runs with `_`, strip leading
  * `_.-`, and cap at 40 chars.
  *
- * Exported because it is not only a container-*naming* concern: Go's
- * `Config.Validate` rewrites `c.ProjectId`
+ * Exported because it is not only a container-*naming* concern: config
+ * validation rewrites the resolved project id
  * to this same sanitized form **in place, once, at config-load time** (every
  * `flags.LoadConfig` call ends in `Load` -> `Validate`), and every later use
- * of `Config.ProjectId` — including the Docker LABEL value written by `start`
- * (`internal/utils/docker.go:375`: `config.Labels[CliProjectLabel] =
+ * of that project id — including the Docker LABEL value written by `start`
+ * (`config.Labels[CliProjectLabel] =
  * Config.ProjectId`) — reads that already-sanitized singleton. `GetId` itself
  * performs no sanitisation of its own; it just reads the pre-sanitized value.
  * So on the config/env-derived (non-`--project-id`) path, callers building a
@@ -63,7 +63,7 @@ export function legacySanitizeProjectId(src: string) {
 
 /**
  * `supabase_<suffix>_<sanitizedProjectId>` — the naming scheme shared by every
- * local Docker resource (`utils.GetId`, `apps/cli-go/internal/utils/config.go`).
+ * local Docker resource (`utils.GetId`).
  * Exported so callers building a single service's container name (e.g. a
  * future `legacy-service-catalog.ts` consumer) don't need to go through
  * {@link legacyServiceContainerIds}'s fixed 13-element array.
@@ -113,7 +113,7 @@ export const LEGACY_CLI_WORKDIR_LABEL = "com.supabase.cli.workdir";
  * `utils.GetDockerIds()` — the
  * 13 service container ids (excludes `db`, `network`, and the `differ` shadow
  * container, which are not part of the "expected running services" set). Order and
- * alias-name strings are taken verbatim from `config.go:36-49,61-79`.
+ * alias-name strings are taken verbatim from the established naming scheme.
  */
 export function legacyServiceContainerIds(projectId: string): ReadonlyArray<string> {
   return [
@@ -145,10 +145,8 @@ export function legacyServiceContainerIds(projectId: string): ReadonlyArray<stri
  * `Config.ProjectId` singleton once at config-load time so every later
  * reader — including the Docker LABEL `start` writes — sees the same
  * sanitized string. An explicit `--project-id <value>` (where one exists,
- * e.g. `stop`) is Go's one exception: it assigns straight to
- * `Config.ProjectId` without going through `Validate`
- * (`apps/cli-go/internal/stop/stop.go:19-20`, deleted in CLI-1970; last
- * present at commit 7b469f5b3), so that path must stay raw/
+ * e.g. `stop`) is the one exception: it assigns straight to
+ * the project id without going through validation, so that path must stay raw/
  * unsanitized to match. There is also no injection risk either way: this
  * value is always passed as a single argv element to a spawned process
  * (never through a shell), so a malformed value can only make Docker's own

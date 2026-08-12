@@ -25,7 +25,7 @@ describe("legacyFormatValue", () => {
   });
 
   it("renders JSON objects and arrays like Go's fmt %v (not [object Object])", () => {
-    // Captured from `fmt.Sprintf("%v", ...)` on the Go toolchain.
+    // Captured from the established %v-style formatting.
     expect(legacyFormatValue({ k: "v", z: 1, a: true })).toBe("map[a:true k:v z:1]");
     expect(legacyFormatValue([1, 2, "x"])).toBe("[1 2 x]");
     expect(legacyFormatValue({ count: 1000000 })).toBe("map[count:1e+06]");
@@ -47,7 +47,7 @@ describe("legacyFormatValue", () => {
   });
 
   it("renders bytea (Buffer/Uint8Array) as Go's []byte %v decimal array, not map[]", () => {
-    // Go scans bytea into []byte; `fmt.Sprintf("%v", []byte{222,173,190,239})` → "[222 173 190 239]".
+    // Established: `[222,173,190,239]` renders as "[222 173 190 239]".
     expect(legacyFormatValue(new Uint8Array([222, 173, 190, 239]))).toBe("[222 173 190 239]");
     expect(legacyFormatValue(new Uint8Array([]))).toBe("[]");
   });
@@ -55,8 +55,8 @@ describe("legacyFormatValue", () => {
 
 describe("legacyFormatLinkedValue", () => {
   it("renders top-level JSON numbers with Go's float64 %g (interface{} path)", () => {
-    // Go unmarshals linked rows into interface{}, so every number is a float64 and
-    // `fmt.Sprintf("%v")` prints it with %g — unlike the local pgx path.
+    // Linked rows decode into a generic value, so every number is a float and
+    // is printed with %g — unlike the local path.
     expect(legacyFormatLinkedValue(1000000)).toBe("1e+06");
     expect(legacyFormatLinkedValue(1234567)).toBe("1.234567e+06");
     expect(legacyFormatLinkedValue(999999)).toBe("999999");
@@ -96,7 +96,7 @@ describe("legacyMakeLocalCellFormatter", () => {
 
   it("preserves negative zero in a float column like Go's %v (-0, not 0)", () => {
     const fmt = legacyMakeLocalCellFormatter([701, 701]);
-    expect(fmt(-0, 0)).toBe("-0"); // float8 column → Go keeps the sign
+    expect(fmt(-0, 0)).toBe("-0"); // float8 column → the sign is preserved
     expect(fmt(0, 1)).toBe("0"); // positive zero stays plain
   });
 
@@ -109,8 +109,8 @@ describe("legacyMakeLocalCellFormatter", () => {
   });
 
   it("preserves microseconds for raw timestamp text (OID 1114), trimming zeros", () => {
-    // node-postgres' Date is millisecond-only; the raw-text override keeps the µs that
-    // Go's pgx time.Time prints via `%v`.
+    // node-postgres' Date is millisecond-only; the raw-text override keeps
+    // the µs that the established `%v`-style formatting prints.
     const fmt = legacyMakeLocalCellFormatter([1114]);
     expect(fmt("2026-01-01 00:00:00.123456", 0)).toBe("2026-01-01 00:00:00.123456 +0000 UTC");
     expect(fmt("2026-01-01 00:00:00.12", 0)).toBe("2026-01-01 00:00:00.12 +0000 UTC");
@@ -150,8 +150,8 @@ describe("legacyCoerceLocalJsonRows", () => {
   });
 
   it("emits out-of-safe-range int8 as an exact bare JSON number (not a string)", () => {
-    // Go scans int8 as int64 and json.Marshal emits the full integer; JS numbers lose
-    // precision past 2^53, so we coerce to a raw JSON number token instead.
+    // int8 is established as the full integer; JS numbers lose precision past
+    // 2^53, so we coerce to a raw JSON number token instead.
     const huge = "9223372036854775807"; // > Number.MAX_SAFE_INTEGER
     const coerced = legacyCoerceLocalJsonRows([[huge]], [20]);
     const out = legacyRenderJson(["n"], coerced, false, "", Option.none());
@@ -160,13 +160,13 @@ describe("legacyCoerceLocalJsonRows", () => {
   });
 
   it("coerces bytea (Buffer/Uint8Array) cells to standard base64 like Go's json.Marshal", () => {
-    // OID 17 = bytea. Go encodes []byte as a base64 string in JSON output.
+    // OID 17 = bytea. The established encoding is a base64 string in JSON output.
     const out = legacyCoerceLocalJsonRows([[new Uint8Array([222, 173, 190, 239])]], [17]);
     expect(out[0]?.[0]).toBe("3q2+7w==");
   });
 
   it("coerces timestamp/timestamptz/date cells to Go's RFC3339Nano (UTC, microseconds)", () => {
-    // Go marshals a time.Time as RFC3339Nano; node-postgres' Date would lose the µs.
+    // The established encoding is RFC3339Nano; node-postgres' Date would lose the µs.
     expect(legacyCoerceLocalJsonRows([["2026-01-01 00:00:00.123456"]], [1114])[0]?.[0]).toBe(
       "2026-01-01T00:00:00.123456Z",
     );
@@ -264,34 +264,36 @@ describe("legacyRenderJson", () => {
   });
 
   it("keeps integer-like column keys in Go's lexicographic order (not JS numeric)", () => {
-    // `select 1 as "10", 2 as "2"` — Go's map marshal emits "10" before "2"; a plain
-    // JS object would reorder them numerically to "2","10".
+    // `select 1 as "10", 2 as "2"` — established output emits "10" before
+    // "2"; a plain JS object would reorder them numerically to "2","10".
     const out = legacyRenderJson(["10", "2"], [[1, 2]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "10": 1,\n    "2": 2\n  }\n]\n');
   });
 
   it("collapses duplicate column names to the last value (Go's map overwrite)", () => {
-    // `select 1 as x, 2 as x` — Go's writeJSON map keeps a single "x" with the last value.
+    // `select 1 as x, 2 as x` — the row-as-map encoding keeps a single "x"
+    // with the last value.
     const out = legacyRenderJson(["x", "x"], [[1, 2]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "x": 2\n  }\n]\n');
   });
 
   it("preserves negative zero like Go's json.Encoder (-0, not 0)", () => {
-    // `select '-0'::float8 as n` — Go emits `-0`; JSON.stringify(-0) would collapse to `0`.
+    // `select '-0'::float8 as n` — established output emits `-0`;
+    // JSON.stringify(-0) would collapse to `0`.
     const out = legacyRenderJson(["n"], [[-0]], false, "", Option.none());
     expect(out).toBe('[\n  {\n    "n": -0\n  }\n]\n');
   });
 
   it("wraps agent results in the untrusted-data envelope with HTML-escaped boundary markers", () => {
     const out = legacyRenderJson(["id"], [[1]], true, "deadbeef", Option.none());
-    // Envelope keys in Go map-sort order: boundary, rows, warning (no advisory).
+    // Envelope keys in the established map-sort order: boundary, rows, warning (no advisory).
     const boundaryIdx = out.indexOf('"boundary"');
     const rowsIdx = out.indexOf('"rows"');
     const warningIdx = out.indexOf('"warning"');
     expect(boundaryIdx).toBeGreaterThanOrEqual(0);
     expect(boundaryIdx).toBeLessThan(rowsIdx);
     expect(rowsIdx).toBeLessThan(warningIdx);
-    // Go's json.Encoder HTML-escapes < and > (it never calls SetEscapeHTML(false)).
+    // HTML-escapes < and > (never disabled).
     expect(out).toContain("\\u003cdeadbeef\\u003e");
     expect(out).not.toContain("<deadbeef>");
     expect(out.endsWith("\n")).toBe(true);
@@ -310,7 +312,7 @@ describe("legacyRenderJson", () => {
     expect(parsed.advisory.remediation_sql).toBe(
       "ALTER TABLE public.users ENABLE ROW LEVEL SECURITY;",
     );
-    // Advisory keys keep Go struct declaration order, not sorted.
+    // Advisory keys keep the established declaration order, not sorted.
     const advisoryJson = out.slice(out.indexOf('"advisory"'));
     expect(advisoryJson.indexOf('"id"')).toBeLessThan(advisoryJson.indexOf('"priority"'));
     expect(advisoryJson.indexOf('"priority"')).toBeLessThan(advisoryJson.indexOf('"level"'));
@@ -323,7 +325,7 @@ describe("legacyOrderedKeys", () => {
   });
 
   it("preserves integer-like alias order (Object.keys would reorder them numerically)", () => {
-    // `select 1 as "10", 2 as "2"` → Go keeps source order; JS Object.keys → ["2","10"].
+    // `select 1 as "10", 2 as "2"` → source order is preserved; JS Object.keys → ["2","10"].
     expect(legacyOrderedKeys('[{"10":1,"2":2,"name":3}]')).toEqual(["10", "2", "name"]);
   });
 

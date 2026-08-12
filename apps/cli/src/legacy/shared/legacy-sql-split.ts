@@ -225,9 +225,9 @@ export interface LegacySplitSqlToken {
    * check is ever reached, so a token exactly AT the limit still succeeds. An
    * unterminated trailing token has no delimiter to find: once the buffer
    * fills to the effective limit without one, the too-long check fires
-   * immediately — Go never gets to attempt the extra `Read()` that would
+   * immediately — there's never a chance to attempt the extra `Read()` that would
    * reveal real EOF and let the split function emit the trailing token
-   * instead. Verified empirically against `apps/cli-go/pkg/parser.Split`: a
+   * instead. Verified empirically against `pkg/parser.Split`: a
    * single terminated statement of exactly `maxbuf` bytes always succeeds,
    * while an unterminated one of exactly `maxbuf` bytes always fails with
    * `bufio.ErrTooLong` (one byte under still succeeds; one byte over always
@@ -259,8 +259,7 @@ export function legacySplitSqlTokens(sql: string): ReadonlyArray<LegacySplitSqlT
   }));
 }
 
-// `(?i)drop\s+` — `dropStatementPattern` (`internal/db/diff/diff.go:100`,
-// also `internal/db/declarative/declarative.go:62`).
+// `(?i)drop\s+` — `dropStatementPattern`.
 const DROP_STATEMENT_PATTERN = /drop\s+/i;
 
 /**

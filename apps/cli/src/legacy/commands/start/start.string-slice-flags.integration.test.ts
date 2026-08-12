@@ -75,8 +75,9 @@ function setup() {
 }
 
 describe("legacy start --exclude flag (pflag CSV parity)", () => {
-  // Go-verified (CLI-2005): the rendered line is identical for both
-  // spellings — pflag always frames a shorthand flag as `-x, --exclude`.
+  // Verified against pflag's actual output (CLI-2005): the rendered line is
+  // identical for both spellings — pflag always frames a shorthand flag as
+  // `-x, --exclude`.
   const spellings: ReadonlyArray<{ readonly name: string; readonly flag: string }> = [
     { name: "--exclude", flag: "--exclude" },
     { name: "-x", flag: "-x" },

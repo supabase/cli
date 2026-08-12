@@ -109,8 +109,7 @@ function hostFromTcpEndpoint(endpoint: string): string | undefined {
  * (`Docker.DaemonHost()` + `client.ParseHostURL` + `net.SplitHostPort`).
  * 3. Otherwise, the ACTIVE DOCKER CONTEXT's daemon endpoint, when it's a
  * `tcp://` one — `Docker.DaemonHost()` comes from a client built via
- * `command.NewDockerCli()` + `cli.Initialize()` (`apps/cli-go/internal/
- * utils/docker.go:41-54`), whose endpoint resolution walks `DOCKER_HOST` ->
+ * `command.NewDockerCli()` + `cli.Initialize()`, whose endpoint resolution walks `DOCKER_HOST` ->
  * `DOCKER_CONTEXT` -> the config file's `currentContext` -> the context
  * store (`docker/cli` `cli/command/cli.go`'s `getDockerEndPoint`/
  * `resolveContextName`) — not just `DOCKER_HOST`. The `docker`/`podman`

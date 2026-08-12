@@ -66,8 +66,7 @@ describe("legacyParseUintBase0 (Go strconv.ParseUint(s, 0, 64) parity)", () => {
 // Every expectation in this file is ground truth captured from go1.26:
 // `strconv.ParseInt(s, 0, 64)` — the exact call pflag makes for an
 // `Int64VarP` flag (`int64Value.Set`, `pflag/int64.go`), e.g. `backups
-// restore --timestamp` (`apps/cli-go/cmd/backups.go:43`, deleted in CLI-1970;
-// last present at commit 7b469f5b3).
+// restore --timestamp`.
 describe("legacyIsValidBase0Int64 (Go strconv.ParseInt(s, 0, 64) parity)", () => {
   it("accepts int64's exact bounds, both signs", () => {
     expect(legacyIsValidBase0Int64("9223372036854775807")).toBe(true); // int64 max

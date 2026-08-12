@@ -65,7 +65,7 @@ type RouteResult = {
  * hook, see that function's doc comment) so `legacyCleanupStartSecrets` gets container
  * names/workdirs from the same request that lists ids to stop, rather than a second,
  * separately-formatted `docker ps` call — which would cost an extra real Docker Engine
- * API request Go never makes. `stdout` for a `ps` route response is one `<id>\t<name>`
+ * API request. `stdout` for a `ps` route response is one `<id>\t<name>`
  * line per container (no third, workdir column — every test here exercises the
  * `cliConfig.workdir` fallback path); `defaultRoute` below tab-joins each configured id
  * with itself.

@@ -165,9 +165,9 @@ describe("legacy branches list integration", () => {
     const { layer, out } = setup({ goOutput: "yaml", response: [SAMPLE_BRANCH, zeroBranch] });
     return Effect.gen(function* () {
       yield* legacyBranchesList({ projectRef: Option.none() });
-      // Byte-exact Go parity: yaml.v3 lowercases the Go field names, renders
-      // nil pointers as null, and leaves time.Time timestamps unquoted
-      // (CLI-1975; golden shape verified against apps/cli-go).
+      // Established output contract: yaml.v3 lowercases the struct's field
+      // names, renders nil pointers as null, and leaves time.Time timestamps
+      // unquoted.
       expect(out.stdoutText).toBe(`- createdat: 2026-05-27T01:02:03Z
   deletionscheduledat: null
   gitbranch: feat-1
@@ -220,9 +220,8 @@ describe("legacy branches list integration", () => {
     const { layer, out } = setup({ goOutput: "toml", response: [SAMPLE_BRANCH] });
     return Effect.gen(function* () {
       yield* legacyBranchesList({ projectRef: Option.none() });
-      // Byte-exact Go parity: BurntSushi emits PascalCase Go field names,
-      // 2-space indentation, native TOML datetimes, and omits nil pointers
-      // (CLI-1975; golden shape verified against apps/cli-go).
+      // Established output contract: BurntSushi emits PascalCase Go field names,
+      // 2-space indentation, native TOML datetimes, and omits nil pointers.
       expect(out.stdoutText).toBe(`[[branches]]
   CreatedAt = 2026-05-27T01:02:03Z
   GitBranch = "feat-1"

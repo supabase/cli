@@ -2,7 +2,7 @@ import { legacyBold } from "./legacy-colors.ts";
 import { legacySortMigrationPathsByVersion } from "./legacy-migration-history.ts";
 
 /**
- * `pkg/migration/file.go` — local migration filenames are `<digits>_<name>.sql`.
+ * Local migration filenames are `<digits>_<name>.sql`.
  * `ListLocalMigrations` guarantees every path in `localMigrations` matches, so the
  * version capture group is always present.
  */
@@ -16,8 +16,8 @@ const baseName = (path: string): string => {
 };
 
 /**
- * `pkg/migration/apply.go:14-16` — the exact error strings Go raises so the legacy
- * handler can byte-match them on stderr.
+ * The exact error strings so the legacy
+ * handler can match them on stderr.
  */
 export const LEGACY_ERR_MISSING_REMOTE =
   "Found local migration files to be inserted before the last migration on remote database.";

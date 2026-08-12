@@ -7,8 +7,8 @@ import type {
 } from "./legacy-db-connection.errors.ts";
 
 /**
- * Plain Postgres connection parameters, mirroring Go's `pgconn.Config`
- * (`apps/cli-go/internal/utils/flags/db_url.go`). The password is plain here;
+ * Plain Postgres connection parameters, mirroring pgconn's `pgconn.Config`.
+ * The password is plain here;
  * driver layers wrap it (e.g. `Redacted`) at the boundary.
  */
 export interface LegacyPgConnInput {
@@ -105,22 +105,19 @@ export interface LegacyDbSession {
    * Whether an extension named `name` already exists in `pg_extension`,
    * **regardless of which schema it lives in**.
    *
-   * Go keys "did pgTAP already exist?" off a `pgx` `OnNotice` callback (notice
+   * The established behavior keys "did pgTAP already exist?" off a `pgx` `OnNotice` callback (notice
    * code `42710`, `duplicate_object`). That notice fires whenever
    * `CREATE EXTENSION IF NOT EXISTS pgtap ...` finds the extension already
    * installed — extensions are global per-database, so the schema is irrelevant.
    * `@effect/sql-pg`'s `PgClient` exposes no notice hook, so the legacy port
    * detects pre-existence with this query before enabling. Querying by `extname`
-   * only (not `extname` + `nspname`) matches Go: it must not drop a pgTAP the user
+   * only (not `extname` + `nspname`) matches that behavior: it must not drop a pgTAP the user
    * pre-installed in another schema such as `public`.
-   * See `apps/cli-go/internal/db/test/test.go:57-78` (deleted in CLI-1970;
-   * last present at commit 7b469f5b3).
    */
   readonly extensionExists: (name: string) => Effect.Effect<boolean, LegacyDbExecError>;
   /**
    * Run a server-side `COPY (...) TO STDOUT` and return its raw bytes. Mirrors
-   * `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`, deleted
-   * in CLI-1970; last present at commit 7b469f5b3), which
+   * `copyToCSV`, which
    * streams `pgconn.CopyTo` into a file. `sql` is the already-wrapped COPY
    * statement (e.g. `COPY (<query>) TO STDOUT WITH CSV HEADER`); the driver does
    * not wrap it. Used by `inspect report` to produce byte-identical CSVs by
@@ -129,19 +126,18 @@ export interface LegacyDbSession {
    * The driver opens ONE dedicated raw connection (node-postgres' COPY protocol
    * needs the raw client, which `@effect/sql-pg` does not expose) against the same
    * resolved dial target the primary connection won — so TLS / fallback / DoH
-   * parity is preserved — and reuses it for every copy, matching Go's single
+   * parity is preserved — and reuses it for every copy, matching the established single
    * `pgconn` for all report queries. The connection is opened lazily on the first
    * copy and closed when the owning session's scope closes. Failing to establish
-   * that connection raises `LegacyDbConnectError` (a connection-setup failure,
-   * matching Go); only the COPY stream itself raises `LegacyDbCopyError`.
+   * that connection raises `LegacyDbConnectError` (a connection-setup failure); only
+   * the COPY stream itself raises `LegacyDbCopyError`.
    */
   readonly copyToCsv: (
     sql: string,
   ) => Effect.Effect<Uint8Array, LegacyDbCopyError | LegacyDbConnectError>;
   /**
-   * Run a SQL statement and return its full result metadata, mirroring Go's
-   * `pgx.Rows` surface used by `db query` (`apps/cli-go/internal/db/query/query.go`,
-   * deleted in CLI-1970; last present at commit 7b469f5b3):
+   * Run a SQL statement and return its full result metadata, mirroring
+   * `pgx.Rows` surface used by `db query`:
    * the ordered column names (`fields`), the row values **positionally** (so
    * duplicate column names survive — node-postgres `rowMode: "array"`), and the
    * raw command tag (`rows.CommandTag()`, e.g. `INSERT 0 1`, `CREATE TABLE`).
@@ -181,7 +177,7 @@ export interface LegacyQueryResult {
 export interface LegacyDbConnectOptions {
   /**
    * Whether the target is the local stack (`utils.IsLocalDatabase`). Drives
-   * TLS, mirroring Go (`apps/cli-go/internal/utils/connect.go`): local connections
+   * TLS: local connections
    * set `cc.TLSConfig = nil` (`ConnectLocalPostgres`) → no TLS, while remote
    * connections go through `ConnectByUrl`, where pgx defaults to `sslmode=prefer`
    * and every non-TLS fallback is stripped → TLS is required (without certificate

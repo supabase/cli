@@ -7,14 +7,12 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 // ---------------------------------------------------------------------------
-// Bootstrap-specific tagged errors. Each maps to a Go `errors.New` / failure
-// site in `apps/cli-go/cmd/bootstrap.go` + `internal/bootstrap/bootstrap.go`
-// (deleted in CLI-1970; last present at commit 7b469f5b3).
+// Bootstrap-specific tagged errors, one per established failure site.
 // Login / create / api-keys / link failures are surfaced by the extracted
 // shared cores (`legacy/shared/legacy-*`), so they are NOT redefined here.
 // ---------------------------------------------------------------------------
 
-/** Positional template arg with no case-insensitive match — Go's `"Invalid template: " + name` (`cmd/bootstrap.go:48`). */
+/** Positional template arg with no case-insensitive match — `"Invalid template: " + name`. */
 export class LegacyBootstrapInvalidTemplateError extends Data.TaggedError(
   "LegacyBootstrapInvalidTemplateError",
 )<{
@@ -25,7 +23,7 @@ export class LegacyBootstrapInvalidTemplateError extends Data.TaggedError(
   }
 }
 
-/** GitHub samples listing failure — Go's `failed to list samples` (`bootstrap.go:ListSamples`). */
+/** GitHub samples listing failure — `failed to list samples`. */
 export class LegacyBootstrapTemplateListError extends Data.TaggedError(
   "LegacyBootstrapTemplateListError",
 )<{
@@ -36,7 +34,7 @@ export class LegacyBootstrapTemplateListError extends Data.TaggedError(
   }
 }
 
-/** Reading the target workdir failed — Go's `failed to read workdir: %w` (`bootstrap.go:44`). */
+/** Reading the target workdir failed — `failed to read workdir: %w`. */
 export class LegacyBootstrapWorkdirReadError extends Data.TaggedError(
   "LegacyBootstrapWorkdirReadError",
 )<{
@@ -48,8 +46,8 @@ export class LegacyBootstrapWorkdirReadError extends Data.TaggedError(
 }
 
 /**
- * User declined the overwrite prompt — Go returns `errors.New(context.Canceled)`
- * (`bootstrap.go:51`). Carries no suggestion frame (cancellation, not a fault).
+ * User declined the overwrite prompt — returns `errors.New(context.Canceled)`.
+ * Carries no suggestion frame (cancellation, not a fault).
  */
 export class LegacyBootstrapOverwriteDeclinedError extends Data.TaggedError(
   "LegacyBootstrapOverwriteDeclinedError",
@@ -61,7 +59,7 @@ export class LegacyBootstrapOverwriteDeclinedError extends Data.TaggedError(
   }
 }
 
-/** Template download failure — Go's `failed to download template: %w` (`bootstrap.go:downloadSample`). */
+/** Template download failure — `failed to download template: %w`. */
 export class LegacyBootstrapTemplateDownloadError extends Data.TaggedError(
   "LegacyBootstrapTemplateDownloadError",
 )<{
@@ -73,8 +71,8 @@ export class LegacyBootstrapTemplateDownloadError extends Data.TaggedError(
 }
 
 /**
- * Project health probe failed — Go's `Error status %d: %s` (non-200) or
- * `Service not healthy: %s (%s)` (`bootstrap.go:checkProjectHealth`).
+ * Project health probe failed — `Error status %d: %s` (non-200) or
+ * `Service not healthy: %s (%s)`.
  */
 export class LegacyBootstrapHealthError extends Data.TaggedError("LegacyBootstrapHealthError")<{
   readonly message: string;

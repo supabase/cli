@@ -179,8 +179,8 @@ function setup(
     // role..." stderr line (`legacy-db-config.layer.ts`'s `initLoginRole`),
     // fired as part of `resolve()`'s own connection-resolution work — i.e.
     // strictly before `legacyDbPushCore` (and its "DRY RUN: …" line) ever runs.
-    // `mockResolver` is otherwise silent, so tests pin real Go output ordering
-    // (`db_url.go:204` before `push.go:22-24`) against this stand-in line.
+    // `mockResolver` is otherwise silent, so tests pin the established output
+    // ordering against this stand-in line.
     simulateInitialisingLoginRole?: boolean;
   },
 ) {
@@ -339,7 +339,7 @@ describe("legacy db push", () => {
     return Effect.gen(function* () {
       yield* legacyDbPush(DEFAULT_FLAGS).pipe(Effect.provide(layer));
       expect(out.stderrText).toContain("Applying migration 20240101000000_test.sql...");
-      // "supabase db push" is wrapped in Aqua (cyan) on stdout, matching Go.
+      // "supabase db push" is wrapped in Aqua (cyan) on stdout (established output contract).
       expect(out.stdoutText).toContain("Finished");
       expect(out.stdoutText).toContain("supabase db push");
       // The migration body + history insert ran inside a transaction.
@@ -1171,8 +1171,8 @@ describe("legacy db push", () => {
 
   it.live("loads a Go-style env() boolean in config (no ProjectConfigParseError)", () => {
     // Regression for the strict @supabase/config loader rejecting `enabled = "env(VAR)"`:
-    // Go decodes it via env-expansion + strconv.ParseBool, so the config must load and the
-    // migration proceed. Previously native push aborted before the Go-compatible parse ran.
+    // env-expansion + boolean parsing must resolve it, so the config loads and the
+    // migration proceeds. Previously native push aborted before that parse ran.
     const previous = process.env["SEED_ENABLED"];
     process.env["SEED_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {
@@ -1194,10 +1194,11 @@ describe("legacy db push", () => {
   });
 
   it.live("a matched remote block's migrations.enabled beats the shell env override", () => {
-    // Go merges a matched [remotes.<ref>] block at viper's override tier (`v.Set`), which
-    // sits ABOVE AutomaticEnv — so `[remotes.preview.db.migrations] enabled = false` wins
-    // over `SUPABASE_DB_MIGRATIONS_ENABLED=true` and the push skips migrations. (Before the
-    // config-reader convergence, push resolved this gate env-first and wrongly applied.)
+    // A matched [remotes.<ref>] block overrides the shell env, so
+    // `[remotes.preview.db.migrations] enabled = false` wins over
+    // `SUPABASE_DB_MIGRATIONS_ENABLED=true` and the push skips migrations.
+    // (Before the config-reader convergence, push resolved this gate
+    // env-first and wrongly applied.)
     const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "true";
     const { layer, out } = setup(tmp.current, {

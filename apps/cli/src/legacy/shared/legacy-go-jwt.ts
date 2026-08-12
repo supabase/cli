@@ -2,11 +2,11 @@ import { createHmac, createPrivateKey, createSign } from "node:crypto";
 import { encodeGoJsonCompact } from "./legacy-go-json.ts";
 
 /**
- * RFC 7517 JWK fields `JWK` struct round-trips (`pkg/config/auth.go:88-108`,
- * `toml`/`json` tags `kty`, `kid`, `use`, `key_ops`, `alg`, `ext`, `n`, `e`, `d`, `p`, `q`, `dp`,
+ * RFC 7517 JWK fields `JWK` struct round-trips (`toml`/`json` tags `kty`, `kid`, `use`,
+ * `key_ops`, `alg`, `ext`, `n`, `e`, `d`, `p`, `q`, `dp`,
  * `dq`, `qi`, `crv`, `x`, `y`) — field names match exactly, so a signing-keys file can be parsed
- * straight into this shape (Go decodes `auth.signing_keys_path` directly into `[]JWK`,
- * `pkg/config/config.go:1113`, so `use`/`key_ops`/`ext` on a user's key file must round-trip into
+ * straight into this shape (`auth.signing_keys_path` decodes directly into `[]JWK`,
+ * so `use`/`key_ops`/`ext` on a user's key file must round-trip into
  * both `GOTRUE_JWT_KEYS` and the published JWKS just like every other field here). A superset of
  * Node's own `crypto.webcrypto.JsonWebKey` (which omits `kid`), so it's still assignable wherever
  * that type is expected (e.g. `createPrivateKey`'s `format: "jwk"` input) — `key_ops` is typed as
@@ -36,8 +36,8 @@ export interface LegacyJwk {
 /**
  * `NewConfig()` default `Auth.SigningKeys` —
  * a single ES256 key, unconditionally present on every resolved config UNLESS overwritten by a
- * real `auth.signing_keys_path` file (and only then when `auth.enabled` — see
- * `config.go:1087,1110-1116`). `ResolveJWKS` iterates `a.SigningKeys` regardless of
+ * real `auth.signing_keys_path` file (and only then when `auth.enabled`).
+ * `ResolveJWKS` iterates `a.SigningKeys` regardless of
  * `auth.enabled`, so this default key is always part of the published JWKS unless a configured
  * file overrides it — callers must not skip it just because auth happens to be disabled or no
  * `signing_keys_path` is set. Shared by GoTrue's own env building (`services/gotrue.service.ts`,
@@ -171,11 +171,10 @@ type LegacySupportedJwtAlgorithm = "RS256" | "ES256";
  * all (`encoding/json` only calls `UnmarshalText` for a key present in the source
  * JSON; a missing key just leaves the struct field at its zero value), so that case
  * is caught later, at SIGN time, by {@link legacySignJwtWithJwk}'s own `unsupported
- * algorithm: ` check instead. Throws Go's own bare `UnmarshalText` error text
+ * algorithm: ` check instead. Throws the established bare `UnmarshalText` error text
  * unwrapped; callers apply their own decode-context wrapping (`"failed to parse
  * JWK: %w"` for a pasted stdin JWK, `"failed to decode signing keys: failed to parse
- * response body: %w"` for a `signing_keys_path` file — see `fetcher.ParseJSON`,
- * `apps/cli-go/pkg/fetcher/http.go:144-151`).
+ * response body: %w"` for a `signing_keys_path` file — see `fetcher.ParseJSON`).
  */
 export function legacyAssertDecodableJwkAlgorithm(alg: string | undefined): void {
   if (alg !== undefined && alg !== "RS256" && alg !== "ES256") {
@@ -250,16 +249,16 @@ function assertDecodableJwkNumericFields(jwk: LegacyJwk): void {
 }
 
 /**
- * Go has NO explicit cross-check between `jwk.Algorithm` and `jwk.KeyType` before
+ * There is NO explicit cross-check between `jwk.Algorithm` and `jwk.KeyType` before
  * signing: `jwkToPrivateKey` only validates kty/curve (see {@link assertSupportedKty}),
  * and `GenerateAsymmetricJWT`'s algorithm switch only validates `jwk.Algorithm`
  * itself. A mismatched pair (e.g. `kty: "RSA"` signed as `ES256`) reaches
  * `token.SignedString(privateKey)` and fails INSIDE golang-jwt's own signing
- * method, which type-asserts the key (jwt/v5@v5.3.1 `rsa.go:76` / `ecdsa.go:99`):
- * `"key is of invalid type: <detail>"`, wrapped by `apikeys.go:113` into
+ * method, which type-asserts the key:
+ * `"key is of invalid type: <detail>"`, wrapped into
  * `"failed to sign JWT: %w"`. Node's own `createSign(...).sign(privateKey)` would
  * also fail on this mismatch, but with an OpenSSL-level message that does not
- * match Go's text — so this reproduces Go's OBSERVABLE error deliberately, ahead
+ * match this text — so this reproduces the established OBSERVABLE error deliberately, ahead
  * of ever touching Node's signer.
  */
 function assertKeyMatchesAlgorithm(jwk: LegacyJwk, algorithm: LegacySupportedJwtAlgorithm): void {

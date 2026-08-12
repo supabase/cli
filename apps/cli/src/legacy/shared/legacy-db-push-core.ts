@@ -55,19 +55,18 @@ const applyError = (message: string) => new LegacyDbPushApplyError({ message });
 
 /**
  * Everything `push.Run` does once its target connection AND config are
- * already resolved (`apps/cli-go/internal/db/push/push.go`, deleted in
- * CLI-1970; last present at commit 7b469f5b3). Shared by two
- * callers, matching Go's own structure exactly — `push.Run` never
+ * already resolved. Shared by two
+ * callers, following the same structure — `push.Run` never
  * resolves the project ref or loads `config.toml` itself, it just uses
  * whatever its caller already resolved:
  *
  * - `db push` (`push.handler.ts`) resolves `--db-url`/`--linked`/`--local` via
  * `LegacyDbConfigResolver`/`LegacyProjectRefResolver`, loads + validates
  * `config.toml` itself (so the "Loading config override" line — printed by
- * Go's config-load path, which runs before `push.Run` — prints before this
+ * the config-load path, which runs before `push.Run` — prints before this
  * core runs), then calls this core with the resolved connection.
  * - `bootstrap` calls `push.Run(ctx, false, false, true, true, config, fsys)`
- * directly in Go — it never re-resolves the
+ * directly — it never re-resolves the
  * project ref or db config for push, reusing the config it already derived
  * for `.env`. `bootstrap.handler.ts` mirrors that: it passes its own
  * `workdir` / `projectRef` / connection directly, never touching

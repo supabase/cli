@@ -11,10 +11,10 @@ import {
  * Errors raised while deriving Storage connection credentials, shared by
  * `seed buckets` and `storage ls/cp/mv/rm`.
  *
- * `LegacyStorageConfigError` covers the config-load-time validations Go runs
- * before `NewStorageAPI` (`auth.jwt_secret` length, Kong TLS cert/key pairing
+ * `LegacyStorageConfigError` covers the config-load-time validations run
+ * before the Storage API client is built (`auth.jwt_secret` length, Kong TLS cert/key pairing
  * and readability). The remaining three mirror `tenant.GetApiKeys` failure
- * modes on the `--linked` path (`internal/utils/tenant/client.go`).
+ * modes on the `--linked` path.
  */
 export class LegacyStorageConfigError extends Data.TaggedError("LegacyStorageConfigError")<{
   readonly message: string;
@@ -26,8 +26,8 @@ export class LegacyStorageConfigError extends Data.TaggedError("LegacyStorageCon
 
 /**
  * Raised on `--linked` when the project's api-keys response yields no keys,
- * mirroring `tenant.GetApiKeys` → `errMissingKey` ("Anon key not found.",
- * `internal/utils/tenant/client.go:16,80-82`), which aborts before the remote
+ * mirroring `tenant.GetApiKeys` → `errMissingKey` ("Anon key not found."),
+ * which aborts before the remote
  * Storage client is built.
  */
 export class LegacyStorageMissingApiKeyError extends Data.TaggedError(

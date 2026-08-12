@@ -19,12 +19,12 @@ describe("supabase migration squash (legacy)", () => {
   });
 
   // Real-subprocess guard for the production layer graph: `--version 0_init` is
-  // not a valid integer, so `squash.Run`'s bare `invalid version number` message
+  // not a valid integer, so the bare `invalid version number` message
   // (no repair-style `failed to parse <v>:` prefix) must surface — proving the
   // real `legacyMigrationSquashRuntimeLayer` builds end to end, without ever
   // touching Docker/Postgres. This is the same class of missing-service bug the
   // `migration fetch` e2e exists to catch. Unlike a declined confirmation prompt
-  // (Go's `context.Canceled`), this is a genuine validation error, so the usual
+  // (a genuine cancellation), this is a genuine validation error, so the usual
   // `--debug` troubleshooting hint still follows it (`output.layer.ts`'s
   // `CONTEXT_CANCELED_MESSAGE` guard does not apply here).
   test(

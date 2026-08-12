@@ -6,15 +6,14 @@ import { legacyInspectBaseLayer } from "../inspect.layers.ts";
 /**
  * The command-runtime path for a single `inspect db <leaf>` subcommand.
  *
- * The `leaf` is the cobra `Use` name of the invoked command (e.g. `"locks"`, or a
+ * The `leaf` is the invoked command's own name (e.g. `"locks"`, or a
  * deprecated alias like `"cache-hit"`) and is appended to `["inspect", "db"]`. This
  * path is what `withLegacyCommandInstrumentation` records as the PostHog
- * `cli_command_executed` `command` property, matching Go's `cmd.CommandPath()`
- * (`apps/cli-go/cmd/root_analytics.go:32-38`): Go's inspect tree is a real 3-level
+ * `cli_command_executed` `command` property: the inspect tree is a real 3-level
  * hierarchy, so each of the 25 leaves emits a distinct command name. A shared
  * `["inspect", "db"]` path would collapse them all into one event, so each leaf must
  * pass its own name — and a deprecated alias records the alias the user typed, not
- * the backend command it delegates to (`cmd/inspect.go:139-247`).
+ * the backend command it delegates to.
  */
 export const legacyInspectDbCommandPath = (leaf: string): ReadonlyArray<string> => [
   "inspect",

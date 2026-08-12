@@ -71,7 +71,7 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
       return { baseUrl, apiKey: envKey, localKongCa: undefined } satisfies LegacyStorageCredentials;
     }
     // Resolve the Management API client lazily so the local path never triggers
-    // auth (`api.go:22` → `tenant.GetApiKeys`).
+    // auth (`tenant.GetApiKeys`).
     const api = yield* (yield* LegacyPlatformApiFactory).make;
     const keys = legacyExtractServiceKeys(
       yield* api.v1.getProjectApiKeys({ ref: opts.projectRef, reveal: true }).pipe(
@@ -100,11 +100,11 @@ export const legacyResolveStorageCredentials = Effect.fnUntraced(function* (opts
   const baseUrl = resolveLocalBaseUrl(opts.config);
   const apiKey = yield* resolveLocalServiceRoleKey(opts.config.auth);
 
-  // Go installs `status.NewKongClient` unconditionally for the local client; its
+  // `status.NewKongClient` installs unconditionally for the local client; its
   // embedded CA only matters for https. `(*api).Validate` resolves cert_path /
   // key_path and validates the pairing only when `api.enabled && api.tls.enabled`.
   // Inject a CA whenever the resolved URL is https
-  // (Go derives the scheme from `api.tls.enabled` alone, `config.go:639-642`).
+  // (the scheme derives from `api.tls.enabled` alone).
   let localKongCa: string | undefined;
   const validatedCa =
     opts.config.api.enabled && opts.config.api.tls.enabled
@@ -199,8 +199,8 @@ const validateLocalKongTls = Effect.fnUntraced(function* (
   }
 
   if (hasCert) {
-    // Go joins TLS paths unconditionally with the supabase dir — NO IsAbs guard
-    // (config.go:795-801 uses path.Join, which absorbs a leading "/").
+    // TLS paths join unconditionally with the supabase dir — NO IsAbs guard
+    // (`path.Join` absorbs a leading "/").
     const absCert = path.join(workdir, "supabase", certPath);
     const certContent = yield* fs.readFileString(absCert).pipe(
       Effect.catchTag(

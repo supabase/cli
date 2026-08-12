@@ -49,7 +49,7 @@ export interface LegacyMigrationRepairInput {
   readonly password: Option.Option<string>;
 }
 
-/** Go's `repair.UpdateMigrationTable` — create the table, then run one batch txn. */
+/** Creates the migration table, then runs one batch transaction. */
 const updateMigrationTable = Effect.fnUntraced(function* (
   session: LegacyDbSession,
   fs: FileSystem.FileSystem,
@@ -62,7 +62,7 @@ const updateMigrationTable = Effect.fnUntraced(function* (
   const output = yield* Output;
   yield* legacyCreateMigrationTable(session);
 
-  // Resolve the applied rows up front (Go reads each file while queueing the
+  // Resolve the applied rows up front (each file is read while queueing the
   // batch, before sending it — a missing file aborts with no DB mutation).
   const appliedFiles: Array<LegacyMigrationFile> = [];
   if (status === "applied") {
@@ -101,7 +101,7 @@ const updateMigrationTable = Effect.fnUntraced(function* (
     ),
   );
 
-  // Go prints this only when NOT repairing the whole table (`repair.go:82`).
+  // Printed only when NOT repairing the whole table.
   if (!repairAll) {
     yield* output.raw(
       `Repaired migration history: [${versions.join(" ")}] => ${status}\n`,
@@ -140,12 +140,10 @@ const runRepair = Effect.fnUntraced(function* (
 
   const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
   const repairAll = input.versions.length === 0;
-  const connType = target.connType ?? "linked"; // repair defaults to `--linked` (Go: `Bool("linked", true)`).
+  const connType = target.connType ?? "linked"; // repair defaults to `--linked`.
 
   // Resolve the DB config (and, for the linked default, the project ref) BEFORE the
-  // version parse and any prompt — mirroring Go's cobra order: root `PersistentPreRunE`
-  // runs `ParseDatabaseConfig` (`apps/cli-go/cmd/root.go:118`) before `repair.Run`'s
-  // `strconv.Atoi` version loop (`internal/migration/repair/repair.go:27-31`). So an
+  // version parse and any prompt, so an
   // unlinked / invalid-config / malformed-`--db-url` run surfaces that error before an
   // invalid positional version or a prompt.
   const cfg = yield* resolver.resolve({
@@ -155,19 +153,18 @@ const runRepair = Effect.fnUntraced(function* (
     password: input.password,
   });
 
-  // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
-  // after the parse-time flag-group validation above — so a SUPABASE_YES set only in
-  // supabase/.env auto-confirms the repair-all prompt, but a flag conflict still surfaces
-  // before any .env read. Resolve --yes against the project env here, not just process.env.
+  // The project .env loads after the parse-time flag-group validation above — so a
+  // SUPABASE_YES set only in supabase/.env auto-confirms the repair-all prompt, but a
+  // flag conflict still surfaces before any .env read. Resolve --yes against the
+  // project env here, not just process.env.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
-  // Linked repair caches the project ref + identifies project groups — Go's
-  // `ensureProjectGroupsCached`, called from `Execute()` (`apps/cli-go/cmd/root.go:174`)
-  // gated on `executedCmd != nil`, NOT on the RunE error. The ref is loaded now (pre-run,
-  // via `ParseDatabaseConfig`'s `LoadProjectRef`), and the cache is attached to the whole
+  // Linked repair caches the project ref + identifies project groups, gated on the
+  // command having executed, NOT on the handler's own failure. The ref is loaded now
+  // (pre-run), and the cache is attached to the whole
   // repair flow via `Effect.ensuring` below — so it runs even when the version parse fails
-  // or the repair-all prompt is declined (Go caches on `context.Canceled` too).
+  // or the repair-all prompt is declined (caches on cancellation too).
   const cacheLinkedRef =
     connType === "linked"
       ? yield* Effect.gen(function* () {
@@ -179,8 +176,7 @@ const runRepair = Effect.fnUntraced(function* (
       : undefined;
 
   const repairFlow = Effect.gen(function* () {
-    // Version validation runs after DB-config resolution (Go's `strconv.Atoi` loop lives
-    // inside `repair.Run`, after `PersistentPreRunE`). Rejects non-numeric AND
+    // Version validation runs after DB-config resolution. Rejects non-numeric AND
     // out-of-int64-range values; `legacyParseMigrationVersion` mirrors that exactly.
     for (const version of input.versions) {
       if (legacyParseMigrationVersion(version) === undefined) {
@@ -209,8 +205,8 @@ const runRepair = Effect.fnUntraced(function* (
 
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
-        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        // The connect diagnostic prints to stderr before dialing,
+        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -232,7 +228,7 @@ const runRepair = Effect.fnUntraced(function* (
     );
 
     if (output.format === "text") {
-      // Go's group PostRun (stdout) + root CmdSuggestion (stderr), both on success.
+      // The success banner (stdout) + follow-up suggestion (stderr), both on success.
       yield* output.raw(`Finished ${legacyAqua("supabase migration repair")}.\n`);
       yield* output.raw(
         `Run ${legacyAqua("supabase migration list")} to show the updated migration history.\n`,

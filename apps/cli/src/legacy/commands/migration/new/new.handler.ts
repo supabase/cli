@@ -13,7 +13,7 @@ import type { LegacyMigrationNewFlags } from "./new.command.ts";
 import { LegacyMigrationNewWriteError } from "./new.errors.ts";
 
 /**
- * Native port of `supabase migration new` (`internal/migration/new/new.go`):
+ * `supabase migration new`:
  * write `supabase/migrations/<UTC timestamp>_<name>.sql` (mode 0644), seeding it
  * from piped stdin when present, then print the created path. No DB / API / prompt.
  */
@@ -58,10 +58,9 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
         Effect.mapError((cause) => new LegacyMigrationNewWriteError({ message: cause.message })),
       );
 
-    // Go prints the RELATIVE path: `utils.MigrationsDir` is `supabase/migrations`
-    // and Go chdir's into `--workdir` in its persistent pre-run, so the printed
-    // path is workdir-independent. Reproduce that exactly while still writing to
-    // the absolute `migrationPath`.
+    // The RELATIVE path prints: `supabase/migrations`
+    // is workdir-independent regardless of the invoking cwd. Reproduce that exactly
+    // while still writing to the absolute `migrationPath`.
     const relativePath = path.join(
       "supabase",
       "migrations",
@@ -74,16 +73,16 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
         ? output.raw(`Created new migration at ${legacyBold(relativePath, process.stdout)}\n`)
         : Effect.void;
 
-    // Go's `CopyStdinIfExists` opens the migration file first, then streams stdin into it
-    // with `io.Copy` (`internal/migration/new/new.go:19,28,41`) — a fixed-size buffer, so a
-    // large `pg_dump | supabase migration new` runs in constant memory. Mirror that: create
-    // the file (mode 0644, like Go's O_CREATE|O_TRUNC), then stream piped stdin into the open
+    // The migration file opens first, then stdin streams into it
+    // via a fixed-size buffer, so a
+    // large `pg_dump | supabase migration new` runs in constant memory. Create
+    // the file (mode 0644, O_CREATE|O_TRUNC), then stream piped stdin into the open
     // handle rather than buffering the whole pipe. A TTY (char device) writes nothing → empty
-    // file; an empty pipe streams nothing → empty file, both matching Go.
+    // file; an empty pipe streams nothing → empty file.
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go fails with "failed to open migration file" if the open fails (`new.go:21`) —
-        // BEFORE its deferred Created-line print is registered, so no line on open failure...
+        // Fails with "failed to open migration file" if the open fails —
+        // BEFORE the Created-line print, so no line on open failure...
         const handle = yield* fs.open(migrationPath, { flag: "w", mode: 0o644 }).pipe(
           Effect.mapError(
             (cause) =>
@@ -92,10 +91,10 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
               }),
           ),
         );
-        // ...and with "failed to copy from stdin" if the copy fails (`new.go:42`). A piped
+        // ...and with "failed to copy from stdin" if the copy fails. A piped
         // stdin read error must abort here, not silently leave a truncated/empty file — but
-        // Go's `defer fmt.Println("Created new migration at …")` (`new.go:24-27`) is already
-        // registered by then, so the Created line still prints (stdout) BEFORE the copy
+        // the Created-line print is already
+        // scheduled by then, so the Created line still prints (stdout) BEFORE the copy
         // error surfaces (stderr, exit 1).
         if (!stdin.isTTY) {
           yield* stdin.pipedBytesStream.pipe(

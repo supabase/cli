@@ -6,8 +6,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * Storage URL parsing, ported 1:1 from `internal/storage/client/scheme.go`
- * plus the slices of `net/url` that `url.Parse` exercises for the `ss://` scheme.
+ * Storage URL parsing, matching `url.Parse` semantics for the `ss://` scheme.
  *
  * Two layers:
  * - `legacyGoUrlParse` reproduces `url.Parse` for the fields the storage
@@ -184,8 +183,7 @@ function isValidOptionalPort(port: string): boolean {
 
 /**
  * Go `net/url.parseHost`, restricted to the branches this module's callers
- * can actually hit (`net/url/url.go:544-608` in the Go stdlib `apps/cli-go`
- * builds against): IP-literal (`[...]`) bracket/port validation, and the bare
+ * can actually hit: IP-literal (`[...]`) bracket/port validation, and the bare
  * `host[:port]` port-digit check. Deliberately does NOT implement IPv6
  * zone-identifier percent-decoding or `netip.ParseAddr` address validation
  * (Go additionally requires a bracketed literal to parse as a valid,

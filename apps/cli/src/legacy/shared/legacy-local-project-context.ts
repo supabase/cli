@@ -14,10 +14,7 @@ import { legacyResolveProjectEnvironmentValues } from "./legacy-project-environm
 
 /**
  * The config-load/env/project-id resolution `stop` (its non-`--all`/non-`--project-id` branch)
- * and `status` (unconditionally) both duplicated verbatim before this hoist. Ported from Go's
- * `flags.LoadConfig` (config load, `internal/utils/flags/config_path.go:10-14` ->
- * `pkg/config/config.go:882`) plus `utils.GetHostname`/`GetId`'s project-id resolution
- * (`internal/utils/misc.go:231-311`, `internal/utils/config.go`).
+ * and `status` (unconditionally) both duplicated verbatim before this hoist.
  *
  * Deliberately excludes workdir validation (`legacyValidateWorkdirIsDirectory`,
  * `legacy-workdir-validation.ts`): both callers already invoke that themselves, at a point in
@@ -29,8 +26,8 @@ import { legacyResolveProjectEnvironmentValues } from "./legacy-project-environm
  * own numbered comments for exactly why that ordering is load-bearing. Callers keep calling
  * {@link legacyValidateWorkdirIsDirectory} themselves, unchanged, before this.
  *
- * The sanitized project id (`Config.ProjectId` singleton, rewritten once by `Config.Validate`
- * at config-load time, `pkg/config/config.go:938-944`) IS included here, even though `status`
+ * The sanitized project id (a singleton, rewritten once by validation
+ * at config-load time) IS included here, even though `status`
  * previously computed it AFTER its own `legacyResolveStatusLocalState` call, and `stop` computed it
  * after its own `legacyResolveLocalConfigValues` call — both of those are pure, non-throwing string
  * derivations (`legacyResolveLocalProjectId`/`legacySanitizeProjectId`, see their own doc comments)
@@ -67,13 +64,13 @@ export const legacyLoadLocalProjectContext = <E>(
   projectRef?: string,
 ): Effect.Effect<LegacyLocalProjectContext, E, FileSystem.FileSystem | Path.Path> =>
   Effect.gen(function* () {
-    // `search: false`: `workdir` already IS Go's fully-resolved chdir target (`legacy-cli-config.
+    // `search: false`: `workdir` already IS the fully-resolved chdir target (`legacy-cli-config.
     // layer.ts`'s `resolveWorkdir` mirrors `ChangeWorkDir`'s explicit-exact-vs-default-searched
-    // resolution, `apps/cli-go/internal/utils/misc.go:231-247`), so letting `@supabase/config`'s
+    // resolution), so letting `@supabase/config`'s
     // `findProjectPaths` climb ancestors again on top of that would let an unrelated ancestor
     // project's config.toml win when `--workdir`/`SUPABASE_WORKDIR` points at a subdirectory with
-    // no `supabase/config.toml` of its own — Go never searches past the exact (explicit or
-    // defaulted) workdir (`NewPathBuilder`, `pkg/config/utils.go:43-48`).
+    // no `supabase/config.toml` of its own — this never searches past the exact (explicit or
+    // defaulted) workdir (`NewPathBuilder`).
     const projectEnv = yield* loadProjectEnvironment({
       cwd: workdir,
       baseEnv: process.env,
@@ -104,20 +101,20 @@ export const legacyLoadLocalProjectContext = <E>(
     });
 
     // `godotenv.Load` (`loadEnvIfExists`, called by `loadNestedEnv` above this same
-    // `Config.Load` pass, `pkg/config/config.go:1261`) installs every parsed dotenv key into
+    // config-load pass) installs every parsed dotenv key into
     // the process's OWN environment via `os.Setenv` — never overriding an already-set key —
     // so it's visible to every subsequent call in THIS process that reads `process.env` at
-    // CALL time, not just to `Config.Load`'s own field decoding. `BITBUCKET_CLONE_DIR` is the
+    // CALL time, not just to config decoding. `BITBUCKET_CLONE_DIR` is the
     // one key this applies to today: `os.Getenv("BITBUCKET_CLONE_DIR")` read
     // lives inside `DockerStart`, a regular
-    // function invoked during the command's own `Run()`, well after `flags.LoadConfig` ->
-    // `godotenv.Load` has already installed dotenv keys into the process env — not in a
-    // package-level `var` initializer evaluated before `godotenv.Load` ever runs (see
+    // function invoked during the command's own `Run()`, well after config load has already
+    // installed dotenv keys into the process env — not in a
+    // package-level `var` initializer evaluated before that ever runs (see
     // {@link LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY}'s own doc comment; review:
     // PRRT_kwDOErm0O86VmHkm) — so a value set ONLY in a project `.env` file genuinely reaches
-    // Go too. Deliberately permanent (unlike `legacyApplyProjectEnv`'s own narrower,
-    // explicitly-scoped opt-in around a single command's container work) — matching Go's own
-    // non-reverting `os.Setenv`, which persists for that single-command process's entire
+    // it too. Deliberately permanent (unlike `legacyApplyProjectEnv`'s own narrower,
+    // explicitly-scoped opt-in around a single command's container work) — matching the
+    // established non-reverting `os.Setenv`, which persists for that single-command process's entire
     // lifetime.
     for (const [key, value] of Object.entries(projectEnvValues)) {
       if (key === LEGACY_BITBUCKET_CLONE_DIR_ENV_KEY && process.env[key] === undefined) {
@@ -128,15 +125,16 @@ export const legacyLoadLocalProjectContext = <E>(
     // Deliberately NOT extended to Docker-client keys (`DOCKER_HOST`/`DOCKER_CONTEXT`/
     // `DOCKER_CONFIG`/etc, `legacyIsDockerClientEnvKey`), unlike an earlier version of this
     // function — same reasoning as `SUPABASE_SERVICES_HOSTNAME` right below, with even more
-    // direct evidence: Go's ENTIRE Docker connectivity is the package-level
+    // direct evidence: the reference implementation's ENTIRE Docker connectivity is the package-level
     // `var Docker = NewDocker()`, whose
-    // `cli.Initialize(&dockerFlags.ClientOptions{})` reads these exact env vars once, at Go
+    // `cli.Initialize(&dockerFlags.ClientOptions{})` reads these exact env vars once, at
     // BINARY STARTUP — before `main()` runs, before cobra parses argv, before any command's
     // `Run()` calls `flags.LoadConfig` -> `Config.Load` -> `loadNestedEnv` -> `godotenv.Load`.
-    // Go never shells out to a `docker`/`podman` binary for its own container work (there is no
-    // `exec.Command("docker", ...)` anywhere under `apps/cli-go`) — every container operation
+    // The reference implementation never shells out to a `docker`/`podman` binary for its own
+    // container work —
+    // every container operation
     // goes through that single already-frozen SDK client, so a project-dotenv-only Docker-client
-    // override can NEVER retarget Go's daemon, any more than it can retarget
+    // override can NEVER retarget that daemon, any more than it can retarget
     // `utils.Config.Hostname` below. Verified empirically (a scratch probe reproducing the exact
     // package-var-init-before-dotenv-load ordering): a value installed via `os.Setenv` after a
     // package var has already captured the environment never reaches that var. Installing these

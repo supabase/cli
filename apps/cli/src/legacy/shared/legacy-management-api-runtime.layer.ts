@@ -165,9 +165,8 @@ type LegacyManagementApiServices =
  * Building this layer resolves NO access token — `legacyPlatformApiFactoryLayer`
  * captures context and wraps `legacyMakePlatformApi` in `Effect.cached`, deferring
  * token resolution to the first `factory.make` (i.e. when `initLoginRole` /
- * `listAndUnban` actually call the Management API). This mirrors Go's lazy
- * `GetSupabase` (`apps/cli-go/internal/utils/api.go`) and `NewDbConfigWithPassword`
- * (`internal/utils/flags/db_url.go`), which never load a token when a DB password
+ * `listAndUnban` actually call the Management API). This never loads a token when a
+ * DB password
  * is supplied — so `db dump --linked --password …` / `… generate --linked --password`
  * succeed without a login. Management API commands that legitimately require a token
  * keep using `legacyManagementApiRuntimeLayer`, where the eager stack fails up front.

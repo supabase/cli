@@ -1,7 +1,5 @@
-// Pure diff-engine resolution shared by `db diff` and `db pull`. Mirrors the
-// three Go helpers in `apps/cli-go/cmd/db.go:375-401` so engine selection stays
-// byte-identical to the Go CLI. No Effect / service dependencies — unit-tested
-// directly.
+// Pure diff-engine resolution shared by `db diff` and `db pull`. No Effect / service
+// dependencies — unit-tested directly.
 
 /**
  * Whether pg-delta is the active default engine. Mirrors `shouldUsePgDelta`:

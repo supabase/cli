@@ -92,7 +92,6 @@ const baseEnvInput: LegacyBuildGotrueEnvInput = {
 };
 
 describe("legacyBuildGotrueEnv", () => {
-  // Port of TestBuildGotrueEnv's 4 sub-cases (start_test.go:440-520).
   describe("TestBuildGotrueEnv parity", () => {
     test("uses auth scoped external url and absolute mailer verify urls", () => {
       const env = legacyBuildGotrueEnv({
@@ -206,9 +205,8 @@ describe("legacyBuildGotrueEnv", () => {
     });
   });
 
-  // Port of TestFormatMapForEnvConfig (start_test.go:566-612), exercised
-  // through GOTRUE_SMS_TEST_OTP since `formatMapForEnvConfig` is only ever
-  // called from inside `buildGotrueEnv`.
+  // Exercised through GOTRUE_SMS_TEST_OTP since `legacyFormatMapForEnvConfig`
+  // is only ever called from inside `legacyBuildGotrueEnv`.
   describe("GOTRUE_SMS_TEST_OTP / formatMapForEnvConfig parity", () => {
     test("legacyFormatMapForEnvConfig produces key:value pairs with no trailing comma", () => {
       expect(legacyFormatMapForEnvConfig({})).toBe("");

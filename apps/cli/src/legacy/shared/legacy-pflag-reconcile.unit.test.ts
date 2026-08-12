@@ -215,7 +215,7 @@ describe("legacyPflagWorkdirValue", () => {
   it("ignores the parsed flag when the --workdir token was consumed by another flag, falling to the env var", () => {
     // `--domains --workdir /x`: pflag hands `--workdir` to `--domains` and
     // never marks workdir changed, so viper falls to SUPABASE_WORKDIR
-    // (binary-verified against apps/cli-go, PR #5974 round 6).
+    // (binary-verified, PR #5974 round 6).
     expect(legacyPflagWorkdirValue(scan([], ["workdir"]), Option.some("/x"), "/env")).toEqual(
       Option.some("/env"),
     );

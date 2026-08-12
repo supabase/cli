@@ -39,9 +39,9 @@ export const legacyReadSniffBytes = Effect.fnUntraced(function* (
 
 /**
  * Refine a content-type by file extension, but only when it is a generic
- * `text/plain` (`if strings.Contains(fo.ContentType, "text/plain")` gate,
- * `objects.go:105-108`). Applied to both the sniffed type and an explicit
- * `--content-type` value, matching `ParseFileOptions` → `UploadObject` flow.
+ * `text/plain` (`if strings.Contains(fo.ContentType, "text/plain")` gate).
+ * Applied to both the sniffed type and an explicit
+ * `--content-type` value, matching the established file-options → upload flow.
  */
 export function legacyRefineUploadContentType(contentType: string, filePath: string): string {
   if (contentType.includes("text/plain")) {

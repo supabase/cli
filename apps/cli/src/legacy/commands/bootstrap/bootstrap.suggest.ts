@@ -1,17 +1,14 @@
 import { relative } from "node:path";
 
 /**
- * Reproduces Go's `suggestAppStart` (`apps/cli-go/internal/bootstrap/bootstrap.go`,
- * deleted in CLI-1970; last present at commit 7b469f5b3).
- *
- * Builds the "To start your app:" hint printed at the end of bootstrap. Go computes
+ * Builds the "To start your app:" hint printed at the end of bootstrap. Computes
  * the relative path from the original working directory (`utils.CurrentDirAbs`) to
  * the (post-chdir) project directory; a non-trivial relative path adds a `cd <rel>`
  * line, and a non-empty start command adds a second line.
  *
- * Colour is applied via the injected `colorize` callback (Go wraps each command
- * line in `utils.Aqua`). It defaults to identity so unit tests assert the raw text,
- * matching Go's `TestSuggestAppStart` which runs under a non-TTY (uncoloured) profile.
+ * Colour is applied via the injected `colorize` callback (each command line
+ * is wrapped in `utils.Aqua`). It defaults to identity so unit tests assert
+ * the raw text, matching a non-TTY (uncoloured) profile.
  */
 export function suggestAppStart(
   currentDirAbs: string,

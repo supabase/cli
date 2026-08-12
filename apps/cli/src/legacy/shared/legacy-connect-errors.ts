@@ -1,6 +1,6 @@
 /**
- * Connection-error classification and rendering ported from Go's
- * `internal/utils/connect.go` and pgconn's `connectError`.
+ * Connection-error classification and rendering ported from the established
+ * connect helpers and pgconn's `connectError`.
  * Used by the container-level pooler fallback (`db dump --linked`) to decide
  * whether a failed pg_dump/pg container was an IPv6 connectivity failure that
  * warrants retrying through the IPv4 transaction pooler, and by the connection
@@ -242,7 +242,7 @@ const LEGACY_SERVER_REFUSED_SSL = "The server does not support SSL connections";
 // the socket before the handshake completes (node `lib/_tls_wrap.js`
 // `onConnectEnd`; Bun emits the same text for both FIN and RST). Phase-specific
 // by construction — only ever raised pre-secure-connection — so it maps to
-// pgconn's startTLS stage (`tls error (…)`, `pgconn.go:283-289`). Its code is
+// pgconn's startTLS stage (`tls error (…)`). Its code is
 // ECONNRESET, deliberately absent from LEGACY_DIAL_ERROR_CODES: a raw
 // post-handshake `read ECONNRESET` is not phase-specific and stays verbatim.
 const LEGACY_TLS_DISCONNECT_MESSAGE =
@@ -263,19 +263,19 @@ export const legacyIsSqlState = (code: string): boolean => SQLSTATE_PATTERN.test
 /**
  * Render the underlying driver failure the way pgconn stages its
  * `connectError.msg` (`server error` / `hostname resolving error` /
- * `dial error` / `tls error`, each with the cause parenthesized —
- * `errors.go:66-72`). A server ErrorResponse reproduces pgconn's `PgError`
- * rendering byte-for-byte (`Severity: Message (SQLSTATE Code)`, `errors.go:51`);
+ * `dial error` / `tls error`, each with the cause parenthesized).
+ * A server ErrorResponse reproduces pgconn's `PgError`
+ * rendering byte-for-byte (`Severity: Message (SQLSTATE Code)`);
  * for the other stages the parenthesized text is the node driver's own message,
  * which cannot byte-match libpq/pgconn wording (e.g. node's
- * `connect ECONNREFUSED 1.2.3.4:5432` vs Go's
+ * `connect ECONNREFUSED 1.2.3.4:5432` vs
  * `dial tcp 1.2.3.4:5432: connect: connection refused`). An unrecognized cause
  * (e.g. node-postgres' `Connection terminated unexpectedly`, where pgconn would
  * say `failed to receive message (unexpected EOF)`) is rendered verbatim rather
  * than guessing a stage.
  *
  * Known stage-label caveat: pgconn labels by auth PHASE, which node-postgres
- * does not expose — a wrong password over SCRAM arrives mid-SASL, so Go renders
+ * does not expose — a wrong password over SCRAM arrives mid-SASL, so pgconn renders
  * `failed SASL auth (FATAL: password authentication failed … (SQLSTATE 28P01))`
  * where this renders `server error (…)` with the identical
  * inner `PgError` bytes. The suggestion classifier keys off the inner text, so
@@ -319,8 +319,8 @@ function legacyConnectCauseDetail(cause: unknown): string {
  * Port of pgconn's `connectError.Error()`, the inner text of
  * `failed to connect to postgres: %w` wrap:
  * `` failed to connect to `host=… user=… database=…`: <staged driver cause> ``.
- * Callers pass the connection config (pgconn embeds the config-level identity,
- * `errors.go:66-68`) and the raw failure — either the `@effect/sql` `SqlError`
+ * Callers pass the connection config (pgconn embeds the config-level identity)
+ * and the raw failure — either the `@effect/sql` `SqlError`
  * from the pooled connect probe or the bare node-postgres error from the raw
  * client, both unwrapped by {@link legacyDeepestConnectCause}.
  */

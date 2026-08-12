@@ -17,10 +17,9 @@ import {
 export const LEGACY_BRANCH_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
 /**
- * Permissive UUID pattern (any 8-4-4-4-12 hex sequence). Go uses
- * `github.com/google/uuid`'s `uuid.Validate` which accepts any RFC 4122
- * variant including v6/v7 and version 0 — we mirror that liberal acceptance
- * rather than the v1–v5 + variant-1 subset.
+ * Permissive UUID pattern (any 8-4-4-4-12 hex sequence) — accepts any RFC 4122
+ * variant including v6/v7 and version 0, matching the established liberal
+ * acceptance rather than the v1–v5 + variant-1 subset.
  */
 export const LEGACY_BRANCH_UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,8 +39,7 @@ const mapGetError = mapLegacyHttpError({
 });
 
 /**
- * Reproduces `apps/cli-go/internal/branches/pause/pause.go:GetBranchProjectRef`
- * (deleted in CLI-1970; last present at commit 7b469f5b3):
+ * Resolves an arbitrary branch identifier to its project ref:
  *
  * 1. If the input matches `^[a-z]{20}$`, it's already a project ref — return as-is.
  * 2. Else if the input is a UUID, call `V1GetABranchConfig` (`GET /v1/branches/{id}`)

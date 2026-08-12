@@ -22,7 +22,6 @@ const config = {
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Squashes the migration history of the local database."),
-    // Go: `squashFlags.Bool("local", true, …)`.
     Flag.withDefault(true),
   ),
   password: Flag.string("password").pipe(
@@ -48,8 +47,7 @@ export const legacyMigrationSquashCommand = Command.make("squash", config).pipe(
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
-        // Go's `markFlagTelemetrySafe(migration.go:134)` — only `--version`'s value is
-        // recorded verbatim.
+        // Only `--version`'s value is recorded verbatim.
         safeFlags: ["version"],
         aliases: { p: "password" },
       }),

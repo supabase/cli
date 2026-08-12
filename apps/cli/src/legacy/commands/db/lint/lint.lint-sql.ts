@@ -1,14 +1,13 @@
 /**
- * SQL constants for `db lint`, ported verbatim from the Go reference so the
- * statements sent to Postgres byte-match.
+ * SQL constants for `db lint`, an established output contract for the
+ * statements sent to Postgres.
  *
- *   - `LEGACY_ENABLE_PGSQL_CHECK` — `internal/db/lint/lint.go:20`.
- *   - `LEGACY_CHECK_SCHEMA_SCRIPT` — `internal/db/lint/templates/check.sql`,
- *     the per-schema `plpgsql_check_function` mass-check.
- *   - `LEGACY_LIST_SCHEMAS_SQL` + `LEGACY_MANAGED_SCHEMAS` —
- *     `pkg/migration/queries/list.sql` and `pkg/migration/drop.go:19-31`, used
- *     when `--schema` is omitted (Go's `migration.ListUserSchemas`). The
- *     `\_` / `pg\_%` escapes are preserved exactly — they are `LIKE` patterns.
+ *   - `LEGACY_ENABLE_PGSQL_CHECK` — enables the `plpgsql_check` extension.
+ *   - `LEGACY_CHECK_SCHEMA_SCRIPT` — the per-schema `plpgsql_check_function`
+ *     mass-check.
+ *   - `LEGACY_LIST_SCHEMAS_SQL` + `LEGACY_MANAGED_SCHEMAS` — lists user
+ *     schemas, used when `--schema` is omitted. The `\_` / `pg\_%` escapes
+ *     are preserved exactly — they are `LIKE` patterns.
  */
 
 export const LEGACY_ENABLE_PGSQL_CHECK = "CREATE EXTENSION IF NOT EXISTS plpgsql_check";
@@ -33,9 +32,9 @@ where pd.deptype is null
 order by pn.nspname`;
 
 /**
- * Postgres-managed schemas excluded from `ListUserSchemas` (`drop.go:19-31`).
- * These are `LIKE` patterns bound as the `$1` text[] parameter — the `\_` /
- * `pg\_%` escapes are intentional.
+ * Postgres-managed schemas excluded from the user-schema listing. These are
+ * `LIKE` patterns bound as the `$1` text[] parameter — the `\_` / `pg\_%`
+ * escapes are intentional.
  */
 export const LEGACY_MANAGED_SCHEMAS: ReadonlyArray<string> = [
   String.raw`information\_schema`,

@@ -5,7 +5,6 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/traffic_profile/traffic_profile.sql` (deleted in CLI-1970; last present at commit 7b469f5b3).
 const SQL = ` -- Query adapted from Crunchy Data blog: "Is Postgres Read Heavy or Write Heavy? (And Why You Should Care)" by David Christensen
 WITH
 ratio_target AS (SELECT 5 AS ratio),
@@ -54,9 +53,7 @@ ORDER BY
 
 /**
  * `inspect db traffic-profile` — read/write activity ratio per table.
- * Port of `apps/cli-go/internal/inspect/traffic_profile/traffic_profile.go`
- * (deleted in CLI-1970; last present at commit 7b469f5b3). The
- * `blocks_write` column is formatted with one decimal place (`%.1f`).
+ * The `blocks_write` column is formatted with one decimal place.
  */
 export const legacyTrafficProfileSpec: LegacyInspectQuerySpec = {
   name: "traffic-profile",

@@ -17,10 +17,10 @@ import { LEGACY_CLI_WORKDIR_LABEL } from "./legacy-docker-ids.ts";
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * Listing containers or volumes by Docker label failed. Wraps Go's
- * `Docker.ContainerList`/`Docker.VolumeList` errors (`docker.go:99-104`,
- * `docker.go:334-336` — see `checkServiceHealth`/`DockerRemoveAll`), which Go
- * wraps as `"failed to list containers: %w"` / equivalent.
+ * Listing containers or volumes by Docker label failed. Wraps the established
+ * `Docker.ContainerList`/`Docker.VolumeList` errors (see
+ * `checkServiceHealth`/`DockerRemoveAll`), which
+ * wrap as `"failed to list containers: %w"` / equivalent.
  */
 export class LegacyDockerLifecycleListError extends Data.TaggedError(
   "LegacyDockerLifecycleListError",
@@ -151,7 +151,7 @@ function spawnDockerPsLines(
 
 /**
  * `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
- * (`docker.go:99-104`, `status.go:126-131`) via `docker ps --filter
+ * via `docker ps --filter
  * label=<filterValue>`. `all: false` mirrors `status`'s running-only list;
  * `all: true` mirrors `stop`'s "every container regardless of state" list.
  */

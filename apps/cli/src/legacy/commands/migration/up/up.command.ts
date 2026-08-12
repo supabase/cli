@@ -21,7 +21,6 @@ const config = {
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Applies pending migrations to the local database."),
-    // Go: `upFlags.Bool("local", true, …)`.
     Flag.withDefault(true),
   ),
 } as const;

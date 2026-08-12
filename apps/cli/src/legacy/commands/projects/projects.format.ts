@@ -6,8 +6,8 @@ import { formatLegacyTimestamp } from "../../shared/legacy-timestamp.format.ts";
 
 // ---------------------------------------------------------------------------
 // Pure formatters — no Effect / no service dependencies, kept unit-testable.
-// Match Go's byte output for `projects list`, `projects create`, `projects
-// api-keys`.
+// Match the established byte output for `projects list`, `projects create`,
+// `projects api-keys`.
 // ---------------------------------------------------------------------------
 
 type ApiKey = typeof ApiKeyResponse.Type;
@@ -30,10 +30,8 @@ export function readProjectField(project: unknown, key: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Region display names. Mirrors Go's `utils.regionMap` /
-// `utils.FormatRegion` (`apps/cli-go/internal/utils/render.go:34-60`):
-// known region codes render as a human-readable name; unknown codes pass
-// through unchanged.
+// Region display names: known region codes render as a human-readable name;
+// unknown codes pass through unchanged.
 // ---------------------------------------------------------------------------
 
 const REGION_MAP: Readonly<Record<string, string>> = {
@@ -62,9 +60,8 @@ export function formatRegion(region: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Dashboard URL per profile. Mirrors Go's `utils.GetSupabaseDashboardURL` ->
-// `CurrentProfile.DashboardURL` (`apps/cli-go/internal/utils/profile.go:30-91`).
-// Defaults to the production dashboard for unknown / file-based profiles.
+// Dashboard URL per profile. Defaults to the production dashboard for
+// unknown / file-based profiles.
 // ---------------------------------------------------------------------------
 
 const DASHBOARD_URLS: Readonly<Record<string, string>> = {
@@ -79,8 +76,9 @@ export function dashboardUrlForProfile(profile: string): string {
 
 // ---------------------------------------------------------------------------
 // Tables. `renderGlamourTable` lays out cells directly, so literal `|` in a
-// project name flows through unescaped and matches Go's glamour byte output
-// (the markdown `\|` escape is decoded back to `|` by glamour upstream).
+// project name flows through unescaped and matches the established glamour
+// byte output (the markdown `\|` escape is decoded back to `|` by glamour
+// upstream).
 // ---------------------------------------------------------------------------
 
 const LIST_HEADERS = [
@@ -96,15 +94,14 @@ const CREATE_HEADERS = ["ORG ID", "REFERENCE ID", "NAME", "REGION", "CREATED AT 
 
 const API_KEYS_HEADERS = ["NAME", "KEY VALUE"] as const;
 
-/** Go's `formatBullet` (`list.go:73-78`): bullet for the linked project. */
+/** Bullet marker for the linked project. */
 function formatBullet(linked: boolean): string {
   return linked ? "  ●" : " ";
 }
 
 /**
- * Reproduces Go's `projects list` pretty table (`list.go:44-59`). The REFERENCE
- * ID and LINKED-marker comparison both use the project `id` field, matching
- * Go's use of `project.Id`.
+ * `projects list` pretty table. The REFERENCE ID and LINKED-marker
+ * comparison both use the project `id` field.
  */
 export function renderProjectsListTable(projects: ReadonlyArray<LegacyLinkedProject>): string {
   const rows = projects.map((project) => [
@@ -118,7 +115,7 @@ export function renderProjectsListTable(projects: ReadonlyArray<LegacyLinkedProj
   return renderGlamourTable(LIST_HEADERS, rows);
 }
 
-/** Reproduces Go's `projects create` pretty table (`create.go:36-47`). */
+/** `projects create` pretty table. */
 export function renderProjectCreateTable(project: unknown): string {
   const rows = [
     [
@@ -133,8 +130,8 @@ export function renderProjectCreateTable(project: unknown): string {
 }
 
 /**
- * Reproduces Go's `projects api-keys` pretty table (`api_keys.go:23-33`):
- * the KEY VALUE column shows `******` when the api key is nullable-null.
+ * `projects api-keys` pretty table: the KEY VALUE column shows `******`
+ * when the api key is nullable-null.
  */
 export function renderProjectApiKeysTable(keys: ReadonlyArray<ApiKey>): string {
   const rows = keys.map((entry) => [entry.name, apiKeyValue(entry.api_key)]);

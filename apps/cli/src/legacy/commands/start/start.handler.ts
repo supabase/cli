@@ -671,7 +671,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const isBitbucketPipeline = legacyIsBitbucketPipeline();
 
     // 3. Missing proceeds to startup; other inspect failures propagate.
-    // Unlike Go, verified stopped stacks are recovered unless Bitbucket's lack of named volumes
+    // Verified stopped stacks are recovered unless Bitbucket's lack of named volumes
     // makes removing the Postgres container destructive.
     const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
@@ -689,8 +689,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     const shouldRecoverStoppedStack = isRecoverableStoppedState(dbState) && !isBitbucketPipeline;
 
     const reportAlreadyRunningStatus = Effect.fnUntraced(function* () {
-      // `start.go:55`: printed unconditionally in Go (which has no JSON output
-      // mode to protect); gated here on text mode for internal consistency
+      // Gated here on text mode for internal consistency
       // with every other supplementary stderr line this handler prints (see
       // the exclude warning above and the success-path messages below) — this
       // port's `--output-format json|stream-json` callers get a clean
@@ -794,9 +793,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     });
 
     // Same treatment as `majorVersion` below, for the sibling
-    // `edge_runtime.deno_version` -> `Config.EdgeRuntime.Image` switch
-    // (`pkg/config/config.go:1164-1173`), applied before `Validate` at the
-    // end of `Config.Load` (`config.go:882`). Start-only (Edge Runtime has no
+    // `edge_runtime.deno_version` -> image switch, applied before validation
+    // at the end of config loading. Start-only (Edge Runtime has no
     // `db start` equivalent), so it stays outside the shared bootstrap-config
     // derivation below.
     const denoVersion = legacyEnvOverrideDenoVersion(
@@ -1230,10 +1228,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     );
 
     // Same bug class as `dbHealthTimeoutSeconds` (now resolved by the shared
-    // `legacyResolveDbBootstrapConfig` call above): Go decodes `edge_runtime.policy`
-    // (an enum via `UnmarshalText`) and `edge_runtime.inspector_port` (a plain `uint`) during
-    // the same unconditional `Config.Load` pass (`pkg/config/config.go:749-756,777`), before
-    // `start.Run` touches Docker — regardless of `--exclude edge-runtime`. The Edge Runtime
+    // `legacyResolveDbBootstrapConfig` call above): `edge_runtime.policy`
+    // (an enum) and `edge_runtime.inspector_port` (a plain uint) decode during
+    // the same unconditional config-load pass, before
+    // any Docker work — regardless of `--exclude edge-runtime`. The Edge Runtime
     // branch below re-resolves both against `resolvedEdgeRuntime`'s env-interpolated subtree
     // for the real container build; this eager call only needs the raw `config.edge_runtime`
     // value to prove it parses.
@@ -1449,8 +1447,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               containerName: studioContainerName,
               networkId,
               port: values.studioPort,
-              // Go computes these whenever Studio is enabled, independently of Edge Runtime.
-              // They are resolved during preflight above so recovery teardown remains reversible.
+              // Computed whenever Studio is enabled, independently of Edge Runtime.
+              // Resolved during preflight above so recovery teardown remains reversible.
               functionBinds: [...studioFunctionBinds],
               env: {
                 dbPassword,
@@ -2009,15 +2007,15 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         if (Result.isFailure(healthResult)) {
           const error = healthResult.failure;
           if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
-            // `ignoreHealthCheck`/`IsUnhealthyError` only gates THIS wait
-            // (`start.go:1271`), not Postgres's own earlier one. Go additionally
-            // runs a narrower, storage-only recheck-and-seed here (`start.go:
-            // 1272-1277`): when it's a fresh volume and Storage was among the
+            // `ignoreHealthCheck`/`legacyIsUnhealthyStartError` only gates THIS
+            // wait, not Postgres's own earlier one. There's additionally a
+            // narrower, storage-only recheck-and-seed here: when it's a fresh
+            // volume and Storage was among the
             // started containers, wait for Storage alone to become healthy, and
             // if it does, seed buckets. A seed FAILURE there REPLACES this
-            // original health error and hard-fails (with rollback) — Go's
-            // `return seedErr` — since a plain seed error never satisfies
-            // `IsUnhealthyError` and so never gets this branch's own
+            // original health error and hard-fails (with rollback) —
+            // since a plain seed error never satisfies
+            // `legacyIsUnhealthyStartError` and so never gets this branch's own
             // downgrade-to-warning treatment. A seed SUCCESS (or a storage
             // recheck that never turns healthy) changes nothing: fall through to
             // the same downgrade-to-warning as every other ignored-unhealthy

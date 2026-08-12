@@ -7,8 +7,7 @@ import {
 
 /**
  * Opening a Postgres connection failed. Mirrors `pgx`/`pgconn` connect
- * failures surfaced by `utils.ConnectByConfig`
- * (`apps/cli-go/internal/utils/connect.go`). The `suggestion` carries Go's
+ * failures surfaced by `utils.ConnectByConfig`. The `suggestion` carries the
  * `utils.CmdSuggestion` text when the connect path sets one.
  */
 export class LegacyDbConnectError extends Data.TaggedError("LegacyDbConnectError")<{
@@ -27,9 +26,8 @@ export class LegacyDbConnectError extends Data.TaggedError("LegacyDbConnectError
 }
 
 /**
- * Executing a SQL statement against an open connection failed. Mirrors the Go
- * `conn.Exec` error sites in `apps/cli-go/internal/db/test/test.go` (deleted
- * in CLI-1970; last present at commit 7b469f5b3).
+ * Executing a SQL statement against an open connection failed. Mirrors the
+ * established `conn.Exec` error sites.
  */
 export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly message: string;
@@ -50,7 +48,7 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
    * Postgres error cursor of a server ErrorResponse (`pgErr.Position`): a
    * 1-based index into the failing statement. Only set when the server reported a
    * position > 0. The migration-apply error context uses it to render `^`
-   * caret under the error position (`pkg/migration/file.go:98`, `markError`).
+   * caret under the error position (`markError`).
    */
   readonly position?: number;
 }> {
@@ -60,14 +58,14 @@ export class LegacyDbExecError extends Data.TaggedError("LegacyDbExecError")<{
 }
 
 /**
- * A server-side `COPY (...) TO STDOUT` stream failed. Mirrors Go's
- * `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`, deleted in
- * CLI-1970; last present at commit 7b469f5b3), where
+ * A server-side `COPY (...) TO STDOUT` stream failed. Mirrors
+ * `copyToCSV`, where
  * `conn.CopyTo` returns `failed to copy output: %w`. Raised by the driver's
  * `copyToCsv`; the report handler maps a subsequent file-write failure to its
- * own `failed to create output file` error (Go raises that one first, when it
+ * own `failed to create output file` error (the reference implementation raises that
+ * one first, when it
  * opens the file before copying — the TS port collects the bytes first, so the
- * two messages still match Go's text on the matching failure).
+ * two messages still match on the matching failure).
  *
  * That "collect bytes first" ordering is also where the two sides diverge on
  * disk, not just in message text — Go opens the output file (`O_TRUNC`) before

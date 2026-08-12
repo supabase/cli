@@ -8,12 +8,12 @@
  * raw `process.argv` slice.
  *
  * cobra's `MarkFlagsMutuallyExclusive` error has TWO bracketed lists: the
- * group list keeps REGISTRATION order (`strings.Join(flagNames, " ")`,
- * `flag_groups.go:73`) and is NOT sorted, while the "were all set" list IS
- * sorted (`sort.Strings(set)`, `flag_groups.go:203-204`). The FIXED insertion
+ * group list keeps REGISTRATION order (`strings.Join(flagNames, " ")`)
+ * and is NOT sorted, while the "were all set" list IS
+ * sorted (`sort.Strings(set)`). The FIXED insertion
  * order ["db-url","linked","local"] — alphabetical — for the `setFlags` array
  * matches only that second, sorted list; each command must hardcode its own
- * group list in its own Go registration order (e.g. seed `[local linked]`
+ * group list in its own registration order (e.g. seed `[local linked]`
  * vs storage `[linked local]`).
  *
  * pflag accepts `--flag value` (space form) for non-boolean flags: the token
@@ -28,8 +28,8 @@ export interface LegacyDbTargetSelection {
   /** Alphabetically-sorted list of explicitly-set selector flags ("db-url", "linked", "local"). */
   readonly setFlags: ReadonlyArray<string>;
   /**
-   * Changed-first selection, matching `ParseDatabaseConfig` precedence
-   * (db_url.go:46-63): db-url > local > linked (if changed) > undefined (→ local default).
+   * Changed-first selection, matching `ParseDatabaseConfig` precedence:
+   * db-url > local > linked (if changed) > undefined (→ local default).
    *
    * `undefined` means no selector was explicitly set; callers default to "local".
    */
@@ -81,8 +81,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "fail-on",
   "type",
   // migration/db credential flag — `StringVarP(&dbPassword, "password", "p", …)`
-  // consumes the next token as the value (`apps/cli-go/cmd/migration.go:115,127`,
-  // deleted in CLI-1970; last present at commit 7b469f5b3).
+  // consumes the next token as the value.
   "password",
   // inspect report flag (StringVar, no short alias)
   "output-dir",
@@ -186,9 +185,7 @@ export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
 /**
  * Detects which of `--linked` / `--local` were explicitly set on the command
  * line, reproducing cobra's `pflag.Changed` for the `MarkFlagsMutuallyExclusive`
- * groups on `seedCmd` and `storageCmd`
- * (`apps/cli-go/cmd/storage.go:99`, both deleted in CLI-1970; last present at
- * commit 7b469f5b3). Shared by `seed buckets` and
+ * groups on `seedCmd` and `storageCmd`. Shared by `seed buckets` and
  * `storage ls/cp/mv/rm`.
  *
  * Effect CLI's parsed flags carry no `Changed` bit, so this re-derives it from
@@ -196,7 +193,7 @@ export const VALUE_CONSUMING_SHORT_FLAGS = new Set([
  * (`--workdir <path>`, `-o <fmt>`, …) to avoid false positives. The negation
  * form (`--no-linked`/`--no-local`) counts as changed. Returned in cobra's
  * alphabetically-sorted order `["linked", "local"]` so the rendered conflict
- * string matches Go exactly.
+ * string matches exactly.
  */
 export function legacyChangedLinkedLocalFlags(args: ReadonlyArray<string>): ReadonlyArray<string> {
   let linked = false;
@@ -249,7 +246,7 @@ export function legacyChangedLinkedLocalFlags(args: ReadonlyArray<string>): Read
  * rendered conflict string (`[db-url linked]`, `[linked local]`, …) matches
  * cobra's alphabetically-sorted output exactly.
  *
- * `connType` follows Go's Changed-first precedence (db_url.go:46-63):
+ * `connType` follows `ParseDatabaseConfig`'s Changed-first precedence:
  * 1. `--db-url` if changed → "db-url"
  * 2. `--local` if changed → "local"
  * 3. `--linked` if changed → "linked"

@@ -212,8 +212,7 @@ describe("legacy inspect report", () => {
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
         ),
       ).toBe(true);
-      // Go pins the date folder to 0755 and each CSV to 0644 (report.handler.ts
-      // mirrors `internal/utils/misc.go:273,281-284`).
+      // The date folder is pinned to 0755 and each CSV to 0644.
       expect(statSync(dir).mode & 0o777).toBe(0o755);
       expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
@@ -243,7 +242,7 @@ describe("legacy inspect report", () => {
       expect(Option.isSome((resolver.resolveInput as { dbUrl: Option.Option<string> }).dbUrl)).toBe(
         true,
       );
-      // The connect diagnostic reflects a non-local target (Go parity).
+      // The connect diagnostic reflects a non-local target.
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });
@@ -400,8 +399,8 @@ describe("legacy inspect report", () => {
     const base = tempDir("supabase-report-out-");
     const workdir = tempDir("supabase-report-workdir-");
     mkdirSync(join(workdir, "supabase"), { recursive: true });
-    // An invalid rule config (unknown key) — Go loads config in PersistentPreRun, so
-    // it must abort before the DB connection and before any CSV files are written.
+    // An invalid rule config (unknown key) must abort before the DB connection
+    // and before any CSV files are written.
     writeFileSync(
       join(workdir, "supabase", "config.toml"),
       [

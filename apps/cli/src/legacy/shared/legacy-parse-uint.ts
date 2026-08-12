@@ -125,9 +125,7 @@ export function legacyParseUintBase0(token: string): LegacyParseUintResult {
 /**
  * Faithful port of Go's `strconv.ParseInt(s, 0, 64)` — the exact parser
  * pflag runs for an `Int64VarP`/`Int64Var` flag (`int64Value.Set`,
- * `pflag/int64.go`), e.g. `backups restore --timestamp`
- * (`apps/cli-go/cmd/backups.go:43`, deleted in CLI-1970; last present at
- * commit 7b469f5b3). Only a syntax-and-range VERDICT is
+ * `pflag/int64.go`), e.g. `backups restore --timestamp`. Only a syntax-and-range VERDICT is
  * needed for completion (not the parsed value), so this returns a boolean
  * rather than mirroring `LegacyParseUintResult`'s shape.
  *
@@ -137,8 +135,7 @@ export function legacyParseUintBase0(token: string): LegacyParseUintResult {
  * `+`/`-`, parse the magnitude, and bound it against `int64`'s asymmetric
  * two's-complement range — `-9223372036854775808` is valid, but that same
  * magnitude, `9223372036854775808`, is NOT (it is one past `int64`'s
- * positive bound, `9223372036854775807`) — verified empirically against a
- * real `apps/cli-go` build: `backups restore --timestamp
+ * positive bound, `9223372036854775807`) — verified empirically: `backups restore --timestamp
  * 9223372036854775808 --p` returns zero candidates with the Default
  * directive, while `--timestamp 9223372036854775807` (`int64` max) and
  * `--timestamp -9223372036854775808` (`int64` min) both still offer

@@ -18,8 +18,8 @@ const GLOB_META_CHARS = /[*?[]/u;
 // that escape — see `legacyPathMatch`'s escape handling below.
 const toSlash = (p: string): string => (process.platform === "win32" ? p.replaceAll("\\", "/") : p);
 
-// `sort.Strings` (used by both `Glob.SQLFiles`, `config.go:155`, and
-// `walkMatchedDir`, `config.go:207`) orders strings by their raw UTF-8 BYTES —
+// `sort.Strings` (used by both `Glob.SQLFiles` and
+// `walkMatchedDir`) orders strings by their raw UTF-8 BYTES —
 // Go strings are just byte slices, so `strings.Compare` never decodes runes. JS's
 // default `Array.prototype.sort()` instead compares UTF-16 CODE UNITS, which
 // disagrees with UTF-8 byte order for any character outside the Basic Multilingual
@@ -49,8 +49,8 @@ const utf8Compare = (a: string, b: string): number => {
 // cleaning:
 //
 // - Direct glob-match construction (`globOne`, below): the real runtime glob path —
-// `config.Glob.SQLFiles`'s `fs.Glob(fsys, pattern)` call (`apps/cli-go/pkg/config/
-// config.go:145`) resolves to `afero.IOFS.Glob` (it implements `fs.GlobFS`), which
+// `config.Glob.SQLFiles`'s `fs.Glob(fsys, pattern)` call resolves to `afero.IOFS.Glob`
+// (it implements `fs.GlobFS`), which
 // delegates to `afero.Glob`. Its
 // `glob()` helper appends each match as `filepath.Join(dir, n)`,
 // so a glob whose directory portion has a cleanable segment
@@ -94,7 +94,7 @@ const joinRelChild = (path: Path.Path, rel: string, name: string): string => pat
  * to `afero.Glob`/`match.go`'s `filepath.Split` followed by a switch on
  * `dir` that leaves a bare `filepath.Separator` alone — every OTHER trailing
  * separator is chopped, but the root one is deliberately preserved. Verified
- * empirically against `apps/cli-go`: with cwd elsewhere, a pattern rooted at
+ * empirically: with cwd elsewhere, a pattern rooted at
  * `/`, with a metacharacter in the FIRST component after the root slash
  * (e.g. `tmp` + wildcard + `probe-dir` + wildcard + `.sql`), still resolves
  * that first component against the filesystem ROOT, not cwd. Collapsing this
@@ -105,7 +105,7 @@ const joinRelChild = (path: Path.Path, rel: string, name: string): string => pat
  * preservation, for the same reason but a different mechanism: Go's
  * `filepath.Split` treats `"C:"` as the volume name (`volumeNameLen`,
  * `internal/filepathlite/path_windows.go`) and always keeps the following
- * separator attached to `dir` — verified against that source directly, since
+ * separator attached to `dir` — verified against the stdlib source directly, since
  * there is no Windows machine available to run the compiled stdlib on:
  * `Split("C:/*.sql")` returns `dir: "C:/"`, not `dir: "C:"`. Chopping the
  * separator here would matter downstream: Node's `path.isAbsolute("C:")` is
@@ -186,9 +186,9 @@ const globOne = (
           //
           // Deliberately NOT `toSlash`'d here, on Windows: `config.Glob.SQLFiles`
           // sorts the RAW backslash-joined matches from `fs.Glob`/`afero.Glob` (built via
-          // `filepath.Join`, `config.go:145-155`) and only converts each surviving match
-          // to forward slash AFTER that sort (`fp := filepath.ToSlash(item)`,
-          // `config.go:156`). This function's own caller (`legacySqlFilesGlob`) already
+          // `filepath.Join`) and only converts each surviving match
+          // to forward slash AFTER that sort (`fp := filepath.ToSlash(item)`).
+          // This function's own caller (`legacySqlFilesGlob`) already
           // sorts the array `globOne` returns and slashes each item only after — slashing
           // here too would sort forward-slash-joined strings instead of the raw
           // backslash-joined ones, which can disagree: comparing `a\x.sql` vs `a0\x.sql`
@@ -205,7 +205,7 @@ const globOne = (
 /**
  * Recursively collects the regular `.sql` files under a matched directory, porting
  * `walkMatchedDir` with the `SQLFiles` include filter (`entry.Type().IsRegular() &&
- * filepath.Ext(path) == ".sql"`, `apps/cli-go/pkg/config/config.go:126-131,194-211`).
+ * filepath.Ext(path) == ".sql"`).
  * Paths are workdir-relative (matching the glob output), forward-slashed, and sorted
  * for deterministic application.
  *
@@ -213,7 +213,7 @@ const globOne = (
  * directory) fails the WHOLE walk with `failed to walk matched directory: <cause>`,
  * discarding every file collected so far — `fs.WalkDir` callback returns that
  * `err` unchanged, which stops the traversal immediately and makes `walkMatchedDir`
- * return `(nil, err)` rather than the partial list (`config.go:196-208`; verified
+ * return `(nil, err)` rather than the partial list (verified
  * empirically: an unreadable matched directory makes `Glob.SQLFiles` return a
  * `failed to walk matched directory: ...` error with zero files, not an empty match).
  */
@@ -229,7 +229,7 @@ const legacyWalkSqlFiles = (
       Effect.gen(function* () {
         const absDir = path.isAbsolute(rel) ? rel : path.join(workdir, rel);
         // `fs.WalkDir` runs against `afero.OsFs` with the process cwd already the
-        // workdir (`ChangeWorkDir`, `cmd/root.go`), so a `ReadDir` failure — on the
+        // workdir, so a `ReadDir` failure — on the
         // matched root `dir` itself, or on any nested directory the walk descends into —
         // embeds the workdir-relative `rel` in its error text, never an absolute path.
         // This module never `process.chdir`s, so the real read needs `absDir`, but the
@@ -252,7 +252,7 @@ const legacyWalkSqlFiles = (
         // which single error message this walk fails with, or which `WARN:`/fatal text a
         // caller (the experimental schema branch, or seed-path globbing) surfaces —
         // would otherwise depend on filesystem enumeration order instead of matching
-        // Go's deterministic choice (review CLI-1958). Sort with the same UTF-8
+        // the established deterministic choice (review CLI-1958). Sort with the same UTF-8
         // byte-order comparator `globOne`/the top-level match list already use above.
         for (const name of [...names].sort(utf8Compare)) {
           const childRel = joinRelChild(path, rel, name);
@@ -261,7 +261,7 @@ const legacyWalkSqlFiles = (
           // (`os.ReadDir`'s Lstat-based `DirEntry`) and never re-`Stat`s through it —
           // so a symlinked file or subdirectory found below the matched root is
           // neither included nor recursed into, regardless of what it points to
-          // (`io/fs/walk.go:114-115`: only the matched root itself, resolved once by
+          // (`io/fs/walk.go`: only the matched root itself, resolved once by
           // the caller before reaching this walk, may be a symlink). `readLink`
           // succeeds only for symlinks, so use it as the no-follow probe in place of
           // the `Lstat` this FileSystem service doesn't expose.
@@ -297,7 +297,7 @@ const legacyWalkSqlFiles = (
             // `fs.WalkDir` unconditionally attempts a second `ReadDir` to recurse into it
             // (`io/fs/walk.go`'s `walkDir`); when the child has since been removed, that
             // second `ReadDir` fails, and `walkMatchedDir`'s callback propagates the error
-            // unchanged (`if err != nil { return err }`, `config.go:198-199`) — `fs.WalkDir`
+            // unchanged (`if err != nil { return err }`) — `fs.WalkDir`
             // returns it, and `walkMatchedDir` wraps it as `failed to walk matched
             // directory: <cause>`, discarding every file already collected.
             // Verified empirically: a scratch `fs.WalkDir` probe that
@@ -343,7 +343,7 @@ interface LegacySqlFilesGlobResult {
    * files: …` / `failed to walk matched directory: …`), in pattern order. Never fatal
    * by itself — callers decide when a warning matters
    * (e.g. the seed path always surfaces it; the schema-files apply path only surfaces
-   * it when NO pattern matched anything at all, mirroring `apply.go:53-55`).
+   * it when NO pattern matched anything at all).
    */
   readonly warnings: ReadonlyArray<string>;
 }
@@ -353,8 +353,7 @@ interface LegacySqlFilesGlobResult {
  * caller in this shared module needs them today (`legacyApplySchemaFiles`'s
  * `[db.migrations].schema_paths`, and the two `[db.seed].sql_paths` callers —
  * `legacyGetPendingSeeds` and `legacy-seed.ts`'s `resolveSeedFiles` — all pass none,
- * matching Go's own zero-option call sites, `pkg/migration/seed.go:35` and
- * `internal/migration/apply/apply.go:52`). Added for `db diff`'s declarative path,
+ * matching the established zero-option call sites). Added for `db diff`'s declarative path,
  * which calls `Glob.files` `WithSkipEmptyGlobs()` + `WithErrorOnAllSkippedGlobs()`.
  */
 export interface LegacySqlFilesGlobOptions {
@@ -381,12 +380,12 @@ export interface LegacySqlFilesGlobOptions {
  * over `fs.Glob`. Shared by
  * `[db.seed].sql_paths` (via `legacyGetPendingSeeds`, `legacy-seed-ops.ts`, and
  * `legacy-seed.ts`'s `resolveSeedFiles`) and `[db.migrations].schema_paths` (via
- * `legacyApplySchemaFiles`, `legacy-migration-apply.ts`) — all three Go call sites
+ * `legacyApplySchemaFiles`, `legacy-migration-apply.ts`) — all three call sites
  * resolve through the exact same `Glob` type and `SQLFiles` method, so the traversal
  * logic lives here once.
  *
- * Each pattern is matched independently: matches are sorted per-pattern (Go's
- * `sort.Strings`, `config.go:155`), but the overall result preserves cross-pattern
+ * Each pattern is matched independently: matches are sorted per-pattern (`sort.Strings`
+ * byte order), but the overall result preserves cross-pattern
  * DECLARATION order (no global re-sort), with first-seen dedup. A directory match is
  * expanded to its regular `.sql` files, recursively, sorted by full path
  * (`walkMatchedDir`); a non-directory match is kept verbatim regardless of extension. A
@@ -451,7 +450,7 @@ export const legacySqlFilesGlob = Effect.fnUntraced(function* (
       // otherwise-successful reset into a hard apply error.
       //
       // `fs.Stat(fsys, fp)` runs with its process cwd already
-      // the workdir (`ChangeWorkDir`, `cmd/root.go`), so `fp` IS the exact string the
+      // the workdir, so `fp` IS the exact string the
       // real syscall sees and the resulting error's path is that workdir-relative
       // `fp`. This module never `process.chdir`s, so the real stat needs an absolute
       // path here — but the wrapped message must still report the relative `fp`, not

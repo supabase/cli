@@ -527,9 +527,9 @@ describe("legacyApplySchemaFiles", () => {
       // `SUPABASE_SCANNER_BUFFER_SIZE` when it's explicitly set — `parseFile`
       // otherwise auto-grows the scanner to the real file's byte length, so the
       // DEFAULT path can never hit `bufio.ErrTooLong`. With it set below a single
-      // statement's raw byte length, Go fails with `bufio.Scanner: token too long`
+      // statement's raw byte length, this fails with `bufio.Scanner: token too long`
       // instead of silently applying the oversized statement — verified empirically
-      // against `apps/cli-go/pkg/parser` (a `parser.SplitAndTrim` scratch probe).
+      // (a `parser.SplitAndTrim` scratch probe).
       const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
@@ -660,8 +660,7 @@ describe("legacyApplySchemaFiles", () => {
   it.effect(
     "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (viper parity, not '5M' == 5MiB)",
     () => {
-      // Verified empirically against `apps/cli-go/pkg/parser` + vendored
-      // `viper@v1.21.0`: a bare multiplier suffix with NO trailing "b"/"B" (e.g. "5M")
+      // Verified empirically: a bare multiplier suffix with NO trailing "b"/"B" (e.g. "5M")
       // is NOT 5 MiB in real Go — `parseSizeInBytes` only recognizes a multiplier when
       // the string's LAST character is literally "b"/"B", so "5M" never strips a
       // suffix and `cast.ToInt("5M")` fails whole, yielding 0. `viper.IsSet` is still

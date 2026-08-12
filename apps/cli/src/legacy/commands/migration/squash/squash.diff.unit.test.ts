@@ -9,10 +9,8 @@ import {
 } from "./squash.diff.ts";
 
 /**
- * Ports Go's `TestLineByLine` (`apps/cli-go/internal/migration/squash/squash_test.go`,
- * deleted in CLI-1970; last present at commit 7b469f5b3).
- * The `before.sql`/`after.sql`/`diff.sql` fixtures are read directly from the Go oracle's
- * own `testdata/` directory (same pattern as `legacy-pg-dump.env.unit.test.ts`'s
+ * The `before.sql`/`after.sql`/`diff.sql` fixtures are read directly from the
+ * `apps/cli-go` testdata directory (same pattern as `legacy-pg-dump.env.unit.test.ts`'s
  * `goScriptsDir`) rather than hand-transcribed as template literals: `apps/cli` still
  * gains no new `testdata/` fixtures directory of its own, but a byte-for-byte copy of
  * 90+109+19 lines of real `pg_dump` output is exactly the kind of content a manual
@@ -50,7 +48,7 @@ describe("legacySquashLineByLineDiff", () => {
   });
 
   it('swallows every subsequent after line once before is exhausted (the anchor.Text() === "" sentinel)', () => {
-    // Once `before` runs out of tokens, Go's `anchor.Text()` returns `""` forever, so a
+    // Once `before` runs out of tokens, the anchor text returns `""` forever, so a
     // blank line in `after` matches that sentinel and is silently dropped — NOT emitted
     // as if it were an unmatched line. `before` has a single non-blank token; every
     // remaining `after` line (including two literal blank lines) must vanish.

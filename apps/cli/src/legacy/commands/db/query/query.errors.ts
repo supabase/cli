@@ -7,10 +7,9 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
- * No SQL was provided by any source. Byte-matches Go's
- * `"no SQL query provided. Pass SQL as an argument, via --file, or pipe to stdin"`
- * (`apps/cli-go/internal/db/query/query.go` `ResolveSQL`, deleted in CLI-1970;
- * last present at commit 7b469f5b3).
+ * No SQL was provided by any source; message text
+ * (`"no SQL query provided. Pass SQL as an argument, via --file, or pipe to
+ * stdin"`) is an established output contract.
  */
 export class LegacyDbQueryNoSqlError extends Data.TaggedError("LegacyDbQueryNoSqlError")<{
   readonly message: string;
@@ -20,7 +19,7 @@ export class LegacyDbQueryNoSqlError extends Data.TaggedError("LegacyDbQueryNoSq
   }
 }
 
-/** Stdin was piped but empty. Byte-matches Go's `"no SQL provided via stdin"`. */
+/** Stdin was piped but empty; message text (`"no SQL provided via stdin"`) is an established output contract. */
 export class LegacyDbQueryNoStdinSqlError extends Data.TaggedError("LegacyDbQueryNoStdinSqlError")<{
   readonly message: string;
 }> {
@@ -29,7 +28,7 @@ export class LegacyDbQueryNoStdinSqlError extends Data.TaggedError("LegacyDbQuer
   }
 }
 
-/** `--file` could not be read. Byte-matches Go's `"failed to read SQL file: " + err`. */
+/** `--file` could not be read; message text (`"failed to read SQL file: " + err`) is an established output contract. */
 export class LegacyDbQueryReadFileError extends Data.TaggedError("LegacyDbQueryReadFileError")<{
   readonly message: string;
 }> {
@@ -39,9 +38,8 @@ export class LegacyDbQueryReadFileError extends Data.TaggedError("LegacyDbQueryR
 }
 
 /**
- * `--linked` was used without an access token. Mirrors Go's PreRunE, which
- * returns `utils.ErrMissingToken` with the suggestion `Run supabase login first.`
- * (`apps/cli-go/cmd/db.go:300-307`).
+ * `--linked` was used without an access token; message text and the
+ * `Run supabase login first.` suggestion are an established output contract.
  */
 export class LegacyDbQueryLoginRequiredError extends Data.TaggedError(
   "LegacyDbQueryLoginRequiredError",
@@ -54,7 +52,7 @@ export class LegacyDbQueryLoginRequiredError extends Data.TaggedError(
   }
 }
 
-/** Query execution failed. Byte-matches Go's `"failed to execute query: " + err`. */
+/** Query execution failed; message text (`"failed to execute query: " + err`) is an established output contract. */
 export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecError")<{
   readonly message: string;
   /**
@@ -74,10 +72,9 @@ export class LegacyDbQueryExecError extends Data.TaggedError("LegacyDbQueryExecE
 }
 
 /**
- * More than one of `--db-url` / `--linked` / `--local` was set. Reproduces
- * cobra's `dbQueryCmd.MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
- * (`apps/cli-go/cmd/db.go:526`) `ValidateFlagGroups` error byte-for-byte, so the
- * invocation fails before any SQL runs.
+ * More than one of `--db-url` / `--linked` / `--local` was set; message text
+ * is an established output contract, so the invocation fails before any SQL
+ * runs.
  */
 export class LegacyDbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyDbQueryMutuallyExclusiveFlagsError",
@@ -90,8 +87,8 @@ export class LegacyDbQueryMutuallyExclusiveFlagsError extends Data.TaggedError(
 }
 
 /**
- * The linked Management API returned a non-201 status. Byte-matches Go's
- * `"unexpected status %d: %s"` (`RunLinked`).
+ * The linked Management API returned a non-201 status; message text
+ * (`"unexpected status %d: %s"`) is an established output contract.
  */
 export class LegacyDbQueryUnexpectedStatusError extends Data.TaggedError(
   "LegacyDbQueryUnexpectedStatusError",

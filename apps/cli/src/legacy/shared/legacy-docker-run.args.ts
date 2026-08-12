@@ -7,9 +7,7 @@ import type { LegacyDockerRunOpts } from "./legacy-docker-run.service.ts";
 
 /**
  * Assemble the `docker run` argv from run options. Pure (no Effect) so the
- * argument ordering — Go parity with `apps/cli-go/internal/db/test/test.go`
- * (deleted in CLI-1970; last present at commit 7b469f5b3) +
- * `utils.DockerRunOnceWithConfig` — is unit-testable in isolation.
+ * argument ordering is unit-testable in isolation.
  */
 export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<string> {
   const { network, binds, env, securityOpt, extraHosts, workingDir, image, cmd } = opts;
@@ -39,8 +37,7 @@ export function buildLegacyDockerArgs(opts: LegacyDockerRunOpts): ReadonlyArray<
     ...(Option.isSome(workingDir) ? ["-w", workingDir.value] : []),
     // `DockerStart` unconditionally sets `com.supabase.cli.project` and
     // `com.docker.compose.project` on `config.Labels` for EVERY container it
-    // starts, one-shot jobs included (`apps/cli-go/internal/utils/docker.go:
-    // 371-376`) — `supabase stop` and this shell's own rollback both discover
+    // starts, one-shot jobs included — `supabase stop` and this shell's own rollback both discover
     // orphaned containers by that project-label filter
     // (`legacy-docker-remove-all.ts`), so a one-shot job left running after a
     // client interruption/daemon disconnect must carry the same labels to be

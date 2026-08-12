@@ -7,11 +7,9 @@ import {
 
 /**
  * An explicit `--workdir`/`SUPABASE_WORKDIR` path doesn't exist or isn't a
- * directory. Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:
- * 231-250`), which unconditionally `os.Chdir(workdir)`s in `PersistentPreRunE`
- * (`apps/cli-go/cmd/root.go:93-105`) — before `stop`'s own flag validation or
- * `RunE`, so a bad explicit workdir must fail here first, before config load
- * or any Docker access.
+ * directory. The explicit workdir is `chdir`'d into unconditionally before
+ * `stop`'s own flag validation or handler body, so a bad explicit workdir must
+ * fail here first, before config load or any Docker access.
  */
 export class LegacyStopWorkdirError extends Data.TaggedError("LegacyStopWorkdirError")<{
   readonly message: string;
@@ -22,11 +20,8 @@ export class LegacyStopWorkdirError extends Data.TaggedError("LegacyStopWorkdirE
 }
 
 /**
- * `--project-id` and `--all` were both set. Best-effort match of cobra's
- * `MarkFlagsMutuallyExclusive` message shape (`stopCmd.MarkFlagsMutuallyExclusive("project-id",
- * "all")`, `apps/cli-go/cmd/stop.go`, deleted in CLI-1970; last present at
- * commit 7b469f5b3). Cobra isn't vendored in this repo, so the exact
- * wording could not be verified against source; this mirrors the same phrasing already
+ * `--project-id` and `--all` were both set. Matches the established
+ * mutually-exclusive-flags message shape already
  * used for `gen types`'s mutually-exclusive flag groups (`types.handler.ts`).
  */
 export class LegacyStopMutuallyExclusiveError extends Data.TaggedError(

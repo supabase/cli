@@ -139,8 +139,8 @@ function mockConnection(opts: {
 }
 
 /** Project-ref resolver mock. `db lint --linked` resolves the ref via the
- *  non-prompting `loadProjectRef` (Go's `flags.LoadProjectRef`) to write the
- *  linked-project cache; the other methods are unused by lint. */
+ *  non-prompting `loadProjectRef` to write the linked-project cache; the
+ *  other methods are unused by lint. */
 function mockProjectRef() {
   const calls: Array<string> = [];
   const layer = Layer.succeed(LegacyProjectRefResolver, {
@@ -352,8 +352,8 @@ describe("legacy db lint", () => {
   });
 
   it.live("does not trigger --fail-on warning when --level error filters the warning out", () => {
-    // Go filters by --level before the fail-on check (lint.go:62-76), so a
-    // warning removed by --level error cannot trigger --fail-on warning.
+    // The --level filter runs before the fail-on check, so a warning removed
+    // by --level error cannot trigger --fail-on warning.
     const { layer, out } = setup({ checkRows: { public: [checkRow("f1", [WARNING_ISSUE])] } });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -485,7 +485,7 @@ describe("legacy db lint", () => {
     const { layer, cache } = setup({ checkRows: { public: [] } });
     return Effect.gen(function* () {
       yield* legacyDbLint(flags({ schema: ["public"] }));
-      // Go's ensureProjectGroupsCached no-ops when flags.ProjectRef is empty.
+      // The cache is only written when a ref is known.
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
@@ -503,11 +503,11 @@ describe("legacy db lint", () => {
     });
   });
 
-  // ── Changed-based routing parity (Go pflag.Changed semantics) ────────────
+  // ── Changed-based routing (explicitly-set flag, not its value) ───────────
 
   it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
-    // cobra's Changed fires when the flag appears on the command line regardless
-    // of its value: `--linked=false` is still "explicitly set" → linked branch.
+    // "Changed" fires when the flag appears on the command line regardless of
+    // its value: `--linked=false` is still "explicitly set" → linked branch.
     const { layer, projectRef, cache } = setup({
       isLocal: false,
       checkRows: { public: [] },
@@ -534,7 +534,7 @@ describe("legacy db lint", () => {
   });
 
   it.live("--local=false --linked fails with mutual-exclusion (sorted set [linked local])", () => {
-    // Both flags are Changed → mutual exclusion fires with cobra's sorted set.
+    // Both flags are explicitly set → mutual exclusion fires with the sorted set.
     const { layer } = setup({ args: ["--local=false", "--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbLint(flags({ schema: ["public"] })));

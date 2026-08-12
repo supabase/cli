@@ -48,32 +48,28 @@ const runFetch = Effect.fnUntraced(function* (
     );
   }
 
-  const connType = target.connType ?? "linked"; // fetch defaults to `--linked` (Go: `Bool("linked", true)`).
+  const connType = target.connType ?? "linked"; // fetch defaults to `--linked`.
 
-  // Resolve the DB config BEFORE any filesystem/prompt side effects — mirroring Go's
-  // root `PersistentPreRunE` (`apps/cli-go/cmd/root.go:118`), which parses the DB config
-  // before `migrationFetchCmd.RunE` calls `fetch.Run`. An invalid `--db-url`/`config.toml`
-  // then fails immediately, instead of first creating `supabase/migrations` or letting a
-  // declined overwrite prompt mask the real error with `context canceled`. Same fix as
-  // `migration repair`.
+  // Resolve the DB config BEFORE any filesystem/prompt side effects — an invalid
+  // `--db-url`/`config.toml` then fails immediately, instead of first creating
+  // `supabase/migrations` or letting a declined overwrite prompt mask the real error
+  // with `context canceled`. Same fix as `migration repair`.
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
   });
 
-  // Go loads the project .env via loadNestedEnv INSIDE ParseDatabaseConfig (config.go:701),
-  // i.e. after the parse-time flag-group validation above — so a SUPABASE_YES set only in
-  // supabase/.env auto-confirms, but a flag conflict still surfaces before any .env read.
-  // Resolve --yes against the project env here, not just process.env (root.go:318-334).
-  // Same ordering as `migration down`/`repair`.
+  // The project .env loads after the parse-time flag-group validation above — so a
+  // SUPABASE_YES set only in supabase/.env auto-confirms, but a flag conflict still
+  // surfaces before any .env read. Resolve --yes against the project env here, not
+  // just process.env. Same ordering as `migration down`/`repair`.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
 
-  // Linked fetch caches the project ref on success (Go's `PersistentPostRun`). The ref is
+  // Linked fetch caches the project ref on success. The ref is
   // loaded now (pre-run), but the cache write is attached to the body via `Effect.ensuring`,
-  // so a declined prompt returns before it runs — matching Go (PostRun is skipped on a
-  // non-nil RunE error).
+  // so a declined prompt returns before it runs.
   const cacheLinkedRef =
     connType === "linked"
       ? yield* Effect.gen(function* () {
@@ -87,15 +83,15 @@ const runFetch = Effect.fnUntraced(function* (
   const fetchBody = Effect.gen(function* () {
     const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
 
-    // Go: `MkdirIfNotExistFS` then `afero.IsEmpty`; prompt before overwriting a
-    // non-empty migrations dir (default YES). Cancel → `context.Canceled`.
+    // Create the migrations dir if missing, then prompt before overwriting a
+    // non-empty migrations dir (default YES). Cancel → cancellation.
     yield* fs
       .makeDirectory(migrationsDir, { recursive: true })
       .pipe(
         Effect.mapError((cause) => new LegacyMigrationFetchWriteError({ message: cause.message })),
       );
-    // Go's `fetch.Run` gates the overwrite prompt on `afero.IsEmpty`, which aborts on
-    // ANY read failure before fetching/writing (`internal/migration/fetch/fetch.go:21-22`).
+    // The overwrite prompt is gated on directory emptiness, which aborts on
+    // ANY read failure before fetching/writing.
     // Only a missing directory counts as "empty"; a read error (e.g. an unreadable dir)
     // must propagate — collapsing it to empty would skip the confirmation and clobber
     // existing migrations.
@@ -122,8 +118,8 @@ const runFetch = Effect.fnUntraced(function* (
 
     const migrations = yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go's `utils.ConnectByConfig` prints this to stderr before dialing
-        // (`internal/utils/connect.go:343-348`), local/remote per `IsLocalDatabase`.
+        // The connect diagnostic prints to stderr before dialing,
+        // local/remote per the resolved connection.
         yield* output.raw(
           `Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`,
           "stderr",
@@ -140,11 +136,10 @@ const runFetch = Effect.fnUntraced(function* (
     for (const file of migrations) {
       // The version/name come from the remote `schema_migrations` table. A
       // tampered/hostile remote could supply path separators or `..` in EITHER field to
-      // escape the migrations dir on write (CWE-22). Go writes the raw column values
-      // verbatim (`fmt.Sprintf("%s_%s.sql", r.Version, r.Name)`,
-      // `internal/migration/fetch/fetch.go:36`) with no digit check, so reject only the
+      // escape the migrations dir on write (CWE-22). The raw column values write
+      // verbatim, with no digit check, so reject only the
       // actual traversal vectors — separators and `..` segments — in both fields. This
-      // keeps a Go-valid signed version like `-1` writable while closing the vector.
+      // keeps a signed version like `-1` writable while closing the vector.
       const escapes = (segment: string) =>
         /[/\\]/u.test(segment) || segment.split(/[/\\]/u).includes("..");
       if (escapes(file.version) || escapes(file.name)) {
@@ -156,7 +151,7 @@ const runFetch = Effect.fnUntraced(function* (
       }
       const name = `${file.version}_${file.name}.sql`;
       const filePath = path.join(migrationsDir, name);
-      // Go: `strings.Join(statements, ";\n") + ";\n"`.
+      // The written form joins statements with `;\n`, plus a trailing `;\n`.
       const contents = `${file.statements.join(";\n")};\n`;
       yield* fs.writeFileString(filePath, contents, { mode: 0o644 }).pipe(
         Effect.mapError(
@@ -169,7 +164,7 @@ const runFetch = Effect.fnUntraced(function* (
       written.push(filePath);
     }
 
-    // Go is silent on success in text mode.
+    // Silent on success in text mode.
     if (output.format !== "text") {
       yield* output.success("Migration history fetched", { files: written });
     }

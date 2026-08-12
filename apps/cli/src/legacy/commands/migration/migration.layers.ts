@@ -41,13 +41,13 @@ const dbConfig = legacyDbConfigLayer.pipe(
  * pg-delta / migra stack (no Docker, edge-runtime, SSL probe, or shadow seam):
  * the db-config resolver + connection, the lazy linked-resolver auth stack
  * (project-ref + linked-project cache), the shared identity stitcher, telemetry
- * flush, piped stdin (for the migration confirm prompt — Go's `PromptYesNo` reads
+ * flush, piped stdin (for the migration confirm prompt, which reads
  * stdin), and the command runtime span. `Output`, `Analytics`, `Stdio`,
  * `FileSystem`, `Path`, `Clock`, `Tty`, and `LegacyYesFlag` come from the root.
  *
  * `legacyIdentityStitchLayer` is provided by the SAME reference to `dbConfig` and
- * the linked resolver so Effect memoises one shared `sync.Once` (legacy CLAUDE.md
- * rule 5).
+ * the linked resolver so Effect memoises one shared identity-stitch attempt
+ * (legacy CLAUDE.md rule 5).
  */
 export const legacyMigrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>) =>
   Layer.mergeAll(
@@ -67,7 +67,7 @@ const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLay
  * Runtime layer for `supabase migration squash` — `legacyMigrationDbRuntimeLayer`'s bundle
  * plus the three services only squash needs: `LegacyDockerRun` (the `pg_dump` one-shot
  * container + the shadow's PG15+ one-shot setup jobs), `HttpClient` (the native shadow's
- * health-check wait), and `LegacyDebugLogger` (Go's `GetDebugLogger()` on the
+ * health-check wait), and `LegacyDebugLogger` (used on the
  * `LoadLocalVersions` fallback). `ChildProcessSpawner`/`RuntimeInfo`/`Tty`/`FileSystem`/
  * `Path` come from the root layer, same as `db diff`.
  */

@@ -7,8 +7,7 @@ import {
 
 /**
  * A remote migration version is not present in the local migrations directory.
- * Byte-matches Go's `ErrMissingLocal` (`pkg/migration/apply.go:16`); the
- * `migration repair --status reverted ...` suggestion is attached separately.
+ * The `migration repair --status reverted ...` suggestion is attached separately.
  */
 export class LegacyMigrationMissingLocalError extends Data.TaggedError(
   "LegacyMigrationMissingLocalError",
@@ -23,8 +22,7 @@ export class LegacyMigrationMissingLocalError extends Data.TaggedError(
 
 /**
  * Out-of-order local migrations exist before the last remote migration, and
- * `--include-all` was not set. Byte-matches Go's `ErrMissingRemote`
- * (`pkg/migration/apply.go:15`); the `--include-all` suggestion is attached
+ * `--include-all` was not set. The `--include-all` suggestion is attached
  * separately.
  */
 export class LegacyMigrationMissingRemoteError extends Data.TaggedError(

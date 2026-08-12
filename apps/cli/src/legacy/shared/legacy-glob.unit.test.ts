@@ -163,8 +163,8 @@ function fakeWalkFs(
 
 describe("legacyWalkSqlFiles", () => {
   it.effect("propagates a stat failure instead of silently treating the entry as absent", () => {
-    // `fs.WalkDir` (`walkMatchedDir`, `pkg/config/config.go:194-207`) propagates a
-    // per-entry stat/lstat error from its walk callback, aborting `Glob.SQLFiles` entirely —
+    // `fs.WalkDir` (`walkMatchedDir`) propagates a
+    // per-entry stat/lstat error from its walk callback, aborting the SQL-files glob entirely —
     // a directory `readDirectory` can list but `stat` then fails to read (permission denied,
     // removed mid-walk, I/O error) must fail the whole walk, not silently resolve to "no file
     // here" (review: PRRT_kwDOErm0O86WXFqr).

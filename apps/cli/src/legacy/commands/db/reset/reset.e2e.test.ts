@@ -20,10 +20,9 @@ describe("supabase db reset (legacy)", () => {
 
   // Docker-free: the destructive remote-reset confirmation fires after the config
   // load and BEFORE any connection is dialed, so a piped decline exits without a
-  // database. Declining must byte-match Go: a single `context canceled` line on
-  // stderr and exit 1, with NO `--debug` troubleshooting hint — `recoverAndExit`
-  // skips `SuggestDebugFlag` for `context.Canceled` (apps/cli-go/cmd/root.go:287-303).
-  // CLI-1973.
+  // database. Declining prints an established output contract: a single
+  // `context canceled` line on stderr and exit 1, with NO `--debug`
+  // troubleshooting hint.
   test(
     "declining the remote reset prompt prints only context canceled, no --debug hint",
     { timeout: E2E_TIMEOUT_MS },

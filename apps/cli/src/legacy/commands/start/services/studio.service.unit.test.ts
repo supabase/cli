@@ -75,8 +75,8 @@ describe("legacyBuildStudioEnv", () => {
   });
 
   test("LOGFLARE_PRIVATE_ACCESS_TOKEN is always Go's hardcoded 'api-key', regardless of input", () => {
-    // `analytics.api_key` isn't a `config.toml`-configurable field in Go
-    // (`toml:"-"`) — there is no input field for it at all.
+    // `analytics.api_key` isn't a `config.toml`-configurable field —
+    // there is no input field for it at all.
     const env = legacyBuildStudioEnv(baseEnvInput);
     expect(env["LOGFLARE_PRIVATE_ACCESS_TOKEN"]).toBe("api-key");
   });

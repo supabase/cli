@@ -197,45 +197,41 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
 });
 
 /**
- * Go's `getSigningKey` Branches B/C (`bearerjwt.go:52-83`, reached when
- * `[auth].signing_keys_path` IS configured): non-TTY prompts for a kid by exact
- * string match (falling back to the first key on a blank answer); a real TTY
- * presents an interactive picker instead (`output.promptSelect`, the same
- * `@clack/prompts`-backed pattern `legacy-project-ref.layer.ts` already uses for
- * Go's bubbletea `PromptChoice` — the rendered ANSI never byte-matches Go's TUI
- * either way, so this codebase's established precedent is to match only the
- * observable stderr line Go itself prints after a choice, "Selected key ID: <kid>").
+ * Branches B/C (reached when `[auth].signing_keys_path` IS configured):
+ * non-TTY prompts for a kid by exact string match (falling back to the
+ * first key on a blank answer); a real TTY presents an interactive picker
+ * instead (`output.promptSelect`, the same `@clack/prompts`-backed pattern
+ * `legacy-project-ref.layer.ts` already uses for the established
+ * bubbletea-style `PromptChoice` — the rendered ANSI never byte-matches a
+ * TUI either way, so this codebase's established precedent is to match
+ * only the observable stderr line printed after a choice, "Selected key
+ * ID: <kid>").
  *
  * Both the picker AND that line are routed to stderr explicitly (`{ stream: "stderr"
  * }` / `output.raw(..., "stderr")` below) rather than the shared `promptSelect`/`info`
- * defaults: Go's own `PromptChoice` comments "Interactive prompts should always be
- * written to stderr" and passes `tea.WithOutput(os.Stderr)`
- * (`internal/utils/prompt.go:127-128`) — but clack's `select()`/`log.info()` default to
- * `process.stdout` (verified directly against the installed `@clack/prompts` source),
- * and this command's own stdout IS the signed-token payload even in text mode (see
- * `bearer-jwt.handler.ts`'s doc comment) — so the unmodified defaults would corrupt a
- * piped/captured token with picker UI and the "Selected key ID: ..." line for any
- * interactive user with a configured `signing_keys_path` (Codex review finding,
- * CLI-1961).
+ * defaults: interactive prompts should always be written to stderr — but
+ * clack's `select()`/`log.info()` default to `process.stdout`, and this
+ * command's own stdout IS the signed-token payload even in text mode (see
+ * `bearer-jwt.handler.ts`'s doc comment) — so the unmodified defaults would
+ * corrupt a piped/captured token with picker UI and the "Selected key ID:
+ * ..." line for any interactive user with a configured `signing_keys_path`.
  *
  * The picker tries the AMBIENT `Output` first — this is what every test in this file
  * mocks, and it's what a real `text` run already uses — and only on the AMBIENT
  * `output.promptSelect`/`raw` failing with `NonInteractiveError` (the json/stream-json
  * `Output` layers' unconditional behavior, `output.layer.ts`) does it retry through a
  * FRESH, locally-provided {@link textOutputLayer} instance. This is the same rationale
- * as `legacy/commands/migration/migration.prompt.ts`'s `legacyMigrationConfirm`
- * (CLI-1974): Go's own `PromptChoice` has no concept of an output format at all and
+ * as `legacy/commands/migration/migration.prompt.ts`'s `legacyMigrationConfirm`:
+ * the established `PromptChoice` has no concept of an output format at all and
  * always prompts on a real TTY, and this command's stdout is the raw token
  * unconditionally in EVERY format (see `bearer-jwt.handler.ts`'s doc comment) — there
  * is no structured json/stream-json result here for an interactive widget to corrupt,
  * unlike `legacy-project-ref.layer.ts`'s own `promptSelect` (which DOES stay gated
  * behind `output.format`, because ITS caller's json/stream-json mode has a real
- * machine payload an interactive prompt would otherwise interleave with). Verified
- * against the real binary (CLI-1961, Codex review finding): the ambient
+ * machine payload an interactive prompt would otherwise interleave with). The ambient
  * json/stream-json `Output` layers' `promptSelect` unconditionally raises
  * `NonInteractiveError`, which would abort this command entirely on a real TTY with a
- * configured `signing_keys_path` and more than one stored key — a regression Go never
- * had, since it has no `--output-format` flag to trip over. The try-then-fall-back
+ * configured `signing_keys_path` and more than one stored key. The try-then-fall-back
  * shape (rather than unconditionally swapping to `textOutputLayer`) is deliberate: it
  * keeps every existing mock-driven test exercising the SAME ambient `Output` path they
  * already do, and only reaches the real, un-mockable `@clack/prompts` renderer in the
@@ -251,9 +247,9 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
     const kid = yield* legacyConsolePromptText(
       "Enter the kid of your signing key (or leave blank to use the first one): ",
     );
-    // Go's loop checks every key for an EXACT `KeyID` match BEFORE the blank-input
-    // fallback (`bearerjwt.go:59-66`) — so a key whose own `kid` is literally `""`
-    // still matches a blank answer here, ahead of "return the first key".
+    // The exact `KeyID` match check runs BEFORE the blank-input fallback —
+    // so a key whose own `kid` is literally `""` still matches a blank
+    // answer here, ahead of "return the first key".
     const found = availableKeys.find((key) => (key.kid ?? "") === kid);
     if (found !== undefined) {
       return found;
@@ -267,13 +263,13 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
   }
 
   if (availableKeys.length === 0) {
-    // Go's bubbletea `PromptChoice` (`internal/utils/prompt.go:110-140`), given a
-    // ZERO-item list, quits immediately without ever letting the user select anything:
-    // `errors.New("user aborted")`, unwrapped. Guarded here rather than ever reaching
-    // `output.promptSelect` — `@clack/prompts`' own `select()` has no equivalent
-    // "immediately quit on an empty option list" behavior to lean on, and calling it
-    // with zero options would otherwise resolve to an out-of-range index and crash
-    // with a raw `TypeError` when `.kid` is accessed below.
+    // A ZERO-item list must quit immediately without ever letting the user
+    // select anything: `errors.New("user aborted")`, unwrapped. Guarded
+    // here rather than ever reaching `output.promptSelect` —
+    // `@clack/prompts`' own `select()` has no equivalent "immediately quit
+    // on an empty option list" behavior to lean on, and calling it with
+    // zero options would otherwise resolve to an out-of-range index and
+    // crash with a raw `TypeError` when `.kid` is accessed below.
     return yield* Effect.fail(
       new LegacyGenBearerJwtKeyPickerAbortedError({ message: "user aborted" }),
     );
@@ -292,17 +288,17 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
   // renders on a genuine TTY. `textOutputLayer` only needs `Tty` (already in scope),
   // so this fallback is a purely local override; the token itself is still written
   // through the AMBIENT `Output` later, in `bearer-jwt.handler.ts`, completely
-  // unaffected by it. See this function's doc comment above for why Go's own picker
-  // needs this at all.
+  // unaffected by it. See this function's doc comment above for why this
+  // picker needs this at all.
   const pickSigningKey = (pickerOutput: typeof Output.Service) =>
     Effect.gen(function* () {
       const chosen = yield* pickerOutput.promptSelect("Select a signing key:", options, {
         stream: "stderr",
       });
       const chosenKey = availableKeys[Number(chosen)]!;
-      // Go: `fmt.Fprintln(os.Stderr, "Selected key ID:", choice.Summary)` (`bearerjwt.go:82`).
-      // `output.raw(..., "stderr")`, NOT `output.info` — `info` is clack's `log.info`,
-      // which defaults to stdout (see this function's doc comment above).
+      // `output.raw(..., "stderr")`, NOT `output.info` — `info` is clack's
+      // `log.info`, which defaults to stdout (see this function's doc
+      // comment above).
       yield* pickerOutput.raw(`Selected key ID: ${chosenKey.kid ?? ""}\n`, "stderr");
       return chosenKey;
     });
@@ -320,23 +316,23 @@ const resolveSigningKeyFromConfigured = Effect.fnUntraced(function* (
 });
 
 /**
- * Go's `getSigningKey` (`apps/cli-go/internal/gen/bearerjwt/bearerjwt.go:35-84`,
- * deleted in CLI-1970; last present at commit 7b469f5b3), fully
- * assembled: resolves `[auth].signing_keys_path`'s config, then dispatches to Branch
- * A (unconfigured) or Branches B/C (configured, non-TTY/TTY).
+ * Fully assembled: resolves `[auth].signing_keys_path`'s config, then
+ * dispatches to Branch A (unconfigured) or Branches B/C (configured,
+ * non-TTY/TTY).
  *
- * Reproduces the verified `[auth].enabled = false` quirk: Go's `Config.Validate` only
- * reads the `signing_keys_path` FILE inside `if c.Auth.Enabled` (`config.go:1087`), but
- * `getSigningKey` only checks whether the PATH STRING is configured
- * (`len(SigningKeysPath) == 0`) — independent of `auth.enabled`. So when auth is
- * disabled and a path IS configured, the kid-prompt branch still runs, but the actual
- * available keys stay the built-in default (the file is never read) — a real user
- * hitting this combination sees a misleading kid prompt they can never satisfy with
- * their own file's kids. `gen signing-key`'s OWN sibling resolver
- * ({@link legacyGenSigningKey}'s `loadSigningKeysConfig`) needs and replicates this exact
- * same gate — it goes through the identical `flags.LoadConfig` -> `Config.Validate` Go
- * pipeline as this command, so it is subject to the same auth-disabled quirk (CLI-1961
- * Codex review finding; see `gen.signing-keys-config.ts`'s `authEnabled` doc comment).
+ * Reproduces the established `[auth].enabled = false` quirk: config
+ * validation only reads the `signing_keys_path` FILE when auth is enabled,
+ * but `getSigningKey` only checks whether the PATH STRING is configured —
+ * independent of `auth.enabled`. So when auth is disabled and a path IS
+ * configured, the kid-prompt branch still runs, but the actual available
+ * keys stay the built-in default (the file is never read) — a real user
+ * hitting this combination sees a misleading kid prompt they can never
+ * satisfy with their own file's kids. `gen signing-key`'s OWN sibling
+ * resolver ({@link legacyGenSigningKey}'s `loadSigningKeysConfig`) needs and
+ * replicates this exact same gate — it goes through the identical config
+ * load and validation pipeline as this command, so it is subject to the
+ * same auth-disabled quirk (see `gen.signing-keys-config.ts`'s
+ * `authEnabled` doc comment).
  */
 export const legacyResolveBearerJwtSigningKey = Effect.fnUntraced(function* (workdir: string) {
   const paths = yield* legacyResolveSigningKeysConfigPaths(
@@ -355,16 +351,17 @@ export const legacyResolveBearerJwtSigningKey = Effect.fnUntraced(function* (wor
       (message) => new LegacyGenBearerJwtReadError({ message }),
       (message) => new LegacyGenBearerJwtDecodeError({ message }),
     );
-    // `normalizeStoredJwk` throws Go's bare `encoding/json` struct-field type-mismatch
-    // text (see its own doc comment) the moment any stored key entry has a malformed
-    // field — e.g. `[{"kty":"oct","alg":"ES256","ext":"true"}]` — wrapped here with the
+    // `normalizeStoredJwk` throws the established bare `encoding/json`
+    // struct-field type-mismatch text (see its own doc comment) the moment
+    // any stored key entry has a malformed field — e.g.
+    // `[{"kty":"oct","alg":"ES256","ext":"true"}]` — wrapped here with the
     // SAME `"failed to decode signing keys: failed to parse response body: %w"` this
     // file's sibling `alg`-allowlist check (inside `legacyReadSigningKeysFile`) already
-    // uses for this exact call site (Codex review finding, CLI-1961). A DUPLICATE
+    // uses for this exact call site. A DUPLICATE
     // malformed field (e.g. `[{"kid":1,"kid":"k1",...}]`) is already rejected earlier,
     // by `legacyReadSigningKeysFile` itself calling `assertNoMalformedDuplicateJwkField`
     // against each element's own raw source text — `storedKeys` here is guaranteed
-    // free of that gap by the time this runs (CLI-1961 Codex review finding).
+    // free of that gap by the time this runs.
     availableKeys = yield* Effect.try({
       try: () => storedKeys.map(normalizeStoredJwk),
       catch: (cause) =>

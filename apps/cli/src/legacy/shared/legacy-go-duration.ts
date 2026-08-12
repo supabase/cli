@@ -4,15 +4,12 @@
  *
  * Several `config.toml` fields decode in `@supabase/config` as the raw
  * duration STRING (e.g. `auth.sessions.timebox = "1h"`,
- * `auth.sms.max_frequency = "5s"`) rather than Go's parsed `time.Duration`
- * (nanoseconds as `int64`). Go itself re-serializes the PARSED value with
- * `fmt.Sprintf("%v", duration)` when building a container's env (e.g.
- * `GOTRUE_SESSIONS_TIMEBOX`, `GOTRUE_SMS_MAX_FREQUENCY` in
- * `apps/cli-go/internal/start/start.go`'s `buildGotrueEnv`, deleted along with
- * the rest of `internal/start` as unreachable, CLI-1966; last present at
- * commit a253ccba2), which normalizes
- * the string to Go's canonical form — `"1h"` becomes `"1h0m0s"`,
- * `"90s"` becomes `"1m30s"` — so callers needing byte-exact parity must
+ * `auth.sms.max_frequency = "5s"`) rather than a parsed `time.Duration`
+ * (nanoseconds as `int64`). A container's env (e.g.
+ * `GOTRUE_SESSIONS_TIMEBOX`, `GOTRUE_SMS_MAX_FREQUENCY`) is built from the
+ * PARSED-then-re-serialized value, which normalizes
+ * the string to the canonical form — `"1h"` becomes `"1h0m0s"`,
+ * `"90s"` becomes `"1m30s"` — so callers needing byte-exact output must
  * round-trip through both functions below, not just pass the configured
  * string through unchanged.
  */

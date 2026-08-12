@@ -25,10 +25,10 @@ import type { LegacyProjectsApiKeysFlags } from "./api-keys.command.ts";
 type ApiKeys = typeof V1GetProjectApiKeysOutput.Type;
 
 /**
- * Mirror of Go's `api.ApiKeyResponse` (`apps/cli-go/pkg/api/types.gen.go`).
- * Only `-o yaml` hits the raw struct — `-o toml`/`-o env` encode the
- * `SUPABASE_<NAME>_KEY` env map instead (`api_keys.go:34-36`) — and yaml.v3
- * renders the `nullable.Nullable[T]` fields as `map[bool]T` (CLI-1975).
+ * Struct spec for the raw API key response. Only `-o yaml` hits the raw
+ * struct — `-o toml`/`-o env` encode the `SUPABASE_<NAME>_KEY` env map
+ * instead — and yaml.v3 renders the `nullable.Nullable[T]` fields as
+ * `map[bool]T`.
  */
 const LEGACY_GO_API_KEYS_LIST = legacyGoSlice(
   legacyGoStruct([
@@ -54,8 +54,7 @@ export const legacyProjectsApiKeys = Effect.fn("legacy.projects.api-keys")(funct
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
-  // Go's root PersistentPreRun resolves `--project-ref` via `ParseProjectRef`
-  // (`root.go:112-115`), which prompts on a TTY and fails when unlinked.
+  // `--project-ref` resolution prompts on a TTY and fails when unlinked.
   const ref = yield* resolver.resolve(flags.projectRef);
 
   yield* Effect.gen(function* () {

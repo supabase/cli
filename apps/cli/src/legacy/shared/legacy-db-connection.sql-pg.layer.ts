@@ -45,8 +45,7 @@ declare module "pg" {
   }
 }
 
-// Go's role step-down (`apps/cli-go/internal/utils/connect.go:200-220`,
-// `ConnectByConfigStream`): after connecting to a remote database as a
+// Role step-down (`ConnectByConfigStream`): after connecting to a remote database as a
 // platform-provisioned login role (`cli_login_*`) or a privileged role
 // (`supabase_admin`), run `SET SESSION ROLE postgres` so subsequent statements
 // (e.g. `CREATE EXTENSION`) execute as `postgres` rather than the temp role.
@@ -79,9 +78,9 @@ const legacyQueryRawTypes = {
 
 /**
  * Whether the connecting user requires the `SET SESSION ROLE postgres` step-down.
- * Go strips any Supavisor `.{ref}` tenant suffix first (`strings.Split(user, ".")[0]`)
- * before comparing. Go installs the step-down `AfterConnect` hook **only on the
- * remote path** (`ConnectByConfigStream`, `connect.go:211-222`); the local path
+ * Strips any Supavisor `.{ref}` tenant suffix first (`strings.Split(user, ".")[0]`)
+ * before comparing. The step-down `AfterConnect` hook installs **only on the
+ * remote path** (`ConnectByConfigStream`); the local path
  * (`ConnectLocalPostgres`) never installs it, regardless of the configured user — so
  * the caller must also gate on `!isLocal` (a local `--db-url` can set any user).
  */
@@ -92,10 +91,10 @@ function needsRoleStepDown(user: string): boolean {
 
 // pgconn terminates the multi-host fallback chain (rather than trying the next
 // host) when the server returns an authentication/authorization/catalog/privilege
-// error, surfacing it instead of masking it behind a later host (jackc/pgconn
-// `pgconn.go:159-192`, documented at `:127-130`). These are the SQLSTATEs pgconn
-// breaks on; `28000` is gated on the failed attempt having used TLS (`pgconn.go:182`,
-// `fc.TLSConfig != nil`).
+// error, surfacing it instead of masking it behind a later host. These are the
+// SQLSTATEs pgconn
+// breaks on; `28000` is gated on the failed attempt having used TLS
+// (`fc.TLSConfig != nil`).
 const LEGACY_TERMINAL_SQLSTATES = new Set(["28P01", "3D000", "42501"]);
 const LEGACY_TLS_GATED_SQLSTATE = "28000";
 
@@ -145,8 +144,8 @@ interface LegacyPgServerError {
  * its string `severity` plus a SQLSTATE-shaped `code` (never a node system error).
  * `detail` and `position` mirror `pgErr.Detail`/`pgErr.Position`
  * (node-postgres carries `position` as a decimal string): `detail` only when
- * non-empty, `position` only when > 0, matching Go's gates in `ExecBatch`
- * (`pkg/migration/file.go:98-101` — `markError` no-ops on 0 anyway).
+ * non-empty, `position` only when > 0, matching `ExecBatch`'s own gates
+ * (`markError` no-ops on 0 anyway).
  */
 function legacyExtractPgServerError(error: unknown): LegacyPgServerError | undefined {
   let current: unknown = error;
@@ -174,10 +173,10 @@ function legacyExtractPgServerError(error: unknown): LegacyPgServerError | undef
 /**
  * Maps a failed statement to `LegacyDbExecError`. A server ErrorResponse renders
  * pgconn's `PgError.Error()` byte-for-byte — `<Severity>: <Message> (SQLSTATE
- * <Code>)` (pgconn `errors.go:51`) — which is the head line Go prints when a
- * migration statement fails (`pkg/migration/file.go:112`, `%w`), and carries the
- * structured `detail`/`position` fields the migration-apply error context renders
- * (Go `file.go:96-110`). Non-server failures (socket drops, driver errors) keep
+ * <Code>)` — which is the head line printed when a
+ * migration statement fails, and carries the
+ * structured `detail`/`position` fields the migration-apply error context renders.
+ * Non-server failures (socket drops, driver errors) keep
  * the driver's own text.
  */
 export function legacyToExecError(error: unknown): LegacyDbExecError {
@@ -231,9 +230,9 @@ export function legacyIsUnixSocketHost(host: string): boolean {
  */
 /**
  * Merge the libpq `options` startup param with the parsed `runtimeParams`, encoding
- * each runtime param as a `-c <key>=<value>` flag. Go sends every
- * `pgconn.Config.RuntimeParams` entry as a discrete StartupMessage parameter
- * (`ToPostgresURL`, `apps/cli-go/internal/utils/connect.go:31-33`), so the live
+ * each runtime param as a `-c <key>=<value>` flag. Every
+ * `pgconn.Config.RuntimeParams` entry is sent as a discrete StartupMessage parameter
+ * (`ToPostgresURL`), so the live
  * query/COPY connection applies `search_path`, `statement_timeout`, etc.
  * node-postgres has no discrete startup-param API, but Postgres applies the
  * `-c key=value` flags carried in the `options` startup param to the same session
@@ -271,15 +270,14 @@ export function legacyBuildConnectionUrl(
 }
 
 /**
- * Map Go's TLS behavior to the `pg` driver's `ssl` option. Parity with
- * `apps/cli-go/internal/utils/connect.go`:
+ * Map the established TLS behavior to the `pg` driver's `ssl` option:
  *
  * - **Local** (`ConnectLocalPostgres` sets `cc.TLSConfig = nil`) → no TLS;
  * return `false` so `pg` stays in plaintext mode even when `PGSSLMODE` is set
- * in the environment. `sslmode` is ignored, matching Go, which overwrites the
- * local config unconditionally.
+ * in the environment. `sslmode` is ignored — the
+ * local config overwrites it unconditionally.
  * - **Remote** maps the URL's `sslmode` to the *primary* config pgconn would try
- * (`config.go:772-780`'s fallback list), since the `pg` driver carries a single
+ * (its fallback list), since the `pg` driver carries a single
  * `ssl` option and cannot replay pgconn's TLS↔plaintext fallback:
  * - `disable` and `allow` → plaintext (`ssl: false`). pgconn's `allow` list is
  * `{nil, tlsConfig}`, i.e. a **non-TLS primary** with a TLS fallback, so an
@@ -289,8 +287,8 @@ export function legacyBuildConnectionUrl(
  * verification (their primary is the TLS config).
  *
  * `servername` (the original hostname) is carried for **every** TLS mode, not
- * just the verifying ones. Go enables `sslsni` by default (`pgconn`'s
- * `config.go:768` sets `tlsConfig.ServerName = host` for all TLS sslmodes when
+ * just the verifying ones. `sslsni` is enabled by default (pgconn's `config.go`
+ * sets `tlsConfig.ServerName = host` for all TLS sslmodes when
  * the host is not a literal IP) and keeps the original hostname in the
  * connection config even when `--dns-resolver https` swaps the dial target for a
  * DoH-resolved IP (via `FallbackLookupIP`). Dropping the SNI on `require`/
@@ -613,9 +611,9 @@ const connect = (
     // local. A DSN/`PGCONNECT_TIMEOUT` value (>0) overrides
     // both. Without this a black-holed host would hang to the OS/driver default.
     const connectTimeoutSeconds = cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10);
-    // Whether the remote step-down runs on this connection. Go installs the
-    // `AfterConnect` hook only on the remote path (`ConnectByConfigStream`,
-    // `connect.go:342-362`), not `ConnectLocalPostgres`, so gate on `!isLocal`.
+    // Whether the remote step-down runs on this connection. The
+    // `AfterConnect` hook installs only on the remote path (`ConnectByConfigStream`),
+    // not `ConnectLocalPostgres`, so gate on `!isLocal`.
     const stepDownRequired = !isLocal && needsRoleStepDown(cfg.user);
     // Build the primary connection over a self-managed `pg.Pool` (via
     // `PgClient.fromPool`) rather than `PgClient.make`, so we control two pool
@@ -653,8 +651,7 @@ const connect = (
     // mapping the driver error to an actionable hint that replaces
     // the generic "--debug" suggestion. The resolver attaches the profile context to
     // `cfg.suggestionContext`; map it here so the suggestion travels on the error.
-    // The message mirrors `pgxv5.Connect` wrap of pgconn's `connectError`
-    // (`pkg/pgxv5/connect.go:33`, pgconn `errors.go:66-72`): the `failed to connect
+    // The message mirrors `pgxv5.Connect` wrap of pgconn's `connectError`: the `failed to connect
     // to postgres:` prefix plus the `host=… user=… database=…` identity and the
     // underlying driver cause — not the bare `SqlError` toString, which drops all
     // of that detail.
@@ -727,7 +724,7 @@ const connect = (
         (ssl) => ({
           client: makeClient(dialHost, port, ssl),
           // pgconn only short-circuits the fallback chain on an auth error when the
-          // failed attempt used TLS (`pgconn.go:182`, gated on `fc.TLSConfig != nil`);
+          // failed attempt used TLS (gated on `fc.TLSConfig != nil`);
           // a TLS config is any non-plaintext `ssl` value.
           usedTls: ssl !== undefined && ssl !== false,
           rawConfig: legacyBuildRawPgConfig(cfg, dialHost, port, ssl, connectTimeoutSeconds),

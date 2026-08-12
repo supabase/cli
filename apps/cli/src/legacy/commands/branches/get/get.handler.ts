@@ -155,10 +155,8 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
     const projectHost = legacyProjectHost(cliConfig.profile);
     const projected = toStandardEnvs(detail, primary, keys, projectHost);
     if (projected.poolerWarning !== undefined && output.format === "text") {
-      // Mirror Go's `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`
-      // (`apps/cli-go/internal/branches/get/get.go:94`, deleted in CLI-1970;
-      // last present at commit 7b469f5b3). The "WARNING:" prefix
-      // is yellow, then a space, then the parse error message.
+      // Established output: `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`.
+      // The "WARNING:" prefix is yellow, then a space, then the parse error message.
       yield* output.raw(
         `${styleText("yellow", "WARNING:")} ${projected.poolerWarning}\n`,
         "stderr",

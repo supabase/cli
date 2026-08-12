@@ -219,7 +219,7 @@ const cases: ReadonlyArray<Case> = [
       expect_autoanalyze: "no",
     },
     expect: ["public.t", "No stats", "2024-01-01 00:00"],
-    // The two threshold columns are dropped (Go renders only 9 of 11 columns).
+    // The two threshold columns are dropped (only 9 of 11 columns are rendered).
     absent: ["777", "888"],
   },
   {
@@ -292,7 +292,7 @@ describe("legacy inspect db specs (per-subcommand correctness)", () => {
     });
   }
 
-  // Cell-level truth for `blocking.go:56`'s per-column backtick-wrapping: col 2
+  // Cell-level truth for blocking's per-column backtick-wrapping: col 2
   // (`blocking_statement`) is backtick-wrapped, so a null/empty value renders as
   // the two literal backticks (glamour's empty-code-span rule), while col 5
   // (`blocked_statement`) stays bare, so an empty value renders as "".

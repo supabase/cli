@@ -226,7 +226,7 @@ describe("legacyConnectFailureMessage", () => {
     // Node/Bun's `_tls_wrap.js` onConnectEnd shape: the server accepted
     // SSLRequest but closed the socket before the handshake completed. The
     // message is phase-specific (only ever raised pre-secure-connection), so it
-    // stages like pgconn's startTLS wrap (`tls error (…)`, pgconn.go:283-289).
+    // stages like pgconn's startTLS wrap (`tls error (…)`).
     const midHandshake = Object.assign(
       new Error("Client network socket disconnected before secure TLS connection was established"),
       { code: "ECONNRESET" },
@@ -413,8 +413,8 @@ describe("legacyConnectSuggestion", () => {
     // `errors[0].code` onto the AggregateError itself. A refused first attempt
     // followed by a final unreachable-IPv6 attempt must classify the LAST
     // attempt (IPv6 pooler hint), not the parent's copied ECONNREFUSED —
-    // otherwise the suggestion disagrees with the rendered cause, which Go
-    // makes impossible (`pgconn.go:171-203`, `connect.go:317`).
+    // otherwise the suggestion disagrees with the rendered cause, which pgconn's
+    // own connect flow makes impossible.
     const aggregate = Object.assign(new AggregateError([], ""), {
       code: "ECONNREFUSED",
       errors: [

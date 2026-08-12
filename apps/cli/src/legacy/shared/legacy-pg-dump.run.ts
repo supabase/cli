@@ -9,8 +9,8 @@ import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
 /**
  * Runs a pg_dump / pg_dumpall bash script in a one-shot container, streaming its
  * stdout chunk-by-chunk to `onStdout` and teeing stderr live, returning the exit
- * code + captured stderr for failure classification. Mirrors `dockerExec`
- * (`apps/cli-go/internal/db/dump/dump.go`): host networking by default (overridden
+ * code + captured stderr for failure classification. Mirrors `dockerExec`:
+ * host networking by default (overridden
  * by the global `--network-id` flag, the ambient `SUPABASE_NETWORK_ID` env var, or
  * a project `supabase/.env` value, in that precedence), no security-opt, and the
  * Linux-only `host.docker.internal:host-gateway` extra host.

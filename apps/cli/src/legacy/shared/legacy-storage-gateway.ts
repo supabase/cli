@@ -13,7 +13,7 @@ import { legacyGoPathSplit } from "./legacy-storage-url.ts";
 
 /**
  * Native TypeScript client for the Supabase Storage **service gateway** (Kong),
- * mirroring `apps/cli-go/pkg/storage/{buckets,objects,vector,api}.go` and the
+ * mirroring `pkg/storage/{buckets,objects,vector,api}.go` and the
  * `fetcher.NewServiceGateway` auth headers — see {@link legacyKongAuthHeaders}
  * for the exact `apikey`/`Authorization` header shape.
  *
@@ -21,7 +21,7 @@ import { legacyGoPathSplit } from "./legacy-storage-url.ts";
  * and `storage ls/cp/mv/rm` (object list/download/move/delete + bucket delete).
  */
 
-/** `pkg/storage/api.go:9-11`. */
+/** `pkg/storage/api.go`. */
 export const LEGACY_PAGE_LIMIT = 100;
 export const LEGACY_DELETE_OBJECTS_LIMIT = 1000;
 
@@ -224,8 +224,8 @@ const decodeBucketSummaries = (
 
 /**
  * Decode `[]ObjectResponse`: `Id` is a `*string`,
- * so an absent or `null` id marks a directory (`o.Id == nil`,
- * `internal/storage/ls/ls.go:67`); a present id (any non-null) marks a file. A
+ * so an absent or `null` id marks a directory (`o.Id == nil`);
+ * a present id (any non-null) marks a file. A
  * non-string non-null id fails the decode, matching `*string` unmarshal.
  */
 const decodeStorageObjects = (

@@ -140,7 +140,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
    * the internal fallback below only loads whatever THIS command's own project would
    * supply. When omitted (the standalone `seed buckets` command), fall back to
    * `legacyResolveYesWithProjectEnv`, loading the project env ourselves — `seed buckets`
-   * defaults to `--local` (`seedFlags.Bool("local", true, ...)`, `cmd/seed.go:31`),
+   * defaults to `--local` (`seedFlags.Bool("local", true, ...)`),
    * and root's `ParseDatabaseConfig` calls `LoadConfig` — loading the project `.env` files —
    * before `buckets.Run`'s overwrite/prune prompts, so a `SUPABASE_YES`
    * set only in `supabase/.env` must auto-confirm here too.
@@ -159,7 +159,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
    * that SAME resolution for bucket seeding to match — an independent reload
    * from disk would silently drop any override that exists only in the
    * shell/dotenv, not literally in config.toml. Only `start` passes this;
-   * the standalone `seed buckets` command's own single load already IS Go's
+   * the standalone `seed buckets` command's own single load already IS the
    * one-shot `Config.Load()` for that process, so it keeps reloading below.
    */
   readonly resolvedConfig?: {
@@ -171,7 +171,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   const cliConfig = yield* LegacyCliConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
+  // `--yes` OR `SUPABASE_YES`.
   const yes =
     opts.yes ??
     (yield* legacyResolveYesWithProjectEnv(
@@ -224,7 +224,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // during config.Load — before `buckets.Run` can take its no-op path — so an
   // invalid value fails even when there's nothing to seed.
   //
-  // Bucket names (Go ValidateBucketName, config.go:899-903).
+  // Bucket names (`ValidateBucketName`).
   for (const name of bucketNames) {
     yield* legacyValidateBucketName(name);
   }
@@ -608,9 +608,9 @@ const collectDir = (
         Effect.catch(() => Effect.succeed(false)),
       );
       if (isSymlink) {
-        // Go `isUploadableEntry` (batch.go:73-84) OPENS the target then stats the
+        // `isUploadableEntry` OPENS the target then stats the
         // handle; it uploads only a regular file. `stat` alone would queue an
-        // unreadable target and abort later at upload, so mirror Go: open + stat.
+        // unreadable target and abort later at upload, so mirror that: open + stat.
         const targetType = yield* Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* fs.open(absChild, { flag: "r" });

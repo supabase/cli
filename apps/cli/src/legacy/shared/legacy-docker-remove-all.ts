@@ -222,19 +222,16 @@ export const legacyDockerRemoveAll = (
     onContainersRemoved?.(containers);
 
     if (deleteVolumes) {
-      // Go gates the `--all` filter arg on Docker API >= 1.42 (`docker.go:126-133`,
-      // `Docker.ClientVersion() >= "1.42"`): Docker CLI's own `volume prune --all` flag is
-      // annotated `version: "1.42"` (`docker/cli@v28.5.2` `cli/command/volume/prune.go:53`) and
-      // enforced by Cobra's `Args` validator *before* `RunE` runs —
+      // The `--all` filter arg is gated on Docker API >= 1.42: Docker CLI's own `volume
+      // prune --all` flag is annotated `version: "1.42"` and enforced by
+      // its own arg validator before the command runs —
       // on an older daemon, passing `--all` unconditionally
       // would hard-fail this whole call and prune nothing, not just prune a narrower set. There's
-      // no persistent Engine API client here to ask the negotiated version directly (Go talks to
-      // the Docker Engine API, never a `docker` binary), so
+      // no persistent Engine API client here to ask the negotiated version directly, so
       // {@link legacyDockerSupportsVolumePruneAllFlag} asks the `docker` CLI itself via `docker
-      // version` and mirrors Go's gate exactly.
+      // version` and applies the same gate.
       //
-      // Podman is a Docker-CLI-compatible fallback this port adds, not something Go itself has,
-      // so there's no Go behavior to match on that path — but `--all` isn't a real flag on any
+      // Podman is a Docker-CLI-compatible fallback — but `--all` isn't a real flag on any
       // released Podman `volume prune` (only `--filter`/`--force`/`--help`, checked v4.3 through
       // the current v5.7; `--all` only exists in unreleased dev docs), so it hard-fails on a real
       // Podman-only host. Podman already prunes every unused volume by default, so omitting

@@ -10,7 +10,7 @@ import type { LegacyStatusOutputNames } from "./legacy-status-values.ts";
  * extent this command's rounded box needs them.
  *
  * Column 0 (the label column) is capped at 16 display columns
- * (`ColMaxWidths.PerColumn[0] = 16`, `status.go:344`); a label wider than that
+ * (`ColMaxWidths.PerColumn[0] = 16`); a label wider than that
  * word-wraps across multiple lines, leaving column 1 blank on the continuation
  * lines (verified against a real `tablewriter@v1.1.4` render — see the port
  * plan). None of the fixed labels below reach 17 characters today, so this is

@@ -11,14 +11,13 @@ export interface LegacyColorStream {
 }
 
 /**
- * Port of termenv's colour-profile gate, which is what Go's lipgloss default
- * renderer consults (`lipgloss/renderer.go` → `termenv.EnvColorProfile`,
- * `termenv@v0.16.0` `termenv.go:68-115`):
+ * Port of termenv's colour-profile gate, which is what the established lipgloss default
+ * renderer consults (`lipgloss/renderer.go` → `termenv.EnvColorProfile`):
  *
  * 1. `NO_COLOR` non-empty → no colour, beats everything (`EnvNoColor`).
  * 2. `CLICOLOR=0` → no colour, unless forced (`EnvNoColor`).
  * 3. `CLICOLOR_FORCE` set and not `"0"` → colour even when piped (the
- * Ascii→ANSI promotion, `termenv.go:104-106`).
+ * Ascii→ANSI promotion).
  * 4. `CI` non-empty → treated as non-TTY.
  * 5. Otherwise: the stream must be a colour-capable TTY. `hasColors()` is
  * faithful on Bun TTYs (it also covers `TERM=dumb`) and absent on piped
@@ -39,9 +38,9 @@ function legacySupportsColor(stream: LegacyColorStream): boolean {
 }
 
 /**
- * Ports of `utils.Aqua` / `utils.Bold` (`apps/cli-go/internal/utils/colors.go`).
+ * Ports of `utils.Aqua` / `utils.Bold`.
  *
- * Go uses lipgloss, which auto-detects the output profile and renders **plain**
+ * The established behavior uses lipgloss, which auto-detects the output profile and renders **plain**
  * text when the stream is not a TTY (piped output, CI, tests). Node's
  * `styleText` would mirror that via `validateStream`, but Bun (1.3.14, the
  * only runtime the CLI ships on) does not implement `validateStream`: it

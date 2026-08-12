@@ -7,10 +7,8 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 // ---------------------------------------------------------------------------
-// HTTP-bound errors — one (Network + UnexpectedStatus) pair per Go errorf site.
-// Names trace back to `apps/cli-go/internal/projects/<sub>/` for grepability
-// (deleted in CLI-1970; last present at commit 7b469f5b3).
-// Templates match Go's `errors.Errorf(...)` phrasing byte-for-byte.
+// HTTP-bound errors — one (Network + UnexpectedStatus) pair per error site.
+// Templates match the established `errors.Errorf(...)` phrasing byte-for-byte.
 // ---------------------------------------------------------------------------
 
 export class LegacyProjectsListNetworkError extends Data.TaggedError(
@@ -66,8 +64,7 @@ export class LegacyProjectsCreateUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// Interactive org list fetched by `create` when `--org-id` is omitted
-// (`create.go:97-105`).
+// Interactive org list fetched by `create` when `--org-id` is omitted.
 export class LegacyProjectsOrgsListNetworkError extends Data.TaggedError(
   "LegacyProjectsOrgsListNetworkError",
 )<{
@@ -118,7 +115,7 @@ export class LegacyProjectsDeleteUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// 404 branch of `delete.Run` (`delete.go:37-38`): "Project does not exist:<ref>".
+// "Project does not exist:<ref>" (404 branch of the delete flow).
 export class LegacyProjectsDeleteNotFoundError extends Data.TaggedError(
   "LegacyProjectsDeleteNotFoundError",
 )<{
@@ -158,7 +155,7 @@ export class LegacyProjectsApiKeysUnexpectedStatusError extends Data.TaggedError
 // Pure-path errors (validation, prompt-time semantics, user cancellation).
 // ---------------------------------------------------------------------------
 
-// `list` rejects Go's `--output env` (`list.go:66-67`, `utils.ErrEnvNotSupported`).
+// `list` rejects `--output env` (`utils.ErrEnvNotSupported`).
 export class LegacyProjectsEnvNotSupportedError extends Data.TaggedError(
   "LegacyProjectsEnvNotSupportedError",
 )<{
@@ -169,9 +166,8 @@ export class LegacyProjectsEnvNotSupportedError extends Data.TaggedError(
   }
 }
 
-// Non-interactive `create` missing required params — mirrors Go's PreRunE
-// marking `--org-id`, `--db-password`, `--region` required + ExactArgs(1)
-// (`projects.go:62-69`).
+// Non-interactive `create` missing required params — `--org-id`,
+// `--db-password`, `--region` are required, plus exactly 1 positional arg.
 export class LegacyProjectsCreateMissingArgError extends Data.TaggedError(
   "LegacyProjectsCreateMissingArgError",
 )<{
@@ -182,7 +178,7 @@ export class LegacyProjectsCreateMissingArgError extends Data.TaggedError(
   }
 }
 
-// Interactive `create` name prompt returned blank (`create.go:94`).
+// Interactive `create` name prompt returned blank.
 export class LegacyProjectsCreateNameEmptyError extends Data.TaggedError(
   "LegacyProjectsCreateNameEmptyError",
 )<{
@@ -193,8 +189,8 @@ export class LegacyProjectsCreateNameEmptyError extends Data.TaggedError(
   }
 }
 
-// `delete` non-interactive with no positional ref — mirrors Go's
-// `cobra.ExactArgs(1)` on a non-TTY (`projects.go:109-113`).
+// `delete` non-interactive with no positional ref — exactly 1 positional
+// arg is required on a non-TTY.
 export class LegacyProjectsDeleteRefRequiredError extends Data.TaggedError(
   "LegacyProjectsDeleteRefRequiredError",
 )<{
@@ -205,8 +201,7 @@ export class LegacyProjectsDeleteRefRequiredError extends Data.TaggedError(
   }
 }
 
-// User declined the delete confirmation prompt (`delete.go:24-25`,
-// `errors.New(context.Canceled)`).
+// User declined the delete confirmation prompt (`errors.New(context.Canceled)`).
 export class LegacyProjectsDeleteCancelledError extends Data.TaggedError(
   "LegacyProjectsDeleteCancelledError",
 )<{

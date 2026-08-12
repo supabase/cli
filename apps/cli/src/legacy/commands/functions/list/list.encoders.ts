@@ -11,7 +11,7 @@ import {
   legacyGoTomlListWrapper,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 
-/** Mirror of Go's `api.FunctionResponse` (`apps/cli-go/pkg/api/types.gen.go`). */
+/** Struct spec for the function response. */
 const LEGACY_GO_FUNCTION_RESPONSE = legacyGoStruct([
   ["created_at", legacyGoInt],
   ["entrypoint_path", legacyGoPtr(legacyGoString)],

@@ -256,7 +256,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
     );
   });
 
-  // `TestGlobSQLFiles` (`pkg/config/config_test.go`) — same two scenarios, ported.
+  // Same two scenarios as the original test suite this was ported from.
   it.effect(
     "expands a directory schema_paths entry to its .sql files, recursively, in declared order",
     () => {

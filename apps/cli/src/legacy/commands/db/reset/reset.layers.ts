@@ -22,9 +22,9 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * the Postgres connection, the db-config resolver, project-ref resolution, and the
  * linked-project cache, all over the lazy management-API factory so the local /
  * `--db-url` paths never resolve an access token at layer-build time. Both targets
- * are fully native (CLI-1955/CLI-2062 for the local container-recreate primitives,
- * CLI-1958 for the remote `--experimental` schema-files apply) — no Go delegation
- * remains on this command, so `LegacyGoProxy` is not composed here.
+ * are fully native (the local container-recreate primitives, and the remote
+ * `--experimental` schema-files apply) — no Go delegation remains on this
+ * command, so `LegacyGoProxy` is not composed here.
  *
  * `legacyDockerRunLayer` backs the native local recreate's PG15+ one-shot migrate
  * jobs (`legacyStartSetupLocalDatabase`, reused via `legacyRecreateLocalDatabase`)
@@ -37,8 +37,8 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * (`db/start/start.layers.ts`, `push.layers.ts`). Without them, a versionless reset
  * with pg-delta enabled would hit an unhandled missing-service defect — not caught
  * by the handler's typed `Effect.catch` — AFTER the database has already been
- * reset, instead of writing the catalog or emitting Go's best-effort warning
- * (review CLI-1958). `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/
+ * reset, instead of writing the catalog or emitting the established best-effort
+ * warning (review CLI-1958). `LegacyCliConfig`/`ChildProcessSpawner`/`FileSystem`/`Path`/
  * `RuntimeInfo` are ambient from the root runtime (`shared/cli/run.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -93,9 +93,9 @@ export const legacyDbResetRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
-  // `legacyPromptYesNo`'s non-TTY branch reads the piped answer via `Stdin` (Go's
-  // `console.ReadLine`); without it a CI/piped remote `db reset` that reaches the
-  // confirmation prompt fails with a missing-service defect instead of the default.
+  // `legacyPromptYesNo`'s non-TTY branch reads the piped answer via `Stdin`;
+  // without it a CI/piped remote `db reset` that reaches the confirmation
+  // prompt fails with a missing-service defect instead of the default.
   stdinLayer,
   // Backs the native local recreate's PG15+ one-shot migrate jobs, and the remote
   // path's own post-reset pg-delta catalog-cache call.

@@ -29,9 +29,7 @@ const config = {
     Flag.optional,
   ),
   // Optional so the handler can distinguish "explicit false" (demote to
-  // ephemeral) from "absent". Mirrors Go's `cmdFlags.Changed("persistent")`
-  // in `apps/cli-go/cmd/branches.go:123` (deleted in CLI-1970; last present
-  // at commit 7b469f5b3).
+  // ephemeral) from "absent".
   persistent: Flag.boolean("persistent").pipe(
     Flag.withDescription("Switch between ephemeral and persistent branch."),
     Flag.optional,

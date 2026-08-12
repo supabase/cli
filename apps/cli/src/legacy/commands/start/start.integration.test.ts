@@ -1566,7 +1566,7 @@ describe("legacy start integration", () => {
         // (`legacyResolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
         // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass, none of
         // which interact with each other. A malformed `db.health_timeout` is exercised
-        // separately below (it now hard-fails the whole command, matching Go, so it can't
+        // separately below (it now hard-fails the whole command, so it can't
         // be bundled into this "successful bring-up" scenario anymore).
         const { layer, workdir, child } = setup({
           configContents: `project_id = "demo"
@@ -1804,7 +1804,7 @@ content_path = "./templates/custom_notice.html"
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_TABLES even when storage is excluded, matching Go's Config.Load",
       () => {
         // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_tables`
-        // is decoded in the same Config.Load pass (pkg/config/storage.go:28-39).
+        // decodes in the same config-load pass.
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"] = "not-a-uint";
         const { layer, child } = setup();
@@ -1834,7 +1834,7 @@ content_path = "./templates/custom_notice.html"
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS even when storage is excluded, matching Go's Config.Load",
       () => {
         // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_catalogs`
-        // is decoded in the same Config.Load pass (pkg/config/storage.go:28-39).
+        // decodes in the same config-load pass.
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"] = "not-a-uint";
         const { layer, child } = setup();
@@ -1863,8 +1863,8 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_BUCKETS even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.vector.max_buckets` is a plain uint decoded in the same Config.Load pass as
-        // storage.analytics.* above (pkg/config/storage.go:28-39), unconditionally.
+        // `storage.vector.max_buckets` is a plain uint decoded in the same config-load pass as
+        // storage.analytics.* above, unconditionally.
         const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"];
         process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"] = "not-a-uint";
         const { layer, child } = setup();
@@ -1892,8 +1892,8 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_INDEXES even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.vector.max_indexes` is a plain uint decoded in the same Config.Load pass as
-        // storage.vector.max_buckets above (pkg/config/storage.go:28-39), unconditionally.
+        // `storage.vector.max_indexes` is a plain uint decoded in the same config-load pass as
+        // storage.vector.max_buckets above, unconditionally.
         const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"];
         process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"] = "not-a-uint";
         const { layer, child } = setup();
@@ -2042,8 +2042,8 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally in Go's
-        // Config.Load (pkg/config/auth.go:210-240), same override-only-throw reasoning as the
+        // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally at
+        // config load, same override-only-throw reasoning as the
         // web3/oauth_server tests above (review: PRRT_kwDOErm0O86WXFqj).
         const previous = process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
         process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
@@ -2075,8 +2075,8 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
-        // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
+        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all —
+        // `auth.passkey.enabled` decodes unconditionally at config load via
         // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw
         // reasoning as the web3/oauth_server tests above, except the malformed value lives directly in
         // config.toml here since `@supabase/config` never sees (or rejects) this unmodeled field —
@@ -2101,7 +2101,7 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.external` is a genuine Go `map[string]provider` (auth.go:190) — an unmodeled/
+        // `auth.external` is an open-ended provider map — an unmodeled/
         // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
         // schema silently drops at decode time (see the "custom auth.external providers" describe
         // block below for the accepted-value counterpart), so
@@ -2396,9 +2396,7 @@ content_path = "./templates/custom_notice.html"
         return Effect.gen(function* () {
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          // Runs once, AFTER the fresh-volume migrate+seed pipeline — matching Go's
-          // `SetupLocalDatabase` calling `pgcache.TryCacheMigrationsCatalog` immediately
-          // after `apply.MigrateAndSeed` (`start.go:368-379`).
+          // Runs once, immediately AFTER the fresh-volume migrate+seed pipeline.
           expect(edgeRunCalls).toHaveLength(1);
           const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
           const catalogFiles = readdirSync(tempDir).filter((name) =>
@@ -2795,9 +2793,8 @@ content_path = "./templates/custom_notice.html"
       () => {
         // `resolveFunctionBindMounts` backs Studio's function bind mounts
         // unconditionally of Edge Runtime being enabled (see
-        // `start.handler.ts`'s "studio" case doc comment) — Go's
-        // `PopulatePerFunctionConfigs` still logs the skip line via that path
-        // alone here, since Edge Runtime itself never runs to log it too.
+        // `start.handler.ts`'s "studio" case doc comment) — the skip line still
+        // logs via that path alone here, since Edge Runtime itself never runs to log it too.
         const workdir = tempRoot.current;
         mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
         writeFileSync(join(workdir, "supabase", "functions", "foo", "index.ts"), "export {};\n");
@@ -3205,8 +3202,8 @@ content_path = "./templates/custom_notice.html"
       "fails on a malformed auth.email.max_frequency before any Docker work, matching Go's Config.Load",
       () => {
         // `auth.email.max_frequency` is a plain, unvalidated string in `@supabase/config`'s
-        // schema. Go decodes it in the same unconditional Config.Load mapstructure pass as every
-        // other duration field, before start.Run touches Docker at all — this is now validated
+        // schema. It decodes in the same unconditional config-load pass as every
+        // other duration field, before any Docker work — this is now validated
         // eagerly here too (see the `resolvedEmail` validation in start.handler.ts), so a
         // malformed value fails before the network/Postgres/Kong/GoTrue sequence ever begins,
         // not partway through it.
@@ -3335,10 +3332,10 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "exits 0 on --ignore-health-check when Postgres itself never becomes healthy, without rolling back and without starting any other service",
       () => {
-        // Mirrors the regression test above, but with `--ignore-health-check` set — Go's
-        // `Run()` (`start.go:74-75`) applies `ignoreHealthCheck && IsUnhealthyError(err)`
-        // uniformly to whatever `run()` returns, including Postgres's own health-wait
-        // failure, which `run()` propagates immediately (`start.go:294-296`) before any
+        // Mirrors the regression test above, but with `--ignore-health-check` set — the
+        // `ignoreHealthCheck && legacyIsUnhealthyStartError(err)` downgrade applies
+        // uniformly to whatever the run returns, including Postgres's own health-wait
+        // failure, which propagates immediately before any
         // other service is even created.
         const neverHealthy = new Set<string>();
         const base = defaultRoute({ neverHealthy });
@@ -3474,9 +3471,8 @@ content_path = "./templates/custom_notice.html"
         // advice names the image actually resolved for that container.
         expect(out.stderrText).toContain("supabase_auth_demo container is not ready");
         expect(out.stderrText).toContain("docker image rm -f public.ecr.aws/supabase/gotrue:");
-        // Go never fires `cli_stack_started` on the ignored-unhealthy
-        // fallthrough (`start.go:1287` sits after the `if err != nil` block) —
-        // only a genuine bulk health-check SUCCESS reaches that capture.
+        // `cli_stack_started` never fires on the ignored-unhealthy
+        // fallthrough — only a genuine bulk health-check SUCCESS reaches that capture.
         expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -4632,8 +4628,8 @@ content_path = "./templates/custom_notice.html"
   });
 
   describe("SUPABASE_API_ENABLED override", () => {
-    // Go nests the entire TLS cert/key disk read inside `if c.Api.Enabled`
-    // (`pkg/config/config.go:1006-1027`) — when API is disabled (however that happened), Kong
+    // The entire TLS cert/key disk read is nested inside the API-enabled check —
+    // when API is disabled (however that happened), Kong
     // keeps its embedded default cert/key regardless of `api.tls.enabled`/cert_path/key_path.
     it.live(
       "skips the configured cert/key read for Kong when API is disabled only via env override",
@@ -4819,10 +4815,8 @@ content_path = "./templates/custom_notice.html"
           expect(envFilePath).toBeDefined();
           const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
           expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
-          // Names reach the container UPPERCASED — Go's config loader applies
-          // `strings.ToUpper` to every secret key (`pkg/config/config.go:766-771`)
-          // — and empty values are skipped — Go's `set.ListSecrets` SHA256>0
-          // gate (`internal/secrets/set/set.go:48-52`), shared with
+          // Names reach the container UPPERCASED — every secret key is uppercased
+          // — and empty values are skipped, shared with
           // `functions serve` via `toPlainEdgeRuntimeConfig`.
           expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
           expect(envFileContent).not.toContain("my_lower_secret=");
@@ -4835,9 +4829,9 @@ content_path = "./templates/custom_notice.html"
       "decrypts an encrypted [edge_runtime.secrets] entry into plaintext, not the raw ciphertext",
       () => {
         // Mirrors "encrypted secrets reach GoTrue's container" above, but for
-        // `edge_runtime.secrets` — Go's `DecryptSecretHookFunc` decrypts this field during
-        // `Config.Load` too, so the real Edge Runtime container's env file must contain the
-        // decrypted "value", never the literal `encrypted:...` string.
+        // `edge_runtime.secrets` — this field decrypts during config load too, so the real
+        // Edge Runtime container's env file must contain the decrypted "value", never the
+        // literal `encrypted:...` string.
         const previous = process.env["DOTENV_PRIVATE_KEY"];
         process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
         const { layer, child } = setup({
@@ -5425,7 +5419,7 @@ content_path = "./templates/custom_notice.html"
         // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the pre-decode
         // `env(...)` walker substitutes the real value but leaves it a raw string (no type
         // coercion for schema-unmodeled paths) — a strict `=== true` check would silently read
-        // this valid Go config as disabled.
+        // this valid config as disabled.
         const previous = process.env["PASSKEY_ENABLED"];
         process.env["PASSKEY_ENABLED"] = "true";
         const { layer, child } = setup({

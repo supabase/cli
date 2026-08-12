@@ -6,10 +6,10 @@ import { legacyAqua, legacyBold, legacyGreen, legacyRed, legacyYellow } from "./
 // Bun's `util.styleText` ignores `validateStream` (verified on Bun 1.3.14: a
 // piped stdout still gets `\x1b[36m…\x1b[39m`, even under NO_COLOR=1), so
 // `legacy-colors.ts` implements termenv's gate itself — the same decision
-// order Go's lipgloss default renderer uses (`termenv@v0.16.0`
-// `termenv.go:68-115`). These tests pin that gate deterministically with fake
+// order the established lipgloss-style default renderer uses. These tests pin
+// that gate deterministically with fake
 // streams and stubbed env vars; a piped stream (no `hasColors`) must yield
-// PLAIN text, exactly like `utils.Aqua` under `go test`'s piped stdout.
+// PLAIN text, exactly like the established behavior under a piped stdout.
 const colorTty: LegacyColorStream = { hasColors: () => true };
 const monoTty: LegacyColorStream = { hasColors: () => false };
 const piped: LegacyColorStream = {};
