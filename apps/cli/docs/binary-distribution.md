@@ -109,9 +109,10 @@ This:
 - `db remote changes`, `db remote commit`
 - `gen keys` — kept indefinitely; its planned removal (CLI-1964) was cancelled
 - `functions download` — kept for the hidden `--legacy-bundle` path (CLI-1963)
-- `db schema declarative __catalog` (hidden) and `db start` — the pg-delta seam: the native TS `db schema declarative generate|sync` commands spawn these directly (`legacy-pgdelta.seam.layer.ts`, not `LegacyGoProxy`) to provision the shadow database and export pg-delta catalogs. Only the seam command and its parent group's experimental/pg-delta gate survive in `cmd/db_schema_declarative.go`; the visible Go `sync`/`generate` implementations are deleted
 
-Everything else the original Go CLI implemented was deleted outright from `apps/cli-go/` (CLI-1970), not just excluded from the shipped binary. The reachable set was computed with a `go list -deps -test` fixpoint from the trimmed `main` package, and everything outside it was removed: the main module's first-party package count went from 138 to 37 (101 packages / ~29.5k LOC across 326 files deleted), including every other command's `cmd/*.go` file, `internal/{inspect,storage,sso,login,link,init,bootstrap,migration-squash,migration-up,migration-fetch,...}`, the Go docs generator (`docs/`), `examples/`, and `tools/{jsonschema,shared}`. Counting stdlib and third-party dependencies too, the full dependency closure shrank from 1078 to 959 packages. `pkg/` (a separate, independently tagged/published Go module for external consumers) and `tools/listdep` (used by `cli-go-mirror.yml`) were left untouched.
+That list is exhaustive: `LegacyGoProxy` is the only code path in the TypeScript CLI that spawns `supabase-go`. The one historical exception — the hidden pg-delta seam (`db schema declarative __catalog` + `db start`), spawned directly by the native `db schema declarative generate|sync` commands to provision shadow databases and export pg-delta catalogs — was ported to native TypeScript as part of CLI-1970 (`legacy-pgdelta.seam.layer.ts` now composes `legacySetupShadowDatabase`/`legacyExportCatalogPgDelta`/`legacyStartLocalDatabase` in-process), and those two Go commands were deleted with it.
+
+Everything else the original Go CLI implemented was deleted outright from `apps/cli-go/` (CLI-1970), not just excluded from the shipped binary. The reachable set was computed with a `go list -deps -test` fixpoint from the trimmed `main` package, and everything outside it was removed: the main module's first-party package count went from 138 to 38 (100 packages / ~29.5k LOC across 321 files deleted), including every other command's `cmd/*.go` file, `internal/{inspect,storage,sso,login,link,init,bootstrap}`, `internal/migration/{squash,up,fetch}`, the Go docs generator (`docs/`), `examples/`, and `tools/{jsonschema,shared}`. Counting stdlib and third-party dependencies too, the full dependency closure shrank from 1078 to 959 packages. `pkg/` (a separate, independently tagged/published Go module for external consumers) and `tools/listdep` (used by `cli-go-mirror.yml`) were left untouched.
 
 For any command or package deleted by CLI-1970, the parity/provenance reference is the last commit with the full source intact: `7b469f5b3` — the same convention CLI-1966 established for `internal/start` (see below).
 
@@ -130,7 +131,7 @@ Measured on the CLI-1970 branch with the real release build (`build.ts --shell l
 
 (musl packages ship the glibc `supabase-go` binary — see Package Layout above.)
 
-Progression across both trims: the original two-binary baseline was 97–103 MB per platform; CLI-1966's `internal/start` deletion cut it to roughly 47–52 MB; CLI-1970 brings it to 39.1–42.8 MB. A like-for-like local darwin-arm64 build went from 48.1 MB to 41.5 MB.
+Progression across both trims: the original two-binary baseline was 97–103 MB per platform; CLI-1966's `internal/start` deletion cut it to roughly 47–52 MB; CLI-1970 brings it to 39.1–42.8 MB.
 
 The remaining size is dominated by dependencies the retained commands still need: the multigres Postgres parser (`db pull --experimental`), `stripe/pg-schema-diff` (`db diff --use-pg-schema`), the Docker client (shadow-database provisioning for diff/pull), pgx, the Management API client, cobra/viper, and sentry/posthog.
 

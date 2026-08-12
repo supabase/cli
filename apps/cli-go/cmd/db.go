@@ -9,7 +9,6 @@ import (
 	"github.com/spf13/viper"
 	"github.com/supabase/cli/internal/db/diff"
 	"github.com/supabase/cli/internal/db/pull"
-	"github.com/supabase/cli/internal/db/start"
 	"github.com/supabase/cli/internal/utils"
 	"github.com/supabase/cli/internal/utils/flags"
 	"github.com/supabase/cli/legacy/branch/create"
@@ -174,19 +173,6 @@ var (
 			return pull.Run(cmd.Context(), schema, flags.DbConfig, "remote_commit", false, usePgDeltaDiff, pullDiffer, afero.NewOsFs())
 		},
 	}
-
-	fromBackup string
-
-	// dbStartCmd is retained for the native declarative commands' pg-delta seam
-	// (legacy-pgdelta.seam.layer.ts), which spawns `supabase-go db start` to
-	// bring up the local database before catalog export.
-	dbStartCmd = &cobra.Command{
-		Use:   "start",
-		Short: "Starts local Postgres database",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return start.Run(cmd.Context(), fromBackup, afero.NewOsFs())
-		},
-	}
 )
 
 func shouldUsePgDelta() bool {
@@ -270,9 +256,5 @@ func init() {
 	dbRemoteCmd.AddCommand(dbRemoteChangesCmd)
 	dbRemoteCmd.AddCommand(dbRemoteCommitCmd)
 	dbCmd.AddCommand(dbRemoteCmd)
-	// Build start command
-	startFlags := dbStartCmd.Flags()
-	startFlags.StringVar(&fromBackup, "from-backup", "", "Path to a logical backup file.")
-	dbCmd.AddCommand(dbStartCmd)
 	rootCmd.AddCommand(dbCmd)
 }
