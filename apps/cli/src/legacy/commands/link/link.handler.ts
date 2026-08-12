@@ -150,7 +150,10 @@ function legacyLinkBranchNotFoundMessage(
 
   const trimmedLower = value.trim().toLowerCase();
   const nearMiss = branches.find((branch) => branch.name.toLowerCase() === trimmedLower);
-  const didYouMean = nearMiss !== undefined ? ` Did you mean "${nearMiss.name}"?` : "";
+  // Sanitized like the list above — an API-provided name must not be able to
+  // inject ANSI/OSC/newline controls into the terminal (PR #6168 review).
+  const didYouMean =
+    nearMiss !== undefined ? ` Did you mean "${sanitizeLegacyErrorBody(nearMiss.name)}"?` : "";
 
   return (
     `Branch "${value}" not found for project ${parentRef}. Available branches: ${namesList}` +
@@ -228,12 +231,12 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
       new LegacyLinkBranchNotReadyError({
         branch: found.name,
         status: found.status,
-        message: `Branch "${found.name}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
+        message: `Branch "${sanitizeLegacyErrorBody(found.name)}" has no project ref yet (status: ${found.status}). Wait for it to finish provisioning, then retry.`,
       }),
     );
   }
 
-  const line = `Resolved branch "${found.name}" of project ${parentRef} to project ref ${found.project_ref}.`;
+  const line = `Resolved branch "${sanitizeLegacyErrorBody(found.name)}" of project ${parentRef} to project ref ${found.project_ref}.`;
   yield* output.format === "text" ? output.raw(`${line}\n`, "stderr") : output.info(line);
 
   return { projectRef: found.project_ref, branchName: found.name, parentRef };
@@ -367,7 +370,21 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
           organization_slug: p.organization_slug,
         });
       }
-      yield* analytics.capture(EventProjectLinked, {}).pipe(withAnalyticsContext({ groups }));
+      // Confirmed on staging (PR #6168 review): a DEFAULT branch's
+      // `project_ref` IS the parent's own ref, so `link main` resolves via
+      // `branchResolution` above but `getProject(ref)` still returns 200
+      // (this arm), never the 404 arm below — without this, a
+      // default-branch link would be misclassified as a plain project link
+      // and lose `linked_via`.
+      const linkedViaProperties: Record<string, unknown> = Option.isSome(branchResolution)
+        ? {
+            [PropLinkedVia]: "branch",
+            [PropParentProjectRef]: branchResolution.value.parentRef,
+          }
+        : {};
+      yield* analytics
+        .capture(EventProjectLinked, linkedViaProperties)
+        .pipe(withAnalyticsContext({ groups }));
     } else if (Option.isSome(branchResolution)) {
       // TS-only event extension (CLI-2167): a branch name/UUID was resolved to
       // `ref` above, so we know definitively this is a branch link — fire the

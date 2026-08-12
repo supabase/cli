@@ -28,6 +28,10 @@ function readOptionalCacheString(record: Record<string, unknown>, key: string): 
   return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
 /** Best-effort parse of `<workdir>/supabase/.temp/linked-project.json`'s `ref`
  * (and, when present, `name`/`organization_slug`/`organization_id`) fields —
  * a missing file, unreadable file, malformed JSON, or non-string/empty `ref`
@@ -37,13 +41,12 @@ export function legacyParseCachedLinkedProject(
 ): Option.Option<LegacyCachedLinkedProject> {
   try {
     const parsed: unknown = JSON.parse(content);
-    if (typeof parsed === "object" && parsed !== null && "ref" in parsed) {
-      const record = parsed as Record<string, unknown>;
-      const ref = record.ref;
+    if (isRecord(parsed)) {
+      const ref = parsed.ref;
       if (typeof ref === "string" && ref.length > 0) {
-        const name = readOptionalCacheString(record, "name");
-        const organizationSlug = readOptionalCacheString(record, "organization_slug");
-        const organizationId = readOptionalCacheString(record, "organization_id");
+        const name = readOptionalCacheString(parsed, "name");
+        const organizationSlug = readOptionalCacheString(parsed, "organization_slug");
+        const organizationId = readOptionalCacheString(parsed, "organization_id");
         return Option.some({
           ref,
           ...(name === undefined ? {} : { name }),
@@ -82,12 +85,17 @@ function legacyClassifyParentCandidates(
  * Candidate order, first ref-shaped value wins:
  *
  *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliConfig`).
- *   2. `ref` in `<workdir>/supabase/.temp/linked-project.json`. KEY INVARIANT:
- *      this file is written by `link`'s own success path only for a REAL
- *      (non-404) project — the branch/404 path leaves it untouched — and
- *      `LegacyLinkedProjectCache.cache` never overwrites an existing file, so
- *      this reliably holds the last real parent project even after
- *      subsequent branch links.
+ *   2. `ref` in `<workdir>/supabase/.temp/linked-project.json` — ONLY when
+ *      candidate 3 below yielded a value. KEY INVARIANT: the cache alone is
+ *      NOT proof of a completed link — `link`'s handler writes it via
+ *      `Effect.ensuring` on BOTH success and failure (mirroring Go's
+ *      `PersistentPostRun`), so a FAILED `link --project-ref B` can leave a
+ *      cache entry for a `B` that was never actually linked (`getProject`
+ *      returned 200 — e.g. for a paused project — but a later link step
+ *      failed before `project-ref` itself was ever written). It's a
+ *      telemetry artifact, not linked-state evidence; it's trusted only as
+ *      PARENT RECOVERY for a link that has already actually happened, which
+ *      candidate 3 is exactly the proof of (PR #6168 review).
  *   3. `<workdir>/supabase/.temp/project-ref`.
  *
  * If a candidate exists but none is ref-shaped, that's corrupt/stale linked
@@ -100,13 +108,15 @@ export const legacyResolveLinkedParentRef = Effect.fnUntraced(function* () {
   const path = yield* Path.Path;
   const paths = legacyTempPaths(path, cliConfig.workdir);
 
-  const cachedRef = yield* fs.readFileString(paths.linkedProjectCache).pipe(
-    Effect.map(legacyParseCachedParentRef),
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
   const fileRef = yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
+  const cachedRef = Option.isSome(fileRef)
+    ? yield* fs.readFileString(paths.linkedProjectCache).pipe(
+        Effect.map(legacyParseCachedParentRef),
+        Effect.orElseSucceed(() => Option.none<string>()),
+      )
+    : Option.none<string>();
 
   return legacyClassifyParentCandidates([cliConfig.projectId, cachedRef, fileRef]);
 });

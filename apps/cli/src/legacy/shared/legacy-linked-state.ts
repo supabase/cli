@@ -8,8 +8,8 @@ import { Output } from "../../shared/output/output.service.ts";
 import {
   type LegacyCachedLinkedProject,
   legacyParseCachedLinkedProject,
-  legacyResolveLinkedParentRef,
 } from "./legacy-parent-project-ref.ts";
+import { sanitizeLegacyErrorBody } from "./legacy-http-errors.ts";
 import { legacyReadProjectRefFile, legacyTempPaths } from "./legacy-temp-paths.ts";
 
 type LegacyLinkedStateBranches = typeof V1ListAllBranchesOutput.Type;
@@ -97,8 +97,8 @@ const legacyAcquireLinkedStateApi = Effect.fnUntraced(function* () {
 /**
  * Best-effort branch-name lookup against `parentRef`'s branches, returning
  * the matching branch's `name` (or `undefined` on no match/any failure —
- * this is the single degradation point {@link legacyResolveLinkedState}'s two
- * call sites share). Shows the `Checking linked branch...` spinner in text
+ * this is the degradation point {@link legacyResolveLinkedState}'s one call
+ * site relies on). Shows the `Checking linked branch...` spinner in text
  * mode, but only once an API client is actually available — an acquisition
  * failure degrades silently, before ever touching the spinner.
  */
@@ -147,14 +147,15 @@ const legacyFindLinkedBranchName = Effect.fnUntraced(function* (
  *     line — on any acquisition or API failure. This is the fix for the real
  *     bug this feature shipped to fix: the user must still see they're on a
  *     branch even when the lookup can't run (no token, offline, API error).
- *   - No cache at all (missing/unreadable/malformed) → there is no CONFIRMED
- *     parent, so `legacyResolveLinkedParentRef`'s ref-only env/file fallback
- *     is used ONLY as an API query target, never to unconditionally claim a
- *     branch link: if that lookup POSITIVELY finds a branch whose
- *     `project_ref` matches the linked ref, render the branch-linked shape
- *     (parent ref from the chain, no name/org); otherwise (no fallback
- *     candidate, or the lookup found nothing / couldn't run) render the bare
- *     project line with no parent claim at all.
+ *   - No cache at all (missing/unreadable/malformed) → the plain
+ *     `{ linked: true, projectRef }` shape, with ZERO API calls (PR #6168
+ *     review). `legacyResolveLinkedParentRef`'s own env/file chain is now
+ *     ALWAYS self-referential here (its cache candidate only ever
+ *     participates when a link has actually completed — see its doc
+ *     comment), so querying it could only ever match the linked ref's own
+ *     DEFAULT branch row (misrendering an ordinary project as "a branch of
+ *     itself") or 403 on the real platform when the linked ref genuinely is
+ *     a branch — there is no positive-confirmation case left to attempt.
  */
 export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
   const cliConfig = yield* LegacyCliConfig;
@@ -199,36 +200,34 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
     } as const;
   }
 
-  // No cache at all — the ref-only chain fallback is only trustworthy as an
-  // API query target, not as unconditional evidence of a branch link.
-  const parentFromChain = yield* legacyResolveLinkedParentRef().pipe(
-    Effect.map((resolution) =>
-      resolution.kind === "resolved" ? Option.some(resolution.ref) : Option.none<string>(),
-    ),
-  );
-  if (Option.isNone(parentFromChain)) {
-    return { linked: true, projectRef: linkedRef.value } as const;
-  }
-
-  const parentRef = parentFromChain.value;
-  const branch = yield* legacyFindLinkedBranchName(parentRef, linkedRef.value);
-  if (branch === undefined) {
-    // The lookup didn't POSITIVELY confirm a branch — no cache-backed
-    // evidence either, so make no parent claim at all.
-    return { linked: true, projectRef: linkedRef.value } as const;
-  }
-  return { linked: true, projectRef: linkedRef.value, parentRef, branch } as const;
+  // No cache at all — render the plain shape with ZERO API calls (PR #6168
+  // review). With `legacyResolveLinkedParentRef`'s own fix (its cache
+  // candidate only participates when a link actually completed), its
+  // env/file chain is now ALWAYS self-referential here — it's the exact same
+  // soft linked-ref chain `legacyResolveSoftLinkedRef` above just read — so
+  // querying it could only ever (a) match the linked ref's own DEFAULT
+  // branch row when it's an ordinary parent, misrendering the project as "a
+  // branch of itself", or (b) 403 on the real platform when the linked ref
+  // genuinely is a branch (branches endpoints are parent-scoped). There is
+  // no positive-confirmation case left to attempt.
+  return { linked: true, projectRef: linkedRef.value } as const;
 });
 
+// Both label helpers render API-derived strings (branch/project names, org
+// slug/id from linked-project.json) straight to the terminal, so they apply
+// the same control-char sanitization as error bodies — a hostile name must
+// not be able to inject ANSI/OSC/newline controls (PR #6168 review).
 function legacyFormatOrgLabel(slug: string | undefined, id: string | undefined): string {
   if (slug !== undefined && id !== undefined) {
-    return slug === id ? slug : `${slug} (${id})`;
+    return slug === id
+      ? sanitizeLegacyErrorBody(slug)
+      : `${sanitizeLegacyErrorBody(slug)} (${sanitizeLegacyErrorBody(id)})`;
   }
-  return slug ?? id ?? "";
+  return sanitizeLegacyErrorBody(slug ?? id ?? "");
 }
 
 function legacyFormatNamedRef(name: string | undefined, ref: string): string {
-  return name === undefined ? ref : `${name} (${ref})`;
+  return name === undefined ? ref : `${sanitizeLegacyErrorBody(name)} (${ref})`;
 }
 
 /**

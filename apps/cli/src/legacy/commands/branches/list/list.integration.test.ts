@@ -422,6 +422,31 @@ describe("legacy branches list integration", () => {
     });
 
     it.live(
+      "the cache alone is never proof of a link: no project-ref file/env means LegacyProjectNotLinkedError, no API call (PR #6168 review)",
+      () => {
+        // Only linked-project.json exists — no supabase/.temp/project-ref and no
+        // SUPABASE_PROJECT_ID. `legacyResolveLinkedParentRef`'s cache candidate
+        // only ever participates once a link has actually completed (proven by
+        // the project-ref file's presence, the fix this test pins) — a FAILED
+        // `link` can leave a stale cache entry behind, so the cache by itself
+        // must never be trusted as linked-state evidence.
+        const { layer, api, workdir } = setup({
+          projectId: Option.none(),
+          response: [SAMPLE_BRANCH],
+        });
+        writeLinkedProjectCacheFile(workdir, PARENT_REF);
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyBranchesList({ projectRef: Option.none() }));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyProjectNotLinkedError");
+          }
+          expect(api.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
       "a normal (non-branch) linked state via the project-ref file alone is unaffected",
       () => {
         const { layer, api, workdir } = setup({
@@ -487,25 +512,6 @@ describe("legacy branches list integration", () => {
           yield* legacyBranchesList({ projectRef: Option.none() });
           const success = out.messages.find((m) => m.type === "success");
           expect(success?.data).toEqual({ branches: [SAMPLE_BRANCH] });
-        }).pipe(Effect.provide(layer));
-      },
-    );
-
-    it.live(
-      "renders no marker when the active-ref chain (env/project-ref file) resolves to nothing, even though the parent (cache) resolves fine",
-      () => {
-        const { layer, out, workdir } = setup({
-          projectId: Option.none(),
-          response: [SAMPLE_BRANCH],
-        });
-        // Only the cache holds a parent — `resolveOptional` (env/project-ref
-        // file only) never consults it, so the marker chain comes up empty
-        // while the branches call itself still succeeds via the parent chain.
-        writeLinkedProjectCacheFile(workdir, PARENT_REF);
-        return Effect.gen(function* () {
-          yield* legacyBranchesList({ projectRef: Option.none() });
-          expect(out.stdoutText).not.toContain("(active)");
-          expect(out.stdoutText).toContain("feat-1");
         }).pipe(Effect.provide(layer));
       },
     );

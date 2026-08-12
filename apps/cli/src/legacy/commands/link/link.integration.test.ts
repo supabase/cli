@@ -107,6 +107,17 @@ const LINK_BRANCH_OTHER: LegacyLinkBranch = {
   project_ref: OTHER_BRANCH_PROJECT_REF,
 };
 
+// A DEFAULT branch's `project_ref` IS the parent's own ref (PR #6168 review) —
+// `getProject(ref)` therefore returns 200 for it, routing telemetry into the
+// normal 200 arm rather than the 404 `else if (branchResolution)` arm.
+const LINK_BRANCH_DEFAULT: LegacyLinkBranch = {
+  ...LINK_BRANCH,
+  id: "77777777-8888-4999-8aaa-bbbbbbbbbbbb",
+  name: "main",
+  project_ref: PARENT_REF,
+  is_default: true,
+};
+
 const LINK_BRANCH_ZETA: LegacyLinkBranch = {
   ...LINK_BRANCH,
   id: "22222222-3333-4444-8555-666666666666",
@@ -898,6 +909,33 @@ describe("legacy link integration", () => {
     );
 
     it.live(
+      "cache alone (linked-project.json with no project-ref file) is never proof of a link: fails with LegacyLinkBranchNotLinkedError, no API call (PR #6168 review)",
+      () => {
+        const { layer, apiMock, workdir } = setup();
+        // Simulates a FAILED prior `link --project-ref <parent>`: `getProject`
+        // returned 200 (so `linked-project.json` got written via the failure
+        // arm's `Effect.ensuring`) but a later step failed before `project-ref`
+        // itself was ever written. That stale cache entry must never be trusted
+        // as parent-resolution evidence for a NEW branch lookup.
+        writeLinkedProjectCacheFile(workdir, linkedProjectCacheJson(PARENT_REF));
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(
+            legacyLink(
+              flags({ refOrBranch: Option.some("feature-branch"), projectRef: Option.none() }),
+            ),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const json = JSON.stringify(exit.cause);
+            expect(json).toContain("LegacyLinkBranchNotLinkedError");
+            expect(json).toContain(`Cannot resolve \\"feature-branch\\": it is not a project ref`);
+          }
+          expect(apiMock.requests).toHaveLength(0);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
       "treats an unreadable project-ref path (e.g. a directory) as no candidate rather than failing",
       () => {
         const { layer, workdir, apiMock } = setup();
@@ -1301,6 +1339,46 @@ describe("legacy link integration", () => {
           // The branch NAME is user-created content and must never leave the
           // machine in any captured analytics payload.
           expect(JSON.stringify(analytics.captured)).not.toContain("feature-branch");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "default-branch link (getProject(parent) returns 200): the normal 200 arm ALSO carries linked_via/parent_project_ref, plus its usual org/project groupIdentify richness (PR #6168 review)",
+      () => {
+        const analytics = mockContextualAnalytics();
+        const { layer, workdir } = setup({
+          branches: { ok: [LINK_BRANCH_DEFAULT] },
+          analytics,
+          // No `project` override — `HEALTHY_PROJECT.ref === PARENT_REF`, so
+          // `getProject(PARENT_REF)` returns 200 here, unlike the 404 test
+          // above: a default branch's own `project_ref` IS the parent's ref.
+        });
+        writeLinkedParentRef(workdir, PARENT_REF);
+        return Effect.gen(function* () {
+          yield* legacyLink(flags({ refOrBranch: Option.some("main"), projectRef: Option.none() }));
+          const captures = analytics.captured.filter((c) => c.event === "cli_project_linked");
+          expect(captures).toHaveLength(1);
+          const properties = captures[0]?.properties as { groups?: unknown } | undefined;
+          expect(properties).toMatchObject({
+            linked_via: "branch",
+            parent_project_ref: PARENT_REF,
+          });
+          expect(properties?.groups).toEqual({ organization: "org_123", project: PARENT_REF });
+          // The normal 200 arm's usual richness is untouched by the extension.
+          expect(analytics.groupIdentified).toEqual([
+            {
+              groupType: "organization",
+              groupKey: "org_123",
+              properties: { organization_slug: "acme" },
+            },
+            {
+              groupType: "project",
+              groupKey: PARENT_REF,
+              properties: { name: "My Project", organization_slug: "acme" },
+            },
+          ]);
+          expect(JSON.stringify(analytics.captured)).not.toContain('"main"');
         }).pipe(Effect.provide(layer));
       },
     );

@@ -1484,26 +1484,29 @@ project_id = "short"
     );
 
     it.live(
-      "branch-linked with no cache, branch found via the self-referential parent chain: omits the parent name and org",
+      "branch-linked with no cache at all: plain project block, ZERO API calls (cache alone is never proof of a link, PR #6168 review)",
       () => {
-        const { layer, out, workdir } = setup({
+        // An api mock IS wired (matching LINKED_BRANCH_REF as a self-referential
+        // branch) so the zero-requests assertion below is a genuine runtime
+        // count, not just "we didn't need one" — with no `linked-project.json`,
+        // `legacyResolveLinkedParentRef`'s cache candidate never participates
+        // either (its own fix), so there is no parent to resolve at all, and
+        // `legacyResolveLinkedState` never attempts the old self-referential
+        // branch lookup.
+        const { layer, out, workdir, apiMock } = setup({
           branches: {
             ok: [{ ...LINKED_BRANCH, parent_project_ref: LINKED_BRANCH_REF }],
           },
         });
         writeProjectRefFile(workdir, LINKED_BRANCH_REF);
-        // No linked-project.json — the parent chain's only candidate is the
-        // project-ref file itself, so a branch match here carries no cached
-        // parent name/org at all (a degenerate but reachable state).
         return Effect.gen(function* () {
           yield* legacyStatus(flags());
           expect(
-            out.stdoutText.startsWith(
-              `Linked Project:\n` +
-                `  Project: ${LINKED_BRANCH_REF}\n` +
-                `  Branch: feature-x (${LINKED_BRANCH_REF})\n`,
-            ),
+            out.stdoutText.startsWith(`Linked Project:\n  Project: ${LINKED_BRANCH_REF}\n`),
           ).toBe(true);
+          expect(out.stdoutText).not.toContain("\n  Branch:");
+          expect(out.stdoutText).not.toContain("\n  Org:");
+          expect(apiMock?.requests).toEqual([]);
         }).pipe(Effect.provide(layer));
       },
     );
