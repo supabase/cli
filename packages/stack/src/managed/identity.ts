@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect } from "effect";
+import { claimFileAtomically } from "./atomic-claim.ts";
 import {
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
@@ -117,11 +118,10 @@ export interface EnsureOrdinaryWorkspaceIdentityResult {
 
 /**
  * Claiming a workspace stays one `await` chain rather than an `Effect.gen`
- * pipeline: the temporary file, the hardlink that makes the claim atomic, its
- * `EEXIST` re-read of the winning marker, and the `finally` that removes the
- * temporary path are a single indivisible protocol. Interleaving it with other
- * work — or interrupting it between the link and the cleanup — could leave a
- * workspace holding a stray temporary marker.
+ * pipeline: reading the marker, publishing the claim, and re-reading the marker
+ * a losing claimant must adopt are a single indivisible protocol, and an
+ * interruption between those steps would leave the caller with an identity no
+ * workspace agreed to.
  */
 const ensureIdentity = async (
   workspacePath: string,
@@ -141,25 +141,21 @@ const ensureIdentity = async (
   };
 
   await mkdir(dirname(markerPath), { recursive: true });
-  const temporaryPath = `${markerPath}.tmp.${createManagedUuid(idFactory, "identity temporary id")}`;
-  await writeFile(temporaryPath, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o600 });
-  try {
-    await link(temporaryPath, markerPath);
+  const outcome = await claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
+    mode: 0o600,
+    temporaryId: createManagedUuid(idFactory, "identity temporary id"),
+  });
+  if (outcome === "claimed") {
     return { identity, created: true, markerPath };
-  } catch (error: unknown) {
-    if (errorCode(error) !== "EEXIST") {
-      throw error;
-    }
-    const winner = await readIdentity(workspacePath);
-    if (winner === undefined) {
-      throw new InvalidManagedIdentityError({
-        message: "Identity publication raced without a winning marker",
-      });
-    }
-    return { identity: winner, created: false, markerPath };
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined);
   }
+
+  const winner = await readIdentity(workspacePath);
+  if (winner === undefined) {
+    throw new InvalidManagedIdentityError({
+      message: "Identity publication raced without a winning marker",
+    });
+  }
+  return { identity: winner, created: false, markerPath };
 };
 
 export const ensureOrdinaryWorkspaceIdentity = (

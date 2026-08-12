@@ -47,6 +47,7 @@ import {
 } from "./managed/model.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./managed/repository.ts";
+import { sqliteManagedStackRepositoryLayer, type ManagedSqliteDatabase } from "./managed/sqlite.ts";
 import type { MakeManagedStackServiceOptions, ManagedStackServiceHandle } from "./managed-bun.ts";
 import {
   bunSqliteManagedStackRepositoryLayer,
@@ -77,6 +78,53 @@ const openRegistry = async (
   return {
     repository: Context.get(await runtime.context(), ManagedStackRepository),
     close: () => runtime.dispose(),
+  };
+};
+
+/**
+ * An in-memory registry handle that runs `reenterOnce`'s callback the first time
+ * a decision reads a row, so a test can re-enter the repository from inside a
+ * transaction the way a mistaken caller would.
+ */
+const reentrantRegistry = (): {
+  readonly handle: ManagedSqliteDatabase;
+  readonly reenterOnce: (reentry: () => void) => void;
+} => {
+  const database = new Database(":memory:");
+  let pending: (() => void) | undefined;
+  const trigger = (): void => {
+    const reentry = pending;
+    pending = undefined;
+    reentry?.();
+  };
+  return {
+    reenterOnce: (reentry) => {
+      pending = reentry;
+    },
+    handle: {
+      exec(sql) {
+        database.exec(sql);
+      },
+      prepare(sql) {
+        const statement = database.query(sql);
+        return {
+          run(parameters = []) {
+            statement.run(...parameters);
+          },
+          get(parameters = []) {
+            trigger();
+            return statement.get(...parameters) ?? undefined;
+          },
+          all(parameters = []) {
+            trigger();
+            return statement.all(...parameters);
+          },
+        };
+      },
+      close() {
+        database.close();
+      },
+    },
   };
 };
 
@@ -2613,6 +2661,49 @@ describe("managed repository and lifecycle", () => {
 
     expect(Exit.isSuccess(exit) ? "committed" : Cause.pretty(exit.cause)).toBe("committed");
     await registry.close();
+  });
+
+  it("refuses a registry decision that re-enters the repository, keeping its own writes", async () => {
+    // SQLite has no nested transactions, so a decision that calls back into the
+    // repository can only lose: the inner `BEGIN` is refused, and unwinding the
+    // inner attempt would roll back the writes the outer decision has already
+    // made. The guard therefore refuses before any statement runs.
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const identity = (await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace))).identity;
+    const sqlite = reentrantRegistry();
+    const runtime = ManagedRuntime.make(sqliteManagedStackRepositoryLayer(() => sqlite.handle));
+    const repository = Context.get(await runtime.context(), ManagedStackRepository);
+
+    let nested: Exit.Exit<ReadonlyArray<ManagedStackRecord>> | undefined;
+    sqlite.reenterOnce(() => {
+      nested = Effect.runSyncExit(repository.listStacks());
+    });
+
+    const stackId = crypto.randomUUID();
+    const prepared = runRepo(
+      repository.prepareOrdinaryStack({
+        identity,
+        canonicalPath: realpathSync(workspace),
+        locationId: crypto.randomUUID(),
+        stackId,
+        stackName: "default",
+        paths: managedStackPaths(join(root, "managed"), stackId),
+        operationToken: crypto.randomUUID(),
+        now: "2026-08-11T00:00:00.000Z",
+        configuration: {},
+      }),
+    );
+
+    if (nested === undefined || !Exit.isFailure(nested)) {
+      throw new Error("Expected the nested decision to be refused");
+    }
+    expect(Cause.pretty(nested.cause)).toContain("A registry transaction is already open");
+    expect(prepared.outcome).toBe("create");
+    // The refusal never touched the transaction in flight, so the outer
+    // decision committed and the handle is free for the next one.
+    expect(runRepo(repository.listStacks()).map((stack) => stack.id)).toEqual([stackId]);
+    await runtime.dispose();
   });
 
   it("writes the current schema version into a fresh registry", async () => {

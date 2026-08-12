@@ -314,7 +314,11 @@ That marker protocol is the one place in the managed surface that uses raw `node
 of the `FileSystem` service the policy layer reclaims stack state through: writing a temporary file,
 hardlinking it into place, re-reading the winning marker on `EEXIST`, and removing the temporary path
 is a single indivisible claim, and the hardlink with that `EEXIST` contract is not part of the platform
-service's surface.
+service's surface. The claim itself is `claimFileAtomically` in `managed/atomic-claim.ts`, shared with
+`StateManager`'s single-stack state claim so both settle a race the same way; a filesystem without
+hardlinks (`EPERM` or `ENOTSUP`) falls back to an exclusive create, which still decides the race but
+publishes without the hardlink's all-or-nothing guarantee. The marker protocol owns what a lost race
+means: the identity claim adopts the winning marker, while a claimed stack state is a failure.
 
 No mutable runtime state or credential value is stored in that marker. Read-only discovery does
 not create it. The registry stores only an opaque credential reference, never resolved plaintext
@@ -456,7 +460,11 @@ effects: the fiber scheduler preempts at its operation budget, and a fiber parke
 `COMMIT` would let another fiber `BEGIN IMMEDIATE` on the same connection — SQLite refuses the nested
 transaction, and either fiber's `COMMIT` could publish the other's writes. Keeping the whole
 transaction in one JavaScript turn is therefore what makes a partially applied decision
-unobservable and keeps interruption from ever landing inside a transaction.
+unobservable and keeps interruption from ever landing inside a transaction. Synchrony cannot rule out
+the other way two transactions could meet, a decision that re-enters the repository, so the handles
+currently inside a transaction are tracked and a re-entering `BEGIN` is refused before it runs:
+SQLite has no nested transactions, and unwinding the inner attempt would roll back the outer
+decision's writes.
 
 The database handle's lifetime is a scope. `sqliteManagedStackRepositoryLayer` acquires the handle
 with `Effect.acquireRelease`, so opening the file and registering its close are one step nothing can

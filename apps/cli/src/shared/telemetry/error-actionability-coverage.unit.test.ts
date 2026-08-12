@@ -40,6 +40,69 @@ import {
 const ERROR_DEFINITION_PATTERN =
   /TaggedError\(\s*"([A-Za-z0-9_]+)"|class\s+[A-Za-z0-9_]+\s+extends\s+[A-Za-z0-9_.]*Error\(\s*"([A-Za-z0-9_]+)"|class\s+([A-Za-z0-9_]+)\s+extends\s+Error\b/gs;
 
+// Removes `//` line comments and `/* */` block comments from a source string
+// so the regex-based scan below never mistakes a comment merely mentioning
+// `class X extends Error` (or a TaggedError example) for a real definition.
+// String and template literals are treated as opaque runs — a `//` or `/*`
+// inside `"https://..."` (or a backtick template) must survive untouched.
+// Stripped comment bytes are replaced with spaces (newlines are preserved)
+// so line numbers and any line-based logic elsewhere stay unaffected. This
+// is a compact scanner, not a full tokenizer: it does not special-case regex
+// literals or `${...}` interpolation inside template literals.
+function stripComments(source: string): string {
+  let out = "";
+  let i = 0;
+  const n = source.length;
+  while (i < n) {
+    const c = source[i];
+    const next = source[i + 1];
+
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      out += c;
+      i += 1;
+      while (i < n) {
+        const ch = source[i];
+        out += ch;
+        i += 1;
+        if (ch === "\\" && i < n) {
+          out += source[i];
+          i += 1;
+          continue;
+        }
+        if (ch === quote) break;
+      }
+      continue;
+    }
+
+    if (c === "/" && next === "/") {
+      out += "  ";
+      i += 2;
+      while (i < n && source[i] !== "\n") {
+        out += " ";
+        i += 1;
+      }
+      continue;
+    }
+
+    if (c === "/" && next === "*") {
+      out += "  ";
+      i += 2;
+      while (i < n && !(source[i] === "*" && source[i + 1] === "/")) {
+        out += source[i] === "\n" ? "\n" : " ";
+        i += 1;
+      }
+      out += "  ";
+      i += 2;
+      continue;
+    }
+
+    out += c;
+    i += 1;
+  }
+  return out;
+}
+
 function scanErrorTags(root: string): Map<string, Array<string>> {
   const tagsByFile = new Map<string, Array<string>>();
   const walk = (dir: string) => {
@@ -50,15 +113,71 @@ function scanErrorTags(root: string): Map<string, Array<string>> {
         continue;
       }
       if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
-      const tags = [...readFileSync(path, "utf8").matchAll(ERROR_DEFINITION_PATTERN)].map(
-        (match) => match[1] ?? match[2] ?? match[3] ?? "",
-      );
+      const tags = [
+        ...stripComments(readFileSync(path, "utf8")).matchAll(ERROR_DEFINITION_PATTERN),
+      ].map((match) => match[1] ?? match[2] ?? match[3] ?? "");
       if (tags.length > 0) tagsByFile.set(path, tags);
     }
   };
   walk(root);
   return tagsByFile;
 }
+
+// Extracts the error tags a snippet of source would contribute to the scan,
+// mirroring the comment-stripping + matching pipeline `scanErrorTags` runs
+// against real files, without touching the filesystem.
+function extractErrorTags(source: string): Array<string> {
+  return [...stripComments(source).matchAll(ERROR_DEFINITION_PATTERN)].map(
+    (match) => match[1] ?? match[2] ?? match[3] ?? "",
+  );
+}
+
+describe("stripComments", () => {
+  it("removes a line comment mentioning a fake error class", () => {
+    const source = "// class Fake extends Error\nconst x = 1;";
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+
+  it("removes a block comment mentioning a fake TaggedError example", () => {
+    const source = '/* e.g. Data.TaggedError("FakeTag") */\nconst x = 1;';
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+
+  it("removes a block comment spanning multiple lines", () => {
+    const source = [
+      "/*",
+      " * class AlsoFake extends Error",
+      ' * Data.TaggedError("AlsoFakeTag")',
+      " */",
+      "const x = 1;",
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+
+  it("keeps a string literal containing `//` intact and still finds a real definition after it", () => {
+    const source = [
+      'const url = "https://example.com/foo";',
+      "export class RealError extends Error {}",
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual(["RealError"]);
+  });
+
+  it("keeps a template literal containing `//` intact and still finds a real definition after it", () => {
+    const source = [
+      "const url = `https://example.com/${path}`;",
+      'export class TemplateError extends Data.TaggedError("TemplateError") {}',
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual(["TemplateError"]);
+  });
+
+  it("still finds a real definition that follows a comment about a fake one", () => {
+    const source = [
+      "// This looks like a class Fake extends Error but is not",
+      'export class RealTaggedError extends Data.TaggedError("RealTaggedError") {}',
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual(["RealTaggedError"]);
+  });
+});
 
 const kindValues = new Set<string>(Object.values(CliErrorKind));
 const categoryValues = new Set<string>(Object.values(CliErrorCategory));

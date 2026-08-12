@@ -368,32 +368,49 @@ const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
   }
 };
 
+/** The handles currently between `BEGIN` and `COMMIT` — see {@link runTransaction}. */
+const openTransactions = new WeakSet<ManagedSqliteDatabase>();
+
 /**
  * `BEGIN`, the decision's statements, and `COMMIT` as one synchronous block.
  *
  * Atomicity here rests on the drivers being synchronous and the handle being
  * single-threaded: nothing else can run between the statements, so a partially
- * applied decision is never observable and two transactions can never nest on
- * the same connection. That only holds while the whole block is one JavaScript
- * turn — splitting the boundary across effects would reintroduce a suspension
- * point where the fiber scheduler could preempt at its operation budget and let
- * another fiber `BEGIN` on this very handle.
+ * applied decision is never observable. That only holds while the whole block is
+ * one JavaScript turn — splitting the boundary across effects would reintroduce
+ * a suspension point where the fiber scheduler could preempt at its operation
+ * budget and let another fiber `BEGIN` on this very handle.
+ *
+ * What synchrony cannot rule out is a decision that re-enters the repository:
+ * SQLite has no nested transactions, so the inner `BEGIN` would refuse with a
+ * driver message about the outer one, and unwinding the inner attempt would
+ * `ROLLBACK` the outer transaction's writes. Reentrancy is a bug in the calling
+ * code rather than a condition to recover from, so it is refused here — before
+ * any statement runs, and without touching the transaction already in flight.
  */
 const runTransaction = <A>(
   database: ManagedSqliteDatabase,
   begin: "BEGIN" | "BEGIN IMMEDIATE",
   run: () => A,
 ): A => {
-  database.exec(begin);
-  let decided: A;
-  try {
-    decided = run();
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
+  if (openTransactions.has(database)) {
+    throw new Error("A registry transaction is already open on this database handle");
   }
-  commitPreservingCause(database);
-  return decided;
+  database.exec(begin);
+  openTransactions.add(database);
+  try {
+    let decided: A;
+    try {
+      decided = run();
+    } catch (error: unknown) {
+      rollbackPreservingCause(database);
+      throw error;
+    }
+    commitPreservingCause(database);
+    return decided;
+  } finally {
+    openTransactions.delete(database);
+  }
 };
 
 /**
