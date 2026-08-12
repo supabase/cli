@@ -232,7 +232,10 @@ const resolveLegacyLinkBranchRef = Effect.fnUntraced(function* (value: string) {
   yield* task?.clear() ?? Effect.void;
 
   const found: LegacyLinkBranch | undefined = branches.find(
-    (branch) => branch.name === value || branch.id === value,
+    // UUID matching is case-insensitive (canonical branch ids are lowercase
+    // hex, but uppercase input is a valid UUID spelling — PR #6168 review);
+    // name matching stays exact, with the did-you-mean hint covering near misses.
+    (branch) => branch.name === value || branch.id.toLowerCase() === value.toLowerCase(),
   );
   if (found === undefined) {
     return yield* Effect.fail(
@@ -466,16 +469,18 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         // its parent is unknown here) whose cache names a DIFFERENT project —
         // best-effort correlate the two: if `cachedParent`'s own branches
         // verifiably still include `ref`, the cache is still accurate, keep
-        // it; if they verifiably do NOT, the cache is stale for a different
-        // project (e.g. cache = A, this link = a raw branch ref of B) —
-        // delete it, since a wrong parent claim silently misdirects every
-        // parent-scoped command onto A. Any lookup failure (network, decode,
-        // 403, 404) means "can't verify" — leave the cache exactly as it was.
-        // One extra API call, only on this path, only when a cache exists and
-        // diverges from `ref`. The plain 404-ref path with no cache at all,
-        // or a cache that already agrees with `ref`, needs no correlation.
-        // Hard-bounded (`LEGACY_LINK_CACHE_CORRELATION_TIMEOUT`) — a timeout
-        // is just another "can't verify" failure, caught the same way below.
+        // it; anything else — verifiably absent, or ANY lookup failure
+        // (network, decode, 403, 404, timeout) — deletes it. Fail-SAFE, not
+        // fail-convenient (PR #6168 review): an unverified divergent cache
+        // silently misdirects parent-scoped MUTATIONS onto the wrong project,
+        // while deleting merely downgrades later branches commands to a loud
+        // not-linked error the user recovers from by relinking the parent.
+        // The window is tiny anyway — link's own API calls just succeeded
+        // moments before this runs. One extra API call, only on this path,
+        // only when a cache exists and diverges from `ref`; the plain
+        // 404-ref path with no cache, or a cache that already agrees with
+        // `ref`, needs no correlation. Hard-bounded
+        // (`LEGACY_LINK_CACHE_CORRELATION_TIMEOUT`).
         // By this point the user has already seen the linking work happen
         // (service-link warnings, a resolved-branch line, ...), so a
         // successful link otherwise feels DONE right before this silently
@@ -483,16 +488,15 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         // spinner in text mode so it never sits silent (PR #6168 review).
         const correlating =
           output.format === "text" ? yield* output.task("Checking branch parent...") : undefined;
-        yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
+        const verified = yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
           Effect.timeout(LEGACY_LINK_CACHE_CORRELATION_TIMEOUT),
-          Effect.flatMap((branches) =>
-            branches.some((branch) => branch.project_ref === ref)
-              ? Effect.void
-              : fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore),
-          ),
-          Effect.catch(() => Effect.void),
+          Effect.map((branches) => branches.some((branch) => branch.project_ref === ref)),
+          Effect.catch(() => Effect.succeed(false)),
           Effect.ensuring(correlating?.clear() ?? Effect.void),
         );
+        if (!verified) {
+          yield* fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore);
+        }
       }
     }
 

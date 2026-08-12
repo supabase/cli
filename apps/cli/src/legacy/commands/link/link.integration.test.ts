@@ -268,6 +268,10 @@ function readTemp(workdir: string, name: string): string {
   return readFileSync(tempFile(workdir, name), "utf8");
 }
 
+function existsTemp(workdir: string, name: string): boolean {
+  return existsSync(tempFile(workdir, name));
+}
+
 function writeTempContent(workdir: string, name: string, content: string): void {
   mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
   writeFileSync(tempFile(workdir, name), content);
@@ -1051,8 +1055,12 @@ describe("legacy link integration", () => {
     );
 
     it.live(
-      "raw ref-shaped 404 link where the correlation lookup itself fails: keeps the cache untouched, link still succeeds",
+      "raw ref-shaped 404 link where the correlation lookup itself fails: DELETES the unverified cache, link still succeeds (fail-safe, PR #6168 review)",
       () => {
+        // Superseded behavior: an unverifiable divergent cache used to be
+        // kept. Fail-safe wins — a wrong parent claim silently misdirects
+        // parent-scoped mutations, while deletion just downgrades later
+        // branches commands to a loud, recoverable not-linked error.
         const { layer, workdir } = setup({
           project: { fail: legacyStatusCodeFailure(404) },
           branches: { fail: legacyStatusCodeFailure(500) },
@@ -1062,7 +1070,7 @@ describe("legacy link integration", () => {
         return Effect.gen(function* () {
           yield* legacyLink(flags({ projectRef: Option.some(BRANCH_PROJECT_REF) }));
           expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
-          expect(readTemp(workdir, "linked-project.json")).toBe(cacheContent);
+          expect(existsTemp(workdir, "linked-project.json")).toBe(false);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1103,6 +1111,20 @@ describe("legacy link integration", () => {
       return Effect.gen(function* () {
         yield* legacyLink(
           flags({ refOrBranch: Option.some(LINK_BRANCH.id), projectRef: Option.none() }),
+        );
+        expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("resolves a branch by an UPPERCASE-hex UUID spelling (PR #6168 review)", () => {
+      const { layer, workdir } = setup({ branches: { ok: [LINK_BRANCH] } });
+      writeLinkedParentRef(workdir, PARENT_REF);
+      return Effect.gen(function* () {
+        yield* legacyLink(
+          flags({
+            refOrBranch: Option.some(LINK_BRANCH.id.toUpperCase()),
+            projectRef: Option.none(),
+          }),
         );
         expect(readTemp(workdir, "project-ref")).toBe(BRANCH_PROJECT_REF);
       }).pipe(Effect.provide(layer));
