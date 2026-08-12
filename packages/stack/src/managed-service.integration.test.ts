@@ -7,6 +7,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -181,6 +182,23 @@ const prepareAbandonedStack = async (
 };
 
 describe("ordinary-folder managed stack contract", () => {
+  it("restricts registry and stack state permissions to the owning user", async () => {
+    const root = makeRoot();
+    const service = makePersistentService(root);
+    const stateRoot = join(root, "managed");
+    const { stack } = await service.provisionOrdinaryStack({
+      workspacePath: makeWorkspace(root),
+    });
+    service.close();
+
+    const modeOf = (path: string): number => statSync(path).mode & 0o777;
+    expect(modeOf(stateRoot)).toBe(0o700);
+    expect(modeOf(managedRegistryPath(stateRoot))).toBe(0o600);
+    expect(modeOf(stack.paths.data)).toBe(0o700);
+    expect(modeOf(stack.paths.logs)).toBe(0o700);
+    expect(modeOf(stack.paths.runtime)).toBe(0o700);
+  });
+
   it("keeps read-only discovery registration-free", async () => {
     const root = makeRoot();
     const workspace = makeWorkspace(root);

@@ -434,9 +434,9 @@ export const makeManagedStackService = (
       }
 
       try {
-        await mkdir(prepared.stack.paths.data, { recursive: true });
-        await mkdir(prepared.stack.paths.logs, { recursive: true });
-        await mkdir(prepared.stack.paths.runtime, { recursive: true });
+        await mkdir(prepared.stack.paths.data, { recursive: true, mode: 0o700 });
+        await mkdir(prepared.stack.paths.logs, { recursive: true, mode: 0o700 });
+        await mkdir(prepared.stack.paths.runtime, { recursive: true, mode: 0o700 });
         await provisionOptions.initialize?.(prepared.stack);
         await provisionOptions.validate?.(prepared.stack);
         const published = options.repository.publishPendingStack(

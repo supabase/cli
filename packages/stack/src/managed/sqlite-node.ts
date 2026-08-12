@@ -1,13 +1,19 @@
-import { mkdirSync } from "node:fs";
+import { chmodSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { createSqliteManagedStackRepository, type ManagedSqliteDatabase } from "./sqlite.ts";
 
 export const openNodeSqliteManagedStackRepository = (path: string) => {
   if (path !== ":memory:") {
-    mkdirSync(dirname(path), { recursive: true });
+    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   }
   const database = new DatabaseSync(path);
+  if (path !== ":memory:") {
+    // Restrict before the WAL conversion so the -wal/-shm sidecars inherit the
+    // owner-only mode; the registry stores workspace paths, ports, and
+    // credential references that other local users must not read.
+    chmodSync(path, 0o600);
+  }
   const adapter: ManagedSqliteDatabase = {
     exec(sql) {
       database.exec(sql);
