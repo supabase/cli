@@ -476,6 +476,13 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         // or a cache that already agrees with `ref`, needs no correlation.
         // Hard-bounded (`LEGACY_LINK_CACHE_CORRELATION_TIMEOUT`) — a timeout
         // is just another "can't verify" failure, caught the same way below.
+        // By this point the user has already seen the linking work happen
+        // (service-link warnings, a resolved-branch line, ...), so a
+        // successful link otherwise feels DONE right before this silently
+        // runs for up to 5s more ahead of "Finished supabase link." — show a
+        // spinner in text mode so it never sits silent (PR #6168 review).
+        const correlating =
+          output.format === "text" ? yield* output.task("Checking branch parent...") : undefined;
         yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
           Effect.timeout(LEGACY_LINK_CACHE_CORRELATION_TIMEOUT),
           Effect.flatMap((branches) =>
@@ -484,6 +491,7 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
               : fs.remove(paths.linkedProjectCache, { force: true }).pipe(Effect.ignore),
           ),
           Effect.catch(() => Effect.void),
+          Effect.ensuring(correlating?.clear() ?? Effect.void),
         );
       }
     }
