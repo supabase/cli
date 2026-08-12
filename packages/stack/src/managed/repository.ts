@@ -1,3 +1,4 @@
+import { Context, type Effect } from "effect";
 import {
   InvalidManagedOwnerPidError,
   InvalidManagedPortError,
@@ -15,6 +16,7 @@ import {
   type ManagedStackRecord,
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
+import type { DuplicateManagedIdentityError, ManagedOperationOwnershipError } from "./model.ts";
 
 export interface PrepareOrdinaryStackInput {
   readonly identity: OrdinaryWorkspaceIdentity;
@@ -72,33 +74,111 @@ export type ReconcileManagedOperationResult =
   | { readonly outcome: "discarded" }
   | { readonly outcome: "tombstoned"; readonly stack: ManagedStackRecord };
 
-export interface ManagedStackRepository {
-  prepareOrdinaryStack(input: PrepareOrdinaryStackInput): PrepareOrdinaryStackResult;
-  publishPendingStack(stackId: string, operationToken: string, now: string): ManagedStackRecord;
-  abortPendingStack(stackId: string, operationToken: string): void;
-  getStack(stackId: string): ManagedStackRecord | undefined;
-  listStacks(options?: { readonly includeTombstoned?: boolean }): ReadonlyArray<ManagedStackRecord>;
-  claimOperation(input: ClaimManagedOperationInput): ClaimManagedOperationResult;
-  finishOperation(
+/** Failures both adapters raise while registering an ordinary workspace stack. */
+export type PrepareOrdinaryStackFailure =
+  | DuplicateManagedIdentityError
+  | InvalidManagedOwnerPidError
+  | InvalidManagedPortError
+  | ManagedOperationOwnershipError
+  | ManagedPortReservationError
+  | ManagedStackNotFoundError;
+
+/** Failures both adapters raise while claiming an operation for a stack. */
+export type ClaimManagedOperationFailure =
+  | InvalidManagedOwnerPidError
+  | ManagedOperationOwnershipError
+  | ManagedStackNotFoundError;
+
+/** Failures both adapters raise while reconfiguring a published stack. */
+export type UpdateManagedStackFailure =
+  | InvalidManagedPortError
+  | ManagedOperationOwnershipError
+  | ManagedPendingStackUpdateError
+  | ManagedPortReservationError
+  | ManagedRunningStackPortChangeError
+  | ManagedStackNotFoundError;
+
+/**
+ * Failures both adapters raise while settling an abandoned operation. Adopting a
+ * stack re-reserves the ports it claims, so another stack holding one of them
+ * fails the reconciliation rather than stealing the lease.
+ */
+export type ReconcileManagedOperationFailure =
+  | InvalidManagedPortError
+  | ManagedOperationOwnershipError
+  | ManagedPortReservationError
+  | ManagedStackNotFoundError;
+
+/** Failures both adapters raise while resolving a stack under a live claim. */
+export type OwnedManagedStackFailure = ManagedOperationOwnershipError | ManagedStackNotFoundError;
+
+/**
+ * The registry contract shared by the persistent SQLite adapters and the
+ * in-memory test seam.
+ *
+ * Every method is an `Effect` whose error channel names the domain failures that
+ * decision can reach. Storage-level failures — a corrupt row, an unexpected
+ * driver error — are defects instead: they are not outcomes a caller can act on.
+ */
+export interface ManagedStackRepositoryShape {
+  readonly prepareOrdinaryStack: (
+    input: PrepareOrdinaryStackInput,
+  ) => Effect.Effect<PrepareOrdinaryStackResult, PrepareOrdinaryStackFailure>;
+  readonly publishPendingStack: (
+    stackId: string,
+    operationToken: string,
+    now: string,
+  ) => Effect.Effect<ManagedStackRecord, OwnedManagedStackFailure>;
+  readonly abortPendingStack: (
+    stackId: string,
+    operationToken: string,
+  ) => Effect.Effect<void, OwnedManagedStackFailure>;
+  readonly getStack: (stackId: string) => Effect.Effect<ManagedStackRecord | undefined>;
+  readonly listStacks: (options?: {
+    readonly includeTombstoned?: boolean;
+  }) => Effect.Effect<ReadonlyArray<ManagedStackRecord>>;
+  readonly claimOperation: (
+    input: ClaimManagedOperationInput,
+  ) => Effect.Effect<ClaimManagedOperationResult, ClaimManagedOperationFailure>;
+  readonly finishOperation: (
     stackId: string,
     operationToken: string,
     outcome: "completed" | "failed",
     now: string,
     error?: string,
-  ): void;
-  updateStack(input: UpdateManagedStackInput): ManagedStackRecord;
-  listActiveOperations(startedBefore?: string): ReadonlyArray<ManagedOperationRecord>;
-  reconcileOperation(
+  ) => Effect.Effect<void, ManagedOperationOwnershipError>;
+  readonly updateStack: (
+    input: UpdateManagedStackInput,
+  ) => Effect.Effect<ManagedStackRecord, UpdateManagedStackFailure>;
+  readonly listActiveOperations: (
+    startedBefore?: string,
+  ) => Effect.Effect<ReadonlyArray<ManagedOperationRecord>>;
+  readonly reconcileOperation: (
     stackId: string,
     operationToken: string,
     lifecycle: ManagedStackLifecycle,
     now: string,
-  ): ReconcileManagedOperationResult;
-  tombstoneStack(stackId: string, operationToken: string, now: string): ManagedStackRecord;
-  listCheckoutLocations(): ReadonlyArray<ManagedCheckoutLocation>;
-  pruneCheckoutLocations(locationIds: ReadonlyArray<string>): number;
-  close(): void;
+  ) => Effect.Effect<ReconcileManagedOperationResult, ReconcileManagedOperationFailure>;
+  readonly tombstoneStack: (
+    stackId: string,
+    operationToken: string,
+    now: string,
+  ) => Effect.Effect<ManagedStackRecord, OwnedManagedStackFailure>;
+  readonly listCheckoutLocations: () => Effect.Effect<ReadonlyArray<ManagedCheckoutLocation>>;
+  readonly pruneCheckoutLocations: (locationIds: ReadonlyArray<string>) => Effect.Effect<number>;
 }
+
+/**
+ * The registry a managed stack service reads and writes.
+ *
+ * A persistent adapter owns a database handle, so it is provided as a scoped
+ * layer that closes the handle when the layer's scope closes; there is no
+ * `close` method on the contract for a caller to forget.
+ */
+export class ManagedStackRepository extends Context.Service<
+  ManagedStackRepository,
+  ManagedStackRepositoryShape
+>()("stack/managed/ManagedStackRepository") {}
 
 export const managedStackOccupiesPorts = (lifecycle: ManagedStackLifecycle): boolean =>
   lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping";

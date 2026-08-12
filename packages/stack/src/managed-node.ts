@@ -1,12 +1,25 @@
+import { NodeFileSystem } from "@effect/platform-node";
 import {
   createManagedStackServiceWith,
+  makeManagedStackServiceWith,
   type CreateManagedStackServiceOptions,
+  type MakeManagedStackServiceOptions,
+  type ManagedStackServiceHandle,
 } from "./managed/create-service.ts";
-import { openNodeSqliteManagedStackRepository } from "./managed/sqlite-node.ts";
+import { nodeSqliteManagedStackRepositoryLayer } from "./managed/sqlite-node.ts";
 
 export * from "./managed.ts";
-export { openNodeSqliteManagedStackRepository };
-export type { CreateManagedStackServiceOptions };
+export { nodeSqliteManagedStackRepositoryLayer };
 
-export const createManagedStackService = (options: CreateManagedStackServiceOptions = {}) =>
-  createManagedStackServiceWith(openNodeSqliteManagedStackRepository, options);
+export const createManagedStackService = (
+  options: CreateManagedStackServiceOptions = {},
+): ManagedStackServiceHandle =>
+  createManagedStackServiceWith(
+    NodeFileSystem.layer,
+    nodeSqliteManagedStackRepositoryLayer,
+    options,
+  );
+
+export const makeManagedStackService = (
+  options: MakeManagedStackServiceOptions,
+): ManagedStackServiceHandle => makeManagedStackServiceWith(NodeFileSystem.layer, options);

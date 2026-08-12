@@ -1,9 +1,15 @@
-import { Schema } from "effect";
+import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
+import { dirname } from "node:path";
+import { Effect, Exit, Layer, Schema, Scope } from "effect";
 import {
   DuplicateManagedIdentityError,
+  InvalidManagedOwnerPidError,
+  InvalidManagedPortError,
   MANAGED_REGISTRY_SCHEMA_VERSION,
   ManagedOperationOwnershipError,
+  ManagedPendingStackUpdateError,
   ManagedPortReservationError,
+  ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
   UnsupportedManagedRegistryVersionError,
   type ManagedCheckoutLocation,
@@ -21,22 +27,29 @@ import {
   type ManagedStackStatus,
 } from "./model.ts";
 import type {
+  ClaimManagedOperationFailure,
   ClaimManagedOperationInput,
   ClaimManagedOperationResult,
-  ManagedStackRepository,
+  ManagedStackRepositoryShape,
+  OwnedManagedStackFailure,
+  PrepareOrdinaryStackFailure,
   PrepareOrdinaryStackInput,
   PrepareOrdinaryStackResult,
+  ReconcileManagedOperationFailure,
   ReconcileManagedOperationResult,
+  UpdateManagedStackFailure,
   UpdateManagedStackInput,
 } from "./repository.ts";
 import {
   assertManagedOwnerPid,
   assertManagedStackUpdatable,
   managedStackOccupiesPorts,
+  ManagedStackRepository,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
 } from "./repository.ts";
 import { errorCode } from "./error-code.ts";
+import { failsWith, neverFails } from "./failure.ts";
 
 type SqliteValue = null | number | string;
 
@@ -302,29 +315,63 @@ const initializeSchema = (database: ManagedSqliteDatabase): void => {
   }
 };
 
-const transaction = <A>(database: ManagedSqliteDatabase, run: () => A): A => {
-  database.exec("BEGIN IMMEDIATE");
+const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
   try {
-    const result = run();
     database.exec("COMMIT");
-    return result;
   } catch (error: unknown) {
     rollbackPreservingCause(database);
     throw error;
   }
 };
 
-const readTransaction = <A>(database: ManagedSqliteDatabase, run: () => A): A => {
-  database.exec("BEGIN");
-  try {
-    const result = run();
-    database.exec("COMMIT");
-    return result;
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
-  }
-};
+/**
+ * Runs one registry decision inside a transaction.
+ *
+ * The decision itself stays a synchronous closure — the drivers are synchronous,
+ * and a partially applied decision must never be observable — while the
+ * transaction boundary is an acquired resource: the `Exit` decides whether the
+ * statement batch commits or rolls back, so an interrupted fiber cannot leave a
+ * transaction open. `catchFailure` names the domain failures the decision
+ * raises; anything else is a defect and still rolls back.
+ */
+const transaction = <A, E>(
+  database: ManagedSqliteDatabase,
+  run: () => A,
+  catchFailure: (error: unknown) => E,
+): Effect.Effect<A, E> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      database.exec("BEGIN IMMEDIATE");
+    }),
+    () => Effect.try({ try: run, catch: catchFailure }),
+    (_, exit) =>
+      Effect.sync(() => {
+        if (Exit.isSuccess(exit)) {
+          commitPreservingCause(database);
+          return;
+        }
+        rollbackPreservingCause(database);
+      }),
+  );
+
+const readTransaction = <A>(
+  database: ManagedSqliteDatabase,
+  run: () => A,
+): Effect.Effect<A, never> =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      database.exec("BEGIN");
+    }),
+    () => Effect.try({ try: run, catch: neverFails }),
+    (_, exit) =>
+      Effect.sync(() => {
+        if (Exit.isSuccess(exit)) {
+          commitPreservingCause(database);
+          return;
+        }
+        rollbackPreservingCause(database);
+      }),
+  );
 
 const decodePort = (row: unknown): ManagedPortAssignment => ({
   key: getString(row, "key"),
@@ -498,26 +545,23 @@ const claimOperation = (
   database: ManagedSqliteDatabase,
   input: ClaimManagedOperationInput,
 ): ClaimManagedOperationResult => {
-  assertManagedOwnerPid(input.ownerPid);
-  return transaction(database, () => {
-    requireStack(database, input.stackId);
-    const active = getActiveOperation(database, input.stackId);
-    if (active !== undefined) {
-      return { acquired: false, operation: active };
-    }
-    database
-      .prepare(
-        `INSERT INTO operations
+  requireStack(database, input.stackId);
+  const active = getActiveOperation(database, input.stackId);
+  if (active !== undefined) {
+    return { acquired: false, operation: active };
+  }
+  database
+    .prepare(
+      `INSERT INTO operations
           (token, stack_id, kind, status, owner_pid, started_at)
          VALUES (?, ?, ?, 'active', ?, ?)`,
-      )
-      .run([input.token, input.stackId, input.kind, input.ownerPid ?? null, input.now]);
-    const operation = getActiveOperation(database, input.stackId);
-    if (operation === undefined) {
-      throw new ManagedOperationOwnershipError({ stackId: input.stackId });
-    }
-    return { acquired: true, operation };
-  });
+    )
+    .run([input.token, input.stackId, input.kind, input.ownerPid ?? null, input.now]);
+  const operation = getActiveOperation(database, input.stackId);
+  if (operation === undefined) {
+    throw new ManagedOperationOwnershipError({ stackId: input.stackId });
+  }
+  return { acquired: true, operation };
 };
 
 const insertConfiguration = (
@@ -565,331 +609,506 @@ const insertConfiguration = (
   );
 };
 
-export const createSqliteManagedStackRepository = (
+const prepareOrdinaryStack = (
   database: ManagedSqliteDatabase,
-): ManagedStackRepository => {
-  initializeSchema(database);
+  input: PrepareOrdinaryStackInput,
+): PrepareOrdinaryStackResult => {
+  database
+    .prepare("INSERT OR IGNORE INTO projects (id, created_at) VALUES (?, ?)")
+    .run([input.identity.projectId, input.now]);
 
-  return {
-    prepareOrdinaryStack(input): PrepareOrdinaryStackResult {
-      assertManagedOwnerPid(input.ownerPid);
-      return transaction(database, () => {
-        database
-          .prepare("INSERT OR IGNORE INTO projects (id, created_at) VALUES (?, ?)")
-          .run([input.identity.projectId, input.now]);
+  const checkoutRow = database
+    .prepare("SELECT project_id FROM checkouts WHERE id = ?")
+    .get([input.identity.checkoutId]);
+  if (
+    checkoutRow !== undefined &&
+    getString(checkoutRow, "project_id") !== input.identity.projectId
+  ) {
+    throw new DuplicateManagedIdentityError({
+      identityId: input.identity.checkoutId,
+      existingClaim: getString(checkoutRow, "project_id"),
+      requestedClaim: input.identity.projectId,
+    });
+  }
+  database
+    .prepare("INSERT OR IGNORE INTO checkouts (id, project_id, created_at) VALUES (?, ?, ?)")
+    .run([input.identity.checkoutId, input.identity.projectId, input.now]);
 
-        const checkoutRow = database
-          .prepare("SELECT project_id FROM checkouts WHERE id = ?")
-          .get([input.identity.checkoutId]);
-        if (
-          checkoutRow !== undefined &&
-          getString(checkoutRow, "project_id") !== input.identity.projectId
-        ) {
-          throw new DuplicateManagedIdentityError({
-            identityId: input.identity.checkoutId,
-            existingClaim: getString(checkoutRow, "project_id"),
-            requestedClaim: input.identity.projectId,
-          });
-        }
-        database
-          .prepare("INSERT OR IGNORE INTO checkouts (id, project_id, created_at) VALUES (?, ?, ?)")
-          .run([input.identity.checkoutId, input.identity.projectId, input.now]);
+  const contextRow = database
+    .prepare("SELECT checkout_id FROM contexts WHERE id = ?")
+    .get([input.identity.contextId]);
+  if (
+    contextRow !== undefined &&
+    getString(contextRow, "checkout_id") !== input.identity.checkoutId
+  ) {
+    throw new DuplicateManagedIdentityError({
+      identityId: input.identity.contextId,
+      existingClaim: getString(contextRow, "checkout_id"),
+      requestedClaim: input.identity.checkoutId,
+    });
+  }
+  database
+    .prepare(`INSERT OR IGNORE INTO contexts (id, checkout_id, created_at) VALUES (?, ?, ?)`)
+    .run([input.identity.contextId, input.identity.checkoutId, input.now]);
 
-        const contextRow = database
-          .prepare("SELECT checkout_id FROM contexts WHERE id = ?")
-          .get([input.identity.contextId]);
-        if (
-          contextRow !== undefined &&
-          getString(contextRow, "checkout_id") !== input.identity.checkoutId
-        ) {
-          throw new DuplicateManagedIdentityError({
-            identityId: input.identity.contextId,
-            existingClaim: getString(contextRow, "checkout_id"),
-            requestedClaim: input.identity.checkoutId,
-          });
-        }
-        database
-          .prepare(`INSERT OR IGNORE INTO contexts (id, checkout_id, created_at) VALUES (?, ?, ?)`)
-          .run([input.identity.contextId, input.identity.checkoutId, input.now]);
-
-        const checkoutLocation = database
-          .prepare("SELECT * FROM checkout_locations WHERE checkout_id = ?")
-          .get([input.identity.checkoutId]);
-        if (
-          checkoutLocation !== undefined &&
-          getString(checkoutLocation, "canonical_path") !== input.canonicalPath
-        ) {
-          throw new DuplicateManagedIdentityError({
-            identityId: input.identity.checkoutId,
-            existingClaim: getString(checkoutLocation, "canonical_path"),
-            requestedClaim: input.canonicalPath,
-          });
-        }
-        const pathLocation = database
-          .prepare("SELECT * FROM checkout_locations WHERE canonical_path = ?")
-          .get([input.canonicalPath]);
-        if (
-          pathLocation !== undefined &&
-          getString(pathLocation, "checkout_id") !== input.identity.checkoutId
-        ) {
-          throw new DuplicateManagedIdentityError({
-            identityId: input.canonicalPath,
-            existingClaim: getString(pathLocation, "checkout_id"),
-            requestedClaim: input.identity.checkoutId,
-          });
-        }
-        if (checkoutLocation === undefined) {
-          database
-            .prepare(
-              `INSERT INTO checkout_locations
+  const checkoutLocation = database
+    .prepare("SELECT * FROM checkout_locations WHERE checkout_id = ?")
+    .get([input.identity.checkoutId]);
+  if (
+    checkoutLocation !== undefined &&
+    getString(checkoutLocation, "canonical_path") !== input.canonicalPath
+  ) {
+    throw new DuplicateManagedIdentityError({
+      identityId: input.identity.checkoutId,
+      existingClaim: getString(checkoutLocation, "canonical_path"),
+      requestedClaim: input.canonicalPath,
+    });
+  }
+  const pathLocation = database
+    .prepare("SELECT * FROM checkout_locations WHERE canonical_path = ?")
+    .get([input.canonicalPath]);
+  if (
+    pathLocation !== undefined &&
+    getString(pathLocation, "checkout_id") !== input.identity.checkoutId
+  ) {
+    throw new DuplicateManagedIdentityError({
+      identityId: input.canonicalPath,
+      existingClaim: getString(pathLocation, "checkout_id"),
+      requestedClaim: input.identity.checkoutId,
+    });
+  }
+  if (checkoutLocation === undefined) {
+    database
+      .prepare(
+        `INSERT INTO checkout_locations
                 (id, checkout_id, canonical_path, last_seen_at)
                VALUES (?, ?, ?, ?)`,
-            )
-            .run([input.locationId, input.identity.checkoutId, input.canonicalPath, input.now]);
-        } else {
-          database
-            .prepare("UPDATE checkout_locations SET last_seen_at = ? WHERE id = ?")
-            .run([input.now, getString(checkoutLocation, "id")]);
-        }
+      )
+      .run([input.locationId, input.identity.checkoutId, input.canonicalPath, input.now]);
+  } else {
+    database
+      .prepare("UPDATE checkout_locations SET last_seen_at = ? WHERE id = ?")
+      .run([input.now, getString(checkoutLocation, "id")]);
+  }
 
-        const existingRow = database
-          .prepare(
-            `SELECT * FROM stacks
+  const existingRow = database
+    .prepare(
+      `SELECT * FROM stacks
              WHERE checkout_id = ? AND context_id = ? AND name = ? AND status != 'tombstoned'`,
-          )
-          .get([input.identity.checkoutId, input.identity.contextId, input.stackName]);
-        if (existingRow !== undefined) {
-          const stack = decodeStack(database, existingRow);
-          const operation = getActiveOperation(database, stack.id);
-          return { outcome: "existing", stack, operation };
-        }
+    )
+    .get([input.identity.checkoutId, input.identity.contextId, input.stackName]);
+  if (existingRow !== undefined) {
+    const stack = decodeStack(database, existingRow);
+    const operation = getActiveOperation(database, stack.id);
+    return { outcome: "existing", stack, operation };
+  }
 
-        insertConfiguration(database, input);
-        database
-          .prepare(
-            `INSERT INTO operations
+  insertConfiguration(database, input);
+  database
+    .prepare(
+      `INSERT INTO operations
               (token, stack_id, kind, status, owner_pid, started_at)
              VALUES (?, ?, 'start', 'active', ?, ?)`,
-          )
-          .run([input.operationToken, input.stackId, input.ownerPid ?? null, input.now]);
-        const stack = requireStack(database, input.stackId);
-        const operation = getActiveOperation(database, input.stackId);
-        if (operation === undefined) {
-          throw new ManagedOperationOwnershipError({ stackId: input.stackId });
-        }
-        return { outcome: "create", stack, operation };
-      });
-    },
-    publishPendingStack(stackId, operationToken, now) {
-      return transaction(database, () => {
-        requireOwnedOperation(database, stackId, operationToken);
-        database
-          .prepare("UPDATE stacks SET status = 'active', updated_at = ? WHERE id = ?")
-          .run([now, stackId]);
-        database
-          .prepare(
-            `UPDATE operations
+    )
+    .run([input.operationToken, input.stackId, input.ownerPid ?? null, input.now]);
+  const stack = requireStack(database, input.stackId);
+  const operation = getActiveOperation(database, input.stackId);
+  if (operation === undefined) {
+    throw new ManagedOperationOwnershipError({ stackId: input.stackId });
+  }
+  return { outcome: "create", stack, operation };
+};
+
+const publishPendingStack = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  operationToken: string,
+  now: string,
+): ManagedStackRecord => {
+  requireOwnedOperation(database, stackId, operationToken);
+  database
+    .prepare("UPDATE stacks SET status = 'active', updated_at = ? WHERE id = ?")
+    .run([now, stackId]);
+  database
+    .prepare(
+      `UPDATE operations
              SET status = 'completed', finished_at = ?
              WHERE token = ? AND stack_id = ?`,
-          )
-          .run([now, operationToken, stackId]);
-        return requireStack(database, stackId);
-      });
-    },
-    abortPendingStack(stackId, operationToken) {
-      transaction(database, () => {
-        requireOwnedOperation(database, stackId, operationToken);
-        const stack = requireStack(database, stackId);
-        if (stack.status !== "pending") {
-          throw new ManagedOperationOwnershipError({ stackId });
-        }
-        database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
-      });
-    },
-    getStack(stackId) {
-      return readTransaction(database, () => getStack(database, stackId));
-    },
-    listStacks(options) {
-      return readTransaction(database, () => {
-        const rows =
-          options?.includeTombstoned === true
-            ? database.prepare("SELECT * FROM stacks ORDER BY created_at, id").all()
-            : database
-                .prepare(
-                  "SELECT * FROM stacks WHERE status != 'tombstoned' ORDER BY created_at, id",
-                )
-                .all();
-        const portsByStack = queryPortsByStack(
-          database,
-          rows.map((row) => getString(row, "id")),
-        );
-        return rows.map((row) =>
-          decodeStackWithPorts(row, portsByStack.get(getString(row, "id")) ?? []),
-        );
-      });
-    },
-    claimOperation(input) {
-      return claimOperation(database, input);
-    },
-    finishOperation(stackId, operationToken, outcome, now, error) {
-      transaction(database, () => {
-        requireOwnedOperation(database, stackId, operationToken);
-        database
-          .prepare(
-            `UPDATE operations
+    )
+    .run([now, operationToken, stackId]);
+  return requireStack(database, stackId);
+};
+
+const abortPendingStack = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  operationToken: string,
+): void => {
+  requireOwnedOperation(database, stackId, operationToken);
+  const stack = requireStack(database, stackId);
+  if (stack.status !== "pending") {
+    throw new ManagedOperationOwnershipError({ stackId });
+  }
+  database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
+};
+
+const selectStacks = (
+  database: ManagedSqliteDatabase,
+  options?: { readonly includeTombstoned?: boolean },
+): ReadonlyArray<ManagedStackRecord> => {
+  const rows =
+    options?.includeTombstoned === true
+      ? database.prepare("SELECT * FROM stacks ORDER BY created_at, id").all()
+      : database
+          .prepare("SELECT * FROM stacks WHERE status != 'tombstoned' ORDER BY created_at, id")
+          .all();
+  const portsByStack = queryPortsByStack(
+    database,
+    rows.map((row) => getString(row, "id")),
+  );
+  return rows.map((row) => decodeStackWithPorts(row, portsByStack.get(getString(row, "id")) ?? []));
+};
+
+const finishOperation = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  operationToken: string,
+  outcome: "completed" | "failed",
+  now: string,
+  error?: string,
+): void => {
+  requireOwnedOperation(database, stackId, operationToken);
+  database
+    .prepare(
+      `UPDATE operations
              SET status = ?, finished_at = ?, error = ?
              WHERE token = ? AND stack_id = ?`,
-          )
-          .run([outcome, now, error ?? null, operationToken, stackId]);
-      });
-    },
-    updateStack(input: UpdateManagedStackInput) {
-      return transaction(database, () => {
-        requireOwnedOperation(database, input.stackId, input.operationToken);
-        const current = requireStack(database, input.stackId);
-        assertManagedStackUpdatable(current);
-        const runtimeRequest = input.runtimeRequest ?? current.runtimeRequest;
-        const runtime = input.runtime ?? current.runtime;
-        const lifecycle = input.lifecycle ?? current.lifecycle;
-        const serviceVersions = input.serviceVersions ?? current.serviceVersions;
-        const runtimeMetadata = input.runtimeMetadata ?? current.runtimeMetadata;
-        const configFingerprint = input.configFingerprint ?? current.configFingerprint;
-        const credentialsReference = input.credentialsReference ?? current.credentialsReference;
-        const ports = reconcileManagedPortAssignments(current, input.ports, lifecycle);
-        database
-          .prepare(
-            `UPDATE stacks SET
+    )
+    .run([outcome, now, error ?? null, operationToken, stackId]);
+};
+
+const updateStack = (
+  database: ManagedSqliteDatabase,
+  input: UpdateManagedStackInput,
+): ManagedStackRecord => {
+  requireOwnedOperation(database, input.stackId, input.operationToken);
+  const current = requireStack(database, input.stackId);
+  assertManagedStackUpdatable(current);
+  const runtimeRequest = input.runtimeRequest ?? current.runtimeRequest;
+  const runtime = input.runtime ?? current.runtime;
+  const lifecycle = input.lifecycle ?? current.lifecycle;
+  const serviceVersions = input.serviceVersions ?? current.serviceVersions;
+  const runtimeMetadata = input.runtimeMetadata ?? current.runtimeMetadata;
+  const configFingerprint = input.configFingerprint ?? current.configFingerprint;
+  const credentialsReference = input.credentialsReference ?? current.credentialsReference;
+  const ports = reconcileManagedPortAssignments(current, input.ports, lifecycle);
+  database
+    .prepare(
+      `UPDATE stacks SET
               lifecycle = ?, runtime_request = ?, runtime = ?,
               service_versions_json = ?, runtime_metadata_json = ?,
               config_fingerprint = ?, credentials_reference = ?, updated_at = ?
              WHERE id = ?`,
-          )
-          .run([
-            lifecycle,
-            runtimeRequest,
-            runtime ?? null,
-            JSON.stringify(serviceVersions),
-            JSON.stringify(runtimeMetadata),
-            configFingerprint ?? null,
-            credentialsReference ?? null,
-            input.now,
-            input.stackId,
-          ]);
-        replacePorts(database, input.stackId, ports, lifecycle);
-        return requireStack(database, input.stackId);
-      });
-    },
-    listActiveOperations(startedBefore) {
-      // The token tie-break keeps claims that share one `startedAt` in a
-      // defined order instead of whatever order the sorter happens to emit.
-      const rows =
-        startedBefore === undefined
-          ? database
-              .prepare(
-                "SELECT * FROM operations WHERE status = 'active' ORDER BY started_at, token",
-              )
-              .all()
-          : database
-              .prepare(
-                `SELECT * FROM operations
+    )
+    .run([
+      lifecycle,
+      runtimeRequest,
+      runtime ?? null,
+      JSON.stringify(serviceVersions),
+      JSON.stringify(runtimeMetadata),
+      configFingerprint ?? null,
+      credentialsReference ?? null,
+      input.now,
+      input.stackId,
+    ]);
+  replacePorts(database, input.stackId, ports, lifecycle);
+  return requireStack(database, input.stackId);
+};
+
+const selectActiveOperations = (
+  database: ManagedSqliteDatabase,
+  startedBefore?: string,
+): ReadonlyArray<ManagedOperationRecord> => {
+  // The token tie-break keeps claims that share one `startedAt` in a
+  // defined order instead of whatever order the sorter happens to emit.
+  const rows =
+    startedBefore === undefined
+      ? database
+          .prepare("SELECT * FROM operations WHERE status = 'active' ORDER BY started_at, token")
+          .all()
+      : database
+          .prepare(
+            `SELECT * FROM operations
                  WHERE status = 'active' AND started_at < ? ORDER BY started_at, token`,
-              )
-              .all([startedBefore]);
-      return rows.map(decodeOperation);
-    },
-    reconcileOperation(stackId, operationToken, lifecycle, now): ReconcileManagedOperationResult {
-      return transaction(database, () => {
-        requireOwnedOperation(database, stackId, operationToken);
-        const current = requireStack(database, stackId);
-        if (current.status === "tombstoned") {
-          // A tombstoned row under a live claim is a deletion that died before
-          // releasing it. Registry state is already final, so recovery only
-          // releases the claim; reviving a lifecycle here would resurrect a
-          // deleted stack, and dropping the row would break idempotent deletion.
-          database
-            .prepare(
-              `UPDATE operations SET
+          )
+          .all([startedBefore]);
+  return rows.map(decodeOperation);
+};
+
+const reconcileOperation = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  operationToken: string,
+  lifecycle: ManagedStackLifecycle,
+  now: string,
+): ReconcileManagedOperationResult => {
+  requireOwnedOperation(database, stackId, operationToken);
+  const current = requireStack(database, stackId);
+  if (current.status === "tombstoned") {
+    // A tombstoned row under a live claim is a deletion that died before
+    // releasing it. Registry state is already final, so recovery only
+    // releases the claim; reviving a lifecycle here would resurrect a
+    // deleted stack, and dropping the row would break idempotent deletion.
+    database
+      .prepare(
+        `UPDATE operations SET
                 status = 'failed', finished_at = ?, error = ?
                WHERE token = ? AND stack_id = ?`,
-            )
-            .run([now, "Recovered after an abandoned deletion", operationToken, stackId]);
-          return { outcome: "tombstoned", stack: current };
-        }
-        if (current.status === "pending" && lifecycle === "stopped") {
-          database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
-          return { outcome: "discarded" };
-        }
-        replacePorts(database, stackId, current.ports, lifecycle);
-        database
-          .prepare(
-            `UPDATE stacks SET
+      )
+      .run([now, "Recovered after an abandoned deletion", operationToken, stackId]);
+    return { outcome: "tombstoned", stack: current };
+  }
+  if (current.status === "pending" && lifecycle === "stopped") {
+    database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
+    return { outcome: "discarded" };
+  }
+  replacePorts(database, stackId, current.ports, lifecycle);
+  database
+    .prepare(
+      `UPDATE stacks SET
               status = CASE WHEN status = 'pending' THEN 'active' ELSE status END,
               lifecycle = ?, updated_at = ?
              WHERE id = ?`,
-          )
-          .run([lifecycle, now, stackId]);
-        database
-          .prepare(
-            `UPDATE operations SET
+    )
+    .run([lifecycle, now, stackId]);
+  database
+    .prepare(
+      `UPDATE operations SET
               status = 'failed', finished_at = ?, error = ?
              WHERE token = ? AND stack_id = ?`,
-          )
-          .run([
-            now,
-            `Recovered after runtime reconciliation (${lifecycle})`,
-            operationToken,
-            stackId,
-          ]);
-        return { outcome: "recovered", stack: requireStack(database, stackId) };
-      });
-    },
-    tombstoneStack(stackId, operationToken, now) {
-      return transaction(database, () => {
-        requireOwnedOperation(database, stackId, operationToken);
-        requireStack(database, stackId);
-        database.prepare("DELETE FROM ports WHERE stack_id = ?").run([stackId]);
-        database
-          .prepare(
-            `UPDATE stacks SET
+    )
+    .run([now, `Recovered after runtime reconciliation (${lifecycle})`, operationToken, stackId]);
+  return { outcome: "recovered", stack: requireStack(database, stackId) };
+};
+
+const tombstoneStack = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+  operationToken: string,
+  now: string,
+): ManagedStackRecord => {
+  requireOwnedOperation(database, stackId, operationToken);
+  requireStack(database, stackId);
+  database.prepare("DELETE FROM ports WHERE stack_id = ?").run([stackId]);
+  database
+    .prepare(
+      `UPDATE stacks SET
               status = 'tombstoned', lifecycle = 'stopped',
               runtime_metadata_json = ?, updated_at = ?, tombstoned_at = ?
              WHERE id = ?`,
-          )
-          .run([JSON.stringify({ processIds: {}, containerIds: {} }), now, now, stackId]);
-        return requireStack(database, stackId);
-      });
-    },
-    listCheckoutLocations() {
-      return database
-        .prepare("SELECT * FROM checkout_locations ORDER BY canonical_path")
-        .all()
-        .map(
-          (row): ManagedCheckoutLocation => ({
-            id: getString(row, "id"),
-            checkoutId: getString(row, "checkout_id"),
-            canonicalPath: getString(row, "canonical_path"),
-            lastSeenAt: getString(row, "last_seen_at"),
-          }),
-        );
-    },
-    pruneCheckoutLocations(locationIds) {
-      return transaction(database, () => {
-        let removed = 0;
-        const statement = database.prepare("DELETE FROM checkout_locations WHERE id = ?");
-        for (const id of new Set(locationIds)) {
-          const existing = database
-            .prepare("SELECT id FROM checkout_locations WHERE id = ?")
-            .get([id]);
-          if (existing !== undefined) {
-            statement.run([id]);
-            removed += 1;
-          }
-        }
-        return removed;
-      });
-    },
-    close() {
-      database.close();
-    },
-  };
+    )
+    .run([JSON.stringify({ processIds: {}, containerIds: {} }), now, now, stackId]);
+  return requireStack(database, stackId);
 };
+
+const selectCheckoutLocations = (
+  database: ManagedSqliteDatabase,
+): ReadonlyArray<ManagedCheckoutLocation> =>
+  database
+    .prepare("SELECT * FROM checkout_locations ORDER BY canonical_path")
+    .all()
+    .map(
+      (row): ManagedCheckoutLocation => ({
+        id: getString(row, "id"),
+        checkoutId: getString(row, "checkout_id"),
+        canonicalPath: getString(row, "canonical_path"),
+        lastSeenAt: getString(row, "last_seen_at"),
+      }),
+    );
+
+const pruneCheckoutLocations = (
+  database: ManagedSqliteDatabase,
+  locationIds: ReadonlyArray<string>,
+): number => {
+  let removed = 0;
+  const statement = database.prepare("DELETE FROM checkout_locations WHERE id = ?");
+  for (const id of new Set(locationIds)) {
+    const existing = database.prepare("SELECT id FROM checkout_locations WHERE id = ?").get([id]);
+    if (existing !== undefined) {
+      statement.run([id]);
+      removed += 1;
+    }
+  }
+  return removed;
+};
+
+/**
+ * The owner pid is validated before the transaction opens: it is the caller's
+ * own input, not a decision about persisted state, and a value recovery could
+ * never probe must not even begin a write.
+ */
+const requireOwnerPid = (
+  ownerPid: number | undefined,
+): Effect.Effect<void, InvalidManagedOwnerPidError> =>
+  Effect.try({
+    try: () => {
+      assertManagedOwnerPid(ownerPid);
+    },
+    catch: failsWith<InvalidManagedOwnerPidError>(InvalidManagedOwnerPidError),
+  });
+
+/**
+ * Binds the registry contract to an open SQLite handle.
+ *
+ * The schema is initialized as part of building the repository, so a registry
+ * written by an unsupported version fails here rather than at the first query.
+ * Closing the handle belongs to the layer that opened it — see
+ * {@link sqliteManagedStackRepositoryLayer} — so the contract has no `close`
+ * method for a caller to forget.
+ */
+const createSqliteManagedStackRepository = (
+  database: ManagedSqliteDatabase,
+): Effect.Effect<ManagedStackRepositoryShape, UnsupportedManagedRegistryVersionError> =>
+  Effect.gen(function* () {
+    yield* Effect.try({
+      try: () => {
+        initializeSchema(database);
+      },
+      catch: failsWith<UnsupportedManagedRegistryVersionError>(
+        UnsupportedManagedRegistryVersionError,
+      ),
+    });
+
+    return {
+      prepareOrdinaryStack: (input) =>
+        Effect.flatMap(requireOwnerPid(input.ownerPid), () =>
+          transaction(
+            database,
+            () => prepareOrdinaryStack(database, input),
+            failsWith<PrepareOrdinaryStackFailure>(
+              DuplicateManagedIdentityError,
+              InvalidManagedPortError,
+              ManagedOperationOwnershipError,
+              ManagedPortReservationError,
+              ManagedStackNotFoundError,
+            ),
+          ),
+        ),
+      publishPendingStack: (stackId, operationToken, now) =>
+        transaction(
+          database,
+          () => publishPendingStack(database, stackId, operationToken, now),
+          failsWith<OwnedManagedStackFailure>(
+            ManagedOperationOwnershipError,
+            ManagedStackNotFoundError,
+          ),
+        ),
+      abortPendingStack: (stackId, operationToken) =>
+        transaction(
+          database,
+          () => abortPendingStack(database, stackId, operationToken),
+          failsWith<OwnedManagedStackFailure>(
+            ManagedOperationOwnershipError,
+            ManagedStackNotFoundError,
+          ),
+        ),
+      getStack: (stackId) => readTransaction(database, () => getStack(database, stackId)),
+      listStacks: (options) => readTransaction(database, () => selectStacks(database, options)),
+      claimOperation: (input) =>
+        Effect.flatMap(requireOwnerPid(input.ownerPid), () =>
+          transaction(
+            database,
+            () => claimOperation(database, input),
+            failsWith<ClaimManagedOperationFailure>(
+              ManagedOperationOwnershipError,
+              ManagedStackNotFoundError,
+            ),
+          ),
+        ),
+      finishOperation: (stackId, operationToken, outcome, now, error) =>
+        transaction(
+          database,
+          () => finishOperation(database, stackId, operationToken, outcome, now, error),
+          failsWith<ManagedOperationOwnershipError>(ManagedOperationOwnershipError),
+        ),
+      updateStack: (input) =>
+        transaction(
+          database,
+          () => updateStack(database, input),
+          failsWith<UpdateManagedStackFailure>(
+            InvalidManagedPortError,
+            ManagedOperationOwnershipError,
+            ManagedPendingStackUpdateError,
+            ManagedPortReservationError,
+            ManagedRunningStackPortChangeError,
+            ManagedStackNotFoundError,
+          ),
+        ),
+      listActiveOperations: (startedBefore) =>
+        Effect.sync(() => selectActiveOperations(database, startedBefore)),
+      reconcileOperation: (stackId, operationToken, lifecycle, now) =>
+        transaction(
+          database,
+          () => reconcileOperation(database, stackId, operationToken, lifecycle, now),
+          failsWith<ReconcileManagedOperationFailure>(
+            InvalidManagedPortError,
+            ManagedOperationOwnershipError,
+            ManagedPortReservationError,
+            ManagedStackNotFoundError,
+          ),
+        ),
+      tombstoneStack: (stackId, operationToken, now) =>
+        transaction(
+          database,
+          () => tombstoneStack(database, stackId, operationToken, now),
+          failsWith<OwnedManagedStackFailure>(
+            ManagedOperationOwnershipError,
+            ManagedStackNotFoundError,
+          ),
+        ),
+      listCheckoutLocations: () => Effect.sync(() => selectCheckoutLocations(database)),
+      pruneCheckoutLocations: (locationIds) =>
+        transaction(database, () => pruneCheckoutLocations(database, locationIds), neverFails),
+    };
+  });
+
+/**
+ * The registry stores workspace paths, ports, and credential references that
+ * other local users must not read. Pre-create the database file with an
+ * owner-only mode so it never exists with umask-derived permissions, and
+ * retighten both it and a directory left looser by an earlier build. Doing this
+ * before the WAL conversion also makes the -wal/-shm sidecars inherit the
+ * owner-only mode.
+ */
+export const hardenManagedRegistryFile = (path: string): void => {
+  if (path === ":memory:") {
+    return;
+  }
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  chmodSync(dirname(path), 0o700);
+  closeSync(openSync(path, "a", 0o600));
+  chmodSync(path, 0o600);
+};
+
+/**
+ * The registry as a scoped layer: the handle is opened when the layer is built
+ * and closed when its scope closes, including when schema initialization refuses
+ * the registry, so no failure path can leak an open database.
+ */
+export const sqliteManagedStackRepositoryLayer = (
+  openDatabase: () => ManagedSqliteDatabase,
+): Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError> =>
+  Layer.effect(
+    ManagedStackRepository,
+    Effect.gen(function* () {
+      const scope = yield* Effect.scope;
+      const database = yield* Effect.sync(openDatabase);
+      yield* Scope.addFinalizer(
+        scope,
+        Effect.sync(() => {
+          database.close();
+        }),
+      );
+      return yield* createSqliteManagedStackRepository(database);
+    }),
+  );

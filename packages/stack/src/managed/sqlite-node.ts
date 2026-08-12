@@ -1,23 +1,17 @@
-import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
-import { dirname } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { createSqliteManagedStackRepository, type ManagedSqliteDatabase } from "./sqlite.ts";
+import type { Layer } from "effect";
+import type { UnsupportedManagedRegistryVersionError } from "./model.ts";
+import type { ManagedStackRepository } from "./repository.ts";
+import {
+  hardenManagedRegistryFile,
+  sqliteManagedStackRepositoryLayer,
+  type ManagedSqliteDatabase,
+} from "./sqlite.ts";
 
-export const openNodeSqliteManagedStackRepository = (path: string) => {
-  if (path !== ":memory:") {
-    // The registry stores workspace paths, ports, and credential references
-    // that other local users must not read. Pre-create the database file with
-    // an owner-only mode so it never exists with umask-derived permissions,
-    // and retighten both it and a directory left looser by an earlier build.
-    // Doing this before the WAL conversion also makes the -wal/-shm sidecars
-    // inherit the owner-only mode.
-    mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
-    chmodSync(dirname(path), 0o700);
-    closeSync(openSync(path, "a", 0o600));
-    chmodSync(path, 0o600);
-  }
+const openDatabase = (path: string): ManagedSqliteDatabase => {
+  hardenManagedRegistryFile(path);
   const database = new DatabaseSync(path);
-  const adapter: ManagedSqliteDatabase = {
+  return {
     exec(sql) {
       database.exec(sql);
     },
@@ -39,10 +33,9 @@ export const openNodeSqliteManagedStackRepository = (path: string) => {
       database.close();
     },
   };
-  try {
-    return createSqliteManagedStackRepository(adapter);
-  } catch (error: unknown) {
-    database.close();
-    throw error;
-  }
 };
+
+export const nodeSqliteManagedStackRepositoryLayer = (
+  path: string,
+): Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError> =>
+  sqliteManagedStackRepositoryLayer(() => openDatabase(path));

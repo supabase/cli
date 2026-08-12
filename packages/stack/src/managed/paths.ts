@@ -74,6 +74,26 @@ export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): 
   );
 };
 
+/**
+ * The state root a managed stack service must be started with.
+ *
+ * `stateRoot` is required wherever a service is built, but a caller bypassing
+ * the type system (or a plain-JS caller) could still pass `undefined`, which
+ * would make {@link resolveManagedStateRoot} silently fall back to
+ * `SUPABASE_HOME` or the user's home directory instead of failing loudly. A root
+ * is a decision the caller owes the service, so a missing one is refused here
+ * rather than guessed.
+ */
+export const requireExplicitManagedStateRoot = (stateRoot: string | undefined): string => {
+  if (stateRoot === undefined) {
+    throw new UnsafeManagedStackPathError({
+      path: String(stateRoot),
+      reason: "Refusing to start a managed stack service without an explicit state root",
+    });
+  }
+  return resolveManagedStateRoot({ stateRoot });
+};
+
 export const managedRegistryPath = (stateRoot: string): string =>
   join(stateRoot, "registry-v3.sqlite3");
 

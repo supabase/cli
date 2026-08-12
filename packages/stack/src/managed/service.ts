@@ -1,7 +1,19 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, rm } from "node:fs/promises";
+import {
+  Cause,
+  Context,
+  Duration,
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Schedule,
+} from "effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
+  InvalidManagedIdentityError,
+  InvalidManagedOwnerPidError,
   InvalidManagedStackNameError,
   ManagedAbandonedOperationError,
   ManagedOperationInProgressError,
@@ -26,16 +38,24 @@ import {
   readOrdinaryWorkspaceIdentity,
 } from "./identity.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
-import { assertManagedStackRoot, managedStackPaths, resolveManagedStateRoot } from "./paths.ts";
+import {
+  assertManagedStackRoot,
+  managedStackPaths,
+  requireExplicitManagedStateRoot,
+} from "./paths.ts";
 import { errorCode } from "./error-code.ts";
+import { failsWith } from "./failure.ts";
 import {
   assertManagedOwnerPid,
   isUsableManagedOwnerPid,
-  type ManagedStackRepository,
+  ManagedStackRepository,
+  type ClaimManagedOperationFailure,
+  type OwnedManagedStackFailure,
+  type PrepareOrdinaryStackFailure,
+  type UpdateManagedStackFailure,
 } from "./repository.ts";
 
 export interface ManagedStackServiceOptions {
-  readonly repository: ManagedStackRepository;
   readonly stateRoot: string;
   readonly idFactory?: () => string;
   readonly clock?: () => Date;
@@ -49,8 +69,14 @@ export interface ProvisionOrdinaryStackOptions {
   readonly workspacePath: string;
   readonly stackName?: string;
   readonly configuration?: ManagedStackConfiguration;
-  readonly initialize?: (stack: ManagedStackRecord) => Promise<void>;
-  readonly validate?: (stack: ManagedStackRecord) => Promise<void>;
+  /**
+   * Provisioning steps a caller owns. Their failures never reach the caller as
+   * themselves: whatever they fail with becomes the `cause` of a
+   * {@link ManagedStackInitializationError} once the pending stack is rolled
+   * back, so the error channel here is deliberately open.
+   */
+  readonly initialize?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
+  readonly validate?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
 }
 
 export interface ProvisionOrdinaryStackResult {
@@ -74,27 +100,28 @@ export interface DeleteManagedStackResult {
     | { readonly outcome: "retained"; readonly error: unknown };
 }
 
-interface ReconcileAbandonedOperationsBaseOptions {
+interface ReconcileAbandonedOperationsBaseOptions<E> {
   readonly inspectRuntime: (
     stack: ManagedStackRecord,
     operation: ManagedOperationRecord,
-  ) => Promise<"running" | "stopped" | "unknown">;
+  ) => Effect.Effect<"running" | "stopped" | "unknown", E>;
 }
 
-export type ReconcileAbandonedOperationsOptions = ReconcileAbandonedOperationsBaseOptions &
-  (
-    | {
-        readonly startedBefore?: string;
-        readonly force?: never;
-      }
-    | {
-        readonly startedBefore?: never;
-        readonly force: {
-          readonly stackId: string;
-          readonly operationToken: string;
-        };
-      }
-  );
+export type ReconcileAbandonedOperationsOptions<E = unknown> =
+  ReconcileAbandonedOperationsBaseOptions<E> &
+    (
+      | {
+          readonly startedBefore?: string;
+          readonly force?: never;
+        }
+      | {
+          readonly startedBefore?: never;
+          readonly force: {
+            readonly stackId: string;
+            readonly operationToken: string;
+          };
+        }
+    );
 
 export interface RetainedManagedOperation {
   readonly operation: ManagedOperationRecord;
@@ -134,30 +161,70 @@ export interface ReconcileAbandonedOperationsResult {
   readonly failures: ReadonlyArray<ManagedOperationRecoveryFailure>;
 }
 
-export interface ManagedStackService {
+/** Claiming an operation on behalf of a caller, including a refused claim. */
+type RequireManagedOperationFailure =
+  | ClaimManagedOperationFailure
+  | InvalidManagedIdentityError
+  | ManagedOperationInProgressError;
+
+export type UpdateManagedStackConfigurationFailure =
+  | RequireManagedOperationFailure
+  | UpdateManagedStackFailure;
+
+export type ProvisionManagedStackFailure =
+  | InvalidManagedIdentityError
+  | InvalidManagedStackNameError
+  | ManagedAbandonedOperationError
+  | ManagedOperationInProgressError
+  | ManagedStackInitializationError
+  | ManagedStackNotFoundError
+  | ManagedStackPublicationTimeoutError
+  | PrepareOrdinaryStackFailure
+  | UpdateManagedStackConfigurationFailure;
+
+export type DeleteManagedStackFailure =
+  | ManagedStackNotFoundError
+  | ManagedStackNotStoppedError
+  | OwnedManagedStackFailure
+  | RequireManagedOperationFailure
+  | UpdateManagedStackFailure;
+
+export interface ManagedStackServiceShape {
   readonly stateRoot: string;
-  readonly repository: ManagedStackRepository;
-  provisionOrdinaryStack(
+  readonly provisionOrdinaryStack: (
     options: ProvisionOrdinaryStackOptions,
-  ): Promise<ProvisionOrdinaryStackResult>;
-  inspectOrdinaryWorkspace(workspacePath: string): Promise<InspectOrdinaryWorkspaceResult>;
-  inspectStack(stackId: string): ManagedStackRecord | undefined;
-  listStacks(options?: { readonly includeTombstoned?: boolean }): ReadonlyArray<ManagedStackRecord>;
-  updateStack(
+  ) => Effect.Effect<ProvisionOrdinaryStackResult, ProvisionManagedStackFailure>;
+  readonly inspectOrdinaryWorkspace: (
+    workspacePath: string,
+  ) => Effect.Effect<InspectOrdinaryWorkspaceResult, InvalidManagedIdentityError>;
+  readonly inspectStack: (stackId: string) => Effect.Effect<ManagedStackRecord | undefined>;
+  readonly listStacks: (options?: {
+    readonly includeTombstoned?: boolean;
+  }) => Effect.Effect<ReadonlyArray<ManagedStackRecord>>;
+  readonly updateStack: (
     stackId: string,
     configuration: ManagedStackConfiguration,
-  ): Promise<ManagedStackRecord>;
-  deleteStack(
+  ) => Effect.Effect<ManagedStackRecord, UpdateManagedStackConfigurationFailure>;
+  /**
+   * The `stop` callback's failure reaches the caller unchanged — a stack that
+   * refused to stop was not deleted — so its error type flows through.
+   */
+  readonly deleteStack: <E = never>(
     stackId: string,
-    options?: { readonly stop?: (stack: ManagedStackRecord) => Promise<void> },
-  ): Promise<DeleteManagedStackResult>;
-  reconcileAbandonedOperations(
+    options?: { readonly stop?: (stack: ManagedStackRecord) => Effect.Effect<void, E> },
+  ) => Effect.Effect<DeleteManagedStackResult, DeleteManagedStackFailure | E>;
+  /**
+   * Recovery reports rather than fails: a runtime it could not inspect is a
+   * retained operation, and a reclamation it could not finish is a reported
+   * failure. Only a forced target that is not a pair of managed UUIDs refuses
+   * the whole pass.
+   */
+  readonly reconcileAbandonedOperations: (
     options: ReconcileAbandonedOperationsOptions,
-  ): Promise<ReconcileAbandonedOperationsResult>;
-  pruneCheckoutLocations(
-    shouldPrune: (location: ManagedCheckoutLocation) => boolean | Promise<boolean>,
-  ): Promise<number>;
-  close(): void;
+  ) => Effect.Effect<ReconcileAbandonedOperationsResult, InvalidManagedIdentityError>;
+  readonly pruneCheckoutLocations: <E = never>(
+    shouldPrune: (location: ManagedCheckoutLocation) => Effect.Effect<boolean, E>,
+  ) => Effect.Effect<number, E>;
 }
 
 const selectionForStack = (stack: ManagedStackRecord): ManagedStackSelection => ({
@@ -168,10 +235,36 @@ const selectionForStack = (stack: ManagedStackRecord): ManagedStackSelection => 
   stackName: stack.name,
 });
 
-const wait = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
+const provisionResult = (
+  outcome: ProvisionOrdinaryStackResult["outcome"],
+  stack: ManagedStackRecord,
+  identityMarkerCreated: boolean,
+): ProvisionOrdinaryStackResult => ({
+  outcome,
+  selection: selectionForStack(stack),
+  stack,
+  identityMarkerCreated,
+});
 
-/** Ceiling for {@link makeManagedStackService}'s publication poll backoff. */
+const deletionResult = (
+  outcome: DeleteManagedStackResult["outcome"],
+  stack: ManagedStackRecord,
+  dataReclamation: DeleteManagedStackResult["dataReclamation"],
+): DeleteManagedStackResult => ({ outcome, stack, dataReclamation });
+
+const dataRemoved: DeleteManagedStackResult["dataReclamation"] = { outcome: "removed" };
+
+const dataRetained = (error: unknown): DeleteManagedStackResult["dataReclamation"] => ({
+  outcome: "retained",
+  error,
+});
+
+const unregisteredWorkspace: InspectOrdinaryWorkspaceResult = { registered: false, stacks: [] };
+
+/** What one look at a stack awaiting publication can refuse to wait for. */
+type PublicationPollFailure = ManagedAbandonedOperationError | ManagedStackNotFoundError;
+
+/** Ceiling for the publication poll's backoff. */
 const MAX_PUBLICATION_POLL_MS = 250;
 
 const stackNamePattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
@@ -193,489 +286,646 @@ const processIsAlive = (pid: number): boolean => {
   }
 };
 
-export const makeManagedStackService = (
-  options: ManagedStackServiceOptions,
-): ManagedStackService => {
-  // Anchored and validated once, at the boundary, through the one resolver that
-  // owns state-root policy: a relative root injected here would be reinterpreted
-  // against the process' cwd at every later use, and a blank one would anchor
-  // every managed path to it. `stateRoot` is required in the option type, but a
-  // caller bypassing the type system (or a plain-JS caller) could still pass
-  // `undefined`, which would make `resolveManagedStateRoot` silently fall back
-  // to `SUPABASE_HOME`/the user's home directory instead of failing loudly.
-  if (options.stateRoot === undefined) {
-    throw new UnsafeManagedStackPathError({
-      path: String(options.stateRoot),
-      reason: "Refusing to start a managed stack service without an explicit state root",
-    });
-  }
-  const stateRoot = resolveManagedStateRoot({ stateRoot: options.stateRoot });
-  const idFactory = options.idFactory ?? randomUUID;
-  const clock = options.clock ?? (() => new Date());
-  // Validated here as well as in the repository: the pid is this service's own
-  // option, so the failure belongs to the caller that supplied it.
-  assertManagedOwnerPid(options.ownerPid);
-  const ownerPid = options.ownerPid ?? process.pid;
-  const publicationTimeoutMs = options.publicationTimeoutMs ?? 10_000;
-  const publicationPollMs = options.publicationPollMs ?? 10;
-  const isProcessAlive = options.isProcessAlive ?? processIsAlive;
-  const now = (): string => clock().toISOString();
-
-  const removeStackState = async (stack: ManagedStackRecord): Promise<void> => {
-    const root = assertManagedStackRoot(stateRoot, stack.id, stack.paths.root);
-    await rm(root, { force: true, recursive: true });
-  };
-
-  const reclaimStackState = async (
-    stack: ManagedStackRecord,
-  ): Promise<DeleteManagedStackResult["dataReclamation"]> => {
-    try {
-      await removeStackState(stack);
-      return { outcome: "removed" };
-    } catch (error: unknown) {
-      return { outcome: "retained", error };
-    }
-  };
-
-  const finishOperationBestEffort = (
-    stackId: string,
-    operationToken: string,
-    error: unknown,
-  ): boolean => {
-    try {
-      options.repository.finishOperation(stackId, operationToken, "failed", now(), String(error));
-      return true;
-    } catch {
-      // Preserve the operation's original failure when ownership changed concurrently.
-      return false;
-    }
-  };
-
-  /**
-   * A concurrent forced recovery can resolve this same operation before this
-   * call closes it out, but only after the delete's own data removal already
-   * ran — so the delete is provably done and its ownership race must not be
-   * reported as a failure. Any other error still propagates, since only that
-   * specific race is known to be harmless.
-   */
-  const finishDeleteOperationTolerantly = (stackId: string, operationToken: string): void => {
-    try {
-      options.repository.finishOperation(stackId, operationToken, "completed", now());
-    } catch (error: unknown) {
-      if (!(error instanceof ManagedOperationOwnershipError)) {
-        throw error;
-      }
-    }
-  };
-
-  const failRecoveryBestEffort = (
-    stack: ManagedStackRecord | undefined,
-    operation: ManagedOperationRecord,
-    error: unknown,
-  ): boolean => {
-    if (stack === undefined || stack.status === "pending") {
-      return false;
-    }
-    try {
-      options.repository.updateStack({
-        stackId: operation.stackId,
-        operationToken: operation.token,
-        lifecycle: "failed",
-        now: now(),
-      });
-    } catch {
-      // Releasing the abandoned claim is still useful if the failed lifecycle cannot be recorded.
-    }
-    return finishOperationBestEffort(operation.stackId, operation.token, error);
-  };
-
-  const requireOperation = (
-    stackId: string,
-    kind: ManagedOperationKind,
-  ): ManagedOperationRecord => {
-    const claimed = options.repository.claimOperation({
-      token: createManagedUuid(idFactory, "operation token"),
-      stackId,
-      kind,
-      ownerPid,
-      now: now(),
-    });
-    if (!claimed.acquired) {
-      throw new ManagedOperationInProgressError({ stackId, operation: claimed.operation });
-    }
-    return claimed.operation;
-  };
-
-  // Publication normally lands within the first poll, so start tight and back
-  // off: a slow publisher must not be polled hundreds of times per second for
-  // the whole timeout window. The ceiling only ever slows polling down, so a
-  // caller asking for a slower interval than the ceiling keeps its own.
-  const backOffPublicationPoll = (pollMs: number): number =>
-    Math.min(pollMs * 2, Math.max(MAX_PUBLICATION_POLL_MS, publicationPollMs));
-
-  const awaitPublication = async (pending: ManagedStackRecord): Promise<ManagedStackRecord> => {
-    const deadline = performance.now() + publicationTimeoutMs;
-    let pollMs = publicationPollMs;
-    while (performance.now() <= deadline) {
-      const current = options.repository.getStack(pending.id);
-      if (current === undefined) {
-        throw new ManagedAbandonedOperationError({ stackId: pending.id });
-      }
-      if (current.status === "active") {
-        return current;
-      }
-      if (current.status === "tombstoned") {
-        throw new ManagedStackNotFoundError({ stackId: current.id });
-      }
-      // Never sleep past the deadline: the timeout is the caller's bound, not a
-      // floor a long poll interval may overshoot by a whole interval.
-      await wait(Math.max(Math.min(pollMs, deadline - performance.now()), 0));
-      pollMs = backOffPublicationPoll(pollMs);
-    }
-    throw new ManagedStackPublicationTimeoutError({ stackId: pending.id });
-  };
-
-  const updateStackRecord = async (
-    stackId: string,
-    configuration: ManagedStackConfiguration,
-  ): Promise<ManagedStackRecord> => {
-    const operation = requireOperation(stackId, "update");
-    try {
-      const stack = options.repository.updateStack({
-        stackId,
-        operationToken: operation.token,
-        now: now(),
-        ...configuration,
-      });
-      options.repository.finishOperation(stackId, operation.token, "completed", now());
-      return stack;
-    } catch (error: unknown) {
-      finishOperationBestEffort(stackId, operation.token, error);
-      throw error;
-    }
-  };
-
-  /**
-   * Reused stacks adopt the caller's requested configuration regardless of
-   * whether the record was already published or was awaited while another
-   * caller published it, so the outcome never depends on that timing.
-   */
-  const applyRequestedConfiguration = async (
-    stack: ManagedStackRecord,
-    configuration: ManagedStackConfiguration | undefined,
-  ): Promise<ManagedStackRecord> =>
-    configuration === undefined || Object.keys(configuration).length === 0
-      ? stack
-      : updateStackRecord(stack.id, configuration);
-
-  return {
-    stateRoot,
-    repository: options.repository,
-    async provisionOrdinaryStack(provisionOptions) {
-      const stackName = provisionOptions.stackName ?? DEFAULT_MANAGED_STACK_NAME;
-      if (!stackNamePattern.test(stackName)) {
-        throw new InvalidManagedStackNameError({ stackName });
-      }
-      const canonicalPath = await canonicalizeOrdinaryWorkspacePath(provisionOptions.workspacePath);
-      const marker = await ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
-      const stackId = createManagedUuid(idFactory, "stackId");
-      const prepared = options.repository.prepareOrdinaryStack({
-        identity: marker.identity,
-        canonicalPath,
-        locationId: createManagedUuid(idFactory, "checkout location id"),
-        stackId,
-        stackName,
-        paths: managedStackPaths(stateRoot, stackId),
-        operationToken: createManagedUuid(idFactory, "operation token"),
-        ownerPid,
-        now: now(),
-        configuration: provisionOptions.configuration ?? {},
-      });
-
-      if (prepared.outcome === "existing") {
-        if (prepared.stack.status === "active") {
-          if (prepared.operation !== undefined) {
-            throw new ManagedOperationInProgressError({
-              stackId: prepared.stack.id,
-              operation: prepared.operation,
-            });
-          }
-          const stack = await applyRequestedConfiguration(
-            prepared.stack,
-            provisionOptions.configuration,
-          );
-          return {
-            outcome: "reuse",
-            selection: selectionForStack(stack),
-            stack,
-            identityMarkerCreated: marker.created,
-          };
-        }
-        if (prepared.operation === undefined) {
-          throw new ManagedAbandonedOperationError({ stackId: prepared.stack.id });
-        }
-        // A stored pid that is not a usable pid means there is no owner to wait
-        // for, exactly as a missing one does: probing it could report a dead
-        // publisher as alive and make this caller wait out the whole
-        // publication timeout instead of reporting the abandoned claim.
-        if (
-          !isUsableManagedOwnerPid(prepared.operation.ownerPid) ||
-          !(await isProcessAlive(prepared.operation.ownerPid))
-        ) {
-          throw new ManagedAbandonedOperationError({ stackId: prepared.stack.id });
-        }
-        const published = await applyRequestedConfiguration(
-          await awaitPublication(prepared.stack),
-          provisionOptions.configuration,
-        );
-        return {
-          outcome: "reuse",
-          selection: selectionForStack(published),
-          stack: published,
-          identityMarkerCreated: marker.created,
-        };
-      }
-
-      try {
-        await mkdir(prepared.stack.paths.data, { recursive: true, mode: 0o700 });
-        await mkdir(prepared.stack.paths.logs, { recursive: true, mode: 0o700 });
-        await mkdir(prepared.stack.paths.runtime, { recursive: true, mode: 0o700 });
-        await provisionOptions.initialize?.(prepared.stack);
-        await provisionOptions.validate?.(prepared.stack);
-        const published = options.repository.publishPendingStack(
-          prepared.stack.id,
-          prepared.operation.token,
-          now(),
-        );
-        return {
-          outcome: "create",
-          selection: selectionForStack(published),
-          stack: published,
-          identityMarkerCreated: marker.created,
-        };
-      } catch (cause: unknown) {
-        const cleanupErrors: Array<unknown> = [];
-        let aborted = false;
-        try {
-          options.repository.abortPendingStack(prepared.stack.id, prepared.operation.token);
-          aborted = true;
-        } catch (error: unknown) {
-          cleanupErrors.push(error);
-        }
-        if (aborted) {
-          try {
-            await removeStackState(prepared.stack);
-          } catch (error: unknown) {
-            cleanupErrors.push(error);
-          }
-        }
-        throw new ManagedStackInitializationError({
-          stackId: prepared.stack.id,
-          cause,
-          cleanupErrors,
+/**
+ * The managed registry's policy layer: identity marker handling, provisioning
+ * order, publication waiting, deletion, and recovery of abandoned operations.
+ */
+export class ManagedStackService extends Context.Service<
+  ManagedStackService,
+  ManagedStackServiceShape
+>()("stack/managed/ManagedStackService") {
+  static make(
+    options: ManagedStackServiceOptions,
+  ): Layer.Layer<
+    ManagedStackService,
+    InvalidManagedOwnerPidError | UnsafeManagedStackPathError,
+    FileSystem.FileSystem | ManagedStackRepository
+  > {
+    return Layer.effect(
+      this,
+      Effect.gen(function* () {
+        const repository = yield* ManagedStackRepository;
+        const fs = yield* FileSystem.FileSystem;
+        // Anchored and validated once, at the boundary, through the one resolver
+        // that owns state-root policy: a relative root injected here would be
+        // reinterpreted against the process' cwd at every later use, and a blank
+        // or missing one would anchor every managed path to it.
+        const stateRoot = yield* Effect.try({
+          try: () => requireExplicitManagedStateRoot(options.stateRoot),
+          catch: failsWith<UnsafeManagedStackPathError>(UnsafeManagedStackPathError),
         });
-      }
-    },
-    async inspectOrdinaryWorkspace(workspacePath) {
-      const canonicalPath = await canonicalizeOrdinaryWorkspacePath(workspacePath);
-      const identity = await readOrdinaryWorkspaceIdentity(canonicalPath);
-      if (identity === undefined) {
-        return { registered: false, stacks: [] };
-      }
-      const stacks = options.repository
-        .listStacks()
-        .filter(
-          (stack) =>
-            stack.projectId === identity.projectId &&
-            stack.checkoutId === identity.checkoutId &&
-            stack.contextId === identity.contextId,
-        );
-      return { registered: stacks.length > 0, identity, stacks };
-    },
-    inspectStack(stackId) {
-      return options.repository.getStack(stackId);
-    },
-    listStacks(listOptions) {
-      return options.repository.listStacks(listOptions);
-    },
-    async updateStack(stackId, configuration) {
-      return updateStackRecord(stackId, configuration);
-    },
-    async deleteStack(stackId, deleteOptions) {
-      const existing = options.repository.getStack(stackId);
-      if (existing === undefined) {
-        throw new ManagedStackNotFoundError({ stackId });
-      }
-      if (existing.status === "tombstoned") {
-        return {
-          outcome: "no-op",
-          stack: existing,
-          dataReclamation: await reclaimStackState(existing),
-        };
-      }
-      const operation = requireOperation(stackId, "delete");
-      try {
-        const current = options.repository.getStack(stackId);
-        if (current === undefined) {
-          throw new ManagedStackNotFoundError({ stackId });
-        }
-        if (current.status === "tombstoned") {
-          const dataReclamation = await reclaimStackState(current);
-          options.repository.finishOperation(stackId, operation.token, "completed", now());
-          return { outcome: "no-op", stack: current, dataReclamation };
-        }
-        if (current.lifecycle !== "stopped") {
-          if (deleteOptions?.stop === undefined) {
-            throw new ManagedStackNotStoppedError({ stackId });
-          }
-          await deleteOptions.stop(current);
-          options.repository.updateStack({
-            stackId,
-            operationToken: operation.token,
-            now: now(),
-            lifecycle: "stopped",
-            runtimeMetadata: { processIds: {}, containerIds: {} },
+        // Validated here as well as in the repository: the pid is this service's
+        // own option, so the failure belongs to the caller that supplied it.
+        yield* Effect.try({
+          try: () => {
+            assertManagedOwnerPid(options.ownerPid);
+          },
+          catch: failsWith<InvalidManagedOwnerPidError>(InvalidManagedOwnerPidError),
+        });
+
+        const idFactory = options.idFactory ?? randomUUID;
+        const clock = options.clock ?? (() => new Date());
+        const ownerPid = options.ownerPid ?? process.pid;
+        const publicationTimeoutMs = options.publicationTimeoutMs ?? 10_000;
+        const publicationPollMs = options.publicationPollMs ?? 10;
+        const isProcessAlive = options.isProcessAlive ?? processIsAlive;
+        const now = (): string => clock().toISOString();
+
+        const managedUuid = (label: string): Effect.Effect<string, InvalidManagedIdentityError> =>
+          Effect.try({
+            try: () => createManagedUuid(idFactory, label),
+            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
           });
-        }
-        const tombstoned = options.repository.tombstoneStack(stackId, operation.token, now());
-        const dataReclamation = await reclaimStackState(tombstoned);
-        finishDeleteOperationTolerantly(stackId, operation.token);
-        return { outcome: "delete", stack: tombstoned, dataReclamation };
-      } catch (error: unknown) {
-        finishOperationBestEffort(stackId, operation.token, error);
-        throw error;
-      }
-    },
-    async reconcileAbandonedOperations(reconcileOptions) {
-      const recovered: Array<ManagedStackRecord> = [];
-      const abortedStackIds: Array<string> = [];
-      const reclaimedStackIds: Array<string> = [];
-      const retained: Array<RetainedManagedOperation> = [];
-      const skippedOperationIds: Array<string> = [];
-      const failures: Array<ManagedOperationRecoveryFailure> = [];
-      const forcedOperation = reconcileOptions.force;
-      if (forcedOperation !== undefined) {
-        assertManagedUuid(forcedOperation.stackId, "forced recovery stackId");
-        assertManagedUuid(forcedOperation.operationToken, "forced recovery operation token");
-      }
-      const operations = options.repository
-        .listActiveOperations(
-          forcedOperation === undefined ? reconcileOptions.startedBefore : undefined,
-        )
-        .filter(
-          (operation) =>
-            forcedOperation === undefined ||
-            (operation.stackId === forcedOperation.stackId &&
-              operation.token === forcedOperation.operationToken),
-        );
-      for (const operation of operations) {
-        // A persisted pid that is not a usable pid is treated as no owner at
-        // all: asking the liveness probe about it could report a live owner and
-        // wedge this claim forever, which is the failure recovery exists to fix.
-        if (forcedOperation === undefined && isUsableManagedOwnerPid(operation.ownerPid)) {
-          try {
-            if (await isProcessAlive(operation.ownerPid)) {
-              retained.push({ operation, reason: "owner-alive" });
-              continue;
-            }
-          } catch (error: unknown) {
-            retained.push({ operation, reason: "owner-liveness-unknown", error });
-            continue;
-          }
-        }
-        let stack: ManagedStackRecord | undefined;
-        try {
-          stack = options.repository.getStack(operation.stackId);
-          if (stack === undefined) {
-            skippedOperationIds.push(operation.token);
-            continue;
-          }
-          // A tombstoned row is a deletion that died before releasing its claim.
-          // Its registry state is already final, so `reconcileOperation` ignores
-          // the lifecycle for it — and tombstoning zeroed the runtime metadata an
-          // inspector would need, so asking could only answer "unknown" and leak
-          // the stack directory forever.
-          let lifecycle: ManagedStackLifecycle = "stopped";
-          if (stack.status !== "tombstoned") {
-            let actual: "running" | "stopped" | "unknown";
-            try {
-              actual = await reconcileOptions.inspectRuntime(stack, operation);
-            } catch (error: unknown) {
-              retained.push({ operation, reason: "runtime-inspection-failed", error });
-              continue;
-            }
-            if (actual === "unknown") {
-              retained.push({ operation, reason: "runtime-unknown" });
-              continue;
-            }
-            lifecycle = actual === "running" ? "running" : "stopped";
-          }
-          const reconciled = options.repository.reconcileOperation(
-            stack.id,
-            operation.token,
-            lifecycle,
-            now(),
+
+        const requireManagedUuid = (
+          value: string,
+          label: string,
+        ): Effect.Effect<string, InvalidManagedIdentityError> =>
+          Effect.try({
+            try: () => assertManagedUuid(value, label),
+            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+          });
+
+        /**
+         * `isProcessAlive` is a caller-supplied seam that may answer
+         * synchronously or asynchronously, and may refuse to answer at all.
+         * Recovery reports a refusal as a retained operation, so the refusal is
+         * kept in the error channel here rather than being turned into a defect.
+         */
+        const probeProcessAlive = (pid: number): Effect.Effect<boolean, unknown> =>
+          Effect.flatMap(
+            Effect.try({ try: () => isProcessAlive(pid), catch: (error: unknown) => error }),
+            (answer) =>
+              typeof answer === "boolean"
+                ? Effect.succeed(answer)
+                : Effect.tryPromise({ try: () => answer, catch: (error: unknown) => error }),
           );
-          if (reconciled.outcome === "recovered") {
-            recovered.push(reconciled.stack);
-          } else {
-            // Both remaining outcomes leave state on disk that no registry row
-            // will ever point at again: a discarded pending stack's partial
-            // provisioning, or the data a crashed deletion never got to remove.
-            // The stack is reported under either id list only once that data is
-            // actually gone; otherwise the removal failure is the whole report.
-            try {
-              await removeStackState(stack);
-              if (reconciled.outcome === "discarded") {
-                abortedStackIds.push(stack.id);
-              } else {
-                reclaimedStackIds.push(stack.id);
-              }
-            } catch (error: unknown) {
-              failures.push({
-                operation,
-                phase: "state-reclamation",
-                operationReleased: true,
-                error,
-              });
+
+        /**
+         * A stack's directory is only ever removed through the path guard, so a
+         * forged or stale record cannot make recovery delete something outside the
+         * state root. Both refusals — the guard's and the filesystem's — are
+         * reported as retained data rather than propagated.
+         */
+        const removeStackState = (stack: ManagedStackRecord) =>
+          Effect.flatMap(
+            Effect.try({
+              try: () => assertManagedStackRoot(stateRoot, stack.id, stack.paths.root),
+              catch: failsWith<UnsafeManagedStackPathError>(UnsafeManagedStackPathError),
+            }),
+            (root) => fs.remove(root, { force: true, recursive: true }),
+          );
+
+        const reclaimStackState = (
+          stack: ManagedStackRecord,
+        ): Effect.Effect<DeleteManagedStackResult["dataReclamation"]> =>
+          removeStackState(stack).pipe(
+            Effect.as(dataRemoved),
+            Effect.catchCause((cause) => Effect.succeed(dataRetained(Cause.squash(cause)))),
+          );
+
+        const finishOperationBestEffort = (
+          stackId: string,
+          operationToken: string,
+          error: unknown,
+        ): Effect.Effect<boolean> =>
+          repository.finishOperation(stackId, operationToken, "failed", now(), String(error)).pipe(
+            Effect.as(true),
+            // Preserve the operation's original failure when ownership changed concurrently.
+            Effect.catchCause(() => Effect.succeed(false)),
+          );
+
+        /**
+         * A concurrent forced recovery can resolve this same operation before
+         * this call closes it out, but only after the delete's own data removal
+         * already ran — so the delete is provably done and its ownership race
+         * must not be reported as a failure. Any other error still propagates,
+         * since only that specific race is known to be harmless.
+         */
+        const finishDeleteOperationTolerantly = (
+          stackId: string,
+          operationToken: string,
+        ): Effect.Effect<void> =>
+          repository
+            .finishOperation(stackId, operationToken, "completed", now())
+            .pipe(Effect.catchTag("ManagedOperationOwnershipError", () => Effect.void));
+
+        const failRecoveryBestEffort = (
+          stack: ManagedStackRecord | undefined,
+          operation: ManagedOperationRecord,
+          error: unknown,
+        ): Effect.Effect<boolean> => {
+          if (stack === undefined || stack.status === "pending") {
+            return Effect.succeed(false);
+          }
+          return repository
+            .updateStack({
+              stackId: operation.stackId,
+              operationToken: operation.token,
+              lifecycle: "failed",
+              now: now(),
+            })
+            .pipe(
+              // Releasing the abandoned claim is still useful if the failed lifecycle cannot be recorded.
+              Effect.catchCause(() => Effect.void),
+              Effect.flatMap(() =>
+                finishOperationBestEffort(operation.stackId, operation.token, error),
+              ),
+            );
+        };
+
+        const requireOperation = (
+          stackId: string,
+          kind: ManagedOperationKind,
+        ): Effect.Effect<ManagedOperationRecord, RequireManagedOperationFailure> =>
+          Effect.gen(function* () {
+            const token = yield* managedUuid("operation token");
+            const claimed = yield* repository.claimOperation({
+              token,
+              stackId,
+              kind,
+              ownerPid,
+              now: now(),
+            });
+            if (!claimed.acquired) {
+              return yield* Effect.fail(
+                new ManagedOperationInProgressError({ stackId, operation: claimed.operation }),
+              );
             }
-          }
-        } catch (error: unknown) {
-          if (
-            error instanceof ManagedOperationOwnershipError ||
-            error instanceof ManagedStackNotFoundError
-          ) {
-            skippedOperationIds.push(operation.token);
-            continue;
-          }
-          failures.push({
-            operation,
-            phase: "reconciliation",
-            operationReleased: failRecoveryBestEffort(stack, operation, error),
-            error,
+            return claimed.operation;
           });
-        }
-      }
-      return {
-        recovered,
-        abortedStackIds,
-        reclaimedStackIds,
-        retained,
-        skippedOperationIds,
-        failures,
-      };
-    },
-    async pruneCheckoutLocations(shouldPrune) {
-      const stale: Array<string> = [];
-      for (const location of options.repository.listCheckoutLocations()) {
-        if (await shouldPrune(location)) {
-          stale.push(location.id);
-        }
-      }
-      return options.repository.pruneCheckoutLocations(stale);
-    },
-    close() {
-      options.repository.close();
-    },
-  };
-};
+
+        // Publication normally lands within the first poll, so start tight and
+        // back off: a slow publisher must not be polled hundreds of times per
+        // second for the whole timeout window. The ceiling only ever slows
+        // polling down, so a caller asking for a slower interval keeps its own.
+        const publicationPollCeiling = Math.max(MAX_PUBLICATION_POLL_MS, publicationPollMs);
+        const publicationPollSchedule = Schedule.exponential(
+          Duration.millis(publicationPollMs),
+        ).pipe(
+          Schedule.modifyDelay(({ duration }) =>
+            Effect.succeed(
+              Duration.millis(Math.min(Duration.toMillis(duration), publicationPollCeiling)),
+            ),
+          ),
+        );
+
+        /**
+         * One look at a stack a caller is waiting for. `Option.none()` is the
+         * retryable answer — the row is still pending, so the poll schedules
+         * another look — while the two failures are final answers about a
+         * publisher that will never arrive.
+         */
+        const pollPublication = (
+          pending: ManagedStackRecord,
+        ): Effect.Effect<Option.Option<ManagedStackRecord>, PublicationPollFailure> =>
+          Effect.flatMap(
+            repository.getStack(pending.id),
+            (current): Effect.Effect<Option.Option<ManagedStackRecord>, PublicationPollFailure> => {
+              if (current === undefined) {
+                return Effect.fail(new ManagedAbandonedOperationError({ stackId: pending.id }));
+              }
+              if (current.status === "active") {
+                return Effect.succeed(Option.some(current));
+              }
+              if (current.status === "tombstoned") {
+                return Effect.fail(new ManagedStackNotFoundError({ stackId: current.id }));
+              }
+              return Effect.succeed(Option.none());
+            },
+          );
+
+        const awaitPublication = (
+          pending: ManagedStackRecord,
+        ): Effect.Effect<
+          ManagedStackRecord,
+          | ManagedAbandonedOperationError
+          | ManagedStackNotFoundError
+          | ManagedStackPublicationTimeoutError
+        > =>
+          pollPublication(pending).pipe(
+            Effect.repeat({
+              schedule: publicationPollSchedule,
+              while: (published) => Option.isNone(published),
+            }),
+            // The timeout is the caller's bound on the whole wait, so it
+            // interrupts the poll rather than being checked between polls.
+            Effect.timeoutOrElse({
+              duration: Duration.millis(publicationTimeoutMs),
+              orElse: () =>
+                Effect.fail(new ManagedStackPublicationTimeoutError({ stackId: pending.id })),
+            }),
+            Effect.flatMap((published) =>
+              Option.isSome(published)
+                ? Effect.succeed(published.value)
+                : Effect.fail(new ManagedStackPublicationTimeoutError({ stackId: pending.id })),
+            ),
+          );
+
+        const updateStackRecord = (
+          stackId: string,
+          configuration: ManagedStackConfiguration,
+        ): Effect.Effect<ManagedStackRecord, UpdateManagedStackConfigurationFailure> =>
+          Effect.gen(function* () {
+            const operation = yield* requireOperation(stackId, "update");
+            return yield* repository
+              .updateStack({
+                stackId,
+                operationToken: operation.token,
+                now: now(),
+                ...configuration,
+              })
+              .pipe(
+                Effect.tap(() =>
+                  repository.finishOperation(stackId, operation.token, "completed", now()),
+                ),
+                Effect.catchCause((cause) =>
+                  finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
+                    Effect.flatMap(() => Effect.failCause(cause)),
+                  ),
+                ),
+              );
+          });
+
+        /**
+         * Reused stacks adopt the caller's requested configuration regardless of
+         * whether the record was already published or was awaited while another
+         * caller published it, so the outcome never depends on that timing.
+         */
+        const applyRequestedConfiguration = (
+          stack: ManagedStackRecord,
+          configuration: ManagedStackConfiguration | undefined,
+        ): Effect.Effect<ManagedStackRecord, UpdateManagedStackConfigurationFailure> =>
+          configuration === undefined || Object.keys(configuration).length === 0
+            ? Effect.succeed(stack)
+            : updateStackRecord(stack.id, configuration);
+
+        const provisionOrdinaryStack = (
+          provisionOptions: ProvisionOrdinaryStackOptions,
+        ): Effect.Effect<ProvisionOrdinaryStackResult, ProvisionManagedStackFailure> =>
+          Effect.gen(function* () {
+            const stackName = provisionOptions.stackName ?? DEFAULT_MANAGED_STACK_NAME;
+            if (!stackNamePattern.test(stackName)) {
+              return yield* Effect.fail(new InvalidManagedStackNameError({ stackName }));
+            }
+            const canonicalPath = yield* canonicalizeOrdinaryWorkspacePath(
+              provisionOptions.workspacePath,
+            );
+            const marker = yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
+            const stackId = yield* managedUuid("stackId");
+            const locationId = yield* managedUuid("checkout location id");
+            const operationToken = yield* managedUuid("operation token");
+            const paths = yield* Effect.try({
+              try: () => managedStackPaths(stateRoot, stackId),
+              catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+            });
+            const prepared = yield* repository.prepareOrdinaryStack({
+              identity: marker.identity,
+              canonicalPath,
+              locationId,
+              stackId,
+              stackName,
+              paths,
+              operationToken,
+              ownerPid,
+              now: now(),
+              configuration: provisionOptions.configuration ?? {},
+            });
+
+            if (prepared.outcome === "existing") {
+              if (prepared.stack.status === "active") {
+                if (prepared.operation !== undefined) {
+                  return yield* Effect.fail(
+                    new ManagedOperationInProgressError({
+                      stackId: prepared.stack.id,
+                      operation: prepared.operation,
+                    }),
+                  );
+                }
+                const stack = yield* applyRequestedConfiguration(
+                  prepared.stack,
+                  provisionOptions.configuration,
+                );
+                return provisionResult("reuse", stack, marker.created);
+              }
+              if (prepared.operation === undefined) {
+                return yield* Effect.fail(
+                  new ManagedAbandonedOperationError({ stackId: prepared.stack.id }),
+                );
+              }
+              // A stored pid that is not a usable pid means there is no owner to
+              // wait for, exactly as a missing one does: probing it could report
+              // a dead publisher as alive and make this caller wait out the whole
+              // publication timeout instead of reporting the abandoned claim.
+              // Provisioning has no report to put a refused probe in, so a seam
+              // that cannot answer is a defect here rather than an outcome.
+              if (
+                !isUsableManagedOwnerPid(prepared.operation.ownerPid) ||
+                !(yield* Effect.orDie(probeProcessAlive(prepared.operation.ownerPid)))
+              ) {
+                return yield* Effect.fail(
+                  new ManagedAbandonedOperationError({ stackId: prepared.stack.id }),
+                );
+              }
+              const awaited = yield* awaitPublication(prepared.stack);
+              const published = yield* applyRequestedConfiguration(
+                awaited,
+                provisionOptions.configuration,
+              );
+              return provisionResult("reuse", published, marker.created);
+            }
+
+            const pending = prepared.stack;
+            const operation = prepared.operation;
+            return yield* Effect.gen(function* () {
+              yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
+              yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
+              yield* fs.makeDirectory(pending.paths.runtime, { recursive: true, mode: 0o700 });
+              if (provisionOptions.initialize !== undefined) {
+                yield* provisionOptions.initialize(pending);
+              }
+              if (provisionOptions.validate !== undefined) {
+                yield* provisionOptions.validate(pending);
+              }
+              const published = yield* repository.publishPendingStack(
+                pending.id,
+                operation.token,
+                now(),
+              );
+              return provisionResult("create", published, marker.created);
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.gen(function* () {
+                  const cleanupErrors: Array<unknown> = [];
+                  const aborted = yield* Effect.exit(
+                    repository.abortPendingStack(pending.id, operation.token),
+                  );
+                  if (Exit.isFailure(aborted)) {
+                    cleanupErrors.push(Cause.squash(aborted.cause));
+                  } else {
+                    const reclaimed = yield* Effect.exit(removeStackState(pending));
+                    if (Exit.isFailure(reclaimed)) {
+                      cleanupErrors.push(Cause.squash(reclaimed.cause));
+                    }
+                  }
+                  return yield* Effect.fail(
+                    new ManagedStackInitializationError({
+                      stackId: pending.id,
+                      cause: Cause.squash(cause),
+                      cleanupErrors,
+                    }),
+                  );
+                }),
+              ),
+            );
+          });
+
+        const inspectOrdinaryWorkspace = (
+          workspacePath: string,
+        ): Effect.Effect<InspectOrdinaryWorkspaceResult, InvalidManagedIdentityError> =>
+          Effect.gen(function* () {
+            const canonicalPath = yield* canonicalizeOrdinaryWorkspacePath(workspacePath);
+            const identity = yield* readOrdinaryWorkspaceIdentity(canonicalPath);
+            if (identity === undefined) {
+              return unregisteredWorkspace;
+            }
+            const stacks = (yield* repository.listStacks()).filter(
+              (stack) =>
+                stack.projectId === identity.projectId &&
+                stack.checkoutId === identity.checkoutId &&
+                stack.contextId === identity.contextId,
+            );
+            return { registered: stacks.length > 0, identity, stacks };
+          });
+
+        const deleteStack = <E = never>(
+          stackId: string,
+          deleteOptions?: {
+            readonly stop?: (stack: ManagedStackRecord) => Effect.Effect<void, E>;
+          },
+        ): Effect.Effect<DeleteManagedStackResult, DeleteManagedStackFailure | E> =>
+          Effect.gen(function* () {
+            const existing = yield* repository.getStack(stackId);
+            if (existing === undefined) {
+              return yield* Effect.fail(new ManagedStackNotFoundError({ stackId }));
+            }
+            if (existing.status === "tombstoned") {
+              return deletionResult("no-op", existing, yield* reclaimStackState(existing));
+            }
+            const operation = yield* requireOperation(stackId, "delete");
+            return yield* Effect.gen(function* () {
+              const current = yield* repository.getStack(stackId);
+              if (current === undefined) {
+                return yield* Effect.fail(new ManagedStackNotFoundError({ stackId }));
+              }
+              if (current.status === "tombstoned") {
+                const dataReclamation = yield* reclaimStackState(current);
+                yield* repository.finishOperation(stackId, operation.token, "completed", now());
+                return deletionResult("no-op", current, dataReclamation);
+              }
+              if (current.lifecycle !== "stopped") {
+                const stop = deleteOptions?.stop;
+                if (stop === undefined) {
+                  return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId }));
+                }
+                yield* stop(current);
+                yield* repository.updateStack({
+                  stackId,
+                  operationToken: operation.token,
+                  now: now(),
+                  lifecycle: "stopped",
+                  runtimeMetadata: { processIds: {}, containerIds: {} },
+                });
+              }
+              const tombstoned = yield* repository.tombstoneStack(stackId, operation.token, now());
+              const dataReclamation = yield* reclaimStackState(tombstoned);
+              yield* finishDeleteOperationTolerantly(stackId, operation.token);
+              return deletionResult("delete", tombstoned, dataReclamation);
+            }).pipe(
+              Effect.catchCause((cause) =>
+                finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
+                  Effect.flatMap(() => Effect.failCause(cause)),
+                ),
+              ),
+            );
+          });
+
+        const reconcileAbandonedOperations = (
+          reconcileOptions: ReconcileAbandonedOperationsOptions,
+        ): Effect.Effect<ReconcileAbandonedOperationsResult, InvalidManagedIdentityError> =>
+          Effect.gen(function* () {
+            const recovered: Array<ManagedStackRecord> = [];
+            const abortedStackIds: Array<string> = [];
+            const reclaimedStackIds: Array<string> = [];
+            const retained: Array<RetainedManagedOperation> = [];
+            const skippedOperationIds: Array<string> = [];
+            const failures: Array<ManagedOperationRecoveryFailure> = [];
+            const forcedOperation = reconcileOptions.force;
+            if (forcedOperation !== undefined) {
+              yield* requireManagedUuid(forcedOperation.stackId, "forced recovery stackId");
+              yield* requireManagedUuid(
+                forcedOperation.operationToken,
+                "forced recovery operation token",
+              );
+            }
+            const operations = (yield* repository.listActiveOperations(
+              forcedOperation === undefined ? reconcileOptions.startedBefore : undefined,
+            )).filter(
+              (operation) =>
+                forcedOperation === undefined ||
+                (operation.stackId === forcedOperation.stackId &&
+                  operation.token === forcedOperation.operationToken),
+            );
+
+            const settleOperation = (operation: ManagedOperationRecord): Effect.Effect<void> =>
+              Effect.gen(function* () {
+                // A persisted pid that is not a usable pid is treated as no owner
+                // at all: asking the liveness probe about it could report a live
+                // owner and wedge this claim forever, which is the failure
+                // recovery exists to fix.
+                if (forcedOperation === undefined && isUsableManagedOwnerPid(operation.ownerPid)) {
+                  const alive = yield* Effect.exit(probeProcessAlive(operation.ownerPid));
+                  if (Exit.isFailure(alive)) {
+                    retained.push({
+                      operation,
+                      reason: "owner-liveness-unknown",
+                      error: Cause.squash(alive.cause),
+                    });
+                    return;
+                  }
+                  if (alive.value) {
+                    retained.push({ operation, reason: "owner-alive" });
+                    return;
+                  }
+                }
+                let claimedStack: ManagedStackRecord | undefined;
+                yield* Effect.gen(function* () {
+                  const stack = yield* repository.getStack(operation.stackId);
+                  claimedStack = stack;
+                  if (stack === undefined) {
+                    skippedOperationIds.push(operation.token);
+                    return;
+                  }
+                  // A tombstoned row is a deletion that died before releasing its
+                  // claim. Its registry state is already final, so
+                  // `reconcileOperation` ignores the lifecycle for it — and
+                  // tombstoning zeroed the runtime metadata an inspector would
+                  // need, so asking could only answer "unknown" and leak the
+                  // stack directory forever.
+                  let lifecycle: ManagedStackLifecycle = "stopped";
+                  if (stack.status !== "tombstoned") {
+                    const inspected = yield* Effect.exit(
+                      reconcileOptions.inspectRuntime(stack, operation),
+                    );
+                    if (Exit.isFailure(inspected)) {
+                      retained.push({
+                        operation,
+                        reason: "runtime-inspection-failed",
+                        error: Cause.squash(inspected.cause),
+                      });
+                      return;
+                    }
+                    if (inspected.value === "unknown") {
+                      retained.push({ operation, reason: "runtime-unknown" });
+                      return;
+                    }
+                    lifecycle = inspected.value === "running" ? "running" : "stopped";
+                  }
+                  const reconciled = yield* repository.reconcileOperation(
+                    stack.id,
+                    operation.token,
+                    lifecycle,
+                    now(),
+                  );
+                  if (reconciled.outcome === "recovered") {
+                    recovered.push(reconciled.stack);
+                    return;
+                  }
+                  // Both remaining outcomes leave state on disk that no registry
+                  // row will ever point at again: a discarded pending stack's
+                  // partial provisioning, or the data a crashed deletion never
+                  // got to remove. The stack is reported under either id list
+                  // only once that data is actually gone; otherwise the removal
+                  // failure is the whole report.
+                  const removal = yield* Effect.exit(removeStackState(stack));
+                  if (Exit.isFailure(removal)) {
+                    failures.push({
+                      operation,
+                      phase: "state-reclamation",
+                      operationReleased: true,
+                      error: Cause.squash(removal.cause),
+                    });
+                    return;
+                  }
+                  if (reconciled.outcome === "discarded") {
+                    abortedStackIds.push(stack.id);
+                    return;
+                  }
+                  reclaimedStackIds.push(stack.id);
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.gen(function* () {
+                      const error = Cause.squash(cause);
+                      if (
+                        error instanceof ManagedOperationOwnershipError ||
+                        error instanceof ManagedStackNotFoundError
+                      ) {
+                        skippedOperationIds.push(operation.token);
+                        return;
+                      }
+                      failures.push({
+                        operation,
+                        phase: "reconciliation",
+                        operationReleased: yield* failRecoveryBestEffort(
+                          claimedStack,
+                          operation,
+                          error,
+                        ),
+                        error,
+                      });
+                    }),
+                  ),
+                );
+              });
+
+            for (const operation of operations) {
+              yield* settleOperation(operation);
+            }
+            return {
+              recovered,
+              abortedStackIds,
+              reclaimedStackIds,
+              retained,
+              skippedOperationIds,
+              failures,
+            };
+          });
+
+        const pruneCheckoutLocations = <E = never>(
+          shouldPrune: (location: ManagedCheckoutLocation) => Effect.Effect<boolean, E>,
+        ): Effect.Effect<number, E> =>
+          Effect.gen(function* () {
+            const stale: Array<string> = [];
+            for (const location of yield* repository.listCheckoutLocations()) {
+              if (yield* shouldPrune(location)) {
+                stale.push(location.id);
+              }
+            }
+            return yield* repository.pruneCheckoutLocations(stale);
+          });
+
+        return {
+          stateRoot,
+          provisionOrdinaryStack,
+          inspectOrdinaryWorkspace,
+          inspectStack: (stackId) => repository.getStack(stackId),
+          listStacks: (listOptions) => repository.listStacks(listOptions),
+          updateStack: updateStackRecord,
+          deleteStack,
+          reconcileAbandonedOperations,
+          pruneCheckoutLocations,
+        };
+      }),
+    );
+  }
+}

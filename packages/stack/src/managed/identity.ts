@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { link, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { Effect } from "effect";
 import {
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
@@ -8,7 +9,16 @@ import {
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { errorCode } from "./error-code.ts";
+import { failsWith } from "./failure.ts";
 import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
+
+/**
+ * The marker's own failures are the only ones this module reports. Filesystem
+ * errors that are not part of the identity protocol — an unreadable workspace, a
+ * full disk — are defects: no caller can act on them, and inventing an identity
+ * failure for them would hide what actually went wrong.
+ */
+const failsWithIdentity = failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError);
 
 const identityField = (value: unknown, field: string): string => {
   if (typeof value !== "object" || value === null) {
@@ -51,15 +61,21 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
   };
 };
 
-export const canonicalizeOrdinaryWorkspacePath = async (workspacePath: string): Promise<string> => {
-  const info = await stat(workspacePath);
-  if (!info.isDirectory()) {
-    throw new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` });
-  }
-  return realpath(workspacePath);
-};
+export const canonicalizeOrdinaryWorkspacePath = (
+  workspacePath: string,
+): Effect.Effect<string, InvalidManagedIdentityError> =>
+  Effect.tryPromise({
+    try: async () => {
+      const info = await stat(workspacePath);
+      if (!info.isDirectory()) {
+        throw new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` });
+      }
+      return realpath(workspacePath);
+    },
+    catch: failsWithIdentity,
+  });
 
-export const readOrdinaryWorkspaceIdentity = async (
+const readIdentity = async (
   workspacePath: string,
 ): Promise<OrdinaryWorkspaceIdentity | undefined> => {
   const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
@@ -73,17 +89,30 @@ export const readOrdinaryWorkspaceIdentity = async (
   }
 };
 
+export const readOrdinaryWorkspaceIdentity = (
+  workspacePath: string,
+): Effect.Effect<OrdinaryWorkspaceIdentity | undefined, InvalidManagedIdentityError> =>
+  Effect.tryPromise({ try: () => readIdentity(workspacePath), catch: failsWithIdentity });
+
 export interface EnsureOrdinaryWorkspaceIdentityResult {
   readonly identity: OrdinaryWorkspaceIdentity;
   readonly created: boolean;
   readonly markerPath: string;
 }
 
-export const ensureOrdinaryWorkspaceIdentity = async (
+/**
+ * Claiming a workspace stays one `await` chain rather than an `Effect.gen`
+ * pipeline: the temporary file, the hardlink that makes the claim atomic, its
+ * `EEXIST` re-read of the winning marker, and the `finally` that removes the
+ * temporary path are a single indivisible protocol. Interleaving it with other
+ * work — or interrupting it between the link and the cleanup — could leave a
+ * workspace holding a stray temporary marker.
+ */
+const ensureIdentity = async (
   workspacePath: string,
-  idFactory: () => string = randomUUID,
+  idFactory: () => string,
 ): Promise<EnsureOrdinaryWorkspaceIdentityResult> => {
-  const existing = await readOrdinaryWorkspaceIdentity(workspacePath);
+  const existing = await readIdentity(workspacePath);
   const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
   if (existing !== undefined) {
     return { identity: existing, created: false, markerPath };
@@ -106,7 +135,7 @@ export const ensureOrdinaryWorkspaceIdentity = async (
     if (errorCode(error) !== "EEXIST") {
       throw error;
     }
-    const winner = await readOrdinaryWorkspaceIdentity(workspacePath);
+    const winner = await readIdentity(workspacePath);
     if (winner === undefined) {
       throw new InvalidManagedIdentityError({
         message: "Identity publication raced without a winning marker",
@@ -117,3 +146,12 @@ export const ensureOrdinaryWorkspaceIdentity = async (
     await unlink(temporaryPath).catch(() => undefined);
   }
 };
+
+export const ensureOrdinaryWorkspaceIdentity = (
+  workspacePath: string,
+  idFactory: () => string = randomUUID,
+): Effect.Effect<EnsureOrdinaryWorkspaceIdentityResult, InvalidManagedIdentityError> =>
+  Effect.tryPromise({
+    try: () => ensureIdentity(workspacePath, idFactory),
+    catch: failsWithIdentity,
+  });

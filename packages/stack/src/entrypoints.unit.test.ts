@@ -64,7 +64,8 @@ describe("@supabase/stack entrypoints", () => {
   it("exposes managed policy through its own entrypoint", () => {
     expect(managed).toHaveProperty("createManagedStackService");
     expect(managed).toHaveProperty("makeManagedStackService");
-    expect(managed).toHaveProperty("openBunSqliteManagedStackRepository");
+    expect(managed).toHaveProperty("ManagedStackService");
+    expect(managed).toHaveProperty("bunSqliteManagedStackRepositoryLayer");
     expect(nodeRoot).not.toHaveProperty("createManagedStackService");
   });
 
@@ -91,11 +92,14 @@ describe("@supabase/stack entrypoints", () => {
       "ManagedStackNotFoundError",
       "ManagedStackNotStoppedError",
       "ManagedStackPublicationTimeoutError",
+      "ManagedStackRepository",
+      "ManagedStackService",
       "ORDINARY_WORKSPACE_IDENTITY_VERSION",
       "UnsafeManagedStackPathError",
       "UnsupportedManagedRegistryVersionError",
       "assertManagedStackRoot",
       "assertManagedUuid",
+      "bunSqliteManagedStackRepositoryLayer",
       "canonicalizeOrdinaryWorkspacePath",
       "createManagedStackService",
       "createManagedUuid",
@@ -104,9 +108,9 @@ describe("@supabase/stack entrypoints", () => {
       "makeManagedStackService",
       "managedRegistryPath",
       "managedStackPaths",
-      "openBunSqliteManagedStackRepository",
       "ordinaryWorkspaceIdentityPath",
       "readOrdinaryWorkspaceIdentity",
+      "requireExplicitManagedStateRoot",
       "resolveManagedStateRoot",
     ]);
   });

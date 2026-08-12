@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { Context, Effect, ManagedRuntime } from "effect";
 import { managedStackContractFixtures } from "./managed-stack-contract.ts";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
@@ -41,16 +42,37 @@ import {
   UnsafeManagedStackPathError,
   UnsupportedManagedRegistryVersionError,
   type ManagedStackConfiguration,
+  type ManagedStackRecord,
 } from "./managed/model.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
-import type { ManagedStackRepository } from "./managed/repository.ts";
+import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./managed/repository.ts";
+import type { MakeManagedStackServiceOptions, ManagedStackServiceHandle } from "./managed-bun.ts";
 import {
+  bunSqliteManagedStackRepositoryLayer,
+  createManagedStackService,
   makeManagedStackService,
-  type ManagedStackService,
-  type ManagedStackServiceOptions,
-} from "./managed/service.ts";
-import { openBunSqliteManagedStackRepository } from "./managed/sqlite-bun.ts";
-import { createManagedStackService } from "./managed-bun.ts";
+} from "./managed-bun.ts";
+
+/**
+ * Both registry adapters decide synchronously, so a test can run a contract call
+ * the same way the Promise facade's synchronous accessors do.
+ */
+const runRepo = Effect.runSync;
+
+/**
+ * Opens a registry the way production does, as a scoped layer, for the tests that
+ * exercise the SQLite adapter itself rather than a managed stack service. The
+ * layer's scope owns the database handle, so it stays open until `close`.
+ */
+const openRegistry = (
+  databasePath: string,
+): { readonly repository: ManagedStackRepositoryShape; readonly close: () => Promise<void> } => {
+  const runtime = ManagedRuntime.make(bunSqliteManagedStackRepositoryLayer(databasePath));
+  return {
+    repository: Context.get(Effect.runSync(runtime.contextEffect), ManagedStackRepository),
+    close: () => runtime.dispose(),
+  };
+};
 
 const temporaryRoots: Array<string> = [];
 
@@ -88,9 +110,12 @@ const findNodeBinary = (): string => {
   throw new Error("Node is required for the managed SQLite adapter test");
 };
 
-type ServiceOverrides = Omit<ManagedStackServiceOptions, "repository" | "stateRoot">;
+type ServiceOverrides = Omit<MakeManagedStackServiceOptions, "repository" | "stateRoot">;
 
-const makeInMemoryService = (root: string, overrides: ServiceOverrides = {}): ManagedStackService =>
+const makeInMemoryService = (
+  root: string,
+  overrides: ServiceOverrides = {},
+): ManagedStackServiceHandle =>
   makeManagedStackService({
     repository: createInMemoryManagedStackRepository(),
     stateRoot: join(root, "managed"),
@@ -101,16 +126,12 @@ const makeInMemoryService = (root: string, overrides: ServiceOverrides = {}): Ma
 const makePersistentService = (
   root: string,
   overrides: ServiceOverrides = {},
-): ManagedStackService => {
-  const stateRoot = join(root, "managed");
-  const databasePath = managedRegistryPath(stateRoot);
-  return makeManagedStackService({
-    repository: openBunSqliteManagedStackRepository(databasePath),
-    stateRoot,
+): ManagedStackServiceHandle =>
+  createManagedStackService({
+    stateRoot: join(root, "managed"),
     publicationPollMs: 1,
     ...overrides,
   });
-};
 
 /**
  * Valid managed UUIDs whose lexicographic order is the reverse of the order
@@ -155,25 +176,27 @@ const invalidStackNameCases = managedStackContractFixtures
   .flatMap((scenario) => stackNames(scenario.id).map((name) => [scenario.id, name] as const));
 
 const prepareAbandonedStack = async (
-  service: ManagedStackService,
+  service: ManagedStackServiceHandle,
   workspace: string,
   ownerPid?: number,
   configuration: ManagedStackConfiguration = {},
 ) => {
-  const identity = (await ensureOrdinaryWorkspaceIdentity(workspace)).identity;
+  const identity = (await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace))).identity;
   const stackId = crypto.randomUUID();
-  const prepared = service.repository.prepareOrdinaryStack({
-    identity,
-    canonicalPath: realpathSync(workspace),
-    locationId: crypto.randomUUID(),
-    stackId,
-    stackName: "default",
-    paths: managedStackPaths(service.stateRoot, stackId),
-    operationToken: crypto.randomUUID(),
-    ownerPid,
-    now: "2026-08-11T00:00:00.000Z",
-    configuration,
-  });
+  const prepared = runRepo(
+    service.repository.prepareOrdinaryStack({
+      identity,
+      canonicalPath: realpathSync(workspace),
+      locationId: crypto.randomUUID(),
+      stackId,
+      stackName: "default",
+      paths: managedStackPaths(service.stateRoot, stackId),
+      operationToken: crypto.randomUUID(),
+      ownerPid,
+      now: "2026-08-11T00:00:00.000Z",
+      configuration,
+    }),
+  );
   if (prepared.outcome !== "create") {
     throw new Error("Expected an abandoned pending stack");
   }
@@ -189,7 +212,7 @@ describe("ordinary-folder managed stack contract", () => {
     const { stack } = await service.provisionOrdinaryStack({
       workspacePath: makeWorkspace(root),
     });
-    service.close();
+    await service.close();
 
     const modeOf = (path: string): number => statSync(path).mode & 0o777;
     expect(modeOf(stateRoot)).toBe(0o700);
@@ -207,7 +230,7 @@ describe("ordinary-folder managed stack contract", () => {
     writeFileSync(registryPath, "", { mode: 0o644 });
 
     const service = makePersistentService(root);
-    service.close();
+    await service.close();
 
     const modeOf = (path: string): number => statSync(path).mode & 0o777;
     expect(modeOf(stateRoot)).toBe(0o700);
@@ -223,15 +246,15 @@ describe("ordinary-folder managed stack contract", () => {
 
     expect(result).toEqual({ registered: false, stacks: [] });
     expect(existsSync(ordinaryWorkspaceIdentityPath(workspace))).toBe(false);
-    expect(service.repository.listStacks()).toEqual([]);
-    expect(service.repository.listCheckoutLocations()).toEqual([]);
+    expect(runRepo(service.repository.listStacks())).toEqual([]);
+    expect(runRepo(service.repository.listCheckoutLocations())).toEqual([]);
   });
 
   it("reports an existing identity without stacks as not yet registered", async () => {
     const root = makeRoot();
     const workspace = makeWorkspace(root);
     const service = makeInMemoryService(root);
-    const marker = await ensureOrdinaryWorkspaceIdentity(workspace);
+    const marker = await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace));
 
     const result = await service.inspectOrdinaryWorkspace(workspace);
 
@@ -241,13 +264,13 @@ describe("ordinary-folder managed stack contract", () => {
   it("filters inspected stacks by the complete project, checkout, and context identity", async () => {
     const root = makeRoot();
     const repository = createInMemoryManagedStackRepository();
-    let foreignContextStack: ReturnType<ManagedStackRepository["getStack"]>;
-    const filteringRepository: ManagedStackRepository = {
+    let foreignContextStack: ManagedStackRecord | undefined;
+    const filteringRepository: ManagedStackRepositoryShape = {
       ...repository,
-      listStacks(options) {
-        const stacks = repository.listStacks(options);
-        return foreignContextStack === undefined ? stacks : [...stacks, foreignContextStack];
-      },
+      listStacks: (options) =>
+        Effect.map(repository.listStacks(options), (stacks) =>
+          foreignContextStack === undefined ? stacks : [...stacks, foreignContextStack],
+        ),
     };
     const service = makeManagedStackService({
       repository: filteringRepository,
@@ -287,8 +310,8 @@ describe("ordinary-folder managed stack contract", () => {
     await expect(
       service.provisionOrdinaryStack({ workspacePath: workspace }),
     ).rejects.toBeInstanceOf(InvalidManagedIdentityError);
-    expect(service.repository.listStacks()).toEqual([]);
-    expect(service.repository.listCheckoutLocations()).toEqual([]);
+    expect(runRepo(service.repository.listStacks())).toEqual([]);
+    expect(runRepo(service.repository.listCheckoutLocations())).toEqual([]);
   });
 
   it.each(invalidStackNameCases)("rejects %s", async (_fixtureId, stackName) => {
@@ -369,7 +392,7 @@ describe("ordinary-folder managed stack contract", () => {
       contextId: created.selection.contextId,
     });
 
-    service.close();
+    await service.close();
     const reopened = makePersistentService(root);
     const reused = await reopened.provisionOrdinaryStack({ workspacePath: workspace });
 
@@ -378,7 +401,7 @@ describe("ordinary-folder managed stack contract", () => {
     expect(reused.selection).toEqual(created.selection);
     expect(reused.stack.ports).toEqual(created.stack.ports);
     expect(reopened.listStacks()).toHaveLength(1);
-    reopened.close();
+    await reopened.close();
 
     const registry = new Database(managedRegistryPath(join(root, "managed")));
     const columns = registry.query("PRAGMA table_info(stacks)").all();
@@ -425,7 +448,7 @@ describe("ordinary-folder managed stack contract", () => {
         await initializationGate;
       },
     });
-    while (service.repository.listStacks().length === 0) {
+    while (runRepo(service.repository.listStacks()).length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
     const second = service.provisionOrdinaryStack({ workspacePath: workspace });
@@ -436,8 +459,8 @@ describe("ordinary-folder managed stack contract", () => {
     expect(results.map((result) => result.outcome).sort()).toEqual(["create", "reuse"]);
     expect(new Set(results.map((result) => result.stack.id))).toHaveProperty("size", 1);
     expect(initializerCalls).toBe(1);
-    expect(service.repository.listStacks()).toHaveLength(1);
-    service.close();
+    expect(runRepo(service.repository.listStacks())).toHaveLength(1);
+    await service.close();
   });
 
   it("applies the requested configuration after awaiting another caller's publication", async () => {
@@ -456,7 +479,7 @@ describe("ordinary-folder managed stack contract", () => {
         await initializationGate;
       },
     });
-    while (service.repository.listStacks().length === 0) {
+    while (runRepo(service.repository.listStacks()).length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
     const second = service.provisionOrdinaryStack({
@@ -475,7 +498,7 @@ describe("ordinary-folder managed stack contract", () => {
       ports: [requested],
       serviceVersions: { postgres: "17.6.1.143" },
     });
-    service.close();
+    await service.close();
   });
 
   it("rolls back failed initialization and makes the same start retryable", async () => {
@@ -502,7 +525,7 @@ describe("ordinary-folder managed stack contract", () => {
     const retried = await service.provisionOrdinaryStack({ workspacePath: workspace });
     expect(retried.outcome).toBe("create");
     expect(service.listStacks()).toHaveLength(1);
-    service.close();
+    await service.close();
   });
 
   it("rejects a copied ordinary-folder identity claim", async () => {
@@ -521,8 +544,8 @@ describe("ordinary-folder managed stack contract", () => {
       service.provisionOrdinaryStack({ workspacePath: secondWorkspace }),
     ).rejects.toBeInstanceOf(DuplicateManagedIdentityError);
     expect(service.listStacks()).toHaveLength(1);
-    expect(service.repository.listCheckoutLocations()).toHaveLength(1);
-    service.close();
+    expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
+    await service.close();
   });
 
   it("times out without adopting a pending stack owned by another caller", async () => {
@@ -538,7 +561,7 @@ describe("ordinary-folder managed stack contract", () => {
       service.provisionOrdinaryStack({ workspacePath: workspace }),
     ).rejects.toBeInstanceOf(ManagedStackPublicationTimeoutError);
     expect(service.listStacks()).toHaveLength(1);
-    service.close();
+    await service.close();
   });
 
   it.each([0, -1, 1.5])(
@@ -552,14 +575,14 @@ describe("ordinary-folder managed stack contract", () => {
       const workspace = makeWorkspace(root);
       const repository = createInMemoryManagedStackRepository();
       let livenessProbes = 0;
-      const corruptedRepository: ManagedStackRepository = {
+      const corruptedRepository: ManagedStackRepositoryShape = {
         ...repository,
-        prepareOrdinaryStack(input) {
-          const prepared = repository.prepareOrdinaryStack(input);
-          return prepared.outcome === "existing" && prepared.operation !== undefined
-            ? { ...prepared, operation: { ...prepared.operation, ownerPid } }
-            : prepared;
-        },
+        prepareOrdinaryStack: (input) =>
+          Effect.map(repository.prepareOrdinaryStack(input), (prepared) =>
+            prepared.outcome === "existing" && prepared.operation !== undefined
+              ? { ...prepared, operation: { ...prepared.operation, ownerPid } }
+              : prepared,
+          ),
       };
       const service = makeManagedStackService({
         repository: corruptedRepository,
@@ -578,7 +601,7 @@ describe("ordinary-folder managed stack contract", () => {
       ).rejects.toBeInstanceOf(ManagedAbandonedOperationError);
 
       expect(livenessProbes).toBe(0);
-      service.close();
+      await service.close();
     },
   );
 
@@ -587,12 +610,13 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const repository = createInMemoryManagedStackRepository();
     const pollTimes: Array<number> = [];
-    const observedRepository: ManagedStackRepository = {
+    const observedRepository: ManagedStackRepositoryShape = {
       ...repository,
-      getStack(stackId) {
-        pollTimes.push(performance.now());
-        return repository.getStack(stackId);
-      },
+      getStack: (stackId) =>
+        Effect.suspend(() => {
+          pollTimes.push(performance.now());
+          return repository.getStack(stackId);
+        }),
     };
     const service = makeManagedStackService({
       repository: observedRepository,
@@ -612,13 +636,13 @@ describe("ordinary-folder managed stack contract", () => {
     expect(pollTimes.length).toBeGreaterThanOrEqual(2);
     const gaps = pollTimes.slice(1).map((time, index) => time - (pollTimes[index] ?? 0));
     expect(gaps.slice(0, 2).every((gap) => gap >= 350)).toBe(true);
-    service.close();
+    await service.close();
   });
 
   it("rejects a non-UUID stack factory result before deriving state paths", async () => {
     const root = makeRoot();
     const workspace = makeWorkspace(root);
-    await ensureOrdinaryWorkspaceIdentity(workspace);
+    await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace));
     const service = makeManagedStackService({
       repository: createInMemoryManagedStackRepository(),
       stateRoot: join(root, "managed"),
@@ -664,7 +688,7 @@ describe("managed service options", () => {
         makeManagedStackService({
           repository: createInMemoryManagedStackRepository(),
           stateRoot: undefined,
-        } as unknown as ManagedStackServiceOptions),
+        } as unknown as MakeManagedStackServiceOptions),
       ).toThrow(UnsafeManagedStackPathError);
       expect(existsSync(configuredHome)).toBe(false);
     } finally {
@@ -690,7 +714,7 @@ describe("managed service options", () => {
     },
   );
 
-  it("validates owner pids on the shared entrypoint options path too", () => {
+  it("validates owner pids on the shared entrypoint options path too", async () => {
     const root = makeRoot();
     expect(() =>
       createManagedStackService({
@@ -706,7 +730,7 @@ describe("managed service options", () => {
       ownerPid: 4321,
     });
     expect(service.stateRoot).toBe(join(root, "managed"));
-    service.close();
+    await service.close();
   });
 });
 
@@ -739,12 +763,12 @@ describe("managed repository and lifecycle", () => {
         [first.stack.id, second.stack.id].sort(),
       );
 
-      const paths = service.repository
-        .listCheckoutLocations()
-        .map((location) => location.canonicalPath);
+      const paths = runRepo(service.repository.listCheckoutLocations()).map(
+        (location) => location.canonicalPath,
+      );
       expect(paths).toEqual([...paths].sort());
       expect(paths).toHaveLength(2);
-      service.close();
+      await service.close();
     });
   }
 
@@ -763,17 +787,17 @@ describe("managed repository and lifecycle", () => {
       expect(created.outcome).toBe("create");
       expect(reused.outcome).toBe("reuse");
       expect(reused.selection).toEqual(created.selection);
-      service.close();
+      await service.close();
     });
   }
 
-  it("anchors an injected relative state root so a later chdir cannot split stack state", () => {
+  it("anchors an injected relative state root so a later chdir cannot split stack state", async () => {
     const service = makeManagedStackService({
       repository: createInMemoryManagedStackRepository(),
       stateRoot: "relative-managed-state",
     });
     expect(service.stateRoot).toBe(resolve("relative-managed-state"));
-    service.close();
+    await service.close();
   });
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
@@ -797,7 +821,7 @@ describe("managed repository and lifecycle", () => {
         }),
       ).rejects.toBeInstanceOf(InvalidManagedPortError);
       expect(service.inspectStack(created.stack.id)?.ports).toEqual([]);
-      service.close();
+      await service.close();
     });
   }
 
@@ -844,7 +868,7 @@ describe("managed repository and lifecycle", () => {
       }),
     ).rejects.toBeInstanceOf(ManagedPortReservationError);
     expect(service.inspectStack(second.stack.id)?.ports).toEqual([]);
-    service.close();
+    await service.close();
   });
 
   it("rolls back an in-memory registration when its initial port reservation conflicts", async () => {
@@ -868,12 +892,12 @@ describe("managed repository and lifecycle", () => {
         },
       }),
     ).rejects.toBeInstanceOf(ManagedPortReservationError);
-    expect(service.repository.listCheckoutLocations()).toHaveLength(1);
+    expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
     expect(service.listStacks()).toHaveLength(1);
 
     const retried = await service.provisionOrdinaryStack({ workspacePath: secondWorkspace });
     expect(retried.outcome).toBe("create");
-    expect(service.repository.listCheckoutLocations()).toHaveLength(2);
+    expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(2);
   });
 
   it("requires actual runtime inspection before recovering an abandoned operation", async () => {
@@ -882,22 +906,26 @@ describe("managed repository and lifecycle", () => {
     const created = await service.provisionOrdinaryStack({
       workspacePath: makeWorkspace(root),
     });
-    const claimed = service.repository.claimOperation({
-      token: crypto.randomUUID(),
-      stackId: created.stack.id,
-      kind: "start",
-      ownerPid: 987_654,
-      now: "2026-08-11T00:00:00.000Z",
-    });
+    const claimed = runRepo(
+      service.repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: created.stack.id,
+        kind: "start",
+        ownerPid: 987_654,
+        now: "2026-08-11T00:00:00.000Z",
+      }),
+    );
     if (!claimed.acquired) {
       throw new Error("Expected to claim an abandoned operation");
     }
-    service.repository.updateStack({
-      stackId: created.stack.id,
-      operationToken: claimed.operation.token,
-      lifecycle: "starting",
-      now: "2026-08-11T00:00:01.000Z",
-    });
+    runRepo(
+      service.repository.updateStack({
+        stackId: created.stack.id,
+        operationToken: claimed.operation.token,
+        lifecycle: "starting",
+        now: "2026-08-11T00:00:01.000Z",
+      }),
+    );
 
     const unknown = await service.reconcileAbandonedOperations({
       inspectRuntime: async () => "unknown",
@@ -938,7 +966,7 @@ describe("managed repository and lifecycle", () => {
     const retried = await service.provisionOrdinaryStack({ workspacePath: workspace });
     expect(retried.outcome).toBe("create");
     expect(retried.stack.id).not.toBe(pending.stack.id);
-    service.close();
+    await service.close();
   });
 
   it("publishes a crashed pending provision when runtime inspection finds it running", async () => {
@@ -959,7 +987,7 @@ describe("managed repository and lifecycle", () => {
     const reused = await service.provisionOrdinaryStack({ workspacePath: workspace });
     expect(reused.outcome).toBe("reuse");
     expect(reused.stack.id).toBe(pending.stack.id);
-    service.close();
+    await service.close();
   });
 
   it("retains operations while their owner process is still alive", async () => {
@@ -1051,7 +1079,7 @@ describe("managed repository and lifecycle", () => {
 
     expect(staleTarget.abortedStackIds).toEqual([]);
     expect(inspected).toEqual([]);
-    expect(service.repository.listActiveOperations()).toHaveLength(3);
+    expect(runRepo(service.repository.listActiveOperations())).toHaveLength(3);
 
     const forced = await service.reconcileAbandonedOperations({
       force: {
@@ -1067,8 +1095,7 @@ describe("managed repository and lifecycle", () => {
     expect(inspected).toEqual([target.stack.id]);
     expect(forced.abortedStackIds).toEqual([target.stack.id]);
     expect(
-      service.repository
-        .listActiveOperations()
+      runRepo(service.repository.listActiveOperations())
         .map(({ token }) => token)
         .sort(),
     ).toEqual(
@@ -1112,11 +1139,13 @@ describe("managed repository and lifecycle", () => {
 
     const reconciled = await service.reconcileAbandonedOperations({
       inspectRuntime: async (stack, operation) => {
-        service.repository.reconcileOperation(
-          stack.id,
-          operation.token,
-          "running",
-          "2026-08-11T00:00:01.000Z",
+        runRepo(
+          service.repository.reconcileOperation(
+            stack.id,
+            operation.token,
+            "running",
+            "2026-08-11T00:00:01.000Z",
+          ),
         );
         return "stopped";
       },
@@ -1130,7 +1159,7 @@ describe("managed repository and lifecycle", () => {
       lifecycle: "running",
     });
     expect(readFileSync(dataFile, "utf8")).toBe("live data");
-    service.close();
+    await service.close();
   });
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
@@ -1150,17 +1179,19 @@ describe("managed repository and lifecycle", () => {
             stackRoot = stack.paths.root;
             dataFile = join(stack.paths.data, "database");
             writeFileSync(dataFile, "live data");
-            const operation = service.repository
-              .listActiveOperations()
-              .find((candidate) => candidate.stackId === stack.id);
+            const operation = runRepo(service.repository.listActiveOperations()).find(
+              (candidate) => candidate.stackId === stack.id,
+            );
             if (operation === undefined) {
               throw new Error("Expected the provision operation to remain active");
             }
-            service.repository.reconcileOperation(
-              stack.id,
-              operation.token,
-              "running",
-              "2026-08-11T00:00:01.000Z",
+            runRepo(
+              service.repository.reconcileOperation(
+                stack.id,
+                operation.token,
+                "running",
+                "2026-08-11T00:00:01.000Z",
+              ),
             );
           },
         }),
@@ -1175,7 +1206,7 @@ describe("managed repository and lifecycle", () => {
       expect(service.listStacks()).toEqual([
         expect.objectContaining({ status: "active", lifecycle: "running" }),
       ]);
-      service.close();
+      await service.close();
     });
   }
 
@@ -1221,7 +1252,7 @@ describe("managed repository and lifecycle", () => {
         error: inspectionError,
       },
     ]);
-    expect(service.repository.listActiveOperations()).toEqual([pending.operation]);
+    expect(runRepo(service.repository.listActiveOperations())).toEqual([pending.operation]);
   });
 
   it("reports a failed post-abort state reclamation", async () => {
@@ -1229,23 +1260,22 @@ describe("managed repository and lifecycle", () => {
     const repository = createInMemoryManagedStackRepository();
     let returnUnsafePath = false;
     const unsafeRoot = join(root, "outside");
-    const guardedRepository: ManagedStackRepository = {
+    const guardedRepository: ManagedStackRepositoryShape = {
       ...repository,
-      getStack(stackId) {
-        const stack = repository.getStack(stackId);
-        if (stack === undefined || !returnUnsafePath) {
-          return stack;
-        }
-        return {
-          ...stack,
-          paths: {
-            root: unsafeRoot,
-            data: join(unsafeRoot, "data"),
-            logs: join(unsafeRoot, "logs"),
-            runtime: join(unsafeRoot, "runtime"),
-          },
-        };
-      },
+      getStack: (stackId) =>
+        Effect.map(repository.getStack(stackId), (stack) =>
+          stack === undefined || !returnUnsafePath
+            ? stack
+            : {
+                ...stack,
+                paths: {
+                  root: unsafeRoot,
+                  data: join(unsafeRoot, "data"),
+                  logs: join(unsafeRoot, "logs"),
+                  runtime: join(unsafeRoot, "runtime"),
+                },
+              },
+        ),
     };
     const service = makeManagedStackService({
       repository: guardedRepository,
@@ -1282,20 +1312,24 @@ describe("managed repository and lifecycle", () => {
     const second = await service.provisionOrdinaryStack({
       workspacePath: makeWorkspace(root, "second"),
     });
-    const firstOperation = service.repository.claimOperation({
-      token: crypto.randomUUID(),
-      stackId: first.stack.id,
-      kind: "start",
-      ownerPid: 987_653,
-      now: "2026-08-11T00:00:00.000Z",
-    });
-    const secondOperation = service.repository.claimOperation({
-      token: crypto.randomUUID(),
-      stackId: second.stack.id,
-      kind: "start",
-      ownerPid: 987_654,
-      now: "2026-08-11T00:00:01.000Z",
-    });
+    const firstOperation = runRepo(
+      service.repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: first.stack.id,
+        kind: "start",
+        ownerPid: 987_653,
+        now: "2026-08-11T00:00:00.000Z",
+      }),
+    );
+    const secondOperation = runRepo(
+      service.repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: second.stack.id,
+        kind: "start",
+        ownerPid: 987_654,
+        now: "2026-08-11T00:00:01.000Z",
+      }),
+    );
     if (!firstOperation.acquired || !secondOperation.acquired) {
       throw new Error("Expected both recovery operations to be claimed");
     }
@@ -1303,11 +1337,13 @@ describe("managed repository and lifecycle", () => {
     const reconciled = await service.reconcileAbandonedOperations({
       inspectRuntime: async (stack, operation) => {
         if (stack.id === first.stack.id) {
-          service.repository.finishOperation(
-            stack.id,
-            operation.token,
-            "completed",
-            "2026-08-11T00:00:02.000Z",
+          runRepo(
+            service.repository.finishOperation(
+              stack.id,
+              operation.token,
+              "completed",
+              "2026-08-11T00:00:02.000Z",
+            ),
           );
         }
         return "stopped";
@@ -1357,7 +1393,7 @@ describe("managed repository and lifecycle", () => {
         status: "pending",
         lifecycle: "stopped",
       });
-      expect(service.repository.listActiveOperations()).toEqual([pending.operation]);
+      expect(runRepo(service.repository.listActiveOperations())).toEqual([pending.operation]);
 
       await service.updateStack(owner.stack.id, { lifecycle: "stopped" });
       const retried = await service.reconcileAbandonedOperations({
@@ -1372,8 +1408,8 @@ describe("managed repository and lifecycle", () => {
         }),
       ]);
       expect(retried.failures).toEqual([]);
-      expect(service.repository.listActiveOperations()).toEqual([]);
-      service.close();
+      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
+      await service.close();
     });
   }
 
@@ -1398,13 +1434,15 @@ describe("managed repository and lifecycle", () => {
           ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
         },
       });
-      const operation = service.repository.claimOperation({
-        token: crypto.randomUUID(),
-        stackId: blocked.stack.id,
-        kind: "start",
-        ownerPid: 987_654,
-        now: "2026-08-11T00:00:00.000Z",
-      });
+      const operation = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: blocked.stack.id,
+          kind: "start",
+          ownerPid: 987_654,
+          now: "2026-08-11T00:00:00.000Z",
+        }),
+      );
       if (!operation.acquired) {
         throw new Error("Expected the abandoned start operation to be claimed");
       }
@@ -1420,14 +1458,14 @@ describe("managed repository and lifecycle", () => {
         operationReleased: true,
         error: expect.any(ManagedPortReservationError),
       });
-      expect(service.repository.listActiveOperations()).toEqual([]);
+      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
       expect(service.inspectStack(blocked.stack.id)?.lifecycle).toBe("failed");
       await expect(
         service.deleteStack(blocked.stack.id, { stop: async () => {} }),
       ).resolves.toMatchObject({
         outcome: "delete",
       });
-      service.close();
+      await service.close();
     });
   }
 
@@ -1467,7 +1505,7 @@ describe("managed repository and lifecycle", () => {
     });
     expect(sticky.outcome).toBe("reuse");
     expect(sticky.stack.ports).toEqual([{ ...requested, intent: "automatic" }]);
-    service.close();
+    await service.close();
   });
 
   it("rejects port drift while running without overwriting persisted exact intent", async () => {
@@ -1493,7 +1531,7 @@ describe("managed repository and lifecycle", () => {
     expect(service.inspectStack(created.stack.id)?.ports).toEqual([
       { key: previous.key, port: previous.port, intent: previous.intent },
     ]);
-    service.close();
+    await service.close();
   });
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
@@ -1538,7 +1576,7 @@ describe("managed repository and lifecycle", () => {
         lifecycle: "stopped",
         ports: [{ key: "api.port", port: 55_404, intent: "exact" }],
       });
-      service.close();
+      await service.close();
     });
   }
 
@@ -1577,7 +1615,7 @@ describe("managed repository and lifecycle", () => {
     const startedSecond = await service.updateStack(second.stack.id, { lifecycle: "starting" });
     expect(startedSecond.ports).toEqual([assignment]);
     expect(stickyContract.expected.outcome).toBe("reuse");
-    service.close();
+    await service.close();
   });
 
   it("reports duplicate ports inside one stack as a managed reservation error", async () => {
@@ -1597,7 +1635,7 @@ describe("managed repository and lifecycle", () => {
       }),
     ).rejects.toBeInstanceOf(ManagedPortReservationError);
     expect(service.inspectStack(created.stack.id)?.ports).toEqual([]);
-    service.close();
+    await service.close();
   });
 
   it("rejects a second operation claim without mutating the stack", async () => {
@@ -1606,13 +1644,15 @@ describe("managed repository and lifecycle", () => {
     const created = await service.provisionOrdinaryStack({
       workspacePath: makeWorkspace(root),
     });
-    const claimed = service.repository.claimOperation({
-      token: crypto.randomUUID(),
-      stackId: created.stack.id,
-      kind: "start",
-      ownerPid: process.pid,
-      now: "2026-08-11T00:00:00.000Z",
-    });
+    const claimed = runRepo(
+      service.repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: created.stack.id,
+        kind: "start",
+        ownerPid: process.pid,
+        now: "2026-08-11T00:00:00.000Z",
+      }),
+    );
     if (!claimed.acquired) {
       throw new Error("Expected the first operation claim to succeed");
     }
@@ -1636,26 +1676,30 @@ describe("managed repository and lifecycle", () => {
       const created = await service.provisionOrdinaryStack({
         workspacePath: makeWorkspace(root),
       });
-      const claimed = service.repository.claimOperation({
-        token: crypto.randomUUID(),
-        stackId: created.stack.id,
-        kind: "update",
-        ownerPid: process.pid,
-        now: "2026-08-11T00:00:00.000Z",
-      });
+      const claimed = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: created.stack.id,
+          kind: "update",
+          ownerPid: process.pid,
+          now: "2026-08-11T00:00:00.000Z",
+        }),
+      );
       if (!claimed.acquired) {
         throw new Error("Expected the update operation to be claimed");
       }
 
       expect(() =>
-        service.repository.finishOperation(
-          created.stack.id,
-          crypto.randomUUID(),
-          "completed",
-          "2026-08-11T00:00:01.000Z",
+        runRepo(
+          service.repository.finishOperation(
+            created.stack.id,
+            crypto.randomUUID(),
+            "completed",
+            "2026-08-11T00:00:01.000Z",
+          ),
         ),
       ).toThrow(ManagedOperationOwnershipError);
-      service.close();
+      await service.close();
     });
   }
 
@@ -1680,14 +1724,14 @@ describe("managed repository and lifecycle", () => {
         lifecycle: "stopped",
         ports: [],
       });
-      expect(service.repository.listActiveOperations()).toEqual([]);
+      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
 
       const successor = await service.provisionOrdinaryStack({
         workspacePath: makeWorkspace(root, "successor"),
         configuration: { lifecycle: "running", ports: [reserved] },
       });
       expect(successor.stack.ports).toEqual([reserved]);
-      service.close();
+      await service.close();
     });
   }
 
@@ -1709,20 +1753,24 @@ describe("managed repository and lifecycle", () => {
           workspacePath: makeWorkspace(root),
         });
         writeFileSync(join(created.stack.paths.data, "database"), "leaked");
-        const claimed = service.repository.claimOperation({
-          token: crypto.randomUUID(),
-          stackId: created.stack.id,
-          kind: "delete",
-          ownerPid: 987_680,
-          now: "2026-08-11T00:00:00.000Z",
-        });
+        const claimed = runRepo(
+          service.repository.claimOperation({
+            token: crypto.randomUUID(),
+            stackId: created.stack.id,
+            kind: "delete",
+            ownerPid: 987_680,
+            now: "2026-08-11T00:00:00.000Z",
+          }),
+        );
         if (!claimed.acquired) {
           throw new Error("Expected the delete operation to be claimed");
         }
-        service.repository.tombstoneStack(
-          created.stack.id,
-          claimed.operation.token,
-          "2026-08-11T00:00:01.000Z",
+        runRepo(
+          service.repository.tombstoneStack(
+            created.stack.id,
+            claimed.operation.token,
+            "2026-08-11T00:00:01.000Z",
+          ),
         );
 
         const reconciled = await service.reconcileAbandonedOperations({
@@ -1734,7 +1782,7 @@ describe("managed repository and lifecycle", () => {
         expect(reconciled.abortedStackIds).toEqual([]);
         expect(reconciled.failures).toEqual([]);
         expect(reconciled.retained).toEqual([]);
-        expect(service.repository.listActiveOperations()).toEqual([]);
+        expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
         // The tombstone itself survives: idempotent deletion depends on it.
         expect(service.inspectStack(created.stack.id)).toMatchObject({
           status: "tombstoned",
@@ -1759,7 +1807,7 @@ describe("managed repository and lifecycle", () => {
         await expect(service.deleteStack(created.stack.id)).resolves.toMatchObject({
           outcome: "no-op",
         });
-        service.close();
+        await service.close();
       });
     }
   }
@@ -1780,20 +1828,24 @@ describe("managed repository and lifecycle", () => {
         workspacePath: makeWorkspace(root),
       });
       writeFileSync(join(created.stack.paths.data, "database"), "leaked");
-      const claimed = service.repository.claimOperation({
-        token: crypto.randomUUID(),
-        stackId: created.stack.id,
-        kind: "delete",
-        ownerPid: 987_681,
-        now: "2026-08-11T00:00:00.000Z",
-      });
+      const claimed = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: created.stack.id,
+          kind: "delete",
+          ownerPid: 987_681,
+          now: "2026-08-11T00:00:00.000Z",
+        }),
+      );
       if (!claimed.acquired) {
         throw new Error("Expected the delete operation to be claimed");
       }
-      service.repository.tombstoneStack(
-        created.stack.id,
-        claimed.operation.token,
-        "2026-08-11T00:00:01.000Z",
+      runRepo(
+        service.repository.tombstoneStack(
+          created.stack.id,
+          claimed.operation.token,
+          "2026-08-11T00:00:01.000Z",
+        ),
       );
 
       const reconciled = await service.reconcileAbandonedOperations({
@@ -1805,10 +1857,10 @@ describe("managed repository and lifecycle", () => {
       expect(reconciled.reclaimedStackIds).toEqual([created.stack.id]);
       expect(reconciled.retained).toEqual([]);
       expect(reconciled.failures).toEqual([]);
-      expect(service.repository.listActiveOperations()).toEqual([]);
+      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
       expect(existsSync(created.stack.paths.root)).toBe(false);
       expect(service.inspectStack(created.stack.id)?.status).toBe("tombstoned");
-      service.close();
+      await service.close();
     });
   }
 
@@ -1819,28 +1871,26 @@ describe("managed repository and lifecycle", () => {
       const outsideRoot = join(root, "outside");
       mkdirSync(outsideRoot, { recursive: true });
       writeFileSync(join(outsideRoot, "preserve"), "safe");
-      const repository =
-        adapter === "in-memory"
-          ? createInMemoryManagedStackRepository()
-          : openBunSqliteManagedStackRepository(managedRegistryPath(stateRoot));
+      const registry =
+        adapter === "in-memory" ? undefined : openRegistry(managedRegistryPath(stateRoot));
+      const repository = registry?.repository ?? createInMemoryManagedStackRepository();
       let forgePath = false;
-      const guardedRepository: ManagedStackRepository = {
+      const guardedRepository: ManagedStackRepositoryShape = {
         ...repository,
-        getStack(stackId) {
-          const stack = repository.getStack(stackId);
-          if (stack === undefined || !forgePath) {
-            return stack;
-          }
-          return {
-            ...stack,
-            paths: {
-              root: outsideRoot,
-              data: join(outsideRoot, "data"),
-              logs: join(outsideRoot, "logs"),
-              runtime: join(outsideRoot, "runtime"),
-            },
-          };
-        },
+        getStack: (stackId) =>
+          Effect.map(repository.getStack(stackId), (stack) =>
+            stack === undefined || !forgePath
+              ? stack
+              : {
+                  ...stack,
+                  paths: {
+                    root: outsideRoot,
+                    data: join(outsideRoot, "data"),
+                    logs: join(outsideRoot, "logs"),
+                    runtime: join(outsideRoot, "runtime"),
+                  },
+                },
+          ),
       };
       const service = makeManagedStackService({
         repository: guardedRepository,
@@ -1850,20 +1900,24 @@ describe("managed repository and lifecycle", () => {
       const created = await service.provisionOrdinaryStack({
         workspacePath: makeWorkspace(root),
       });
-      const claimed = service.repository.claimOperation({
-        token: crypto.randomUUID(),
-        stackId: created.stack.id,
-        kind: "delete",
-        ownerPid: 987_682,
-        now: "2026-08-11T00:00:00.000Z",
-      });
+      const claimed = runRepo(
+        service.repository.claimOperation({
+          token: crypto.randomUUID(),
+          stackId: created.stack.id,
+          kind: "delete",
+          ownerPid: 987_682,
+          now: "2026-08-11T00:00:00.000Z",
+        }),
+      );
       if (!claimed.acquired) {
         throw new Error("Expected the delete operation to be claimed");
       }
-      service.repository.tombstoneStack(
-        created.stack.id,
-        claimed.operation.token,
-        "2026-08-11T00:00:01.000Z",
+      runRepo(
+        service.repository.tombstoneStack(
+          created.stack.id,
+          claimed.operation.token,
+          "2026-08-11T00:00:01.000Z",
+        ),
       );
       forgePath = true;
 
@@ -1883,7 +1937,8 @@ describe("managed repository and lifecycle", () => {
         },
       ]);
       expect(readFileSync(join(outsideRoot, "preserve"), "utf8")).toBe("safe");
-      service.close();
+      await service.close();
+      await registry?.close();
     });
   }
 
@@ -1912,7 +1967,7 @@ describe("managed repository and lifecycle", () => {
 
       expect(updated.ports).toEqual(sorted);
       expect(service.inspectStack(created.stack.id)?.ports).toEqual(sorted);
-      service.close();
+      await service.close();
     });
   }
 
@@ -1935,13 +1990,15 @@ describe("managed repository and lifecycle", () => {
           workspacePath: makeWorkspace(root, name),
         });
         const token = nextToken();
-        const claimed = service.repository.claimOperation({
-          token,
-          stackId: created.stack.id,
-          kind: "start",
-          ownerPid: 987_683,
-          now: "2026-08-11T00:00:00.000Z",
-        });
+        const claimed = runRepo(
+          service.repository.claimOperation({
+            token,
+            stackId: created.stack.id,
+            kind: "start",
+            ownerPid: 987_683,
+            now: "2026-08-11T00:00:00.000Z",
+          }),
+        );
         if (!claimed.acquired) {
           throw new Error("Expected each recovery operation to be claimed");
         }
@@ -1949,10 +2006,10 @@ describe("managed repository and lifecycle", () => {
       }
 
       expect(tokens).toEqual([...tokens].sort().reverse());
-      expect(service.repository.listActiveOperations().map(({ token }) => token)).toEqual(
+      expect(runRepo(service.repository.listActiveOperations()).map(({ token }) => token)).toEqual(
         [...tokens].sort(),
       );
-      service.close();
+      await service.close();
     });
   }
 
@@ -1970,22 +2027,24 @@ describe("managed repository and lifecycle", () => {
 
       for (const ownerPid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
         expect(() =>
-          service.repository.claimOperation({
-            token: crypto.randomUUID(),
-            stackId: created.stack.id,
-            kind: "start",
-            ownerPid,
-            now: "2026-08-11T00:00:00.000Z",
-          }),
+          runRepo(
+            service.repository.claimOperation({
+              token: crypto.randomUUID(),
+              stackId: created.stack.id,
+              kind: "start",
+              ownerPid,
+              now: "2026-08-11T00:00:00.000Z",
+            }),
+          ),
         ).toThrow(InvalidManagedOwnerPidError);
       }
-      expect(service.repository.listActiveOperations()).toEqual([]);
+      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
 
       await expect(
         prepareAbandonedStack(service, makeWorkspace(root, "prepared"), 0),
       ).rejects.toBeInstanceOf(InvalidManagedOwnerPidError);
       expect(service.listStacks()).toHaveLength(1);
-      service.close();
+      await service.close();
     });
   }
 
@@ -2000,19 +2059,21 @@ describe("managed repository and lifecycle", () => {
       const pending = await prepareAbandonedStack(service, makeWorkspace(root), process.pid);
 
       expect(() =>
-        service.repository.updateStack({
-          stackId: pending.stack.id,
-          operationToken: pending.operation.token,
-          now: "2026-08-11T00:00:02.000Z",
-          lifecycle: "running",
-        }),
+        runRepo(
+          service.repository.updateStack({
+            stackId: pending.stack.id,
+            operationToken: pending.operation.token,
+            now: "2026-08-11T00:00:02.000Z",
+            lifecycle: "running",
+          }),
+        ),
       ).toThrow(ManagedPendingStackUpdateError);
 
       expect(service.inspectStack(pending.stack.id)).toMatchObject({
         status: "pending",
         lifecycle: "stopped",
       });
-      service.close();
+      await service.close();
     });
   }
 
@@ -2034,8 +2095,8 @@ describe("managed repository and lifecycle", () => {
         status: "active",
         lifecycle: "running",
       });
-      expect(service.repository.listActiveOperations()).toEqual([]);
-      service.close();
+      expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
+      await service.close();
     });
   }
 
@@ -2043,31 +2104,43 @@ describe("managed repository and lifecycle", () => {
     const root = makeRoot();
     const repository = createInMemoryManagedStackRepository();
     let promoteBeforeDelete = true;
-    const racingRepository: ManagedStackRepository = {
+    const racingRepository: ManagedStackRepositoryShape = {
       ...repository,
-      claimOperation(input) {
-        if (input.kind === "delete" && promoteBeforeDelete) {
-          promoteBeforeDelete = false;
-          const start = repository.claimOperation({
-            token: crypto.randomUUID(),
-            stackId: input.stackId,
-            kind: "start",
-            ownerPid: 123,
-            now: input.now,
-          });
-          if (!start.acquired) {
-            throw new Error("Expected the racing start operation to be claimed");
+      claimOperation: (input) =>
+        Effect.suspend(() => {
+          if (input.kind === "delete" && promoteBeforeDelete) {
+            promoteBeforeDelete = false;
+            const start = runRepo(
+              repository.claimOperation({
+                token: crypto.randomUUID(),
+                stackId: input.stackId,
+                kind: "start",
+                ownerPid: 123,
+                now: input.now,
+              }),
+            );
+            if (!start.acquired) {
+              throw new Error("Expected the racing start operation to be claimed");
+            }
+            runRepo(
+              repository.updateStack({
+                stackId: input.stackId,
+                operationToken: start.operation.token,
+                lifecycle: "running",
+                now: input.now,
+              }),
+            );
+            runRepo(
+              repository.finishOperation(
+                input.stackId,
+                start.operation.token,
+                "completed",
+                input.now,
+              ),
+            );
           }
-          repository.updateStack({
-            stackId: input.stackId,
-            operationToken: start.operation.token,
-            lifecycle: "running",
-            now: input.now,
-          });
-          repository.finishOperation(input.stackId, start.operation.token, "completed", input.now);
-        }
-        return repository.claimOperation(input);
-      },
+          return repository.claimOperation(input);
+        }),
     };
     const service = makeManagedStackService({
       repository: racingRepository,
@@ -2094,14 +2167,12 @@ describe("managed repository and lifecycle", () => {
     // claim first must not turn an already-completed delete into a failure.
     const root = makeRoot();
     const repository = createInMemoryManagedStackRepository();
-    const racingRepository: ManagedStackRepository = {
+    const racingRepository: ManagedStackRepositoryShape = {
       ...repository,
-      finishOperation(stackId, operationToken, outcome, now, error) {
-        if (outcome === "completed") {
-          throw new ManagedOperationOwnershipError({ stackId });
-        }
-        repository.finishOperation(stackId, operationToken, outcome, now, error);
-      },
+      finishOperation: (stackId, operationToken, outcome, now, error) =>
+        outcome === "completed"
+          ? Effect.fail(new ManagedOperationOwnershipError({ stackId }))
+          : repository.finishOperation(stackId, operationToken, outcome, now, error),
     };
     const service = makeManagedStackService({
       repository: racingRepository,
@@ -2118,7 +2189,7 @@ describe("managed repository and lifecycle", () => {
       dataReclamation: { outcome: "removed" },
     });
     expect(existsSync(created.stack.paths.root)).toBe(false);
-    service.close();
+    await service.close();
   });
 
   it("stops, tombstones, and reclaims one opaque stack ID idempotently", async () => {
@@ -2149,7 +2220,7 @@ describe("managed repository and lifecycle", () => {
     expect(repeated.dataReclamation).toEqual({ outcome: "removed" });
     expect(service.listStacks()).toEqual([]);
     expect(service.listStacks({ includeTombstoned: true })).toHaveLength(1);
-    service.close();
+    await service.close();
   });
 
   it("reports unsafe tombstone data as retained without deleting it", async () => {
@@ -2159,23 +2230,22 @@ describe("managed repository and lifecycle", () => {
     const outsideRoot = join(root, "outside");
     mkdirSync(outsideRoot);
     writeFileSync(join(outsideRoot, "preserve"), "safe");
-    const guardedRepository: ManagedStackRepository = {
+    const guardedRepository: ManagedStackRepositoryShape = {
       ...repository,
-      getStack(stackId) {
-        const stack = repository.getStack(stackId);
-        if (stack === undefined || !forgePath) {
-          return stack;
-        }
-        return {
-          ...stack,
-          paths: {
-            root: outsideRoot,
-            data: join(outsideRoot, "data"),
-            logs: join(outsideRoot, "logs"),
-            runtime: join(outsideRoot, "runtime"),
-          },
-        };
-      },
+      getStack: (stackId) =>
+        Effect.map(repository.getStack(stackId), (stack) =>
+          stack === undefined || !forgePath
+            ? stack
+            : {
+                ...stack,
+                paths: {
+                  root: outsideRoot,
+                  data: join(outsideRoot, "data"),
+                  logs: join(outsideRoot, "logs"),
+                  runtime: join(outsideRoot, "runtime"),
+                },
+              },
+        ),
     };
     const service = makeManagedStackService({
       repository: guardedRepository,
@@ -2213,29 +2283,29 @@ describe("managed repository and lifecycle", () => {
 
     expect(contract.expected.outcome).toBe("update");
     expect(pruned).toBe(1);
-    expect(service.repository.listCheckoutLocations()).toEqual([]);
+    expect(runRepo(service.repository.listCheckoutLocations())).toEqual([]);
     expect(service.inspectStack(created.stack.id)?.status).toBe("active");
     expect(readFileSync(dataFile, "utf8")).toBe("preserve me");
-    service.close();
+    await service.close();
   });
 
   it("persists and reuses managed state through the real Node SQLite adapter", async () => {
     const root = makeRoot();
     const stateRoot = join(root, "node-managed");
     const workspace = makeWorkspace(root, "node-workspace");
-    const adapterUrl = pathToFileURL(join(process.cwd(), "src/managed/sqlite-node.ts")).href;
-    const serviceUrl = pathToFileURL(join(process.cwd(), "src/managed/service.ts")).href;
+    // The Node entrypoint is exercised end to end, `node:sqlite` driver and all:
+    // it is the only place the Node registry adapter and its service wiring run.
+    const entrypointUrl = pathToFileURL(join(process.cwd(), "src/managed-node.ts")).href;
     const source = `
       import assert from "node:assert/strict";
       import { randomUUID } from "node:crypto";
-      import { openNodeSqliteManagedStackRepository } from ${JSON.stringify(adapterUrl)};
-      import { makeManagedStackService } from ${JSON.stringify(serviceUrl)};
+      import { Effect } from "effect";
+      import { createManagedStackService } from ${JSON.stringify(entrypointUrl)};
+      const runRepo = Effect.runSync;
       const stateRoot = ${JSON.stringify(stateRoot)};
       const workspacePath = ${JSON.stringify(workspace)};
-      const databasePath = ${JSON.stringify(managedRegistryPath(stateRoot))};
-      const firstRepository = openNodeSqliteManagedStackRepository(databasePath);
-      assert.equal(firstRepository.getStack(randomUUID()), undefined);
-      const firstService = makeManagedStackService({ repository: firstRepository, stateRoot });
+      const firstService = createManagedStackService({ stateRoot });
+      assert.equal(runRepo(firstService.repository.getStack(randomUUID())), undefined);
       const first = await firstService.provisionOrdinaryStack({
         workspacePath,
         configuration: {
@@ -2245,50 +2315,49 @@ describe("managed repository and lifecycle", () => {
       const starting = await firstService.updateStack(first.stack.id, { lifecycle: "starting" });
       assert.equal(starting.ports[0]?.port, 55431);
       await firstService.updateStack(first.stack.id, { lifecycle: "stopped" });
-      const abandoned = firstRepository.claimOperation({
+      const abandoned = runRepo(firstService.repository.claimOperation({
         token: randomUUID(),
         stackId: first.stack.id,
         kind: "start",
         now: new Date().toISOString(),
-      });
+      }));
       assert.equal(abandoned.acquired, true);
       const recovery = await firstService.reconcileAbandonedOperations({
         inspectRuntime: async () => "stopped",
       });
       assert.equal(recovery.recovered.length, 1);
       assert.equal(recovery.failures.length, 0);
-      firstService.close();
-      const secondRepository = openNodeSqliteManagedStackRepository(databasePath);
-      const secondService = makeManagedStackService({ repository: secondRepository, stateRoot });
+      await firstService.close();
+      const secondService = createManagedStackService({ stateRoot });
       const second = await secondService.provisionOrdinaryStack({ workspacePath });
       assert.equal(first.outcome, "create");
       assert.equal(second.outcome, "reuse");
       assert.equal(second.stack.id, first.stack.id);
-      const conflicting = secondRepository.claimOperation({
+      const conflicting = runRepo(secondService.repository.claimOperation({
         token: randomUUID(),
         stackId: second.stack.id,
         kind: "update",
         ownerPid: process.pid,
         now: new Date().toISOString(),
-      });
+      }));
       assert.equal(conflicting.acquired, true);
       await assert.rejects(
         secondService.updateStack(second.stack.id, { lifecycle: "running" }),
         { name: "ManagedOperationInProgressError" },
       );
       if (!conflicting.acquired) throw new Error("Expected operation ownership");
-      secondRepository.finishOperation(
+      runRepo(secondService.repository.finishOperation(
         second.stack.id,
         conflicting.operation.token,
         "completed",
         new Date().toISOString(),
-      );
+      ));
       const deleted = await secondService.deleteStack(second.stack.id);
       const repeated = await secondService.deleteStack(second.stack.id);
       assert.equal(deleted.outcome, "delete");
       assert.equal(deleted.dataReclamation.outcome, "removed");
       assert.equal(repeated.outcome, "no-op");
-      secondService.close();
+      await secondService.close();
     `;
     const command = [
       findNodeBinary(),
@@ -2312,12 +2381,18 @@ describe("managed repository and lifecycle", () => {
   it("initializes one fresh registry safely across concurrent Bun processes", async () => {
     const root = makeRoot();
     const databasePath = managedRegistryPath(join(root, "cold"));
-    const adapterUrl = pathToFileURL(join(process.cwd(), "src/managed/sqlite-bun.ts")).href;
+    const entrypointUrl = pathToFileURL(join(process.cwd(), "src/managed-bun.ts")).href;
     const source = `
-      import { openBunSqliteManagedStackRepository } from ${JSON.stringify(adapterUrl)};
-      const repository = openBunSqliteManagedStackRepository(${JSON.stringify(databasePath)});
-      repository.listStacks();
-      repository.close();
+      import { Context, Effect, ManagedRuntime } from "effect";
+      import {
+        bunSqliteManagedStackRepositoryLayer,
+        ManagedStackRepository,
+      } from ${JSON.stringify(entrypointUrl)};
+      const layer = bunSqliteManagedStackRepositoryLayer(${JSON.stringify(databasePath)});
+      const runtime = ManagedRuntime.make(layer);
+      const context = Effect.runSync(runtime.contextEffect);
+      Effect.runSync(Context.get(context, ManagedStackRepository).listStacks());
+      await runtime.dispose();
     `;
     const children = Array.from({ length: 8 }, () =>
       Bun.spawn([process.execPath, "--eval", source], { stdout: "ignore", stderr: "pipe" }),
@@ -2331,9 +2406,9 @@ describe("managed repository and lifecycle", () => {
     );
 
     expect(results).toEqual(Array.from({ length: 8 }, () => ({ exitCode: 0, stderr: "" })));
-    const repository = openBunSqliteManagedStackRepository(databasePath);
-    expect(repository.listStacks()).toEqual([]);
-    repository.close();
+    const registry = openRegistry(databasePath);
+    expect(runRepo(registry.repository.listStacks())).toEqual([]);
+    await registry.close();
   });
 
   it("fails safely when a registry has a newer schema version", () => {
@@ -2343,9 +2418,7 @@ describe("managed repository and lifecycle", () => {
     database.exec("PRAGMA user_version = 999");
     database.close();
 
-    expect(() => openBunSqliteManagedStackRepository(databasePath)).toThrow(
-      UnsupportedManagedRegistryVersionError,
-    );
+    expect(() => openRegistry(databasePath)).toThrow(UnsupportedManagedRegistryVersionError);
   });
 
   it.each([1, 2])("fails clearly instead of opening obsolete development schema v%i", (version) => {
@@ -2355,16 +2428,13 @@ describe("managed repository and lifecycle", () => {
     database.exec(`PRAGMA user_version = ${version}`);
     database.close();
 
-    expect(() => openBunSqliteManagedStackRepository(databasePath)).toThrow(
-      UnsupportedManagedRegistryVersionError,
-    );
+    expect(() => openRegistry(databasePath)).toThrow(UnsupportedManagedRegistryVersionError);
   });
 
-  it("writes the current schema version into a fresh registry", () => {
+  it("writes the current schema version into a fresh registry", async () => {
     const root = makeRoot();
     const databasePath = managedRegistryPath(join(root, "fresh"));
-    const repository = openBunSqliteManagedStackRepository(databasePath);
-    repository.close();
+    await openRegistry(databasePath).close();
 
     const database = new Database(databasePath, { readonly: true });
     expect(database.query("PRAGMA user_version").get()).toEqual({
