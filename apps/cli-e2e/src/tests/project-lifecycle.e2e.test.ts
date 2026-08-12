@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
 import { createHarness, exec, makeTempDir } from "@supabase/cli-test-helpers";
 import { ACCESS_TOKEN, isRecording, PROJECT_REF, TARGET } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 describe("init", () => {
   testBehaviour("creates supabase/config.toml and exits zero", async ({ run, workspace }) => {
@@ -58,10 +58,6 @@ describe("init", () => {
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toContain("Finished supabase init");
   });
-
-  // testParity is intentionally omitted for init: the command uses os.Getwd()
-  // basename as project_id when none is set, producing non-identical config.toml
-  // content across the two isolated parity temp dirs (go vs ts-legacy).
 });
 
 describe("link", () => {
@@ -146,8 +142,6 @@ describe("link", () => {
       expect(existsSync(join(workspace.path, "supabase", ".temp", "project-ref"))).toBe(true);
     },
   );
-
-  testParity(["link", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
 });
 
 describe("unlink", () => {
@@ -162,6 +156,4 @@ describe("unlink", () => {
   // Linux CI (no D-Bus session bus) the keyring call returns an unhandled error
   // and the command exits 1. The not-linked error path above gives meaningful
   // coverage; deeper success-path behaviour is covered by unlink.integration.test.ts.
-
-  testParity(["unlink"]);
 });

@@ -18,14 +18,11 @@ import { describe, it } from "vitest";
 //     - testBehaviour: saves token with --token and custom --name
 //     - testBehaviour: includes debug output with --debug
 //     - testBehaviour: exits non-zero on invalid token format
-//     - testParity(["login", "--token", ACCESS_TOKEN])
-//     - testParity(["login", "--token", "not_a_valid_token"])
 //
 //   logout
 //     - testBehaviour: exits zero after login with --yes
 //     - testBehaviour: exits zero gracefully when not logged in with --yes
 //       (double-logout pattern to clear any stale keychain state between runs)
-//     - testParity(["logout", "--yes"])
 
 describe("auth", () => {
   it.todo("login and logout tests blocked on Go CLI keyring opt-out (see file comment)");

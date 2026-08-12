@@ -1,6 +1,6 @@
 import { describe, expect } from "vitest";
 import { isRecording, PROJECT_REF } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 const BRANCH_NAME = "my-branch";
 
@@ -79,9 +79,6 @@ describe("branches", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["branches", "list", "--project-ref", PROJECT_REF]);
-    testParity(["branches", "list", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("branches:create", () => {
@@ -193,11 +190,6 @@ describe("branches", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
     });
-
-    testParity(["branches", "create", BRANCH_NAME, "--project-ref", PROJECT_REF]);
-    testParity(["branches", "create", BRANCH_NAME, "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
-    });
   });
 
   describe("branches:get", () => {
@@ -248,11 +240,6 @@ describe("branches", () => {
       const result = await run(["branches", "get", BRANCH_NAME, "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
-    });
-
-    testParity(["branches", "get", BRANCH_NAME, "--project-ref", PROJECT_REF]);
-    testParity(["branches", "get", BRANCH_NAME, "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 
@@ -407,11 +394,6 @@ describe("branches", () => {
       const result = await run(["branches", "delete", BRANCH_NAME, "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Invalid token");
-    });
-
-    testParity(["branches", "delete", BRANCH_NAME, "--project-ref", PROJECT_REF]);
-    testParity(["branches", "delete", BRANCH_NAME, "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 

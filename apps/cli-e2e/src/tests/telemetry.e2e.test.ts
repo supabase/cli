@@ -1,7 +1,7 @@
 import { chmodSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 describe("telemetry", () => {
   describe("telemetry:enable", () => {
@@ -20,9 +20,6 @@ describe("telemetry", () => {
         chmodSync(workspace.path, 0o755);
       }
     });
-
-    testParity(["telemetry", "enable"]);
-    testParity(["telemetry", "enable"], { failureType: "NON_AUTH" });
   });
 
   describe("telemetry:disable", () => {
@@ -31,9 +28,6 @@ describe("telemetry", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Telemetry is disabled.");
     });
-
-    testParity(["telemetry", "disable"]);
-    testParity(["telemetry", "disable"], { failureType: "NON_AUTH" });
   });
 
   describe("telemetry:status", () => {
@@ -65,8 +59,5 @@ describe("telemetry", () => {
       expect(result.stdout).toContain("Telemetry is enabled.");
       expect(() => JSON.parse(readFileSync(telemetryPath, "utf8"))).not.toThrow();
     });
-
-    testParity(["telemetry", "status"]);
-    testParity(["telemetry", "status"], { failureType: "NON_AUTH" });
   });
 });

@@ -17,11 +17,11 @@ There are two fixture stores:
 | Store             | Path                                          | Used by         | When served                                                |
 | ----------------- | --------------------------------------------- | --------------- | ---------------------------------------------------------- |
 | Scenario fixtures | `fixtures/scenarios/<slug>/interactions.json` | `testBehaviour` | When a named scenario is active (ordered, strict sequence) |
-| Recorded fixtures | `fixtures/recorded/<KEY>/`                    | `testParity`    | Fallback when no scenario is active (sequential queue)     |
+| Recorded fixtures | `fixtures/recorded/<KEY>/`                    | (fallback)      | When no scenario is active (sequential queue)              |
 
 `testBehaviour` loads a scenario before each test via `POST /_ctrl/scenario`. The scenario fixture is an ordered list of request/response pairs consumed exactly in order — any mismatch returns a 400. This is the primary fixture mechanism.
 
-`testParity` does not load a scenario. It uses the fallback `serveFromFixtures` path, which reads from `fixtures/recorded/`. Multiple calls to the same endpoint are served from `default.request.json`, then `2.request.json`, `3.request.json`, etc. in order.
+Tests that bypass `testBehaviour` (and so never call `POST /_ctrl/scenario`) fall through to the `serveFromFixtures` path, which reads from `fixtures/recorded/`. Multiple calls to the same endpoint are served from `default.request.json`, then `2.request.json`, `3.request.json`, etc. in order.
 
 ### Why `fixtures/recorded/` has numbered files
 
@@ -31,7 +31,7 @@ Every time an API endpoint is called during a recording session, it writes a fil
 - 2nd call → `2.request.json` / `2.response.json`
 - etc.
 
-The directory is **cleared on the first call** to each endpoint per session, so re-recording always produces a clean set. Files do not accumulate across runs. The numbered sequence is necessary so parity tests (which call the same endpoint twice — once per CLI target) each get their own fixture entry.
+The directory is **cleared on the first call** to each endpoint per session, so re-recording always produces a clean set. Files do not accumulate across runs.
 
 Each endpoint is capped at `MAX_FIXTURE_ENTRIES` (5) — the matcher wraps with
 `entries[index % entries.length]`, so additional entries past the cap add bytes
@@ -79,17 +79,6 @@ Available fixtures:
 - `orgId` — org slug (real in record mode, default in replay)
 - `apiUrl` — the relay server base URL, for direct `/_ctrl/` calls
 - `workspace` — temp dir, auto-disposed after the test
-
-### `testParity` — verify Go CLI and TS-legacy CLI produce identical output
-
-```typescript
-import { testParity } from "./test-context.ts";
-
-testParity(["command", "--flag", PROJECT_REF]);
-testParity(["command", "--flag", PROJECT_REF], { failureType: "NON_AUTH" });
-```
-
-Always skipped in record mode. Uses `PROJECT_REF` (not `projectRef` from context) because it's static and uses the recorded fallback fixture, not a scenario.
 
 ### Error injection tests
 
@@ -160,26 +149,25 @@ The pre-recording cleanup deletes projects named `cli-e2e-test`, `my-project`, a
 - Global setup (`tests/live-setup.ts`) provisions **one ephemeral project per run** (`cli-e2e-live-{target}-{runId}-{short}`), waits for `ACTIVE_HEALTHY`, resolves the anon JWT, the IPv4 **session-pooler `dbUrl`** (for `--db-url` DB commands), the functions URL, and a seeded storage bucket, exposing them via `inject()`. It deletes the project on teardown (even on failure). Setup is intentionally **dumb** — no provisioning retry; the CI job re-runs the step on flake.
 - Use `testLive` from `src/tests/live/live-context.ts`: `run(cmd)` (direct-wired CLI), `invoke(slug)` (direct HTTP call sending the **anon JWT** in both `Authorization: Bearer` and `apikey`), plus `workspace` (a fresh `supabase init` config so golden paths exercise a generated config), `projectRef`, `anonKey`, `functionsUrl`, `dbUrl`, `storageBucket`. The functions deploy tests call `seedFunctions(workspace.path)` to layer the `deploy-e2e-*` fixtures + their `[functions.*]` config onto the init'd config.
 - **Assertion style:** outcome-based — assert `exitCode`/`stdout` substrings and the function's HTTP status + JSON body. This is ID-agnostic, so **no normalization/snapshots by default**. If the CLI's own diagnostic output is ever the assertion target, add a scoped normalizer for that one test — do not make normalization the default.
-- **Authoring target is `go`** (source of truth for the port); `ts-legacy` runs the same tests to prove the shim matches. Both run as separate CI jobs.
+- **Authoring/CI target is `ts-legacy`** — the only shipped CLI shell. It still shells out to the Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `SUPABASE_GO_BINARY` must point at a built Go binary for those to resolve.
 - Retargeting to another env (e.g. `supabox`) is an env swap only: `CLI_E2E_TARGET_ENV` + `CLI_E2E_API_URL` + `CLI_E2E_PROJECT_HOST` + token. Tests assert on function output, not hostnames.
-- **CI triggers** (`.github/workflows/live-e2e.yml`): `workflow_dispatch` (manual; the Actions branch picker selects the ref — no free-form `ref` input, so the staging token never reaches arbitrary code) and an hourly `schedule`. There is **no `pull_request` trigger** — run it manually on a PR branch for pre-merge coverage. The scheduled run exercises the `@beta` channel: `develop` is the default branch and the beta release source, so it builds from `develop` source and runs the same `[go, ts-legacy]` matrix. A `gate` job skips the run unless the published `supabase@beta` version changed since the last green run (an `actions/cache` marker keyed on the version, written by `finalize` only after **both** legs pass), so a staging project is spent only when there is a new beta to test. Because the marker is written only on a fully-green matrix, a chronically-failing `@beta` keeps re-running every hour until it goes green or a newer beta supersedes it (intended — the failure stays visible).
+- **CI triggers** (`.github/workflows/live-e2e.yml`): `workflow_dispatch` (manual; the Actions branch picker selects the ref — no free-form `ref` input, so the staging token never reaches arbitrary code) and an hourly `schedule`. There is **no `pull_request` trigger** — run it manually on a PR branch for pre-merge coverage. The scheduled run exercises the `@beta` channel: `develop` is the default branch and the beta release source, so it builds from `develop` source and runs the `ts-legacy` job. A `gate` job skips the run unless the published `supabase@beta` version changed since the last green run (an `actions/cache` marker keyed on the version, written by `finalize` only after the job passes), so a staging project is spent only when there is a new beta to test. Because the marker is written only on a green run, a chronically-failing `@beta` keeps re-running every hour until it goes green or a newer beta supersedes it (intended — the failure stays visible).
 
 ## Running the suite
 
 ```sh
 # Replay (no credentials needed)
 pnpm nx run @supabase/cli-e2e:test:legacy   # ts-legacy target
-pnpm nx run @supabase/cli-e2e:test:go       # go binary target
 
 # Record (requires staging access)
 SUPABASE_ACCESS_TOKEN=sbp_... SUPABASE_STAGING_URL=https://api.supabase.green \
   pnpm nx run @supabase/cli-e2e:record
 
 # Live (requires staging access; creates + deletes a real project; needs Docker).
-# For the `go` target, build the binary first so newly-added commands resolve
-# (the system `supabase` may be stale) — mirrors what CI does.
+# Build the Go binary first so newly-added proxy commands resolve (the system
+# `supabase` may be stale) — mirrors what CI does.
 cd apps/cli-go && go build -o /tmp/supabase-test-binary . && cd -
-SUPABASE_GO_BINARY=/tmp/supabase-test-binary CLI_HARNESS_TARGET=go \
+SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
   SUPABASE_ACCESS_TOKEN=sbp_... \
   pnpm --filter @supabase/cli-e2e test:e2e:live
 ```

@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { isRecording, PROJECT_REF, PROVIDER_ID } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 const MINIMAL_SAML_XML = `<?xml version="1.0" encoding="UTF-8"?>
 <md:EntityDescriptor xmlns:md="urn:oasis:names:tc:SAML:2.0:metadata" entityID="https://example.com/saml">
@@ -85,9 +85,6 @@ describe("sso", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["sso", "list", "--project-ref", PROJECT_REF]);
-    testParity(["sso", "list", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("sso:info", () => {
@@ -106,7 +103,6 @@ describe("sso", () => {
     });
 
     // sso info makes no API calls — no error injection tests needed
-    testParity(["sso", "info", "--project-ref", PROJECT_REF]);
   });
 
   describe("sso:show", () => {
@@ -205,11 +201,6 @@ describe("sso", () => {
       const result = await run(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF]);
-    testParity(["sso", "show", PROVIDER_ID, "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 
@@ -399,26 +390,6 @@ describe("sso", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    // No success parity: metadata-file is required for reliable recording, but
-    // testParity has no workspace to write the file. NON_AUTH covers argument
-    // forwarding parity between Go and ts-legacy.
-    testParity(
-      [
-        "sso",
-        "add",
-        "--type",
-        "saml",
-        "--metadata-url",
-        "https://example.com/saml/metadata",
-        "--skip-url-validation",
-        "--domains",
-        "example.com",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 
   describe("sso:update", () => {
@@ -602,20 +573,6 @@ describe("sso", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity([
-      "sso",
-      "update",
-      PROVIDER_ID,
-      "--add-domains",
-      "example.com",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      ["sso", "update", PROVIDER_ID, "--add-domains", "example.com", "--project-ref", PROJECT_REF],
-      { failureType: "NON_AUTH" },
-    );
   });
 
   describe("sso:remove", () => {
@@ -678,12 +635,6 @@ describe("sso", () => {
       const result = await run(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    // No success parity: the happy-path fixture is hand-crafted (destructive operation)
-    // and has no corresponding recorded/ fixture for testParity to use.
-    testParity(["sso", "remove", PROVIDER_ID, "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 });
