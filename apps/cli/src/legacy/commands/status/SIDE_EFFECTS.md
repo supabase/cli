@@ -335,12 +335,14 @@ the Go CLI's own contract exactly. The additive failure envelope above is scoped
   review) — this is decoration on an interactive command, and the generated client's own retry
   policy would otherwise let a single blackholed API stall every `status` run for minutes; a
   timeout degrades exactly like any other lookup failure.
-- Every string in the human-text block — names, org slug/id, AND the refs themselves — is
-  sanitized (`legacySanitizeInlineName`) before rendering: `project-ref`/`linked-project.json`
-  are worktree files accepted without `PROJECT_REF_PATTERN` validation, so a malicious/corrupted
-  one could otherwise inject ANSI/OSC/newline controls into `status`'s stdout (PR #6168 review).
-  Machine payloads stay data-faithful — JSON/YAML/TOML/env encoding already neutralizes control
-  characters there.
+- The linked ref itself (env `SUPABASE_PROJECT_ID` or the `project-ref` file) is VALIDATED
+  against `PROJECT_REF_PATTERN` before use: malformed or symlinked non-ref content (e.g. a
+  `project-ref` symlinked at an access token) is treated as not linked and never reaches ANY
+  output channel — machine formats included (PR #6168 review). The cache-sourced display fields
+  (name, org slug/id) remain merely sanitized (`legacySanitizeInlineName`), as are all strings in
+  the human-text block, so a hostile name cannot inject ANSI/OSC/newline controls into stdout;
+  machine payloads stay data-faithful for those fields since JSON/YAML/TOML/env encoding already
+  neutralizes control characters.
 - `-o`/`--output` (`env|pretty|json|toml|yaml`) takes priority over `--output-format` whenever
   it is set, matching the Go-parity checklist's dual-output-flag rule. `-o pretty` (or `-o`
   unset) falls through to `--output-format`'s text/json/stream-json handling.

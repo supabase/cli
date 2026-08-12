@@ -442,7 +442,15 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         // real `link <parent-ref>` run.
         const parentRef = branchResolution.value.parentRef;
         if (Option.isNone(cachedParent) || cachedParent.value.ref !== parentRef) {
+          // Fail-safe fallback (PR #6168 review): if the replacement write
+          // fails (e.g. an unwritable stale cache file), DELETE the stale
+          // cache instead of leaving a wrong parent trusted by the parent
+          // chain — no parent info beats wrong parent info. Both steps stay
+          // best-effort; the mandatory `project-ref` write in the same
+          // directory already succeeded, so a residual double-failure here
+          // is practically unreachable.
           yield* writeTempFile(paths.linkedProjectCache, JSON.stringify({ ref: parentRef })).pipe(
+            Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
             Effect.ignore,
           );
         }

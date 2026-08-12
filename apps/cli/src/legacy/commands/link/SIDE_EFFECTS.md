@@ -67,7 +67,10 @@ All under `<workdir>/supabase/.temp/` (plain text, created with parent dirs as n
 >   verifiably among that project's branches, the cache is still accurate and is left alone; if
 >   it's verifiably NOT, the cache is stale for a different project and is deleted (better no
 >   parent claim than silently misdirecting every parent-scoped command at the wrong project). Any
->   lookup failure means "can't verify" — the cache is left exactly as it was.
+>   lookup failure or timeout ALSO deletes the cache — fail-safe, not fail-convenient: an
+>   unverified divergent cache is treated as untrustworthy. Similarly, when a name/UUID-resolved
+>   branch link cannot REPLACE a divergent cache (write failure), the stale cache is deleted
+>   rather than left trusted.
 >
 > This diverges from Go's filesystem behavior on the branch/404 link path (Go never touches this
 > file there at all) — flag if the cli-e2e parity harness's filesystem-comparison dimension
