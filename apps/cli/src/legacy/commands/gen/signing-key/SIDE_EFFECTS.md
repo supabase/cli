@@ -2,12 +2,12 @@
 
 ## Files Read
 
-| Path                                            | Format                      | When                                                                                  |
-| ----------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------- |
-| `supabase/config.toml` / `supabase/config.json` | TOML / JSON                 | always when present in the active workdir; used to discover `auth.signing_keys_path`  |
-| `<resolved signing_keys_path>`                  | JSON array of JWKs          | when `auth.signing_keys_path` is configured; loaded before overwrite or append        |
-| git ignore rules                                | git metadata / ignore files | best-effort after a successful write when the resulting file contains exactly 1 key   |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*`   | dotenv                      | always, to resolve `SUPABASE_YES` (CLI-1878) |
+| Path                                            | Format                      | When                                                                                 |
+| ----------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------ |
+| `supabase/config.toml` / `supabase/config.json` | TOML / JSON                 | always when present in the active workdir; used to discover `auth.signing_keys_path` |
+| `<resolved signing_keys_path>`                  | JSON array of JWKs          | when `auth.signing_keys_path` is configured; loaded before overwrite or append       |
+| git ignore rules                                | git metadata / ignore files | best-effort after a successful write when the resulting file contains exactly 1 key  |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*`   | dotenv                      | always, to resolve `SUPABASE_YES` (CLI-1878)                                         |
 
 ## Files Written
 
@@ -23,8 +23,8 @@
 
 ## Environment Variables
 
-| Variable       | Purpose                                                                                                                                                                                          | Required? |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| Variable       | Purpose                                                                                                                                                            | Required? |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
 | `SUPABASE_YES` | Auto-confirms the overwrite prompt, same as `--yes`. Read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878). | No        |
 
 ## Exit Codes

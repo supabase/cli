@@ -12,10 +12,10 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves |
+| Path                                           | Format | When                                             |
+| ---------------------------------------------- | ------ | ------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
 
 ## API Routes
 

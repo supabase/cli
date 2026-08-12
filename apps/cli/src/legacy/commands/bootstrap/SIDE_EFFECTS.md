@@ -71,7 +71,7 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 | `GITHUB_TOKEN`                     | raise the GitHub API rate limit for template fetch                                                                                                  | no        |
 | `SUPABASE_ACCESS_TOKEN`            | auth bypass for ensure-login                                                                                                                        | no        |
 | `SUPABASE_PROFILE`                 | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                                                        | no        |
-| `SUPABASE_YES`                     | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                             | no        |
+| `SUPABASE_YES`                     | auto-confirm the native push step's prompts, read project-`.env`-aware like the standalone `db push`                                                | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the push step's migrations-catalog cache when `[experimental.pgdelta].enabled` is unset, read project-`.env`-aware (see Files Read)         | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the push step's pg-delta edge-runtime image registry, read project-`.env`-aware (see Files Read)                                          | no        |
 | `PGDELTA_NPM_REGISTRY`             | overrides the push step's pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward), read project-`.env`-aware (see Files Read) | no        |

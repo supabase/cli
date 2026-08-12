@@ -43,7 +43,7 @@
 | `1`  | API error (non-2xx response)          |
 | `1`  | authentication error (no token found) |
 | `1`  | network / connection failure          |
-| `1`  | unsupported `--output` mode (`env`)    |
+| `1`  | unsupported `--output` mode (`env`)   |
 
 ## Telemetry Events Fired
 

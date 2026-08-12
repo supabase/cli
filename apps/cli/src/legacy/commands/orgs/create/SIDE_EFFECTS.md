@@ -10,8 +10,8 @@
 
 ## Files Written
 
-| Path                         | Format | When                                                        |
-| ---------------------------- | ------ | ----------------------------------------------------------- |
+| Path                         | Format | When                                            |
+| ---------------------------- | ------ | ----------------------------------------------- |
 | `~/.supabase/telemetry.json` | JSON   | always (in `Effect.ensuring`) at end of command |
 
 `orgs create` is a user-level command — it does not resolve a `--project-ref`, so the legacy
@@ -31,9 +31,9 @@ linked-project cache is never written.
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                                   | Required?                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
+| Variable                | Purpose                                                                                                                                       | Required?                                               |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                          | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_PROFILE`      | selects API base URL (`supabase`, `supabase-staging`, `supabase-local`), or a filesystem path to a YAML profile (used by the cli-e2e harness) | no (defaults to `supabase`)                             |
 
 ## Exit Codes

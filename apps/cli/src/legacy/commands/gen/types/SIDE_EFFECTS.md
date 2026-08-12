@@ -113,7 +113,7 @@ Not applicable.
   for TypeScript, and run pg-meta locally against the project database (temporary
   login-role credentials, preview-branch fallback) for the other languages. The old Go
   CLI instead hard-errored with `Unable to generate <lang> types for selected project.
-  Try using --db-url flag instead.` and never ran pg-meta for a project ref. This
+Try using --db-url flag instead.` and never ran pg-meta for a project ref. This
   permissiveness is deliberate — it resolves the user-filed CLI-1623 complaint — and was
   blessed in the CLI-1988 ruling; do not revert it to a hard error. The mutex groups only
   block `--swift-access-control` / `--query-timeout` when `--linked`/`--project-id` is

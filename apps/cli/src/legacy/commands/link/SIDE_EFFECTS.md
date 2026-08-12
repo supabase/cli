@@ -54,10 +54,10 @@ Tenant service gateway (`https://<ref>.<projectHost>`, `apikey: <service-key>` +
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                      |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `SUPABASE_PROJECT_ID`   | project-ref resolution (flag → env → TTY prompt)                                                                             |
-| `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                                      |
+| Variable                | Purpose                                                                                                      |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `SUPABASE_PROJECT_ID`   | project-ref resolution (flag → env → TTY prompt)                                                             |
+| `SUPABASE_ACCESS_TOKEN` | Management API bearer auth (env → keyring → `~/.supabase/access-token`)                                      |
 | `SUPABASE_DB_PASSWORD`  | bound to `--password`; **accepted but a no-op** for `link` (there is no DB-connection path that consumes it) |
 
 ## Exit Codes

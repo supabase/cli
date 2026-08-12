@@ -34,13 +34,13 @@ as a new timestamped migration.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                                     | Required? |
-| ---------------------------- | ----------------------------------------------------------- | --------- |
-| `PGDELTA_NPM_REGISTRY`       | private `@supabase` npm registry for pg-delta               | no        |
-| `PGDELTA_DEBUG`              | verbose pg-delta diagnostics                                | no        |
-| `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary                      | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                    | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback          | no        |
+| Variable                     | Purpose                                            | Required? |
+| ---------------------------- | -------------------------------------------------- | --------- |
+| `PGDELTA_NPM_REGISTRY`       | private `@supabase` npm registry for pg-delta      | no        |
+| `PGDELTA_DEBUG`              | verbose pg-delta diagnostics                       | no        |
+| `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary             | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate           | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback | no        |
 
 ## Exit Codes
 

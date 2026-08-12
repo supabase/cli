@@ -21,11 +21,11 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                               | Required?                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)  |
-| `DB_PASSWORD`           | **not consumed** by `projects create` | n/a                                                     |
+| Variable                | Purpose                                              | Required?                                               |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| `DB_PASSWORD`           | **not consumed** by `projects create`                | n/a                                                     |
 
 ## Exit Codes
 
@@ -40,8 +40,8 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                     |
-| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
+| Event                  | When                                       | Notable properties / groups                                        |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe) |
 
 ## Flags

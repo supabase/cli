@@ -2,12 +2,12 @@
 
 ## Files Read
 
-| Path                                             | Format             | When                                                                                                                                                                                                     |
-| ------------------------------------------------ | ------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml` / `config.json` | TOML / JSON        | always when present in the active workdir; used to discover `[auth].enabled` and `[auth].signing_keys_path`                                                                                              |
+| Path                                             | Format             | When                                                                                                                                     |
+| ------------------------------------------------ | ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml` / `config.json` | TOML / JSON        | always when present in the active workdir; used to discover `[auth].enabled` and `[auth].signing_keys_path`                              |
 | `<workdir>/supabase/.env*`, `<workdir>/.env*`    | dotenv             | always (the load still runs and can itself fail on a malformed file, even though no `--yes`-style prompt of this command's own reads it) |
-| `<resolved signing_keys_path>`                   | JSON array of JWKs | when `[auth].signing_keys_path` is configured AND `[auth].enabled` is `true` (default) — see Notes for the `auth.enabled = false` quirk                                                                  |
-| stdin                                            | plain text / JSON  | interactive/piped prompt for a raw JWK (unconfigured `signing_keys_path`) or a signing-key `kid` (configured, non-TTY)                                                                                   |
+| `<resolved signing_keys_path>`                   | JSON array of JWKs | when `[auth].signing_keys_path` is configured AND `[auth].enabled` is `true` (default) — see Notes for the `auth.enabled = false` quirk  |
+| stdin                                            | plain text / JSON  | interactive/piped prompt for a raw JWK (unconfigured `signing_keys_path`) or a signing-key `kid` (configured, non-TTY)                   |
 
 ## Files Written
 

@@ -9,10 +9,10 @@
 
 ## Files Written
 
-| Path                                 | Format | When                                                                                                                                             |
-| ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Path                                 | Format | When                                                                                                   |
+| ------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------ |
 | `supabase/.temp/linked-project.json` | JSON   | when a project ref resolves and no cache exists yet (`Effect.ensuring(linkedProjectCache.cache(ref))`) |
-| `~/.supabase/telemetry.json`         | JSON   | always (`Effect.ensuring(telemetryState.flush)`) at end of the command                                                                           |
+| `~/.supabase/telemetry.json`         | JSON   | always (`Effect.ensuring(telemetryState.flush)`) at end of the command                                 |
 
 ## API Routes
 
@@ -50,7 +50,7 @@ Tenant calls send `apikey: <serviceKey>` and additionally
 | Code | Condition                                                                      |
 | ---- | ------------------------------------------------------------------------------ |
 | `0`  | success; always prints the local service matrix and optionally linked versions |
-| `1`  | `--output env` is requested; explicitly unsupported            |
+| `1`  | `--output env` is requested; explicitly unsupported                            |
 
 ## Output
 

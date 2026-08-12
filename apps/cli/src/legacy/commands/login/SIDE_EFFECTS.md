@@ -12,11 +12,11 @@ captures `cli_login_completed`.
 
 ## Files Written
 
-| Path                                            | Format                    | When                                                                                                                                   |
-| ----------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| OS keyring (`Supabase CLI` / profile)           | token string              | always on success when the keyring is available                                                                                        |
-| `~/.supabase/access-token`                      | plain text (mode `0600`)  | on success when the keyring is unavailable (WSL / `SUPABASE_NO_KEYRING`)                                                               |
-| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON                      | always (PersistentPostRun flush); `distinct_id` set on stitch, removed on clear                                                        |
+| Path                                            | Format                    | When                                                                                               |
+| ----------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------- |
+| OS keyring (`Supabase CLI` / profile)           | token string              | always on success when the keyring is available                                                    |
+| `~/.supabase/access-token`                      | plain text (mode `0600`)  | on success when the keyring is unavailable (WSL / `SUPABASE_NO_KEYRING`)                           |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON                      | always (PersistentPostRun flush); `distinct_id` set on stitch, removed on clear                    |
 | `~/.supabase/profile`                           | plain text (profile name) | on success only, when a profile is explicitly set (`--profile` ≠ default, else `SUPABASE_PROFILE`) |
 
 ## API Routes
@@ -38,13 +38,13 @@ captures `cli_login_completed`.
 
 ## Exit Codes
 
-| Code | Condition                                                                                   |
-| ---- | ------------------------------------------------------------------------------------------- |
-| `0`  | success (token path or browser path)                                                        |
-| `1`  | invalid `--token` (`cannot save provided token: …`)                                         |
-| `1`  | non-TTY with no token (`Cannot use automatic login flow inside non-TTY environments. …`)    |
-| `1`  | keygen failure, verification retries exhausted, or decryption failure (browser path)        |
-| `1`  | failure to persist `~/.supabase/profile` (blocks subsequent commands on save failure)       |
+| Code | Condition                                                                                |
+| ---- | ---------------------------------------------------------------------------------------- |
+| `0`  | success (token path or browser path)                                                     |
+| `1`  | invalid `--token` (`cannot save provided token: …`)                                      |
+| `1`  | non-TTY with no token (`Cannot use automatic login flow inside non-TTY environments. …`) |
+| `1`  | keygen failure, verification retries exhausted, or decryption failure (browser path)     |
+| `1`  | failure to persist `~/.supabase/profile` (blocks subsequent commands on save failure)    |
 
 Browser-open failure is non-fatal (logged, ignored).
 

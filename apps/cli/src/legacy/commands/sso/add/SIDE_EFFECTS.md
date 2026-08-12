@@ -13,10 +13,10 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves |
+| Path                                           | Format | When                                             |
+| ---------------------------------------------- | ------ | ------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
 
 ## API Routes
 
@@ -45,8 +45,8 @@ Bypasses the typed Management API client for the POST so user-supplied keys insi
 | `1`  | `LegacySsoInvalidFlagValueError` — a `--type`/`--skip-url-validation`/`--name-id-format` occurrence pflag's `Value.Set` would reject (enum membership / `strconv.ParseBool`; fails before every validation; no request)                                                                                        |
 | `1`  | malformed CSV in a `--domains` value — fails during flag parsing, before the handler and telemetry, with pflag's exact diagnostic on stderr (e.g. `invalid argument "a\"b" for "--domains" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
 | `1`  | `LegacySsoFlagNeedsArgumentError` — a bare value-taking flag is the final argv token (pflag `ValueRequiredError`, fails before every validation; no request)                                                                                                                                                   |
-| `1`  | `LegacyProfileLoadError` — the pflag/viper-effective `--profile`/`SUPABASE_PROFILE` cannot be loaded the way the old Go CLI's profile loader loaded it (before the workdir change; beats the workdir, required-flag, and mutex checks; no request)                                                    |
-| `1`  | `LegacyPflagWorkdirError` — the pflag/viper-effective `--workdir`/`SUPABASE_WORKDIR` is not an existing directory (the old Go CLI's workdir-change step; beats the required-flag and mutex checks; no request)                                                                                       |
+| `1`  | `LegacyProfileLoadError` — the pflag/viper-effective `--profile`/`SUPABASE_PROFILE` cannot be loaded the way the old Go CLI's profile loader loaded it (before the workdir change; beats the workdir, required-flag, and mutex checks; no request)                                                             |
+| `1`  | `LegacyPflagWorkdirError` — the pflag/viper-effective `--workdir`/`SUPABASE_WORKDIR` is not an existing directory (the old Go CLI's workdir-change step; beats the required-flag and mutex checks; no request)                                                                                                 |
 | `1`  | `LegacySsoAddRequiredFlagError` — pflag consumed the `--type`/`-t` token as another flag's value (cobra `ValidateRequiredFlags`)                                                                                                                                                                               |
 | `1`  | `LegacySsoMutexFlagError` — `--metadata-file` and `--metadata-url` both set                                                                                                                                                                                                                                    |
 | `1`  | `LegacySsoAddMetadataFileError` — metadata file unreadable, non-UTF-8, or metadata URL invalid/unreachable/non-UTF-8                                                                                                                                                                                           |

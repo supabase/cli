@@ -11,10 +11,10 @@ Checks a database for PL/pgSQL typing errors via the `plpgsql_check` extension.
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
+| Path                                           | Format | When                                                  |
+| ---------------------------------------------- | ------ | ----------------------------------------------------- |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LegacyLinkedProjectCache.cache` |
-| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                                                                |
+| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                          |
 
 No user data is written: the lint runs inside a transaction that is **always
 rolled back** (`BEGIN` … `ROLLBACK`) — including

@@ -6,8 +6,8 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
 | `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
 | `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
@@ -17,7 +17,7 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 | -------- | ------------------------------------ | ------------ | -------------------------------------------------------------- | ------------------- |
 | `GET`    | `/v1/projects/{ref}/branches/{name}` | Bearer token | branch input is not a UUID and not a `^[a-z]{20}$` ref pattern | `{project_ref}`     |
 | `GET`    | `/v1/branches/{branch_id_or_ref}`    | Bearer token | branch input is a UUID                                         | `{ref}`             |
-| `DELETE` | `/v1/branches/{branch_id_or_ref}`    | Bearer token | always — `force` query param omitted           | `{ message: "ok" }` |
+| `DELETE` | `/v1/branches/{branch_id_or_ref}`    | Bearer token | always — `force` query param omitted                           | `{ message: "ok" }` |
 
 ## Environment Variables
 

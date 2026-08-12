@@ -2,13 +2,13 @@
 
 ## Files Read
 
-| Path                                  | Format | When                                                                                                                                                       |
-| ------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<cwd>/supabase/tests/**/*.{sql,pg}`  | SQL    | default test discovery when no `[path]` given                                                                                                              |
-| `<path...>`                           | SQL    | when explicit test files/dirs are passed                                                                                                                   |
-| `<workdir>/supabase/config.toml`      | TOML   | always: `db.port`, `db.shadow_port`, `db.password`, `project_id`. Absent → defaults; **present but malformed → command fails** |
-| `<workdir>/supabase/.temp/pooler-url` | text   | `--linked` pooler fallback only — the connection-pooler URL written by `supabase link` (read from this file rather than from config.toml)                            |
-| `~/.supabase/access-token`            | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                                        |
+| Path                                  | Format | When                                                                                                                                      |
+| ------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `<cwd>/supabase/tests/**/*.{sql,pg}`  | SQL    | default test discovery when no `[path]` given                                                                                             |
+| `<path...>`                           | SQL    | when explicit test files/dirs are passed                                                                                                  |
+| `<workdir>/supabase/config.toml`      | TOML   | always: `db.port`, `db.shadow_port`, `db.password`, `project_id`. Absent → defaults; **present but malformed → command fails**            |
+| `<workdir>/supabase/.temp/pooler-url` | text   | `--linked` pooler fallback only — the connection-pooler URL written by `supabase link` (read from this file rather than from config.toml) |
+| `~/.supabase/access-token`            | text   | `--linked` only, when `SUPABASE_ACCESS_TOKEN` unset                                                                                       |
 
 ## Files Written
 

@@ -6,18 +6,18 @@ stack is used; with `--linked` the remote project is used.
 
 ## Files Read
 
-| Path                                          | Format      | When                                                                                                                                                                                                                                                                             |
-| --------------------------------------------- | ----------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`              | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config; on `--linked`, the matching `[remotes.<name>]` block (whose `project_id` equals the resolved project ref) is merged over the base config before decode, so remote-specific storage config takes effect          |
-| `<workdir>/supabase/<objects_path>/**`        | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/`, an absolute path is used as-is                                                                                                |
-| `<workdir>/supabase/<api.tls.cert_path>`      | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read).      |
-| `<workdir>/supabase/<api.tls.key_path>`       | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`. |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv      | when no pre-resolved `yes` is passed in (the standalone command; `db reset --local` passes its own), to resolve `SUPABASE_YES` for the overwrite/prune prompts (CLI-1878)                                                                                  |
+| Path                                          | Format      | When                                                                                                                                                                                                                                                                        |
+| --------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML        | always, to read `[storage.buckets]` / `[storage.vector]` config; on `--linked`, the matching `[remotes.<name>]` block (whose `project_id` equals the resolved project ref) is merged over the base config before decode, so remote-specific storage config takes effect     |
+| `<workdir>/supabase/<objects_path>/**`        | any (bytes) | per configured bucket with a non-empty `objects_path`, recursively; a relative `objects_path` resolves under `supabase/`, an absolute path is used as-is                                                                                                                    |
+| `<workdir>/supabase/<api.tls.cert_path>`      | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.cert_path` is set; the file is read to obtain the CA certificate for trusting the local Kong HTTPS gateway. If `cert_path` is not set, the embedded `kong.local.crt` constant is used instead (no file read). |
+| `<workdir>/supabase/<api.tls.key_path>`       | PEM text    | local runs only, when `[api.tls] enabled = true` AND `api.tls.key_path` is set; read purely to validate the cert/key pairing — the key content is not used by the CLI. If `cert_path` is set without `key_path` (or vice-versa), the command exits `1`.                     |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv      | when no pre-resolved `yes` is passed in (the standalone command; `db reset --local` passes its own), to resolve `SUPABASE_YES` for the overwrite/prune prompts (CLI-1878)                                                                                                   |
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                                                                                                                                                 |
-| ---------------------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Path                                           | Format | When                                                                                                                                                      |
+| ---------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, once the project ref resolves and no cache exists yet. Best-effort (auth/network/write errors are swallowed). Local runs never write it. |
 
 ## API Routes
@@ -65,13 +65,13 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 
 ## Environment Variables
 
-| Variable                         | Purpose                                                                                                                                                                                                               | Required? |
-| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_SERVICES_HOSTNAME`     | override the local services host (highest precedence)                                                                                                                                                                 | no        |
-| `DOCKER_HOST`                    | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                                                        | no        |
+| Variable                         | Purpose                                                                                                                                                                                | Required? |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_SERVICES_HOSTNAME`     | override the local services host (highest precedence)                                                                                                                                  | no        |
+| `DOCKER_HOST`                    | when a `tcp://host:port` endpoint, the local services host falls back to it before `127.0.0.1`                                                                                         | no        |
 | `SUPABASE_AUTH_SERVICE_ROLE_KEY` | when set and non-empty: for `--linked`, used as the service-role key (skips Management API key fetch); for local runs, used as the service-role key instead of `auth.service_role_key` | no        |
-| `SUPABASE_AUTH_JWT_SECRET`       | local runs only: when set and non-empty, overrides `auth.jwt_secret` for service-role key derivation                                         | no        |
-| `SUPABASE_YES`                   | auto-confirms the overwrite/prune prompts, same as `--yes`; read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878)                                              | no        |
+| `SUPABASE_AUTH_JWT_SECRET`       | local runs only: when set and non-empty, overrides `auth.jwt_secret` for service-role key derivation                                                                                   | no        |
+| `SUPABASE_YES`                   | auto-confirms the overwrite/prune prompts, same as `--yes`; read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files (shell wins; CLI-1878)               | no        |
 
 ## Exit Codes
 
@@ -85,7 +85,7 @@ Analytics bucket routes (`/storage/v1/iceberg/...`) are only reached when
 | `1`  | `api.tls.cert_path` or `api.tls.key_path` points to an unreadable file (local TLS only)                       |
 | `1`  | Storage API error (non-2xx) other than vector-unavailable                                                     |
 | `1`  | network / connection failure to the Storage gateway                                                           |
-| `1`  | malformed list response (a 200 body whose shape doesn't decode)            |
+| `1`  | malformed list response (a 200 body whose shape doesn't decode)                                               |
 | `1`  | unreadable `objects_path` (filesystem error during walk/upload)                                               |
 
 ## Telemetry Events Fired

@@ -6,8 +6,8 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
 | `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
 | `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 

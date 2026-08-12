@@ -2,10 +2,10 @@
 
 ## Files Read
 
-| Path                                          | Format     | When                                                               |
-| --------------------------------------------- | ---------- | ------------------------------------------------------------------ |
-| `~/.supabase/access-token`                    | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                  |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878) |
+| Path                                          | Format     | When                                              |
+| --------------------------------------------- | ---------- | ------------------------------------------------- |
+| `~/.supabase/access-token`                    | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878)      |
 
 ## Files Written
 

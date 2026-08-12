@@ -15,7 +15,7 @@ model (see the CLI-1324 plan's "Critical architectural finding" for why).
 
 | Path                                                                | Format              | When                                                                                    |
 | ------------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                             |
+| `~/.supabase/telemetry.json`                                        | JSON                | always (in `Effect.ensuring`) at end of command                                         |
 | `<workdir>/supabase/.temp/start-secrets/<container-name>` (removed) | plaintext, per-file | after teardown succeeds, for every container name torn down that had a staged directory |
 
 The `start-secrets` removal is a TS-port-only hygiene step (`legacyCleanupStartSecrets`,

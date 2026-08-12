@@ -6,14 +6,14 @@ the unified diff and confirm → PATCH/PUT/POST.
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                                                                               |
-| ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (parse error aborts, exit 1)                                                                                                                       |
-| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml` and to collect `DOTENV_PRIVATE_KEY`(`_*`) values for decrypting `encrypted:` secrets                                 |
-| Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per the rules below                                                                                                                       |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file)                                                                                                                    |
+| Path                                           | Format                    | When                                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (parse error aborts, exit 1)                                                                                                          |
+| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml` and to collect `DOTENV_PRIVATE_KEY`(`_*`) values for decrypting `encrypted:` secrets                    |
+| Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per the rules below                                                                                                               |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file)                                                                                                       |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, to decide whether the cache write below is skipped (`ensureProjectGroupsCached` telemetry cache — see `db/lint`'s Notes for the full mechanism) |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                         |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                            |
 
 ## Files Written
 
@@ -63,7 +63,7 @@ when its local gate is off.
 
 | Code | Condition                                                                                  |
 | ---- | ------------------------------------------------------------------------------------------ |
-| `0`  | success, **including** declining a confirmation prompt      |
+| `0`  | success, **including** declining a confirmation prompt                                     |
 | `1`  | malformed `config.toml`                                                                    |
 | `1`  | an `encrypted:` (dotenvx) secret anywhere in the document cannot be decrypted (see below)  |
 | `1`  | invalid `auth.email.*.content_path` (missing/unreadable template file when `auth.enabled`) |

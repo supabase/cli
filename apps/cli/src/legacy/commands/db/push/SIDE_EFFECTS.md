@@ -18,12 +18,12 @@ before migrations unless `--skip-vault` is set.
 
 ## Files Written
 
-| Path                                                                            | Format | When                                                                                                                                                                                                                                                 |
-| ------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | on the `--linked` path (post-run cache)                                                                                                                                                                            |
-| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                    |
+| Path                                                                            | Format | When                                                                                                                                                                                                      |
+| ------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | on the `--linked` path (post-run cache)                                                                                                                                                                   |
+| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                         |
 | `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after a successful migration apply, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the push |
-| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                        | PEM    | same gate as above, when the target requires SSL (`legacyPreparePgDeltaRef`)                                                                                                                                                                         |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                        | PEM    | same gate as above, when the target requires SSL (`legacyPreparePgDeltaRef`)                                                                                                                              |
 
 ## Database Mutations
 
@@ -47,7 +47,7 @@ before migrations unless `--skip-vault` is set.
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
 | `SUPABASE_ACCESS_TOKEN`            | auth token for the `--linked` resolver path                                                                      | no (falls back to keyring → `~/.supabase/access-token`) |
 | `SUPABASE_DB_PASSWORD`             | password for the linked/remote connection                                                                        | no (`--password`/`-p` takes precedence)                 |
-| `SUPABASE_YES`                     | auto-confirm prompts                                                                          | no (also `--yes`)                                       |
+| `SUPABASE_YES`                     | auto-confirm prompts                                                                                             | no (also `--yes`)                                       |
 | `DOTENV_PRIVATE_KEY*`              | decrypts `encrypted:` config secrets; `[db.vault]` values are not decrypted with `--skip-vault`                  | no                                                      |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the migrations-catalog cache when `[experimental.pgdelta].enabled` is unset                              | no (project `.env` or shell)                            |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY` | overrides the pg-delta edge-runtime image registry for the cache export                                          | no (project `.env` or shell)                            |

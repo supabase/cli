@@ -32,10 +32,10 @@ These two are consumed by the dynamic `__complete`/`__completeNoDesc` responder
 `SIDE_EFFECTS.md` for the completion family, and the two hidden commands are only
 ever reached via a script this family generates.
 
-| Variable                           | Purpose                                                                                                                                                                                                                                                                                                                        | Required? |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------- |
+| Variable                           | Purpose                                                                                                                                                                                                                                                                                                          | Required? |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
 | `SUPABASE_COMPLETION_DESCRIPTIONS` | Program-specific override for whether `__complete` includes descriptions (accepted spellings: `1/t/T/TRUE/true/True` = include, `0/f/F/FALSE/false/False` = omit; anything else ignored). Checked before the generic var below. Has no effect on `__completeNoDesc`, which always omits descriptions regardless. | No        |
-| `COBRA_COMPLETION_DESCRIPTIONS`    | Generic fallback for the above, checked only when `SUPABASE_COMPLETION_DESCRIPTIONS` is unset or empty.                                                                                                                                                                               | No        |
+| `COBRA_COMPLETION_DESCRIPTIONS`    | Generic fallback for the above, checked only when `SUPABASE_COMPLETION_DESCRIPTIONS` is unset or empty.                                                                                                                                                                                                          | No        |
 
 ### Telemetry
 

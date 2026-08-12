@@ -51,7 +51,7 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 | Event                   | When                                                                                  | Notable properties / groups                                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — no `domains` flag is telemetry-safe)                     |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — no `domains` flag is telemetry-safe)                           |
 | `cli_upgrade_suggested` | `create`/`get`/`activate`/`reverify` 4xx carrying the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback |
 
 ## Output

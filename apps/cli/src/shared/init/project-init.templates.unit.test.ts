@@ -86,11 +86,11 @@ describe("project init templates", () => {
   });
 
   it("matches the Go VS Code extensions scaffold", () => {
-    expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(readVendoredTemplate("vscode-extensions.json"));
+    expect(VSCODE_EXTENSIONS_TEMPLATE).toBe(readVendoredTemplate("vscode-extensions.json.golden"));
   });
 
   it("matches the Go VS Code settings scaffold", () => {
-    expect(VSCODE_SETTINGS_TEMPLATE).toBe(readVendoredTemplate("vscode-settings.json"));
+    expect(VSCODE_SETTINGS_TEMPLATE).toBe(readVendoredTemplate("vscode-settings.json.golden"));
   });
 
   it("matches the Go IntelliJ scaffold", () => {

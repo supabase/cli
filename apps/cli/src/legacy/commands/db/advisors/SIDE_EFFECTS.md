@@ -16,7 +16,7 @@ Management API.
 
 | Path                                           | Format | When                                                  |
 | ---------------------------------------------- | ------ | ----------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)  |
+| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                          |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LegacyLinkedProjectCache.cache` |
 
 The local lint query runs inside a transaction that is **always rolled back**.
