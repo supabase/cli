@@ -1,5 +1,5 @@
 import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
-import { Effect, FileSystem, Option, Path } from "effect";
+import { Duration, Effect, FileSystem, Option, Path } from "effect";
 import type { PlatformError } from "effect/PlatformError";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
@@ -113,6 +113,14 @@ const mapApiKeysError = legacyMapTenantApiKeysError({
   networkError: LegacyLinkApiKeysNetworkError,
   statusError: LegacyLinkAuthTokenError,
 });
+
+// Same reasoning + duration as `legacy-linked-state.ts`'s status-lookup bound
+// (`LEGACY_LINKED_STATE_LOOKUP_TIMEOUT`) — duplicated locally rather than
+// shared across two otherwise-unrelated modules: the best-effort 404-path
+// stale-cache correlation lookup below must not let an otherwise-successful
+// `link` silently stall ~6 minutes at the very end on the generated client's
+// own 60s×5-retry defaults (PR #6168 review).
+const LEGACY_LINK_CACHE_CORRELATION_TIMEOUT = Duration.seconds(5);
 
 /**
  * A value made entirely of lowercase letters (but not 20 of them, or it would
@@ -466,7 +474,10 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
         // One extra API call, only on this path, only when a cache exists and
         // diverges from `ref`. The plain 404-ref path with no cache at all,
         // or a cache that already agrees with `ref`, needs no correlation.
+        // Hard-bounded (`LEGACY_LINK_CACHE_CORRELATION_TIMEOUT`) — a timeout
+        // is just another "can't verify" failure, caught the same way below.
         yield* api.v1.listAllBranches({ ref: cachedParent.value.ref }).pipe(
+          Effect.timeout(LEGACY_LINK_CACHE_CORRELATION_TIMEOUT),
           Effect.flatMap((branches) =>
             branches.some((branch) => branch.project_ref === ref)
               ? Effect.void

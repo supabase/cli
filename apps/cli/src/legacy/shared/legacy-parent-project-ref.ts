@@ -84,7 +84,15 @@ function legacyClassifyParentCandidates(
  * `link <other-branch>`, or any `branches` subcommand — CLI-2167 follow-up).
  * Candidate order, first ref-shaped value wins:
  *
- *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliConfig`).
+ *   1. `SUPABASE_PROJECT_ID` (env, via `LegacyCliConfig`) — UNLESS it merely
+ *      RESTATES candidate 3's own value. A CI workflow commonly exports
+ *      `SUPABASE_PROJECT_ID=<branch-ref>` right after `link <branch>`
+ *      (mirroring what `project-ref` already holds) — that adds no parent
+ *      information, so treat it exactly as absent and let the cache (the
+ *      REAL parent) win instead of self-referentially "resolving" to the
+ *      branch's own ref again (PR #6168 review). A genuinely different env
+ *      value (a deliberate override to a DIFFERENT project) still wins
+ *      outright, same as always.
  *   2. `ref` in `<workdir>/supabase/.temp/linked-project.json` — ONLY when
  *      candidate 3 below yielded a value. KEY INVARIANT: the cache alone is
  *      NOT proof of a completed link — `link`'s handler writes it via
@@ -118,7 +126,17 @@ export const legacyResolveLinkedParentRef = Effect.fnUntraced(function* () {
       )
     : Option.none<string>();
 
-  return legacyClassifyParentCandidates([cliConfig.projectId, cachedRef, fileRef]);
+  // Dedup rule (PR #6168 review): an env candidate that merely restates the
+  // file candidate's own value carries no parent information — drop it so
+  // the cache gets a chance to win instead.
+  const envRef =
+    Option.isSome(cliConfig.projectId) &&
+    Option.isSome(fileRef) &&
+    cliConfig.projectId.value === fileRef.value
+      ? Option.none<string>()
+      : cliConfig.projectId;
+
+  return legacyClassifyParentCandidates([envRef, cachedRef, fileRef]);
 });
 
 /**

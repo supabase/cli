@@ -378,6 +378,26 @@ describe("legacy branches list integration", () => {
     });
 
     it.live(
+      "SUPABASE_PROJECT_ID merely restating the linked branch ref is deduped; the cached parent wins (PR #6168 review)",
+      () => {
+        // CI exports the branch's own ref after `link <branch>`: env === file.
+        // The env candidate adds no parent information beyond the file, so it
+        // must not shadow the cache (which holds the real parent) — otherwise
+        // parent-scoped endpoints 403 again.
+        const { layer, api, workdir } = setup({
+          projectId: Option.some(BRANCH_OWN_REF),
+          response: [SAMPLE_BRANCH],
+        });
+        writeProjectRefFile(workdir, BRANCH_OWN_REF);
+        writeLinkedProjectCacheFile(workdir, PARENT_REF);
+        return Effect.gen(function* () {
+          yield* legacyBranchesList({ projectRef: Option.none() });
+          expect(api.requests[0]?.url).toContain(`/v1/projects/${PARENT_REF}/branches`);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
       "a garbage SUPABASE_PROJECT_ID falls through to the cache file and succeeds (previously failed before any API call)",
       () => {
         const { layer, api, workdir } = setup({

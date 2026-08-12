@@ -1432,15 +1432,31 @@ project_id = "short"
     );
 
     it.live(
-      "linked ref is non-ref-shaped with no cache: the parent chain yields nothing usable, degrading to the bare project line",
+      "linked ref is non-ref-shaped: treated as not linked, the file content never reaches output (PR #6168 review)",
       () => {
         const { layer, out, workdir } = setup();
         writeProjectRefFile(workdir, "not-a-real-ref!!");
         return Effect.gen(function* () {
           yield* legacyStatus(flags());
-          expect(out.stdoutText.startsWith("Linked Project:\n  Project: not-a-real-ref!!\n")).toBe(
-            true,
-          );
+          expect(out.stdoutText.startsWith("Not linked.\n")).toBe(true);
+          expect(out.stdoutText).not.toContain("not-a-real-ref!!");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "-o json: a symlink/garbage project-ref file's content never reaches machine output (PR #6168 review, token-exfiltration vector)",
+      () => {
+        // A malicious worktree can symlink supabase/.temp/project-ref at
+        // ~/.supabase/access-token; the pattern gate must keep any
+        // non-ref-shaped content (e.g. a token) out of every output channel.
+        const { layer, out, workdir } = setup({ goOutput: Option.some("json") });
+        writeProjectRefFile(workdir, "sbp_0102030405060708090a0b0c0d0e0f10111213");
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).not.toContain("sbp_");
+          expect(out.stdoutText).not.toContain("LINKED_PROJECT_REF");
+          expect(out.stdoutText).not.toContain("linked_project_ref");
         }).pipe(Effect.provide(layer));
       },
     );
@@ -1739,17 +1755,21 @@ project_id = "short"
     );
 
     it.live(
-      "sanitizes control chars/ANSI in a project-ref file before rendering the linked block (PR #6168 review)",
+      "a control-char/ANSI-laden project-ref file is treated as not linked; nothing of it reaches stdout (PR #6168 review)",
       () => {
+        // Superseded behavior: this used to render a sanitized block. The
+        // pattern gate in legacyResolveSoftLinkedRef now rejects any
+        // non-ref-shaped content outright (stronger: also closes the
+        // symlink-to-secret exfiltration vector), so sanitization is
+        // defense-in-depth behind it.
         const DIRTY_REF = "\x1b[31mmalicious\x1b[0m";
         const { layer, out, workdir } = setup();
         writeProjectRefFile(workdir, DIRTY_REF);
         return Effect.gen(function* () {
           yield* legacyStatus(flags());
+          expect(out.stdoutText.startsWith("Not linked.\n")).toBe(true);
           expect(out.stdoutText).not.toContain("\x1b");
-          expect(out.stdoutText.startsWith("Linked Project:\n  Project: [31mmalicious[0m\n")).toBe(
-            true,
-          );
+          expect(out.stdoutText).not.toContain("malicious");
         }).pipe(Effect.provide(layer));
       },
     );

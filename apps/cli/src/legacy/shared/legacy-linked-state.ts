@@ -4,6 +4,7 @@ import { Duration, Effect, FileSystem, Option, Path } from "effect";
 import { LegacyPlatformApiFactory } from "../auth/legacy-platform-api-factory.service.ts";
 import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
+import { PROJECT_REF_PATTERN } from "../config/legacy-project-ref.service.ts";
 import { Output } from "../../shared/output/output.service.ts";
 import {
   type LegacyCachedLinkedProject,
@@ -43,12 +44,23 @@ export type LegacyLinkedState =
 /**
  * Soft "currently linked ref" lookup: env `SUPABASE_PROJECT_ID` → the
  * `<workdir>/supabase/.temp/project-ref` file, never a prompt, never a
- * failure. Reproduces `LegacyProjectRefResolver.resolveOptional(Option.none())`
- * without depending on that service, so `legacyResolveLinkedState` stays
- * usable from a runtime (e.g. `status`'s) that never wires up the resolver —
- * this shape only ever needs the flagless (env → file) tail of that chain
- * anyway, so the reproduction can't drift out of sync with it. Also reports
- * WHICH candidate won, since an env override sitting on top of an unrelated
+ * failure. Loosely based on `LegacyProjectRefResolver.resolveOptional(Option.none())`
+ * (reproduced without depending on that service, so `legacyResolveLinkedState`
+ * stays usable from a runtime — e.g. `status`'s — that never wires up the
+ * resolver) but DELIBERATELY STRICTER than it: both candidates are validated
+ * against `PROJECT_REF_PATTERN` here, which `resolveOptional` itself does not
+ * do. This is a security boundary, not just a reproduction gap — SECURITY
+ * (PR #6168 review): `legacyReadProjectRefFile` follows symlinks and accepts
+ * any non-empty content, and `status -o json`/`--output-format json` emits
+ * this value verbatim into machine output. A malicious/compromised worktree
+ * could symlink `supabase/.temp/project-ref` -> `~/.supabase/access-token`
+ * (or any other secret file) to exfiltrate it through CI logs or an agent's
+ * captured output. A candidate that does NOT match `PROJECT_REF_PATTERN` is
+ * therefore treated exactly as if it were absent — falling through to the
+ * next candidate — so non-ref-shaped content (garbage OR a symlinked
+ * secret) never reaches ANY output channel, text or machine, and degrades
+ * to `Not linked.` / `linked_project: null` instead. Also reports WHICH
+ * candidate won, since an env override sitting on top of an unrelated
  * workdir's cache needs different trust rules than the workdir's own file.
  */
 const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
@@ -56,13 +68,16 @@ const legacyResolveSoftLinkedRef = Effect.fnUntraced(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  if (Option.isSome(cliConfig.projectId)) {
+  if (Option.isSome(cliConfig.projectId) && PROJECT_REF_PATTERN.test(cliConfig.projectId.value)) {
     return { ref: cliConfig.projectId, source: "env" as const };
   }
   const fileRef = yield* legacyReadProjectRefFile(fs, path, cliConfig.workdir).pipe(
     Effect.orElseSucceed(() => Option.none<string>()),
   );
-  return { ref: fileRef, source: "file" as const };
+  return {
+    ref: Option.filter(fileRef, (ref) => PROJECT_REF_PATTERN.test(ref)),
+    source: "file" as const,
+  };
 });
 
 /**
@@ -258,17 +273,18 @@ export const legacyResolveLinkedState = Effect.fnUntraced(function* () {
 });
 
 // Every string in this human-text block is untrusted display data — not just
-// API-derived names/org slug/id, but the refs themselves. `projectRef` and
-// `parentRef` are both sourced from worktree files (`.temp/project-ref` via
-// `legacyResolveSoftLinkedRef`, and `linked-project.json`'s `ref` via
-// `legacyParseCachedLinkedProject`) that are accepted as any non-empty string
-// with no `PROJECT_REF_PATTERN` validation — a malicious/corrupted worktree
+// API-derived names/org slug/id, but the refs themselves. `projectRef` is now
+// pattern-validated upstream (`legacyResolveSoftLinkedRef`, PR #6168 review —
+// closes the `.temp/project-ref` symlink/token-exfiltration vector), but
+// `parentRef` (`linked-project.json`'s `ref`, via `legacyParseCachedLinkedProject`)
+// is still only validated as a non-empty string — a malicious/corrupted cache
 // file could inject ANSI/OSC/newline controls into `supabase status` stdout
-// via the ref itself, not just a branch/org name (PR #6168 review). Apply the
-// same control-char sanitization as error bodies to every rendered value.
-// Machine payloads (`-o`/`--output-format`) stay data-faithful — JSON/YAML/
-// TOML/env encoding already neutralizes control chars there; this
-// sanitization is for the human text block only.
+// via the parent ref itself, not just a branch/org name. Sanitize every
+// rendered value regardless — defense-in-depth for `projectRef` too, since a
+// display-layer guarantee shouldn't depend on remembering every upstream
+// validation site. Machine payloads (`-o`/`--output-format`) stay
+// data-faithful — JSON/YAML/TOML/env encoding already neutralizes control
+// chars there; this sanitization is for the human text block only.
 function legacyFormatOrgLabel(slug: string | undefined, id: string | undefined): string {
   if (slug !== undefined && id !== undefined) {
     return slug === id
