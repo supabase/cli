@@ -107,6 +107,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_url",
   "internal_build",
   "invalid_config",
+  "managed_git_workspace",
   "managed_identity",
   "managed_identity_conflict",
   "managed_initialization",
@@ -804,6 +805,13 @@ const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionability
     fingerprint_suffix: "invalid_config",
   },
   MANAGED_STACK_NOT_FOUND: { ...actionability.invalidInput, fingerprint_suffix: "not_found" },
+  // The directory the command ran in holds git metadata rather than a working
+  // tree — a bare repository or a `.git` — so the remediation is to run it from a
+  // checkout instead.
+  UNSUPPORTED_GIT_WORKSPACE: {
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_git_workspace",
+  },
   // Another caller owns the stack right now; the remediation is to settle that
   // operation before retrying.
   MANAGED_OPERATION_IN_PROGRESS: {
@@ -869,8 +877,8 @@ const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionability
 
 /**
  * The managed table above, re-keyed by the `_tag` of the class that declares
- * each code. Generated from `@supabase/stack`'s own tag/code map so the
- * eighteen managed tags are classified without restating a single verdict:
+ * each code. Generated from `@supabase/stack`'s own tag/code map so every
+ * managed tag is classified without restating a single verdict:
  * {@link managedActionabilityByCode} stays the one place a managed failure is
  * classified, and a tag/code pair the package renames cannot silently fall
  * through to `unknown`.

@@ -1,11 +1,51 @@
 import { Data } from "effect";
 
-export const MANAGED_REGISTRY_SCHEMA_VERSION = 3;
+export const MANAGED_REGISTRY_SCHEMA_VERSION = 4;
 export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
+export const GIT_CHECKOUT_IDENTITY_VERSION = 1;
 export const DEFAULT_MANAGED_STACK_NAME = "default";
 
 export type ManagedRuntimeRequest = "auto" | "docker" | "native";
 export type ManagedRuntime = "docker" | "native";
+
+/**
+ * What a registered checkout physically is. A primary git checkout is `git`;
+ * `linked-worktree` and `bare-worktree` are the two kinds of linked worktree,
+ * distinguished by whether the repository they belong to has a working tree of
+ * its own; `ordinary` is a folder outside any repository.
+ *
+ * Recorded because it is the only thing that explains a checkout's identity
+ * locations to a reader, never because identity depends on it: every checkout,
+ * worktrees included, is keyed by its own opaque UUID.
+ */
+export type ManagedCheckoutKind = "bare-worktree" | "git" | "linked-worktree" | "ordinary";
+
+/**
+ * What a development context is keyed by, which decides its scope:
+ *
+ * - `branch` contexts are project-scoped, because a branch is shared by every
+ *   checkout of the repository and two worktrees on one branch resolve one
+ *   context. Their IDs are minted in git config, so git's own rules rename and
+ *   delete them along with the branch.
+ * - `detached` contexts are checkout-scoped: a detached `HEAD` names no branch,
+ *   so every commit a checkout is parked on shares that checkout's one detached
+ *   context rather than minting a context per commit.
+ * - `workspace` contexts are the ordinary-folder case, checkout-scoped and
+ *   recorded in the folder's own identity marker.
+ */
+export type ManagedContextKind = "branch" | "detached" | "workspace";
+
+/** The checkout-scoped context kinds, of which a checkout has at most one each. */
+export type ManagedCheckoutScopedContextKind = Exclude<ManagedContextKind, "branch">;
+
+/**
+ * How a caller names the context a stack belongs to. A branch carries its name
+ * as a display-only locator; the other two are keyed by the checkout alone.
+ */
+export type ManagedContextDescriptor =
+  | { readonly kind: "branch"; readonly locator: string }
+  | { readonly kind: "detached" }
+  | { readonly kind: "workspace" };
 export type ManagedStackStatus = "active" | "pending" | "tombstoned";
 export type ManagedStackLifecycle = "failed" | "running" | "starting" | "stopped" | "stopping";
 export type ManagedPortIntent = "automatic" | "exact";
@@ -17,6 +57,21 @@ export interface OrdinaryWorkspaceIdentity {
   readonly projectId: string;
   readonly checkoutId: string;
   readonly contextId: string;
+}
+
+/**
+ * The checkout identity a git checkout keeps inside its own git directory.
+ *
+ * The project and branch-context identities live in git config, where git's own
+ * lifecycle rules apply to them: the common config is shared by every linked
+ * worktree and is never copied by `git clone`, and git renames or deletes a
+ * `branch.<name>` section along with the branch. A checkout identity has no such
+ * rule to inherit — it must be per-worktree — so it is stored as a file, one per
+ * git directory.
+ */
+export interface GitCheckoutIdentity {
+  readonly version: typeof GIT_CHECKOUT_IDENTITY_VERSION;
+  readonly checkoutId: string;
 }
 
 export interface ManagedStackPaths {
@@ -60,6 +115,42 @@ export interface ManagedStackRecord {
   readonly tombstonedAt?: string;
 }
 
+/**
+ * A stack record joined to the checkout and context it belongs to, so a reader
+ * can tell sibling instances apart without resolving any workspace: two stacks
+ * of the same name differ by their checkout, and two checkouts of one repository
+ * differ by their canonical path.
+ *
+ * The joined fields are reported rather than authoritative — a canonical path is
+ * absent once its checkout location has been pruned, and a branch locator is
+ * whatever the branch was called when the context was last resolved — so nothing
+ * may key a decision on them.
+ */
+export interface ManagedStackProjection extends ManagedStackRecord {
+  readonly checkoutKind: ManagedCheckoutKind;
+  readonly canonicalPath?: string;
+  readonly contextKind: ManagedContextKind;
+  readonly contextLocator?: string;
+}
+
+/** The complete identity a stack is resolved by, before the stack itself. */
+export interface ManagedIdentityTriple {
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly contextId: string;
+}
+
+export interface ManagedContextRecord {
+  readonly id: string;
+  readonly projectId: string;
+  /** Absent for a branch context, which is shared by the whole project. */
+  readonly checkoutId?: string;
+  readonly kind: ManagedContextKind;
+  /** The branch name a branch context was last resolved under; display-only. */
+  readonly locator?: string;
+  readonly createdAt: string;
+}
+
 export interface ManagedOperationRecord {
   readonly token: string;
   readonly stackId: string;
@@ -101,6 +192,27 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
   readonly message: string;
 }> {
   readonly code = "INVALID_MANAGED_IDENTITY" as const;
+}
+
+/**
+ * A path that encloses git metadata rather than a working tree: a bare
+ * repository's directory, a `.git` directory, or a checkout whose `HEAD` names
+ * something no branch context can be derived from.
+ *
+ * Refused rather than guessed at, because every alternative invents an identity
+ * for a workspace that has none: a bare repository has no working tree to run a
+ * stack against, and the linked worktrees that do belong to it are inspected
+ * from their own paths.
+ */
+export class UnsupportedGitWorkspaceError extends Data.TaggedError("UnsupportedGitWorkspaceError")<{
+  readonly path: string;
+  readonly reason: string;
+}> {
+  readonly code = "UNSUPPORTED_GIT_WORKSPACE" as const;
+
+  override get message(): string {
+    return `${this.reason}: ${JSON.stringify(this.path)}`;
+  }
 }
 
 export class UnsupportedManagedRegistryVersionError extends Data.TaggedError(
@@ -341,6 +453,7 @@ export type ManagedStackError =
   | ManagedStackNotStoppedError
   | ManagedStackPublicationTimeoutError
   | UnsafeManagedStackPathError
+  | UnsupportedGitWorkspaceError
   | UnsupportedManagedRegistryVersionError;
 
 /**
@@ -400,6 +513,7 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "MANAGED_STACK_NOT_STOPPED",
   "MANAGED_STACK_PUBLICATION_TIMEOUT",
   "UNSAFE_MANAGED_STACK_PATH",
+  "UNSUPPORTED_GIT_WORKSPACE",
   "UNSUPPORTED_MANAGED_REGISTRY_VERSION",
 ] as const);
 
@@ -410,8 +524,8 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
  * `_tag` is the Effect-native discriminant (`Effect.catchTag`, structural
  * dispatch) and `code` is the stable wire-level contract. Consumers that key a
  * table by one and dispatch on the other — the CLI's telemetry classifier is
- * the motivating case — derive it from this map instead of restating all
- * eighteen pairs by hand. Typing this `satisfies Record<ManagedErrorCode,
+ * the motivating case — derive it from this map instead of restating every pair
+ * by hand. Typing this `satisfies Record<ManagedErrorCode,
  * ManagedErrorTag>` requires every code to be present with a valid tag, so a
  * new error class that is not registered here is a compile error.
  */
@@ -433,6 +547,7 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_STACK_NOT_STOPPED: "ManagedStackNotStoppedError",
   MANAGED_STACK_PUBLICATION_TIMEOUT: "ManagedStackPublicationTimeoutError",
   UNSAFE_MANAGED_STACK_PATH: "UnsafeManagedStackPathError",
+  UNSUPPORTED_GIT_WORKSPACE: "UnsupportedGitWorkspaceError",
   UNSUPPORTED_MANAGED_REGISTRY_VERSION: "UnsupportedManagedRegistryVersionError",
 } as const satisfies Record<ManagedErrorCode, ManagedErrorTag>;
 

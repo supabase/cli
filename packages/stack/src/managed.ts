@@ -1,3 +1,4 @@
+export * from "./managed/git.ts";
 export * from "./managed/identity.ts";
 export * from "./managed/ids.ts";
 export * from "./managed/model.ts";
@@ -14,9 +15,9 @@ export type {
   ClaimManagedOperationResult,
   ManagedStackRepositoryShape,
   OwnedManagedStackFailure,
-  PrepareOrdinaryStackFailure,
-  PrepareOrdinaryStackInput,
-  PrepareOrdinaryStackResult,
+  PrepareStackFailure,
+  PrepareStackInput,
+  PrepareStackResult,
   ReconcileManagedOperationFailure,
   ReconcileManagedOperationResult,
   UpdateManagedStackFailure,
@@ -27,6 +28,6 @@ export type {
   MakeManagedStackServiceOptions,
   ManagedStackLayerFailure,
   ManagedStackServiceHandle,
-  ProvisionOrdinaryStackRequest,
   ReconcileAbandonedOperationsRequest,
+  ResolveManagedStackRequest,
 } from "./managed/create-service.ts";
