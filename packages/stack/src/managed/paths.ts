@@ -10,8 +10,10 @@ export interface ManagedStateRootOptions {
   readonly platform?: NodeJS.Platform;
 }
 
-const nonEmpty = (value: string | undefined): string | undefined =>
-  value === undefined || value.length === 0 ? undefined : value;
+const nonEmpty = (value: string | undefined): string | undefined => {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
+};
 
 export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): string => {
   if (options.stateRoot !== undefined) {

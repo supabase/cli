@@ -28,6 +28,40 @@ describe("managed paths", () => {
     ).toBe("/configured/supabase/managed");
   });
 
+  it("trims surrounding whitespace from a configured SUPABASE_HOME", () => {
+    expect(
+      resolveManagedStateRoot({
+        env: { SUPABASE_HOME: "  /configured/supabase  " },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe("/configured/supabase/managed");
+  });
+
+  it("treats whitespace-only state-root environment values as unset", () => {
+    expect(
+      resolveManagedStateRoot({
+        env: { SUPABASE_HOME: "   " },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe("/home/user/.local/state/supabase/managed");
+    expect(
+      resolveManagedStateRoot({
+        env: { XDG_STATE_HOME: "\t" },
+        homeDir: "/home/user",
+        platform: "linux",
+      }),
+    ).toBe("/home/user/.local/state/supabase/managed");
+    expect(
+      resolveManagedStateRoot({
+        env: { LOCALAPPDATA: " " },
+        homeDir: "C:\\Users\\user",
+        platform: "win32",
+      }),
+    ).toBe("C:\\Users\\user/AppData/Local/Supabase/managed");
+  });
+
   it("uses platform application-state directories by default", () => {
     expect(resolveManagedStateRoot({ env: {}, homeDir: "/home/user", platform: "linux" })).toBe(
       "/home/user/.local/state/supabase/managed",

@@ -23,12 +23,14 @@ import {
 import {
   DuplicateManagedIdentityError,
   InvalidManagedIdentityError,
+  InvalidManagedStackNameError,
   ManagedOperationInProgressError,
   ManagedOperationOwnershipError,
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
   ManagedStackInitializationError,
   ManagedStackNotFoundError,
+  ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
   UnsafeManagedStackPathError,
   UnsupportedManagedRegistryVersionError,
@@ -244,9 +246,9 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const service = makeInMemoryService(root);
 
-    await expect(
-      service.provisionOrdinaryStack({ workspacePath: workspace, stackName }),
-    ).rejects.toThrow(`Invalid managed stack name: ${stackName}`);
+    const provision = service.provisionOrdinaryStack({ workspacePath: workspace, stackName });
+    await expect(provision).rejects.toBeInstanceOf(InvalidManagedStackNameError);
+    await expect(provision).rejects.toThrow(`Invalid managed stack name: ${stackName}`);
     expect(existsSync(ordinaryWorkspaceIdentityPath(workspace))).toBe(false);
     expect(service.listStacks()).toEqual([]);
   });
@@ -385,6 +387,44 @@ describe("ordinary-folder managed stack contract", () => {
     expect(new Set(results.map((result) => result.stack.id))).toHaveProperty("size", 1);
     expect(initializerCalls).toBe(1);
     expect(service.repository.listStacks()).toHaveLength(1);
+    service.close();
+  });
+
+  it("applies the requested configuration after awaiting another caller's publication", async () => {
+    const requested = { key: "api.port", port: 55_451, intent: "exact" } as const;
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const service = makePersistentService(root);
+    let releaseInitialization: () => void = () => {};
+    const initializationGate = new Promise<void>((resolve) => {
+      releaseInitialization = resolve;
+    });
+
+    const first = service.provisionOrdinaryStack({
+      workspacePath: workspace,
+      initialize: async () => {
+        await initializationGate;
+      },
+    });
+    while (service.repository.listStacks().length === 0) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    const second = service.provisionOrdinaryStack({
+      workspacePath: workspace,
+      configuration: { ports: [requested], serviceVersions: { postgres: "17.6.1.143" } },
+    });
+    releaseInitialization();
+    const [created, reused] = await Promise.all([first, second]);
+
+    expect(created.outcome).toBe("create");
+    expect(reused.outcome).toBe("reuse");
+    expect(reused.stack.id).toBe(created.stack.id);
+    expect(reused.stack.ports).toEqual([requested]);
+    expect(reused.stack.serviceVersions).toEqual({ postgres: "17.6.1.143" });
+    expect(service.inspectStack(created.stack.id)).toMatchObject({
+      ports: [requested],
+      serviceVersions: { postgres: "17.6.1.143" },
+    });
     service.close();
   });
 
@@ -1341,6 +1381,61 @@ describe("managed repository and lifecycle", () => {
           "2026-08-11T00:00:01.000Z",
         ),
       ).toThrow(ManagedOperationOwnershipError);
+      service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`refuses to resurrect a tombstoned stack with ${adapter}`, async () => {
+      const reserved = { key: "api.port", port: 55_461, intent: "exact" } as const;
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory" ? makeInMemoryService(root) : makePersistentService(root);
+      const deleted = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root, "deleted"),
+        configuration: { lifecycle: "running", ports: [reserved] },
+      });
+      await service.deleteStack(deleted.stack.id, { stop: async () => {} });
+
+      await expect(
+        service.updateStack(deleted.stack.id, { lifecycle: "running", ports: [reserved] }),
+      ).rejects.toBeInstanceOf(ManagedStackNotFoundError);
+
+      expect(service.inspectStack(deleted.stack.id)).toMatchObject({
+        status: "tombstoned",
+        lifecycle: "stopped",
+        ports: [],
+      });
+      expect(service.repository.listActiveOperations()).toEqual([]);
+
+      const successor = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root, "successor"),
+        configuration: { lifecycle: "running", ports: [reserved] },
+      });
+      expect(successor.stack.ports).toEqual([reserved]);
+      service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`refuses to delete a running stack without a stop path with ${adapter}`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory" ? makeInMemoryService(root) : makePersistentService(root);
+      const created = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root),
+        configuration: { lifecycle: "running" },
+      });
+
+      await expect(service.deleteStack(created.stack.id)).rejects.toBeInstanceOf(
+        ManagedStackNotStoppedError,
+      );
+
+      expect(service.inspectStack(created.stack.id)).toMatchObject({
+        status: "active",
+        lifecycle: "running",
+      });
+      expect(service.repository.listActiveOperations()).toEqual([]);
       service.close();
     });
   }

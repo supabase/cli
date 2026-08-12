@@ -133,12 +133,30 @@ export class DuplicateManagedIdentityError extends ManagedStackError {
   }
 }
 
+export class InvalidManagedStackNameError extends ManagedStackError {
+  readonly code = "MANAGED_INVALID_STACK_NAME";
+
+  constructor(readonly stackName: string) {
+    super(`Invalid managed stack name: ${stackName}`);
+    this.name = "InvalidManagedStackNameError";
+  }
+}
+
 export class ManagedStackNotFoundError extends ManagedStackError {
   readonly code = "MANAGED_STACK_NOT_FOUND";
 
   constructor(readonly stackId: string) {
     super(`Managed stack ${stackId} was not found`);
     this.name = "ManagedStackNotFoundError";
+  }
+}
+
+export class ManagedStackNotStoppedError extends ManagedStackError {
+  readonly code = "MANAGED_STACK_NOT_STOPPED";
+
+  constructor(readonly stackId: string) {
+    super(`Managed stack ${stackId} must be safely stopped before deletion`);
+    this.name = "ManagedStackNotStoppedError";
   }
 }
 

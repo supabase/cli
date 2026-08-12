@@ -102,6 +102,12 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_url",
   "internal_build",
   "invalid_config",
+  "managed_identity",
+  "managed_identity_conflict",
+  "managed_initialization",
+  "managed_recovery",
+  "managed_stack_name",
+  "managed_stack_running",
   "network",
   "not_found",
   "plan_limit",
@@ -897,6 +903,45 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
       return { ...actionability.startStack, fingerprint_suffix: "daemon_start" };
     }
     return { ...actionability.stopStack, fingerprint_suffix: "daemon_transport" };
+  },
+
+  // @supabase/stack managed registry — every managed failure is a plain
+  // `Error` subclass of the single `ManagedStackError` root, so the concrete
+  // failure is carried by the stable `code` field rather than by a tag.
+  ManagedStackError: (error) => {
+    switch (readString(error, "code")) {
+      case "INVALID_MANAGED_IDENTITY":
+        return { ...actionability.invalidInput, fingerprint_suffix: "managed_identity" };
+      case "DUPLICATE_MANAGED_IDENTITY":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "managed_identity_conflict" };
+      case "MANAGED_INVALID_STACK_NAME":
+        return { ...actionability.invalidInput, fingerprint_suffix: "managed_stack_name" };
+      case "UNSUPPORTED_MANAGED_REGISTRY_VERSION":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "invalid_config" };
+      case "MANAGED_STACK_NOT_FOUND":
+        return { ...actionability.invalidInput, fingerprint_suffix: "not_found" };
+      // Another caller owns the stack right now; the remediation is to settle
+      // that operation before retrying.
+      case "MANAGED_OPERATION_IN_PROGRESS":
+      case "MANAGED_OPERATION_OWNERSHIP_MISMATCH":
+      case "MANAGED_STACK_PUBLICATION_TIMEOUT":
+        return { ...actionability.stopStack, fingerprint_suffix: "conflict" };
+      case "MANAGED_OPERATION_REQUIRES_RECONCILIATION":
+        return { ...actionability.stopStack, fingerprint_suffix: "managed_recovery" };
+      case "MANAGED_STACK_NOT_STOPPED":
+      case "MANAGED_RUNNING_STACK_PORT_CHANGE":
+        return { ...actionability.stopStack, fingerprint_suffix: "managed_stack_running" };
+      case "MANAGED_PORT_ALREADY_RESERVED":
+        return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
+      // The registry derives every stack root itself, so a path that fails the
+      // containment check means the CLI passed a rejected argument.
+      case "UNSAFE_MANAGED_STACK_PATH":
+        return { ...actionability.impossibleState, fingerprint_suffix: "bad_argument" };
+      case "MANAGED_STACK_INITIALIZATION_FAILED":
+        return { ...actionability.startStack, fingerprint_suffix: "managed_initialization" };
+      default:
+        return actionability.unknown;
+    }
   },
 
   // @supabase/process-compose — the CLI generates the process graph, so graph

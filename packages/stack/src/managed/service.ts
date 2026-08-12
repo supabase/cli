@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
 import {
   DEFAULT_MANAGED_STACK_NAME,
+  InvalidManagedStackNameError,
   ManagedAbandonedOperationError,
   ManagedOperationInProgressError,
   ManagedOperationOwnershipError,
   ManagedStackInitializationError,
   ManagedStackNotFoundError,
+  ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
   type ManagedCheckoutLocation,
   type ManagedOperationKind,
@@ -286,13 +288,26 @@ export const makeManagedStackService = (
     }
   };
 
+  /**
+   * Reused stacks adopt the caller's requested configuration regardless of
+   * whether the record was already published or was awaited while another
+   * caller published it, so the outcome never depends on that timing.
+   */
+  const applyRequestedConfiguration = async (
+    stack: ManagedStackRecord,
+    configuration: ManagedStackConfiguration | undefined,
+  ): Promise<ManagedStackRecord> =>
+    configuration === undefined || Object.keys(configuration).length === 0
+      ? stack
+      : updateStackRecord(stack.id, configuration);
+
   return {
     stateRoot: options.stateRoot,
     repository: options.repository,
     async provisionOrdinaryStack(provisionOptions) {
       const stackName = provisionOptions.stackName ?? DEFAULT_MANAGED_STACK_NAME;
       if (!stackNamePattern.test(stackName)) {
-        throw new Error(`Invalid managed stack name: ${stackName}`);
+        throw new InvalidManagedStackNameError(stackName);
       }
       const canonicalPath = await canonicalizeOrdinaryWorkspacePath(provisionOptions.workspacePath);
       const marker = await ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
@@ -315,11 +330,10 @@ export const makeManagedStackService = (
           if (prepared.operation !== undefined) {
             throw new ManagedOperationInProgressError(prepared.stack.id, prepared.operation);
           }
-          const stack =
-            provisionOptions.configuration === undefined ||
-            Object.keys(provisionOptions.configuration).length === 0
-              ? prepared.stack
-              : await updateStackRecord(prepared.stack.id, provisionOptions.configuration);
+          const stack = await applyRequestedConfiguration(
+            prepared.stack,
+            provisionOptions.configuration,
+          );
           return {
             outcome: "reuse",
             selection: selectionForStack(stack),
@@ -336,7 +350,10 @@ export const makeManagedStackService = (
         ) {
           throw new ManagedAbandonedOperationError(prepared.stack.id);
         }
-        const published = await awaitPublication(prepared.stack);
+        const published = await applyRequestedConfiguration(
+          await awaitPublication(prepared.stack),
+          provisionOptions.configuration,
+        );
         return {
           outcome: "reuse",
           selection: selectionForStack(published),
@@ -431,7 +448,7 @@ export const makeManagedStackService = (
         }
         if (current.lifecycle !== "stopped") {
           if (deleteOptions?.stop === undefined) {
-            throw new Error(`Managed stack ${stackId} must be safely stopped before deletion`);
+            throw new ManagedStackNotStoppedError(stackId);
           }
           await deleteOptions.stop(current);
           options.repository.updateStack({

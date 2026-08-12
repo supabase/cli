@@ -715,6 +715,11 @@ export const createSqliteManagedStackRepository = (
       return transaction(database, () => {
         requireOwnedOperation(database, input.stackId, input.operationToken);
         const current = requireStack(database, input.stackId);
+        if (current.status === "tombstoned") {
+          // A tombstone is deleted state: a caller holding a stale ID must
+          // never resurrect it into a port-occupying lifecycle.
+          throw new ManagedStackNotFoundError(input.stackId);
+        }
         const runtimeRequest = input.runtimeRequest ?? current.runtimeRequest;
         const runtime = input.runtime ?? current.runtime;
         const lifecycle = input.lifecycle ?? current.lifecycle;

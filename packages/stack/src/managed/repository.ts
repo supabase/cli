@@ -502,6 +502,11 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
     updateStack(input) {
       requireOwnedOperation(input.stackId, input.operationToken);
       const current = requireStack(input.stackId);
+      if (current.status === "tombstoned") {
+        // A tombstone is deleted state: a caller holding a stale ID must never
+        // resurrect it into a port-occupying lifecycle.
+        throw new ManagedStackNotFoundError(input.stackId);
+      }
       const next = applyConfiguration(current, input, input.now);
       transitionPortOwnership(current, next);
       stacks.set(current.id, next);
