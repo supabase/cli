@@ -13,7 +13,7 @@ export { nodeSqliteManagedStackRepositoryLayer };
 
 export const createManagedStackService = (
   options: CreateManagedStackServiceOptions = {},
-): ManagedStackServiceHandle =>
+): Promise<ManagedStackServiceHandle> =>
   createManagedStackServiceWith(
     NodeFileSystem.layer,
     nodeSqliteManagedStackRepositoryLayer,
@@ -22,4 +22,4 @@ export const createManagedStackService = (
 
 export const makeManagedStackService = (
   options: MakeManagedStackServiceOptions,
-): ManagedStackServiceHandle => makeManagedStackServiceWith(NodeFileSystem.layer, options);
+): Promise<ManagedStackServiceHandle> => makeManagedStackServiceWith(NodeFileSystem.layer, options);

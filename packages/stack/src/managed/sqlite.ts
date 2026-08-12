@@ -1,6 +1,6 @@
 import { chmodSync, closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname } from "node:path";
-import { Effect, Exit, Layer, Schema, Scope } from "effect";
+import { Duration, Effect, Exit, Layer, Schedule, Schema, Scope } from "effect";
 import {
   DuplicateManagedIdentityError,
   InvalidManagedOwnerPidError,
@@ -186,23 +186,41 @@ const isSqliteBusy = (error: unknown): boolean => {
   return error instanceof Error && /database is (?:busy|locked)/i.test(error.message);
 };
 
-const synchronousWait = (milliseconds: number): void => {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, milliseconds);
-};
+const WAL_CONVERSION_RETRY_MS = 10;
+const WAL_CONVERSION_RETRY_CEILING_MS = 100;
+const WAL_CONVERSION_BUDGET_MS = 4_000;
 
-const enableWriteAheadLogging = (database: ManagedSqliteDatabase): void => {
-  for (let attempt = 0; ; attempt += 1) {
-    try {
+/**
+ * Converting a fresh registry to WAL can lose a race with another process doing
+ * the same thing, and SQLite reports that as a busy error instead of waiting it
+ * out under `busy_timeout`. The conversion is therefore retried on a schedule:
+ * tight at first, capped so a long contention window is not polled every 10 ms,
+ * and bounded by a total budget. The retry is a schedule rather than a blocking
+ * wait, so a cold start under contention suspends the fiber instead of stalling
+ * the event loop that is driving every other caller of this process.
+ */
+const walConversionSchedule = Schedule.exponential(Duration.millis(WAL_CONVERSION_RETRY_MS)).pipe(
+  Schedule.modifyDelay(({ duration }) =>
+    Effect.succeed(
+      Duration.millis(Math.min(Duration.toMillis(duration), WAL_CONVERSION_RETRY_CEILING_MS)),
+    ),
+  ),
+  Schedule.upTo({ duration: Duration.millis(WAL_CONVERSION_BUDGET_MS) }),
+);
+
+const enableWriteAheadLogging = (database: ManagedSqliteDatabase): Effect.Effect<void> =>
+  Effect.try({
+    try: () => {
       database.exec("PRAGMA journal_mode = WAL");
-      return;
-    } catch (error: unknown) {
-      if (!isSqliteBusy(error) || attempt >= 49) {
-        throw error;
-      }
-      synchronousWait(Math.min(10 + attempt * 5, 100));
-    }
-  }
-};
+    },
+    catch: (error: unknown) => error,
+  }).pipe(
+    Effect.retry({ while: isSqliteBusy, schedule: walConversionSchedule }),
+    // Contention that never clears within the budget is not a managed failure a
+    // caller could recover from, so the driver's own error stays a defect —
+    // exactly as an immediate non-busy failure of this pragma always has.
+    Effect.orDie,
+  );
 
 const rollbackPreservingCause = (database: ManagedSqliteDatabase): void => {
   try {
@@ -212,10 +230,7 @@ const rollbackPreservingCause = (database: ManagedSqliteDatabase): void => {
   }
 };
 
-const initializeSchema = (database: ManagedSqliteDatabase): void => {
-  database.exec("PRAGMA busy_timeout = 5000");
-  database.exec("PRAGMA foreign_keys = ON");
-  enableWriteAheadLogging(database);
+const migrateSchema = (database: ManagedSqliteDatabase): void => {
   database.exec("BEGIN IMMEDIATE");
   try {
     const versionRow = database.prepare("PRAGMA user_version").get();
@@ -314,6 +329,34 @@ const initializeSchema = (database: ManagedSqliteDatabase): void => {
     throw error;
   }
 };
+
+/**
+ * Prepares a freshly opened handle for use as the registry.
+ *
+ * `busy_timeout` is set first so every later statement waits out a writer on its
+ * own, then the file is converted to WAL, and only then is the schema read and
+ * created. A registry written by an unsupported version is the one outcome a
+ * caller can act on, so it is the only failure this reports; everything else the
+ * driver raises stays a defect.
+ */
+const initializeRegistry = (
+  database: ManagedSqliteDatabase,
+): Effect.Effect<void, UnsupportedManagedRegistryVersionError> =>
+  Effect.gen(function* () {
+    yield* Effect.sync(() => {
+      database.exec("PRAGMA busy_timeout = 5000");
+      database.exec("PRAGMA foreign_keys = ON");
+    });
+    yield* enableWriteAheadLogging(database);
+    yield* Effect.try({
+      try: () => {
+        migrateSchema(database);
+      },
+      catch: failsWith<UnsupportedManagedRegistryVersionError>(
+        UnsupportedManagedRegistryVersionError,
+      ),
+    });
+  });
 
 const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
   try {
@@ -970,14 +1013,7 @@ const createSqliteManagedStackRepository = (
   database: ManagedSqliteDatabase,
 ): Effect.Effect<ManagedStackRepositoryShape, UnsupportedManagedRegistryVersionError> =>
   Effect.gen(function* () {
-    yield* Effect.try({
-      try: () => {
-        initializeSchema(database);
-      },
-      catch: failsWith<UnsupportedManagedRegistryVersionError>(
-        UnsupportedManagedRegistryVersionError,
-      ),
-    });
+    yield* initializeRegistry(database);
 
     return {
       prepareOrdinaryStack: (input) =>
@@ -1094,6 +1130,10 @@ export const hardenManagedRegistryFile = (path: string): void => {
  * The registry as a scoped layer: the handle is opened when the layer is built
  * and closed when its scope closes, including when schema initialization refuses
  * the registry, so no failure path can leak an open database.
+ *
+ * Building this layer is I/O and may suspend: a cold start racing another
+ * process' WAL conversion waits on a schedule before trying again, so the layer
+ * must be built through a runner that can suspend rather than `Effect.runSync`.
  */
 export const sqliteManagedStackRepositoryLayer = (
   openDatabase: () => ManagedSqliteDatabase,

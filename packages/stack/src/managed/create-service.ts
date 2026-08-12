@@ -64,18 +64,23 @@ export type ReconcileAbandonedOperationsRequest = {
 /**
  * The managed registry as a Promise API.
  *
- * `inspectStack` and `listStacks` stay synchronous accessors: the registry is a
- * synchronous handle, and callers use them inline while deciding what to do next.
+ * Every method is Promise-returning, reads included: the registry lives in a
+ * file this process may have to wait for, so a handle that answered reads
+ * synchronously would only be hiding that I/O from its caller. The handle is an
+ * `AsyncDisposable`, so a block that acquires one with `await using` closes it
+ * on every path out.
  */
-export interface ManagedStackServiceHandle {
+export interface ManagedStackServiceHandle extends AsyncDisposable {
   readonly stateRoot: string;
   readonly repository: ManagedStackRepositoryShape;
   provisionOrdinaryStack(
     options: ProvisionOrdinaryStackRequest,
   ): Promise<ProvisionOrdinaryStackResult>;
   inspectOrdinaryWorkspace(workspacePath: string): Promise<InspectOrdinaryWorkspaceResult>;
-  inspectStack(stackId: string): ManagedStackRecord | undefined;
-  listStacks(options?: { readonly includeTombstoned?: boolean }): ReadonlyArray<ManagedStackRecord>;
+  inspectStack(stackId: string): Promise<ManagedStackRecord | undefined>;
+  listStacks(options?: {
+    readonly includeTombstoned?: boolean;
+  }): Promise<ReadonlyArray<ManagedStackRecord>>;
   updateStack(
     stackId: string,
     configuration: ManagedStackConfiguration,
@@ -106,15 +111,16 @@ const fromCallback = <A>(run: () => A | Promise<A>): Effect.Effect<A, unknown> =
       : Effect.succeed(answer),
   );
 
-const managedStackServiceHandle = <ER>(
+const managedStackServiceHandle = async <ER>(
   layer: Layer.Layer<ManagedStackRepository | ManagedStackService, ER>,
-): ManagedStackServiceHandle => {
+): Promise<ManagedStackServiceHandle> => {
   const runtime = ManagedRuntime.make(layer);
-  // Built eagerly and synchronously: the registry is a synchronous handle, the
-  // facade exposes synchronous reads over it, and a registry this process cannot
-  // open must fail while the service is being created rather than at whichever
-  // call happens to touch it first.
-  const context = Effect.runSync(runtime.contextEffect);
+  // Acquiring the service is the I/O it always was: the registry file is opened
+  // and its schema read, and a cold start may wait out another process' WAL
+  // conversion. Awaiting it here keeps that failure at the acquisition — a
+  // registry this process cannot open rejects rather than surfacing at whichever
+  // later call happens to touch it first — without blocking the event loop.
+  const context = await runtime.context();
   const service = Context.get(context, ManagedStackService);
   const repository = Context.get(context, ManagedStackRepository);
 
@@ -138,8 +144,8 @@ const managedStackServiceHandle = <ER>(
     },
     inspectOrdinaryWorkspace: (workspacePath) =>
       runtime.runPromise(service.inspectOrdinaryWorkspace(workspacePath)),
-    inspectStack: (stackId) => runtime.runSync(service.inspectStack(stackId)),
-    listStacks: (options) => runtime.runSync(service.listStacks(options)),
+    inspectStack: (stackId) => runtime.runPromise(service.inspectStack(stackId)),
+    listStacks: (options) => runtime.runPromise(service.listStacks(options)),
     updateStack: (stackId, configuration) =>
       runtime.runPromise(service.updateStack(stackId, configuration)),
     deleteStack: (stackId, options) => {
@@ -166,6 +172,7 @@ const managedStackServiceHandle = <ER>(
         service.pruneCheckoutLocations((location) => fromCallback(() => shouldPrune(location))),
       ),
     close: () => runtime.dispose(),
+    [Symbol.asyncDispose]: () => runtime.dispose(),
   };
 };
 
@@ -191,12 +198,14 @@ const serviceLayer = (
  *
  * The state root and owner pid are validated here, before any layer is built, so
  * a caller that supplied neither a usable root nor a usable pid learns about it
- * from the call that made the mistake.
+ * from the call that made the mistake. Acquisition is asynchronous throughout, so
+ * that — like every other way this can fail — arrives as a rejection rather than
+ * as a throw the caller has to guard separately.
  */
-export const makeManagedStackServiceWith = (
+export const makeManagedStackServiceWith = async (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
   options: MakeManagedStackServiceOptions,
-): ManagedStackServiceHandle => {
+): Promise<ManagedStackServiceHandle> => {
   const stateRoot = requireExplicitManagedStateRoot(options.stateRoot);
   assertManagedOwnerPid(options.ownerPid);
   return managedStackServiceHandle(
@@ -215,13 +224,13 @@ export const makeManagedStackServiceWith = (
  * Node entries structurally impossible, and lets the Bun test suite cover the
  * plumbing that the Node entry (which imports `node:sqlite`) shares.
  */
-export const createManagedStackServiceWith = (
+export const createManagedStackServiceWith = async (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
   openRepository: (
     registryPath: string,
   ) => Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
   options: CreateManagedStackServiceOptions,
-): ManagedStackServiceHandle => {
+): Promise<ManagedStackServiceHandle> => {
   const stateRoot = resolveManagedStateRoot(options);
   assertManagedOwnerPid(options.ownerPid);
   const repository = options.repository;

@@ -13,9 +13,9 @@ export { bunSqliteManagedStackRepositoryLayer };
 
 export const createManagedStackService = (
   options: CreateManagedStackServiceOptions = {},
-): ManagedStackServiceHandle =>
+): Promise<ManagedStackServiceHandle> =>
   createManagedStackServiceWith(BunFileSystem.layer, bunSqliteManagedStackRepositoryLayer, options);
 
 export const makeManagedStackService = (
   options: MakeManagedStackServiceOptions,
-): ManagedStackServiceHandle => makeManagedStackServiceWith(BunFileSystem.layer, options);
+): Promise<ManagedStackServiceHandle> => makeManagedStackServiceWith(BunFileSystem.layer, options);

@@ -81,20 +81,19 @@ const program = Effect.gen(function* () {
 await Effect.runPromise(Effect.scoped(Effect.provide(program, managedLayer)));
 ```
 
-Callers that do not run an Effect runtime can use the Promise edge over the same layers. It builds
-its runtime eagerly, so `inspectStack` and `listStacks` stay synchronous accessors and a registry
-this process cannot open fails at creation rather than at the first call that touches it:
+Callers that do not run an Effect runtime can use the Promise edge over the same layers. Acquiring it
+is I/O, so it is awaited and a registry this process cannot open rejects there rather than at the
+first call that touches it. The handle is an `AsyncDisposable`, so `await using` closes it:
 
 ```typescript
 import { createManagedStackService } from "@supabase/stack/managed";
 
-const managed = createManagedStackService();
+await using managed = await createManagedStackService();
 const result = await managed.provisionOrdinaryStack({
   workspacePath: "/absolute/project",
 });
 
-console.log(managed.inspectStack(result.stack.id)?.status);
-await managed.close();
+console.log((await managed.inspectStack(result.stack.id))?.status);
 ```
 
 Managed state uses opaque project, checkout, context, and stack UUIDs. A non-Git workspace stores

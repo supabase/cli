@@ -479,24 +479,32 @@ const program = Effect.gen(function* () {
 `createManagedStackService()` — and `makeManagedStackService()` over a repository the caller already
 has — is a thin `ManagedRuntime` edge over exactly those layers, for consumers that do not run an
 Effect runtime. It exists to serve the Promise-oriented `createStack()` boundary; the runtime
-lifecycle beneath it is Effect-based either way. Two properties of that edge are contracts rather
+lifecycle beneath it is Effect-based either way. Three properties of that edge are contracts rather
 than incidental:
 
-- **Construction is eager and synchronous.** The facade builds the runtime's context with
-  `Effect.runSync`, so the registry is opened while the service is being created. That keeps
-  `inspectStack` and `listStacks` synchronous accessors over a synchronous handle, matching how
-  callers read the registry inline while deciding what to do next, and it makes a registry this
-  process cannot open fail at creation rather than at whichever later call happens to touch it first.
-- **The cold-start WAL retry is therefore synchronous too.** Converting a fresh registry to WAL can
-  lose a race with another process doing the same thing, so `enableWriteAheadLogging` retries
-  `SQLITE_BUSY` with a blocking `Atomics.wait`. Expressing that retry as an Effect schedule would
-  make layer construction asynchronous, which the synchronous-construction contract above forbids.
-  The retry stays synchronous by design for now; making it an Effect retry is gated on the facade
-  giving up its synchronous accessors.
+- **Acquisition is asynchronous.** Both factories return a `Promise<ManagedStackServiceHandle>` and
+  build the runtime's context through `runtime.context()`, because opening the registry is I/O: a
+  file is created and hardened, its schema read, and a cold start may have to wait out another
+  process' WAL conversion. Everything that can refuse the acquisition arrives as a rejection — a
+  blank state root, an owner PID that could never be probed, and a registry written by an
+  unsupported schema version all reject with the same typed error instances, so a caller has one
+  failure channel instead of a throw plus a rejection.
+- **Reads are Promises too.** `inspectStack` and `listStacks` return Promises rather than answering
+  inline. A handle that read synchronously would only be hiding the registry's I/O from its caller,
+  and it is what forced the cold-start retry below to block. The `repository` accessor stays a plain
+  property: the context is already resolved by the time a caller holds the handle.
+- **The cold-start WAL retry is a schedule, not a blocking wait.** Converting a fresh registry to
+  WAL can lose a race with another process doing the same thing, so `enableWriteAheadLogging`
+  retries exactly the `SQLITE_BUSY`/`SQLITE_LOCKED` classification on `Schedule.exponential` from
+  10 ms, capped at 100 ms per wait and bounded to a total ~4 s budget. Contention that never clears
+  surfaces the driver's own busy error, as an immediate non-busy failure of that pragma always has.
+  Because the retry suspends the fiber instead of spinning on `Atomics.wait`, a process opening the
+  registry no longer stalls the event loop that every other caller in it depends on.
 
 `close()` disposes the `ManagedRuntime`, which closes the scope that owns the database handle. The
-facade also hands back the very repository the service uses, so an embedder can read the registry
-without opening a second handle on it.
+handle is also an `AsyncDisposable`, so `await using service = await createManagedStackService()`
+closes it on every path out of the block. The facade hands back the very repository the service uses,
+so an embedder can read the registry without opening a second handle on it.
 
 ## Legacy daemon paths
 
