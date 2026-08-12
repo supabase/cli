@@ -9,17 +9,13 @@ import {
 } from "./squash.diff.ts";
 
 /**
- * The `before.sql`/`after.sql`/`diff.sql` fixtures are read directly from the
- * `apps/cli-go` testdata directory (same pattern as `legacy-pg-dump.env.unit.test.ts`'s
- * `goScriptsDir`) rather than hand-transcribed as template literals: `apps/cli` still
- * gains no new `testdata/` fixtures directory of its own, but a byte-for-byte copy of
- * 90+109+19 lines of real `pg_dump` output is exactly the kind of content a manual
- * transcription would silently corrupt (trailing whitespace, blank lines, quoting).
+ * The `before.sql`/`after.sql`/`diff.sql` fixtures are vendored copies of real
+ * `pg_dump` output rather than hand-transcribed template literals: a byte-for-byte
+ * corpus of 90+109+19 lines is exactly the kind of content a manual transcription
+ * would silently corrupt (trailing whitespace, blank lines, quoting).
  */
-const goTestdataDir = fileURLToPath(
-  new URL("../../../../../../cli-go/internal/migration/squash/testdata/", import.meta.url),
-);
-const readGoFixture = (name: string) => readFileSync(`${goTestdataDir}${name}`, "utf8");
+const testdataDir = fileURLToPath(new URL("./testdata/", import.meta.url));
+const readGoFixture = (name: string) => readFileSync(`${testdataDir}${name}`, "utf8");
 
 describe("legacySquashLineByLineDiff", () => {
   it("diffs real pg_dump output into Go's exact diff.sql bytes", () => {

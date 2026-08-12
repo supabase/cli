@@ -12,8 +12,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { legacyStatus } from "./status.handler.ts";
 
-// Go registers both `--override-name` and `--exclude` as pflag `StringSliceVar`
-// (`cmd/status.go:38-39`), which CSV-splits each occurrence and accumulates
+// `--override-name` and `--exclude` are pflag-style string-slice flags, which
+// CSV-split each occurrence and accumulate
 // across repeats — `--override-name a=1,b=2` is two overrides, not one.
 // Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
 // see `legacyStringSliceFlag`).
@@ -38,7 +38,7 @@ const config = {
 
 export type LegacyStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `status` makes no Management API calls (Go's status needs no access token), so
+// `status` makes no Management API calls (it needs no access token), so
 // it deliberately avoids `legacyManagementApiRuntimeLayer` — mirrors `unlink`'s
 // runtime shape. `legacyCliConfigLayer` is exposed at the top level directly
 // (nothing else in this runtime needs to consume it internally).

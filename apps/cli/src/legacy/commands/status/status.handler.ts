@@ -45,15 +45,11 @@ import type { LegacyStatusFlags } from "./status.command.ts";
 
 /**
  * Parses `--override-name api.url=NEXT_PUBLIC_SUPABASE_URL` entries into a
- * `fieldKey -> outputName` map, mirroring Go's `env.EnvironToEnvSet` +
- * `env.Unmarshal` (`cmd/status.go:21-27`): each entry must be a `KEY=VALUE`
- * pair. `env.EnvironToEnvSet` only validates that shape (`go-env`'s
- * `ErrInvalidEnviron`); the Netflix `go-env` library's `Unmarshal` then walks
- * `CustomName`'s own struct fields and looks up each field's tag in the
- * resulting map — it never checks the map for leftover/unmatched keys, so an
- * entry whose `KEY` isn't one of the 18 known `CustomName` field keys is
- * silently ignored, not an error (verified against `go-env@v0.1.2`'s
- * `env.go`/`transform.go`).
+ * `fieldKey -> outputName` map: each entry must be a `KEY=VALUE`
+ * pair, validated only for that shape. Unmatched/unknown keys are walked
+ * against the known field keys and looked up — an
+ * entry whose `KEY` isn't one of the 18 known field keys is
+ * silently ignored, not an error.
  */
 function parseOverrides(
   entries: ReadonlyArray<string>,
@@ -79,7 +75,7 @@ function parseOverrides(
   return Effect.succeed(overrides);
 }
 
-/** Go's `fmt.Fprintln(os.Stderr, "Stopped services:", stopped)` slice format. */
+/** The established `"Stopped services:", stopped` slice format. */
 function formatGoStringSlice(items: ReadonlyArray<string>): string {
   return `[${items.join(" ")}]`;
 }
@@ -93,36 +89,31 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
   const fs = yield* FileSystem.FileSystem;
 
   yield* Effect.gen(function* () {
-    // 0. Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
-    // unconditionally `os.Chdir`s the resolved `--workdir`/`SUPABASE_WORKDIR`
-    // in `PersistentPreRunE` (`cmd/root.go:93-105`) — before `status`'s own
-    // `PreRunE` (override-name parsing) or `RunE`. A missing or non-directory
+    // 0. The resolved `--workdir`/`SUPABASE_WORKDIR` is `chdir`'d into
+    // unconditionally — before `status`'s own
+    // override-name parsing or handler body. A missing or non-directory
     // path fails immediately, so this must win over every later error.
     yield* legacyValidateWorkdirIsDirectory(cliConfig.workdir, fs).pipe(
       Effect.mapError((error) => new LegacyStatusWorkdirError({ message: error.message })),
     );
 
-    // 1. `--override-name KEY=VALUE` parsing — mirroring Go's Cobra wiring,
-    // where override validation runs in `PreRunE` (`cmd/status.go:21-27`) and
-    // Cobra's execute loop returns as soon as `PreRunE` errors, never calling
-    // `RunE` (`spf13/cobra@v1.10.2/command.go:999-1015`). So a malformed
-    // `--override-name` entry fails before `status.Run` ever loads config or
-    // touches Docker (`internal/status/status.go:101-116`) — it must win over
+    // 1. `--override-name KEY=VALUE` parsing runs before config load or any
+    // Docker work. So a malformed
+    // `--override-name` entry fails before the handler ever loads config or
+    // touches Docker — it must win over
     // a config-load error or a Docker/DB health-check error, not be masked by
     // either. `overrides` itself is only consumed much later, by
     // `legacyStatusValuesFromState` below.
     const overrides = yield* parseOverrides(flags.overrideName);
 
-    // 2. `status` always needs config, unlike `stop` (status.go:99-103). An
-    // ABSENT config.toml is not a hard failure in Go: `flags.LoadConfig` ->
-    // `Config.Load` -> `loadFromFile` -> `mergeFileConfig` treats a missing
-    // file as a no-op (`os.ErrNotExist` -> nil, pkg/config/config.go:655-656)
-    // and proceeds with template defaults (`mergeDefaultValues`,
-    // pkg/config/config.go:639-648). Only a MALFORMED file is a hard error.
+    // 2. `status` always needs config, unlike `stop`. An
+    // ABSENT config.toml is not a hard failure: config loading treats a missing
+    // file as a no-op and proceeds with template defaults. Only a MALFORMED
+    // file is a hard error.
     // `legacyLoadLocalProjectContext` mirrors that (decoding an empty document
     // through the schema for its defaults) and also resolves the sanitized,
     // config/env-derived project id used below — see its own doc comment for
-    // the full Go-parity rationale (including why workdir validation stays out
+    // the full rationale (including why workdir validation stays out
     // of it and is instead handled by step 0 above).
     const context = yield* legacyLoadLocalProjectContext(
       cliConfig.workdir,
@@ -130,10 +121,8 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     );
 
     // 3. Resolve + VALIDATE config-derived state before any Docker call —
-    // matching Go's `flags.LoadConfig` (config load + `Validate`,
-    // `internal/utils/flags/config_path.go:12` -> `pkg/config/config.go:882`),
-    // which runs entirely before `assertContainerHealthy`/container listing
-    // (`internal/status/status.go:101-116`). `legacyResolveStatusLocalState`
+    // config load + validation run entirely before the health check/container
+    // listing below. `legacyResolveStatusLocalState`
     // can throw `LegacyInvalidJwtSecretError` (a short `auth.jwt_secret`),
     // `LegacyInvalidPortEnvOverrideError`/`LegacyInvalidBoolEnvOverrideError`
     // (a malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED` override), or a
@@ -156,20 +145,19 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     });
 
     // 4. status has no --project-id flag; resolution is always env → toml →
-    // workdir basename, then sanitized to match the singleton Go's
-    // `Config.Validate` produces once at config-load time
-    // (`pkg/config/config.go:938-944`) — every reader, including the Docker
-    // LABEL `start` writes (`internal/utils/docker.go:375`), sees that same
+    // workdir basename, then sanitized to match the singleton config
+    // validation produces once at config-load time — every reader, including
+    // the Docker LABEL `start` writes, sees that same
     // sanitized string, so `status` must filter on it too (see
     // `legacyCliProjectFilterValue`'s doc comment).
     const projectId = context.projectId;
     const dbContainerId = localDbContainerId(projectId);
 
-    // 5. Health check, skipped entirely with --ignore-health-check (status.go:104-108).
-    // Go's `assertContainerHealthy` never special-cases "not found" — an absent
-    // container fails `ContainerInspect` itself, which surfaces as the generic
-    // inspect error (status.go:147-150), not the "not running" branch (which
-    // only applies to a present-but-stopped container, status.go:150-151).
+    // 5. Health check, skipped entirely with --ignore-health-check.
+    // The health check never special-cases "not found" — an absent
+    // container fails the inspect call itself, which surfaces as the generic
+    // inspect error, not the "not running" branch (which
+    // only applies to a present-but-stopped container).
     // `legacyInspectContainerState` mirrors that: a missing container is just
     // another non-zero exit, mapped below with the real Docker stderr text.
     if (!flags.ignoreHealthCheck) {
@@ -192,8 +180,8 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       }
     }
 
-    // 6. List running containers, diff against the 13 expected service ids
-    // (status.go:125-145), and report any that are stopped.
+    // 6. List running containers, diff against the 13 expected service ids,
+    // and report any that are stopped.
     const filterValue = legacyCliProjectFilterValue(projectId);
     const runningNames = yield* legacyListContainersByLabel(spawner, {
       projectIdFilter: filterValue,
@@ -211,7 +199,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     const excluded = [...stopped, ...flags.exclude];
 
     // 8. Apply the exclude-based gating on top of the already-validated
-    // `localState` (Go's `toValues()` exclude filtering, `status.go:55-61`).
+    // `localState`.
     // Pure/non-throwing — see `legacyGateStatusState`'s doc comment. Reused
     // for both the real and pretty-mode (empty-override) value maps below,
     // matching this handler's pre-split behavior.
@@ -219,12 +207,12 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     const state = legacyGateStatusState(localState, containerIds, excluded);
     const { values } = legacyStatusValuesFromState(state, overrides);
 
-    // Go's `PrettyPrint` (`status.go:236-243`) unmarshals a FRESH, empty
-    // `EnvSet{}` into a brand-new `CustomName{}` rather than reusing the
-    // CLI-supplied, override-populated `names` — `--override-name` only ever
-    // affects `printStatus`'s env/json/toml/yaml path, never the pretty table.
+    // The pretty renderer always uses a FRESH, empty override map
+    // rather than reusing the CLI-supplied, override-populated `names` —
+    // `--override-name` only ever affects the env/json/toml/yaml path, never
+    // the pretty table.
     // Remap names from the already-resolved `state` (empty override map) so the
-    // rendered table matches Go exactly without leaking `--override-name` into
+    // rendered table stays consistent without leaking `--override-name` into
     // pretty-mode output, and without a second (throwing) state resolution.
     const renderPretty = Effect.fnUntraced(function* () {
       yield* output.raw(
@@ -235,9 +223,9 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
     });
 
-    // 9. Output branching: Go's -o (env|json|toml|yaml|pretty) is a complete
-    // format choice and takes priority over --output-format (root.ts:119-121,
-    // matching functions/list's list.handler.ts:115-118) — only an ABSENT -o
+    // 9. Output branching: -o (env|json|toml|yaml|pretty) is a complete
+    // format choice and takes priority over --output-format
+    // (matching functions/list's list.handler.ts:115-118) — only an ABSENT -o
     // defers to --output-format for json/stream-json.
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
@@ -263,7 +251,7 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     }
 
     // goFmt is undefined — defer to TS --output-format for json/stream-json,
-    // otherwise render the grouped rounded-table (Go's `-o pretty` default).
+    // otherwise render the grouped rounded-table (the `-o pretty` default).
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("", values);
       return;
