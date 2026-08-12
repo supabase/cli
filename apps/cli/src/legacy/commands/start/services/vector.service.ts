@@ -1,7 +1,5 @@
 /**
- * Vector container spec builder — port of Go's "Start vector" block
- * (`apps/cli-go/internal/start/start.go:396-484`, deleted in CLI-1966; last
- * present at commit a253ccba2), gated on
+ * Vector container spec builder, gated on
  * `config.analytics.enabled && !isContainerExcluded(config.analytics.vector_image,
  * excluded)` — see `legacy-service-catalog.ts`'s `vector` entry
  * (`excludeKey: "vector"`, depends on `logflare` being healthy). Gating and
@@ -11,21 +9,20 @@
  * resolved/pulled" contract.
  *
  * Vector is the one `start` service that inspects the HOST's own Docker
- * daemon endpoint (`utils.Docker.DaemonHost()`, `start.go:415`) to decide how
- * to mount/reach that daemon's socket from INSIDE the Vector container for
- * its `docker_logs` source. That decision is split into two independently
- * exported, independently testable pieces, matching every other `start`
- * service's "builder stays pure" shape:
+ * daemon endpoint to decide how to mount/reach that daemon's socket from
+ * INSIDE the Vector container for its `docker_logs` source. That decision is
+ * split into two independently exported, independently testable pieces,
+ * matching every other `start` service's "builder stays pure" shape:
  *
  * - {@link legacyResolveDockerDaemonHost} — the one IMPURE piece: discovers
  *   the current `scheme://host` string a caller should feed into the pure
  *   branch below. See its doc comment for exactly what it reads/shells out to
  *   and why.
  * - {@link legacyResolveVectorDockerSocketPlan} — the PURE scheme-branching
- *   logic (`start.go:421-443`): given an already-resolved daemon host string,
- *   decides the `DOCKER_HOST` env override, bind mount, and `--security-opt`
- *   this container needs. This is the highest-parity-risk logic in this
- *   module — Docker Desktop, Colima, OrbStack, and rootless Podman each take a
+ *   logic: given an already-resolved daemon host string, decides the
+ *   `DOCKER_HOST` env override, bind mount, and `--security-opt` this
+ *   container needs. This is the highest-parity-risk logic in this module —
+ *   Docker Desktop, Colima, OrbStack, and rootless Podman each take a
  *   different branch.
  *
  * {@link legacyBuildVectorContainerSpec} itself stays a pure function of an
@@ -42,13 +39,13 @@ import { legacyRenderStartVectorYaml } from "../lib/template-render.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** `utils.VectorAliases` (`apps/cli-go/internal/utils/config.go:48`) — a fixed, non-configurable constant. */
+/** The Vector network alias — a fixed, non-configurable constant. */
 const LEGACY_VECTOR_NETWORK_ALIASES = ["vector"];
 
-/** `utils.DinDHost` (`apps/cli-go/internal/utils/docker.go:58`) — the well-known Docker-Desktop-for-{Mac,Windows}/Colima/OrbStack hostname that resolves to the host machine from inside a container. */
+/** The well-known Docker-Desktop-for-{Mac,Windows}/Colima/OrbStack hostname that resolves to the host machine from inside a container. */
 const LEGACY_DIND_HOST = "host.docker.internal";
 
-/** The default port `dindHost` targets before a `tcp` daemon host's own port overrides it (`start.go:420`). */
+/** The default port `dindHost` targets before a `tcp` daemon host's own port overrides it. */
 const LEGACY_DIND_DEFAULT_PORT = "2375";
 
 export interface LegacyParsedDockerHostUrl {
@@ -57,15 +54,13 @@ export interface LegacyParsedDockerHostUrl {
 }
 
 /**
- * Port of `client.ParseHostURL` (`docker/docker/client`, vendored by
- * `apps/cli-go`): splits `scheme://addr` and, for a `tcp` host, strips any
- * path/query so `.host` is exactly the `host:port` pair — docker host strings
- * never carry a path in practice, so that extra round-trip through
- * `net/url.Parse` Go performs is a no-op here. Throws on a string with no
- * `://` separator or an empty address, matching Go's own hard error for a
- * malformed host — `utils.Docker.DaemonHost()` is always a well-formed
- * `scheme://` string in practice, so this should never actually throw outside
- * a test feeding it garbage on purpose.
+ * Splits a Docker host string of the form `scheme://addr` and, for a `tcp`
+ * host, strips any path/query so `.host` is exactly the `host:port` pair —
+ * docker host strings never carry a path in practice. Throws on a string
+ * with no `://` separator or an empty address — the daemon host resolved by
+ * {@link legacyResolveDockerDaemonHost} is always a well-formed `scheme://`
+ * string in practice, so this should never actually throw outside a test
+ * feeding it garbage on purpose.
  */
 export function legacyParseDockerHostUrl(host: string): LegacyParsedDockerHostUrl {
   const separatorIndex = host.indexOf("://");
@@ -85,10 +80,10 @@ export function legacyParseDockerHostUrl(host: string): LegacyParsedDockerHostUr
 }
 
 /**
- * Minimal port of `net.SplitHostPort`, covering exactly the shapes a Docker
- * `tcp://` host string can take (`host:port` or `[ipv6]:port`) — Go's own use
- * (`start.go:423`) only ever reads the returned port, so this returns just
- * that (`undefined` when the string has no trailing `:<digits>`).
+ * Extracts the port from a Docker `tcp://` host string, covering exactly the
+ * shapes it can take (`host:port` or `[ipv6]:port`) — only the port is ever
+ * needed here, so this returns just that (`undefined` when the string has no
+ * trailing `:<digits>`).
  */
 export function legacySplitHostPortPort(hostPort: string): string | undefined {
   const lastColon = hostPort.lastIndexOf(":");
@@ -98,13 +93,12 @@ export function legacySplitHostPortPort(hostPort: string): string | undefined {
 }
 
 /**
- * Port of `shouldMountRootDockerSocket` (`start.go:131-136`): recognizes the
- * KNOWN rootful-socket paths Docker Desktop for Mac (`.docker/run` and the
- * older `.docker/desktop`) and Colima expose, where binding the STANDARD
- * `/var/run/docker.sock` path (handled specially by those runtimes, "under
- * the hood") is required instead of binding the detected path directly.
- * Anything else (Podman, OrbStack, a bare Linux socket) is assumed
- * bindable-as-is.
+ * Recognizes the KNOWN rootful-socket paths Docker Desktop for Mac
+ * (`.docker/run` and the older `.docker/desktop`) and Colima expose, where
+ * binding the STANDARD `/var/run/docker.sock` path (handled specially by
+ * those runtimes, "under the hood") is required instead of binding the
+ * detected path directly. Anything else (Podman, OrbStack, a bare Linux
+ * socket) is assumed bindable-as-is.
  */
 export function legacyShouldMountRootDockerSocket(host: string): boolean {
   return (
@@ -116,9 +110,8 @@ export function legacyShouldMountRootDockerSocket(host: string): boolean {
 }
 
 /**
- * Port of `client.DefaultDockerHost`, which is a PLATFORM-COMPILE-TIME Go
- * constant (`client_unix.go` vs `client_windows.go`) — `platform` defaults to
- * `process.platform` as this binary's own per-platform equivalent.
+ * The platform-default Docker host: `platform` defaults to
+ * `process.platform`.
  */
 export function legacyPlatformDefaultDockerHost(
   platform: NodeJS.Platform = process.platform,
@@ -127,46 +120,45 @@ export function legacyPlatformDefaultDockerHost(
 }
 
 export interface LegacyVectorDockerSocketPlan {
-  /** `env` Go appends to (`start.go:413,426,430`) — empty for the `unix` scheme, which sets no `DOCKER_HOST` override at all. */
+  /** The `DOCKER_HOST` env override — empty for the `unix` scheme, which sets no override at all. */
   readonly env: Readonly<Record<string, string>>;
-  /** `binds` Go appends to (`start.go:413,437,440`) — only ever populated by the `unix` scheme's two sub-branches. */
+  /** Bind mounts — only ever populated by the `unix` scheme's two sub-branches. */
   readonly binds: ReadonlyArray<string>;
-  /** `securityOpts` Go appends to (`start.go:413,441`) — only the `unix`/non-root sub-branch sets `label:disable`. */
+  /** Security options — only the `unix`/non-root sub-branch sets `label:disable`. */
   readonly securityOpt: ReadonlyArray<string>;
   /**
-   * `parsed.Scheme == "npipe"` (`start.go:481`): Go still creates/starts the
-   * Vector container on this branch, but — uniquely among every `start`
-   * service — does NOT add it to the `started` slice a later
-   * `WaitForHealthyService` call waits on. Orchestration-only signal for a
-   * future `start.handler.ts`; this module's builder does not act on it.
+   * True for the `npipe` scheme: the Vector container still gets created and
+   * started on this branch, but — uniquely among every `start` service — it
+   * is NOT added to the health-wait list a later `WaitForHealthyService`
+   * call waits on. Orchestration-only signal for a future
+   * `start.handler.ts`; this module's builder does not act on it.
    */
   readonly isNpipe: boolean;
 }
 
 /**
- * Port of the `switch parsed.Scheme` block (`start.go:421-443`) — the pure
- * decision of what `DOCKER_HOST` env override, bind mount, and
+ * The pure decision of what `DOCKER_HOST` env override, bind mount, and
  * `--security-opt` Vector's container needs to reach the REAL Docker daemon
  * from inside its own container, given an already-resolved daemon host
  * string (see {@link legacyResolveDockerDaemonHost} for how a caller obtains
- * one). Every branch mirrors Go's exactly:
+ * one):
  *
  * - `tcp` — proxy through `host.docker.internal` on the SAME port the daemon
  *   host itself specified (falling back to the default DinD port `2375` when
  *   the host string has no parseable port).
- * - `npipe` (Windows) — same `host.docker.internal:2375` proxy target; Go
- *   additionally prints a stderr warning here, which is this module's
- *   caller's responsibility (output side effects don't belong in a pure spec
+ * - `npipe` (Windows) — same `host.docker.internal:2375` proxy target; a
+ *   stderr warning belongs here too, which is this module's caller's
+ *   responsibility (output side effects don't belong in a pure spec
  *   builder).
  * - `unix` — no env override; instead mounts the daemon socket read-only.
  *   Docker Desktop/Colima's KNOWN rootful-socket paths
  *   ({@link legacyShouldMountRootDockerSocket}) get the STANDARD
  *   `/var/run/docker.sock` bound to itself (that path is special-cased by
- *   those runtimes "under the hood", per Go's comment) — the ACTUAL detected
- *   path is never used as the bind source in this sub-branch. Anything else
- *   (Podman, OrbStack) binds the actual detected socket path onto the
- *   standard path instead, plus `--security-opt label:disable` (needed for
- *   Podman/OrbStack's differently-labeled socket to be readable from inside a
+ *   those runtimes "under the hood") — the ACTUAL detected path is never
+ *   used as the bind source in this sub-branch. Anything else (Podman,
+ *   OrbStack) binds the actual detected socket path onto the standard path
+ *   instead, plus `--security-opt label:disable` (needed for Podman/
+ *   OrbStack's differently-labeled socket to be readable from inside a
  *   container with a different SELinux/AppArmor label).
  */
 export function legacyResolveVectorDockerSocketPlan(
@@ -213,11 +205,8 @@ function collectText(stream: Stream.Stream<Uint8Array, unknown>) {
 }
 
 /**
- * Best-effort resolution of the CURRENT docker CLI context's daemon endpoint,
- * mirroring the context-store branch of Go's vendored
- * `command.NewAPIClientFromFlags`/`resolveDockerEndpoint` (the mechanism
- * `utils.Docker.DaemonHost()` itself goes through when `DOCKER_HOST` is
- * unset) WITHOUT reimplementing Docker's context store file format —
+ * Best-effort resolution of the CURRENT docker CLI context's daemon
+ * endpoint, WITHOUT reimplementing Docker's context store file format —
  * `docker context inspect` already performs that exact resolution (context
  * name from `$DOCKER_CONTEXT`/`~/.docker/config.json`'s `currentContext`,
  * then that context's stored endpoint) using the same `docker` binary this
@@ -257,17 +246,15 @@ function legacyInspectDockerContextHost(spawner: Spawner): Effect.Effect<string,
 
 /**
  * Discovers the daemon host string {@link legacyResolveVectorDockerSocketPlan}
- * branches on, mirroring `utils.Docker.DaemonHost()`'s own resolution order
- * (the vendored `docker/cli` library's `NewAPIClientFromFlags`,
- * `resolveContextName`): an explicit `DOCKER_HOST` env var always wins
- * (checked first, no shell-out needed); otherwise the CURRENT docker context's
- * own endpoint (Docker Desktop, Colima, and OrbStack all select a non-default
- * context rather than setting `DOCKER_HOST`) via
- * {@link legacyInspectDockerContextHost}; finally this platform's bare
- * default socket/pipe path when neither source resolves (no context support,
- * `docker` missing — `legacyEnsureImagesCached`/`spawnContainerCli` will
- * already have surfaced a clearer "docker not found" error earlier in a real
- * `start` run if that's the actual cause).
+ * branches on: an explicit `DOCKER_HOST` env var always wins (checked first,
+ * no shell-out needed); otherwise the CURRENT docker context's own endpoint
+ * (Docker Desktop, Colima, and OrbStack all select a non-default context
+ * rather than setting `DOCKER_HOST`) via {@link legacyInspectDockerContextHost};
+ * finally this platform's bare default socket/pipe path when neither source
+ * resolves (no context support, `docker` missing —
+ * `legacyEnsureImagesCached`/`spawnContainerCli` will already have surfaced a
+ * clearer "docker not found" error earlier in a real `start` run if that's
+ * the actual cause).
  */
 export function legacyResolveDockerDaemonHost(
   spawner: Spawner,
@@ -291,11 +278,11 @@ const LEGACY_VECTOR_HEALTHCHECK = {
 } as const;
 
 /**
- * Reproduces Go's exact string concatenation for the Vector entrypoint
- * (`start.go:449-454`): writes the rendered `vector.yaml` via a `cat <<'EOF'`
- * heredoc, then blocks on a `wget`-poll loop against Logflare's own `/health`
- * endpoint (Vector's `docker_logs`/HTTP sinks would otherwise start before
- * Logflare is ready to receive them) before finally exec'ing `vector`.
+ * Builds the Vector entrypoint script: writes the rendered `vector.yaml` via
+ * a `cat <<'EOF'` heredoc, then blocks on a `wget`-poll loop against
+ * Logflare's own `/health` endpoint (Vector's `docker_logs`/HTTP sinks would
+ * otherwise start before Logflare is ready to receive them) before finally
+ * exec'ing `vector`.
  */
 export function legacyBuildVectorEntrypointScript(vectorYaml: string, logflareId: string): string {
   return (
@@ -310,27 +297,27 @@ export function legacyBuildVectorEntrypointScript(vectorYaml: string, logflareId
 export interface LegacyVectorContainerSpecInput {
   /** `config.analytics.vector_image`, already resolved/pulled by the caller. */
   readonly image: string;
-  /** `legacyServiceContainerName("vector", projectId)` — Go's `utils.VectorId`; also the `vectorConfig.VectorId` template field and the `ContainerName` `DockerStart` argument. */
+  /** `legacyServiceContainerName("vector", projectId)` — also the `vectorConfig.VectorId` template field. */
   readonly containerName: string;
-  /** Go's `utils.NetId` — the shared Docker network every `start` container joins. */
+  /** The shared Docker network every `start` container joins. */
   readonly networkId: string;
   /** `config.analytics.api_key` — the `x-api-key` header value every `vector.yaml` sink sends to Logflare. */
   readonly apiKey: string;
-  /** Go's `utils.LogflareId` — used both as a `vector.yaml` template field and in the entrypoint's `wget` wait-loop URL. */
+  /** Used both as a `vector.yaml` template field and in the entrypoint's `wget` wait-loop URL. */
   readonly logflareId: string;
-  /** Go's `utils.KongId`. */
+  /** Kong's own container id — a `vector.yaml` template field. */
   readonly kongId: string;
-  /** Go's `utils.GotrueId`. */
+  /** GoTrue's own container id — a `vector.yaml` template field. */
   readonly gotrueId: string;
-  /** Go's `utils.RestId`. */
+  /** PostgREST's own container id — a `vector.yaml` template field. */
   readonly restId: string;
-  /** Go's `utils.RealtimeId` — UNLIKE Kong's `kong.yml`, Vector's `vector.yaml` really does use Realtime's container id here, not `Config.Realtime.TenantId` (`start.go:406`). */
+  /** Realtime's own container id — UNLIKE Kong's `kong.yml`, Vector's `vector.yaml` really does use Realtime's container id here, not the tenant id. */
   readonly realtimeId: string;
-  /** Go's `utils.StorageId`. */
+  /** Storage's own container id — a `vector.yaml` template field. */
   readonly storageId: string;
-  /** Go's `utils.EdgeRuntimeId`. */
+  /** Edge Runtime's own container id — a `vector.yaml` template field. */
   readonly edgeRuntimeId: string;
-  /** Go's `utils.DbId` — the local Postgres container's own name. */
+  /** The local Postgres container's own name. */
   readonly dbId: string;
   /** Already-resolved via {@link legacyResolveDockerDaemonHost} + {@link legacyResolveVectorDockerSocketPlan}, keeping this builder a pure function of its `input`. */
   readonly dockerSocketPlan: LegacyVectorDockerSocketPlan;

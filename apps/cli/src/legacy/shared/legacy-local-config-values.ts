@@ -107,11 +107,8 @@ export interface LegacyLocalConfigValues {
   readonly rootKey: string;
   /**
    * Already-resolved (env-overridden, decrypted-if-`encrypted:`) `studio.
-   * openai_api_key`. Go types this as a `config.Secret` (`pkg/config/
-   * config.go:264`), decrypted by `DecryptSecretHookFunc` at decode time
-   * for both the TOML value and any
-   * `SUPABASE_STUDIO_OPENAI_API_KEY` override (Go's generic Viper
-   * `AutomaticEnv` binding, `config.go:582-586`) — same treatment as
+   * openai_api_key`, decrypted for both the TOML value and any
+   * `SUPABASE_STUDIO_OPENAI_API_KEY` override — same treatment as
    * `jwtSecret`/the API keys below, via the same `legacyDecryptAuthSecret` helper.
    */
   readonly openaiApiKey: string | undefined;
@@ -221,7 +218,7 @@ export class LegacyInvalidPortEnvOverrideError extends Error {
   }
 }
 
-/** `uint16` port fields' valid range (`pkg/config/db.go:84`, `pkg/config/api.go:29`, etc). */
+/** `uint16` port fields' valid range. */
 const MAX_PORT = 65535;
 
 /**
@@ -253,39 +250,27 @@ export function legacyEnvOverridePort(
 }
 
 /**
- * `Config.Load` binds Viper with `SetEnvPrefix("SUPABASE")` +
- * `AutomaticEnv()` + a `.`→`_` key replacer,
- * so ANY config field can be overridden by a `SUPABASE_<DOTTED_KEY>` env var,
- * generically across the whole struct — not just auth fields
- * (`config_test.go:351,1061` exercise this against `auth.site_url`, and
- * `internal/status/status.go:52-95`'s `toValues()` reads `utils.Config.*`
- * directly, so every already-overridden field is automatically reflected in
- * `status`'s output). This resolves it for every field this module derives a
- * URL/port from, at the same higher-than-config.toml precedence Viper gives
- * env vars. An empty env var is treated as unset, matching Viper's default
- * (`AllowEmptyEnv` is never enabled in `config.go`).
+ * ANY config field can be overridden by a `SUPABASE_<DOTTED_KEY>` env var,
+ * generically across the whole struct — not just auth fields (every
+ * already-overridden field is automatically reflected in `status`'s output).
+ * This resolves it for every field this module derives a URL/port from, at
+ * the same higher-than-config.toml precedence env vars get. An empty env var
+ * is treated as unset.
  *
- * Viper's `AutomaticEnv` binding runs AFTER `Config.Load`'s `loadNestedEnv`,
- * which loads `supabase/.env`(.local) and project-root
- * dotenv files into the process env before any `SUPABASE_*` var is read —
- * so a value that lives only in one of those files,
- * not the ambient shell, must still be visible here. `projectEnvValues` is
- * that already-resolved map (see `legacyResolveProjectEnvironmentValues`);
- * falling back to `process.env` covers the "no `supabase/` project found"
- * case, where `projectEnvValues` is `undefined`.
+ * The env-override binding is resolved AFTER the project's `supabase/.env`(.local)
+ * and project-root dotenv files are loaded into the process env — so a value
+ * that lives only in one of those files, not the ambient shell, must still be
+ * visible here. `projectEnvValues` is that already-resolved map (see
+ * `legacyResolveProjectEnvironmentValues`); falling back to `process.env`
+ * covers the "no `supabase/` project found" case, where `projectEnvValues` is
+ * `undefined`.
  *
  * The resolved override string itself can be a further `env(VAR)` indirection
- * (e.g. `SUPABASE_API_ENABLED=env(API_ENABLED)`) — `LoadEnvHook`
- * is the first mapstructure decode hook composed
- * into `v.UnmarshalExact`, so it resolves
- * `env(...)` on every string mapstructure decodes into the struct, regardless
- * of whether Viper sourced that string from `config.toml` or a `SUPABASE_*`
- * `AutomaticEnv` override — Viper's `Get()` just returns
- * a string; the hook chain doesn't know or care where it came from. Resolved
- * with the same `projectEnvValues ?? process.env` precedence and non-empty
- * gate as the outer lookup (mirroring `decode_hooks.go:19-24`'s `len(env) > 0`
- * check); an unresolved/empty indirection leaves the `env(VAR)` literal
- * untouched, same as Go.
+ * (e.g. `SUPABASE_API_ENABLED=env(API_ENABLED)`), resolved on every string
+ * decoded into the config regardless of whether it came from `config.toml` or
+ * a `SUPABASE_*` override. Resolved with the same `projectEnvValues ??
+ * process.env` precedence and non-empty gate as the outer lookup; an
+ * unresolved/empty indirection leaves the `env(VAR)` literal untouched.
  */
 export function legacyEnvOverride(
   name: string,
@@ -323,19 +308,16 @@ export class LegacyInvalidBoolEnvOverrideError extends Error {
 }
 
 /**
- * Boolean-flavored sibling of {@link legacyEnvOverride} for `SUPABASE_*` fields Go
- * decodes as a native bool (`api.tls.enabled`, `auth.enabled`, and every other
+ * Boolean-flavored sibling of {@link legacyEnvOverride} for `SUPABASE_*` fields
+ * decoded as a native bool (`api.tls.enabled`, `auth.enabled`, and every other
  * `<section>.enabled` gate `status`/`stop` read — see `legacy-status-values.ts`)
- * rather than a string/number — those are bound by the same generic Viper
- * mechanism (`ExperimentalBindStruct` + `SetEnvPrefix("SUPABASE")` +
- * `AutomaticEnv()`, `pkg/config/config.go:582-586`), but the override string
- * must be decoded with Go's own `strconv.ParseBool` acceptance set
- * ({@link legacyParseGoBool}) instead of used verbatim. Unlike a plain string
- * override — where an unparsed value has no Go-observable failure mode — a
- * malformed bool override is a genuine Go-parity hard failure (see
- * {@link LegacyInvalidBoolEnvOverrideError}), same as
- * {@link LegacyInvalidPortEnvOverrideError} for ports: Go never proceeds with
- * the pre-override value on a decode error, it fails config loading outright.
+ * rather than a string/number, but the override string must be decoded with the
+ * accepted bool-spelling set ({@link legacyParseGoBool}) instead of used
+ * verbatim. Unlike a plain string override — where an unparsed value has no
+ * observable failure mode — a malformed bool override is a genuine hard
+ * failure (see {@link LegacyInvalidBoolEnvOverrideError}), same as
+ * {@link LegacyInvalidPortEnvOverrideError} for ports: never proceed with the
+ * pre-override value on a decode error, fail config loading outright.
  *
  * Exported (not just used internally) because `legacy-status-values.ts`'s own
  * `<section>.enabled` gates need this same override treatment — Go's
@@ -594,21 +576,18 @@ export function legacyEnvOverrideMaxClientConn(
 /**
  * Decrypts a resolved auth identity-key field (`jwt_secret`, `publishable_key`,
  * `secret_key`, `anon_key`, `service_role_key`) when it's a dotenvx `encrypted:`
- * value, mirroring `DecryptSecretHookFunc`,
- * which Go runs unconditionally during `UnmarshalExact` for every
- * `config.Secret`-typed field (`pkg/config/auth.go:181-185` types these five as
- * `Secret`) — an undecryptable value aborts config loading with
+ * value — an undecryptable value aborts config loading with
  * `failed to parse config: <error>` before `status`/`stop`
  * continue. `@supabase/config`'s schema only tags these fields for later
  * `Redacted` wrapping (`packages/config/src/lib/env.ts`) and never decrypts, so
  * without this step a valid `encrypted:` secret would be used as literal (wrong)
  * key material and a malformed one would silently pass through instead of
- * failing like Go does.
+ * failing.
  *
- * Applied AFTER {@link legacyEnvOverride}, matching Go: an env-sourced override lands
- * on the same `config.Secret` field and goes through the same decode hook as a
- * TOML-sourced value, so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted
- * too, not just the config.toml value.
+ * Applied AFTER {@link legacyEnvOverride}: an env-sourced override lands on the
+ * same field and goes through the same decrypt step as a TOML-sourced value,
+ * so `SUPABASE_AUTH_JWT_SECRET=encrypted:...` is decrypted too, not just the
+ * config.toml value.
  */
 function legacyDecryptAuthSecret(
   value: string | undefined,
@@ -624,28 +603,25 @@ function legacyDecryptAuthSecret(
 }
 
 /**
- * `[auth.email.smtp]`'s full resolved field set, including Go's
+ * `[auth.email.smtp]`'s full resolved field set, including its
  * presence-based `enabled` default. Exported so any caller that needs GoTrue's
  * actual SMTP-vs-Mailpit decision (not just validation) can reuse this instead
  * of re-deriving it from the schema-decoded, always-`enabled: false`-when-
  * absent `config.auth.email.smtp` — see `start.handler.ts`'s
  * `resolveGotrueEnvInput`, which used to do exactly that.
  *
- * `[auth.email.smtp]` presence-based `enabled` default:
- * when the TOML table is present but omits
- * `enabled`, Go treats it as `true` — a genuinely presence-based default
- * `@supabase/config`'s schema can't see (it always decodes `smtp.enabled` to
- * `false` when the key is absent), so this reads the raw `authDocument` too.
- * `auth.email.smtp.*` is Viper-bound like every other nested field once
- * `[auth.email.smtp]` is present in config.toml (`ExperimentalBindStruct`/
- * `AutomaticEnv`, `config.go:581-586`), so `SUPABASE_AUTH_EMAIL_SMTP_ENABLED`/
- * `_HOST`/`_PORT`/`_USER`/`_PASS`/`_ADMIN_EMAIL`/`_SENDER_NAME` overrides
- * apply before `Auth.Email.validate` runs — layered on
- * top of the presence-aware raw-document read above, same
+ * `[auth.email.smtp]` presence-based `enabled` default: when the TOML table is
+ * present but omits `enabled`, treat it as `true` — a genuinely presence-based
+ * default `@supabase/config`'s schema can't see (it always decodes
+ * `smtp.enabled` to `false` when the key is absent), so this reads the raw
+ * `authDocument` too. `auth.email.smtp.*` is env-bindable like every other
+ * nested field once `[auth.email.smtp]` is present in config.toml, so
+ * `SUPABASE_AUTH_EMAIL_SMTP_ENABLED`/`_HOST`/`_PORT`/`_USER`/`_PASS`/
+ * `_ADMIN_EMAIL`/`_SENDER_NAME` overrides apply before validation runs —
+ * layered on top of the presence-aware raw-document read above, same
  * `legacyEnvOverride`/`legacyEnvOverridePort` precedent as every other field in this file.
- * `sender_name` is an equally Viper-bound
- * regular field, just not needed by validation (hence absent from
- * {@link LegacySmtpInput}).
+ * `sender_name` is an equally env-bindable regular field, just not needed by
+ * validation (hence absent from {@link LegacySmtpInput}).
  */
 export function legacyResolveAuthEmailSmtp(
   authDocument: Readonly<Record<string, unknown>> | undefined,
@@ -657,7 +633,7 @@ export function legacyResolveAuthEmailSmtp(
    * `legacyEnvOverridePort`/`legacyEnvOverride` calls below THROW (directly, or via
    * `legacyDecryptAuthSecret` for `.pass`) on a malformed override even when a matched remote
    * block already set them, which would abort the whole caller (`legacyResolveLocalConfigValues`,
-   * and the shadow it feeds) on an env value Go silently ignores. `host`/`user`/`admin_email`/
+   * and the shadow it feeds) on an env value the override tier should silently ignore. `host`/`user`/`admin_email`/
    * `sender_name` are also in the allowlist: their `legacyEnvOverride` reads can't throw, but
    * leaving them ungated is still a precedence bug, same reasoning as `auth.external.*`'s
    * `client_id`/`url`/`redirect_uri`. Defaults to empty for `start.handler.ts`'s callers, which
@@ -750,27 +726,24 @@ export function legacyResolveAuthEmailSmtp(
 }
 
 /**
- * `Config.Validate` checks `auth.captcha` right after `auth.site_url`,
- * still inside `if c.Auth.Enabled`: an
- * enabled CAPTCHA section requires both `provider` and `secret`. `auth.captcha.*`
- * is Viper-bound like every other nested field once `[auth.captcha]` is present
- * in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
- * so `SUPABASE_AUTH_CAPTCHA_ENABLED`/`_PROVIDER`/`_SECRET` overrides apply before
+ * `auth.captcha` validation requires both `provider` and `secret` when the
+ * section is enabled. `auth.captcha.*` is env-bindable like every other nested
+ * field once `[auth.captcha]` is present in config.toml, so
+ * `SUPABASE_AUTH_CAPTCHA_ENABLED`/`_PROVIDER`/`_SECRET` overrides apply before
  * this validation runs. Unlike the flat `auth.site_url` field, `config.auth.captcha`
  * does NOT decode to `undefined` when `[auth.captcha]` is absent from config.toml —
  * `captcha.ts`'s own `withDecodingDefaultKey` fills in `{ enabled: false }` even
  * through the outer `Schema.optionalKey` wrapper (`packages/config/src/auth/index.ts`),
  * confirmed empirically; there is no schema-level presence signal here, unlike
  * `auth.passkey`/`auth.webauthn`. So presence is read from the raw `authDocument`
- * instead — matching `AutomaticEnv` (which only intercepts keys already
- * present in the merged config), an absent `[auth.captcha]` section never picks
- * up an env override alone.
+ * instead — an absent `[auth.captcha]` section never picks up an env override
+ * alone (only keys already present in the merged config are env-bindable).
  *
  * Hoisted (like {@link legacyResolveAuthEmailSmtp}) so both
- * `legacyResolveLocalConfigValues` (`Config.Validate` parity) and
- * `start.handler.ts`'s `resolveGotrueEnvInput` (the actual GoTrue env) resolve
- * the SAME effective value — `secret` is `Secret`-typed in Go
- * (`pkg/config/auth.go`), decrypted the same way `jwt_secret`/API keys/`smtp.pass` are.
+ * `legacyResolveLocalConfigValues` and `start.handler.ts`'s
+ * `resolveGotrueEnvInput` (the actual GoTrue env) resolve the SAME effective
+ * value — `secret` is decrypted the same way `jwt_secret`/API keys/`smtp.pass`
+ * are.
  */
 export function legacyResolveAuthCaptcha(
   authDocument: Readonly<Record<string, unknown>> | undefined,
@@ -783,7 +756,7 @@ export function legacyResolveAuthCaptcha(
    * `legacyEnvOverride` calls below THROW (directly, or via `legacyDecryptAuthSecret` for
    * `.secret`) on a malformed override even when a matched remote block already set them, which
    * would abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on
-   * an env value Go silently ignores. `auth.captcha.provider` can't throw the same way
+   * an env value the override tier should silently ignore. `auth.captcha.provider` can't throw the same way
    * (`legacyEnvOverride` is a plain string read), but `legacyValidateResolvedConfig`'s enum check
    * downstream rejects anything other than `hcaptcha`/`turnstile` — same "non-throwing read,
    * throwing downstream consumer" class as `studio.api_url` (review: PRRT_kwDOErm0O86XLAYn).
@@ -965,7 +938,7 @@ function loadSigningKeys(workdir: string, signingKeysPath: string): ReadonlyArra
  * malformed `SUPABASE_AUTH_ENABLED` even when a matched remote block already set `auth.enabled`
  * at viper's OVERRIDE tier — a value `Validate` never even evaluates the env var for in
  * that case — which would otherwise abort this whole resolver (and the shadow it feeds) on an
- * env value Go silently ignores (review: PRRT_kwDOErm0O86W30n6).
+ * env value the override tier should silently ignore (review: PRRT_kwDOErm0O86W30n6).
  */
 export function legacyResolveConfiguredSigningKeys(
   config: ProjectConfig,
@@ -1006,9 +979,9 @@ export function legacyResolveConfiguredSigningKeys(
  * since the presence check (run later, as part of the single consolidated validation call) owns
  * rejecting the one-but-not-the-other case.
  *
- * Go joins both paths unconditionally with the `supabase/` dir — no `filepath.IsAbs` guard
- * (`config.go:961-965` uses `path.Join`, which absorbs a leading `/`) — unlike
- * {@link readSigningKeysFile}'s `signing_keys_path`, which Go does guard with `filepath.IsAbs`.
+ * Both paths join unconditionally with the `supabase/` dir — no `filepath.IsAbs` guard
+ * (`path.Join` absorbs a leading `/`) — unlike {@link readSigningKeysFile}'s
+ * `signing_keys_path`, which IS guarded with an absolute-path check.
  * See `legacyResolveApiTlsPath`. Matches the identical Kong-side
  * validation already ported for `seed buckets`/`storage` in
  * `legacy-storage-credentials.ts`'s `validateLocalKongTls`.
@@ -1082,22 +1055,16 @@ export type LegacyResolvedAuthEmail = Omit<
  * `template`/`notification` THEMSELVES need no raw-document presence gate: they're
  * `Schema.Record`s (`packages/config/src/auth/email.ts`), which — unlike a fixed-shape struct
  * with `withDecodingDefaultKey` — only ever contain a key when the TOML section was actually
- * present, so `Object.entries(email.template)` already reflects presence, matching Go's own
- * `map[string]emailTemplate`. Each entry's OWN `subject` field is a narrower case, though: Go's
- * `emailTemplate.Subject` is `*string`, so an explicit `subject = ""`
- * is a real, non-nil state distinct from an absent key — but both decode to the SAME `""` in
+ * present, so `Object.entries(email.template)` already reflects presence. Each entry's OWN
+ * `subject` field is a narrower case, though: an explicit `subject = ""`
+ * is a real state distinct from an absent key — but both decode to the SAME `""` in
  * `@supabase/config`'s plain-string schema (`packages/config/src/auth/email.ts`), so `authDocument`
  * (the raw TOML) is read per-entry to recover which case applies, same as the
  * `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp` presence gaps elsewhere in this
- * file. An env override always wins outright when set (Go's Viper `AutomaticEnv` precedence over
- * config.toml), regardless of the raw document.
+ * file. An env override always wins outright when set, regardless of the raw document.
  *
- * Former `internal/start/start.go:544-558` (Kong `mountEmailTemplates`) and
- * `start.go:668-694,1376-1406` (GoTrue's mailer/OTP/signup env) — deleted as
- * unreachable in CLI-1966, last present at commit a253ccba2 — both read
- * `utils.Config.Auth.Email.*` post-override — this resolves the
- * SAME effective value for both `buildKongEmailTemplateMounts` and `resolveGotrueEnvInput` in
- * `start.handler.ts`.
+ * This resolves the SAME effective value for both `buildKongEmailTemplateMounts` and
+ * `resolveGotrueEnvInput` in `start.handler.ts`, which both need the post-override email config.
  */
 export function legacyResolveAuthEmail(
   email: ProjectConfig["auth"]["email"],
@@ -1139,9 +1106,8 @@ export function legacyResolveAuthEmail(
         ? tmpl.content_path
         : (legacyEnvOverride(`${envPrefix}_CONTENT_PATH`, tmpl.content_path, projectEnvValues) ??
           tmpl.content_path),
-      // `Content *string` is folded from `${envPrefix}_CONTENT` by the same generic
-      // Viper/`AutomaticEnv` bind as every other field (`config.go:749`, before `Config.Validate`
-      // at `config.go:882`) — so an env override makes `content` "present" here exactly like a raw
+      // `content` is folded from `${envPrefix}_CONTENT` by the same generic env-bind as every
+      // other field — so an env override makes `content` "present" here exactly like a raw
       // TOML `content = "..."` would, and {@link readAuthEmailTemplateContent} rejects it below
       // unless `content_path` is also set.
       content_present:
@@ -1245,17 +1211,16 @@ export function legacyResolveAuthEmail(
 }
 
 /**
- * `(e *email) validate(fsys)` template/notification content read (`pkg/config/
- * config.go:1293-1313`), called from `Config.Validate` right after `Auth.MFA.validate()`, still
- * inside `if c.Auth.Enabled`. Every template is checked unconditionally; a
- * notification only when that notification is itself enabled. Uses the same
- * `readFileSync`-based pattern as {@link readSigningKeysFile}/`readApiTlsFiles` in this file,
- * not an Effect `FileSystem` service.
+ * Template/notification content read, run only when auth is enabled. Every
+ * template is checked unconditionally; a notification only when that
+ * notification is itself enabled. Uses the same `readFileSync`-based pattern
+ * as {@link readSigningKeysFile}/`readApiTlsFiles` in this file, not an Effect
+ * `FileSystem` service.
  *
  * The `content`-vs-`content_path` exclusivity decision and path resolution (including the
- * TEMPLATE-vs-`workdir`/NOTIFICATION-vs-`<workdir>/supabase` base asymmetry, per Go's `(c
- * *baseConfig) resolve` — this asymmetry is real, intentional Go behavior
- * to match, not a bug to fix) now live in `legacyResolveEmailTemplateContentPath`
+ * TEMPLATE-vs-`workdir`/NOTIFICATION-vs-`<workdir>/supabase` base asymmetry — this asymmetry
+ * is real, intentional behavior to match, not a bug to fix) now live in
+ * `legacyResolveEmailTemplateContentPath`
  * (`legacy-config-validate.ts`); this function only feeds it each entry's already-resolved
  * `content_present` (see {@link legacyResolveAuthEmail}, which folds both the raw TOML `content`
  * key AND a `${envPrefix}_CONTENT` env override into that flag) and performs the read when a path
@@ -1303,19 +1268,17 @@ function readAuthEmailTemplateContent(email: LegacyResolvedAuthEmail, workdir: s
   }
 }
 
-// Go's decode-time overflow bound for every field routed through {@link legacyEnvOverrideUint}:
-// they are all plain Go `uint`, 64 bits wide on every platform this CLI ships for (amd64/arm64),
-// decoded via mapstructure's `decodeUint` under Viper's default `WeaklyTypedInput: true`
-// (`strconv.ParseUint(str, 0, 64)` — `viper.go:988` sets the flag, `config.go:749` never
-// overrides it). `BigInt`, not `Number`, comparison: a JS `Number` can't exactly represent values
+// Decode-time overflow bound for every field routed through {@link legacyEnvOverrideUint}:
+// they are all a plain 64-bit `uint`, decoded via `strconv.ParseUint(str, 0, 64)`.
+// `BigInt`, not `Number`, comparison: a JS `Number` can't exactly represent values
 // this close to `2^64`, so a `Number.MAX_SAFE_INTEGER`-based check would incorrectly reject
-// legitimate large `uint64` values Go itself still accepts.
+// legitimate large `uint64` values that are otherwise still accepted.
 const LEGACY_UINT_MAX = 18446744073709551615n; // 2^64 - 1
 
 /**
- * Go-style base-0 unsigned integer literal parsing, matching `strconv.ParseUint(str, 0, bitSize)` —
- * the same call {@link legacyEnvOverrideUint}'s callers all decode through (`mapstructure.go:791`,
- * `decodeUint`). Base 0 auto-detects from a prefix: `0b`/`0B` → binary, `0o`/`0O` → octal, `0x`/`0X`
+ * Base-0 unsigned integer literal parsing, matching `strconv.ParseUint(str, 0, bitSize)` —
+ * the same call {@link legacyEnvOverrideUint}'s callers all decode through. Base 0
+ * auto-detects from a prefix: `0b`/`0B` → binary, `0o`/`0O` → octal, `0x`/`0X`
  * → hex, and a BARE leading `0` followed by more digits is ALSO octal (so `"010"` parses as `8`, not
  * `10` — a real footgun for a user zero-padding a value expecting decimal semantics). Underscores
  * are permitted between digits (Go 1.13+, e.g. `"1_000"`), but ONLY in base-0 mode. `ParseUint`
@@ -1512,22 +1475,19 @@ function legacyEnvOverrideSessionReplicationRole(
 }
 
 /**
- * `Config.Load` applies every `SUPABASE_DB_SETTINGS_*` override
- * generically (Viper's `AutomaticEnv`, `pkg/config/config.go:576-586`) before
- * `(a *settings) ToPostgresConfig()` ever
- * serializes `db.settings` into `postgresql.conf` — so an override for, say,
- * `shared_buffers` changes what Go actually configures Postgres with. This
- * resolves all 23 `db.settings.*` sub-fields (`packages/config/src/db.ts`) to
- * their env-overridden value, for `legacyPostgresSettingsToPostgresConfig` to
+ * Every `SUPABASE_DB_SETTINGS_*` override applies generically before
+ * `postgresql.conf` is serialized — so an override for, say, `shared_buffers`
+ * changes what actually configures Postgres. This resolves all 23
+ * `db.settings.*` sub-fields (`packages/config/src/db.ts`) to their
+ * env-overridden value, for `legacyPostgresSettingsToPostgresConfig` to
  * serialize — mirroring the `db.port`/`db.major_version`-style fix already
  * applied at this same `start` call site, just fanned out across every
  * `[db.settings]` field instead of one.
  *
  * `remoteOverrideKeys` (default empty, so `db start`/`db reset` — which never resolve a
  * `[remotes.<ref>]` block for this config read — see exactly the same behavior as
- * before): the `db.settings.*` keys a matched remote block set at viper's OVERRIDE tier
- * (`v.Set`, above `AutomaticEnv`, `apps/cli-go/pkg/config/config.go:724`) — a remote
- * value for, say, `max_connections` must beat a conflicting `SUPABASE_DB_SETTINGS_MAX_
+ * before): the `db.settings.*` keys a matched remote block set at override tier —
+ * a remote value for, say, `max_connections` must beat a conflicting `SUPABASE_DB_SETTINGS_MAX_
  * CONNECTIONS`, exactly like `legacy-db-config.toml-read.ts`'s own `db.major_version`
  * gate. `db diff --linked`/`db pull` (CLI-1956) pass the set their sibling `legacyReadDbToml`
  * call already computed, via `legacyBuildLocalDbContainerInputs`.
@@ -1818,14 +1778,12 @@ export type LegacyResolvedAuthHooks = {
 };
 
 /**
- * `hook.validate()` fixed iteration order.
- * `auth.hook.<type>.*` is Viper-bound like every other nested field
- * (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`), so
+ * Fixed hook iteration order.
+ * `auth.hook.<type>.*` is env-bindable like every other nested field, so
  * `SUPABASE_AUTH_HOOK_<TYPE>_ENABLED`/`_URI`/`_SECRETS` overrides apply before
- * Go builds `GOTRUE_HOOK_*` (formerly `internal/start/start.go:746-792`, deleted
- * as unreachable in CLI-1966; last present at commit a253ccba2) — Go has no
- * separate "raw" vs. "effective" hook value, so a hook enabled/retargeted
- * purely through env vars must reach GoTrue too, not just validation.
+ * `GOTRUE_HOOK_*` is built — there is no separate "raw" vs. "effective" hook
+ * value, so a hook enabled/retargeted purely through env vars must reach
+ * GoTrue too, not just validation.
  * `@supabase/config`'s hook schema always decodes a `{ enabled: false }`
  * default per type regardless of file presence (`packages/config/src/auth/
  * hooks.ts`'s `withDecodingDefaultKey`), which erases the presence signal
@@ -1847,18 +1805,18 @@ export function legacyResolveAuthHooks(
   /**
    * Same remote-over-env precedence as {@link legacyResolveConfiguredSigningKeys}'s own
    * parameter — every `auth.hook.<type>.{enabled,uri,secrets}` leaf is in
-   * `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`) because Go's
-   * `mergeRemoteConfig` flattens the WHOLE matched block via `u.AllKeys()` and applies every
-   * leaf — not just `enabled` — with `v.Set` (override tier, above `AutomaticEnv`,
-   * `apps/cli-go/pkg/config/config.go:718-724`). `enabled`'s ungated `legacyEnvOverrideBool`
+   * `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`) because a matched remote
+   * block flattens the WHOLE block and applies every leaf — not just `enabled` — at override
+   * tier. `enabled`'s ungated `legacyEnvOverrideBool`
    * call additionally THROWS on a malformed override even when a matched remote block already
    * set it, which would abort the whole caller (`legacyResolveLocalConfigValues`, and the shadow
-   * it feeds) on an env value Go silently ignores. `uri`/`secrets` can't throw the same way
-   * (plain `legacyEnvOverride`), but leaving them ungated is still a precedence bug: a remote's
-   * valid `uri` must beat a stale/malformed `SUPABASE_AUTH_HOOK_<TYPE>_URI`, otherwise
-   * `legacyValidateResolvedConfig`'s scheme check can reject a linked diff/pull that Go would
-   * accept (review: PRRT_kwDOErm0O86XGTq5). Defaults to empty for `start.handler.ts`'s callers,
-   * which never resolve a `[remotes.<ref>]` block for this config read.
+   * it feeds) on an env value that should otherwise be silently ignored. `uri`/`secrets` can't
+   * throw the same way (plain `legacyEnvOverride`), but leaving them ungated is still a
+   * precedence bug: a remote's valid `uri` must beat a stale/malformed
+   * `SUPABASE_AUTH_HOOK_<TYPE>_URI`, otherwise `legacyValidateResolvedConfig`'s scheme check can
+   * reject a linked diff/pull that should otherwise succeed (review: PRRT_kwDOErm0O86XGTq5).
+   * Defaults to empty for `start.handler.ts`'s callers, which never resolve a
+   * `[remotes.<ref>]` block for this config read.
    */
   remoteOverrideKeys: ReadonlySet<string> = new Set(),
 ): LegacyResolvedAuthHooks {
@@ -1921,7 +1879,7 @@ export function legacyResolveAuthMfa(
    * (`legacy-db-config.toml-read.ts`) because its ungated `legacyEnvOverrideBool`/
    * `legacyEnvOverrideUint` call THROWS on a malformed override even when a matched remote block
    * already set it, which would abort the whole caller (`legacyResolveLocalConfigValues`, and the
-   * shadow it feeds) on an env value Go silently ignores. `phone.template`/`.max_frequency` are
+   * shadow it feeds) on an env value the override tier should silently ignore. `phone.template`/`.max_frequency` are
    * also in the allowlist: their `legacyEnvOverride` reads can't throw, but leaving them ungated
    * is still a precedence bug, same reasoning as `auth.external.*`'s `client_id`/`url`/
    * `redirect_uri`. Defaults to empty for `start.handler.ts`'s callers, which never resolve a
@@ -2019,18 +1977,17 @@ export function legacyResolveAuthMfa(
 }
 
 /**
- * `Auth.RateLimit` is a value-typed struct of plain `uint`s,
- * always Viper-bound regardless of `[auth.rate_limit]` presence, so every
- * `SUPABASE_AUTH_RATE_LIMIT_*` override applies before `start.go` builds `GOTRUE_RATE_LIMIT_*` —
- * no raw-document presence gate needed, matching the existing `db.pooler`/SMS numeric-field
- * precedent. Unlike `auth.sms`/`auth.mfa`, `rateLimit` has no `Enabled`-gated Go `validate()`
- * method at all (`config.go:1087-1153` never mentions `RateLimit`) — its only Go-side check is
- * the unconditional `uint` type-decode inside `Config.Load`'s single `UnmarshalExact` pass, so
+ * `auth.rate_limit.*` are plain `uint`s, always env-bindable regardless of
+ * `[auth.rate_limit]` presence, so every `SUPABASE_AUTH_RATE_LIMIT_*` override
+ * applies before `GOTRUE_RATE_LIMIT_*` is built — no raw-document presence
+ * gate needed, matching the existing `db.pooler`/SMS numeric-field precedent.
+ * Unlike `auth.sms`/`auth.mfa`, `rateLimit` has no `Enabled`-gated validation
+ * branch at all — the only check is the unconditional `uint` decode, so
  * callers resolve it eagerly and unconditionally, with no `authEnabled` gate.
  *
  * Hoisted here (originally private to `commands/start/start.handler.ts`) once
  * `commands/db/start/start.handler.ts` became a second caller — both need the same eager,
- * unconditional `auth.rate_limit.*` resolution to reproduce `Config.Load` decode, per
+ * unconditional `auth.rate_limit.*` resolution, per
  * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
  */
 export function legacyResolveGotrueRateLimit(
@@ -2121,32 +2078,28 @@ export function legacyResolveGotrueSessions(
 }
 
 /**
- * `appendGotruePasskeyEnv`/`Auth.Passkey`/`Auth.Webauthn` presence gate
- * (`start.go:1427-1440`, `pkg/config/config.go:1117-1134`): `@supabase/config`
- * has no `auth.passkey`/`auth.webauthn` schema fields at all, so presence and
- * every field must come from the raw, pre-schema TOML document instead — same
- * document-based approach this file's own `Config.Validate`-parity resolution
- * (inside {@link legacyResolveLocalConfigValues}) already uses for these two
- * sections.
+ * `appendGotruePasskeyEnv`/`auth.passkey`/`auth.webauthn` presence gate:
+ * `@supabase/config` has no `auth.passkey`/`auth.webauthn` schema fields at
+ * all, so presence and every field must come from the raw, pre-schema TOML
+ * document instead — same document-based approach this file's own validation
+ * resolution (inside {@link legacyResolveLocalConfigValues}) already uses for
+ * these two sections.
  */
 /**
- * `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other
+ * `auth.passkey.enabled`/`auth.webauthn.*` are env-bindable like every other
  * nested field once `[auth.passkey]`/`[auth.webauthn]` are present in
- * config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
- * so `SUPABASE_AUTH_PASSKEY_ENABLED`/`SUPABASE_AUTH_WEBAUTHN_{RP_ID,
+ * config.toml, so `SUPABASE_AUTH_PASSKEY_ENABLED`/`SUPABASE_AUTH_WEBAUTHN_{RP_ID,
  * RP_DISPLAY_NAME,RP_ORIGINS}` overrides apply before `appendGotruePasskeyEnv`
  * builds GoTrue's env — same reasoning, and same
  * presence-gating (an absent section is never synthesized from an env
- * override alone), as this file's identical `Config.Validate`-parity
- * resolution for this raw-document pair. `rp_display_name` has no
- * validation-path precedent (`Config.Validate` never checks it), but
+ * override alone), as this file's identical validation resolution for this
+ * raw-document pair. `rp_display_name` has no validation-path precedent, but
  * GoTrue's env does consume it, so it gets the same treatment here.
  *
  * Hoisted here (originally private to `commands/start/start.handler.ts`) once
  * `commands/db/start/start.handler.ts` became a second caller — both need the
- * same eager `auth.passkey`/`auth.webauthn` resolution to reproduce Go's
- * unconditional `Config.Load` decode, per `apps/cli/CLAUDE.md`'s "Hoist Before
- * You Duplicate".
+ * same eager `auth.passkey`/`auth.webauthn` resolution, per
+ * `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate".
  */
 export function legacyResolveGotruePasskeyWebauthn(
   document: Readonly<Record<string, unknown>> | undefined,
@@ -2282,13 +2235,12 @@ export function legacyResolveGotrueOAuthServer(
 }
 
 /**
- * `(tpa *thirdParty) validate()` fixed provider order —
- * only enabled providers are forwarded, in that order. Each provider struct
- * (`tpaFirebase`/`tpaAuth0`/`tpaCognito`/`tpaClerk`/`tpaWorkOs`, `auth.go:191-198`) is
- * value-typed, same no-presence-gate reasoning as {@link legacyResolveGotrueWeb3} — so
+ * Fixed provider validation order — only enabled providers are forwarded, in
+ * that order. Each provider struct is value-typed, same no-presence-gate
+ * reasoning as {@link legacyResolveGotrueWeb3} — so
  * `SUPABASE_AUTH_THIRD_PARTY_<PROVIDER>_*` overrides always apply, including `workos`, whose
- * default template omits `[auth.third_party.workos]` entirely, before `Auth.ThirdParty.
- * validate()` runs.
+ * default template omits `[auth.third_party.workos]` entirely, before third-party
+ * validation runs.
  *
  * Hoisted here (originally private to {@link legacyResolveLocalConfigValues}) once
  * `commands/db/start/start.handler.ts`'s eager pre-probe battery became a second caller — both
@@ -2442,41 +2394,38 @@ const LEGACY_SMS_PROVIDER_ORDER = [
 ] as const;
 
 /**
- * `Auth.Sms.<provider>.*` is Viper-bound like every other nested field once
- * `[auth.sms.<provider>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
- * `config.go:581-586`), so `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED`/`_<FIELD>` overrides must reach
- * GoTrue's actual container env (formerly `internal/start/start.go:696-733`,
- * deleted as unreachable in CLI-1966; last present at commit a253ccba2), not
- * just `Config.Validate` — same
+ * `auth.sms.<provider>.*` is env-bindable like every other nested field once
+ * `[auth.sms.<provider>]` is present in config.toml, so
+ * `SUPABASE_AUTH_SMS_<PROVIDER>_ENABLED`/`_<FIELD>` overrides must reach
+ * GoTrue's actual container env, not
+ * just validation — same
  * "validates but doesn't use" gap already fixed for `auth.hook`/`auth.captcha`/`auth.external`/
  * `auth.mfa`. Hoisted so both {@link validateAuthSmsProviders} and `start.handler.ts`'s
  * `resolveGotrueEnvInput` resolve the SAME effective per-provider values — same precedent as
  * {@link legacyResolveAuthExternalProviders}.
  *
- * Presence-gated per provider (the raw `[auth.sms.<provider>]` table must exist), matching
- * `AutomaticEnv`'s "only intercepts keys already present in the merged config" behavior — same
+ * Presence-gated per provider (the raw `[auth.sms.<provider>]` table must exist) — same
  * gate {@link validateAuthSmsProviders} used before this was hoisted out of it. `twilio` is the
- * one exception: Go's ejected default `config.toml` (`pkg/config/templates/config.toml:288-293`)
- * unconditionally emits an UNCOMMENTED `[auth.sms.twilio]` table, merged into Viper
- * (`mergeDefaultValues`, `config.go:690-698`) before the user's own file — so `auth.sms.twilio.*`
- * is always registered with Viper and `SUPABASE_AUTH_SMS_TWILIO_*` overrides apply with no
- * user-declared table, confirmed empirically against the real Go binary. The other 4 providers get
+ * one exception: the default `config.toml` template unconditionally emits an UNCOMMENTED
+ * `[auth.sms.twilio]` table, merged in before the user's own file — so `auth.sms.twilio.*`
+ * is always registered and `SUPABASE_AUTH_SMS_TWILIO_*` overrides apply with no
+ * user-declared table, confirmed empirically. The other 4 providers get
  * no default template entry at all (not even commented out), so they keep the presence gate. When
  * a (non-twilio) provider's table is absent, its decoded (schema-default) values pass through
  * unchanged, still decrypting
- * the one `config.Secret`-typed field per provider for
+ * the one secret-typed field per provider for
  * parity with this function's (now-superseded) `resolveGotrueSms` precursor, which decrypted all
  * 5 providers unconditionally.
  *
- * The 4 top-level scalars (`enable_signup`/`enable_confirmations`/`template`/`max_frequency`,
- * `pkg/config/auth.go:277-288`) get NO presence gate, unlike the providers above — they're
- * unconditionally emitted (uncommented) in Go's ejected default config.toml
- * (`pkg/config/templates/config.toml:257-265`), so `mergeDefaultValues` always registers them
- * with Viper regardless of whether the user's own config.toml even has an `[auth.sms]` section,
+ * The 4 top-level scalars (`enable_signup`/`enable_confirmations`/`template`/`max_frequency`)
+ * get NO presence gate, unlike the providers above — they're
+ * unconditionally emitted (uncommented) in the default ejected config.toml,
+ * so they're always registered
+ * regardless of whether the user's own config.toml even has an `[auth.sms]` section,
  * same reasoning already applied to `legacyResolveAuthEmail`'s scalars. `test_otp` (a
- * `map[string]string`) is deliberately left unresolved: it's commented out of Go's default
- * template, so Viper never knows the key by default, and Go has no `SUPABASE_AUTH_SMS_TEST_OTP*`
- * env var at all — `ExperimentalBindStruct` binds static struct fields, not arbitrary map keys.
+ * `map[string]string`) is deliberately left unresolved: it's commented out of the default
+ * template, so it's never known by default, and there's no `SUPABASE_AUTH_SMS_TEST_OTP*`
+ * env var at all — env binding covers static struct fields, not arbitrary map keys.
  */
 export function legacyResolveAuthSms(
   authDocument: Readonly<Record<string, unknown>> | undefined,
@@ -2490,10 +2439,10 @@ export function legacyResolveAuthSms(
    * `legacyResolveAuthSms(` call sites in `start.handler.ts`/`db/start/start.handler.ts` and
    * missed this file's own `validateAuthSmsProviders` wrapper. `enable_signup`/
    * `enable_confirmations`/each provider's `enabled` THROW via `legacyEnvOverrideBool`, and each
-   * provider's Secret-typed field (`auth_token`/`access_key`/`api_key`/`api_secret`,
-   * `pkg/config/auth.go:339,345,351,358`) THROWS via `legacyDecryptAuthSecret` — either can abort
+   * provider's secret-typed field (`auth_token`/`access_key`/`api_key`/`api_secret`)
+   * THROWS via `legacyDecryptAuthSecret` — either can abort
    * this whole call (and the shadow it feeds) on a malformed ambient `SUPABASE_AUTH_SMS_*`
-   * override even when a matched remote block already set that field at viper's OVERRIDE tier.
+   * override even when a matched remote block already set that field at override tier.
    * Defaults to empty for `start.handler.ts`/`db/start/start.handler.ts`'s callers, which never
    * resolve a `[remotes.<ref>]` block for this config read.
    */
@@ -2763,10 +2712,8 @@ export interface LegacyResolvedAuthExternalProvider {
 }
 
 /**
- * `appendGotrueExternalProviderEnv` presence-filtering (formerly
- * `internal/start/start.go:1442-1462`, deleted as unreachable in CLI-1966;
- * last present at commit a253ccba2): `Auth.External` is a genuine `map[string]provider{}` containing
- * only the providers a user's `config.toml` actually mentions, but
+ * `appendGotrueExternalProviderEnv` presence-filtering: `auth.external` only
+ * ever contains the providers a user's `config.toml` actually mentions, but
  * `@supabase/config`'s schema always decodes a fixed set of ~19 known
  * providers, each defaulting `enabled: false` regardless of TOML presence — so
  * presence must be read from the raw document, same approach
@@ -2774,10 +2721,10 @@ export interface LegacyResolvedAuthExternalProvider {
  * exception, unioned into the iterated provider set unconditionally — see the
  * inline comment at the iteration below for why.
  *
- * `auth.external.<name>.*` is Viper-bound like every other nested field once
- * `[auth.external.<name>]` is present in config.toml (`ExperimentalBindStruct`/
- * `AutomaticEnv`, `config.go:581-586`), so `SUPABASE_AUTH_EXTERNAL_<NAME>_*`
- * overrides apply before `appendGotrueExternalProviderEnv` runs — Go has
+ * `auth.external.<name>.*` is env-bindable like every other nested field once
+ * `[auth.external.<name>]` is present in config.toml, so
+ * `SUPABASE_AUTH_EXTERNAL_<NAME>_*` overrides apply before
+ * `appendGotrueExternalProviderEnv` runs — there is
  * no separate "raw" vs. "effective" provider value, so this must be reflected
  * in GoTrue's actual container env, not just validation.
  *
@@ -2788,12 +2735,10 @@ export interface LegacyResolvedAuthExternalProvider {
  * the SAME effective values.
  */
 /**
- * Go decodes ANY unmodeled/raw-document boolean field — a custom `map[string]provider` entry
- * (`Enabled bool`, `pkg/config/auth.go:361-369`), `auth.passkey.enabled`, etc. —
- * through its own typed struct field regardless of TOML-vs-env origin: an `env(VAR)`-substituted
- * string is weakly-coerced to `bool` by mapstructure's `WeaklyTypedInput`/`strconv.ParseBool`
- * before `Config` ever sees it, so Go never has an untyped raw string for
- * these fields. `@supabase/config` has no schema at all for `auth.passkey`/`auth.webauthn`, and only
+ * ANY unmodeled/raw-document boolean field — a custom external-provider `enabled` entry,
+ * `auth.passkey.enabled`, etc. — must decode with the same weak-bool coercion as a
+ * schema-modeled field: an `env(VAR)`-substituted string decodes the same as a raw one.
+ * `@supabase/config` has no schema at all for `auth.passkey`/`auth.webauthn`, and only
  * recognizes the ~19 known provider ids for `auth.external` (`packages/config/src/auth/
  * providers.ts`) — so for any of these unmodeled paths, the pre-decode `env(...)` walker
  * substitutes the env value but skips type coercion (no schema AST at that path —
@@ -2806,22 +2751,17 @@ export interface LegacyResolvedAuthExternalProvider {
  * are unmodeled-document reads of the identical shape.
  *
  * An unparsable STRING (e.g. a typo, or a still-literal `"env(VAR)"` when the referenced var was
- * never set) is a hard `Config.Load` failure in Go, not a silent `false` — `v.UnmarshalExact`'s
- * `strconv.ParseBool` decode hook errors on it, and that error propagates as
- * `"failed to parse config: %w"`, same as {@link legacyEnvOverrideBool}'s identical treatment for
+ * never set) is a hard config-load failure, not a silent `false`, same as
+ * {@link legacyEnvOverrideBool}'s identical treatment for
  * schema-modeled bool fields. Silently defaulting to `false` here would both misreport a broken
  * config as "section disabled" AND skip the required-field validation an enabled section should
- * trigger. An absent value (`undefined` — key genuinely not present) is NOT an error: that's Go's
- * own zero-value bool default, unchanged.
+ * trigger. An absent value (`undefined` — key genuinely not present) is NOT an error: that's the
+ * zero-value bool default, unchanged.
  *
- * Viper's decoder sets `WeaklyTypedInput: true` (its own hardcoded default —
- * `defaultDecoderConfig`, `viper.go:976-994` — the `UnmarshalExact` call site only overrides
- * `TagName`/`Squash`/`ZeroFields`/`DecodeHook`, never touching this flag), so a raw NUMBER for a
- * `bool` field is NOT an error in Go either — mapstructure's `decodeBool` weakly coerces it via a
- * truthiness check (`mapstructure.go:915-920`: int/uint/float `!= 0`), e.g. `enabled = 123` decodes
+ * A raw NUMBER for a `bool` field is NOT an error either — it weakly coerces via a
+ * truthiness check (int/uint/float `!= 0`), e.g. `enabled = 123` decodes
  * as `true`, `enabled = 0` as `false`. Only a genuinely unconvertible type — an array or inline
- * table (TOML's only other value kinds) — hits mapstructure's `default:` case,
- * which errors unconditionally regardless of `WeaklyTypedInput`. So
+ * table (TOML's only other value kinds) — is a hard failure regardless of the weak-typing rule. So
  * this function must weakly-coerce a JS `number` the same way, and only throw for anything else.
  */
 export function legacyRawUnmodeledBool(value: unknown, dottedFieldPath: string): boolean {
@@ -2861,10 +2801,10 @@ export function legacyResolveAuthExternalProviders(
    * (`legacy-db-config.toml-read.ts`), not via a fixed `LEGACY_ENV_OVERRIDABLE_KEYS` entry,
    * since provider names are an arbitrary/custom-keyed map (see this function's own doc comment
    * above). `enabled`/`skip_nonce_check`/`email_optional` THROW via `legacyEnvOverrideBool` and
-   * `secret` THROWS via `legacyDecryptAuthSecret` (`Secret`-typed, `pkg/config/auth.go:364`) on a
+   * `secret` THROWS via `legacyDecryptAuthSecret` on a
    * malformed override even when a matched remote block already set that field, which would abort
-   * the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on a value Go's
-   * `v.Set` (override tier) silently ignores; `client_id`/`url`/`redirect_uri` can't throw the
+   * the whole caller (`legacyResolveLocalConfigValues`, and the shadow it feeds) on a value the
+   * override tier should otherwise win; `client_id`/`url`/`redirect_uri` can't throw the
    * same way, but leaving them ungated is still a precedence bug — a remote's valid value must
    * beat a stale `SUPABASE_AUTH_EXTERNAL_<NAME>_*` env var, same reasoning as
    * `legacyResolveAuthHooks`'s `uri`/`secrets` (review: PRRT_kwDOErm0O86XKYiF). Defaults to empty
@@ -2880,13 +2820,11 @@ export function legacyResolveAuthExternalProviders(
   const decodedProviders = new Map(Object.entries(external));
   // Iterate the RAW document's keys, not `Object.entries(external)` — see this
   // function's doc comment above for why (unmodeled/custom provider names).
-  // `apple` is unioned in unconditionally: Go's ejected default config.toml
-  // (`pkg/config/templates/config.toml:322-335`) unconditionally emits an
-  // UNCOMMENTED `[auth.external.apple]` table, merged into Viper
-  // (`mergeDefaultValues`, `config.go:690-699`) before the user's own file — so
-  // `auth.external.apple.*` is always registered with Viper and
+  // `apple` is unioned in unconditionally: the default ejected config.toml
+  // unconditionally emits an UNCOMMENTED `[auth.external.apple]` table, merged in
+  // before the user's own file — so `auth.external.apple.*` is always registered and
   // `SUPABASE_AUTH_EXTERNAL_APPLE_*` overrides apply with no user-declared table,
-  // confirmed against the actual Go source. Every other provider has no default
+  // confirmed empirically. Every other provider has no default
   // template entry (just named in a comment), so they keep the raw-document
   // presence gate below.
   const providerNames = new Set([...Object.keys(externalDoc ?? {}), "apple"]);
@@ -2990,13 +2928,12 @@ export function legacyResolveAuthExternalProviders(
  * `LoadedProjectConfig.document`), so no `legacyExpandEnv`-style resolution is needed here,
  * unlike D's raw pre-interpolation document.
  *
- * `auth.external.<name>.*` is Viper-bound like every other nested field once
- * `[auth.external.<name>]` is present in config.toml (`ExperimentalBindStruct`/`AutomaticEnv`,
- * `config.go:581-586`), so `SUPABASE_AUTH_EXTERNAL_<NAME>_ENABLED`/`_CLIENT_ID`/`_SECRET`
+ * `auth.external.<name>.*` is env-bindable like every other nested field once
+ * `[auth.external.<name>]` is present in config.toml, so
+ * `SUPABASE_AUTH_EXTERNAL_<NAME>_ENABLED`/`_CLIENT_ID`/`_SECRET`
  * overrides apply before this validation runs — same gap this schema's own `requiredWhenEnabled`
  * check has for KNOWN providers too (that check only sees the decoded, pre-override TOML value),
- * so this now covers both known and unmodeled provider names uniformly, matching Go not
- * distinguishing between them either.
+ * so this now covers both known and unmodeled provider names uniformly.
  */
 function validateAuthExternalProviders(
   authDocument: Record<string, unknown> | undefined,
@@ -3034,24 +2971,22 @@ function validateAuthExternalProviders(
 
 /**
  * @throws when `project_id` (post-override, post-workdir-basename-fallback) is
- * an explicit empty string. `Config.Validate` checks this FIRST, before
- * every other field: `mergeDefaultValues`
- * merges `sanitizeProjectId(filepath.Base(cwd))` in as a viper DEFAULT value
- * BEFORE `config.toml` is merged (`config.go:690-699`, via `Eject`,
- * `config.go:561-570`) — so `c.ProjectId` is NEVER Go's zero value by the time
- * `Validate` runs; it's always at least this sanitized basename. A workdir
- * whose basename sanitizes to the empty string (e.g. `!!!`) therefore fails
- * config loading in Go even with NO `project_id` key in the file at all. An
- * explicit `project_id = ""` IN the file overwrites that default with the
- * literal empty string the same way (rather than being treated as absent) —
- * Go fails outright rather than falling back to the basename either way.
+ * an explicit empty string. This is checked FIRST, before
+ * every other field: the sanitized workdir basename is merged in as a
+ * default value BEFORE `config.toml` is merged — so `project_id` is NEVER
+ * empty by the time validation runs; it's always at least this sanitized
+ * basename. A workdir whose basename sanitizes to the empty string (e.g.
+ * `!!!`) therefore fails config loading even with NO `project_id` key in the
+ * file at all. An explicit `project_id = ""` IN the file overwrites that
+ * default with the literal empty string the same way (rather than being
+ * treated as absent) — this fails outright rather than falling back to the
+ * basename either way.
  * `legacySanitizeProjectId` is only applied to the BASENAME fallback here,
- * matching `Eject`'s pre-sanitized default — an explicit non-empty
+ * matching the pre-sanitized default — an explicit non-empty
  * `config.project_id`/`SUPABASE_PROJECT_ID` value is intentionally NOT
- * re-sanitized at this point, matching `Validate` "auto-fix" branch
- * being a WARN-only rewrite with no throwing
- * equivalent, same precedent as this module's other WARN-only omissions
- * (`auth.captcha.secret`/`assertEnvLoaded`, SMS's `EnableSignup` case).
+ * re-sanitized at this point; the auto-fix branch is a WARN-only rewrite with
+ * no throwing equivalent, same precedent as this module's other WARN-only
+ * omissions (`auth.captcha.secret`/`assertEnvLoaded`, SMS's `EnableSignup` case).
  * @throws {LegacyInvalidJwtSecretError} when `auth.jwt_secret` is set but too short.
  * @throws {LegacyInvalidPortEnvOverrideError} when a `SUPABASE_*_PORT` env/dotenv
  * override doesn't parse as a valid port.
@@ -3095,8 +3030,8 @@ export function legacyResolveLocalConfigValues(
    */
   document: Readonly<Record<string, unknown>> | undefined = undefined,
   /**
-   * Config keys a matched `[remotes.<ref>]` block contributed at viper's OVERRIDE tier (Go's
-   * `v.Set`, applied ABOVE `AutomaticEnv` — `apps/cli-go/pkg/config/config.go:724`) — see
+   * Config keys a matched `[remotes.<ref>]` block contributed at override tier (applied ABOVE
+   * the ambient env tier) — see
    * `legacy-db-config.toml-read.ts`'s `LegacyRemoteOverride.remoteOverrideKeys` doc comment for
    * the full precedence rationale. Every `legacyEnvOverride*` call below that resolves a field
    * this function's shadow-consuming caller (`legacyBuildLocalDbContainerInputs`) actually
@@ -3116,7 +3051,7 @@ export function legacyResolveLocalConfigValues(
    * THROWS on a malformed override
    * (`legacyEnvOverrideBool`/`legacyEnvOverrideDenoVersion`/`envOverrideAnalyticsBackend`)
    * even when the remote block already set that field, which would abort this entire function
-   * (and every field it DOES return) on an env value Go silently ignores (review:
+   * (and every field it DOES return) on an env value the override tier should silently ignore (review:
    * PRRT_kwDOErm0O86W30n6 for `auth.enabled`/`analytics.*`, PRRT_kwDOErm0O86W4gCk for
    * `edge_runtime.deno_version`, PRRT_kwDOErm0O86W5UlV for `api.enabled`) — "not read by the
    * caller" is not the same as "cannot abort the caller." An earlier version of this comment
@@ -3150,8 +3085,8 @@ export function legacyResolveLocalConfigValues(
    * now too — see those functions' own doc comments (review: PRRT_kwDOErm0O86XFmjZ,
    * PRRT_kwDOErm0O86XKYiF). This function's OWN validation-only `thirdParty`
    * block's non-`enabled` leaves (`requiredField`/`cognitoUserPoolRegion`) are gated too, despite
-   * `legacyEnvOverride` itself never throwing: each provider's per-field `validate()`
-   * (`config.go:1560-1629` — domain/tenant/user_pool_id/issuer_url emptiness, plus Clerk's domain
+   * `legacyEnvOverride` itself never throwing: each provider's per-field validation
+   * (domain/tenant/user_pool_id/issuer_url emptiness, plus Clerk's domain
    * regex) runs inside the single {@link legacyValidateResolvedConfig} call below, so an
    * ungated read that picks up a stale/differently-invalid env override over a remote's own
    * valid value can flip that provider's validation verdict — accepting a config Go would
@@ -3236,7 +3171,7 @@ export function legacyResolveLocalConfigValues(
   // `api.enabled` at viper's OVERRIDE tier — a value `Validate` never even evaluates the
   // env var for in that case — which would otherwise abort this whole function (and the shadow
   // it feeds via `legacyBuildLocalDbContainerInputs`, denying it `apiPort`/`apiUrl`/`dbPort`/
-  // `rootKey`/etc.) on an env value Go silently ignores. `apiEnabled`'s own resolved value is
+  // `rootKey`/etc.) on an env value the override tier should silently ignore. `apiEnabled`'s own resolved value is
   // never part of the returned `LegacyLocalConfigValues` — same "throws before caller-needed
   // fields are resolved" rationale as `authEnabled`/`analytics.*`/`edge_runtime.deno_version`
   // below, not the "value is consumed downstream" rationale `apiTlsEnabled`/`apiPort` above have.
@@ -3305,11 +3240,8 @@ export function legacyResolveLocalConfigValues(
   const majorVersion = remoteWins("db.major_version")
     ? config.db.major_version
     : legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
-  // `flags.LoadConfig` applies every `SUPABASE_DB_SETTINGS_*` override unconditionally
-  // during `Config.Load`, BEFORE `start`/`status`/`stop` do anything else
-  // (formerly `internal/start/start.go:51`, ran before `AssertSupabaseDbIsRunning` at line 54;
-  // deleted as unreachable in CLI-1966, last present at commit a253ccba2; `status.
-  // Run`/`stop.Run` load config first too) — so a malformed override must fail here, the same
+  // Config load applies every `SUPABASE_DB_SETTINGS_*` override unconditionally,
+  // BEFORE `start`/`status`/`stop` do anything else — so a malformed override must fail here, the same
   // point `majorVersion`/`denoVersion`/`orioledbVersion` are already validated, not deep inside
   // `start.handler.ts`'s `bringUp` after Postgres may already be created. Validate-only: the
   // actual resolved settings `start` needs are recomputed at their own call site (same
@@ -3318,10 +3250,10 @@ export function legacyResolveLocalConfigValues(
   // fail this validate-only read the same way `majorVersion` above doesn't.
   legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues, remoteOverrideKeys);
   // Same gap for `db.network_restrictions.enabled` — `[db.network_restrictions]` ships
-  // uncommented in Go's default template (unlike the commented-out `[db.ssl_enforcement]`) and
-  // `NetworkRestrictions` is a plain, non-pointer `db` struct field, so Viper always registers a
-  // default and decodes a malformed `SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED` override
-  // unconditionally during `Config.Load` — same bucket as `db.port`/`db.major_version` above, not
+  // uncommented in the default template (unlike the commented-out `[db.ssl_enforcement]`) and
+  // `network_restrictions` is a plain, always-registered field, so a malformed
+  // `SUPABASE_DB_NETWORK_RESTRICTIONS_ENABLED` override decodes
+  // unconditionally — same bucket as `db.port`/`db.major_version` above, not
   // the presence-gated `db.ssl_enforcement`/`auth.sms.twilio`/`auth.external.apple` cases.
   // Validate-only: `start` doesn't otherwise consume this field (only `config push` does). Same
   // remote-over-env precedence as `majorVersion` above.
@@ -3335,20 +3267,16 @@ export function legacyResolveLocalConfigValues(
   }
   // `db.root_key` isn't modeled in `@supabase/config`'s schema (every other
   // `db.*` field is), so it's read off the raw pre-schema document — same
-  // presence-based pattern as `authDocument` below. Go writes the
-  // default-or-configured, decrypted-if-`encrypted:` value verbatim into
+  // presence-based pattern as `authDocument` below. The
+  // default-or-configured, decrypted-if-`encrypted:` value is written verbatim into
   // `/etc/postgresql-custom/pgsodium_root.key` on every start,
-  // going through the same
-  // `Secret`/`DecryptSecretHookFunc` decode every other secret field gets
-  // (`pkg/config/secret.go:30-109`, wired at `pkg/config/config.go:781`).
+  // going through the same secret-decrypt step every other secret field gets.
   const rawRootKeyValue = asRecord(document?.["db"])?.["root_key"];
-  // `DecryptSecretHookFunc` only intercepts a STRING source value;
+  // The secret decrypt step only intercepts a STRING source value;
   // any other raw TOML kind (integer, bool, array, ...)
-  // falls through untouched and mapstructure then rejects decoding a scalar
-  // into the `Secret{Value, SHA256}` struct with exactly this message
-  // (`config.go:748-751` wraps it as `failed to parse config: %w`) — same
-  // "decoding failed due to the following error(s):" wrapper already used for
-  // `auth.captcha.provider`/`analytics.backend` above.
+  // falls through untouched, and decoding that scalar into a secret-shaped struct is
+  // then rejected with exactly this message — same "decoding failed due to the following
+  // error(s):" wrapper already used for `auth.captcha.provider`/`analytics.backend` above.
   if (rawRootKeyValue !== undefined && typeof rawRootKeyValue !== "string") {
     throw new LegacyConfigValidateError(
       "failed to parse config: decoding failed due to the following error(s):\n\n'db.root_key' expected a map or struct",
@@ -3378,7 +3306,7 @@ export function legacyResolveLocalConfigValues(
   // an ungated `legacyEnvOverrideBool`/`legacyEnvOverridePort` call here THROWS on a malformed
   // `SUPABASE_STUDIO_ENABLED`/`SUPABASE_STUDIO_PORT` even when a matched remote block already
   // set that field at viper's OVERRIDE tier, which would abort this whole function — and the
-  // shadow it feeds — on an env value Go silently ignores (review: PRRT_kwDOErm0O86W6R-G).
+  // shadow it feeds — on an env value the override tier should silently ignore (review: PRRT_kwDOErm0O86W6R-G).
   const studioEnabled = remoteWins("studio.enabled")
     ? config.studio.enabled
     : legacyEnvOverrideBool(
@@ -3455,13 +3383,13 @@ export function legacyResolveLocalConfigValues(
         config.auth.signing_keys_path,
         projectEnvValues,
       );
-  // Gated on `auth.enabled` to match `Validate`:
-  // the signing-keys file read lives entirely inside `if c.Auth.Enabled`, so a
+  // Gated on `auth.enabled`:
+  // the signing-keys file read only runs when auth is enabled, so a
   // disabled auth section never opens/parses `signing_keys_path`, even a stale
   // or missing one. JWT-secret validation and anon/service_role key generation
-  // (`generateAPIKeys`, `apikeys.go:43-73`) run unconditionally either way, so
-  // only this file read is gated. `c.Auth.Enabled` is itself Viper-bound like
-  // any other field, so `Validate`'s gate reads the
+  // run unconditionally either way, so
+  // only this file read is gated. `auth.enabled` is itself env-bindable like
+  // any other field, so this gate reads the
   // POST-`SUPABASE_AUTH_ENABLED`-override value, not the raw TOML one — hence
   // `legacyEnvOverrideBool` here instead of `config.auth.enabled` directly.
   // Same remote-over-env precedence as every other gated field above — `auth.enabled` IS in
@@ -3469,9 +3397,9 @@ export function legacyResolveLocalConfigValues(
   // resolver already gates it (`remoteOverrideKeys.has("auth.enabled")`); this resolver must
   // match, since an ungated `legacyEnvOverrideBool` call THROWS on a malformed
   // `SUPABASE_AUTH_ENABLED` even when a matched remote block already set `auth.enabled` at
-  // viper's OVERRIDE tier — a value `Validate` never even evaluates the env var for in
+  // override tier — a value validation never even evaluates the env var for in
   // that case — which would otherwise abort this whole function (and the shadow it feeds via
-  // `legacyBuildLocalDbContainerInputs`) on an env value Go silently ignores
+  // `legacyBuildLocalDbContainerInputs`) on an env value the override tier should silently ignore
   // (review: PRRT_kwDOErm0O86W30n6).
   const authEnabled = remoteWins("auth.enabled")
     ? config.auth.enabled
@@ -3492,13 +3420,11 @@ export function legacyResolveLocalConfigValues(
     ? config.auth.site_url
     : (legacyEnvOverride("SUPABASE_AUTH_SITE_URL", config.auth.site_url, projectEnvValues) ??
       config.auth.site_url);
-  // `start.go` built GoTrue's env straight off `utils.Config.Auth.*`
-  // with no local override logic of its own (formerly `internal/start/start.go:1365-1405`,
-  // deleted as unreachable in CLI-1966; last present at commit a253ccba2) — the
-  // override happens earlier, generically, via Viper's `AutomaticEnv`,
-  // so every flat `auth.*` scalar Go feeds into
+  // GoTrue's env is built straight off the resolved auth config, with no local
+  // override logic of its own — the override happens earlier, generically, so
+  // every flat `auth.*` scalar fed into
   // GoTrue's env must go through the same override resolution `siteUrl`
-  // above already gets, not just the fields `Validate` happens to check.
+  // above already gets, not just the fields validation happens to check.
   // `jwtIssuer` is a plain, non-throwing `legacyEnvOverride` string read, but leaving it ungated
   // is still a precedence bug, same reasoning as `auth.external.*`'s `client_id`/`url`/
   // `redirect_uri` above — `auth.jwt_issuer` is in `LEGACY_ENV_OVERRIDABLE_KEYS`.
@@ -3615,17 +3541,15 @@ export function legacyResolveLocalConfigValues(
           remoteOverrideKeys,
         ) ?? [LEGACY_DEFAULT_SIGNING_KEY])[0]
       : undefined;
-  // `Config.Validate` runs passkey/webauthn validation, then
-  // `Auth.Hook.validate()`, then `Auth.MFA.validate()`, then
-  // `Auth.Email.validate()`, then `Auth.Sms.validate()`/`Auth.ThirdParty.validate()` (skipping
+  // Validation runs passkey/webauthn, hook, mfa, email, then sms/third-party checks (skipping
   // the D-only `external` step, ported separately below), all right after the signing-keys read
-  // and still inside `if c.Auth.Enabled`. Sms
-  // (`config.go:1145-1147`/`1348-1417`) is enforced at decode time by `@supabase/config`'s `sms`
+  // and only while auth is enabled. Sms
+  // is enforced at decode time by `@supabase/config`'s `sms`
   // schema (`packages/config/src/auth/sms.ts`'s provider-switch check) for the TOML-only case,
   // AND re-checked here post-env-override by {@link validateAuthSmsProviders} (called alongside
   // {@link validateAuthExternalProviders}, after the single `legacyValidateResolvedConfig` call
   // below) — see that function's doc comment for why both are needed. External
-  // (`config.go:1148-1150`/`1419-1451`) is D-only per `legacy-config-validate.ts`'s module
+  // is D-only per `legacy-config-validate.ts`'s module
   // header; {@link validateAuthExternalProviders} ports D's identical inline check. This block
   // only ACCUMULATES the inputs those checks need — the checks themselves run once, later, as
   // part of the single `legacyValidateResolvedConfig` call below.
@@ -3641,18 +3565,18 @@ export function legacyResolveLocalConfigValues(
     // simply skipped rather than guessed at.
     const passkeyDoc = asRecord(authDocument?.["passkey"]);
     const webauthnDoc = asRecord(authDocument?.["webauthn"]);
-    // `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other nested field once
-    // `[auth.passkey]`/`[auth.webauthn]` are present in config.toml (`ExperimentalBindStruct`/
-    // `AutomaticEnv`, `config.go:581-586`), so `SUPABASE_AUTH_PASSKEY_ENABLED` and
-    // `SUPABASE_AUTH_WEBAUTHN_RP_ID`/`_RP_ORIGINS` overrides apply before `Auth.Passkey`/
-    // `Auth.Webauthn` validation runs. Gated on the raw section already
-    // being present (`passkeyDoc`/`webauthnDoc !== undefined`), matching `AutomaticEnv`
-    // (which only intercepts keys already present in the merged config) — an absent
+    // `auth.passkey.enabled`/`auth.webauthn.*` are env-bindable like every other nested field once
+    // `[auth.passkey]`/`[auth.webauthn]` are present in config.toml, so
+    // `SUPABASE_AUTH_PASSKEY_ENABLED` and
+    // `SUPABASE_AUTH_WEBAUTHN_RP_ID`/`_RP_ORIGINS` overrides apply before passkey/webauthn
+    // validation runs. Gated on the raw section already
+    // being present (`passkeyDoc`/`webauthnDoc !== undefined`) — only keys already present in the
+    // merged config are env-bindable, so an absent
     // `[auth.passkey]`/`[auth.webauthn]` section is never synthesized from an env override alone.
     // Same remote-over-env precedence as `studioEnabled`/`authEnabled` above — `auth.passkey.enabled`
     // is in `LEGACY_ENV_OVERRIDABLE_KEYS` because the ungated `legacyEnvOverrideBool` call below
     // THROWS on a malformed override even when a matched remote block already set it, which would
-    // abort this whole function (and the shadow it feeds) on an env value Go silently ignores.
+    // abort this whole function (and the shadow it feeds) on an env value the override tier should silently ignore.
     const passkeyEnabled = remoteWins("auth.passkey.enabled")
       ? legacyRawUnmodeledBool(passkeyDoc?.["enabled"], "auth.passkey.enabled")
       : passkeyDoc !== undefined
@@ -3879,8 +3803,8 @@ export function legacyResolveLocalConfigValues(
   const experimentalDocument = asRecord(document?.["experimental"]);
   const webhooksPresent = asRecord(experimentalDocument?.["webhooks"]) !== undefined;
   // `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED`/`SUPABASE_EXPERIMENTAL_PGDELTA_FORMAT_OPTIONS` are
-  // Viper-bound like every other leaf field (`ExperimentalBindStruct`/`AutomaticEnv`,
-  // `config.go:581-586`) before `experimental.validate()` runs — same mechanism the db/migration
+  // env-bindable like every other leaf field before experimental validation runs — same
+  // mechanism the db/migration
   // loader (`legacy-db-config.toml-read.ts`) already applies for the `pgdelta` override; this
   // resolver just never got the equivalent treatment. A malformed JSON override needs no separate
   // error path here: it flows through unchanged and `legacyValidateResolvedConfig`'s existing
@@ -3889,7 +3813,7 @@ export function legacyResolveLocalConfigValues(
   // webhooks.enabled` is in `LEGACY_ENV_OVERRIDABLE_KEYS` because the ungated
   // `legacyEnvOverrideBool` call below THROWS on a malformed override even when a matched remote
   // block already set it, which would abort this whole function (and the shadow it feeds) on an
-  // env value Go silently ignores.
+  // env value the override tier should silently ignore.
   const webhooksEnabled = remoteWins("experimental.webhooks.enabled")
     ? config.experimental.webhooks?.enabled === true
     : legacyEnvOverrideBool(
@@ -4092,17 +4016,16 @@ export function legacyResolveLocalConfigValues(
     gcpJwtPath: gcpJwtPath ?? "",
     // Sanitized here (not above, in `input.projectId`) — `legacyValidateResolvedConfig`'s check is
     // presence-only and must see the raw value to reject an explicit `project_id = ""` before any
-    // fallback; every OTHER reader of `Config.ProjectId` (Docker resource naming, labels) needs Go's
-    // post-`Validate` sanitized singleton.
+    // fallback; every OTHER reader of the project id (Docker resource naming, labels) needs the
+    // post-validation sanitized singleton.
     projectId: legacySanitizeProjectId(resolvedProjectId ?? ""),
     edgeRuntimeDenoVersion: denoVersion,
   };
 }
 
 /**
- * `(a *auth) ResolveJWKS(ctx)` — reached only
- * from the future native `start` port (formerly `internal/start/start.go:274-277`, deleted as
- * unreachable in CLI-1966, last present at commit a253ccba2: a fetch failure there
+ * Resolves the local JWKS document — reached only
+ * from the future native `start` port (a fetch failure there
  * fails the whole `start` command outright). Deliberately NOT folded into
  * {@link LegacyLocalConfigValues}/{@link legacyResolveLocalConfigValues}: that resolver is
  * synchronous and runs on every `stop`/`status` invocation (see `legacy-status-values.ts`/
@@ -4112,14 +4035,12 @@ export function legacyResolveLocalConfigValues(
  *
  * Divergences from the structurally similar (but functionally unrelated)
  * `resolveLocalAuthArtifacts`/`finalizeAuthArtifacts` pair in
- * `shared/functions/serve.ts` (Go's equivalent call site for THAT pair is
- * `internal/functions/serve/`, out of scope for this port) — deliberately NOT copied here:
- * - a remote-JWKS fetch failure is a hard, propagating error here (matching former
- * `internal/start/start.go:274-277`, deleted as unreachable in CLI-1966 and last present at
- * commit a253ccba2, which returned the error outright); `serve.ts` instead swallows the failure and continues with
- * zero remote keys, a `functions serve`-only leniency with no equivalent in `ResolveJWKS`.
+ * `shared/functions/serve.ts` — deliberately NOT copied here:
+ * - a remote-JWKS fetch failure is a hard, propagating error here (it fails the whole `start`
+ * command outright); `serve.ts` instead swallows the failure and continues with
+ * zero remote keys, a `functions serve`-only leniency with no equivalent here.
  * - this never injects `serve.ts`'s `defaultSigningKey` EC key — that key exists only for
- * `functions serve`'s own local-dev defaults and has no equivalent in `ResolveJWKS`.
+ * `functions serve`'s own local-dev defaults and has no equivalent here.
  *
  * Reuses {@link toPublicJwk}/{@link resolveThirdPartyIssuerUrl}/{@link resolveRemoteJwks}
  * (`shared/auth/jwks.ts`) rather than re-implementing them a second time — see that module's
@@ -4171,13 +4092,13 @@ export async function legacyResolveLocalJwks(
         config.auth.signing_keys_path,
         projectEnvValues,
       );
-  // `a.SigningKeys` is UNCONDITIONALLY seeded with the single default ES256 key at
-  // `NewConfig()` time — every resolved config carries it,
+  // The signing keys are UNCONDITIONALLY seeded with the single default ES256 key —
+  // every resolved config carries it,
   // regardless of `auth.enabled`. It is only ever REPLACED by a configured
   // `signing_keys_path` file, and only when that file is actually read (gated on
-  // `auth.enabled && signing_keys_path set`, `config.go:1087,1110-1116` — see
-  // {@link legacyResolveConfiguredSigningKeys}). So `ResolveJWKS` (which iterates
-  // `a.SigningKeys` with no `auth.enabled` gate of its own) always publishes either the
+  // `auth.enabled && signing_keys_path set` — see
+  // {@link legacyResolveConfiguredSigningKeys}). So JWKS resolution (which has no
+  // `auth.enabled` gate of its own) always publishes either the
   // file's keys or this default — never neither. `GOTRUE_JWT_KEYS` signs with the same
   // default (`services/gotrue.service.ts`'s `LEGACY_GOTRUE_DEFAULT_SIGNING_KEY`), so the
   // two must never disagree on which key applies here.
@@ -4297,23 +4218,21 @@ export async function legacyResolveLocalJwks(
     },
   };
 
-  // `Auth.ThirdParty.validate()` (the "at most one enabled" + required-field checks
-  // `resolveThirdPartyIssuerUrl` performs) only runs inside `Config.Validate`'s `if
-  // c.Auth.Enabled` block — but `ResolveJWKS`/`IssuerURL()` (this whole
-  // function) is called UNCONDITIONALLY (formerly `internal/start/start.go:274`, deleted as
-  // unreachable in CLI-1966; last present at commit a253ccba2), regardless of
+  // The "at most one enabled" + required-field checks `resolveThirdPartyIssuerUrl`
+  // performs only run while auth is enabled — but this whole
+  // function is called UNCONDITIONALLY, regardless of
   // `auth.enabled`. When auth is enabled, `legacyResolveLocalConfigValues`'s own gated
   // `validateAuthThirdPartyProviders`-equivalent check already ran first, so the validating
   // resolver here is safe/redundant-but-harmless. When auth is disabled, that earlier validation
   // is (correctly) skipped, so this function must NOT re-introduce it — using the unchecked,
-  // no-throw `IssuerURL()`-only builder instead, matching Go exactly.
+  // no-throw issuer-url builder instead.
   // Same remote-over-env precedence as every other field above — `auth.enabled` is in
   // `LEGACY_ENV_OVERRIDABLE_KEYS` (`legacy-db-config.toml-read.ts`) and an ungated
   // `legacyEnvOverrideBool` call THROWS on a malformed `SUPABASE_AUTH_ENABLED` even when a
-  // matched remote block already set `auth.enabled` at viper's OVERRIDE tier — a value Go's
-  // `Validate` never even evaluates the env var for in that case — which would otherwise abort
+  // matched remote block already set `auth.enabled` at override tier — a value
+  // validation never even evaluates the env var for in that case — which would otherwise abort
   // this whole function (and the shadow's PG15+ one-shot auth-migration job it feeds via
-  // `legacyBuildLocalDbContainerInputs`) on an env value Go silently ignores
+  // `legacyBuildLocalDbContainerInputs`) on an env value the override tier should silently ignore
   // (review: PRRT_kwDOErm0O86W30n6).
   const authEnabled = remoteWins("auth.enabled")
     ? config.auth.enabled
@@ -4335,10 +4254,10 @@ export async function legacyResolveLocalJwks(
   }
 
   const keys: unknown[] = [];
-  // `ResolveJWKS` only attempts the remote fetch when `issuerURL != ""` —
-  // a provider's own `issuerURL()` can return the
-  // empty string with no validation (e.g. workos's `issuerURL()` is a raw field read,
-  // `config.go:1631-1632`), so an enabled-but-unconfigured third-party provider with
+  // Only attempt the remote fetch when the issuer URL is non-empty —
+  // a provider's own issuer-url resolution can return the
+  // empty string with no validation (e.g. workos's is a raw field read), so an
+  // enabled-but-unconfigured third-party provider with
   // `auth.enabled = false` must be tolerated, not fetched.
   if (issuerUrl !== undefined && issuerUrl.length > 0) {
     try {

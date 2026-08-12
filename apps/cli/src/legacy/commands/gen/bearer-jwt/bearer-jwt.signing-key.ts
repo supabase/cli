@@ -28,19 +28,18 @@ import {
   LegacyGenBearerJwtReadError,
 } from "./bearer-jwt.errors.ts";
 
-/** Go's `Console.ReadLine` timeouts (`apps/cli-go/internal/utils/console.go:35-36`). */
+/** Established console read-line timeouts. */
 const GO_CONSOLE_TTY_TIMEOUT_MILLIS = 10 * 60 * 1000;
 const GO_CONSOLE_NON_TTY_TIMEOUT_MILLIS = 100;
 
 /**
- * Port of Go's `Console.PromptText` (`apps/cli-go/internal/utils/console.go:96-107`):
- * writes `label` to stderr with NO trailing newline, reads one line bounded by a
- * TTY-aware timeout, and — only on a non-TTY — echoes the (trimmed) input back to
- * stderr. On a real TTY the terminal's own line-editing already echoes what the user
- * types, so no explicit echo is written there, matching Go exactly. Used for BOTH of
- * `getSigningKey`'s text prompts (`bearerjwt.go:38`, `:54`) — the branch between them
- * is purely which label/fallback the caller applies to the returned string, not how
- * the read itself behaves.
+ * Writes `label` to stderr with NO trailing newline, reads one line bounded
+ * by a TTY-aware timeout, and — only on a non-TTY — echoes the (trimmed)
+ * input back to stderr. On a real TTY the terminal's own line-editing
+ * already echoes what the user types, so no explicit echo is written
+ * there. Used for BOTH of `getSigningKey`'s text prompts — the branch
+ * between them is purely which label/fallback the caller applies to the
+ * returned string, not how the read itself behaves.
  */
 const legacyConsolePromptText = Effect.fnUntraced(function* (label: string) {
   const output = yield* Output;
@@ -59,30 +58,35 @@ const legacyConsolePromptText = Effect.fnUntraced(function* (label: string) {
 
 /**
  * Narrows an untrusted JSON record (a `signing_keys_path` file entry, or a pasted
- * stdin JWK) into `LegacyJwk`'s shape — every field Go's own `config.JWK` struct
- * would leave at its zero value (`""`/absent) when missing from the JSON decodes the
- * same way here. Every downstream consumer in this file works with the resulting
- * typed `LegacyJwk`, not the raw untrusted record, so key/kid/alg lookups stay
- * type-checked instead of re-guarding `Record<string, unknown>` at every call site.
+ * stdin JWK) into `LegacyJwk`'s shape — every field `config.JWK` would
+ * leave at its zero value (`""`/absent) when missing from the JSON decodes
+ * the same way here. Every downstream consumer in this file works with the
+ * resulting typed `LegacyJwk`, not the raw untrusted record, so
+ * key/kid/alg lookups stay type-checked instead of re-guarding
+ * `Record<string, unknown>` at every call site.
  *
- * Throws a bare `Error` (Go's own unwrapped `encoding/json` text) the moment any field
- * above is present with the wrong JSON type — both call sites below (`normalizeStoredJwk`
- * itself is synchronous) catch that throw and apply THEIR OWN Go-matching wrap: Branch
- * A's pasted-JWK path wraps `"failed to parse JWK: %w"`, while the `signing_keys_path`
- * file path wraps `"failed to decode signing keys: failed to parse response body: %w"`
- * — the same two wraps this file's sibling checks (the JSON-decode / `alg` allowlist
- * checks) already use for those exact same two call sites. Go decodes struct fields in
- * the JSON document's own key order and stops at the FIRST mismatch; this function
- * instead always checks in a fixed field order, so on a payload with MULTIPLE
- * simultaneously-malformed fields the reported field may not always match Go's for
- * that specific multi-error case — accepted gap, no fixture in `bearerjwt_test.go`
- * covers ordering across more than one bad field at once, and every field is still
- * correctly rejected either way. `readOptionalString`/`readOptionalStringArray`/
- * `readOptionalBoolean` are hoisted to `gen.signing-keys-config.ts` (the `gen` family
- * root) rather than defined locally: `assertNoMalformedDuplicateJwkField` there needs
- * the exact same per-field checks to catch a DUPLICATED field whose earlier occurrence
- * `JSON.parse` alone would have silently discarded (CLI-1961 Codex review finding) —
- * see both call sites below, and that function's own doc comment for the mechanics.
+ * Throws a bare `Error` (the established unwrapped `encoding/json` text)
+ * the moment any field above is present with the wrong JSON type — both
+ * call sites below (`normalizeStoredJwk` itself is synchronous) catch that
+ * throw and apply THEIR OWN established wrap: Branch A's pasted-JWK path
+ * wraps `"failed to parse JWK: %w"`, while the `signing_keys_path` file
+ * path wraps `"failed to decode signing keys: failed to parse response
+ * body: %w"` — the same two wraps this file's sibling checks (the
+ * JSON-decode / `alg` allowlist checks) already use for those exact same
+ * two call sites. Decoding processes struct fields in the JSON document's
+ * own key order and stops at the FIRST mismatch; this function instead
+ * always checks in a fixed field order, so on a payload with MULTIPLE
+ * simultaneously-malformed fields the reported field may not always match
+ * the established decoder for that specific multi-error case — accepted
+ * gap, no fixture covers ordering across more than one bad field at once,
+ * and every field is still correctly rejected either way.
+ * `readOptionalString`/`readOptionalStringArray`/`readOptionalBoolean` are
+ * hoisted to `gen.signing-keys-config.ts` (the `gen` family root) rather
+ * than defined locally: `assertNoMalformedDuplicateJwkField` there needs
+ * the exact same per-field checks to catch a DUPLICATED field whose
+ * earlier occurrence `JSON.parse` alone would have silently discarded —
+ * see both call sites below, and that function's own doc comment for the
+ * mechanics.
  */
 function normalizeStoredJwk(record: Record<string, unknown>): LegacyJwk {
   const keyOps = readOptionalStringArray(record, "key_ops");
@@ -108,9 +112,9 @@ function normalizeStoredJwk(record: Record<string, unknown>): LegacyJwk {
 }
 
 /**
- * Go's `getSigningKey` Branch A (`bearerjwt.go:37-51`, reached when
- * `[auth].signing_keys_path` is NOT configured): prompt for a raw JWK, falling back to
- * the built-in default ES256 dev key on a blank answer.
+ * Branch A (reached when `[auth].signing_keys_path` is NOT configured):
+ * prompt for a raw JWK, falling back to the built-in default ES256 dev key
+ * on a blank answer.
  */
 const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
   const input = yield* legacyConsolePromptText(
@@ -129,14 +133,15 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
       }),
     );
   }
-  // A JSON `null` answer decodes into a ZERO-VALUE `config.JWK{}` in Go — verified
-  // against the real binary (CLI-1961): `json.Unmarshal([]byte("null"), &key)` where
-  // `key` is a non-pointer struct is a documented Go no-op (it leaves every field at
-  // its zero value: `kty: ""`, `alg: ""`, ...) rather than an error, and rather than
-  // the built-in default key. This must reach the SAME zero-value JWK the empty-object
-  // shape below does, so it fails downstream at SIGN time with "unsupported key type:
-  // " (empty kty) — Go genuinely rejects a `null` answer where a truly BLANK answer
-  // (handled above, before `JSON.parse` is ever called) falls back to the default key.
+  // A JSON `null` answer decodes into a ZERO-VALUE `config.JWK{}`:
+  // `json.Unmarshal([]byte("null"), &key)` where `key` is a non-pointer
+  // struct is a documented no-op (it leaves every field at its zero value:
+  // `kty: ""`, `alg: ""`, ...) rather than an error, and rather than the
+  // built-in default key. This must reach the SAME zero-value JWK the
+  // empty-object shape below does, so it fails downstream at SIGN time
+  // with "unsupported key type: " (empty kty) — a `null` answer is
+  // genuinely rejected where a truly BLANK answer (handled above, before
+  // `JSON.parse` is ever called) falls back to the default key.
   if (parsed === null) {
     return normalizeStoredJwk({});
   }
@@ -148,10 +153,10 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
     );
   }
   const record = parsed as Record<string, unknown>;
-  // Case-insensitive lookup (`resolveJwkFieldValue`) — Go's `alg` allowlist check
-  // (`config.Algorithm.UnmarshalText`) runs at JSON-decode time regardless of the
-  // key's casing (CLI-1961 Codex review finding); see that function's doc comment
-  // in `gen.signing-keys-config.ts`.
+  // Case-insensitive lookup (`resolveJwkFieldValue`) — the `alg` allowlist
+  // check (`config.Algorithm.UnmarshalText`) runs at JSON-decode time
+  // regardless of the key's casing; see that function's doc comment in
+  // `gen.signing-keys-config.ts`.
   const alg = resolveJwkFieldValue(record, "alg");
   try {
     legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
@@ -162,22 +167,23 @@ const resolveSigningKeyFromStdinJwk = Effect.fnUntraced(function* () {
       }),
     );
   }
-  // `normalizeStoredJwk` throws Go's bare `encoding/json` struct-field type-mismatch
-  // text (see its own doc comment) the moment any OTHER field is malformed — e.g.
-  // `{"kty":"oct","alg":"ES256","key_ops":["sign",1]}` — wrapped here with the same
-  // `"failed to parse JWK: %w"` this Branch A path already uses above (Codex review
-  // finding, CLI-1961).
+  // `normalizeStoredJwk` throws the established bare `encoding/json`
+  // struct-field type-mismatch text (see its own doc comment) the moment
+  // any OTHER field is malformed — e.g.
+  // `{"kty":"oct","alg":"ES256","key_ops":["sign",1]}` — wrapped here with
+  // the same `"failed to parse JWK: %w"` this Branch A path already uses
+  // above.
   //
   // `assertNoMalformedDuplicateJwkField` runs FIRST, against `input` — the untouched
   // pasted text — rather than `record`: by the time `parsed`/`record` exist, `JSON.parse`
   // has ALREADY collapsed any duplicate top-level key down to its last occurrence (plain
   // JS object-literal semantics), silently discarding evidence of an earlier occurrence
-  // Go's own decode would still reject — e.g. a pasted `{"kid":1,"kid":"k"}` parses to
-  // `record.kid === "k"` with no trace `1` was ever there, yet `json.Unmarshal` into
+  // that must still be rejected — e.g. a pasted `{"kid":1,"kid":"k"}` parses to
+  // `record.kid === "k"` with no trace `1` was ever there, yet decoding into
   // `config.JWK` still errors on the `1` and never reaches `normalizeStoredJwk`'s
-  // equivalent of the merged, valid `"k"` (verified against the real binary, CLI-1961
-  // Codex review finding — see that function's own doc comment for the full mechanics,
-  // including the `alg` field's distinct allowlist-driven behavior).
+  // equivalent of the merged, valid `"k"` (see that function's own doc
+  // comment for the full mechanics, including the `alg` field's distinct
+  // allowlist-driven behavior).
   return yield* Effect.try({
     try: () => {
       assertNoMalformedDuplicateJwkField(input);

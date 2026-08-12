@@ -3,10 +3,8 @@ import { describe, expect, it } from "vitest";
 import { stripAnsi } from "../../../../tests/helpers/ansi.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS, legacyPartitionStartExcludeFlags } from "./start.exclude.ts";
 
-// Go's `ExcludableContainers()` order (`apps/cli-go/internal/start/start.go:
-// 1297-1303`, deleted in CLI-1966; last present at commit a253ccba2 — walking
-// `config.Images.Services()`, `apps/cli-go/pkg/config/constants.go:60-76`), expressed as the exact
-// `--exclude` values Go's `utils.ShortContainerImageName` produces for each.
+// The canonical `--exclude` order, walking each service in declaration
+// order and expressing it as its exact `--exclude` value.
 const EXPECTED_ORDER = [
   "gotrue",
   "realtime",

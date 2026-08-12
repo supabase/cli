@@ -80,8 +80,7 @@ interface LegacyDbConfigResolverShape {
 
 /**
  * Resolves a Postgres connection from the `--db-url` / `--local` / `--linked`
- * flags, porting `flags.ParseDatabaseConfig` + `NewDbConfigWithPassword`
- * (`apps/cli-go/internal/utils/flags/db_url.go`). Shared cross-command infra:
+ * flags. Shared cross-command infra:
  * `db reset` / `db dump` will reuse it as they are ported.
  */
 export class LegacyDbConfigResolver extends Context.Service<

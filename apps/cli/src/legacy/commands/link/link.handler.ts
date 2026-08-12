@@ -102,10 +102,9 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
       .makeDirectory(path.dirname(filePath), { recursive: true })
       .pipe(Effect.andThen(() => fs.writeFileString(filePath, content)));
 
-  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): persist the
-  // linked-project cache and telemetry state whether the link succeeds or fails.
-  // `link` itself writes `linked-project.json` on success (below), so `cache`
-  // only fires for the failure / 404 paths.
+  // Persist the linked-project cache and telemetry state whether the link
+  // succeeds or fails. `link` itself writes `linked-project.json` on success
+  // (below), so `cache` only fires for the failure / 404 paths.
   yield* Effect.gen(function* () {
     // 1. Check remote project status (404 tolerated for branch projects).
     const project = yield* api.v1

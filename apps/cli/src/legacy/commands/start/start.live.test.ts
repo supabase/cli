@@ -27,14 +27,12 @@ const LIFECYCLE_OVERHEAD_MS = 90_000;
  * reduced-stack `start` call (Studio's Next.js build, the Logflare/Vector
  * logging pipeline), but "logflare" here, NOT "analytics" like those two
  * siblings. `LEGACY_SERVICE_CATALOG`'s `excludeKey` for the logflare service
- * (Go's `utils.ShortContainerImageName` applied to the logflare image,
- * `apps/cli-go/internal/utils/misc.go:33-39`) is "logflare" — "analytics" is
- * only that service's *container suffix* (`legacy-service-catalog.ts`), never
- * a valid `--exclude` value in either Go or this port. The siblings'
- * `--exclude analytics` was a silent no-op passed straight through to `start`
- * while it was still a Go-binary proxy — harmless for their own coarse "is
- * the stack up/down" assertions, but this suite's exact-container-set
- * assertions need the genuinely valid key so logflare is actually excluded.
+ * is "logflare" — "analytics" is only that service's *container suffix*
+ * (`legacy-service-catalog.ts`), never a valid `--exclude` value. The
+ * siblings' `--exclude analytics` is a silent no-op — harmless for their own
+ * coarse "is the stack up/down" assertions, but this suite's exact-
+ * container-set assertions need the genuinely valid key so logflare is
+ * actually excluded.
  */
 const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare", "vector"]);
 
@@ -44,12 +42,10 @@ const EXCLUDED_SERVICE_KEYS: ReadonlySet<string> = new Set(["studio", "logflare"
  *  - `supavisor` — `db.pooler.enabled` defaults to `false` (`packages/config/src/db.ts`,
  *    `defaultPoolerEnabled`), and `runSupabaseLive(["init"], ...)` above writes a config.toml
  *    with no override, so it's genuinely disabled on this test's stack, not merely unasserted.
- *  - `imgproxy` — gated on `storage.image_transformation.enabled` (`start.gates.ts:169`,
- *    mirroring Go's `isImgProxyEnabled`, `apps/cli-go/internal/start/start.go:302-303`
- *    (deleted in CLI-1966; last present at commit a253ccba2)), which
- *    defaults to `false`/absent; `runSupabaseLive(["init"], ...)` writes a config.toml with
- *    `[storage.image_transformation]` still commented out (`project-init.templates.ts:132-133`,
- *    byte-identical to Go's own template), so imgproxy is genuinely disabled on this test's stack.
+ *  - `imgproxy` — gated on `storage.image_transformation.enabled` (`start.gates.ts:169`),
+ *    which defaults to `false`/absent; `runSupabaseLive(["init"], ...)` writes a config.toml
+ *    with `[storage.image_transformation]` still commented out
+ *    (`project-init.templates.ts:132-133`), so imgproxy is genuinely disabled on this test's stack.
  */
 const NEVER_RUNNING_SERVICE_KEYS: ReadonlySet<string> = new Set(["supavisor", "imgproxy"]);
 
@@ -84,10 +80,9 @@ describeLive("supabase start (live)", () => {
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-start-live-"));
       // No `project_id` override, so the cli resolves it from the workdir
-      // basename — matching Go's precedence exactly (see legacy-docker-ids.ts).
-      // Sanitizing is a no-op for a `mkdtemp`-generated basename (already
-      // alphanumeric/`-`), but mirrors the port's actual resolution rather
-      // than assuming that stays true.
+      // basename (see legacy-docker-ids.ts). Sanitizing is a no-op for a
+      // `mkdtemp`-generated basename (already alphanumeric/`-`), but mirrors
+      // the port's actual resolution rather than assuming that stays true.
       const projectId = legacySanitizeProjectId(path.basename(projectDir));
       const projectFilter = `label=com.supabase.cli.project=${projectId}`;
       const dbContainerId = localDbContainerId(projectId);

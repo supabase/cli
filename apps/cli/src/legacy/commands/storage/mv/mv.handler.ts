@@ -24,11 +24,10 @@ import { legacyListStoragePaths } from "../storage.iterate.ts";
 import type { LegacyStorageMvFlags } from "./mv.command.ts";
 
 /**
- * `supabase storage mv <src> <dst>` — move objects within a bucket. Port of
- * `apps/cli-go/internal/storage/mv/mv.go` (deleted in CLI-1970; last present
- * at commit 7b469f5b3). Both paths must be `ss://` and in the
- * same bucket. A direct move that returns `not_found` falls back to a recursive
- * per-object move when `--recursive` is set.
+ * `supabase storage mv <src> <dst>` — move objects within a bucket. Both
+ * paths must be `ss://` and in the same bucket. A direct move that returns
+ * `not_found` falls back to a recursive per-object move when `--recursive`
+ * is set.
  */
 export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
   flags: LegacyStorageMvFlags,

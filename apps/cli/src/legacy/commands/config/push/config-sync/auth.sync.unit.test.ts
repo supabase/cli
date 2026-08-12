@@ -1,12 +1,10 @@
 /**
- * Unit tests for auth.sync.ts — golden parity with Go `pkg/config/auth_test.go`.
+ * Unit tests for auth.sync.ts.
  *
  * Each test builds `AuthSubset` values directly (secrets already pre-hashed,
- * durations already in Go `.String()` form) and calls `diffAuth`, mirroring
- * Go's `assertSnapshotEqual(t, diff)` approach. Expected diffs are the literal
- * bytes of `apps/cli-go/pkg/config/testdata/TestXxxDiff/*.diff`.
+ * durations already in normalized string form) and calls `diffAuth`.
  *
- * Go's `newWithDefaults()` sets:
+ * The default "remote" baseline used across these tests sets:
  *   EnableSignup = true
  *   AdditionalRedirectUrls = []string{}
  *   Email.EnableConfirmations = true
@@ -750,7 +748,7 @@ describe("TestMfaDiff", () => {
 
 describe("TestSmsDiff", () => {
   it("local disabled remote enabled — matches golden diff", () => {
-    // Go's newWithDefaults() has enable_signup=true, TestOTP={}
+    // The default baseline has enable_signup=true, TestOTP={}
     const local = bareAuth({ enable_signup: true }); // sms = defaults (all disabled)
     const remote = withRemote(local, {
       external_phone_enabled: true,
@@ -1460,11 +1458,11 @@ describe("authToUpdateBody secrets", () => {
 // ---------------------------------------------------------------------------
 // password_required_characters mapping
 //
-// Regression for the Go const-name-vs-API-value bug: the port must map the
-// local `password_requirements` enum to the real API values (with `:`
-// separators between character-class groups), NOT the oapi-codegen constant
-// *names*. The API values below are copied from the generated
-// `V1UpdateAuthServiceConfigInput` `password_required_characters` literals.
+// Regression: local `password_requirements` enum values must map to the real
+// API values (with `:` separators between character-class groups), NOT any
+// internal constant *names*. The API values below are copied from the
+// generated `V1UpdateAuthServiceConfigInput`
+// `password_required_characters` literals.
 // ---------------------------------------------------------------------------
 
 describe("password_required_characters mapping", () => {

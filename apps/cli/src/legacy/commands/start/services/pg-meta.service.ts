@@ -1,9 +1,7 @@
 /**
- * pg-meta container spec builder — port of Go's "Start pg-meta" block
- * (`apps/cli-go/internal/start/start.go:1110-1146`, deleted in CLI-1966;
- * last present at commit a253ccba2). Gated in Go by
- * `config.studio.enabled` (pg-meta has no `enabled` flag of its own — it only
- * exists to back Studio's schema browser) and
+ * pg-meta container spec builder, gated on `config.studio.enabled` (pg-meta
+ * has no `enabled` flag of its own — it only exists to back Studio's schema
+ * browser) and
  * `!isContainerExcluded(config.studio.pgmeta_image, excluded)` — see
  * `legacy-service-catalog.ts`'s `pgMeta` entry (`excludeKey: "postgres-meta"`,
  * gated on `studio.enabled`). Gating and image resolution/pre-pull are the
@@ -19,31 +17,31 @@
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 
-/** Go's hardcoded pg-meta listen port (`start.go:1117`, `PG_META_PORT=8080`) — never configurable. */
+/** The hardcoded pg-meta listen port (`PG_META_PORT=8080`) — never configurable. */
 const PG_META_PORT = 8080;
 
-/** Go's `utils.PgmetaAliases` (`apps/cli-go/internal/utils/config.go:44`) — a fixed, non-configurable constant. */
+/** The pg-meta network alias — a fixed, non-configurable constant. */
 const PG_META_NETWORK_ALIASES = ["pg_meta"];
 
 export interface LegacyPgMetaContainerInput {
   /** `config.studio.pgmeta_image`, already resolved/pulled by the caller. */
   readonly image: string;
-  /** `legacyServiceContainerName("pg_meta", projectId)` — Go's `utils.PgmetaId`. */
+  /** `legacyServiceContainerName("pg_meta", projectId)`. */
   readonly containerName: string;
   /**
-   * Go's `dbConfig.Host` (`utils.DbId`, `internal/start/start.go:66`) — the
-   * local Postgres container's own hostname on the shared Docker network.
+   * The local Postgres container's own hostname on the shared Docker
+   * network.
    */
   readonly dbHost: string;
-  /** Go's `dbConfig.Port` (hardcoded `5432`, `start.go:67`). */
+  /** Hardcoded `5432`. */
   readonly dbPort: number;
-  /** Go's `dbConfig.User` (hardcoded `"postgres"`, `start.go:68`). */
+  /** Hardcoded `"postgres"`. */
   readonly dbUser: string;
-  /** Go's `dbConfig.Password` (`config.db.password`, `legacyResolveLocalConfigValues`'s resolved value). */
+  /** `config.db.password` (`legacyResolveLocalConfigValues`'s resolved value). */
   readonly dbPassword: string;
-  /** Go's `dbConfig.Database` (hardcoded `"postgres"`, `start.go:70`). */
+  /** Hardcoded `"postgres"`. */
   readonly dbName: string;
-  /** Go's `utils.NetId` — the shared Docker network every `start` container joins. */
+  /** The shared Docker network every `start` container joins. */
   readonly networkId: string;
 }
 

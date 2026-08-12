@@ -1,7 +1,4 @@
 /**
- * Port of Go `(*email).validate` file-loading from `apps/cli-go/pkg/config/config.go`
- * and path resolution from `(*baseConfig).resolve`.
- *
  * `config push` reads HTML from `content_path` before building the auth push
  * subset. Templates and notifications use different base directories:
  *   - `[auth.email.template.*]`     → relative to project root (parent of `supabase/`)

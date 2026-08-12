@@ -231,22 +231,21 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     const occurrences = scan.occurrences;
 
     // pflag calls `Value.Set` for every occurrence in argv order, and an
-    // invalid value fails `ParseFlags` (cobra `command.go:919`) before
-    // `ValidateArgs`, every hook, and `RunE` — reachable here because the
-    // Effect parser resolves repeated flags first-wins without validating
-    // later occurrences (`--name-id-format=<valid> --name-id-format=bogus`
-    // parses) and accepts `yes`/`no`, which `strconv.ParseBool` rejects
-    // (binary-verified, PR #5974 review round 4). These checks precede the
-    // missing-value check because a missing value can only arise at the
-    // final argv token, so every recorded occurrence pflag would reject sits
-    // earlier in its sequential walk (binary-verified:
-    // `--skip-url-validation=yes --domains` names the invalid argument, not
-    // the missing one). Flags are checked in Go registration order
-    // (`cmd/sso.go:170-176`); when a single argv holds invalid occurrences
-    // of BOTH flags, pflag names whichever comes first in argv — a
-    // divergence this fixed order cannot see, accepted as unreachable
-    // through sane usage. The same helpers yield the pflag-effective
-    // (last-occurrence) values the handler acts on below.
+    // invalid value fails flag parsing before arity/mutex validation and the
+    // handler body — reachable here because the Effect parser resolves
+    // repeated flags first-wins without validating later occurrences
+    // (`--name-id-format=<valid> --name-id-format=bogus` parses here) and
+    // accepts `yes`/`no`, which `strconv.ParseBool` rejects. These checks
+    // precede the missing-value check because a missing value can only
+    // arise at the final argv token, so every recorded occurrence pflag
+    // would reject sits earlier in its sequential walk
+    // (`--skip-url-validation=yes --domains` names the invalid argument, not
+    // the missing one). Flags are checked in declaration order; when a
+    // single argv holds invalid occurrences of BOTH flags, pflag names
+    // whichever comes first in argv — a divergence this fixed order cannot
+    // see, accepted as unreachable through sane usage. The same helpers
+    // yield the pflag-effective (last-occurrence) values the handler acts
+    // on below.
     const skipUrlValidation = yield* Result.match(
       legacyPflagBoolValue(occurrences, "skip-url-validation"),
       {
@@ -264,24 +263,23 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       },
     );
 
-    // pflag fails `ParseFlags` (cobra `command.go:919`) when a bare
-    // value-taking flag is the final token (`sso update <id> --domains`) —
-    // before `ValidateArgs`, every hook, and `RunE`, so Go reports the
-    // missing argument even when the arg count is also wrong
-    // (binary-verified: `sso update a b --domains`). The Effect parser
-    // accepts that argv (the flag parses as unset), so no GET/PUT may happen
-    // here either. Keep this ahead of the arity check.
+    // Flag parsing fails when a bare value-taking flag is the final token
+    // (`sso update <id> --domains`) — before arity validation, every hook,
+    // and the handler body, so the missing argument is reported even when
+    // the arg count is also wrong (e.g. `sso update a b --domains`). The
+    // Effect parser accepts that argv (the flag parses as unset), so no
+    // GET/PUT may happen here either. Keep this ahead of the arity check.
     if (scan.missingValueError !== undefined) {
       return yield* Effect.fail(
         new LegacySsoFlagNeedsArgumentError({ message: scan.missingValueError }),
       );
     }
 
-    // `ExactArgs(1)` (`cmd/sso.go:87`) counts pflag-effective positionals,
-    // which shift away from what the Effect parser saw whenever pflag
-    // consumed a flag token as a value: `--domains --metadata-url u <id>` is
-    // pflag handing `--metadata-url` to `--domains` and leaving BOTH `u` and
-    // `<id>` positional — Go rejects the arg count before any hook, flag
+    // Arity validation counts pflag-effective positionals, which shift away
+    // from what the Effect parser saw whenever pflag consumed a flag token
+    // as a value: `--domains --metadata-url u <id>` is pflag handing
+    // `--metadata-url` to `--domains` and leaving BOTH `u` and `<id>`
+    // positional — the arg count is rejected before any hook, flag
     // validation, or request. The parser's own arity check can't see this,
     // so re-count from the scan (gated on `anchored`: an unscoped scan has
     // no positional information).
@@ -293,31 +291,28 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       );
     }
 
-    // Go's root `PersistentPreRunE` loads the pflag/viper-effective
-    // `--profile`/`SUPABASE_PROFILE` (`LoadProfile`, `cmd/root.go:98-102`)
-    // immediately BEFORE `ChangeWorkDir`, so an unloadable profile loses to
-    // an arity violation but beats the workdir check, the mutex checks, and
-    // any GET/PUT — and a loadable one decides which API host receives them.
-    // Reachable exactly where the scan and the parser disagree (see
-    // `add.handler.ts` and `legacyResolvePflagProfile` — PR #5974
-    // review round 7); where they agree this is `none` and the config
-    // layer's client/apiUrl below are already pflag-effective.
+    // The effective `--profile`/`SUPABASE_PROFILE` is resolved immediately
+    // before the workdir change, so an unloadable profile loses to an
+    // arity violation but beats the workdir check, the mutex checks, and
+    // any GET/PUT — and a loadable one decides which API host receives
+    // them. Reachable exactly where the scan and the parser disagree (see
+    // `add.handler.ts` and `legacyResolvePflagProfile`); where they agree
+    // this is `none` and the config layer's client/apiUrl below are already
+    // pflag-effective.
     const reconciledProfile = yield* legacyResolvePflagProfile(scan);
     const profileApiUrl = Option.map(reconciledProfile, (profile) => profile.apiUrl);
     // Reconciled-profile credentials, resolved ONCE for the main request and
     // every auxiliary call (linked-project cache fill, upgrade-gate fallback
-    // GETs): Go's reconciled `CurrentProfile` + `GetAccessToken` apply
-    // process-wide (`access_token.go:43`, review r3684524241). `undefined`
-    // when the scan and the parser agree — every consumer then resolves from
-    // the config-layer services as before.
+    // GETs): the reconciled profile's credentials apply process-wide.
+    // `undefined` when the scan and the parser agree — every consumer then
+    // resolves from the config-layer services as before.
     // Reconciled-profile credentials, resolved LAZILY (memoized) so the first
-    // read happens at the request site — Go's token gate is `GetSupabase`
-    // inside RunE (`api.go:119-124`), AFTER required/mutex/workdir
-    // validation, so a missing or invalid reconciled token must not pre-empt
-    // those errors (review r3686720488). Missing → Go's ErrMissingToken;
-    // invalid → ErrInvalidToken (the validation failure propagates). The
-    // auxiliary calls (cache fill, upgrade-gate GETs) use the absorbed
-    // variant: failures skip like Go's best-effort `ensureProjectGroupsCached`.
+    // read happens at the request site — the token gate fires AFTER
+    // required/mutex/workdir validation, so a missing or invalid reconciled
+    // token must not pre-empt those errors. Missing → the missing-token
+    // error; invalid → the validation failure propagates. The auxiliary
+    // calls (cache fill, upgrade-gate GETs) use the absorbed variant:
+    // failures skip, best-effort.
     const reconciledTokenCached = Option.isSome(reconciledProfile)
       ? yield* Effect.cached(legacyAccessTokenForProfile(reconciledProfile.value.name))
       : undefined;
@@ -328,14 +323,12 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
             Effect.succeed(Option.none<Redacted.Redacted<string>>()),
           );
 
-    // Go's root `PersistentPreRunE` chdir's to the pflag/viper-effective
-    // `--workdir`/`SUPABASE_WORKDIR` (`ChangeWorkDir`, `cmd/root.go:104`,
-    // `internal/utils/misc.go:238-257`) after `ValidateArgs` and before
-    // `ValidateFlagGroups` (`command.go:1010`), so a missing directory loses
-    // to an arity violation but beats a mutex violation and any GET/PUT
-    // (binary-verified: `sso update a b --workdir /missing` reports the
-    // arity error; `sso update <id> --workdir /missing --domains a
-    // --add-domains b` reports the chdir failure — PR #5974 review round 6).
+    // The effective `--workdir`/`SUPABASE_WORKDIR` is validated after arity
+    // validation and before flag-group validation, so a missing directory
+    // loses to an arity violation but beats a mutex violation and any
+    // GET/PUT (e.g. `sso update a b --workdir /missing` reports the arity
+    // error; `sso update <id> --workdir /missing --domains a --add-domains
+    // b` reports the chdir failure).
     yield* legacyValidatePflagWorkdir(scan);
 
     for (const group of SSO_UPDATE_MUTEX_GROUPS) {
@@ -354,8 +347,8 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
     // tokens as values while pflag consumes them unconditionally, and
     // resolves repeated flags first-wins while pflag is last-wins, so the
     // two can disagree on which flags are set and what they hold. See
-    // `add.handler.ts` and `legacy-pflag-reconcile.ts` for the full rationale
-    // (CLI-1982). `--name-id-format` and `--skip-url-validation` were
+    // `add.handler.ts` and `legacy-pflag-reconcile.ts` for the full
+    // rationale. `--name-id-format` and `--skip-url-validation` were
     // reconciled above, alongside their pflag value validation.
     const projectRefFlag = legacyPflagStringValue(occurrences, "project-ref");
     const metadataFile = legacyPflagStringValue(occurrences, "metadata-file");
@@ -379,13 +372,13 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       const fetching =
         output.format === "text" ? yield* output.task("Updating SSO provider...") : undefined;
 
-      // The typed client bakes the layer's apiUrl in at construction
-      // (`legacy-platform-api.layer.ts:73`), so when the reconciled profile
-      // differs the GET must be issued raw against the effective host — Go
-      // GETs and PUTs the same viper-effective profile host (`update.go:42`),
-      // and a GET to the layer's host would be a request Go never makes. The
-      // error mapping and the spinner-fail/suggestion stderr ordering mirror
-      // the typed path (`handleGetError`) exactly.
+      // The typed client bakes the layer's apiUrl in at construction, so
+      // when the reconciled profile differs the GET must be issued raw
+      // against the effective host — the GET and PUT must target the same
+      // profile host, and a GET to the layer's host would be a request that
+      // should never happen. The error mapping and the spinner-fail/
+      // suggestion stderr ordering mirror the typed path (`handleGetError`)
+      // exactly.
       const rawGetProvider = Effect.gen(function* () {
         const tokenOpt =
           reconciledTokenCached !== undefined
@@ -412,19 +405,18 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
               }),
           ),
         );
-        // Go's `identityTransport` wraps EVERY Management API response
-        // (`cmd/root.go:146-154`); the typed client stitches via its response
-        // transform (`legacy-platform-api.layer.ts`), so this raw GET must
-        // stitch through the same once-per-command guard — before the status
-        // gate, like the linked-project cache's raw GET. `serviceOption`:
-        // absent outside the real CLI tree (handler-level tests), where no
+        // Every Management API response is wrapped by the identity stitch;
+        // the typed client stitches via its response transform
+        // (`legacy-platform-api.layer.ts`), so this raw GET must stitch
+        // through the same once-per-command guard — before the status gate,
+        // like the linked-project cache's raw GET. `serviceOption`: absent
+        // outside the real CLI tree (handler-level tests), where no
         // telemetry runtime exists to stitch into.
         if (Option.isSome(identityStitch)) {
           yield* identityStitch.value.stitch(response);
         }
-        // Go's generated `ParseV1GetASsoProviderResponse` reads the body up
-        // front; the read error surfaces as `failed to get sso provider: %w`
-        // (`update.go:42-45`).
+        // The body is read up front; the read error surfaces as
+        // `failed to get sso provider: %w`.
         const rawBody = yield* response.text.pipe(
           Effect.tapError(() => fetching?.fail() ?? Effect.void),
           Effect.mapError(
@@ -436,10 +428,9 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         );
         const contentType = response.headers["content-type"] ?? "";
         if (response.status === 200 && contentType.includes("json")) {
-          // Go unmarshals a 200 JSON body and exits with the unmarshal error
-          // before any PUT (`update.go:42-45`); detail text is JS
-          // `JSON.parse`'s, not encoding/json's (documented micro-divergence
-          // — both CLIs exit 1 with no PUT).
+          // A 200 JSON body that fails to parse exits with the parse error
+          // before any PUT; detail text is `JSON.parse`'s (documented
+          // micro-divergence).
           let parsed: unknown;
           try {
             parsed = JSON.parse(rawBody);
@@ -454,9 +445,8 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
           }
           return { domains: extractDomainItems(parsed) };
         }
-        // Non-200 — or a 200 without a JSON content type, which leaves Go's
-        // `JSON200` nil and falls into the same branch (`update.go:47-55`):
-        // gate check, then 404 / unexpected-status.
+        // Non-200 — or a 200 without a JSON content type, which falls into
+        // the same branch: gate check, then 404 / unexpected-status.
         yield* fetching?.fail() ?? Effect.void;
         const bodyText = sanitizeLegacyErrorBody(rawBody);
         const upgradeSuggested = yield* legacySuggestUpgrade({
@@ -487,7 +477,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         );
       });
 
-      // Go's `update.go:42` always GETs first, regardless of which flags are set.
+      // Always GETs first, regardless of which flags are set.
       const existing = yield* Option.isSome(profileApiUrl)
         ? rawGetProvider
         : api.v1.getASsoProvider({ ref, provider_id: providerId }).pipe(
@@ -503,10 +493,8 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       } else if (Option.isSome(metadataUrl)) {
         if (!skipUrlValidation) {
           yield* validateMetadataUrl(metadataUrl.value).pipe(
-            // Go's `update.go:69` wraps the cause with `%w Use --skip-url-validation to
-            // suppress this error.` — note the single space between cause and `Use` and
-            // the trailing period. Go's `create.go:47` uses the same format minus the
-            // trailing period; `sso add` mirrors that.
+            // Note: single space between cause and `Use`, with a trailing
+            // period — `sso add` uses the same format minus the period.
             Effect.mapError(
               (cause) =>
                 new LegacySsoUpdateMetadataFileError({
@@ -527,15 +515,11 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
       if (domains.length > 0) {
         body["domains"] = [...domains];
       } else {
-        // Go's `update.go:84` reads as gating the merge on
-        // `params.AddDomains != nil || params.RemoveDomains != nil`, but
-        // `cmd/sso.go:171-172` declares both flags with a non-nil `[]string{}`
-        // default and passes them unconditionally — so from the CLI that
-        // condition is always true and every `sso update` PUT recomputes and
-        // sends `domains`, even when no domain flag was passed. `body.Domains`
-        // is a non-nil `*[]string` under `json:"domains,omitempty"`, so an
-        // empty merged set serializes as `"domains":[]`, never omitted
-        // (CLI-1981; live-captured against the Go binary).
+        // Both domain flags default to a non-nil empty array and are passed
+        // unconditionally, so every `sso update` PUT recomputes and sends
+        // `domains`, even when no domain flag was passed. An empty merged
+        // set serializes as `"domains":[]` — never omitted. Established
+        // output contract.
         body["domains"] = mergeDomains(existing.domains, addDomains, removeDomains);
       }
 
@@ -591,7 +575,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         });
         yield* fetching?.fail() ?? Effect.void;
         return yield* Effect.fail(
-          // Go reuses the GET error message even for PUT (see `update.go:133`).
+          // Reuses the GET error message even for PUT.
           new LegacySsoUpdateUnexpectedStatusError({
             status: response.status,
             body: bodyText,
@@ -615,8 +599,7 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
         return;
       }
       if (goFmt === "toml") {
-        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
-        // rejects the payload (review r3684270640) — same pattern as list/show.
+        // TOML encode failure wrapping — same pattern as list/show.
         const toml = yield* Effect.try({
           try: () => encodeLegacyGoToml(parsedJson, LEGACY_GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>
@@ -643,11 +626,11 @@ export const legacySsoUpdate = Effect.fn("legacy.sso.update")(function* (
 
       yield* output.raw(renderSingleProvider(toLegacySsoProviderView(parsedJson)));
     }).pipe(
-      // Go's `ensureProjectGroupsCached` GETs `/v1/projects/{ref}` through the
-      // process-wide `CurrentProfile` — the reconciled host, never the layer's.
+      // Linked-project cache fill GETs `/v1/projects/{ref}` through the
+      // reconciled host, never the config layer's.
       Effect.ensuring(
         // Resolved INSIDE the ensuring effect — the memoized token read must
-        // not run before the handler body (Go's gate order, see above).
+        // not run before the handler body (see the token-gate ordering above).
         Effect.flatMap(reconciledTokenForAux, (token) =>
           linkedProjectCache.cache(ref, undefined, Option.getOrUndefined(profileApiUrl), token),
         ),

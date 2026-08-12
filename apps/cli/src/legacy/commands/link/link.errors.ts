@@ -44,8 +44,8 @@ export class LegacyLinkProjectStatusError extends Data.TaggedError("LegacyLinkPr
 
 /**
  * The remote project is paused (`status == INACTIVE`). Message `"project is paused"`
- * with the dashboard unpause suggestion attached, mirroring Go's `errProjectPaused`
- * + `utils.CmdSuggestion` (`link.go:256-258`).
+ * with the dashboard unpause suggestion attached, mirroring `errProjectPaused`
+ * + `utils.CmdSuggestion`.
  */
 export class LegacyProjectPausedError extends Data.TaggedError("LegacyProjectPausedError")<{
   readonly message: string;
@@ -97,7 +97,7 @@ export class LegacyLinkAuthTokenError extends Data.TaggedError("LegacyLinkAuthTo
 
 /**
  * The api-keys response contained no usable anon/service-role key. Byte-matches
- * Go's `errMissingKey` (`"Anon key not found."`, `client.go:15`).
+ * `errMissingKey` (`"Anon key not found."`, `client.go:15`).
  */
 export class LegacyLinkMissingKeyError extends Data.TaggedError("LegacyLinkMissingKeyError")<{
   readonly message: string;

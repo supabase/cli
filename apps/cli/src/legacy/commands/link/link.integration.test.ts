@@ -451,7 +451,7 @@ describe("legacy link integration", () => {
   it.live("fails when writing the project-ref file errors", () => {
     // Make `<workdir>/supabase` a file so creating supabase/.temp fails for every
     // temp write. The project status carries no version, so the first mandatory
-    // write to hit the broken path is project-ref (mirrors Go's read-only FS test).
+    // write to hit the broken path is project-ref (mirrors the read-only FS test).
     const out = mockOutput({ format: "text" });
     const apiMock = mockLegacyPlatformApiService({
       v1: {

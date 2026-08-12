@@ -62,7 +62,7 @@ describe("legacy logout integration", () => {
     return Effect.gen(function* () {
       yield* legacyLogout();
       expect(credentials.deletedAll).toBe(true);
-      // Go's `viper.GetBool("YES")` branch still echoes the accepted prompt to
+      // The `viper.GetBool("YES")` branch still echoes the accepted prompt to
       // stderr (`console.go:70-72`) — `--yes` runs must not be silent (CLI-1974).
       expect(out.stderrText).toContain(
         "Do you want to log out? This will remove the access token from your system. [y/N] y\n",
@@ -86,7 +86,7 @@ describe("legacy logout integration", () => {
   });
 
   it.live("empty non-interactive stdin takes Go's default (false) and cancels", () => {
-    // Go's `PromptYesNo(..., false)` scans stdin and falls back to the default when
+    // `PromptYesNo(..., false)` scans stdin and falls back to the default when
     // the scan is empty (`logout.go:16`, `console.go:64-82`). With no piped input
     // logout cancels — without hanging on the clack confirm.
     const { layer, credentials } = setupLegacyLogout({ stdinIsTty: false });

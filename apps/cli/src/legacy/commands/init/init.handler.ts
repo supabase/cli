@@ -32,25 +32,24 @@ export const legacyInit = Effect.fn("legacy.init")(function* (flags: LegacyInitF
     force: flags.force,
     useOrioledb: flags.useOrioledb,
     interactive: flags.interactive,
-    // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320):
-    // auto-accepts the `-i` IDE prompts with Go's stderr echo instead of
-    // prompting anyway (CLI-1974).
+    // `--yes` OR `SUPABASE_YES` (`viper.GetBool("YES")`, root.go:318-320):
+    // auto-accepts the `-i` IDE prompts with the established stderr echo
+    // instead of prompting anyway (CLI-1974).
     yes: yield* legacyResolveYes,
     withVscodeSettings: flags.withVscodeWorkspace || flags.withVscodeSettings,
     withIntellijSettings: flags.withIntellijSettings,
   });
 
   if (!result.created) {
-    // Go's message embeds the `*os.PathError` from the `O_EXCL` open of
+    // The message embeds the `*os.PathError` from the `O_EXCL` open of
     // `utils.ConfigPath`, which is *relative* — so the path in the message is
     // always `supabase/config.toml` regardless of cwd or `--workdir`. The
     // rendering is platform-specific: `ConfigPath` is built with
-    // `filepath.Join` (`utils/misc.go:82`), so Windows Go prints a backslash,
-    // and the `O_EXCL` open fails there with `ERROR_FILE_EXISTS`, which Go's
+    // `filepath.Join` (`utils/misc.go:82`), so Windows prints a backslash,
+    // and the `O_EXCL` open fails there with `ERROR_FILE_EXISTS`, which
     // `syscall.Errno.Error()` renders as `The file exists.` — vs the POSIX
-    // `EEXIST` text (`file exists`) on Linux/macOS. The POSIX literal is the
-    // byte-exact output of the built Go binary; the Windows literal follows
-    // from the same code path via documented Go/Win32 semantics.
+    // `EEXIST` text (`file exists`) on Linux/macOS. The Windows literal
+    // follows from the same code path via documented Go/Win32 semantics.
     const message =
       runtimeInfo.platform === "win32"
         ? "failed to create config file: open supabase\\config.toml: The file exists."

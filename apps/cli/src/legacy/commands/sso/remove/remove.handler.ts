@@ -101,8 +101,7 @@ export const legacySsoRemove = Effect.fn("legacy.sso.remove")(function* (
         return;
       }
       if (goFmt === "toml") {
-        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
-        // rejects the payload (review r3684270640) — same pattern as list/show.
+        // TOML encode failure wrapping — same pattern as list/show.
         const toml = yield* Effect.try({
           try: () => encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>

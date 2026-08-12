@@ -257,7 +257,7 @@ export interface AuthSubset {
    * fields hold the hashed form for the diff; this bag holds the plaintext so
    * `authToUpdateBody` can send the value the API actually expects. Not part of
    * `AUTH_FIELDS`, so it never appears in the diff. Gated by the hashed field's
-   * presence (mirrors Go's `if len(Secret.SHA256) > 0`).
+   * presence (non-empty hash).
    */
   readonly rawSecrets: AuthRawSecrets;
 }
@@ -878,16 +878,17 @@ function fromRemoteSecret(sha256: string | null | undefined): string {
 // ---------------------------------------------------------------------------
 
 /**
- * Raw-config presence of the optional `[auth]` sub-sections that Go models as
- * `*pointer`/map fields (nil when absent in `config.toml`). `@supabase/config`
- * decodes them as present-with-defaults, so their true presence can't be
- * recovered from the decoded config; we read it from the raw TOML instead
- * (see `push.raw-presence.ts`) to reproduce Go's "skip when nil" semantics in
- * `ToUpdateAuthConfigBody` (`apps/cli-go/pkg/config/auth.go`).
+ * Raw-config presence of the optional `[auth]` sub-sections, which are
+ * modelled as optional (absent when not declared in `config.toml`).
+ * `@supabase/config` decodes them as present-with-defaults, so their true
+ * presence can't be recovered from the decoded config; we read it from the
+ * raw TOML instead (see `push.raw-presence.ts`) to reproduce "skip when
+ * absent" semantics in the update body.
  *
- * `externalProviders` is the set of `[auth.external.<name>]` blocks declared in
- * the raw config; Go additionally always carries the `apple` default from its
- * embedded template, which {@link authSubsetFromConfig} folds in.
+ * `externalProviders` is the set of `[auth.external.<name>]` blocks declared
+ * in the raw config; the update body additionally always carries the
+ * `apple` default from the embedded template, which
+ * {@link authSubsetFromConfig} folds in.
  */
 export interface AuthPresence {
   readonly captcha: boolean;
@@ -904,13 +905,13 @@ export interface AuthPresence {
 }
 
 /**
- * Port of the local half of `(*auth).DiffWithRemote`.
  * Projects `config.auth` into the push subset, pre-computing all duration and
  * secret fields.  `projectId` is the HMAC key for secret hashing. `presence`
- * carries raw-config presence for the optional sub-sections Go skips when nil.
- * `dotenvPrivateKeys` (Go's `DOTENV_PRIVATE_KEY`/`DOTENV_PRIVATE_KEY_*` values)
- * decrypt any `encrypted:` (dotenvx) secret before it's hashed or copied into
- * {@link AuthSubset.rawSecrets} — see `config-sync.secret.ts`.
+ * carries raw-config presence for the optional sub-sections that are skipped
+ * when absent. `dotenvPrivateKeys` (the `DOTENV_PRIVATE_KEY`/
+ * `DOTENV_PRIVATE_KEY_*` values) decrypt any `encrypted:` (dotenvx) secret
+ * before it's hashed or copied into {@link AuthSubset.rawSecrets} — see
+ * `config-sync.secret.ts`.
  *
  * @throws When an `encrypted:` secret cannot be decrypted with any key. The
  *   handler's document-wide pre-check (`legacyAssertDecryptableSecrets`) runs
@@ -1015,8 +1016,8 @@ export function authSubsetFromConfig(
     inactivity_timeout: normalizeDurationStr(sessConfig?.inactivity_timeout),
   };
 
-  // Email templates: `content` is loaded from `content_path` by `loadAuthEmailContent`
-  // before this call (Go's `email.validate`).
+  // Email templates: `content` is loaded from `content_path` by
+  // `loadAuthEmailContent` before this call.
   const emailTmplMap = a.email.template;
   const templateEntries: Record<string, EmailTemplateSubset> = {};
   for (const [k, t] of Object.entries(emailTmplMap)) {
@@ -1102,10 +1103,10 @@ export function authSubsetFromConfig(
     test_otp: s.test_otp ?? {},
   };
 
-  // External providers — Go emits only providers present in its `external` map
-  // (`if p, ok := e[name]; ok`). That map is the `apple` default from Go's
-  // embedded template plus any `[auth.external.<name>]` blocks in config.toml.
-  // @supabase/config defaults *all* providers present, so restrict to Go's set.
+  // External providers: only providers present in the established `apple`
+  // default plus any `[auth.external.<name>]` blocks in config.toml are
+  // emitted. @supabase/config defaults *all* providers present, so restrict
+  // to that set.
   const ext = a.external;
   const providerNames = new Set<string>(["apple", ...presence.externalProviders]);
   const external: Record<string, ProviderSubset> = {};
@@ -1612,8 +1613,8 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
   let messagebird = localSms.messagebird;
   let textlocal = localSms.textlocal;
   let vonage = localSms.vonage;
-  // Mirrors Go's `case !s.EnableSignup: return` — when remote phone is disabled
-  // and no local provider is enabled, provider reconciliation is skipped.
+  // When remote phone is disabled and no local provider is enabled, provider
+  // reconciliation is skipped.
   let skipSmsProviderReconciliation = false;
 
   switch (true) {
@@ -2555,9 +2556,9 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
   const otpString = mapToEnv(local.sms.test_otp);
   if (otpString.length > 0) {
     body["sms_test_otp"] = otpString;
-    // 10-year validity, matching Go's time.Now().UTC().AddDate(10, 0, 0):
-    // calendar-exact, so leap days are counted (a flat 3650-day offset would be
-    // 2-3 days short). setUTCFullYear keeps the UTC semantics of Go's .UTC().
+    // 10-year validity: calendar-exact, so leap days are counted (a flat
+    // 3650-day offset would be 2-3 days short). setUTCFullYear keeps UTC
+    // semantics.
     const validUntil = new Date();
     validUntil.setUTCFullYear(validUntil.getUTCFullYear() + 10);
     body["sms_test_otp_valid_until"] = validUntil.toISOString();
@@ -2669,7 +2670,7 @@ function parseUint16(s: string): number | undefined {
   return n > 65535 ? undefined : n;
 }
 
-/** `mapToEnv`: mirrors Go's `mapToEnv`. Keys in iteration order. */
+/** Flattens a record to `KEY=value` lines, keys in iteration order. */
 function mapToEnv(input: Readonly<Record<string, string>>): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(input)) {

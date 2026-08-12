@@ -144,10 +144,8 @@ describe("legacy backups list integration", () => {
     const { layer, out } = setup({ goOutput: "json", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      // Byte-identical to Go's `encoding/json` output: alphabetical struct-field order,
-      // and a nil Backups slice serializes as `null` (matches
-      // `apps/cli-go/internal/backups/list/list_test.go` fixture, deleted in
-      // CLI-1970; last present at commit 7b469f5b3).
+      // Byte-identical to `encoding/json` output: alphabetical struct-field
+      // order, and a nil Backups slice serializes as `null`.
       expect(out.stdoutText).toBe(
         `{
   "backups": null,
@@ -166,7 +164,7 @@ describe("legacy backups list integration", () => {
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("region: ap-southeast-1");
-      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name (CLI-1975).
       expect(out.stdoutText).toContain("walgenabled: true");
     }).pipe(Effect.provide(layer));
   });
@@ -175,7 +173,7 @@ describe("legacy backups list integration", () => {
     const { layer, out } = setup({ goOutput: "toml", response: PITR_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      // BurntSushi emits PascalCase Go field names (CLI-1975).
+      // BurntSushi emits PascalCase field names (CLI-1975).
       expect(out.stdoutText).toContain('Region = "ap-southeast-1"');
       expect(out.stdoutText).toContain("WalgEnabled = true");
     }).pipe(Effect.provide(layer));
@@ -185,7 +183,7 @@ describe("legacy backups list integration", () => {
     const { layer, out } = setup({ goOutput: "toml", response: LOGICAL_RESPONSE });
     return Effect.gen(function* () {
       yield* legacyBackupsList({ projectRef: Option.none() });
-      // Byte-exact Go parity (CLI-1975): primitives first, then the Backups
+      // Byte-exact (CLI-1975): primitives first, then the Backups
       // array-of-tables and the (empty) PhysicalBackupData table.
       expect(out.stdoutText).toBe(`PitrEnabled = true
 Region = "ap-southeast-1"

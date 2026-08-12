@@ -10,9 +10,7 @@ import { mapLegacyHttpError } from "../../shared/legacy-http-errors.ts";
 
 /**
  * Transport-level failure talking to the Management API pgsodium endpoints.
- * Mirrors Go's `errors.Errorf("failed to <verb> pgsodium config: %w", err)`
- * (`apps/cli-go/internal/encryption/{get,update}`, deleted in CLI-1970; last
- * present at commit 7b469f5b3).
+ * Message format: `failed to <verb> pgsodium config: <err>`.
  */
 export class LegacyEncryptionNetworkError extends Data.TaggedError("LegacyEncryptionNetworkError")<{
   readonly message: string;
@@ -26,9 +24,9 @@ export class LegacyEncryptionNetworkError extends Data.TaggedError("LegacyEncryp
 }
 
 /**
- * The pgsodium endpoint returned a status the Go CLI does not treat as success
- * (it only accepts `JSON200`). Mirrors Go's
- * `errors.Errorf("unexpected <verb> pgsodium config status %d: %s", code, body)`.
+ * The pgsodium endpoint returned a status that is not treated as success
+ * (only `JSON200` is accepted). Message format:
+ * `unexpected <verb> pgsodium config status <code>: <body>`.
  */
 export class LegacyEncryptionUnexpectedStatusError extends Data.TaggedError(
   "LegacyEncryptionUnexpectedStatusError",

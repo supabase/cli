@@ -47,8 +47,7 @@ export const legacyDbAdvisorsCommand = Command.make("advisors", config).pipe(
           "fail-on": flags.failOn,
         },
         // type/level/fail-on are Flag.choice and are auto-detected as safe via
-        // `config` below (Go's isEnumFlag, cmd/root_analytics.go:110-116);
-        // --db-url stays redacted (plain string, may carry secrets).
+        // `config` below; --db-url stays redacted (plain string, may carry secrets).
         config,
       }),
       withJsonErrorHandling,

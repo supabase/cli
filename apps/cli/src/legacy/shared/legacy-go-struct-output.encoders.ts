@@ -6,13 +6,11 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * Byte-faithful reproductions of the Go CLI's `-o yaml` / `-o toml` output for
- * **struct** payloads (CLI-1975).
- *
- * `utils.EncodeOutput` (`apps/cli-go/internal/utils/output.go`) hands the
- * raw Go structs to `gopkg.in/yaml.v3` and `github.com/BurntSushi/toml`.
- * Neither library reads the `json:` tags, so the emitted keys are derived from
- * the Go **field names**, not the snake_case JSON the Management API returns:
+ * Byte-faithful reproductions of the established `-o yaml` / `-o toml` output for
+ * **struct** payloads (CLI-1975) — an output contract raw Go structs were
+ * originally passed through `gopkg.in/yaml.v3` and `github.com/BurntSushi/toml` to produce.
+ * Neither library reads `json:` tags, so the emitted keys are derived from
+ * the original Go **field names**, not the snake_case JSON the Management API returns:
  *
  * - yaml.v3 lowercases the whole field name (`ProjectRef` → `projectref`)
  * and renders nil pointers as explicit `null`.
@@ -20,17 +18,16 @@ import {
  * pointers entirely, and renders `time.Time` as a native TOML datetime.
  *
  * Because the TypeScript CLI only ever sees the decoded snake_case JSON, each
- * payload family declares a {@link LegacyGoType} spec mirroring its Go struct
- * (field order = Go declaration order, from `apps/cli-go/pkg/api/types.gen.go`
- * or the command's own package). The two encoders here then reproduce the
- * exact bytes the Go binary prints — including zero-value filling for
+ * payload family declares a {@link LegacyGoType} spec mirroring the original struct
+ * (field order = original declaration order). The two encoders here then reproduce the
+ * exact established bytes — including zero-value filling for
  * non-pointer fields, nil-vs-empty slice handling, yaml.v3's scalar quoting
  * heuristics and 4-space indentation algorithm, and BurntSushi's 2-space table
  * indentation and blank-line placement.
  *
  * Everything in this file is pure and Effect-free so it stays unit-testable.
  * The golden bytes asserted in the unit tests were captured from a scratch Go
- * program running the repo's own `utils.EncodeOutput` (BurntSushi toml v1.6.0,
+ * program (BurntSushi toml v1.6.0,
  * yaml.v3 v3.0.1) over the same payloads.
  */
 

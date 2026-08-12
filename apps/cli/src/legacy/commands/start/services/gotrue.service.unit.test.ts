@@ -11,12 +11,8 @@ import {
   type LegacyGotrueWebauthnInput,
 } from "./gotrue.service.ts";
 
-// Mirrors the fixture Go's `TestBuildGotrueEnv` builds via `config.NewConfig()`
-// (formerly `apps/cli-go/internal/start/start_test.go:440-520`, deleted along
-// with the rest of `internal/start` as unreachable in CLI-1966; last present
-// at commit a253ccba25c21356ccd33044c4474aecb77d1ae4), translated into this
-// pure function's explicit input shape. Every field not asserted by a
-// specific Go subtest below reflects `config.NewConfig()`'s own defaults.
+// Every field not asserted by a specific subtest below reflects the
+// default config's own values.
 const baseEnvInput: LegacyBuildGotrueEnvInput = {
   dbHost: "db",
   dbPassword: "postgres",
@@ -518,9 +514,9 @@ describe("legacyBuildGotrueEnv", () => {
       expect(env["GOTRUE_MAILER_SUBJECTS_CONFIRMATION"]).toBe("Confirm your signup");
     });
 
-    // Go's `emailTemplate.Subject` is `*string` (`pkg/config/auth.go:266`); `start.go:668-676`
-    // gates strictly on `subject != nil`, not on string length — an explicit blank subject is
-    // still emitted, distinct from an absent one below.
+    // The email template's subject is optional; the gate is strictly
+    // `subject !== undefined`, not on string length — an explicit blank
+    // subject is still emitted, distinct from an absent one below.
     test("still emits an explicit empty subject, distinct from an absent one", () => {
       const env = legacyBuildGotrueEnv({
         ...baseEnvInput,

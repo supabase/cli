@@ -19,11 +19,10 @@ import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts"
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
 import { legacyStorageCommand } from "../storage.command.ts";
 
-// Go's `--jobs` is a pflag uint (`UintVarP`, `cmd/storage.go:107`): a negative
-// value fails `strconv.ParseUint` at cobra flag-parse time — before the
-// `--experimental` gate in `PersistentPreRunE` (`cmd/root.go:93-96`), before
-// cobra's mutual-exclusivity check, and before RunE. `cp.command.ts`
-// reproduces that ordering by rejecting inside the flag's own
+// `--jobs` is a pflag-style uint: a negative value fails
+// `strconv.ParseUint` at flag-parse time — before the `--experimental` gate,
+// the mutual-exclusivity check, and the handler body. `cp.command.ts`
+// establishes that ordering by rejecting inside the flag's own
 // `Flag.mapTryCatch`, which Effect CLI runs while parsing the command tree —
 // strictly ahead of the handler (where the experimental gate and the
 // `--linked`/`--local` mutex check live). This suite proves the rejection is
@@ -183,7 +182,7 @@ describe("legacy storage cp --jobs negative rejection (command-tree wiring)", ()
     },
   );
 
-  // Go's base-0 ParseUint ACCEPTS prefix/underscore forms (`0x10` → 16,
+  // base-0 ParseUint ACCEPTS prefix/underscore forms (`0x10` → 16,
   // `010` → octal 8, `1_0` → 10), so these must clear flag parsing and fail
   // later at the experimental gate — proving the token was not rejected.
   it.live.each([{ token: "0x10" }, { token: "010" }, { token: "1_0" }])(

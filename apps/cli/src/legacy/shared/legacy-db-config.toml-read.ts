@@ -1422,14 +1422,14 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   let analyticsRaw: RawDoc | undefined;
   let projectId = Option.none<string>();
   // Whether `config.toml` set a top-level `project_id` string that env-expanded to empty
-  // (`project_id = ""`). Go keeps that empty override and `config.Validate` fails with
-  // `Missing required field in config: project_id` (config.go:991); tracked here so the
+  // (`project_id = ""`). That empty override is kept and validation fails with
+  // `Missing required field in config: project_id`; tracked here so the
   // check can run after the `SUPABASE_PROJECT_ID` env override below may still rescue it.
   let projectIdExplicitEmpty = false;
-  // Config keys a matched remote block contributed at viper's override tier (Go's
-  // `v.Set`), so they must beat the matching `SUPABASE_*` env overrides below.
+  // Config keys a matched remote block contributed at override tier, so they must beat
+  // the matching `SUPABASE_*` env overrides below.
   let remoteOverrideKeys: ReadonlySet<string> = new Set();
-  // The matched `[remotes.<name>]` block name, echoed as Go's config-override line.
+  // The matched `[remotes.<name>]` block name, echoed as the config-override line.
   let appliedRemote: string | undefined;
   if (Option.isSome(maybeContent)) {
     let doc: RawDoc | undefined;
@@ -1442,8 +1442,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         }),
       );
     }
-    // Go aborts config load when two `[remotes.*]` blocks share a `project_id`,
-    // regardless of which command runs (config.go:506-511) — check before merging.
+    // Config load aborts when two `[remotes.*]` blocks share a `project_id`,
+    // regardless of which command runs — check before merging.
     const duplicateRemote = findDuplicateRemoteProjectId(doc, lookup);
     if (duplicateRemote !== undefined) {
       return yield* Effect.fail(
@@ -1452,9 +1452,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         }),
       );
     }
-    // Go's Validate rejects any remote whose `project_id` is not a valid 20-char ref,
-    // on every load (config.go:832-836), after the duplicate check. So a malformed
-    // remote fails even local/direct commands before any DB connection.
+    // Validation rejects any remote whose `project_id` is not a valid 20-char ref, on
+    // every load, after the duplicate check. So a malformed remote fails even
+    // local/direct commands before any DB connection.
     const invalidRemote = findInvalidRemoteProjectId(doc, lookup);
     if (invalidRemote !== undefined) {
       return yield* Effect.fail(
@@ -1463,8 +1463,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         }),
       );
     }
-    // Apply a matching `[remotes.<name>]` override (Go merges the block whose
-    // `project_id` equals the resolved ref over the base, config.go:503-562).
+    // Apply a matching `[remotes.<name>]` override: merge the block whose
+    // `project_id` equals the resolved ref over the base.
     const remoteOverride =
       ref === undefined
         ? { doc, remoteOverrideKeys: new Set<string>() }
@@ -1482,22 +1482,21 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     edgeRuntimeRaw = asRecord(effectiveDoc?.["edge_runtime"]);
     functionsRaw = asRecord(effectiveDoc?.["functions"]);
     analyticsRaw = asRecord(effectiveDoc?.["analytics"]);
-    // Go expands `env(VAR)` for the top-level `project_id` during `config.Load`
-    // before `UpdateDockerIds` derives container names from
-    // it, so expand here too — otherwise a `project_id = "env(PROJECT_ID)"` would
-    // sanitize to a wrong local-stack id like `supabase_db_env_PROJECT_ID_`.
+    // `env(VAR)` for the top-level `project_id` must be expanded before the derived
+    // Docker container names are computed from it — otherwise a
+    // `project_id = "env(PROJECT_ID)"` would sanitize to a wrong local-stack id like
+    // `supabase_db_env_PROJECT_ID_`.
     const rawProjectId = effectiveDoc?.["project_id"];
     projectId = nonEmptyString(
       typeof rawProjectId === "string" ? legacyExpandEnv(rawProjectId, lookup) : rawProjectId,
     );
-    // A present `project_id` string that resolves to empty is Go's "kept empty override".
+    // A present `project_id` string that resolves to empty is a "kept empty override".
     projectIdExplicitEmpty = typeof rawProjectId === "string" && Option.isNone(projectId);
 
-    // `DecryptSecretHookFunc` is a global decode hook (config.go:730) that decrypts
-    // EVERY `config.Secret` field during `UnmarshalExact`, so an `encrypted:` secret anywhere
-    // in the merged config that cannot be decrypted (e.g. no DOTENV_PRIVATE_KEY) aborts the
-    // load with `failed to parse config: <error>` (secret.go:34,103; config.go:704) — before
-    // Validate and before connecting. This covers `[db.vault]` unless the caller is
+    // Every secret-typed field in the merged config must be decryptable, so an
+    // `encrypted:` secret anywhere (e.g. no DOTENV_PRIVATE_KEY) aborts the load with
+    // `failed to parse config: <error>` — before validation and before connecting.
+    // This covers `[db.vault]` unless the caller is
     // explicitly skipping Vault sync, so the vault loop below only materializes values
     // that this assertion has already proved decryptable.
     const secretError = legacyAssertDecryptableSecrets(effectiveDoc, lookup, dotenvPrivateKeys, {
@@ -1511,28 +1510,25 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // comment for why this is typed narrower than the `ReadonlySet<string>` it wraps.
   const remoteWins = legacyMakeRemoteWins(remoteOverrideKeys);
 
-  // Go: `config.go:626` — read the linked pooler URL from `.temp/pooler-url` and
-  // treat it as configured only when the file exists and is non-empty.
+  // Read the linked pooler URL from `.temp/pooler-url` and treat it as configured only
+  // when the file exists and is non-empty.
   const poolerUrlPath = path.join(supabaseDir, ".temp", "pooler-url");
   const poolerConnectionString = yield* fs
     .readFileString(poolerUrlPath)
     .pipe(Effect.map(nonEmptyString), Effect.orElseSucceed(Option.none<string>));
 
-  // Go: `config.go:700-709` — the pg-delta npm version is read from
-  // `.temp/pgdelta-version` (trimmed, non-empty) during Load, never from the
-  // TOML. An absent/empty file leaves it `None` (callers fall back to the
-  // default via `legacyEffectivePgDeltaNpmVersion`).
+  // The pg-delta npm version is read from `.temp/pgdelta-version` (trimmed, non-empty)
+  // during load, never from the TOML. An absent/empty file leaves it `None` (callers
+  // fall back to the default via `legacyEffectivePgDeltaNpmVersion`).
   const pgDeltaVersionPath = path.join(supabaseDir, ".temp", "pgdelta-version");
   const pgDeltaNpmVersion = yield* fs.readFileString(pgDeltaVersionPath).pipe(
     Effect.map((content) => nonEmptyString(content.trim())),
     Effect.orElseSucceed(Option.none<string>),
   );
 
-  // Go's loader enables viper `SetEnvPrefix("SUPABASE")` + `EnvKeyReplacer(".",
-  // "_")` + `AutomaticEnv()`, so `SUPABASE_DB_*` env vars
-  // override the matching `[db]` field before the TOML value/default. viper
-  // ignores empty env values (`AllowEmptyEnv` defaults false), and the project
-  // `.env` files are loaded into the environment first, so consult both.
+  // `SUPABASE_DB_*` env vars override the matching `[db]` field before the TOML
+  // value/default. An empty env value is ignored, and the project `.env` files are
+  // loaded into the environment first, so consult both.
   const envOverride = (name: string): string | undefined => {
     const fromShell = process.env[name];
     if (fromShell !== undefined && fromShell.length > 0) return fromShell;
@@ -1540,42 +1536,41 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     return fromFile !== undefined && fromFile.length > 0 ? fromFile : undefined;
   };
 
-  // Go's viper AutomaticEnv binds the top-level `project_id` to `SUPABASE_PROJECT_ID`,
-  // so the env value overrides the TOML `project_id` before
-  // `UpdateDockerIds` derives the local-stack container/network names from it
-  // (`internal/utils/config.go:57-63` — `NetId = supabase_network_<project_id>`). The
-  // reader's `projectId` is exactly that Docker-naming id, so apply the override here
-  // (env-expanded like the TOML value, then sanitized at the consumer) — otherwise
-  // `test db --local` joins `supabase_network_<toml-or-basename>` while Go honors the
-  // env id. This is independent of the linked-ref resolver, which reads the env var on
-  // its own chain; the env value is bound regardless of whether a config file exists.
-  // UNLESS a matched `[remotes.<ref>]` block already set `project_id` at viper's override tier
-  // (`remoteWins("project_id")` — NOT guaranteed whenever `appliedRemote` is set: a
-  // block can also match purely via its own `SUPABASE_REMOTES_<NAME>_PROJECT_ID` env override
-  // with no literal `project_id` key, in which case this stays `false` — see
-  // `LEGACY_ENV_OVERRIDABLE_KEYS`'s own doc comment on that key): that Set-tier value, when
-  // present, outranks `AutomaticEnv`, so a stale/differently-scoped `SUPABASE_PROJECT_ID` must
-  // not clobber it — otherwise a linked `db diff`/`db pull` mounts the wrong
-  // `supabase_edge_runtime_<id>` Deno-cache volume for the matched remote (review:
-  // PRRT_kwDOErm0O86XHGDL).
+  // `SUPABASE_PROJECT_ID` overrides the top-level `project_id` before the local-stack
+  // container/network names (`NetId = supabase_network_<project_id>`) are derived from
+  // it. The reader's `projectId` is exactly that Docker-naming id, so apply the
+  // override here (env-expanded like the TOML value, then sanitized at the consumer) —
+  // otherwise `test db --local` would join `supabase_network_<toml-or-basename>`
+  // instead of honoring the env id. This is independent of the linked-ref resolver,
+  // which reads the env var on its own chain; the env value is bound regardless of
+  // whether a config file exists. UNLESS a matched `[remotes.<ref>]` block already set
+  // `project_id` at override tier (`remoteWins("project_id")` — NOT guaranteed whenever
+  // `appliedRemote` is set: a block can also match purely via its own
+  // `SUPABASE_REMOTES_<NAME>_PROJECT_ID` env override with no literal `project_id` key,
+  // in which case this stays `false` — see `LEGACY_ENV_OVERRIDABLE_KEYS`'s own doc
+  // comment on that key): that override-tier value, when present, outranks the ambient
+  // env tier, so a stale/differently-scoped `SUPABASE_PROJECT_ID` must not clobber it —
+  // otherwise a linked `db diff`/`db pull` mounts the wrong `supabase_edge_runtime_<id>`
+  // Deno-cache volume for the matched remote (review: PRRT_kwDOErm0O86XHGDL).
   const projectIdEnv = remoteWins("project_id") ? undefined : envOverride("SUPABASE_PROJECT_ID");
   if (projectIdEnv !== undefined) {
     projectId = nonEmptyString(legacyExpandEnv(projectIdEnv, lookup));
   }
 
-  // `config.Validate` rejects an empty top-level `project_id` (config.go:991). An
-  // absent field is tolerated here (deferred), but a present `project_id = ""` that the
-  // `SUPABASE_PROJECT_ID` override did not rescue is a load error, so a destructive command
-  // (e.g. remote `db reset`) fails fast rather than dropping schemas on a config Go rejects.
+  // Validation rejects an empty top-level `project_id`. An absent field is tolerated
+  // here (deferred), but a present `project_id = ""` that the `SUPABASE_PROJECT_ID`
+  // override did not rescue is a load error, so a destructive command (e.g. remote
+  // `db reset`) fails fast rather than dropping schemas on a config that should have
+  // already failed validation.
   if (projectIdExplicitEmpty && Option.isNone(projectId)) {
     return yield* Effect.fail(
       new LegacyDbConfigLoadError({ message: "Missing required field in config: project_id" }),
     );
   }
 
-  // A present-but-unmarshalable port aborts in Go rather than defaulting; mirror
-  // that so `test db --local` never silently targets the default local database
-  // while hiding a broken `[db]` config.
+  // A present-but-unmarshalable port aborts rather than defaulting, so `test db
+  // --local` never silently targets the default local database while hiding a broken
+  // `[db]` config.
   const port = resolvePort(
     (remoteWins("db.port") ? undefined : envOverride("SUPABASE_DB_PORT")) ?? db?.["port"],
     DEFAULT_PORT,
@@ -1594,39 +1589,35 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       }),
     );
   }
-  // `config.Validate` rejects an explicit `db.port = 0`; an
-  // absent port is defaulted before Validate, so only a present 0 fails. `resolvePort`
-  // accepts 0 as a syntactically valid uint16, so the zero check lives here. No equivalent
-  // for `shadow_port` — Go has no `ShadowPort == 0` validation.
+  // Validation rejects an explicit `db.port = 0`; an absent port is defaulted before
+  // validation, so only a present 0 fails. `resolvePort` accepts 0 as a syntactically
+  // valid uint16, so the zero check lives here. No equivalent check for `shadow_port`.
   if (port === 0) {
     return yield* Effect.fail(
       new LegacyDbConfigLoadError({ message: "Missing required field in config: db.port" }),
     );
   }
 
-  // `db.Password` is tagged `json:"-"` (`apps/cli-go/pkg/config/db.go:88`, the
-  // tag viper decodes with) — that blocks the `SUPABASE_DB_PASSWORD` env binding AND
-  // makes a literal `[db] password` toml key a fatal `UnmarshalExact` config error in
-  // Go (`'db' has invalid keys: password`), so Go's local password is invariably the
-  // `"postgres"` default. Honoring the toml key here is a deliberate TS extension
-  // (established for `--local` connections, `legacy-db-config.layer.ts`). `DB_PASSWORD`
-  // is read only by linked password resolution (`legacy-db-config.layer.ts`), so the
-  // local password must not source it or `db query --local` etc. would authenticate
-  // with a remote secret.
+  // `db.password` isn't part of the config schema (no `SUPABASE_DB_PASSWORD` env
+  // binding, and the local password otherwise defaults to `"postgres"`). Honoring a
+  // literal `[db] password` toml key here is a deliberate TS extension (established
+  // for `--local` connections, `legacy-db-config.layer.ts`). `DB_PASSWORD` is read only
+  // by linked password resolution (`legacy-db-config.layer.ts`), so the local password
+  // must not source it or `db query --local` etc. would authenticate with a remote
+  // secret.
   const passwordRaw = typeof db?.["password"] === "string" ? db["password"] : undefined;
 
-  // Go expands a quoted `env(VAR)` reference for `major_version` and then decodes
-  // it into a `uint`, strictly rejecting a non-integer string (`17foo` is NOT
-  // truncated to 17) and resolving `env(PG_MAJOR)` before validation
-  // (`apps/cli-go/pkg/config/config.go` viper + mapstructure). `resolveConfigInt`
-  // mirrors that; `SUPABASE_DB_MAJOR_VERSION` overrides the TOML via AutomaticEnv.
+  // A quoted `env(VAR)` reference for `major_version` is expanded and then decoded
+  // into a `uint`, strictly rejecting a non-integer string (`17foo` is NOT truncated
+  // to 17), resolving `env(PG_MAJOR)` before validation. `resolveConfigInt` does
+  // this; `SUPABASE_DB_MAJOR_VERSION` overrides the TOML value.
   const majorVersionRaw =
     (remoteWins("db.major_version") ? undefined : envOverride("SUPABASE_DB_MAJOR_VERSION")) ??
     db?.["major_version"];
   const majorVersionResolved = resolveConfigInt(majorVersionRaw, lookup);
   if (majorVersionResolved === "invalid") {
     // Present but not a whole integer (`17foo`, or an `env(VAR)` that does not
-    // resolve to digits): Go fails the config parse rather than defaulting.
+    // resolve to digits): fail the config parse rather than defaulting.
     const shown =
       typeof majorVersionRaw === "string"
         ? legacyExpandEnv(majorVersionRaw, lookup)
@@ -1637,17 +1628,17 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       }),
     );
   }
-  // Rejecting an unsupported major version ({13,14,15,17}; `apps/cli-go/pkg/config/config.go:
-  // 869-897`) is now `legacyValidateResolvedConfig`'s `db.major_version` switch (called once,
-  // below) — an absent value falls through to the default (Go's zero-then-default) and a present
-  // one (including `0`) flows into `input.db.majorVersion` for that switch to check.
+  // Rejecting an unsupported major version ({13,14,15,17}) is
+  // `legacyValidateResolvedConfig`'s `db.major_version` switch (called once, below) — an
+  // absent value falls through to the default (zero-then-default) and a present one
+  // (including `0`) flows into `input.db.majorVersion` for that switch to check.
   const majorVersion =
     typeof majorVersionResolved === "number" ? majorVersionResolved : DEFAULT_MAJOR_VERSION;
 
-  // `[experimental] orioledb_version`: on a 15/17 project Go's Validate rewrites the
+  // `[experimental] orioledb_version`: on a 15/17 project, validation rewrites the
   // Postgres image to the OrioleDB tag and `assertEnvLoaded`s the four S3 fields.
-  // Expand env() like every other
-  // field; the image rewrite itself is applied by `legacyResolveDbImage`.
+  // Expand env() like every other field; the image rewrite itself is applied by
+  // `legacyResolveDbImage`.
   const expandString = (value: unknown): Option.Option<string> =>
     typeof value === "string" ? nonEmptyString(legacyExpandEnv(value, lookup)) : Option.none();
   const orioledbVersion = expandString(experimentalRaw?.["orioledb_version"]);
@@ -1667,17 +1658,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     }
   }
 
-  // `[edge_runtime] deno_version` (default 2). Go switches the edge-runtime image
-  // to the `deno1` tag when this is 1;
-  // the declarative pg-delta runner needs it to pick the matching image. Go's viper
-  // `AutomaticEnv` lets `SUPABASE_EDGE_RUNTIME_DENO_VERSION` override the TOML before
-  // validation (same generic prefix+replacer binding as the pg-delta env vars below),
-  // so a CI env override decides which edge-runtime image pg-delta runs under.
+  // `[edge_runtime] deno_version` (default 2). The edge-runtime image switches to the
+  // `deno1` tag when this is 1; the declarative pg-delta runner needs it to pick the
+  // matching image. `SUPABASE_EDGE_RUNTIME_DENO_VERSION` overrides the TOML before
+  // validation (same env-override precedence as the pg-delta env vars below), so a CI
+  // env override decides which edge-runtime image pg-delta runs under.
   const denoVersionRaw =
     (remoteWins("edge_runtime.deno_version")
       ? undefined
       : envOverride("SUPABASE_EDGE_RUNTIME_DENO_VERSION")) ?? edgeRuntimeRaw?.["deno_version"];
-  // Go decodes `deno_version` into a `uint` before validation, so a present non-integer
+  // `deno_version` decodes into a `uint` before validation, so a present non-integer
   // string (`2foo`) or an unresolved `env(MISSING)` aborts the load rather than falling
   // through to the default Deno 2 image. `resolveConfigInt` expands `env()` then requires
   // a whole integer; the validation switch handles the rest.
@@ -1693,18 +1683,17 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       }),
     );
   }
-  // Rejecting a present-but-invalid deno_version (`config.go:999-1008`: 0 → missing-required,
-  // anything other than 1/2 → invalid) is now `legacyValidateResolvedConfig`'s
-  // `edgeRuntimeDenoVersion` switch (called once, below). An absent key falls through to the
-  // default (Go merges deno_version=2).
+  // Rejecting a present-but-invalid deno_version (0 → missing-required, anything other
+  // than 1/2 → invalid) is `legacyValidateResolvedConfig`'s `edgeRuntimeDenoVersion`
+  // switch (called once, below). An absent key falls through to the default
+  // (deno_version=2).
   const denoVersion =
     typeof denoVersionResolved === "number" ? denoVersionResolved : DEFAULT_DENO_VERSION;
 
   // `[experimental.webhooks]`. `*webhooks` is a nil-unless-declared pointer sibling of
-  // `*PgDeltaConfig` below — checked FIRST within `Experimental.validate()`
-  // (`config.go:1846-1848`, immediately before the pgdelta check right below). The section only
-  // exists to be turned ON: Go rejects ANY present `[experimental.webhooks]` whose `enabled`
-  // isn't explicitly `true`, including when the key is simply omitted (bool zero-value `false`).
+  // `*PgDeltaConfig` below. The section only exists to be turned ON: ANY present
+  // `[experimental.webhooks]` whose `enabled` isn't explicitly `true` is rejected,
+  // including when the key is simply omitted (bool zero-value `false`).
   // `webhooksPresent`/`webhooksEnabled` feed `legacyValidateResolvedConfig`'s existing
   // `experimental.webhooks` check (`legacy-config-validate.ts:676-680`) — this D pipeline never
   // populated that input pair, so the check never ran for any of D's ~15 db/migration-command
@@ -1713,18 +1702,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // decoded config + raw document (review: PRRT_kwDOErm0O86WE42i).
   //
   // UNLIKE `experimental.pgdelta.enabled` below, the `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED`
-  // env override is NOT presence-independent — verified empirically against
-  // `apps/cli-go/pkg/config` (`config.Load` with an in-memory fs, no `[experimental.webhooks]`
-  // section, and a malformed env value): `Load()` succeeds and `Experimental.Webhooks`
-  // stays `nil`, silently ignoring the override, where the equivalent pgdelta probe fails to
-  // load. The difference is `mergeDefaultValues`: it merges the `Eject()`
-  // template BEFORE the user's file, and that template declares `[experimental.pgdelta]`
-  // (`pkg/config/templates/config.toml:409`) but has no `[experimental.webhooks]` entry at all —
-  // so `pgdelta.enabled` is always a "known" viper key (env-bindable via `AutomaticEnv`
-  // regardless of the user's own file), while `webhooks.enabled` is only known, and therefore
-  // only env-overridable, when the section itself is declared (by the user's file or a matching
-  // `[remotes.*]` block — both already folded into `experimentalRaw` above). Gate the env read
-  // itself on `webhooksPresent`, not just the later validation check, so a bogus/irrelevant
+  // env override is NOT presence-independent — verified empirically: loading a config with no
+  // `[experimental.webhooks]` section and a malformed env value succeeds and leaves
+  // `Experimental.Webhooks` unset, silently ignoring the override, where the equivalent pgdelta
+  // probe fails to load. The difference is the default-merge order: the template merged before
+  // the user's file declares `[experimental.pgdelta]` but has no `[experimental.webhooks]` entry
+  // at all — so `pgdelta.enabled` is always a "known" key (env-bindable regardless of the user's
+  // own file), while `webhooks.enabled` is only known, and therefore only env-overridable, when
+  // the section itself is declared (by the user's file or a matching `[remotes.*]` block — both
+  // already folded into `experimentalRaw` above). Gate the env read itself on `webhooksPresent`,
+  // not just the later validation check, so a bogus/irrelevant
   // `SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED` in the shell or project `.env` doesn't abort a load
   // that has no `[experimental.webhooks]` section to apply it to (review: this thread).
   const webhooksRaw = asRecord(experimentalRaw?.["webhooks"]);
@@ -1847,13 +1834,12 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       (typeof formatOptionsRaw === "string" ? formatOptionsRaw : ""),
     lookup,
   );
-  // Rejecting a non-empty, non-JSON `format_options` (`apps/cli-go/pkg/config/config.go:
-  // 1685-1686`) is now `legacyValidateResolvedConfig`'s `experimental.pgdeltaFormatOptions`
-  // check (called once, below).
+  // Rejecting a non-empty, non-JSON `format_options` is `legacyValidateResolvedConfig`'s
+  // `experimental.pgdeltaFormatOptions` check (called once, below).
   const formatOptions = nonEmptyString(formatOptionsExpanded);
 
-  // Bucket-name/function-slug validation (`config.go:898-903`/`993-998`) now lives in
-  // `legacyValidateResolvedConfig` (called once, below); only the pure extraction stays here.
+  // Bucket-name/function-slug validation lives in `legacyValidateResolvedConfig` (called
+  // once, below); only the pure extraction stays here.
   const bucketsRaw = asRecord(storageRaw?.["buckets"]);
   // Same gap for each bucket's own `file_size_limit` — Go decodes it via the same `sizeInBytes`
   // hook as the storage-level default (validated eagerly in `start.handler.ts`), unconditionally
@@ -1931,9 +1917,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
         ? DEFAULT_AUTH_SITE_URL
         : str(authRawResolved, "site_url");
 
-    // A4: [auth.captcha]. The provider enum is a decode-time check (`CaptchaProvider.
-    // UnmarshalText`, `auth.go:58-71`); the required-field checks are `enabled`-gated —
-    // both now live in `legacyValidateResolvedConfig`.
+    // A4: [auth.captcha]. The provider enum check and the `enabled`-gated
+    // required-field checks both live in `legacyValidateResolvedConfig`.
     const captchaRaw = asRecord(authRawResolved["captcha"]);
     let captchaInput: LegacyCaptchaInput | undefined;
     if (captchaRaw !== undefined) {
@@ -2026,10 +2011,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       });
     }
 
-    // B3: email — template/notification content is I/O, stays in D. Go
-    // resolves a relative `content_path` differently per section: TEMPLATE paths are relative to
-    // the PROJECT ROOT (`config.go:854-856`, the `// FIXME` there), NOTIFICATION paths are
-    // relative to the supabase dir; absolute → as-is.
+    // B3: email — template/notification content is I/O, stays in D. A relative
+    // `content_path` resolves differently per section: TEMPLATE paths are relative to
+    // the PROJECT ROOT, NOTIFICATION paths are relative to the supabase dir;
+    // absolute → as-is.
     const emailRaw = asRecord(authRawResolved["email"]);
     const templatesRaw = asRecord(emailRaw?.["template"]);
     if (templatesRaw !== undefined) {
@@ -2255,9 +2240,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   });
 
   if (authEnabled) {
-    // B4: sms — D-only (`config.go:1145-1147`/`1348-1417`, never part of the shared validator,
-    // see `legacy-config-validate.ts`'s module header). Only the FIRST enabled provider is
-    // validated (Go's switch).
+    // B4: sms — D-only (never part of the shared validator, see
+    // `legacy-config-validate.ts`'s module header). Only the FIRST enabled provider is
+    // validated.
     const sms = asRecord(authRawResolved["sms"]);
     if (sms !== undefined) {
       const twilio = asRecord(sms["twilio"]);
@@ -2318,9 +2303,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       }
     }
 
-    // B5: external providers — D-only (`config.go:1148-1150`/`1368-1398`, never part of the
-    // shared validator). linkedin/slack are deprecated and deleted before validation, so they are
-    // never validated here.
+    // B5: external providers — D-only (never part of the shared validator). linkedin/slack
+    // are deprecated and deleted before validation, so they are never validated here.
     const external = asRecord(authRawResolved["external"]);
     if (external !== undefined) {
       for (const name of Object.keys(external)) {
@@ -2340,10 +2324,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   const vaultRaw = asRecord(db?.["vault"]);
   const vaultNames = vaultRaw === undefined ? [] : Object.keys(vaultRaw).sort();
 
-  // `[db.migrations] enabled` — Go default true; overridable by
-  // `SUPABASE_DB_MIGRATIONS_ENABLED` via viper AutomaticEnv — EXCEPT
-  // when the matched remote block explicitly set it (then the remote override-tier value
-  // wins, `config.go:724`).
+  // `[db.migrations] enabled` — default true; overridable by
+  // `SUPABASE_DB_MIGRATIONS_ENABLED` — EXCEPT when the matched remote block explicitly
+  // set it (then the remote override-tier value wins).
   const migrationsRaw = asRecord(db?.["migrations"]);
   const migrationsEnabled = yield* resolveBoolOrFail(
     "db.migrations.enabled",
@@ -2364,35 +2347,31 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     lookup,
     remoteWins("db.seed.enabled") ? undefined : envOverride("SUPABASE_DB_SEED_ENABLED"),
   );
-  // Go decodes `db.seed.sql_paths` through the mapstructure hook chain in order:
-  // `LoadEnvHook` (expands `env(VAR)`) runs BEFORE `StringToSliceHookFunc(",")`
-  // (`config.go:687-695`; `decode_hooks.go`). So a STRING value — the
-  // `SUPABASE_DB_SEED_SQL_PATHS` env override (viper AutomaticEnv) or a TOML string — is
-  // env-expanded FIRST, then comma-split (no trimming; empty → `[]`). A TOML ARRAY is
-  // decoded element-by-element: each element is env-expanded but NOT re-split
-  // (`StringToSliceHookFunc` only fires string→[]string), so `["env(SEEDS)"]` stays one
-  // pattern. The env override (non-empty; `envOverride` drops empties to match
-  // `AllowEmptyEnv=false`) wins over the TOML value; an absent (or non-string/non-array)
-  // value falls back to the `["seed.sql"]` default.
+  // `db.seed.sql_paths` decodes through the hook chain in order: `env(VAR)` expansion
+  // runs BEFORE the comma-split. So a STRING value — the `SUPABASE_DB_SEED_SQL_PATHS`
+  // env override or a TOML string — is env-expanded FIRST, then comma-split (no
+  // trimming; empty → `[]`). A TOML ARRAY is decoded element-by-element: each element is
+  // env-expanded but NOT re-split, so `["env(SEEDS)"]` stays one pattern. The env
+  // override (non-empty; `envOverride` drops empties) wins over the TOML value; an
+  // absent (or non-string/non-array) value falls back to the `["seed.sql"]` default.
   const splitGoSeedPaths = (value: string): ReadonlyArray<string> => {
     const expanded = legacyExpandEnv(value, lookup);
     return expanded.length === 0 ? [] : expanded.split(",");
   };
-  // `decodeString` renders a weakly-converted float via `strconv.FormatFloat(v,
-  // 'f', -1, 64)` (`mapstructure.go:747-748`, format `'f'`) — ALWAYS fixed decimal
-  // notation, never scientific, regardless of magnitude. JS's `String(value)` agrees
-  // for ordinary magnitudes (both use the same shortest-round-trip digit sequence —
-  // `String()` just chooses "e" notation once `|value| >= 1e21` or `< 1e-6`, which
-  // `FormatFloat('f', …)` never does). Verified empirically: `strconv.FormatFloat(1e21,
-  // 'f', -1, 64)` returns `"1000000000000000000000"`, not `"1e+21"`. Expand JS's own
-  // exponential notation back into fixed notation instead of re-deriving the digits,
-  // since `Number.prototype.toString()`/`toExponential()` already computed the same
-  // shortest round-tripping digit sequence Go's algorithm would — only the notation
-  // differs.
+  // A weakly-converted float renders via `strconv.FormatFloat(v, 'f', -1, 64)` — ALWAYS
+  // fixed decimal notation, never scientific, regardless of magnitude. JS's
+  // `String(value)` agrees for ordinary magnitudes (both use the same
+  // shortest-round-trip digit sequence — `String()` just chooses "e" notation once
+  // `|value| >= 1e21` or `< 1e-6`, which `FormatFloat('f', …)` never does). Verified
+  // empirically: `strconv.FormatFloat(1e21, 'f', -1, 64)` returns
+  // `"1000000000000000000000"`, not `"1e+21"`. Expand JS's own exponential notation
+  // back into fixed notation instead of re-deriving the digits, since
+  // `Number.prototype.toString()`/`toExponential()` already computed the same shortest
+  // round-tripping digit sequence the Go algorithm would — only the notation differs.
   //
   // `strconv.FormatFloat` special-cases the three non-finite values BEFORE it ever
   // looks at the format verb, so `'f'` never applies to them: verified empirically
-  // (`apps/cli-go` probe against a real `schema_paths = [inf, -inf, nan]` config load) —
+  // (a probe against a real `schema_paths = [inf, -inf, nan]` config load) —
   // `+Inf`/`-Inf`/`NaN` (note the "+Inf" sign Go always prints, and the short "Inf"/"NaN"
   // spelling) — never JS's own `Infinity`/`-Infinity`/`NaN` (which happens to already
   // match the "NaN" case, but not the two `Infinity` ones). TOML v1.0's bare `inf`/
@@ -2403,10 +2382,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // negative-zero float64 formats as `"-0"`, never `"0"`. Verified empirically —
   // `strconv.FormatFloat(math.Copysign(0, -1), 'f', -1, 64)` returns `"-0"` — and
   // end-to-end through the real decode pipeline this weak-decode mirrors
-  // (`BurntSushi/toml` + `go-viper/mapstructure`'s `WeaklyTypedInput`): a
-  // `schema_paths = [-0.0]` config decodes its glob entry to the literal string
-  // `"-0"`. JS's own `(-0).toString()` is `"0"` (the sign is dropped), by spec —
-  // `Object.is(value, -0)` is JS's only way to detect it, since `-0 === 0`.
+  // (`BurntSushi/toml` + `mapstructure`'s weakly-typed input): a `schema_paths =
+  // [-0.0]` config decodes its glob entry to the literal string `"-0"`. JS's own
+  // `(-0).toString()` is `"0"` (the sign is dropped), by spec — `Object.is(value, -0)`
+  // is JS's only way to detect it, since `-0 === 0`.
   const legacyFormatGoWeakFloat = (value: number): string => {
     if (Number.isNaN(value)) return "NaN";
     if (value === Number.POSITIVE_INFINITY) return "+Inf";
@@ -2430,8 +2409,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // weakly
   // converts a bool to `"1"`/`"0"` and a number to its decimal string, THEN the
   // result flows through the same env-expand/resolve pipeline as a real string
-  // entry. Verified empirically against `apps/cli-go` (`schema_paths = [42]` resolves
-  // to `supabase/42`, `schema_paths = [true]` to `supabase/1`).
+  // entry. Verified empirically (`schema_paths = [42]` resolves to `supabase/42`,
+  // `schema_paths = [true]` to `supabase/1`).
   const legacyWeakCoerceGlobEntry = (value: unknown): string | undefined => {
     if (typeof value === "string") return value;
     if (typeof value === "boolean") return value ? "1" : "0";
@@ -2442,19 +2421,19 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `[{path = "x.sql"}]`) is mapstructure's `UnconvertibleTypeError` instead of a weak
   // conversion, and mapstructure reports every offending index from the SAME
   // `UnmarshalExact` call together, joined by its own `Error.Error()` — which is what
-  // aborts the entire config load, not just that one array. Verified empirically
-  // against `apps/cli-go`: `schema_paths = [[]]` / `[{path = "x.sql"}]` both fail with
+  // aborts the entire config load, not just that one array. Verified empirically:
+  // `schema_paths = [[]]` / `[{path = "x.sql"}]` both fail with
   // `failed to parse config: decoding failed due to the following error(s):\n\n'db.
   // migrations.schema_paths[0]' expected type 'string', got unconvertible type
   // '[]interface {}'` / `'map[string]interface {}'` respectively — never silently
   // dropping the element and continuing with an empty/partial glob list.
   //
   // A bare TOML datetime (e.g. `schema_paths = 1979-05-27T07:32:00Z`) hits this same
-  // `UnconvertibleTypeError` path in Go, but as a DIFFERENT Go type per TOML datetime
+  // `UnconvertibleTypeError` path, but as a DIFFERENT Go type per TOML datetime
   // variant — `BurntSushi/toml` decodes an offset date-time to stdlib `time.Time` and
   // each of the 3 zone-less "local" variants to its own `toml.Local*` wrapper type.
-  // Verified empirically against the real `apps/cli-go` `config.Load` (review
-  // CLI-1958): `schema_paths = 1979-05-27T07:32:00Z` → `unconvertible type
+  // Verified empirically (review CLI-1958): `schema_paths = 1979-05-27T07:32:00Z` →
+  // `unconvertible type
   // 'time.Time'`; `= 1979-05-27T07:32:00` (no zone) → `'toml.LocalDateTime'`;
   // `= 1979-05-27` → `'toml.LocalDate'`; `= 07:32:00` → `'toml.LocalTime'` — same four
   // messages whether the datetime is this top-level scalar or an array element.
@@ -2483,9 +2462,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // `errors.Join(errs...)`-s everything together at the very end.
   // So an invalid `db.migrations.schema_paths` does NOT
   // prevent `db.seed.sql_paths` from ALSO being decoded (and erroring) in the same
-  // pass; both surface together in ONE combined error. Verified empirically against
-  // `apps/cli-go` (`config.Load` with both fields containing an unconvertible entry,
-  // e.g. `sql_paths = [[]]` + `schema_paths = [[]]`): the single returned error
+  // pass; both surface together in ONE combined error. Verified empirically (both
+  // fields containing an unconvertible entry, e.g. `sql_paths = [[]]` +
+  // `schema_paths = [[]]`): the single returned error
   // contains BOTH lines, `db.migrations.schema_paths[0]` BEFORE `db.seed.sql_paths[0]` —
   // `db` struct declares `Migrations` before `Seed`,
   // and mapstructure iterates struct fields in declaration order, not alphabetically,
@@ -2523,13 +2502,13 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   // same per-element rules as a real array entry — a scalar weakly coerces,
   // an unconvertible value (map/array) fails with `'<keyPath>[0]' expected
   // type 'string', got unconvertible type '...'` (mapstructure always
-  // reports the synthetic wrapped index, which is `0`). Verified empirically
-  // against `apps/cli-go`: `schema_paths = 42` → `["42"]`, `= true` →
+  // reports the synthetic wrapped index, which is `0`). Verified empirically:
+  // `schema_paths = 42` → `["42"]`, `= true` →
   // `["1"]`, `= {}` → `[]`, `[db.migrations.schema_paths]\nfoo = "bar"` →
   // `failed to parse config: … 'db.migrations.schema_paths[0]' expected type
   // 'string', got unconvertible type 'map[string]interface {}'`. Never
-  // called with `undefined` — an absent key has its own Go-matching default
-  // per caller below, so callers guard that case before reaching here.
+  // called with `undefined` — an absent key has its own default per caller
+  // below, so callers guard that case before reaching here.
   //
   // The zero-length-map special case must NOT match a `TomlDate` (e.g. `schema_paths =
   // 1979-05-27T07:32:00Z`): a `TomlDate` stores its value internally, not as an
@@ -2611,17 +2590,16 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     sqlPathsOverride,
     ["seed.sql"],
   );
-  // Patterns are already env-expanded above (Go's LoadEnvHook runs before the split);
-  // resolve each to Go's config-load form (absolute verbatim, relative supabase-joined).
+  // Patterns are already env-expanded above (expansion runs before the split); resolve
+  // each to its config-load form (absolute verbatim, relative supabase-joined).
   const seedSqlPaths = sqlPathsResolved.patterns.map((pattern) =>
     legacyResolveSeedSqlPath(path, pattern),
   );
 
-  // `[db.migrations] schema_paths` — Go default `[]` (`pkg/config/templates/config.toml:64`),
-  // resolved through the exact same decode + env-expand + supabase-join pipeline as
-  // `[db.seed].sql_paths` above, but UNCONDITIONALLY (Go's resolve loop for schema_paths,
-  // `config.go:976-980`, is not gated on `db.migrations.enabled` the way the seed loop is
-  // gated on `db.seed.enabled`, `config.go:968-975`).
+  // `[db.migrations] schema_paths` — default `[]`, resolved through the exact same
+  // decode + env-expand + supabase-join pipeline as `[db.seed].sql_paths` above, but
+  // UNCONDITIONALLY (the resolve loop for schema_paths is not gated on
+  // `db.migrations.enabled` the way the seed loop is gated on `db.seed.enabled`).
   const rawSchemaPaths = migrationsRaw?.["schema_paths"];
   const schemaPathsOverride = remoteOverrideKeys.has("db.migrations.schema_paths")
     ? undefined
@@ -2633,11 +2611,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
     [],
   );
 
-  // `UnmarshalExact` decodes the whole config in ONE mapstructure pass (see
-  // `legacyGlobArrayIssues`'s doc comment) — combine BOTH `Glob` fields' issues, in
-  // Go's struct-declaration order (`Migrations` before `Seed`), before failing once,
-  // so a config invalid in both surfaces both, matching Go's single combined error
-  // instead of only the first field checked.
+  // The whole config decodes in ONE pass (see `legacyGlobArrayIssues`'s doc comment) —
+  // combine BOTH `Glob` fields' issues, in struct-declaration order (`Migrations`
+  // before `Seed`), before failing once, so a config invalid in both surfaces both
+  // in a single combined error instead of only the first field checked.
   yield* legacyFailOnGlobIssues([...schemaPathsResolved.issues, ...sqlPathsResolved.issues]);
 
   const schemaPaths = schemaPathsResolved.patterns.map((pattern) =>
@@ -2645,12 +2622,10 @@ const readDbTomlCore = Effect.fnUntraced(function* (
   );
 
   // `[db.vault]` secrets: env-expand each value, then decrypt dotenvx `encrypted:`
-  // ciphertext. `resolved` mirrors `len(SHA256) > 0` gate (Go sets SHA256 only
-  // after a successful decrypt-or-passthrough; `UpsertVaultSecrets` upserts only
-  // resolved secrets). `DecryptSecretHookFunc` runs inside `config.Load`, so an
-  // `encrypted:` value that cannot be decrypted aborts the command with
-  // `failed to parse config: <error>` (`secret.go:30-73`, `config.go:661-667`) — it
-  // is never silently skipped, which an earlier port did and which diverged from Go.
+  // ciphertext. `resolved` gates on a successful decrypt-or-passthrough (`UpsertVaultSecrets`
+  // upserts only resolved secrets). An `encrypted:` value that cannot be decrypted
+  // aborts the command with `failed to parse config: <error>` — it is never silently
+  // skipped, which an earlier port did.
   const vault: Array<LegacyDbVaultSecretToml> = [];
   if (resolveVaultSecrets && vaultRaw !== undefined) {
     for (const name of Object.keys(vaultRaw).sort()) {

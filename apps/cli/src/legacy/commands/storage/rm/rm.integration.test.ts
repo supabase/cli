@@ -101,10 +101,10 @@ describe("legacy storage rm", () => {
   });
 
   it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
-    // SUPABASE_YES lives only in supabase/.env, not the shell — both the `--local` and
-    // (default) `--linked` branches of Go's `ParseDatabaseConfig` load the project `.env`
-    // files before `rm.Run`'s confirmation prompt (root.go:118), so the deletion
-    // auto-confirms with no --yes flag and no env var set in the shell (CLI-1878).
+    // SUPABASE_YES lives only in supabase/.env, not the shell — both the
+    // `--local` and (default) `--linked` branches load the project `.env`
+    // files before the confirmation prompt, so the deletion auto-confirms
+    // with no --yes flag and no env var set in the shell.
     const { layer, out, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -127,10 +127,10 @@ describe("legacy storage rm", () => {
   it.live(
     "surfaces not-linked guidance before a malformed project .env (Go LoadProjectRef-before-LoadConfig)",
     () => {
-      // Go's `ParseDatabaseConfig` `case linked:` (db_url.go:87-93) calls `LoadProjectRef`
-      // strictly before `LoadConfig` (which reads the project `.env` files), so an unlinked
-      // workdir must fail with the not-linked guidance even when `supabase/.env` is malformed
-      // — the malformed file must never be reached (CLI-1878).
+      // The linked-project ref is resolved strictly before the config load
+      // that reads the project `.env` files, so an unlinked workdir must
+      // fail with the not-linked guidance even when `supabase/.env` is
+      // malformed — the malformed file must never be reached.
       const { layer, requests } = setupLegacyStorage(tmp.current, {
         toml: 'project_id = "test"\n',
         linkedFails: true,
@@ -189,14 +189,14 @@ describe("legacy storage rm", () => {
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(true);
-      // The consumed answer is echoed after the label (Go's non-TTY `PromptText`).
+      // The consumed answer is echoed after the label on non-TTY stdin.
       expect(out.stderrText).toContain("[y/N] y");
     });
   });
 
   it.live("falls back to the default (no) on an unparseable piped answer", () => {
-    // Go's `parseYesNo` returns nil for unrecognized input (`console.go:84-93`), so
-    // `PromptYesNo` keeps the `n` default and the deletion is skipped.
+    // Unrecognized input is treated as unanswered, so the confirmation
+    // prompt keeps the `n` default and the deletion is skipped.
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,

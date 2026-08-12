@@ -7,17 +7,17 @@ import {
 } from "../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Go's `ErrMissingToken` (`apps/cli-go/cmd/login.go:16`, deleted in CLI-1970;
- * last present at commit 7b469f5b3). Go Aqua-styles the
+ * `ErrMissingToken`. The reference implementation Aqua-styles the
  * `--token` / `SUPABASE_ACCESS_TOKEN` substrings, but the legacy port renders
- * styling as plain text (Go strips color on a non-TTY), so this is byte-exact.
+ * styling as plain text (color is stripped on a non-TTY anyway), so this is
+ * byte-exact.
  */
 export const LEGACY_LOGIN_MISSING_TOKEN_MESSAGE =
   `Cannot use automatic login flow inside non-TTY environments. ` +
   `Please provide --token flag or set the SUPABASE_ACCESS_TOKEN environment variable.`;
 
 /**
- * Token-path save failure — Go's `cannot save provided token: %w`
+ * Token-path save failure — message format `cannot save provided token: %w`
  * (`login.go:171`). Only ever constructed on the provided-token paths (`--token`
  * / `SUPABASE_ACCESS_TOKEN` / piped stdin); the browser flow saves via the raw
  * `credentials.saveAccessToken`. A malformed provided token is not fixable by
@@ -96,7 +96,7 @@ export class LegacyLoginFailedError extends Data.TaggedError("LegacyLoginFailedE
   }
 }
 
-/** ECDH / AES-GCM decryption failure — Go's `cannot decrypt access token` (`login.go:47`). */
+/** ECDH / AES-GCM decryption failure — message `cannot decrypt access token` (`login.go:47`). */
 export class LegacyLoginDecryptError extends Data.TaggedError("LegacyLoginDecryptError")<{
   readonly message: string;
 }> {
@@ -105,7 +105,7 @@ export class LegacyLoginDecryptError extends Data.TaggedError("LegacyLoginDecryp
   }
 }
 
-/** ECDH keypair generation failure — Go's `cannot generate crypto keys` (`login.go:66`). */
+/** ECDH keypair generation failure — message `cannot generate crypto keys` (`login.go:66`). */
 export class LegacyLoginCryptoError extends Data.TaggedError("LegacyLoginCryptoError")<{
   readonly message: string;
 }> {
