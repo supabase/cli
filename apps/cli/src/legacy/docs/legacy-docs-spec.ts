@@ -10,12 +10,14 @@ import {
 } from "./legacy-docs-introspection.ts";
 import { legacyUnwrapParam } from "../shared/legacy-param-introspection.ts";
 import {
-  LEGACY_DOCS_DEFAULT_OVERRIDES,
+  LEGACY_DOCS_ARG_OVERRIDES,
   LEGACY_DOCS_CHOICE_OVERRIDES,
+  LEGACY_DOCS_DEFAULT_OVERRIDES,
   LEGACY_DOCS_EXCLUDED,
+  LEGACY_DOCS_EXCLUDED_FLAGS,
   LEGACY_DOCS_EXPERIMENTAL,
-  LEGACY_DOCS_EXTRA_FLAGS,
   LEGACY_DOCS_EXPERIMENTAL_OPTIONAL,
+  LEGACY_DOCS_EXTRA_FLAGS,
   LEGACY_DOCS_INFO_DESCRIPTION,
   LEGACY_DOCS_INFO_TAGS,
   LEGACY_DOCS_REQUIRED,
@@ -29,24 +31,40 @@ import type { LegacyDocsInfoTag } from "./legacy-docs-spec.tables.ts";
  * the legacy Effect command tree — replacing the retired Go generator's
  * cobra walk.
  *
- * The semantic contract this preserves (verified against the retired Go
- * generator's output when the pipeline was re-pointed — all 135 command ids,
- * titles, subcommand sets, flag sets, defaults and accepted values matched):
- * command `id` is `CommandPath` with spaces replaced by dashes and is the
- * public URL slug plus the join key into `common-cli-sections.json`;
- * `subcommands`, `flags`, `tags`, `links` are always arrays; `default_value`
- * is always present; flag `name` is a preformatted display string
- * (`-p, --password <string>`); enum flags carry `accepted_values`;
- * experimental leaves append the root `--experimental` flag with
- * `required: true`. Go-yaml serialization quirks (trailing-newline padding of
- * long strings, reversed command order) are deliberately not reproduced —
- * every downstream consumer parses the YAML and joins on `id`.
+ * The load-bearing contract, verified against the retired Go generator's
+ * output while both coexisted: command `id` is `CommandPath` with spaces
+ * replaced by dashes and is the public URL slug plus the join key into
+ * `common-cli-sections.json`; `subcommands`, `flags`, `tags`, `links` are
+ * always arrays; `default_value` is always present; flag `name` is a
+ * preformatted display string (`-p, --password <string>`); enum flags carry
+ * `accepted_values`; experimental leaves append the root `--experimental`
+ * flag. All 135 Go command ids, titles, subcommand sets, defaults and
+ * accepted values matched; flag sets matched once deprecated flags were
+ * excluded (`LEGACY_DOCS_EXCLUDED_FLAGS`).
  *
- * Every static-table key (`legacy-docs-spec.tables.ts`) is validated
- * against the walked tree at build
- * time — a stale entry (after a command or flag rename) fails the build with
- * the offending keys listed instead of silently degrading the published
- * reference.
+ * Deliberately NOT reproduced from the Go output:
+ * - go-yaml serialization quirks: trailing-newline padding of long strings
+ *   and the reversed command order (consumers parse the YAML and join on
+ *   `id`);
+ * - cobra's `UseLine` rule of appending ` [flags]` only when a command
+ *   declares its own local flags — every leaf here accepts flags, so the
+ *   suffix is emitted on all leaf usage strings;
+ * - cobra's flag ordering where persistent group flags trailed local ones —
+ *   flags that were persistent in cobra are own config flags in the Effect
+ *   tree and sort alphabetically with the rest;
+ * - Go-only scalar display typing (`uint`/`duration`/`time`/`stringArray`) —
+ *   flag types render as the Effect tree (and `--help`) declares them;
+ * - argument labels in usage strings render the Effect tree's names, which
+ *   can differ from Go's hand-written `Use` wording (`[name]` vs
+ *   `[project name]`) and are sometimes more precise (`orgs create <name>`,
+ *   `functions deploy [Function name] ...`);
+ * - TS-only surfaces (commands, flags, examples) are additions by design.
+ *
+ * Every static-table key (`legacy-docs-spec.tables.ts`) and every content
+ * input (description overlays, `examples.yaml` entries) is validated against
+ * the walked tree at build time — a stale entry after a command or flag
+ * rename fails the build with the offending keys listed instead of silently
+ * degrading the published reference.
  */
 
 export interface LegacyDocsExample {
@@ -184,12 +202,26 @@ function legacyDocsTypeDefault(
   return "";
 }
 
+/**
+ * Descriptions may embed tab-indented shell snippets (the completion
+ * family); the published spec has always carried them as four spaces, and
+ * tab indentation can stop rendering as a code block downstream.
+ */
+function legacyDocsNormalizeText(text: string): string {
+  return text.replaceAll("\t", "    ");
+}
+
+/** Doc for a visible flag; `undefined` for hidden flags; throws on an unrecognizable param. */
 function legacyDocsFlagDoc(
   commandPath: ReadonlyArray<string>,
   param: Param.AnyFlag,
 ): LegacyDocsFlag | undefined {
   const unwrapped = legacyUnwrapParam(param);
-  if (unwrapped === undefined) return undefined;
+  if (unwrapped === undefined) {
+    throw new Error(
+      `legacy-docs-spec.ts: a flag on "${commandPath.join(" ")}" wraps an unrecognized Param variant — effect's Param union may have changed; the spec cannot be built without dropping it silently.`,
+    );
+  }
   const { single, isVariadic } = unwrapped;
   if (single.hidden) return undefined;
 
@@ -218,7 +250,7 @@ function legacyDocsFlagDoc(
   return {
     id: single.name,
     name,
-    description: Option.getOrElse(single.description, () => ""),
+    description: legacyDocsNormalizeText(Option.getOrElse(single.description, () => "")),
     ...(required ? { required: true } : {}),
     default_value:
       LEGACY_DOCS_DEFAULT_OVERRIDES[overrideKey] ?? legacyDocsTypeDefault(single, isVariadic),
@@ -226,9 +258,16 @@ function legacyDocsFlagDoc(
   };
 }
 
-function legacyDocsArgumentUsage(param: Param.AnyArgument): string | undefined {
+function legacyDocsArgumentUsage(
+  commandPath: ReadonlyArray<string>,
+  param: Param.AnyArgument,
+): string | undefined {
   const unwrapped = legacyUnwrapParam(param);
-  if (unwrapped === undefined) return undefined;
+  if (unwrapped === undefined) {
+    throw new Error(
+      `legacy-docs-spec.ts: an argument on "${commandPath.join(" ")}" wraps an unrecognized Param variant — effect's Param union may have changed; the spec cannot be built without dropping it silently.`,
+    );
+  }
   const { single, isOptional, isVariadic, variadicMin } = unwrapped;
   if (single.hidden) return undefined;
   const optional = isOptional || (isVariadic && variadicMin === 0);
@@ -242,21 +281,6 @@ function legacyDocsVisibleChildren(
   return legacyFlattenSubcommands(command)
     .filter((child) => !child.hidden)
     .toSorted((a, b) => legacyDocsCompare(a.name, b.name));
-}
-
-function legacyDocsExamplesFor(
-  docId: string,
-  command: Command.Command.Any,
-  examples: Readonly<Record<string, ReadonlyArray<LegacyDocsExample>>>,
-): ReadonlyArray<LegacyDocsExample> | undefined {
-  const fromYaml = examples[docId];
-  if (fromYaml !== undefined && fromYaml.length > 0) return fromYaml;
-  if (command.examples.length === 0) return undefined;
-  return command.examples.map((example, index) => ({
-    id: `example-${index + 1}`,
-    name: example.description ?? example.command,
-    code: example.command,
-  }));
 }
 
 /** First line of a command's long description, for the listing summary fallback. */
@@ -296,7 +320,18 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
   const emittedIds = new Set<string>();
   const skippedExcludedIds = new Set<string>();
   const seenFlagKeys = new Set<string>(rootFlags.map((flag) => `supabase ${flag.id}`));
+  const consumedExcludedFlagKeys = new Set<string>();
+  const consumedArgOverrideIds = new Set<string>();
+  const consumedOverlayPaths = new Set<string>();
+  const allowedOrphanOverlayPaths = new Set<string>();
 
+  /**
+   * Builds the visible flag docs for a command's params, dropping hidden
+   * flags and `LEGACY_DOCS_EXCLUDED_FLAGS` entries (deprecated flags cobra
+   * hid from the reference). Does NOT record `seenFlagKeys` — callers record
+   * only the flags that actually reach the output, so table validation
+   * reflects the published spec, not intermediate candidates.
+   */
   const flagDocsFor = (
     commandPath: ReadonlyArray<string>,
     params: ReadonlyArray<Param.AnyFlag>,
@@ -305,9 +340,13 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
     return params
       .map((param) => legacyDocsFlagDoc(commandPath, param))
       .filter((flag) => flag !== undefined)
-      .map((flag) => {
-        seenFlagKeys.add(`${docId} ${flag.id}`);
-        return flag;
+      .filter((flag) => {
+        const key = `${docId} ${flag.id}`;
+        if (LEGACY_DOCS_EXCLUDED_FLAGS.has(key)) {
+          consumedExcludedFlagKeys.add(key);
+          return false;
+        }
+        return true;
       })
       .toSorted((a, b) => legacyDocsCompare(a.id, b.id));
   };
@@ -323,15 +362,20 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
     const isLeaf = children.length === 0;
     emittedIds.add(docId);
 
-    const overlay = input.overlays.get(legacyDocsOverlayPath(commandPath));
-    const description =
-      overlay === undefined ? (command.description ?? "") : legacyDocsStripOverlayHeading(overlay);
+    const overlayPath = legacyDocsOverlayPath(commandPath);
+    const overlay = input.overlays.get(overlayPath);
+    if (overlay !== undefined) consumedOverlayPaths.add(overlayPath);
+    const description = legacyDocsNormalizeText(
+      overlay === undefined ? (command.description ?? "") : legacyDocsStripOverlayHeading(overlay),
+    );
 
     const flags: Array<LegacyDocsFlag> = [];
     if (isLeaf) {
+      const declared = flagDocsFor(commandPath, internals.config.flags);
+      const declaredIds = new Set(declared.map((flag) => flag.id));
       const own = [
-        ...flagDocsFor(commandPath, internals.config.flags),
-        ...(LEGACY_DOCS_EXTRA_FLAGS[docId] ?? []),
+        ...declared,
+        ...(LEGACY_DOCS_EXTRA_FLAGS[docId] ?? []).filter((flag) => !declaredIds.has(flag.id)),
       ].toSorted((a, b) => legacyDocsCompare(a.id, b.id));
       own.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...own);
@@ -341,14 +385,20 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
       const inherited = flagDocsFor(commandPath, inheritedParams).filter(
         (flag) => !ownIds.has(flag.id) && !rootFlagIds.has(flag.id),
       );
+      inherited.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...inherited);
     }
 
     let usage: string | undefined;
     if (isLeaf) {
-      const argUsages = internals.config.arguments
-        .map(legacyDocsArgumentUsage)
-        .filter((part) => part !== undefined);
+      const argOverride = LEGACY_DOCS_ARG_OVERRIDES[docId];
+      if (argOverride !== undefined) consumedArgOverrideIds.add(docId);
+      const argUsages =
+        argOverride !== undefined
+          ? [argOverride]
+          : internals.config.arguments
+              .map((param) => legacyDocsArgumentUsage(commandPath, param))
+              .filter((part) => part !== undefined);
       usage = [...commandPath, ...argUsages, "[flags]"].join(" ");
     }
 
@@ -359,7 +409,17 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
       );
     }
 
-    const commandExamples = legacyDocsExamplesFor(docId, command, input.examples);
+    const fromYaml = input.examples[docId];
+    const commandExamples =
+      fromYaml !== undefined && fromYaml.length > 0
+        ? fromYaml
+        : command.examples.length > 0
+          ? command.examples.map((example, index) => ({
+              id: `example-${index + 1}`,
+              name: example.description ?? example.command,
+              code: example.command,
+            }))
+          : undefined;
 
     commands.push({
       id: docId,
@@ -390,6 +450,7 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
       const childId = childPath.join("-");
       if (LEGACY_DOCS_EXCLUDED.has(childId)) {
         skippedExcludedIds.add(childId);
+        allowedOrphanOverlayPaths.add(legacyDocsOverlayPath(childPath));
         continue;
       }
       visit(child, childPath, childInherited);
@@ -401,12 +462,25 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
     const childId = childPath.join("-");
     if (LEGACY_DOCS_EXCLUDED.has(childId)) {
       skippedExcludedIds.add(childId);
+      allowedOrphanOverlayPaths.add(legacyDocsOverlayPath(childPath));
       continue;
     }
     visit(child, childPath, []);
   }
 
-  legacyValidateDocsTables({ emittedIds, skippedExcludedIds, seenFlagKeys });
+  legacyValidateDocsTables({
+    emittedIds,
+    skippedExcludedIds,
+    seenFlagKeys,
+    consumedExcludedFlagKeys,
+    consumedArgOverrideIds,
+  });
+  legacyValidateDocsContent(input, {
+    emittedIds,
+    skippedExcludedIds,
+    consumedOverlayPaths,
+    allowedOrphanOverlayPaths,
+  });
 
   return {
     clispec: "001",
@@ -430,9 +504,17 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
  * Serializes the spec for publication. Emitted under YAML 1.1 quoting rules
  * so scalars like `yes`/`no` stay strings for downstream YAML 1.1 parsers
  * (PyYAML, Psych, go-yaml v2); the output remains equally valid YAML 1.2.
+ * Anchors/aliases are disabled — the injected `--experimental` doc is the
+ * same object on every experimental leaf, and the serializer would otherwise
+ * emit `&a1`/`*a1` references the published file never carried.
  */
 export function legacyStringifyDocsSpec(spec: LegacyDocsSpec): string {
-  return stringify(spec, { indent: 2, lineWidth: 0, version: "1.1" });
+  return stringify(spec, {
+    indent: 2,
+    lineWidth: 0,
+    version: "1.1",
+    aliasDuplicateObjects: false,
+  });
 }
 
 /**
@@ -445,6 +527,8 @@ function legacyValidateDocsTables(seen: {
   readonly emittedIds: ReadonlySet<string>;
   readonly skippedExcludedIds: ReadonlySet<string>;
   readonly seenFlagKeys: ReadonlySet<string>;
+  readonly consumedExcludedFlagKeys: ReadonlySet<string>;
+  readonly consumedArgOverrideIds: ReadonlySet<string>;
 }): void {
   const stale: Array<string> = [];
   for (const key of Object.keys(LEGACY_DOCS_DEFAULT_OVERRIDES)) {
@@ -471,9 +555,51 @@ function legacyValidateDocsTables(seen: {
   for (const key of LEGACY_DOCS_REQUIRED) {
     if (!seen.seenFlagKeys.has(key)) stale.push(`LEGACY_DOCS_REQUIRED: "${key}"`);
   }
+  for (const key of LEGACY_DOCS_EXCLUDED_FLAGS) {
+    if (!seen.consumedExcludedFlagKeys.has(key)) stale.push(`LEGACY_DOCS_EXCLUDED_FLAGS: "${key}"`);
+  }
+  for (const id of Object.keys(LEGACY_DOCS_ARG_OVERRIDES)) {
+    if (!seen.consumedArgOverrideIds.has(id)) stale.push(`LEGACY_DOCS_ARG_OVERRIDES: "${id}"`);
+  }
   if (stale.length > 0) {
     throw new Error(
       `legacy-docs-spec.ts: stale static-table entries no longer resolve against the command tree — fix or remove them:\n  ${stale.join("\n  ")}`,
+    );
+  }
+}
+
+/**
+ * Extends the build-fails-on-drift guarantee to the content inputs: an
+ * overlay whose path maps to no walked command, or an `examples.yaml` doc id
+ * matching no emitted command, would otherwise vanish from the published
+ * reference silently (the page falls back to the terse tree description).
+ * Overlays belonging to `LEGACY_DOCS_EXCLUDED` commands are deliberate
+ * orphans (deprecated pages keep their content until the follow-up cleanup)
+ * and stay allowed.
+ */
+function legacyValidateDocsContent(
+  input: LegacyDocsSpecInput,
+  seen: {
+    readonly emittedIds: ReadonlySet<string>;
+    readonly skippedExcludedIds: ReadonlySet<string>;
+    readonly consumedOverlayPaths: ReadonlySet<string>;
+    readonly allowedOrphanOverlayPaths: ReadonlySet<string>;
+  },
+): void {
+  const orphaned: Array<string> = [];
+  for (const path of input.overlays.keys()) {
+    if (!seen.consumedOverlayPaths.has(path) && !seen.allowedOrphanOverlayPaths.has(path)) {
+      orphaned.push(`overlay: "${path}"`);
+    }
+  }
+  for (const docId of Object.keys(input.examples)) {
+    if (!seen.emittedIds.has(docId) && !seen.skippedExcludedIds.has(docId)) {
+      orphaned.push(`examples.yaml: "${docId}"`);
+    }
+  }
+  if (orphaned.length > 0) {
+    throw new Error(
+      `legacy-docs-spec.ts: content inputs match no command in the walked tree — a rename would silently drop them from the published reference:\n  ${orphaned.join("\n  ")}`,
     );
   }
 }

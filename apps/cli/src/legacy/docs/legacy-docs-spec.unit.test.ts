@@ -1,5 +1,10 @@
+import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
+import { Command } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
+
+import { LegacyExperimentalFlag } from "../../shared/legacy/global-flags.ts";
 
 import { legacyRoot } from "../cli/root.ts";
 import { legacyReadDocsContent } from "./legacy-docs-spec.content.ts";
@@ -10,7 +15,7 @@ import {
   legacyStringifyDocsSpec,
 } from "./legacy-docs-spec.ts";
 import type { LegacyDocsCommand } from "./legacy-docs-spec.ts";
-import { LEGACY_DOCS_EXCLUDED } from "./legacy-docs-spec.tables.ts";
+import { LEGACY_DOCS_EXCLUDED, LEGACY_DOCS_EXPERIMENTAL } from "./legacy-docs-spec.tables.ts";
 
 interface LegacyBuiltSpecFixture {
   readonly content: ReturnType<typeof legacyReadDocsContent>;
@@ -226,5 +231,174 @@ describe("legacyBuildDocsSpec", () => {
       "yaml",
     ]);
     expect(spec.flags.find((flag) => flag.id === "output-format")?.default_value).toBe("text");
+  });
+});
+
+describe("review fixes stay fixed", () => {
+  it("excludes the deprecated --include-raw-output from every domains page", () => {
+    const { spec, byId } = legacyBuiltSpec();
+    for (const command of spec.commands) {
+      expect(
+        command.flags.some((flag) => flag.id === "include-raw-output"),
+        `${command.id} publishes include-raw-output`,
+      ).toBe(false);
+    }
+    expect(byId.get("supabase-domains-get")?.flags.map((flag) => flag.id)).toContain("project-ref");
+  });
+
+  it("renders required variadic usage from the override table", () => {
+    const { byId } = legacyBuiltSpec();
+    expect(byId.get("supabase-storage-rm")?.usage).toBe("supabase storage rm <file> ... [flags]");
+    expect(byId.get("supabase-secrets-set")?.usage).toBe(
+      "supabase secrets set <NAME=VALUE> ... [flags]",
+    );
+  });
+
+  it("normalizes tabs to four spaces in descriptions", () => {
+    const { spec } = legacyBuiltSpec();
+    for (const command of spec.commands) {
+      expect(command.description.includes("\t"), `${command.id} description has a tab`).toBe(false);
+      for (const flag of command.flags) {
+        expect(flag.description.includes("\t"), `${command.id} --${flag.id} has a tab`).toBe(false);
+      }
+    }
+    expect(byIdDescription("supabase-completion-bash")).toContain("    source <(");
+  });
+
+  it("serializes without YAML anchors or aliases", () => {
+    const { spec } = legacyBuiltSpec();
+    const yaml = legacyStringifyDocsSpec(spec);
+    expect(yaml).not.toMatch(/&a\d+/);
+    expect(yaml).not.toMatch(/\*a\d+/);
+  });
+});
+
+function byIdDescription(id: string): string {
+  const command = legacyBuiltSpec().byId.get(id);
+  if (command === undefined) throw new Error(`no command ${id}`);
+  return command.description;
+}
+
+describe("build guards fail loudly", () => {
+  const emptyInput = { version: "0", overlays: new Map<string, string>(), examples: {} };
+
+  it("throws when the root declares no --experimental global flag", () => {
+    const root = Command.make("supabase").pipe(Command.withSubcommands([Command.make("link")]));
+    expect(() => legacyBuildDocsSpec({ root, ...emptyInput })).toThrow(
+      /no --experimental global flag/,
+    );
+  });
+
+  it("throws for a top-level command without a docs section tag", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([Command.make("not-a-real-command")]),
+      Command.withGlobalFlags([LegacyExperimentalFlag]),
+    );
+    expect(() => legacyBuildDocsSpec({ root, ...emptyInput })).toThrow(/no LEGACY_DOCS_TAGS entry/);
+  });
+
+  it("throws listing stale static-table entries for a shrunken tree", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([Command.make("link")]),
+      Command.withGlobalFlags([LegacyExperimentalFlag]),
+    );
+    expect(() => legacyBuildDocsSpec({ root, ...emptyInput })).toThrow(
+      /stale static-table entries[^]*LEGACY_DOCS_EXPERIMENTAL/,
+    );
+  });
+
+  it("throws for orphaned overlays and examples keys", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([Command.make("link")]),
+      Command.withGlobalFlags([LegacyExperimentalFlag]),
+    );
+    const overlays = new Map([["supabase/lonk.md", "## x\n\nBody.\n"]]);
+    const build = () =>
+      legacyBuildDocsSpec({
+        root,
+        version: "0",
+        overlays,
+        examples: { "supabase-lonk": [{ id: "a", code: "x" }] },
+      });
+    // the stale-table throw fires first on this synthetic tree; assert the
+    // content guard directly by checking its message is reachable when the
+    // table validation is satisfied — covered via the real-tree fixture below.
+    expect(build).toThrow(/stale static-table entries/);
+    const { content } = legacyBuiltSpec();
+    const badExamples = { ...content.examples, "supabase-not-a-command": [{ id: "a" }] };
+    expect(() =>
+      legacyBuildDocsSpec({
+        root: legacyRoot,
+        version: "0",
+        overlays: content.overlays,
+        examples: badExamples,
+      }),
+    ).toThrow(/content inputs match no command[^]*supabase-not-a-command/);
+    const badOverlays = new Map(content.overlays);
+    badOverlays.set("supabase/not-a-real-command.md", "## x\n\nBody.\n");
+    expect(() =>
+      legacyBuildDocsSpec({
+        root: legacyRoot,
+        version: "0",
+        overlays: badOverlays,
+        examples: content.examples,
+      }),
+    ).toThrow(/content inputs match no command[^]*overlay: "supabase\/not-a-real-command\.md"/);
+  });
+});
+
+describe("legacyReadDocsContent rejects malformed examples.yaml", () => {
+  function withTempDocs(examplesYaml: string): () => void {
+    const dir = mkdtempSync(path.join(tmpdir(), "docs-spec-test-"));
+    mkdirSync(path.join(dir, "supabase"), { recursive: true });
+    mkdirSync(path.join(dir, "templates"), { recursive: true });
+    writeFileSync(path.join(dir, "supabase", "link.md"), "## supabase-link\n\nBody.\n");
+    writeFileSync(path.join(dir, "templates", "examples.yaml"), examplesYaml);
+    return () => {
+      try {
+        legacyReadDocsContent(dir);
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    };
+  }
+
+  it("rejects a non-mapping document", () => {
+    expect(withTempDocs("- just\n- a list\n")).toThrow(/must be a mapping of doc ids/);
+  });
+
+  it("rejects a nested-array entry (mis-indented list)", () => {
+    expect(withTempDocs("supabase-link:\n  - - id: oops\n")).toThrow(/must be a mapping/);
+  });
+
+  it("rejects unknown fields (typo'd keys)", () => {
+    expect(withTempDocs("supabase-link:\n  - titel: typo\n    code: x\n")).toThrow(
+      /unknown field "titel"/,
+    );
+  });
+
+  it("rejects non-string field values", () => {
+    expect(withTempDocs("supabase-link:\n  - id: 5\n")).toThrow(/id must be a string/);
+  });
+});
+
+describe("LEGACY_DOCS_EXPERIMENTAL mirrors the runtime gate", () => {
+  it("matches the legacyRequireExperimental call sites exactly", () => {
+    const commandsDir = path.resolve(import.meta.dirname, "../commands");
+    const gated = new Set<string>();
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const entryPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(entryPath);
+        else if (entry.name.endsWith(".command.ts")) {
+          if (readFileSync(entryPath, "utf8").includes("yield* legacyRequireExperimental")) {
+            const relative = path.relative(commandsDir, path.dirname(entryPath));
+            gated.add(`supabase-${relative.split(path.sep).join("-")}`);
+          }
+        }
+      }
+    };
+    walk(commandsDir);
+    expect([...gated].sort()).toEqual([...LEGACY_DOCS_EXPERIMENTAL].sort());
   });
 });

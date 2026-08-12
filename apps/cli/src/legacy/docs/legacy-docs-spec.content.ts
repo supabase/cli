@@ -54,12 +54,19 @@ function legacyParseExamples(
       );
     }
     examples[docId] = entries.map((entry, index) => {
-      if (typeof entry !== "object" || entry === null) {
+      if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
         throw new Error(
           `legacy-docs-spec.content.ts: examples.yaml entry "${docId}"[${index}] must be a mapping.`,
         );
       }
       const fields = new Map<string, unknown>(Object.entries(entry));
+      for (const key of fields.keys()) {
+        if (key !== "id" && key !== "name" && key !== "code" && key !== "response") {
+          throw new Error(
+            `legacy-docs-spec.content.ts: examples.yaml "${docId}"[${index}] has unknown field "${key}" — allowed fields are id, name, code, response.`,
+          );
+        }
+      }
       return {
         ...legacyOptionalString(docId, index, fields, "id"),
         ...legacyOptionalString(docId, index, fields, "name"),

@@ -232,6 +232,33 @@ export const LEGACY_DOCS_CHOICE_OVERRIDES: Readonly<Record<string, ReadonlyArray
 };
 
 /**
+ * Flags excluded from the published reference, keyed `"<doc id> <flag id>"`.
+ * Cobra hid deprecated flags from help and docs; the Effect port keeps
+ * `--include-raw-output` parse-visible for compatibility (see
+ * `commands/domains/SIDE_EFFECTS.md`), so the docs exclusion is restored
+ * here. Validated at build time like the other tables.
+ */
+export const LEGACY_DOCS_EXCLUDED_FLAGS: ReadonlySet<string> = new Set([
+  "supabase-domains-activate include-raw-output",
+  "supabase-domains-create include-raw-output",
+  "supabase-domains-delete include-raw-output",
+  "supabase-domains-get include-raw-output",
+  "supabase-domains-reverify include-raw-output",
+]);
+
+/**
+ * Usage argument overrides, keyed by doc id — for commands whose published
+ * argument rendering cannot be derived from the Effect tree. Both were
+ * hand-written cobra `Use` strings: the parser accepts zero occurrences
+ * (`secrets set --env-file` passes no positionals; `storage rm` validates in
+ * the handler), but the documented shape is required.
+ */
+export const LEGACY_DOCS_ARG_OVERRIDES: Readonly<Record<string, string>> = {
+  "supabase-secrets-set": "<NAME=VALUE> ...",
+  "supabase-storage-rm": "<file> ...",
+};
+
+/**
  * Flags rendered with a Required badge on the docs site, keyed
  * `"<doc id> <flag id>"`. Effect optionality cannot express this — several
  * of these TS flags are intentionally `Flag.optional` at parse time for
