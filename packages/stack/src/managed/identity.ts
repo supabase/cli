@@ -12,11 +12,13 @@ import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
 
 const identityField = (value: unknown, field: string): string => {
   if (typeof value !== "object" || value === null) {
-    throw new InvalidManagedIdentityError("The ordinary workspace identity must be an object");
+    throw new InvalidManagedIdentityError({
+      message: "The ordinary workspace identity must be an object",
+    });
   }
   const fieldValue = Reflect.get(value, field);
   if (typeof fieldValue !== "string") {
-    throw new InvalidManagedIdentityError(`${field} must be an opaque UUID`);
+    throw new InvalidManagedIdentityError({ message: `${field} must be an opaque UUID` });
   }
   return assertManagedUuid(fieldValue, field);
 };
@@ -26,16 +28,20 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
   try {
     value = JSON.parse(content);
   } catch (cause: unknown) {
-    throw new InvalidManagedIdentityError(`The ordinary workspace identity is not JSON: ${cause}`);
+    throw new InvalidManagedIdentityError({
+      message: `The ordinary workspace identity is not JSON: ${cause}`,
+    });
   }
   if (typeof value !== "object" || value === null) {
-    throw new InvalidManagedIdentityError("The ordinary workspace identity must be an object");
+    throw new InvalidManagedIdentityError({
+      message: "The ordinary workspace identity must be an object",
+    });
   }
   const version = Reflect.get(value, "version");
   if (version !== ORDINARY_WORKSPACE_IDENTITY_VERSION) {
-    throw new InvalidManagedIdentityError(
-      `Unsupported ordinary workspace identity version ${String(version)}`,
-    );
+    throw new InvalidManagedIdentityError({
+      message: `Unsupported ordinary workspace identity version ${String(version)}`,
+    });
   }
   return {
     version,
@@ -48,7 +54,7 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
 export const canonicalizeOrdinaryWorkspacePath = async (workspacePath: string): Promise<string> => {
   const info = await stat(workspacePath);
   if (!info.isDirectory()) {
-    throw new InvalidManagedIdentityError(`${workspacePath} is not a directory`);
+    throw new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` });
   }
   return realpath(workspacePath);
 };
@@ -102,7 +108,9 @@ export const ensureOrdinaryWorkspaceIdentity = async (
     }
     const winner = await readOrdinaryWorkspaceIdentity(workspacePath);
     if (winner === undefined) {
-      throw new InvalidManagedIdentityError("Identity publication raced without a winning marker");
+      throw new InvalidManagedIdentityError({
+        message: "Identity publication raced without a winning marker",
+      });
     }
     return { identity: winner, created: false, markerPath };
   } finally {

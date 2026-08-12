@@ -281,8 +281,13 @@ Here, **managed state** means the centralized registry API exposed from
 `managed-stack.ts`, which remains part of the legacy Effect daemon surface. The registry API uses
 Promises because its consumers perform short filesystem and SQLite coordination around the
 Promise-oriented `createStack()` boundary; the runtime lifecycle beneath it remains Effect-based.
-Its errors are ordinary `Error` subclasses with stable `code` fields so Node and Bun callers can
-branch on failures without requiring an Effect runtime at this persistence boundary.
+Its errors are `Data.TaggedError` classes carrying stable `code` fields, and there is no shared base
+class: `ManagedStackError` is a union type over the seventeen failures, with `isManagedStackError`
+as the runtime guard. `_tag` is the Effect-native discriminant, so an Effect consumer can
+`catchTag` them directly; `code` is the wire-level contract that survives identifier minification,
+so Node and Bun callers — and the CLI's telemetry classifier — can branch on failures without
+requiring an Effect runtime at this persistence boundary. `MANAGED_ERROR_TAG_BY_CODE` links the two
+so a consumer keying a table by one and dispatching on the other cannot drift.
 
 The managed surface owns a versioned SQLite registry with separate records for projects,
 checkouts, checkout locations, development contexts, stacks, port reservations, and operations.

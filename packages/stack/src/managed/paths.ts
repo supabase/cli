@@ -18,7 +18,10 @@ const nonEmpty = (value: string | undefined): string | undefined => {
 const requireManagedStateRoot = (stateRoot: string): string => {
   const trimmed = nonEmpty(stateRoot);
   if (trimmed === undefined) {
-    throw new UnsafeManagedStackPathError(stateRoot, "Refusing a blank managed state root");
+    throw new UnsafeManagedStackPathError({
+      path: stateRoot,
+      reason: "Refusing a blank managed state root",
+    });
   }
   return resolve(trimmed);
 };
@@ -93,7 +96,7 @@ export const assertManagedStackRoot = (
   const expected = resolve(managedStackPaths(stateRoot, stackId).root);
   const actual = resolve(stackRoot);
   if (actual !== expected) {
-    throw new UnsafeManagedStackPathError(stackRoot);
+    throw new UnsafeManagedStackPathError({ path: stackRoot });
   }
   return actual;
 };

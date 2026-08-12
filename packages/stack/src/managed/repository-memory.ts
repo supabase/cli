@@ -120,7 +120,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
   const requireStack = (stackId: string): ManagedStackRecord => {
     const stack = stacks.get(stackId);
     if (stack === undefined) {
-      throw new ManagedStackNotFoundError(stackId);
+      throw new ManagedStackNotFoundError({ stackId });
     }
     return stack;
   };
@@ -137,7 +137,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
       operation.stackId !== stackId ||
       operation.status !== "active"
     ) {
-      throw new ManagedOperationOwnershipError(stackId);
+      throw new ManagedOperationOwnershipError({ stackId });
     }
     return operation;
   };
@@ -151,7 +151,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
       for (const assignment of next.ports) {
         const owner = portOwners.get(assignment.port);
         if (owner !== undefined && owner !== next.id) {
-          throw new ManagedPortReservationError(assignment.port, owner);
+          throw new ManagedPortReservationError({ port: assignment.port, ownerStackId: owner });
         }
       }
     }
@@ -166,7 +166,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
       for (const assignment of next.ports) {
         const owner = portOwners.get(assignment.port);
         if (owner !== undefined && owner !== next.id) {
-          throw new ManagedPortReservationError(assignment.port, owner);
+          throw new ManagedPortReservationError({ port: assignment.port, ownerStackId: owner });
         }
         portOwners.set(assignment.port, next.id);
       }
@@ -217,11 +217,11 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
         projects.add(input.identity.projectId);
         const checkout = checkouts.get(input.identity.checkoutId);
         if (checkout !== undefined && checkout.projectId !== input.identity.projectId) {
-          throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            checkout.projectId,
-            input.identity.projectId,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.identity.checkoutId,
+            existingClaim: checkout.projectId,
+            requestedClaim: input.identity.projectId,
+          });
         }
         checkouts.set(input.identity.checkoutId, {
           id: input.identity.checkoutId,
@@ -230,11 +230,11 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
 
         const context = contexts.get(input.identity.contextId);
         if (context !== undefined && context.checkoutId !== input.identity.checkoutId) {
-          throw new DuplicateManagedIdentityError(
-            input.identity.contextId,
-            context.checkoutId,
-            input.identity.checkoutId,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.identity.contextId,
+            existingClaim: context.checkoutId,
+            requestedClaim: input.identity.checkoutId,
+          });
         }
         contexts.set(input.identity.contextId, {
           id: input.identity.contextId,
@@ -248,21 +248,21 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
           existingLocation !== undefined &&
           existingLocation.canonicalPath !== input.canonicalPath
         ) {
-          throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            existingLocation.canonicalPath,
-            input.canonicalPath,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.identity.checkoutId,
+            existingClaim: existingLocation.canonicalPath,
+            requestedClaim: input.canonicalPath,
+          });
         }
         const pathOwner = [...locations.values()].find(
           (location) => location.canonicalPath === input.canonicalPath,
         );
         if (pathOwner !== undefined && pathOwner.checkoutId !== input.identity.checkoutId) {
-          throw new DuplicateManagedIdentityError(
-            input.canonicalPath,
-            pathOwner.checkoutId,
-            input.identity.checkoutId,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.canonicalPath,
+            existingClaim: pathOwner.checkoutId,
+            requestedClaim: input.identity.checkoutId,
+          });
         }
         locations.set(existingLocation?.id ?? input.locationId, {
           id: existingLocation?.id ?? input.locationId,
@@ -317,7 +317,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
           now: input.now,
         });
         if (!claimed.acquired) {
-          throw new ManagedOperationOwnershipError(stack.id);
+          throw new ManagedOperationOwnershipError({ stackId: stack.id });
         }
         return { outcome: "create", stack: copy(stack), operation: claimed.operation };
       });
@@ -346,7 +346,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
       requireOwnedOperation(stackId, operationToken);
       const stack = requireStack(stackId);
       if (stack.status !== "pending") {
-        throw new ManagedOperationOwnershipError(stackId);
+        throw new ManagedOperationOwnershipError({ stackId });
       }
       discardPendingStack(stack, operationToken);
     },

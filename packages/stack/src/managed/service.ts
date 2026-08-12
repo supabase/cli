@@ -204,10 +204,10 @@ export const makeManagedStackService = (
   // `undefined`, which would make `resolveManagedStateRoot` silently fall back
   // to `SUPABASE_HOME`/the user's home directory instead of failing loudly.
   if (options.stateRoot === undefined) {
-    throw new UnsafeManagedStackPathError(
-      String(options.stateRoot),
-      "Refusing to start a managed stack service without an explicit state root",
-    );
+    throw new UnsafeManagedStackPathError({
+      path: String(options.stateRoot),
+      reason: "Refusing to start a managed stack service without an explicit state root",
+    });
   }
   const stateRoot = resolveManagedStateRoot({ stateRoot: options.stateRoot });
   const idFactory = options.idFactory ?? randomUUID;
@@ -301,7 +301,7 @@ export const makeManagedStackService = (
       now: now(),
     });
     if (!claimed.acquired) {
-      throw new ManagedOperationInProgressError(stackId, claimed.operation);
+      throw new ManagedOperationInProgressError({ stackId, operation: claimed.operation });
     }
     return claimed.operation;
   };
@@ -319,20 +319,20 @@ export const makeManagedStackService = (
     while (performance.now() <= deadline) {
       const current = options.repository.getStack(pending.id);
       if (current === undefined) {
-        throw new ManagedAbandonedOperationError(pending.id);
+        throw new ManagedAbandonedOperationError({ stackId: pending.id });
       }
       if (current.status === "active") {
         return current;
       }
       if (current.status === "tombstoned") {
-        throw new ManagedStackNotFoundError(current.id);
+        throw new ManagedStackNotFoundError({ stackId: current.id });
       }
       // Never sleep past the deadline: the timeout is the caller's bound, not a
       // floor a long poll interval may overshoot by a whole interval.
       await wait(Math.max(Math.min(pollMs, deadline - performance.now()), 0));
       pollMs = backOffPublicationPoll(pollMs);
     }
-    throw new ManagedStackPublicationTimeoutError(pending.id);
+    throw new ManagedStackPublicationTimeoutError({ stackId: pending.id });
   };
 
   const updateStackRecord = async (
@@ -374,7 +374,7 @@ export const makeManagedStackService = (
     async provisionOrdinaryStack(provisionOptions) {
       const stackName = provisionOptions.stackName ?? DEFAULT_MANAGED_STACK_NAME;
       if (!stackNamePattern.test(stackName)) {
-        throw new InvalidManagedStackNameError(stackName);
+        throw new InvalidManagedStackNameError({ stackName });
       }
       const canonicalPath = await canonicalizeOrdinaryWorkspacePath(provisionOptions.workspacePath);
       const marker = await ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
@@ -395,7 +395,10 @@ export const makeManagedStackService = (
       if (prepared.outcome === "existing") {
         if (prepared.stack.status === "active") {
           if (prepared.operation !== undefined) {
-            throw new ManagedOperationInProgressError(prepared.stack.id, prepared.operation);
+            throw new ManagedOperationInProgressError({
+              stackId: prepared.stack.id,
+              operation: prepared.operation,
+            });
           }
           const stack = await applyRequestedConfiguration(
             prepared.stack,
@@ -409,7 +412,7 @@ export const makeManagedStackService = (
           };
         }
         if (prepared.operation === undefined) {
-          throw new ManagedAbandonedOperationError(prepared.stack.id);
+          throw new ManagedAbandonedOperationError({ stackId: prepared.stack.id });
         }
         // A stored pid that is not a usable pid means there is no owner to wait
         // for, exactly as a missing one does: probing it could report a dead
@@ -419,7 +422,7 @@ export const makeManagedStackService = (
           !isUsableManagedOwnerPid(prepared.operation.ownerPid) ||
           !(await isProcessAlive(prepared.operation.ownerPid))
         ) {
-          throw new ManagedAbandonedOperationError(prepared.stack.id);
+          throw new ManagedAbandonedOperationError({ stackId: prepared.stack.id });
         }
         const published = await applyRequestedConfiguration(
           await awaitPublication(prepared.stack),
@@ -466,7 +469,11 @@ export const makeManagedStackService = (
             cleanupErrors.push(error);
           }
         }
-        throw new ManagedStackInitializationError(prepared.stack.id, cause, cleanupErrors);
+        throw new ManagedStackInitializationError({
+          stackId: prepared.stack.id,
+          cause,
+          cleanupErrors,
+        });
       }
     },
     async inspectOrdinaryWorkspace(workspacePath) {
@@ -497,7 +504,7 @@ export const makeManagedStackService = (
     async deleteStack(stackId, deleteOptions) {
       const existing = options.repository.getStack(stackId);
       if (existing === undefined) {
-        throw new ManagedStackNotFoundError(stackId);
+        throw new ManagedStackNotFoundError({ stackId });
       }
       if (existing.status === "tombstoned") {
         return {
@@ -510,7 +517,7 @@ export const makeManagedStackService = (
       try {
         const current = options.repository.getStack(stackId);
         if (current === undefined) {
-          throw new ManagedStackNotFoundError(stackId);
+          throw new ManagedStackNotFoundError({ stackId });
         }
         if (current.status === "tombstoned") {
           const dataReclamation = await reclaimStackState(current);
@@ -519,7 +526,7 @@ export const makeManagedStackService = (
         }
         if (current.lifecycle !== "stopped") {
           if (deleteOptions?.stop === undefined) {
-            throw new ManagedStackNotStoppedError(stackId);
+            throw new ManagedStackNotStoppedError({ stackId });
           }
           await deleteOptions.stop(current);
           options.repository.updateStack({

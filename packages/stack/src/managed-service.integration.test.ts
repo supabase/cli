@@ -2098,7 +2098,7 @@ describe("managed repository and lifecycle", () => {
       ...repository,
       finishOperation(stackId, operationToken, outcome, now, error) {
         if (outcome === "completed") {
-          throw new ManagedOperationOwnershipError(stackId);
+          throw new ManagedOperationOwnershipError({ stackId });
         }
         repository.finishOperation(stackId, operationToken, outcome, now, error);
       },

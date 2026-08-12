@@ -208,7 +208,10 @@ const initializeSchema = (database: ManagedSqliteDatabase): void => {
     const versionRow = database.prepare("PRAGMA user_version").get();
     const version = getNumber(versionRow, "user_version");
     if (version !== 0 && version !== MANAGED_REGISTRY_SCHEMA_VERSION) {
-      throw new UnsupportedManagedRegistryVersionError(version, MANAGED_REGISTRY_SCHEMA_VERSION);
+      throw new UnsupportedManagedRegistryVersionError({
+        found: version,
+        supported: MANAGED_REGISTRY_SCHEMA_VERSION,
+      });
     }
     if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
       database.exec("COMMIT");
@@ -428,7 +431,7 @@ const getStack = (
 const requireStack = (database: ManagedSqliteDatabase, stackId: string): ManagedStackRecord => {
   const stack = getStack(database, stackId);
   if (stack === undefined) {
-    throw new ManagedStackNotFoundError(stackId);
+    throw new ManagedStackNotFoundError({ stackId });
   }
   return stack;
 };
@@ -450,7 +453,7 @@ const requireOwnedOperation = (
 ): ManagedOperationRecord => {
   const operation = getActiveOperation(database, stackId);
   if (operation === undefined || operation.token !== operationToken) {
-    throw new ManagedOperationOwnershipError(stackId);
+    throw new ManagedOperationOwnershipError({ stackId });
   }
   return operation;
 };
@@ -475,7 +478,10 @@ const replacePorts = (
         )
         .get([assignment.port, stackId]);
       if (owner !== undefined) {
-        throw new ManagedPortReservationError(assignment.port, getString(owner, "stack_id"));
+        throw new ManagedPortReservationError({
+          port: assignment.port,
+          ownerStackId: getString(owner, "stack_id"),
+        });
       }
     }
   }
@@ -508,7 +514,7 @@ const claimOperation = (
       .run([input.token, input.stackId, input.kind, input.ownerPid ?? null, input.now]);
     const operation = getActiveOperation(database, input.stackId);
     if (operation === undefined) {
-      throw new ManagedOperationOwnershipError(input.stackId);
+      throw new ManagedOperationOwnershipError({ stackId: input.stackId });
     }
     return { acquired: true, operation };
   });
@@ -579,11 +585,11 @@ export const createSqliteManagedStackRepository = (
           checkoutRow !== undefined &&
           getString(checkoutRow, "project_id") !== input.identity.projectId
         ) {
-          throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            getString(checkoutRow, "project_id"),
-            input.identity.projectId,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.identity.checkoutId,
+            existingClaim: getString(checkoutRow, "project_id"),
+            requestedClaim: input.identity.projectId,
+          });
         }
         database
           .prepare("INSERT OR IGNORE INTO checkouts (id, project_id, created_at) VALUES (?, ?, ?)")
@@ -596,11 +602,11 @@ export const createSqliteManagedStackRepository = (
           contextRow !== undefined &&
           getString(contextRow, "checkout_id") !== input.identity.checkoutId
         ) {
-          throw new DuplicateManagedIdentityError(
-            input.identity.contextId,
-            getString(contextRow, "checkout_id"),
-            input.identity.checkoutId,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.identity.contextId,
+            existingClaim: getString(contextRow, "checkout_id"),
+            requestedClaim: input.identity.checkoutId,
+          });
         }
         database
           .prepare(`INSERT OR IGNORE INTO contexts (id, checkout_id, created_at) VALUES (?, ?, ?)`)
@@ -613,11 +619,11 @@ export const createSqliteManagedStackRepository = (
           checkoutLocation !== undefined &&
           getString(checkoutLocation, "canonical_path") !== input.canonicalPath
         ) {
-          throw new DuplicateManagedIdentityError(
-            input.identity.checkoutId,
-            getString(checkoutLocation, "canonical_path"),
-            input.canonicalPath,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.identity.checkoutId,
+            existingClaim: getString(checkoutLocation, "canonical_path"),
+            requestedClaim: input.canonicalPath,
+          });
         }
         const pathLocation = database
           .prepare("SELECT * FROM checkout_locations WHERE canonical_path = ?")
@@ -626,11 +632,11 @@ export const createSqliteManagedStackRepository = (
           pathLocation !== undefined &&
           getString(pathLocation, "checkout_id") !== input.identity.checkoutId
         ) {
-          throw new DuplicateManagedIdentityError(
-            input.canonicalPath,
-            getString(pathLocation, "checkout_id"),
-            input.identity.checkoutId,
-          );
+          throw new DuplicateManagedIdentityError({
+            identityId: input.canonicalPath,
+            existingClaim: getString(pathLocation, "checkout_id"),
+            requestedClaim: input.identity.checkoutId,
+          });
         }
         if (checkoutLocation === undefined) {
           database
@@ -669,7 +675,7 @@ export const createSqliteManagedStackRepository = (
         const stack = requireStack(database, input.stackId);
         const operation = getActiveOperation(database, input.stackId);
         if (operation === undefined) {
-          throw new ManagedOperationOwnershipError(input.stackId);
+          throw new ManagedOperationOwnershipError({ stackId: input.stackId });
         }
         return { outcome: "create", stack, operation };
       });
@@ -695,7 +701,7 @@ export const createSqliteManagedStackRepository = (
         requireOwnedOperation(database, stackId, operationToken);
         const stack = requireStack(database, stackId);
         if (stack.status !== "pending") {
-          throw new ManagedOperationOwnershipError(stackId);
+          throw new ManagedOperationOwnershipError({ stackId });
         }
         database.prepare("DELETE FROM stacks WHERE id = ?").run([stackId]);
       });

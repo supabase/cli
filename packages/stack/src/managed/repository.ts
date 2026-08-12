@@ -121,7 +121,7 @@ export const isUsableManagedOwnerPid = (ownerPid: number | undefined): ownerPid 
  */
 export const assertManagedOwnerPid = (ownerPid: number | undefined): void => {
   if (ownerPid !== undefined && !isUsableManagedOwnerPid(ownerPid)) {
-    throw new InvalidManagedOwnerPidError(ownerPid);
+    throw new InvalidManagedOwnerPidError({ ownerPid });
   }
 };
 
@@ -157,13 +157,13 @@ export const validateManagedPortAssignments = (
   const numbers = new Set<number>();
   for (const assignment of ports) {
     if (!Number.isInteger(assignment.port) || assignment.port < 1 || assignment.port > 65_535) {
-      throw new InvalidManagedPortError(assignment.port, assignment.key);
+      throw new InvalidManagedPortError({ port: assignment.port, key: assignment.key });
     }
     if (keys.has(assignment.key)) {
       throw new Error(`Duplicate managed port key ${assignment.key}`);
     }
     if (numbers.has(assignment.port)) {
-      throw new ManagedPortReservationError(assignment.port, stackId);
+      throw new ManagedPortReservationError({ port: assignment.port, ownerStackId: stackId });
     }
     keys.add(assignment.key);
     numbers.add(assignment.port);
@@ -196,7 +196,7 @@ export const reconcileManagedPortAssignments = (
     managedStackOccupiesPorts(targetLifecycle) &&
     !portNumbersEqual(stack.ports, reconciled)
   ) {
-    throw new ManagedRunningStackPortChangeError(stack.id);
+    throw new ManagedRunningStackPortChangeError({ stackId: stack.id });
   }
   return reconciled;
 };
@@ -213,9 +213,9 @@ export const reconcileManagedPortAssignments = (
  */
 export const assertManagedStackUpdatable = (stack: ManagedStackRecord): void => {
   if (stack.status === "tombstoned") {
-    throw new ManagedStackNotFoundError(stack.id);
+    throw new ManagedStackNotFoundError({ stackId: stack.id });
   }
   if (stack.status === "pending") {
-    throw new ManagedPendingStackUpdateError(stack.id);
+    throw new ManagedPendingStackUpdateError({ stackId: stack.id });
   }
 };

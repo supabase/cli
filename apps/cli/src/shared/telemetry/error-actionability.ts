@@ -1,4 +1,8 @@
-import type { ManagedErrorCode } from "@supabase/stack/managed-model";
+import {
+  MANAGED_ERROR_CODES,
+  MANAGED_ERROR_TAG_BY_CODE,
+  type ManagedErrorCode,
+} from "@supabase/stack/managed-model";
 import { Cause, Option } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
 
@@ -771,12 +775,11 @@ const effectCliActionabilityByTag = {
 
 /**
  * `@supabase/stack` managed registry failures, keyed by the stable `code`
- * literal each class declares. Every managed failure is a plain `Error`
- * subclass of the single `ManagedStackError` root: none carries a `_tag`, and
- * each subclass overwrites `name` with its own class name, so `code` is the
- * only discriminator that both identifies the hierarchy and survives the
- * identifier minification of release builds. This map is therefore the
- * dispatch key as well as the classification table — see `classifyAtDepth`.
+ * literal each class declares. `code` is the package's wire-level contract: it
+ * survives the identifier minification of release builds, and Node/Bun callers
+ * outside an Effect runtime branch on it. Dispatch, however, goes through
+ * `_tag` like every other external error — {@link managedActionabilityByTag}
+ * projects this table onto the tags via the package's own tag/code map.
  *
  * Keyed by the package's exported {@link ManagedErrorCode} union, so the table
  * is exhaustive by construction: a new managed failure cannot be added in
@@ -857,32 +860,35 @@ const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionability
   },
 };
 
-// String-keyed projection of the union-keyed table above: an arbitrary error's
-// `code` is only ever a `string`, and narrowing it by hand would mean either a
-// cast or duplicating the code list.
-const managedActionabilityLookup = new Map<string, CliErrorActionabilityDeclaration>(
-  Object.entries(managedActionabilityByCode),
+/**
+ * The managed table above, re-keyed by the `_tag` of the class that declares
+ * each code. Generated from `@supabase/stack`'s own tag/code map so the
+ * seventeen managed tags are classified without restating a single verdict:
+ * {@link managedActionabilityByCode} stays the one place a managed failure is
+ * classified, and a tag/code pair the package renames cannot silently fall
+ * through to `unknown`.
+ */
+const managedActionabilityByTag: Record<string, ErrorActionabilityAdapter> = Object.fromEntries(
+  MANAGED_ERROR_CODES.map((code) => {
+    const declaration = managedActionabilityByCode[code];
+    return [MANAGED_ERROR_TAG_BY_CODE[code], () => declaration];
+  }),
 );
-
-function readManagedActionability(
-  error: ErrorRecord,
-): CliErrorActionabilityDeclaration | undefined {
-  const code = readString(error, "code");
-  return code === undefined ? undefined : managedActionabilityLookup.get(code);
-}
 
 /**
  * Whether a `@supabase/stack` managed error code has a classification in
  * {@link managedActionabilityByCode}. Used by the coverage test to keep the
- * table exhaustive against the managed subclasses, which carry no `_tag` and
- * therefore never reach {@link isClassifiedExternalErrorTag}.
+ * table exhaustive against the managed classes; the tags themselves are checked
+ * through {@link isClassifiedExternalErrorTag}, which the generated entries
+ * satisfy.
  */
 export function isClassifiedManagedErrorCode(code: string): boolean {
-  return managedActionabilityLookup.has(code);
+  return Object.hasOwn(managedActionabilityByCode, code);
 }
 
 const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
   ...effectCliActionabilityByTag,
+  ...managedActionabilityByTag,
 
   // effect PlatformError — OS/filesystem operations. `reason` is
   // `BadArgument | SystemError`; BadArgument means the CLI itself passed a
@@ -1025,13 +1031,6 @@ const externalActionabilityByTag: Record<string, ErrorActionabilityAdapter> = {
     return { ...actionability.stopStack, fingerprint_suffix: "daemon_transport" };
   },
 
-  // @supabase/stack managed registry — see {@link managedActionabilityByCode}.
-  // Production dispatch never reaches this entry: `classifyAtDepth` routes
-  // managed failures by `code` (they carry no `_tag`). It stays because the
-  // hierarchy root is itself a plain Error subclass, which the coverage test's
-  // tag scan does pick up and requires an adapter for.
-  ManagedStackError: (error) => readManagedActionability(error) ?? actionability.unknown,
-
   // @supabase/process-compose — the CLI generates the process graph, so graph
   // invariants are internal bugs; runtime service failures are stack-state
   // problems the user resolves by restarting the stack.
@@ -1054,10 +1053,8 @@ export function isClassifiedExternalErrorTag(tag: string): boolean {
 
 /**
  * A wrapper's preserved `cause`, but only when classifying it cannot degrade
- * the result: the cause must carry its own declaration, a known external
- * adapter tag, or a recognized managed `code` (managed failures have neither a
- * declaration nor a `_tag`), otherwise the wrapper's own classification is more
- * truthful.
+ * the result: the cause must carry its own declaration or a known external
+ * adapter tag, otherwise the wrapper's own classification is more truthful.
  */
 function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
   const cause = error["cause"];
@@ -1065,7 +1062,6 @@ function classifiableCause(error: ErrorRecord): ErrorRecord | undefined {
   if (readDeclaration(cause) !== undefined) return cause;
   const causeTag = readErrorTag(cause);
   if (causeTag !== undefined && Object.hasOwn(externalActionabilityByTag, causeTag)) return cause;
-  if (readManagedActionability(cause) !== undefined) return cause;
   return undefined;
 }
 
@@ -1166,6 +1162,14 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     }
   }
 
+  // ManagedStackInitializationError is only a wrapper: the real provisioning
+  // failure (a Docker pull, a config parse, ...) is preserved in `cause`, and
+  // the generic initialization verdict would hide the actionable one.
+  if (isErrorRecord(error) && tag === "ManagedStackInitializationError") {
+    const cause = classifiableCause(error);
+    if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
+  }
+
   if (tag !== undefined && isErrorRecord(error)) {
     // Own-property lookup: a sanitized tag like "constructor" must not pick
     // up Object.prototype members as adapters.
@@ -1196,25 +1200,6 @@ function classifyAtDepth(error: unknown, depth: number): CliErrorActionability {
     const classify = externalActionabilityByTag["StackError"];
     if (classify !== undefined) {
       return toActionability(classify(error), "error", "StackError");
-    }
-  }
-
-  // Managed registry failures are untagged, and each subclass renames itself,
-  // so a recognized `code` literal is what routes them to their declaration.
-  if (isErrorRecord(error)) {
-    const managed = readManagedActionability(error);
-    if (managed !== undefined) {
-      // ManagedStackInitializationError is only a wrapper: the real
-      // provisioning failure (a Docker pull, a config parse, ...) is preserved
-      // in `cause`, and the generic initialization verdict would hide the
-      // actionable one.
-      if (readString(error, "code") === "MANAGED_STACK_INITIALIZATION_FAILED") {
-        const cause = classifiableCause(error);
-        if (cause !== undefined) return classifyAtDepth(cause, depth + 1);
-      }
-      // Everything else reports under the hierarchy root: the concrete failure
-      // is already carried by the declaration's fingerprint suffix.
-      return toActionability(managed, "error", "ManagedStackError");
     }
   }
 

@@ -598,10 +598,11 @@ describe("classifyCliErrorActionability", () => {
     expect(classifyCliErrorActionability(other).error_kind).toBe("unknown");
   });
 
-  // Managed registry errors are plain `Error` subclasses that rename themselves
-  // and carry no `_tag`, so `code` is the only thing routing them to their
-  // adapter. `managed-model.unit.test.ts` in `@supabase/stack` pins the real
-  // classes to the (name, code) pairs reproduced here.
+  // Managed registry errors are tagged errors that also declare a stable
+  // `code`: the tag routes them to an adapter generated from the package's
+  // tag/code map, and the code keys the verdict that adapter resolves.
+  // `managed-model.unit.test.ts` in `@supabase/stack` pins the real classes to
+  // the (tag, code) pairs reproduced here.
   it.each([
     [
       "InvalidManagedIdentityError",
@@ -663,18 +664,20 @@ describe("classifyCliErrorActionability", () => {
       "managed_port_change",
       "invalid_config",
     ],
-  ])("classifies %s by its stable managed code", (name, code, suffix, category) => {
+  ])("classifies %s through its generated tag adapter", (tag, code, suffix, category) => {
     const error = new Error("managed registry failure");
-    error.name = name;
+    error.name = tag;
+    Object.defineProperty(error, "_tag", { value: tag });
     Object.defineProperty(error, "code", { value: code });
     const result = classifyCliErrorActionability(error);
     expect(result.error_category).toBe(category);
-    expect(result.error_fingerprint).toBe(`error:ManagedStackError:${suffix}`);
+    expect(result.error_fingerprint).toBe(`tag:${tag}:${suffix}`);
   });
 
-  it("leaves an unrecognized managed-shaped code unclassified", () => {
+  it("leaves an unregistered managed-shaped failure unclassified", () => {
     const unrecognized = new Error("managed failure");
     unrecognized.name = "ManagedFutureError";
+    Object.defineProperty(unrecognized, "_tag", { value: "ManagedFutureError" });
     Object.defineProperty(unrecognized, "code", { value: "MANAGED_FUTURE_FAILURE" });
     expect(classifyCliErrorActionability(unrecognized).error_kind).toBe("unknown");
   });
@@ -684,6 +687,7 @@ describe("classifyCliErrorActionability", () => {
   it("classifies the provisioning cause of a managed initialization failure", () => {
     const wrapped = new Error("managed stack initialization failed");
     wrapped.name = "ManagedStackInitializationError";
+    Object.defineProperty(wrapped, "_tag", { value: "ManagedStackInitializationError" });
     Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
     Object.defineProperty(wrapped, "cause", {
       value: { _tag: "DockerPullError", image: "postgres", daemonDown: true },
@@ -700,17 +704,21 @@ describe("classifyCliErrorActionability", () => {
   it("falls back to the managed initialization verdict for an opaque cause", () => {
     const wrapped = new Error("managed stack initialization failed");
     wrapped.name = "ManagedStackInitializationError";
+    Object.defineProperty(wrapped, "_tag", { value: "ManagedStackInitializationError" });
     Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
     Object.defineProperty(wrapped, "cause", { value: { detail: "opaque" } });
     const result = classifyCliErrorActionability(wrapped);
     expect(result.error_kind).toBe("user_actionable");
     expect(result.suggested_command).toBe("supabase start");
-    expect(result.error_fingerprint).toBe("error:ManagedStackError:managed_initialization");
+    expect(result.error_fingerprint).toBe(
+      "tag:ManagedStackInitializationError:managed_initialization",
+    );
   });
 
   it("classifies a managed cause nested inside a stack wrapper", () => {
     const managed = new Error("port already reserved");
     managed.name = "ManagedPortReservationError";
+    Object.defineProperty(managed, "_tag", { value: "ManagedPortReservationError" });
     Object.defineProperty(managed, "code", { value: "MANAGED_PORT_ALREADY_RESERVED" });
     const result = classifyCliErrorActionability({
       _tag: "StackBuildError",
@@ -718,7 +726,7 @@ describe("classifyCliErrorActionability", () => {
       cause: managed,
     });
     expect(result.error_category).toBe("invalid_config");
-    expect(result.error_fingerprint).toBe("error:ManagedStackError:port_conflict");
+    expect(result.error_fingerprint).toBe("tag:ManagedPortReservationError:port_conflict");
   });
 
   it("classifies the preserved tagged cause of a StackError wrapper", () => {
