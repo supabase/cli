@@ -380,6 +380,10 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
     if (Option.isSome(project)) {
       const p = project.value;
       // SaveLinkedProject — best-effort (debug-logged in Go, never fatal).
+      // Same fail-safe fallback as the branch path (PR #6168 review): if the
+      // rewrite fails while a stale cache for a DIFFERENT project survives,
+      // delete it rather than leave the parent chain trusting the old
+      // project — no cache beats a wrong one.
       yield* writeTempFile(
         paths.linkedProjectCache,
         JSON.stringify({
@@ -388,7 +392,10 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
           organization_id: p.organization_id,
           organization_slug: p.organization_slug,
         }),
-      ).pipe(Effect.ignore);
+      ).pipe(
+        Effect.catch(() => fs.remove(paths.linkedProjectCache, { force: true })),
+        Effect.ignore,
+      );
 
       const groups = { organization: p.organization_id, project: p.ref } as const;
       if (p.organization_id.length > 0) {
