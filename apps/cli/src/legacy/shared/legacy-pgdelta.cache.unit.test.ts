@@ -376,6 +376,33 @@ describe("legacyHashDeclarativeSchemas", () => {
       ),
     );
   });
+
+  // A partial hash can collide with an existing cache key and serve a stale catalog,
+  // so a traversal failure must fail the hash, not shrink it (codex review, PR #6162).
+  it.effect("fails when part of the tree cannot be read instead of hashing a subset", () => {
+    const dir = withTemp();
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(join(declDir, "nested"), { recursive: true });
+    writeFileSync(join(declDir, "public.sql"), "A");
+    writeFileSync(join(declDir, "nested", "auth.sql"), "B");
+    return withServices((fs, path) => {
+      const failing: FileSystem.FileSystem = {
+        ...fs,
+        readDirectory: (p, opts) =>
+          p.endsWith("nested")
+            ? fs.readDirectory(join(dir, "does-not-exist"))
+            : fs.readDirectory(p, opts),
+      };
+      return legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
+    }).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
 
 describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {

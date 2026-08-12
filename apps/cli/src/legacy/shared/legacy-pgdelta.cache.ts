@@ -337,6 +337,11 @@ export const legacyHashMigrations = Effect.fnUntraced(function* (
   return hash.digest("hex");
 });
 
+// The walk is deliberately strict: a readDirectory/stat failure mid-traversal must fail
+// the hash rather than silently drop entries — a partial hash can collide with an existing
+// cache key and serve a stale catalog for a tree that was only partially read. A missing
+// root is the one tolerated case (deterministic empty hash; callers gate on the dir's
+// existence before reaching catalog export).
 const collectSqlFiles = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -348,14 +353,11 @@ const collectSqlFiles = Effect.fnUntraced(function* (
   const stack: Array<string> = [root];
   while (stack.length > 0) {
     const dir = stack.pop()!;
-    const names = yield* fs
-      .readDirectory(dir)
-      .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
+    const names = yield* fs.readDirectory(dir);
     for (const name of names) {
       const full = path.join(dir, name);
-      const stat = yield* fs.stat(full).pipe(Effect.option);
-      if (Option.isNone(stat)) continue;
-      if (stat.value.type === "Directory") stack.push(full);
+      const stat = yield* fs.stat(full);
+      if (stat.type === "Directory") stack.push(full);
       else if (path.extname(name) === ".sql") files.push(full);
     }
   }

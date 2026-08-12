@@ -29,9 +29,9 @@ const legacyShadowDockerCause = (
  * Whether an underlying failure signals the Docker daemon is unreachable, across every tagged
  * error class this seam composes over — `LegacyShadowDbError.reason === "docker_daemon"`,
  * `LegacyImagePrepullError.reason === "docker_daemon"`, `LegacyLocalDbRunningError.daemonDown`,
- * and every `*.docker === "daemon"` field (`LegacyDeclarativeEdgeRuntimeError`,
- * `LegacyPgDeltaDeclarativeApplyError`, …). Checked structurally rather than per-tag so a new
- * error class in the union doesn't silently drop its own daemon signal.
+ * `LegacyPgDeltaDeclarativeApplyError.reason === "daemon"`, and every `*.docker === "daemon"`
+ * field (`LegacyDeclarativeEdgeRuntimeError`, …). Checked structurally rather than per-tag so a
+ * new error class in the union doesn't silently drop its own daemon signal.
  */
 function legacyHasDaemonSignal(cause: {
   readonly message: string;
@@ -39,7 +39,12 @@ function legacyHasDaemonSignal(cause: {
   readonly docker?: unknown;
   readonly daemonDown?: unknown;
 }): boolean {
-  return cause.reason === "docker_daemon" || cause.docker === "daemon" || cause.daemonDown === true;
+  return (
+    cause.reason === "docker_daemon" ||
+    cause.reason === "daemon" ||
+    cause.docker === "daemon" ||
+    cause.daemonDown === true
+  );
 }
 
 /**
