@@ -278,16 +278,19 @@ See [detach mode](./detach-mode.md) for paths, process startup, and compiled exe
 
 Here, **managed state** means the centralized registry API exposed from
 `@supabase/stack/managed`. It is distinct from the older `ManagedStack` daemon-discovery record in
-`managed-stack.ts`, which remains part of the legacy Effect daemon surface. The registry API uses
-Promises because its consumers perform short filesystem and SQLite coordination around the
-Promise-oriented `createStack()` boundary; the runtime lifecycle beneath it remains Effect-based.
-Its errors are `Data.TaggedError` classes carrying stable `code` fields, and there is no shared base
-class: `ManagedStackError` is a union type over the seventeen failures, with `isManagedStackError`
-as the runtime guard. `_tag` is the Effect-native discriminant, so an Effect consumer can
-`catchTag` them directly; `code` is the wire-level contract that survives identifier minification,
-so Node and Bun callers — and the CLI's telemetry classifier — can branch on failures without
-requiring an Effect runtime at this persistence boundary. `MANAGED_ERROR_TAG_BY_CODE` links the two
-so a consumer keying a table by one and dispatching on the other cannot drift.
+`managed-stack.ts`, which remains part of the legacy Effect daemon surface. The registry API is
+Effect-native: its services are `Context.Service` tags, its failures live in the effect error
+channel, and its resources are owned by scopes. A Promise facade sits at the edge for callers that
+do not run an Effect runtime; see "Managed service composition" below.
+
+Managed errors are `Data.TaggedError` classes carrying stable `code` fields, and there is no shared
+base class: `ManagedStackError` is a union type over the seventeen failures, with
+`isManagedStackError` as the runtime guard. `_tag` is the Effect-native discriminant, so a consumer
+can `catchTag` them directly against the union a given method declares; `code` is the wire-level
+contract that survives identifier minification, so Node and Bun callers — and the CLI's telemetry
+classifier — can branch on failures without requiring an Effect runtime at this persistence
+boundary. `MANAGED_ERROR_TAG_BY_CODE` links the two so a consumer keying a table by one and
+dispatching on the other cannot drift.
 
 The managed surface owns a versioned SQLite registry with separate records for projects,
 checkouts, checkout locations, development contexts, stacks, port reservations, and operations.
@@ -338,7 +341,9 @@ unregistered UUID stack root when a provisioner writes after its pending row was
 aborted. The provision error reports the failed ownership cleanup, but there is no automatic orphan
 garbage collection; remove that root only after independently confirming its runtime is stopped.
 
-Stack publication and operation claims are transactional. A new stack remains `pending` while its
+Stack publication and operation claims are transactional; "Managed service composition" below
+describes how that transaction boundary and the wait for a concurrent publisher are expressed. A new
+stack remains `pending` while its
 directories and caller-supplied initialization are validated, then becomes `active` atomically.
 Concurrent callers resolve the published record rather than creating aliases. Recovery first
 retains claims whose owner process is still alive. Once an owner is gone, runtime inspection either
@@ -400,6 +405,99 @@ port-occupying stack stopped and releasing its lease. Runtime qualification, leg
 selection, and credential resolution remain outside this persistence boundary and are composed by
 later CLI slices.
 
+## Managed service composition
+
+The managed surface is two `Context.Service` tags, each with layer factories:
+
+- `ManagedStackRepository` is the storage contract. It is provided by
+  `bunSqliteManagedStackRepositoryLayer(path)` or `nodeSqliteManagedStackRepositoryLayer(path)` —
+  re-exported from `managed-bun.ts` and `managed-node.ts` respectively — or, in tests, by
+  `Layer.succeed(ManagedStackRepository, createInMemoryManagedStackRepository())`, since the
+  in-memory factory from `@supabase/stack/testing` returns the Effect-shaped service object directly.
+  The contract contains no SQLite types, so the adapter is swappable without the policy layer
+  noticing. Opening a registry whose schema version is neither zero nor the supported version fails
+  the layer with `UnsupportedManagedRegistryVersionError`.
+- `ManagedStackService` is the policy layer described above: identity markers, provisioning order,
+  publication waiting, deletion, and recovery. `ManagedStackService.make(options)` returns a layer
+  requiring `FileSystem.FileSystem | ManagedStackRepository` and failing with
+  `InvalidManagedOwnerPidError | UnsafeManagedStackPathError`, so a blank state root or an owner PID
+  that could never be probed is refused while the layer is being built rather than at whichever call
+  first touches a path.
+
+Each method declares only the failures it can actually raise, rather than one service-wide union:
+`provisionOrdinaryStack` carries `ProvisionManagedStackFailure`, `updateStack` carries
+`UpdateManagedStackConfigurationFailure`, `deleteStack` carries `DeleteManagedStackFailure`,
+`inspectOrdinaryWorkspace` carries only `InvalidManagedIdentityError`, and `inspectStack` and
+`listStacks` cannot fail at all. `deleteStack` and `pruneCheckoutLocations` are additionally generic
+in their callback's error type, so a `stop` callback's own failure reaches the caller unchanged — a
+stack that refused to stop was not deleted. Recovery reports rather than fails: only a forced target
+that is not a pair of managed UUIDs refuses a whole pass, so `reconcileAbandonedOperations` declares
+just `InvalidManagedIdentityError` and returns retained claims, skips, and failures in its result.
+
+Registry decisions are transactions written as `Effect.acquireUseRelease`. The acquire opens
+`BEGIN IMMEDIATE` (or `BEGIN` for read paths), the use runs the decision, and the release inspects
+the `Exit` to commit on success and roll back on failure — so an interrupted fiber cannot leave a
+transaction open, and a rollback never masks the original cause. The decision itself stays a
+synchronous closure: the drivers are synchronous, and a partially applied decision must never be
+observable.
+
+The database handle's lifetime is a scope. `sqliteManagedStackRepositoryLayer` opens the file when
+the layer is built and registers a finalizer that closes it, including on the path where schema
+initialization refuses the registry, so no failure path leaks an open handle. Closing the scope that
+built the layer closes the registry.
+
+Waiting for a concurrent publisher is `Schedule`-driven. One look at the pending row is a retryable
+step — a still-pending row asks for another look, while a vanished or tombstoned row is a final
+answer — repeated on `Schedule.exponential` from `publicationPollMs` with a 250 ms ceiling, so a slow
+publisher is not polled hundreds of times per second for the whole window. The ceiling only ever
+slows polling down, so a caller asking for a slower interval keeps its own. `publicationTimeoutMs` is
+the caller's bound on the entire wait and is applied as a timeout around the repeat, so it interrupts
+the poll instead of being checked between polls.
+
+An Effect consumer uses the tags directly, which is the primary API:
+
+```typescript
+import { BunFileSystem } from "@effect/platform-bun";
+import { Effect, Layer } from "effect";
+import { bunSqliteManagedStackRepositoryLayer, ManagedStackService } from "@supabase/stack/managed";
+
+const managedLayer = ManagedStackService.make({ stateRoot }).pipe(
+  Layer.provide(bunSqliteManagedStackRepositoryLayer(registryPath)),
+  Layer.provide(BunFileSystem.layer),
+);
+
+const program = Effect.gen(function* () {
+  const managed = yield* ManagedStackService;
+  return yield* managed.provisionOrdinaryStack({ workspacePath });
+}).pipe(
+  Effect.catchTag("ManagedStackPublicationTimeoutError", (error) =>
+    Effect.fail(`another process never published ${error.stackId}`),
+  ),
+);
+```
+
+`createManagedStackService()` — and `makeManagedStackService()` over a repository the caller already
+has — is a thin `ManagedRuntime` edge over exactly those layers, for consumers that do not run an
+Effect runtime. It exists to serve the Promise-oriented `createStack()` boundary; the runtime
+lifecycle beneath it is Effect-based either way. Two properties of that edge are contracts rather
+than incidental:
+
+- **Construction is eager and synchronous.** The facade builds the runtime's context with
+  `Effect.runSync`, so the registry is opened while the service is being created. That keeps
+  `inspectStack` and `listStacks` synchronous accessors over a synchronous handle, matching how
+  callers read the registry inline while deciding what to do next, and it makes a registry this
+  process cannot open fail at creation rather than at whichever later call happens to touch it first.
+- **The cold-start WAL retry is therefore synchronous too.** Converting a fresh registry to WAL can
+  lose a race with another process doing the same thing, so `enableWriteAheadLogging` retries
+  `SQLITE_BUSY` with a blocking `Atomics.wait`. Expressing that retry as an Effect schedule would
+  make layer construction asynchronous, which the synchronous-construction contract above forbids.
+  The retry stays synchronous by design for now; making it an Effect retry is gated on the facade
+  giving up its synchronous accessors.
+
+`close()` disposes the `ManagedRuntime`, which closes the scope that owns the database handle. The
+facade also hands back the very repository the service uses, so an embedder can read the registry
+without opening a second handle on it.
+
 ## Legacy daemon paths
 
 The pre-managed daemon implementation still reads its project-keyed state as a legacy/bootstrap
@@ -457,6 +555,11 @@ not be used for new managed records.
   factories, topology, projection, cleanup metadata, and protocol schemas.
 - Integration tests exercise binary publication, lifecycle coordination, daemon HTTP/SSE, remote
   stack behavior, state persistence, and Unix socket streaming with stateful Effect Adapters.
+- The managed registry is covered from both of its surfaces. `managed-service.integration.test.ts`
+  carries the behavioral load through the Promise facade against the in-memory and both SQLite
+  adapters, while `managed-effect.integration.test.ts` uses `@effect/vitest` to hold the Effect
+  surface itself to account: the tags composed as layers, typed failures recovered with `catchTag`,
+  and the scoped registry handle released when its scope closes.
 - Targeted e2e tests own the expensive process/container Seam for full stack startup, parallel
   stacks, daemon lifecycle, and cleanup behavior.
 

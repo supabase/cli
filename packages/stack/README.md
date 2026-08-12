@@ -41,20 +41,60 @@ await stack.dispose();
 
 ### Managed ordinary-folder state
 
+The managed registry is an Effect API. `ManagedStackService` is the policy layer and
+`ManagedStackRepository` is the storage contract; each has layer factories, failures arrive in the
+error channel, and the registry handle is owned by a scope:
+
+```typescript
+import { BunFileSystem } from "@effect/platform-bun";
+import { Effect, Layer } from "effect";
+import {
+  bunSqliteManagedStackRepositoryLayer,
+  managedRegistryPath,
+  ManagedStackService,
+} from "@supabase/stack/managed";
+
+const stateRoot = "/absolute/managed-state";
+const managedLayer = ManagedStackService.make({ stateRoot }).pipe(
+  Layer.provide(bunSqliteManagedStackRepositoryLayer(managedRegistryPath(stateRoot))),
+  Layer.provide(BunFileSystem.layer),
+);
+
+const program = Effect.gen(function* () {
+  const managed = yield* ManagedStackService;
+  const result = yield* managed.provisionOrdinaryStack({
+    workspacePath: "/absolute/project",
+    configuration: {
+      runtimeRequest: "docker",
+      serviceVersions: { postgres: "17.6.1.143" },
+    },
+  });
+  console.log(result.stack.id, result.stack.paths.data);
+}).pipe(
+  // Every method declares the failures it can raise, so recovery is typed.
+  Effect.catchTag("ManagedStackPublicationTimeoutError", (error) =>
+    Effect.sync(() => console.log(`another process never published ${error.stackId}`)),
+  ),
+);
+
+// The layer's scope owns the registry handle, so it closes with the scope.
+await Effect.runPromise(Effect.scoped(Effect.provide(program, managedLayer)));
+```
+
+Callers that do not run an Effect runtime can use the Promise edge over the same layers. It builds
+its runtime eagerly, so `inspectStack` and `listStacks` stay synchronous accessors and a registry
+this process cannot open fails at creation rather than at the first call that touches it:
+
 ```typescript
 import { createManagedStackService } from "@supabase/stack/managed";
 
 const managed = createManagedStackService();
 const result = await managed.provisionOrdinaryStack({
   workspacePath: "/absolute/project",
-  configuration: {
-    runtimeRequest: "docker",
-    serviceVersions: { postgres: "17.6.1.143" },
-  },
 });
 
-console.log(result.stack.id, result.stack.paths.data);
-managed.close();
+console.log(managed.inspectStack(result.stack.id)?.status);
+await managed.close();
 ```
 
 Managed state uses opaque project, checkout, context, and stack UUIDs. A non-Git workspace stores
