@@ -351,6 +351,15 @@ Flag divergences from the Go reference:
 
 Behavioral divergences from the Go reference:
 
+- `db remote changes|commit --password <p>`: since CLI-1970, an explicit
+  `--password` beats the `SUPABASE_DB_PASSWORD` env var. Before the trim, Go's
+  package-wide "last `viper.BindPFlag("DB_PASSWORD", …)` wins" behavior bound
+  the key to `projects create --db-password` (lexically last `cmd/*.go` file),
+  so `db remote`'s own `--password` flag was never the bound instance and env
+  silently won over it — a latent bug. With `projects.go` deleted, the bind
+  lands on `db remote`'s persistent `--password` and flag-beats-env applies as
+  intended. Accepted (not restored) in the CLI-1970 parity audit; `db pull`
+  keeps the old precedence (env wins over its `--password`) unchanged.
 - `services` warns on a malformed linked project ref (matching Go's
   `flags.LoadProjectRef` validation message) but, unlike Go, does not then use
   that ref for the remote lookup. Go's `cmd/services.go` (deleted in CLI-1970;

@@ -109,6 +109,7 @@ This:
 - `db remote changes`, `db remote commit`
 - `gen keys` — kept indefinitely; its planned removal (CLI-1964) was cancelled
 - `functions download` — kept for the hidden `--legacy-bundle` path (CLI-1963)
+- `db schema declarative __catalog` (hidden) and `db start` — the pg-delta seam: the native TS `db schema declarative generate|sync` commands spawn these directly (`legacy-pgdelta.seam.layer.ts`, not `LegacyGoProxy`) to provision the shadow database and export pg-delta catalogs. Only the seam command and its parent group's experimental/pg-delta gate survive in `cmd/db_schema_declarative.go`; the visible Go `sync`/`generate` implementations are deleted
 
 Everything else the original Go CLI implemented was deleted outright from `apps/cli-go/` (CLI-1970), not just excluded from the shipped binary. The reachable set was computed with a `go list -deps -test` fixpoint from the trimmed `main` package, and everything outside it was removed: the main module's first-party package count went from 138 to 37 (101 packages / ~29.5k LOC across 326 files deleted), including every other command's `cmd/*.go` file, `internal/{inspect,storage,sso,login,link,init,bootstrap,migration-squash,migration-up,migration-fetch,...}`, the Go docs generator (`docs/`), `examples/`, and `tools/{jsonschema,shared}`. Counting stdlib and third-party dependencies too, the full dependency closure shrank from 1078 to 959 packages. `pkg/` (a separate, independently tagged/published Go module for external consumers) and `tools/listdep` (used by `cli-go-mirror.yml`) were left untouched.
 
