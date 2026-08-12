@@ -43,35 +43,85 @@ const ERROR_DEFINITION_PATTERN =
 // Removes `//` line comments and `/* */` block comments from a source string
 // so the regex-based scan below never mistakes a comment merely mentioning
 // `class X extends Error` (or a TaggedError example) for a real definition.
-// String and template literals are treated as opaque runs — a `//` or `/*`
-// inside `"https://..."` (or a backtick template) must survive untouched.
-// Stripped comment bytes are replaced with spaces (newlines are preserved)
-// so line numbers and any line-based logic elsewhere stay unaffected. This
-// is a compact scanner, not a full tokenizer: it does not special-case regex
-// literals or `${...}` interpolation inside template literals.
+// String and template literals are masked too — literal TEXT (single-quoted
+// string bodies and the literal runs of a template literal) can never
+// contain a real definition, so it is blanked to spaces just like a
+// comment: `'class Fake extends Error'` must extract nothing, and neither
+// must `` `class Fake extends Error` ``. Double-quoted strings get the same
+// treatment UNLESS they are the direct argument of an `...Error(` call
+// (`TaggedError("Tag")`, `CliError("Tag")`, ...) — that is the one shape
+// ERROR_DEFINITION_PATTERN's own capturing groups read their tag out of, so
+// masking it would blind the scan to every real definition. Template-literal
+// INTERPOLATIONS (`${...}`) are the other exception — they are live code, so
+// they are scanned recursively as code again (comments stripped, nested
+// strings/templates masked, further nested interpolations handled the same
+// way), with brace depth tracked so the interpolation's own `{`/`}` don't get
+// confused with the `}` that closes it. Stripped/masked bytes are replaced
+// with spaces (newlines are preserved) so line numbers and any line-based
+// logic elsewhere stay unaffected. This is a compact scanner, not a full
+// tokenizer: it does not special-case regex literals.
+//
+// A double-quoted string counts as an `...Error(` call argument when the
+// (bounded) text immediately preceding its opening quote ends with
+// `Error(` — optionally followed by whitespace, mirroring the `\(\s*"` the
+// pattern itself requires before the tag.
+const ERROR_CALL_ARGUMENT_LOOKBEHIND = /Error\(\s*$/;
+const ERROR_CALL_ARGUMENT_LOOKBEHIND_WINDOW = 120;
 function stripComments(source: string): string {
+  return scanCode(source, 0, false).out;
+}
+
+// Scans a run of *code* starting at `start`. When `stopAtInterpolationClose`
+// is true, this call represents the inside of a `${...}` and returns as soon
+// as it sees the matching top-level `}` (braces opened inside this same
+// region, e.g. an object literal or block, are tracked and do not trigger an
+// early return). `end` is the index of that terminating `}` (or the source
+// length if the interpolation was left unterminated).
+function scanCode(
+  source: string,
+  start: number,
+  stopAtInterpolationClose: boolean,
+): { out: string; end: number } {
   let out = "";
-  let i = 0;
+  let i = start;
   const n = source.length;
+  let braceDepth = 0;
   while (i < n) {
     const c = source[i];
     const next = source[i + 1];
 
-    if (c === '"' || c === "'" || c === "`") {
-      const quote = c;
+    if (stopAtInterpolationClose && c === "}" && braceDepth === 0) {
+      return { out, end: i };
+    }
+    if (c === "{") {
+      braceDepth += 1;
       out += c;
       i += 1;
-      while (i < n) {
-        const ch = source[i];
-        out += ch;
-        i += 1;
-        if (ch === "\\" && i < n) {
-          out += source[i];
-          i += 1;
-          continue;
-        }
-        if (ch === quote) break;
-      }
+      continue;
+    }
+    if (c === "}") {
+      braceDepth -= 1;
+      out += c;
+      i += 1;
+      continue;
+    }
+
+    if (c === '"' || c === "'") {
+      const precedingWindow = source.slice(
+        Math.max(0, i - ERROR_CALL_ARGUMENT_LOOKBEHIND_WINDOW),
+        i,
+      );
+      const preserveContent = c === '"' && ERROR_CALL_ARGUMENT_LOOKBEHIND.test(precedingWindow);
+      const string = scanQuotedString(source, i, c, preserveContent);
+      out += string.out;
+      i = string.end;
+      continue;
+    }
+
+    if (c === "`") {
+      const template = scanTemplateLiteral(source, i);
+      out += template.out;
+      i = template.end;
       continue;
     }
 
@@ -100,7 +150,76 @@ function stripComments(source: string): string {
     out += c;
     i += 1;
   }
-  return out;
+  return { out, end: i };
+}
+
+// Scans a single/double-quoted string, keeping the quote characters so
+// overall structure survives. Unless `preserveContent` is set (the string is
+// the direct argument of an `...Error(` call — see the note above
+// `stripComments`), the body is masked to spaces so it can never be
+// mistaken for a real definition; an escape sequence (`\x`) is blanked as a
+// pair so line/column-preserving length is unaffected either way.
+function scanQuotedString(
+  source: string,
+  start: number,
+  quote: string,
+  preserveContent: boolean,
+): { out: string; end: number } {
+  let out = quote;
+  let i = start + 1;
+  const n = source.length;
+  while (i < n) {
+    const ch = source[i];
+    if (ch === "\\" && i + 1 < n) {
+      out += preserveContent ? source.slice(i, i + 2) : "  ";
+      i += 2;
+      continue;
+    }
+    if (ch === quote) {
+      out += ch;
+      i += 1;
+      break;
+    }
+    out += preserveContent ? ch : ch === "\n" ? "\n" : " ";
+    i += 1;
+  }
+  return { out, end: i };
+}
+
+// Masks the literal-text runs of a template literal while re-entering code
+// mode for every `${...}` interpolation, recursively.
+function scanTemplateLiteral(source: string, start: number): { out: string; end: number } {
+  let out = "`";
+  let i = start + 1;
+  const n = source.length;
+  while (i < n) {
+    const ch = source[i];
+    if (ch === "\\" && i + 1 < n) {
+      out += "  ";
+      i += 2;
+      continue;
+    }
+    if (ch === "`") {
+      out += ch;
+      i += 1;
+      break;
+    }
+    if (ch === "$" && source[i + 1] === "{") {
+      out += "${";
+      const interpolation = scanCode(source, i + 2, true);
+      out += interpolation.out;
+      if (interpolation.end < n && source[interpolation.end] === "}") {
+        out += "}";
+        i = interpolation.end + 1;
+      } else {
+        i = interpolation.end;
+      }
+      continue;
+    }
+    out += ch === "\n" ? "\n" : " ";
+    i += 1;
+  }
+  return { out, end: i };
 }
 
 function scanErrorTags(root: string): Map<string, Array<string>> {
@@ -176,6 +295,26 @@ describe("stripComments", () => {
       'export class RealTaggedError extends Data.TaggedError("RealTaggedError") {}',
     ].join("\n");
     expect(extractErrorTags(source)).toEqual(["RealTaggedError"]);
+  });
+
+  it("masks a double-quoted string literal so a fake class mentioned inside it is not extracted", () => {
+    const source = 'const x = "class Fake extends Error";';
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+
+  it("masks a single-quoted string literal so a fake class mentioned inside it is not extracted", () => {
+    const source = "const x = 'class Fake extends Error';";
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+
+  it("still strips comments inside a template literal interpolation", () => {
+    const source = "const x = `${/* class Fake extends Error */ value}`;";
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+
+  it("still finds a real definition written inside a template literal interpolation", () => {
+    const source = "const x = `${(class Boom extends Error {}).name}`;";
+    expect(extractErrorTags(source)).toEqual(["Boom"]);
   });
 });
 
