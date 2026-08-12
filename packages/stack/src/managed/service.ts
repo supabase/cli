@@ -10,6 +10,7 @@ import {
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
+  UnsafeManagedStackPathError,
   type ManagedCheckoutLocation,
   type ManagedOperationKind,
   type ManagedOperationRecord,
@@ -198,7 +199,16 @@ export const makeManagedStackService = (
   // Anchored and validated once, at the boundary, through the one resolver that
   // owns state-root policy: a relative root injected here would be reinterpreted
   // against the process' cwd at every later use, and a blank one would anchor
-  // every managed path to it.
+  // every managed path to it. `stateRoot` is required in the option type, but a
+  // caller bypassing the type system (or a plain-JS caller) could still pass
+  // `undefined`, which would make `resolveManagedStateRoot` silently fall back
+  // to `SUPABASE_HOME`/the user's home directory instead of failing loudly.
+  if (options.stateRoot === undefined) {
+    throw new UnsafeManagedStackPathError(
+      String(options.stateRoot),
+      "Refusing to start a managed stack service without an explicit state root",
+    );
+  }
   const stateRoot = resolveManagedStateRoot({ stateRoot: options.stateRoot });
   const idFactory = options.idFactory ?? randomUUID;
   const clock = options.clock ?? (() => new Date());
@@ -238,6 +248,23 @@ export const makeManagedStackService = (
     } catch {
       // Preserve the operation's original failure when ownership changed concurrently.
       return false;
+    }
+  };
+
+  /**
+   * A concurrent forced recovery can resolve this same operation before this
+   * call closes it out, but only after the delete's own data removal already
+   * ran — so the delete is provably done and its ownership race must not be
+   * reported as a failure. Any other error still propagates, since only that
+   * specific race is known to be harmless.
+   */
+  const finishDeleteOperationTolerantly = (stackId: string, operationToken: string): void => {
+    try {
+      options.repository.finishOperation(stackId, operationToken, "completed", now());
+    } catch (error: unknown) {
+      if (!(error instanceof ManagedOperationOwnershipError)) {
+        throw error;
+      }
     }
   };
 
@@ -505,7 +532,7 @@ export const makeManagedStackService = (
         }
         const tombstoned = options.repository.tombstoneStack(stackId, operation.token, now());
         const dataReclamation = await reclaimStackState(tombstoned);
-        options.repository.finishOperation(stackId, operation.token, "completed", now());
+        finishDeleteOperationTolerantly(stackId, operation.token);
         return { outcome: "delete", stack: tombstoned, dataReclamation };
       } catch (error: unknown) {
         finishOperationBestEffort(stackId, operation.token, error);

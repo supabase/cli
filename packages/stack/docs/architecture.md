@@ -351,14 +351,23 @@ namespace. A stored PID that is not a probeable PID counts as no owner at all, b
 walks abandoned claims and when provision decides whether to wait for a publisher, since probing it
 could report a dead owner as alive. Because a PID is not a permanent process identity, callers can request forced recovery
 after trustworthy runtime inspection; this is also the required integration path for a state root
-shared across PID namespaces. Forced recovery requires an exact stack ID and operation token,
-processes only that claim, and bypasses only its PID gate—never runtime inspection. Forced recovery
-and the `startedBefore` age filter are mutually exclusive. Recovery results distinguish live owners,
-unknown or failed liveness/runtime inspection, concurrent skips, reconciliation failures,
-reclaimed tombstones from finished deletions, and post-abort data-reclamation failures. An aborted
-or reclaimed stack ID is reported only after its leaked directory is actually removed; a failed
-removal is reported solely as a data-reclamation failure, so the two lists never claim data is gone
-while it is still on disk. A failed reconciliation of an active stack marks its lifecycle
+shared across PID namespaces. Forced recovery requires an exact stack ID and operation token and
+processes only that claim. It bypasses the PID gate, and tombstoned rows are reclaimed without
+runtime inspection because tombstoning already cleared the runtime metadata an inspector would
+read; forcing a claim whose owner is genuinely still finishing a delete can therefore race it—the
+delete still completes and reports success, but the two processes may both attempt the same
+directory removal. Forced recovery and the `startedBefore` age filter are mutually exclusive.
+Recovery results distinguish live owners, unknown or failed liveness/runtime inspection, concurrent
+skips, reconciliation failures, reclaimed tombstones from finished deletions, and post-abort
+data-reclamation failures. An aborted or reclaimed stack ID is reported only after its leaked
+directory is actually removed, so the two lists never claim data is gone while it is still on disk.
+A failed removal is reported as a data-reclamation failure either way, but the two cases diverge
+afterward: a reclaimed (tombstoned) stack's row survives in the registry, so its removal stays
+retryable through ordinary `deleteStack` idempotency, while a discarded pending stack's row is
+already gone by the time removal is attempted, so a failed removal leaves an orphaned directory
+that is reported once and never revisited automatically—like any other orphan root, there is no
+automatic garbage collection, so it requires manual cleanup. A failed reconciliation of an active
+stack marks its lifecycle
 `failed` before best-effort claim release, preserving the requirement for an explicit stop path
 before deletion. A failed pending-stack adoption retains its claim so a later pass can retry without
 losing potentially live unpublished data. That claim blocks other mutations, including deletion,
