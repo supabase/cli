@@ -9,7 +9,7 @@ Bun monorepo with workspaces under `apps/` and `packages/`.
 ## Workspace Layout
 
 - `apps/cli` — main `supabase` package
-- `apps/cli-go` — frozen source of the old Go CLI, kept only as a read-only parity reference for the TypeScript port; do not modify
+- `apps/cli-go` — the old Go CLI, kept as a parity reference for the TypeScript port; see "Legacy Port Status and Go CLI Authority" in `apps/cli/AGENTS.md` for when it is authoritative
 - `apps/docs` — internal Next.js docs site
 - `packages/api` — typed Supabase Management API client
 - `packages/config` — config schema and generated types
@@ -122,7 +122,7 @@ Use `nx show project <name> --json` to discover available targets before running
 
 ## Pull Requests
 
-The Go → TypeScript port of the CLI is complete, so CLI PRs are TypeScript-only. Stable-channel work goes in `apps/cli/src/legacy/`. Do not include changes to `apps/cli-go/` — the Go tree is frozen and serves only as a read-only parity reference. The old dual flow of landing a change in both the Go and TypeScript CLIs is retired.
+The Go → TypeScript port of the CLI is essentially complete, and the old dual flow of landing a change in both the Go and TypeScript CLIs is retired: CLI PRs are TypeScript-only, with stable-channel work going in `apps/cli/src/legacy/`. New CLI work does not land in `apps/cli-go/` — it is kept as a parity reference; see "Legacy Port Status and Go CLI Authority" in `apps/cli/AGENTS.md` for the narrow cases where it must be consulted.
 
 PR titles must follow conventional-commits format because the `Lint Pull Request` workflow runs `amannn/action-semantic-pull-request` against the title. Use `<type>(<scope>): <subject>` (e.g. `fix(cli): …`, `test(cli): …`, `feat(api): …`). A bare descriptive title like "Build TypeScript CLI as compiled Bun binaries" will fail the lint. When a PR is created (including by the Claude Code UI or someone else), check the title against this rule and update it if needed.
 Avoid semantic-release-triggering types for non-release changes. For CI, docs, tests, tooling, agent instructions, and other repository-maintenance changes, do not use `fix`, `feat`, `perf`, or breaking-change markers just to satisfy the PR title linter. Prefer non-releasing conventional types such as `chore`, `docs`, `test`, or `ci` when the change should not produce a package release.

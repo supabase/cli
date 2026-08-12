@@ -230,4 +230,4 @@ SUPABASE_GO_BINARY=/tmp/supabase-test-binary \
 
 `SUPABASE_GO_BINARY` is inherited by the ts-legacy subprocess via `exec()` in the harness, so you only need to set it once in the shell.
 
-The Go → TS port is complete and `apps/cli-go/` is frozen, so no new Go-only commands will appear — the set of proxied commands only shrinks as the remaining ones are ported natively. (The `telemetry` commands that originally motivated this section are now native TypeScript.)
+New commands no longer land in the Go CLI, so the set of proxied commands only shrinks as the remaining ones are ported natively — see the [Legacy Shell Command Status table](../cli/docs/go-cli-porting-status.md#legacy-shell-command-status) for what is still `wrapped`. (The `telemetry` commands that originally motivated this section are now native TypeScript.)

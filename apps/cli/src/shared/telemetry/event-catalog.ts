@@ -1,10 +1,9 @@
-// CLI telemetry catalog. Mirrors the frozen Go catalog
-// (apps/cli-go/internal/telemetry/events.go) 1:1 so legacy/ ports send
-// byte-identical PostHog payloads. The Go tree no longer changes; this
-// file is the canonical catalog going forward. The failure-classification
-// properties below (error_kind … workflow) are TS-only: the native shells
-// classify failures (CLI-1561) and the Go binary never emits these fields, so
-// they are deliberately absent from the Go catalog.
+// CLI telemetry catalog. Mirrors apps/cli-go/internal/telemetry/events.go
+// 1:1 so legacy/ ports send byte-identical PostHog payloads. The Go catalog
+// is no longer updated — new events are added here, on the TS side only. The
+// failure-classification properties below (error_kind … workflow) are TS-only:
+// the native shells classify failures (CLI-1561) and the Go binary never emits
+// these fields, so they are deliberately absent from the Go catalog.
 
 export const EventCommandExecuted = "cli_command_executed";
 export const EventProjectLinked = "cli_project_linked";
