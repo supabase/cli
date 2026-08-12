@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, Layer, Option, Stream } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, Option, Stream } from "effect";
 import { badArgument } from "effect/PlatformError";
 
 import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
@@ -21,6 +21,28 @@ interface SetupOpts {
   readonly format?: OutputFormat;
   readonly isTTY?: boolean;
   readonly piped?: string;
+  readonly openDoesNotMaterialize?: boolean;
+  readonly writeDoesNotMaterialize?: boolean;
+}
+
+function nonMaterializingFsLayer(
+  workdir: string,
+  opts: Pick<SetupOpts, "openDoesNotMaterialize" | "writeDoesNotMaterialize">,
+): Layer.Layer<FileSystem.FileSystem> {
+  return Layer.effect(
+    FileSystem.FileSystem,
+    Effect.map(FileSystem.FileSystem, (real) =>
+      FileSystem.FileSystem.of({
+        ...real,
+        open: (path, options) =>
+          opts.openDoesNotMaterialize === true
+            ? real.open(join(workdir, ".deferred-open"), options)
+            : real.open(path, options),
+        writeFile: (path, data, options) =>
+          opts.writeDoesNotMaterialize === true ? Effect.void : real.writeFile(path, data, options),
+      }),
+    ),
+  ).pipe(Layer.provide(BunServices.layer));
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -32,6 +54,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockStdin(opts.isTTY ?? true, opts.piped),
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
+    ...(opts.openDoesNotMaterialize === true || opts.writeDoesNotMaterialize === true
+      ? [nonMaterializingFsLayer(workdir, opts)]
+      : []),
   );
   return { layer, out, telemetry };
 }
@@ -82,6 +107,39 @@ describe("legacy migration new", () => {
       yield* legacyMigrationNew({ migrationName: "empty_pipe" });
       const file = onlyMigration(tmp.current);
       expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("materializes the migration without relying on an open handle", () => {
+    const { layer } = setup(tmp.current, { openDoesNotMaterialize: true });
+    return Effect.gen(function* () {
+      yield* legacyMigrationNew({ migrationName: "windows_open" });
+      const file = onlyMigration(tmp.current);
+      expect(readFileSync(join(migrationsDir(tmp.current), file), "utf8")).toBe("");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not report success when the migration is not materialized", () => {
+    const { layer, out, telemetry } = setup(tmp.current, {
+      openDoesNotMaterialize: true,
+      writeDoesNotMaterialize: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyMigrationNew({ migrationName: "missing" }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const failure = Cause.findErrorOption(exit.cause);
+        expect(Option.isSome(failure)).toBe(true);
+        if (Option.isSome(failure)) {
+          expect(failure.value).toBeInstanceOf(LegacyMigrationNewWriteError);
+          if (failure.value instanceof LegacyMigrationNewWriteError) {
+            expect(failure.value.message).toContain("failed to verify migration file");
+          }
+        }
+      }
+      expect(readdirSync(migrationsDir(tmp.current))).toEqual([]);
+      expect(out.stdoutText).toBe("");
+      expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
