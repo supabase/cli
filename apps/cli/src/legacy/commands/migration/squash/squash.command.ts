@@ -30,6 +30,11 @@ const config = {
     Flag.withDescription("Password to your remote Postgres database."),
     Flag.optional,
   ),
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
 } as const;
 
 export type LegacyMigrationSquashFlags = CliCommand.Command.Config.Infer<typeof config>;
@@ -47,9 +52,11 @@ export const legacyMigrationSquashCommand = Command.make("squash", config).pipe(
           local: flags.local,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
+          "project-ref": flags.projectRef,
         },
         // Go's `markFlagTelemetrySafe(migration.go:134)` — only `--version`'s value is
-        // recorded verbatim.
+        // recorded verbatim. `--project-ref` is TS-only with no Go telemetry-safety baseline;
+        // Go's nearest --project-ref registrations are unmarked, so it stays redacted.
         safeFlags: ["version"],
         aliases: { p: "password" },
       }),
