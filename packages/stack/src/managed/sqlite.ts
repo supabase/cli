@@ -30,6 +30,7 @@ import type {
   UpdateManagedStackInput,
 } from "./repository.ts";
 import {
+  assertManagedOwnerPid,
   assertManagedStackUpdatable,
   managedStackOccupiesPorts,
   reconcileManagedPortAssignments,
@@ -490,8 +491,9 @@ const replacePorts = (
 const claimOperation = (
   database: ManagedSqliteDatabase,
   input: ClaimManagedOperationInput,
-): ClaimManagedOperationResult =>
-  transaction(database, () => {
+): ClaimManagedOperationResult => {
+  assertManagedOwnerPid(input.ownerPid);
+  return transaction(database, () => {
     requireStack(database, input.stackId);
     const active = getActiveOperation(database, input.stackId);
     if (active !== undefined) {
@@ -510,6 +512,7 @@ const claimOperation = (
     }
     return { acquired: true, operation };
   });
+};
 
 const insertConfiguration = (
   database: ManagedSqliteDatabase,
@@ -563,6 +566,7 @@ export const createSqliteManagedStackRepository = (
 
   return {
     prepareOrdinaryStack(input): PrepareOrdinaryStackResult {
+      assertManagedOwnerPid(input.ownerPid);
       return transaction(database, () => {
         database
           .prepare("INSERT OR IGNORE INTO projects (id, created_at) VALUES (?, ?)")
@@ -770,15 +774,19 @@ export const createSqliteManagedStackRepository = (
       });
     },
     listActiveOperations(startedBefore) {
+      // The token tie-break keeps claims that share one `startedAt` in a
+      // defined order instead of whatever order the sorter happens to emit.
       const rows =
         startedBefore === undefined
           ? database
-              .prepare("SELECT * FROM operations WHERE status = 'active' ORDER BY started_at")
+              .prepare(
+                "SELECT * FROM operations WHERE status = 'active' ORDER BY started_at, token",
+              )
               .all()
           : database
               .prepare(
                 `SELECT * FROM operations
-                 WHERE status = 'active' AND started_at < ? ORDER BY started_at`,
+                 WHERE status = 'active' AND started_at < ? ORDER BY started_at, token`,
               )
               .all([startedBefore]);
       return rows.map(decodeOperation);

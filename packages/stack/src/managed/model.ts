@@ -237,8 +237,17 @@ export class ManagedRunningStackPortChangeError extends ManagedStackError {
 export class UnsafeManagedStackPathError extends ManagedStackError {
   readonly code = "UNSAFE_MANAGED_STACK_PATH";
 
-  constructor(readonly path: string) {
-    super(`Refusing to remove an unsafe managed stack path: ${path}`);
+  /**
+   * The refused path is quoted rather than interpolated bare: the values worth
+   * refusing include blank and whitespace-only ones, which would otherwise
+   * render as an empty message tail. `reason` names which refusal this is,
+   * since the same coded failure guards both stack removal and state roots.
+   */
+  constructor(
+    readonly path: string,
+    reason = "Refusing to remove an unsafe managed stack path",
+  ) {
+    super(`${reason}: ${JSON.stringify(path)}`);
     this.name = "UnsafeManagedStackPathError";
   }
 }

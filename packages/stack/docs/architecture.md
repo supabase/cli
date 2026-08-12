@@ -287,7 +287,10 @@ branch on failures without requiring an Effect runtime at this persistence bound
 The managed surface owns a versioned SQLite registry with separate records for projects,
 checkouts, checkout locations, development contexts, stacks, port reservations, and operations.
 The public repository contract contains no SQLite types, so the same service runs with the
-in-memory test repository and the Node or Bun persistent Adapter.
+in-memory test repository and the Node or Bun persistent Adapter. Both adapters owe identical
+observable semantics, so record ordering — port assignments by key, active operations by start time
+then operation token — and input validation such as refusing an operation owner PID that could never
+be probed live in shared helpers rather than in either adapter.
 
 For an ordinary non-Git folder, the first mutating managed operation atomically publishes:
 
@@ -322,7 +325,9 @@ Schema v3 intentionally has no migration path for this unreleased POC. Before fi
 developers holding any earlier `registry-v*.sqlite3` must remove the old managed state root,
 including its shared `stacks/` directory; registry generations must not be kept side by side.
 The state root is required to be a non-empty path wherever it is passed explicitly, so a blank
-value fails instead of silently anchoring managed state to the process' working directory.
+value fails instead of silently anchoring managed state to the process' working directory. An
+explicit root is a decision and a blank one is a caller bug; a blank environment value is instead
+treated as unset and falls through to the next source.
 Recovery can also leave an
 unregistered UUID stack root when a provisioner writes after its pending row was concurrently
 aborted. The provision error reports the failed ownership cleanup, but there is no automatic orphan
@@ -334,19 +339,26 @@ Concurrent callers resolve the published record rather than creating aliases. Re
 retains claims whose owner process is still alive. Once an owner is gone, runtime inspection either
 publishes a running pending stack or aborts a stopped pending stack so the same identity can retry.
 An abandoned claim over an already tombstoned row is a deletion that died before releasing it:
-recovery finishes that deletion instead of reconciling a lifecycle. It never revives the row and
+recovery finishes that deletion instead of reconciling a lifecycle, without consulting runtime
+inspection at all. Tombstoning already zeroed the runtime metadata an inspector would read, so
+requiring an answer there would retain every crashed deletion forever. It never revives the row and
 never drops the tombstone, since idempotent deletion depends on it; it releases the claim and
 reclaims the leaked stack directory, reporting a failed removal like any other reclamation failure.
 Reconciliation is therefore repeatable: a second pass over the same crashed deletion is a no-op.
 Ownership races are isolated per operation so one completed claim does not stop the recovery pass.
 PID liveness is deliberately conservative and assumes the managed root stays within one host PID
-namespace. Because a PID is not a permanent process identity, callers can request forced recovery
+namespace. A stored PID that is not a probeable PID counts as no owner at all, both when recovery
+walks abandoned claims and when provision decides whether to wait for a publisher, since probing it
+could report a dead owner as alive. Because a PID is not a permanent process identity, callers can request forced recovery
 after trustworthy runtime inspection; this is also the required integration path for a state root
 shared across PID namespaces. Forced recovery requires an exact stack ID and operation token,
 processes only that claim, and bypasses only its PID gate—never runtime inspection. Forced recovery
 and the `startedBefore` age filter are mutually exclusive. Recovery results distinguish live owners,
 unknown or failed liveness/runtime inspection, concurrent skips, reconciliation failures,
-reclaimed tombstones from finished deletions, and post-abort data-reclamation failures. A failed reconciliation of an active stack marks its lifecycle
+reclaimed tombstones from finished deletions, and post-abort data-reclamation failures. An aborted
+or reclaimed stack ID is reported only after its leaked directory is actually removed; a failed
+removal is reported solely as a data-reclamation failure, so the two lists never claim data is gone
+while it is still on disk. A failed reconciliation of an active stack marks its lifecycle
 `failed` before best-effort claim release, preserving the requirement for an explicit stop path
 before deletion. A failed pending-stack adoption retains its claim so a later pass can retry without
 losing potentially live unpublished data. That claim blocks other mutations, including deletion,

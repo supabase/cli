@@ -1,9 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, rm } from "node:fs/promises";
-import { resolve } from "node:path";
 import {
   DEFAULT_MANAGED_STACK_NAME,
-  InvalidManagedOwnerPidError,
   InvalidManagedStackNameError,
   ManagedAbandonedOperationError,
   ManagedOperationInProgressError,
@@ -12,7 +10,6 @@ import {
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
-  UnsafeManagedStackPathError,
   type ManagedCheckoutLocation,
   type ManagedOperationKind,
   type ManagedOperationRecord,
@@ -28,9 +25,13 @@ import {
   readOrdinaryWorkspaceIdentity,
 } from "./identity.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
-import { assertManagedStackRoot, managedStackPaths } from "./paths.ts";
+import { assertManagedStackRoot, managedStackPaths, resolveManagedStateRoot } from "./paths.ts";
 import { errorCode } from "./error-code.ts";
-import type { ManagedStackRepository } from "./repository.ts";
+import {
+  assertManagedOwnerPid,
+  isUsableManagedOwnerPid,
+  type ManagedStackRepository,
+} from "./repository.ts";
 
 export interface ManagedStackServiceOptions {
   readonly repository: ManagedStackRepository;
@@ -113,12 +114,18 @@ export interface ManagedOperationRecoveryFailure {
 
 export interface ReconcileAbandonedOperationsResult {
   readonly recovered: ReadonlyArray<ManagedStackRecord>;
+  /**
+   * Discarded pending stacks whose leaked provisioning data was removed. A stack
+   * whose removal failed is reported under `failures` with the
+   * `state-reclamation` phase instead, never here: this list means the data is
+   * gone.
+   */
   readonly abortedStackIds: ReadonlyArray<string>;
   /**
-   * Tombstoned stacks whose abandoned deletion recovery finished. The registry
+   * Tombstoned stacks whose abandoned deletion recovery finished, with the same
+   * removal-succeeded guarantee as {@link abortedStackIds}. The registry
    * tombstone is deliberately preserved so repeated deletion stays idempotent;
-   * only the leaked stack directory was reclaimed, and a reclamation failure is
-   * reported under `failures` with the `state-reclamation` phase.
+   * only the leaked stack directory is reclaimed.
    */
   readonly reclaimedStackIds: ReadonlyArray<string>;
   readonly retained: ReadonlyArray<RetainedManagedOperation>;
@@ -174,7 +181,7 @@ const stackNamePattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
  * must never be asked about a value that is not a pid — `kill(0, 0)` signals
  * the caller's own process group, and a fractional pid throws, either of which
  * would report a dead owner as alive and wedge recovery forever. Callers
- * therefore filter pids through {@link isUsableOwnerPid} first.
+ * therefore filter pids through {@link isUsableManagedOwnerPid} first.
  */
 const processIsAlive = (pid: number): boolean => {
   try {
@@ -185,38 +192,20 @@ const processIsAlive = (pid: number): boolean => {
   }
 };
 
-const isUsableOwnerPid = (ownerPid: number): boolean =>
-  Number.isSafeInteger(ownerPid) && ownerPid > 0;
-
-const requireOwnerPid = (ownerPid: number): number => {
-  if (!isUsableOwnerPid(ownerPid)) {
-    throw new InvalidManagedOwnerPidError(ownerPid);
-  }
-  return ownerPid;
-};
-
-/**
- * The state root is a required option here, so a blank one is a caller bug
- * rather than a request for the default: silently resolving it would anchor
- * every managed path to the process' working directory.
- */
-const requireManagedStateRoot = (stateRoot: string): string => {
-  const trimmed = stateRoot.trim();
-  if (trimmed.length === 0) {
-    throw new UnsafeManagedStackPathError(stateRoot);
-  }
-  return resolve(trimmed);
-};
-
 export const makeManagedStackService = (
   options: ManagedStackServiceOptions,
 ): ManagedStackService => {
-  // Anchored once, at the boundary: a relative root injected here would be
-  // reinterpreted against the process' cwd at every later use.
-  const stateRoot = requireManagedStateRoot(options.stateRoot);
+  // Anchored and validated once, at the boundary, through the one resolver that
+  // owns state-root policy: a relative root injected here would be reinterpreted
+  // against the process' cwd at every later use, and a blank one would anchor
+  // every managed path to it.
+  const stateRoot = resolveManagedStateRoot({ stateRoot: options.stateRoot });
   const idFactory = options.idFactory ?? randomUUID;
   const clock = options.clock ?? (() => new Date());
-  const ownerPid = options.ownerPid === undefined ? process.pid : requireOwnerPid(options.ownerPid);
+  // Validated here as well as in the repository: the pid is this service's own
+  // option, so the failure belongs to the caller that supplied it.
+  assertManagedOwnerPid(options.ownerPid);
+  const ownerPid = options.ownerPid ?? process.pid;
   const publicationTimeoutMs = options.publicationTimeoutMs ?? 10_000;
   const publicationPollMs = options.publicationPollMs ?? 10;
   const isProcessAlive = options.isProcessAlive ?? processIsAlive;
@@ -290,11 +279,15 @@ export const makeManagedStackService = (
     return claimed.operation;
   };
 
+  // Publication normally lands within the first poll, so start tight and back
+  // off: a slow publisher must not be polled hundreds of times per second for
+  // the whole timeout window. The ceiling only ever slows polling down, so a
+  // caller asking for a slower interval than the ceiling keeps its own.
+  const backOffPublicationPoll = (pollMs: number): number =>
+    Math.min(pollMs * 2, Math.max(MAX_PUBLICATION_POLL_MS, publicationPollMs));
+
   const awaitPublication = async (pending: ManagedStackRecord): Promise<ManagedStackRecord> => {
     const deadline = performance.now() + publicationTimeoutMs;
-    // Publication normally lands within the first poll, so start tight and back
-    // off: a slow publisher must not be polled hundreds of times per second for
-    // the whole timeout window.
     let pollMs = publicationPollMs;
     while (performance.now() <= deadline) {
       const current = options.repository.getStack(pending.id);
@@ -307,8 +300,10 @@ export const makeManagedStackService = (
       if (current.status === "tombstoned") {
         throw new ManagedStackNotFoundError(current.id);
       }
-      await wait(pollMs);
-      pollMs = Math.min(pollMs * 2, MAX_PUBLICATION_POLL_MS);
+      // Never sleep past the deadline: the timeout is the caller's bound, not a
+      // floor a long poll interval may overshoot by a whole interval.
+      await wait(Math.max(Math.min(pollMs, deadline - performance.now()), 0));
+      pollMs = backOffPublicationPoll(pollMs);
     }
     throw new ManagedStackPublicationTimeoutError(pending.id);
   };
@@ -389,8 +384,12 @@ export const makeManagedStackService = (
         if (prepared.operation === undefined) {
           throw new ManagedAbandonedOperationError(prepared.stack.id);
         }
+        // A stored pid that is not a usable pid means there is no owner to wait
+        // for, exactly as a missing one does: probing it could report a dead
+        // publisher as alive and make this caller wait out the whole
+        // publication timeout instead of reporting the abandoned claim.
         if (
-          prepared.operation.ownerPid === undefined ||
+          !isUsableManagedOwnerPid(prepared.operation.ownerPid) ||
           !(await isProcessAlive(prepared.operation.ownerPid))
         ) {
           throw new ManagedAbandonedOperationError(prepared.stack.id);
@@ -539,11 +538,7 @@ export const makeManagedStackService = (
         // A persisted pid that is not a usable pid is treated as no owner at
         // all: asking the liveness probe about it could report a live owner and
         // wedge this claim forever, which is the failure recovery exists to fix.
-        if (
-          forcedOperation === undefined &&
-          operation.ownerPid !== undefined &&
-          isUsableOwnerPid(operation.ownerPid)
-        ) {
+        if (forcedOperation === undefined && isUsableManagedOwnerPid(operation.ownerPid)) {
           try {
             if (await isProcessAlive(operation.ownerPid)) {
               retained.push({ operation, reason: "owner-alive" });
@@ -561,18 +556,26 @@ export const makeManagedStackService = (
             skippedOperationIds.push(operation.token);
             continue;
           }
-          let actual: "running" | "stopped" | "unknown";
-          try {
-            actual = await reconcileOptions.inspectRuntime(stack, operation);
-          } catch (error: unknown) {
-            retained.push({ operation, reason: "runtime-inspection-failed", error });
-            continue;
+          // A tombstoned row is a deletion that died before releasing its claim.
+          // Its registry state is already final, so `reconcileOperation` ignores
+          // the lifecycle for it — and tombstoning zeroed the runtime metadata an
+          // inspector would need, so asking could only answer "unknown" and leak
+          // the stack directory forever.
+          let lifecycle: ManagedStackLifecycle = "stopped";
+          if (stack.status !== "tombstoned") {
+            let actual: "running" | "stopped" | "unknown";
+            try {
+              actual = await reconcileOptions.inspectRuntime(stack, operation);
+            } catch (error: unknown) {
+              retained.push({ operation, reason: "runtime-inspection-failed", error });
+              continue;
+            }
+            if (actual === "unknown") {
+              retained.push({ operation, reason: "runtime-unknown" });
+              continue;
+            }
+            lifecycle = actual === "running" ? "running" : "stopped";
           }
-          if (actual === "unknown") {
-            retained.push({ operation, reason: "runtime-unknown" });
-            continue;
-          }
-          const lifecycle: ManagedStackLifecycle = actual === "running" ? "running" : "stopped";
           const reconciled = options.repository.reconcileOperation(
             stack.id,
             operation.token,
@@ -585,13 +588,15 @@ export const makeManagedStackService = (
             // Both remaining outcomes leave state on disk that no registry row
             // will ever point at again: a discarded pending stack's partial
             // provisioning, or the data a crashed deletion never got to remove.
-            if (reconciled.outcome === "discarded") {
-              abortedStackIds.push(stack.id);
-            } else {
-              reclaimedStackIds.push(stack.id);
-            }
+            // The stack is reported under either id list only once that data is
+            // actually gone; otherwise the removal failure is the whole report.
             try {
               await removeStackState(stack);
+              if (reconciled.outcome === "discarded") {
+                abortedStackIds.push(stack.id);
+              } else {
+                reclaimedStackIds.push(stack.id);
+              }
             } catch (error: unknown) {
               failures.push({
                 operation,

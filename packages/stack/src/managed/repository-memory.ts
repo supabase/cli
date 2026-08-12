@@ -10,6 +10,7 @@ import {
   type ManagedStackRecord,
 } from "./model.ts";
 import {
+  assertManagedOwnerPid,
   assertManagedStackUpdatable,
   compareManagedText,
   managedStackOccupiesPorts,
@@ -186,6 +187,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
   };
 
   const claimOperation = (input: ClaimManagedOperationInput): ClaimManagedOperationResult => {
+    assertManagedOwnerPid(input.ownerPid);
     requireStack(input.stackId);
     const activeToken = activeOperationByStack.get(input.stackId);
     if (activeToken !== undefined) {
@@ -210,6 +212,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
 
   return {
     prepareOrdinaryStack(input) {
+      assertManagedOwnerPid(input.ownerPid);
       return atomic(() => {
         projects.add(input.identity.projectId);
         const checkout = checkouts.get(input.identity.checkoutId);
@@ -382,14 +385,22 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepository =
       return copy(next);
     },
     listActiveOperations(startedBefore) {
-      return [...activeOperationByStack.values()]
-        .flatMap((token) => {
-          const operation = operations.get(token);
-          return operation === undefined ? [] : [operation];
-        })
-        .filter((operation) => startedBefore === undefined || operation.startedAt < startedBefore)
-        .sort((left, right) => compareManagedText(left.startedAt, right.startedAt))
-        .map(copy);
+      return (
+        [...activeOperationByStack.values()]
+          .flatMap((token) => {
+            const operation = operations.get(token);
+            return operation === undefined ? [] : [operation];
+          })
+          .filter((operation) => startedBefore === undefined || operation.startedAt < startedBefore)
+          // Recovery walks this list, so claims sharing one `startedAt` must not
+          // fall back to insertion order: the token breaks the tie in both adapters.
+          .sort(
+            (left, right) =>
+              compareManagedText(left.startedAt, right.startedAt) ||
+              compareManagedText(left.token, right.token),
+          )
+          .map(copy)
+      );
     },
     reconcileOperation(stackId, operationToken, lifecycle, now) {
       const operation = requireOwnedOperation(stackId, operationToken);

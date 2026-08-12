@@ -15,6 +15,14 @@ const nonEmpty = (value: string | undefined): string | undefined => {
   return trimmed === undefined || trimmed.length === 0 ? undefined : trimmed;
 };
 
+const requireManagedStateRoot = (stateRoot: string): string => {
+  const trimmed = nonEmpty(stateRoot);
+  if (trimmed === undefined) {
+    throw new UnsafeManagedStackPathError(stateRoot, "Refusing a blank managed state root");
+  }
+  return resolve(trimmed);
+};
+
 /**
  * Every caller- or environment-supplied root is anchored to the working
  * directory once, here. A relative root would otherwise be reinterpreted
@@ -23,14 +31,16 @@ const nonEmpty = (value: string | undefined): string | undefined => {
  * {@link assertManagedStackRoot} accept a same-shaped path under the new cwd.
  * `homedir()` is absolute by definition and needs no anchoring.
  *
- * A blank explicit root is treated as unset rather than resolved: `resolve("")`
- * silently yields the process' working directory, which would scatter managed
- * state across whatever directory a caller happened to start in.
+ * An explicit root is a decision, so a blank one is a caller bug and fails
+ * rather than falling back: `resolve("")` silently yields the process' working
+ * directory, which would scatter managed state across whatever directory a
+ * caller happened to start in. Environment values are configuration that may
+ * legitimately be present but empty, so a blank one is treated as unset and
+ * falls through to the next source.
  */
 export const resolveManagedStateRoot = (options: ManagedStateRootOptions = {}): string => {
-  const requested = nonEmpty(options.stateRoot);
-  if (requested !== undefined) {
-    return resolve(requested);
+  if (options.stateRoot !== undefined) {
+    return requireManagedStateRoot(options.stateRoot);
   }
 
   const env = options.env ?? process.env;

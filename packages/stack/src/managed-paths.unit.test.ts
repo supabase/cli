@@ -107,22 +107,28 @@ describe("managed paths", () => {
     ).toBe(join(resolve("relative/state"), "supabase", "managed"));
   });
 
-  it("treats a blank explicit state root as unset", () => {
+  it("refuses a blank explicit state root instead of falling back", () => {
     // `resolve("")` silently yields the process' cwd, which would scatter
     // managed state across whatever directory the caller happened to run in.
+    // An explicit root is a decision, so a blank one is a caller bug rather
+    // than a request for the default — the same policy the service applies.
     for (const stateRoot of ["", "   ", "\t"]) {
-      expect(
+      expect(() =>
         resolveManagedStateRoot({ stateRoot, env: {}, homeDir: "/home/user", platform: "linux" }),
-      ).toBe("/home/user/.local/state/supabase/managed");
+      ).toThrow(UnsafeManagedStackPathError);
     }
-    expect(
+    expect(() =>
       resolveManagedStateRoot({
         stateRoot: "",
         env: { SUPABASE_HOME: "/configured/supabase" },
         homeDir: "/home/user",
         platform: "linux",
       }),
-    ).toBe("/configured/supabase/managed");
+    ).toThrow(UnsafeManagedStackPathError);
+  });
+
+  it("names the blank root it refused instead of an empty message tail", () => {
+    expect(() => resolveManagedStateRoot({ stateRoot: "\t" })).toThrow(/"\\t"/);
   });
 
   it("trims surrounding whitespace from an explicit state root", () => {

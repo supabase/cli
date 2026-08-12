@@ -7,15 +7,8 @@ import {
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
+import { errorCode } from "./error-code.ts";
 import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
-
-const errorCode = (error: unknown): string | undefined => {
-  if (typeof error !== "object" || error === null) {
-    return undefined;
-  }
-  const code = Reflect.get(error, "code");
-  return typeof code === "string" ? code : undefined;
-};
 
 const identityField = (value: unknown, field: string): string => {
   if (typeof value !== "object" || value === null) {

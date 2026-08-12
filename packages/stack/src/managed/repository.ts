@@ -1,4 +1,5 @@
 import {
+  InvalidManagedOwnerPidError,
   InvalidManagedPortError,
   ManagedPendingStackUpdateError,
   ManagedPortReservationError,
@@ -103,6 +104,28 @@ export const managedStackOccupiesPorts = (lifecycle: ManagedStackLifecycle): boo
   lifecycle === "running" || lifecycle === "starting" || lifecycle === "stopping";
 
 /**
+ * An operation's owner pid is only useful because recovery asks the operating
+ * system whether that process is still alive, and a value that is not a pid
+ * cannot be asked about: `kill(0, 0)` signals the caller's own process group
+ * and a fractional pid throws, either of which would report a dead owner as
+ * alive and wedge the claim forever. `undefined` is a valid answer — it records
+ * that no owner is known — so it is not usable, but it is not invalid either.
+ */
+export const isUsableManagedOwnerPid = (ownerPid: number | undefined): ownerPid is number =>
+  ownerPid !== undefined && Number.isSafeInteger(ownerPid) && ownerPid > 0;
+
+/**
+ * Rejects a pid that could never be probed, at the boundary that would persist
+ * it. Shared so both adapters refuse the same inputs and no registry row can
+ * carry a pid that recovery cannot reason about.
+ */
+export const assertManagedOwnerPid = (ownerPid: number | undefined): void => {
+  if (ownerPid !== undefined && !isUsableManagedOwnerPid(ownerPid)) {
+    throw new InvalidManagedOwnerPidError(ownerPid);
+  }
+};
+
+/**
  * Ordering shared by both adapters. SQLite compares TEXT with BINARY
  * collation, so the in-memory repository must compare code points too:
  * `localeCompare` folds case and would disagree on mixed-case paths.
@@ -157,12 +180,17 @@ export const reconcileManagedPortAssignments = (
   }
   validateManagedPortAssignments(stack.id, requested);
   const persisted = new Map(stack.ports.map((assignment) => [assignment.key, assignment]));
-  const reconciled = requested.map((assignment) => {
-    const current = persisted.get(assignment.key);
-    return assignment.intent === "automatic" && current !== undefined
-      ? { ...assignment, port: current.port }
-      : assignment;
-  });
+  // Sorted by key here, in the shared reconciler: SQLite reads its port rows
+  // back with `ORDER BY key`, so leaving the caller's request order in place
+  // would make the same request produce differently ordered records per adapter.
+  const reconciled = requested
+    .map((assignment) => {
+      const current = persisted.get(assignment.key);
+      return assignment.intent === "automatic" && current !== undefined
+        ? { ...assignment, port: current.port }
+        : assignment;
+    })
+    .sort((left, right) => compareManagedText(left.key, right.key));
   if (
     managedStackOccupiesPorts(stack.lifecycle) &&
     managedStackOccupiesPorts(targetLifecycle) &&

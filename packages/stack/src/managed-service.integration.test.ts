@@ -25,6 +25,7 @@ import {
   InvalidManagedIdentityError,
   MANAGED_REGISTRY_SCHEMA_VERSION,
   InvalidManagedOwnerPidError,
+  ManagedAbandonedOperationError,
   InvalidManagedPortError,
   InvalidManagedStackNameError,
   ManagedPendingStackUpdateError,
@@ -504,6 +505,82 @@ describe("ordinary-folder managed stack contract", () => {
       service.provisionOrdinaryStack({ workspacePath: workspace }),
     ).rejects.toBeInstanceOf(ManagedStackPublicationTimeoutError);
     expect(service.listStacks()).toHaveLength(1);
+    service.close();
+  });
+
+  it.each([0, -1, 1.5])(
+    "reports an abandoned claim instead of waiting on a corrupt stored owner pid %s",
+    async (ownerPid) => {
+      // A stored pid that is not a pid cannot be asked about: `kill(0, 0)`
+      // signals the caller's own process group and a fractional pid throws,
+      // either of which would report a dead owner as alive and make provision
+      // wait out the whole publication timeout for a publisher that is gone.
+      const root = makeRoot();
+      const workspace = makeWorkspace(root);
+      const repository = createInMemoryManagedStackRepository();
+      let livenessProbes = 0;
+      const corruptedRepository: ManagedStackRepository = {
+        ...repository,
+        prepareOrdinaryStack(input) {
+          const prepared = repository.prepareOrdinaryStack(input);
+          return prepared.outcome === "existing" && prepared.operation !== undefined
+            ? { ...prepared, operation: { ...prepared.operation, ownerPid } }
+            : prepared;
+        },
+      };
+      const service = makeManagedStackService({
+        repository: corruptedRepository,
+        stateRoot: join(root, "managed"),
+        publicationTimeoutMs: 5_000,
+        publicationPollMs: 1,
+        isProcessAlive: () => {
+          livenessProbes += 1;
+          return true;
+        },
+      });
+      await prepareAbandonedStack(service, workspace, process.pid);
+      const startedAt = performance.now();
+
+      await expect(
+        service.provisionOrdinaryStack({ workspacePath: workspace }),
+      ).rejects.toBeInstanceOf(ManagedAbandonedOperationError);
+
+      expect(livenessProbes).toBe(0);
+      expect(performance.now() - startedAt).toBeLessThan(1_000);
+      service.close();
+    },
+  );
+
+  it("keeps polling at a configured interval slower than the internal backoff ceiling", async () => {
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const repository = createInMemoryManagedStackRepository();
+    const pollTimes: Array<number> = [];
+    const observedRepository: ManagedStackRepository = {
+      ...repository,
+      getStack(stackId) {
+        pollTimes.push(performance.now());
+        return repository.getStack(stackId);
+      },
+    };
+    const service = makeManagedStackService({
+      repository: observedRepository,
+      stateRoot: join(root, "managed"),
+      publicationTimeoutMs: 1_600,
+      publicationPollMs: 400,
+      isProcessAlive: () => true,
+    });
+    await prepareAbandonedStack(service, workspace, process.pid);
+
+    await expect(
+      service.provisionOrdinaryStack({ workspacePath: workspace }),
+    ).rejects.toBeInstanceOf(ManagedStackPublicationTimeoutError);
+
+    // The backoff ceiling must never poll a publisher faster than the caller
+    // asked for; only the last wait may be shortened, by the deadline.
+    expect(pollTimes.length).toBeGreaterThanOrEqual(3);
+    const gaps = pollTimes.slice(1).map((time, index) => time - (pollTimes[index] ?? 0));
+    expect(gaps.slice(0, 2).every((gap) => gap >= 350)).toBe(true);
     service.close();
   });
 
@@ -1125,7 +1202,9 @@ describe("managed repository and lifecycle", () => {
       inspectRuntime: async () => "stopped",
     });
 
-    expect(reconciled.abortedStackIds).toEqual([pending.stack.id]);
+    // The claim is released and the pending row is gone, but the leaked data is
+    // still there, so the stack is reported as a reclamation failure only.
+    expect(reconciled.abortedStackIds).toEqual([]);
     expect(reconciled.failures).toEqual([
       {
         operation: pending.operation,
@@ -1556,12 +1635,13 @@ describe("managed repository and lifecycle", () => {
   }
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
-    for (const runtime of ["running", "stopped"] as const) {
+    for (const runtime of ["running", "stopped", "unknown"] as const) {
       it(`finishes a crashed delete without resurrecting its tombstone with ${adapter} (${runtime} runtime)`, async () => {
         // A tombstoned row under a claimed operation is a delete that died
         // between tombstoning and releasing its claim. Recovery must finish the
         // deletion, never revive the row into a lifecycle — whatever the
-        // runtime inspection reports about the dead owner's processes.
+        // runtime inspection reports about the dead owner's processes,
+        // including nothing at all.
         const root = makeRoot();
         const overrides = { isProcessAlive: () => false };
         const service =
@@ -1625,6 +1705,231 @@ describe("managed repository and lifecycle", () => {
         service.close();
       });
     }
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`reclaims a crashed delete without consulting the runtime with ${adapter}`, async () => {
+      // Tombstoning zeroes the runtime metadata, so a real inspector can only
+      // ever answer "unknown" — or fail — about a crashed deletion. Gating the
+      // reclamation on an answer the tombstone destroyed would leak the
+      // directory forever, and the tombstoned branch ignores the lifecycle.
+      const root = makeRoot();
+      const overrides = { isProcessAlive: () => false };
+      const service =
+        adapter === "in-memory"
+          ? makeInMemoryService(root, overrides)
+          : makePersistentService(root, overrides);
+      const created = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root),
+      });
+      writeFileSync(join(created.stack.paths.data, "database"), "leaked");
+      const claimed = service.repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: created.stack.id,
+        kind: "delete",
+        ownerPid: 987_681,
+        now: "2026-08-11T00:00:00.000Z",
+      });
+      if (!claimed.acquired) {
+        throw new Error("Expected the delete operation to be claimed");
+      }
+      service.repository.tombstoneStack(
+        created.stack.id,
+        claimed.operation.token,
+        "2026-08-11T00:00:01.000Z",
+      );
+
+      const reconciled = await service.reconcileAbandonedOperations({
+        inspectRuntime: async () => {
+          throw new Error("runtime inspection is unavailable for a deleted stack");
+        },
+      });
+
+      expect(reconciled.reclaimedStackIds).toEqual([created.stack.id]);
+      expect(reconciled.retained).toEqual([]);
+      expect(reconciled.failures).toEqual([]);
+      expect(service.repository.listActiveOperations()).toEqual([]);
+      expect(existsSync(created.stack.paths.root)).toBe(false);
+      expect(service.inspectStack(created.stack.id)?.status).toBe("tombstoned");
+      service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`reports a crashed delete as reclaimed only once its data is gone with ${adapter}`, async () => {
+      const root = makeRoot();
+      const stateRoot = join(root, "managed");
+      const outsideRoot = join(root, "outside");
+      mkdirSync(outsideRoot, { recursive: true });
+      writeFileSync(join(outsideRoot, "preserve"), "safe");
+      const repository =
+        adapter === "in-memory"
+          ? createInMemoryManagedStackRepository()
+          : openBunSqliteManagedStackRepository(managedRegistryPath(stateRoot));
+      let forgePath = false;
+      const guardedRepository: ManagedStackRepository = {
+        ...repository,
+        getStack(stackId) {
+          const stack = repository.getStack(stackId);
+          if (stack === undefined || !forgePath) {
+            return stack;
+          }
+          return {
+            ...stack,
+            paths: {
+              root: outsideRoot,
+              data: join(outsideRoot, "data"),
+              logs: join(outsideRoot, "logs"),
+              runtime: join(outsideRoot, "runtime"),
+            },
+          };
+        },
+      };
+      const service = makeManagedStackService({
+        repository: guardedRepository,
+        stateRoot,
+        isProcessAlive: () => false,
+      });
+      const created = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root),
+      });
+      const claimed = service.repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: created.stack.id,
+        kind: "delete",
+        ownerPid: 987_682,
+        now: "2026-08-11T00:00:00.000Z",
+      });
+      if (!claimed.acquired) {
+        throw new Error("Expected the delete operation to be claimed");
+      }
+      service.repository.tombstoneStack(
+        created.stack.id,
+        claimed.operation.token,
+        "2026-08-11T00:00:01.000Z",
+      );
+      forgePath = true;
+
+      const reconciled = await service.reconcileAbandonedOperations({
+        inspectRuntime: async () => "stopped",
+      });
+
+      // Reporting the stack as reclaimed before the removal succeeded would tell
+      // the caller its leaked data is gone while it is still on disk.
+      expect(reconciled.reclaimedStackIds).toEqual([]);
+      expect(reconciled.failures).toEqual([
+        {
+          operation: claimed.operation,
+          phase: "state-reclamation",
+          operationReleased: true,
+          error: expect.any(UnsafeManagedStackPathError),
+        },
+      ]);
+      expect(readFileSync(join(outsideRoot, "preserve"), "utf8")).toBe("safe");
+      service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`stores port assignments in one canonical key order with ${adapter}`, async () => {
+      // SQLite reads ports back with `ORDER BY key`, so the shared reconciler
+      // must hand both adapters the same order or a caller's request order
+      // would leak into one adapter's records and not the other's.
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory" ? makeInMemoryService(root) : makePersistentService(root);
+      const studio = { key: "studio.port", port: 55_501, intent: "exact" } as const;
+      const api = { key: "api.port", port: 55_502, intent: "exact" } as const;
+      const db = { key: "db.port", port: 55_503, intent: "exact" } as const;
+      const sorted = [api, db, studio];
+
+      const created = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root),
+        configuration: { ports: [studio, api, db] },
+      });
+
+      expect(created.stack.ports).toEqual(sorted);
+      expect(service.inspectStack(created.stack.id)?.ports).toEqual(sorted);
+
+      const updated = await service.updateStack(created.stack.id, { ports: [db, studio, api] });
+
+      expect(updated.ports).toEqual(sorted);
+      expect(service.inspectStack(created.stack.id)?.ports).toEqual(sorted);
+      service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`breaks active-operation ordering ties by token with ${adapter}`, async () => {
+      // Recovery walks this list, so two claims sharing one `startedAt` must not
+      // depend on insertion order: SQLite would return rowid order and the
+      // in-memory adapter its map order. Descending tokens make insertion order
+      // the wrong answer.
+      const root = makeRoot();
+      const overrides = { clock: () => new Date("2026-08-11T00:00:00.000Z") };
+      const service =
+        adapter === "in-memory"
+          ? makeInMemoryService(root, overrides)
+          : makePersistentService(root, overrides);
+      const nextToken = descendingIdFactory();
+      const tokens: Array<string> = [];
+      for (const name of ["first", "second", "third"]) {
+        const created = await service.provisionOrdinaryStack({
+          workspacePath: makeWorkspace(root, name),
+        });
+        const token = nextToken();
+        const claimed = service.repository.claimOperation({
+          token,
+          stackId: created.stack.id,
+          kind: "start",
+          ownerPid: 987_683,
+          now: "2026-08-11T00:00:00.000Z",
+        });
+        if (!claimed.acquired) {
+          throw new Error("Expected each recovery operation to be claimed");
+        }
+        tokens.push(token);
+      }
+
+      expect(tokens).toEqual([...tokens].sort().reverse());
+      expect(service.repository.listActiveOperations().map(({ token }) => token)).toEqual(
+        [...tokens].sort(),
+      );
+      service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`refuses to persist an unusable owner pid with ${adapter}`, async () => {
+      // The pid is only useful because recovery asks the operating system about
+      // it, and a value that is not a pid cannot be asked about safely. The
+      // repository is the boundary that must never store one.
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory" ? makeInMemoryService(root) : makePersistentService(root);
+      const created = await service.provisionOrdinaryStack({
+        workspacePath: makeWorkspace(root, "claimed"),
+      });
+
+      for (const ownerPid of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+        expect(() =>
+          service.repository.claimOperation({
+            token: crypto.randomUUID(),
+            stackId: created.stack.id,
+            kind: "start",
+            ownerPid,
+            now: "2026-08-11T00:00:00.000Z",
+          }),
+        ).toThrow(InvalidManagedOwnerPidError);
+      }
+      expect(service.repository.listActiveOperations()).toEqual([]);
+
+      await expect(
+        prepareAbandonedStack(service, makeWorkspace(root, "prepared"), 0),
+      ).rejects.toBeInstanceOf(InvalidManagedOwnerPidError);
+      expect(service.listStacks()).toHaveLength(1);
+      service.close();
+    });
   }
 
   for (const adapter of ["in-memory", "bun-sqlite"] as const) {
