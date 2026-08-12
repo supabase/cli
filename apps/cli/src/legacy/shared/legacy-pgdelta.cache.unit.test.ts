@@ -400,6 +400,29 @@ describe("legacyHashDeclarativeSchemas", () => {
     );
   });
 
+  // A root-level failure that isn't not-found (permissions, I/O) must propagate rather
+  // than be treated as an empty tree — an empty-tree hash could cache an empty catalog
+  // and let sync emit destructive drops (codex review, PR #6162).
+  it.effect("fails when the root existence check itself fails", () => {
+    const dir = withTemp();
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const err = yield* fs.readDirectory(join(dir, "does-not-exist")).pipe(Effect.flip);
+        const failing: FileSystem.FileSystem = { ...fs, exists: () => Effect.fail(err) };
+        return yield* legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
+      }),
+    ).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
   // A partial hash can collide with an existing cache key and serve a stale catalog,
   // so a traversal failure must fail the hash, not shrink it (codex review, PR #6162).
   it.effect("fails when part of the tree cannot be read instead of hashing a subset", () => {

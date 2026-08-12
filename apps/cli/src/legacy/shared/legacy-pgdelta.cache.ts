@@ -348,14 +348,16 @@ export const legacyHashMigrations = Effect.fnUntraced(function* (
  * symlink pointing at an ancestor would otherwise loop the walk forever, and symlinked `.sql`
  * files are excluded like non-regular files), and each directory level plus the final list is
  * byte-sorted so the key is stable across platforms. A missing root is the one tolerated
- * case (deterministic empty hash; callers gate on the dir existing before catalog export).
+ * case (deterministic empty hash; callers gate on the dir existing before catalog export) —
+ * `fs.exists` maps only not-found to `false`, so any other root failure (permissions, I/O)
+ * propagates instead of masquerading as an empty tree.
  */
 export const legacyHashDeclarativeSchemas = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,
   _path: Path.Path,
   declarativeDir: string,
 ) {
-  const exists = yield* fs.exists(declarativeDir).pipe(Effect.orElseSucceed(() => false));
+  const exists = yield* fs.exists(declarativeDir);
   const files = exists ? yield* legacyWalkSqlFiles(fs, declarativeDir, "") : [];
   const hash = createHash("sha256");
   for (const rel of files) {
