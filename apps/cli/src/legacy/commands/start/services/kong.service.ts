@@ -152,10 +152,8 @@ export interface LegacyKongEmailTemplateMount {
 /**
  * Go's `mountEmailTemplates` closure (`start.go:527-542`): resolves
  * `contentPath` to an absolute HOST path via `filepath.Abs` (relative to the
- * process's own working directory — NOT `<workdir>/supabase`, unlike
- * `legacyResolveEmailTemplateContentPath`'s existence-check base in
- * `legacy-config-validate.ts`, a genuinely different Go call site with a
- * different base), joins it onto the fixed in-container email-template
+ * process's own working directory, the same project-root base used while
+ * validating `content_path`), joins it onto the fixed in-container email-template
  * directory as `<id><ext-of-hostPath>` (`path.Join`, POSIX — the container is
  * always Linux regardless of the host OS, hence `nodePath.posix.join`, not the
  * platform-dependent `nodePath.join`), and formats the `rw` bind. Returns

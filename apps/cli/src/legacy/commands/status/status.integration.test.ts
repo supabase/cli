@@ -459,6 +459,30 @@ project_id = "short"
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("resolves auth email content_path keys from the same project-root base", () => {
+    const { layer, child, workdir } = setup({
+      configContents: `project_id = "demo"
+[auth.email.template.recovery]
+content_path = "./supabase/templates/recovery.html"
+[auth.email.notification.password_changed]
+enabled = true
+content_path = "./supabase/templates/password_changed_notification.html"
+`,
+    });
+    const templateDir = join(workdir, "supabase", "templates");
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, "recovery.html"), "<p>Recovery</p>");
+    writeFileSync(
+      join(templateDir, "password_changed_notification.html"),
+      "<p>Password changed</p>",
+    );
+
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      expect(child.spawned.length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("honors SUPABASE_AUTH_JWT_SECRET over a config.toml value with -o env", () => {
     // Go's Viper AutomaticEnv gives env vars higher precedence than config.toml
     // (pkg/config/config.go:529-535) — a stack started with this env var set

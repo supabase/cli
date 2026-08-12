@@ -1,6 +1,5 @@
 /**
- * Unit tests for config-sync.auth-email-content.ts — parity with Go
- * `(*email).validate` and `(*baseConfig).resolve` path rules.
+ * Unit tests for config-sync.auth-email-content.ts.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -51,50 +50,38 @@ describe("loadAuthEmailContent", () => {
     return { cwd: workdir, supabaseDir };
   }
 
-  it("loads transactional templates relative to the project root", () => {
+  it("loads templates and notifications from the same project-root base", () => {
     const { cwd, supabaseDir } = setup();
-    const templateDir = join(cwd, "templates");
+    const templateDir = join(supabaseDir, "templates");
     mkdirSync(templateDir, { recursive: true });
     writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
+    writeFileSync(join(templateDir, "password_changed.html"), "<p>Changed</p>");
 
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
           subject: "You are invited",
-          content_path: "./templates/invite.html",
+          content_path: "./supabase/templates/invite.html",
+        },
+      },
+      notification: {
+        password_changed: {
+          enabled: true,
+          subject: "Password changed",
+          content_path: "./supabase/templates/password_changed.html",
         },
       },
     });
 
     expect(content.template["invite"]).toBe("<h1>Invite</h1>");
-    expect(content.notification).toEqual({});
-  });
-
-  it("loads notification templates relative to supabase/", () => {
-    const { cwd, supabaseDir } = setup();
-    writeFileSync(join(supabaseDir, "password_changed.html"), "<p>Changed</p>");
-
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
-      ...emptyEmail,
-      notification: {
-        password_changed: {
-          enabled: true,
-          subject: "Password changed",
-          content_path: "./password_changed.html",
-        },
-      },
-    });
-
     expect(content.notification["password_changed"]).toBe("<p>Changed</p>");
-    expect(content.template).toEqual({});
   });
 
   it("skips notification templates when disabled", () => {
-    const { cwd, supabaseDir } = setup();
-    writeFileSync(join(supabaseDir, "password_changed.html"), "<p>Changed</p>");
+    const { cwd } = setup();
 
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -109,9 +96,9 @@ describe("loadAuthEmailContent", () => {
   });
 
   it("skips entries with an empty content_path", () => {
-    const { cwd, supabaseDir } = setup();
+    const { cwd } = setup();
 
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
@@ -126,10 +113,10 @@ describe("loadAuthEmailContent", () => {
   });
 
   it("throws a Go-shaped error when a template file is missing", () => {
-    const { cwd, supabaseDir } = setup();
+    const { cwd } = setup();
 
     expect(() =>
-      loadAuthEmailContent(cwd, supabaseDir, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {

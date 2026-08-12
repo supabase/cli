@@ -113,7 +113,7 @@ keys mirror `config.toml` paths.
 ## Notes
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
-- Auth email `content_path` resolution (Go parity): `[auth.email.template.*]` paths are relative to the discovered project root; `[auth.email.notification.*]` paths are relative to `supabase/`. Notification HTML is read only when `enabled = true`.
+- Auth email `content_path` resolution: `[auth.email.template.*]` and `[auth.email.notification.*]` paths are relative to the discovered project root. Notification HTML is read only when `enabled = true`.
 - Diff bytes are byte-for-byte identical to the Go CLI (BurntSushi TOML encoder + anchored diff ports).
 - Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw (merged) config document so they are skipped when absent, matching Go's nil-pointer behaviour.
 - **`[remotes.*]` overrides are merged before push.** When a `[remotes.<name>]` block declares `project_id == <ref>`, `@supabase/config` merges that block's subtree over the base config at the raw (pre-decode) level — Go's `mergeRemoteConfig` (`apps/cli-go/pkg/config/config.go:550`) — so only the keys the block declares override the base. `Loading config override: [remotes.<name>]` prints to stderr. Two remotes sharing the target `project_id` abort with Go's `duplicate project_id for [remotes.<b>] and [remotes.<a>]` message.

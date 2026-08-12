@@ -1,11 +1,10 @@
 /**
- * Port of Go `(*email).validate` file-loading from `apps/cli-go/pkg/config/config.go`
- * and path resolution from `(*baseConfig).resolve`.
+ * Port of Go `(*email).validate` file-loading from `apps/cli-go/pkg/config/config.go`,
+ * with one project-root base for every relative email `content_path`.
  *
  * `config push` reads HTML from `content_path` before building the auth push
- * subset. Templates and notifications use different base directories:
- *   - `[auth.email.template.*]`     → relative to project root (parent of `supabase/`)
- *   - `[auth.email.notification.*]` → relative to `supabase/`
+ * subset. Both templates and notifications resolve relative paths from the
+ * project root (parent of `supabase/`).
  */
 
 import type { ProjectConfig } from "@supabase/config";
@@ -49,7 +48,7 @@ export function projectDirsFromConfigPath(configPath: string): {
  * Resolves a `content_path` to an absolute filesystem path.
  *
  * @param contentPath - Path from `config.toml` (absolute or relative to `baseDir`).
- * @param baseDir - Project root for templates, or `supabase/` for notifications.
+ * @param baseDir - Project root.
  * @returns Absolute path, or `""` when `contentPath` is empty.
  */
 function resolveContentPath(contentPath: string, baseDir: string): string {
@@ -84,22 +83,16 @@ function readTemplateContent(
 /**
  * Loads auth email template HTML from disk for `config push`.
  *
- * Mirrors Go `(*email).validate` + `(*baseConfig).resolve`: transactional
- * templates resolve `content_path` from the project root; notifications resolve
- * from `supabase/` and are only read when `enabled = true`.
+ * Templates and notifications resolve `content_path` from the project root;
+ * notifications are only read when `enabled = true`.
  *
  * @param cwd - Discovered project root (parent of `supabase/`).
- * @param supabaseDir - Absolute path to the `supabase/` directory.
  * @param email - Decoded `config.auth.email` from `@supabase/config`.
  * @returns Loaded HTML keyed by template/notification name. Empty records when
  *   nothing was configured or all `content_path` values were empty.
  * @throws When a configured `content_path` points to a missing or unreadable file.
  */
-export function loadAuthEmailContent(
-  cwd: string,
-  supabaseDir: string,
-  email: AuthEmail,
-): AuthEmailContent {
+export function loadAuthEmailContent(cwd: string, email: AuthEmail): AuthEmailContent {
   const template: Record<string, string> = {};
   const notification: Record<string, string> = {};
 
@@ -120,7 +113,7 @@ export function loadAuthEmailContent(
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = resolveContentPath(contentPath, supabaseDir);
+    const resolved = resolveContentPath(contentPath, cwd);
     notification[name] = readTemplateContent("notification", name, resolved);
   }
 

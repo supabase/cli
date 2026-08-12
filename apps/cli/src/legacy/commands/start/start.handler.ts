@@ -7,7 +7,6 @@
  * `internal/db/start/`, which is still present and unaffected.
  */
 import { inferFunctionsManifest, resolveProjectSubtree } from "@supabase/config";
-import { join } from "node:path";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -38,7 +37,6 @@ import {
   legacyApiTlsCertReadErrorMessage,
   legacyApiTlsKeyReadErrorMessage,
   legacyResolveApiTlsPath,
-  legacyResolveEmailTemplateContentPath,
 } from "../../shared/legacy-config-validate.ts";
 import { legacyIsContainerNotFoundMessage } from "../../shared/legacy-container-cli.ts";
 import { legacyCheckDbToml } from "../../shared/legacy-db-config.toml-read.ts";
@@ -360,17 +358,11 @@ function resolveGotrueEnvInput(params: {
  * Go's `mountEmailTemplates` call sites for Kong (`start.go:544-558`): every configured template,
  * then every ENABLED notification, suffixed `_notification`.
  *
- * Go's `baseConfig.resolve` (`config.go:901-916`) rebases `ContentPath` once at config-load time,
- * BEFORE `mountEmailTemplates` ever runs: templates against `workdir`, notifications against
- * `join(workdir, "supabase")` — the same asymmetric base `legacyResolveEmailTemplateContentPath`
- * already applies for the file-existence check in `readAuthEmailTemplateContent`. Notification
- * `content_path` here must go through that same rebase before reaching Kong's mount builder, or a
- * relative notification path gets validated against `<workdir>/supabase/...` but mounted from
- * `<workdir>/...`. Template entries need no rebase — `workdir` is already their correct base.
+ * Native config loading resolves every relative `content_path` from the project root. The Kong
+ * mount builder applies that same base when it turns these paths into absolute host paths.
  */
 function buildKongEmailTemplateMounts(
   email: LegacyResolvedAuthEmail,
-  workdir: string,
 ): ReadonlyArray<LegacyKongEmailTemplateMount> {
   return [
     ...Object.entries(email.template).map(([id, template]) => ({
@@ -381,14 +373,7 @@ function buildKongEmailTemplateMounts(
       .filter(([, notification]) => notification.enabled)
       .map(([id, notification]) => ({
         id: `${id}_notification`,
-        contentPath:
-          legacyResolveEmailTemplateContentPath({
-            section: "notification",
-            name: id,
-            contentPath: notification.content_path,
-            contentPresent: false,
-            base: join(workdir, "supabase"),
-          }) ?? "",
+        contentPath: notification.content_path,
       })),
   ];
 }
@@ -1359,7 +1344,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               poolerId: poolerContainerName,
               nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
               workdir: cliConfig.workdir,
-              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail, cliConfig.workdir),
+              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail),
             }),
           };
         }

@@ -195,12 +195,12 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // `[remotes.*]` block introduces.
     const presence = legacyPresenceIn(loaded.document);
 
-    const { projectRoot, supabaseDir } = projectDirsFromConfigPath(loaded.path);
+    const { projectRoot } = projectDirsFromConfigPath(loaded.path);
 
     // Go's `email.validate` runs during `LoadConfig` before any network call.
     const authEmailContent = authEnabled(config)
       ? yield* Effect.try({
-          try: () => loadAuthEmailContent(projectRoot, supabaseDir, config.auth.email),
+          try: () => loadAuthEmailContent(projectRoot, config.auth.email),
           catch: (cause) =>
             new LegacyConfigPushLoadConfigError({
               message: cause instanceof Error ? cause.message : String(cause),

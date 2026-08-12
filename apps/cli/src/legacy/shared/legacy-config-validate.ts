@@ -738,9 +738,7 @@ export function legacySigningKeysDecodeErrorMessage(cause: unknown): string {
  * when `content` is ALSO set) always wins — Go does not reject "both set", `content_path`
  * silently wins/overwrites.
  *
- * `base` is caller-resolved: TEMPLATE section → workdir; NOTIFICATION section →
- * join(workdir, "supabase") (this asymmetry is real, intentional Go behavior — config.go's own
- * FIXME comment flags it, do not "fix" it).
+ * `base` is the caller-resolved project root for both templates and notifications.
  */
 export function legacyResolveEmailTemplateContentPath(args: {
   readonly section: "template" | "notification";
