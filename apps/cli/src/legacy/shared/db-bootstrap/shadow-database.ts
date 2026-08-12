@@ -15,11 +15,11 @@
  * Go itself has are NOT all the same: `migration squash` (a future port, CLI-1969) only ever
  * needs create -> health-wait -> connect -> `SetupDatabase` (no `CREATE_TEMPLATE`, no
  * migrations at that point — `apps/cli-go/internal/migration/squash/squash.go:83-96`), while
- * `db diff --use-pgadmin` (CLI-1968) needs create -> health-wait -> `MigrateShadowDatabase`
- * (`apps/cli-go/internal/db/diff/pgadmin.go:70-78`). Exposing every primitive individually
- * lets each future caller compose exactly the subset it needs, matching Go's own module shape
- * 1:1 rather than forcing every caller through one shape only `db diff`/`db pull` happen to
- * need.
+ * `db diff --use-pgadmin` (CLI-1968, realized: see `diff.handler.ts`'s pgadmin branch) needs
+ * create -> health-wait -> `MigrateShadowDatabase` (`apps/cli-go/internal/db/diff/
+ * pgadmin.go:70-78`). Exposing every primitive individually lets each future caller compose
+ * exactly the subset it needs, matching Go's own module shape 1:1 rather than forcing every
+ * caller through one shape only `db diff`/`db pull` happen to need.
  *
  * A note on the shadow container's own addressing, since it's the one genuinely surprising
  * empirical fact this whole module depends on: the shadow container is created with NO name
