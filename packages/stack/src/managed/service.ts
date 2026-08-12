@@ -279,6 +279,16 @@ const recordUnlessInterrupted =
       Cause.hasInterruptsOnly(cause) ? Effect.interrupt : record(cause),
     );
 
+/**
+ * The error an absorbed step refused with, for a report entry to carry — or an
+ * interruption, re-raised before any entry is built. It is the rule
+ * {@link recordUnlessInterrupted} applies to a whole step, applied where the
+ * step's exit is inspected instead: an interrupted step has no outcome, so it
+ * must not become a report entry either way.
+ */
+const absorbedError = <E>(cause: Cause.Cause<E>): Effect.Effect<unknown> =>
+  Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(Cause.squash(cause));
+
 /** What one look at a stack awaiting publication can refuse to wait for. */
 type PublicationPollFailure = ManagedAbandonedOperationError | ManagedStackNotFoundError;
 
@@ -396,6 +406,13 @@ export class ManagedStackService extends Context.Service<
             recordUnlessInterrupted((cause) => Effect.succeed(dataRetained(Cause.squash(cause)))),
           );
 
+        /**
+         * Marks an operation failed as part of a recovery report, answering
+         * whether the claim was actually released — a claim that could not be
+         * released is reported, not hidden. Interruption is re-raised, because
+         * this is a recording site: there is no report to put an interrupted
+         * step in.
+         */
         const finishOperationBestEffort = (
           stackId: string,
           operationToken: string,
@@ -406,6 +423,36 @@ export class ManagedStackService extends Context.Service<
             // Preserve the operation's original failure when ownership changed concurrently.
             recordUnlessInterrupted(() => Effect.succeed(false)),
           );
+
+        /**
+         * Releases this call's claim on the way out of a failed operation, then
+         * re-raises the cause that got here.
+         *
+         * The release absorbs everything it can raise, its own interruption
+         * included: the caller's outcome is the failure the operation suffered,
+         * and an embedder repository that reports interruption from
+         * `finishOperation` would otherwise replace that failure with an
+         * interruption the caller never asked for. That is the opposite of the
+         * recording sites above, where an interrupted step has no outcome and
+         * interruption is the only honest answer.
+         */
+        const releasingClaimOnFailure =
+          (stackId: string, operationToken: string) =>
+          <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+            Effect.catchCause(self, (cause) =>
+              repository
+                .finishOperation(
+                  stackId,
+                  operationToken,
+                  "failed",
+                  now(),
+                  String(Cause.squash(cause)),
+                )
+                .pipe(
+                  Effect.catchCause(() => Effect.void),
+                  Effect.flatMap(() => Effect.failCause(cause)),
+                ),
+            );
 
         /**
          * A concurrent forced recovery can resolve this same operation before
@@ -516,12 +563,9 @@ export class ManagedStackService extends Context.Service<
           | ManagedStackPublicationTimeoutError
         > =>
           pollPublication(pending).pipe(
-            // A refinement, so the answer the repeat stops on is narrowed to the
-            // published stack. The type argument is explicit because the
-            // narrowing is lost when the generic guard is inferred here.
             Effect.repeat({
               schedule: publicationPollSchedule,
-              while: Option.isNone<ManagedStackRecord>,
+              while: (answer: Option.Option<ManagedStackRecord>) => Option.isNone(answer),
             }),
             // The timeout is the caller's bound on the whole wait, so it
             // interrupts the poll rather than being checked between polls.
@@ -530,7 +574,21 @@ export class ManagedStackService extends Context.Service<
               orElse: () =>
                 Effect.fail(new ManagedStackPublicationTimeoutError({ stackId: pending.id })),
             }),
-            Effect.map((published) => published.value),
+            // Only an unbounded schedule guarantees the repeat stops on a
+            // published stack, and this one is unbounded. A recurrence bound
+            // added later would hand back the final `None` instead, so the
+            // answer is checked rather than asserted through a refinement: a
+            // schedule that gave up is a bug in this module, not an outcome a
+            // caller could act on.
+            Effect.flatMap((published) =>
+              Option.isNone(published)
+                ? Effect.die(
+                    new Error(
+                      `The publication poll for ${pending.id} stopped before the stack was published`,
+                    ),
+                  )
+                : Effect.succeed(published.value),
+            ),
           );
 
         const updateStackRecord = (
@@ -550,11 +608,7 @@ export class ManagedStackService extends Context.Service<
                 Effect.tap(() =>
                   repository.finishOperation(stackId, operation.token, "completed", now()),
                 ),
-                Effect.catchCause((cause) =>
-                  finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
-                    Effect.flatMap(() => Effect.failCause(cause)),
-                  ),
-                ),
+                releasingClaimOnFailure(stackId, operation.token),
               );
           });
 
@@ -654,6 +708,17 @@ export class ManagedStackService extends Context.Service<
             // interrupted: a caller that times out or closes the service must
             // not leave a pending stack and a leaked directory behind. Only the
             // provisioning steps are interruptible; the rollback is not.
+            //
+            // The mask starts after `prepareOrdinaryStack`, so it covers the row
+            // this call owns but not the act of creating it. That is sound only
+            // because every repository this package ships decides synchronously:
+            // both adapters run the pending row and its claim as one SQLite
+            // transaction or one in-memory mutation, with no suspension point an
+            // interruption could land on. An asynchronous embedder repository
+            // breaks that assumption — interrupted mid-prepare it would leave a
+            // pending row and a claim nothing compensates — so the mask must be
+            // extended to cover row creation before async repositories become
+            // real. `deleteStack`'s claim has the same shape.
             return yield* Effect.uninterruptibleMask((restore) =>
               restore(
                 Effect.gen(function* () {
@@ -780,13 +845,7 @@ export class ManagedStackService extends Context.Service<
                   yield* finishDeleteOperationTolerantly(stackId, operation.token);
                   return deletionResult("delete", tombstoned, dataReclamation);
                 }),
-              ).pipe(
-                Effect.catchCause((cause) =>
-                  finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
-                    Effect.flatMap(() => Effect.failCause(cause)),
-                  ),
-                ),
-              ),
+              ).pipe(releasingClaimOnFailure(stackId, operation.token)),
             );
           });
 
@@ -826,11 +885,8 @@ export class ManagedStackService extends Context.Service<
                 if (forcedOperation === undefined && isUsableManagedOwnerPid(operation.ownerPid)) {
                   const alive = yield* Effect.exit(probeProcessAlive(operation.ownerPid));
                   if (Exit.isFailure(alive)) {
-                    retained.push({
-                      operation,
-                      reason: "owner-liveness-unknown",
-                      error: Cause.squash(alive.cause),
-                    });
+                    const error = yield* absorbedError(alive.cause);
+                    retained.push({ operation, reason: "owner-liveness-unknown", error });
                     return;
                   }
                   if (alive.value) {
@@ -858,11 +914,8 @@ export class ManagedStackService extends Context.Service<
                       reconcileOptions.inspectRuntime(stack, operation),
                     );
                     if (Exit.isFailure(inspected)) {
-                      retained.push({
-                        operation,
-                        reason: "runtime-inspection-failed",
-                        error: Cause.squash(inspected.cause),
-                      });
+                      const error = yield* absorbedError(inspected.cause);
+                      retained.push({ operation, reason: "runtime-inspection-failed", error });
                       return;
                     }
                     if (inspected.value === "unknown") {
@@ -889,11 +942,12 @@ export class ManagedStackService extends Context.Service<
                   // failure is the whole report.
                   const removal = yield* Effect.exit(removeStackState(stack));
                   if (Exit.isFailure(removal)) {
+                    const error = yield* absorbedError(removal.cause);
                     failures.push({
                       operation,
                       phase: "state-reclamation",
                       operationReleased: true,
-                      error: Cause.squash(removal.cause),
+                      error,
                     });
                     return;
                   }

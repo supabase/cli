@@ -231,9 +231,69 @@ const rollbackPreservingCause = (database: ManagedSqliteDatabase): void => {
   }
 };
 
-const migrateSchema = (database: ManagedSqliteDatabase): void => {
-  database.exec("BEGIN IMMEDIATE");
+const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
   try {
+    database.exec("COMMIT");
+  } catch (error: unknown) {
+    rollbackPreservingCause(database);
+    throw error;
+  }
+};
+
+/** The handles currently between `BEGIN` and `COMMIT` — see {@link runTransaction}. */
+const openTransactions = new WeakSet<ManagedSqliteDatabase>();
+
+/**
+ * `BEGIN`, the decision's statements, and `COMMIT` as one synchronous block.
+ *
+ * Atomicity here rests on the drivers being synchronous and the handle being
+ * single-threaded: nothing else can run between the statements, so a partially
+ * applied decision is never observable. That only holds while the whole block is
+ * one JavaScript turn — splitting the boundary across effects would reintroduce
+ * a suspension point where the fiber scheduler could preempt at its operation
+ * budget and let another fiber `BEGIN` on this very handle.
+ *
+ * What synchrony cannot rule out is a decision that re-enters the repository:
+ * SQLite has no nested transactions, so the inner `BEGIN` would refuse with a
+ * driver message about the outer one, and unwinding the inner attempt would
+ * `ROLLBACK` the outer transaction's writes. Reentrancy is a bug in the calling
+ * code rather than a condition to recover from, so it is refused here — before
+ * any statement runs, and without touching the transaction already in flight.
+ */
+const runTransaction = <A>(
+  database: ManagedSqliteDatabase,
+  begin: "BEGIN" | "BEGIN IMMEDIATE",
+  run: () => A,
+): A => {
+  if (openTransactions.has(database)) {
+    throw new Error("A registry transaction is already open on this database handle");
+  }
+  database.exec(begin);
+  openTransactions.add(database);
+  try {
+    let decided: A;
+    try {
+      decided = run();
+    } catch (error: unknown) {
+      rollbackPreservingCause(database);
+      throw error;
+    }
+    commitPreservingCause(database);
+    return decided;
+  } finally {
+    openTransactions.delete(database);
+  }
+};
+
+/**
+ * The schema migration is a registry decision like any other, so it runs through
+ * {@link runTransaction}: it is the first thing an opened handle does, before the
+ * repository it initializes exists, so no transaction can be open on the handle
+ * yet. An already-current registry returns without writing and the transaction
+ * commits nothing.
+ */
+const migrateSchema = (database: ManagedSqliteDatabase): void =>
+  runTransaction(database, "BEGIN IMMEDIATE", () => {
     const versionRow = database.prepare("PRAGMA user_version").get();
     const version = getNumber(versionRow, "user_version");
     if (version !== 0 && version !== MANAGED_REGISTRY_SCHEMA_VERSION) {
@@ -243,7 +303,6 @@ const migrateSchema = (database: ManagedSqliteDatabase): void => {
       });
     }
     if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
-      database.exec("COMMIT");
       return;
     }
     database.exec(`
@@ -324,12 +383,7 @@ const migrateSchema = (database: ManagedSqliteDatabase): void => {
 
       PRAGMA user_version = ${MANAGED_REGISTRY_SCHEMA_VERSION};
     `);
-    database.exec("COMMIT");
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
-  }
-};
+  });
 
 /**
  * Prepares a freshly opened handle for use as the registry.
@@ -358,43 +412,6 @@ const initializeRegistry = (
       ),
     });
   });
-
-const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
-  try {
-    database.exec("COMMIT");
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
-  }
-};
-
-/**
- * `BEGIN`, the decision's statements, and `COMMIT` as one synchronous block.
- *
- * Atomicity here rests on the drivers being synchronous and the handle being
- * single-threaded: nothing else can run between the statements, so a partially
- * applied decision is never observable and two transactions can never nest on
- * the same connection. That only holds while the whole block is one JavaScript
- * turn — splitting the boundary across effects would reintroduce a suspension
- * point where the fiber scheduler could preempt at its operation budget and let
- * another fiber `BEGIN` on this very handle.
- */
-const runTransaction = <A>(
-  database: ManagedSqliteDatabase,
-  begin: "BEGIN" | "BEGIN IMMEDIATE",
-  run: () => A,
-): A => {
-  database.exec(begin);
-  let decided: A;
-  try {
-    decided = run();
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
-  }
-  commitPreservingCause(database);
-  return decided;
-};
 
 /**
  * Runs one registry decision inside a transaction. `catchFailure` names the
