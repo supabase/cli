@@ -774,6 +774,22 @@ describe("legacyEnsureNetwork", () => {
       );
     },
   );
+
+  it.live("skips docker network create for a container: network mode", () => {
+    // Go's `container.NetworkMode.IsUserDefined()`
+    // (`docker/api/types/container/hostconfig_unix.go:23-25`) explicitly
+    // excludes `IsContainer()` — `--network-id container:redis` attaches to
+    // another container's network stack, not a name `docker network create`
+    // could ever act on (review round on CLI-1963's `functions download`
+    // port, which surfaced the same gap in the shared
+    // `isUserDefinedDockerNetwork` predicate this helper reuses).
+    const mock = mockSpawner(() => ({ exitCode: 1, stderr: "some failure" }));
+    return legacyEnsureNetwork(mock.spawner, "container:redis", {}).pipe(
+      Effect.map(() => {
+        expect(mock.spawned).toEqual([]);
+      }),
+    );
+  });
 });
 
 describe("legacyEnsureVolume", () => {

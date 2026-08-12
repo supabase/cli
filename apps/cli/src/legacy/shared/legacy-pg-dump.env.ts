@@ -1,10 +1,12 @@
-import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
+import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 
 /**
  * Pure pg_dump environment builders, ported 1:1 from Go's `pkg/migration/dump.go`.
  * No Effect or service dependencies, so the schema/role/config lists and the
- * `os.Expand` dry-run expansion stay unit-testable in isolation. Shared by the
- * `db` command family (`db dump`, and `db pull`'s initial-migra schema dump).
+ * `os.Expand` dry-run expansion stay unit-testable in isolation. Shared by `db
+ * dump`, `db pull`'s initial-migra schema dump, and (CLI-1969) `migration
+ * squash`'s before/after/full dumps — the third consumer is why this module
+ * lives in `legacy/shared/` rather than `commands/db/shared/`.
  */
 
 /** `migration.InternalSchemas` (`pkg/migration/dump.go:18-49`). Used by schema dumps. */

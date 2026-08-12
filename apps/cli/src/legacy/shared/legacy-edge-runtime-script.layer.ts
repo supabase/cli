@@ -80,9 +80,11 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // config read happens here, not at layer acquisition, so merely composing
           // the db diff/pull runtime never validates the base config before the
           // linked ref is known (Go validates the `[remotes.<ref>]`-merged config,
-          // and even `db diff --use-pgadmin --linked` must not fail at layer build).
-          // Every pg-delta/migra caller passes `opts.denoVersion`, so the base read
-          // is a defensive fallback that does not run for them.
+          // and even `db diff --use-pgadmin --linked` — a native path since CLI-1968,
+          // reading config directly rather than exec'ing a Go child, and never calling
+          // this layer's `run` at all — must not fail at layer build). Every pg-delta/
+          // migra caller passes `opts.denoVersion`, so the base read is a defensive
+          // fallback that does not run for them.
           //
           // Same per-run override for `workdir`: `cliConfig.workdir` is fixed at
           // layer-build time, before a command's own `process.chdir` (bootstrap's
