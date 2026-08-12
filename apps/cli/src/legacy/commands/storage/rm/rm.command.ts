@@ -10,6 +10,7 @@ import { legacyStorageGatewayRuntimeLayer } from "../../../shared/legacy-storage
 import {
   LegacyStorageLinkedFlagDef,
   LegacyStorageLocalFlagDef,
+  LegacyStorageProjectRefFlagDef,
   legacyAssertStorageTargetsExclusive,
 } from "../storage.flags.ts";
 import { legacyStorageRm } from "./rm.handler.ts";
@@ -25,6 +26,7 @@ const config = {
   ),
   linked: LegacyStorageLinkedFlagDef,
   local: LegacyStorageLocalFlagDef,
+  projectRef: LegacyStorageProjectRefFlagDef,
 } as const;
 
 export const legacyStorageRmCommand = Command.make("rm", config).pipe(
@@ -51,13 +53,20 @@ export const legacyStorageRmCommand = Command.make("rm", config).pipe(
         recursive: flags.recursive,
         linked: flags.linked,
         local: flags.local,
+        "project-ref": flags.projectRef,
       };
       return yield* legacyStorageRm({
         files: flags.files.map(String),
         recursive: flags.recursive,
         linked: flags.linked,
         local: flags.local,
-      }).pipe(withLegacyCommandInstrumentation({ flags: telemetryFlags }));
+        projectRef: flags.projectRef,
+      }).pipe(
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
+        withLegacyCommandInstrumentation({ flags: telemetryFlags }),
+      );
     }).pipe(withJsonErrorHandling),
   ),
   Command.provide(Layer.mergeAll(legacyStorageGatewayRuntimeLayer(["storage", "rm"]), stdinLayer)),
