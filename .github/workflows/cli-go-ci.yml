@@ -106,25 +106,6 @@ jobs:
           only-new-issues: true
           working-directory: apps/cli-go
 
-  link:
-    name: Link
-    if: ${{ github.event_name == 'merge_group' || (github.event_name ==
-      'pull_request' && !github.event.pull_request.head.repo.fork) }}
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
-        with:
-          go-version-file: apps/cli-go/go.mod
-          cache: true
-      - run: go build main.go
-      - run: ./main link
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
-
   codegen:
     name: Codegen
     runs-on: ubuntu-latest
