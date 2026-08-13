@@ -425,6 +425,20 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(renamed.identity.contextId).toBe(feature.identity.contextId);
     expect(renamed.context).toEqual({ kind: "branch", branch: "feat/renamed" });
     expect(renamed.stack.contextLocator).toBe("feat/renamed");
+
+    // The repository query itself must retain the branch context predicate: the
+    // main branch shares this project and checkout, but its stack is not part of
+    // the renamed branch's projection.
+    const branchStacks = runRepo(
+      service.repository.listStackProjections({
+        identity: {
+          projectId: feature.identity.projectId,
+          checkoutId: feature.identity.checkoutId,
+          contextId: feature.identity.contextId,
+        },
+      }),
+    );
+    expect(branchStacks.map((stack) => stack.id)).toEqual([feature.stack.id]);
   });
 
   it("resolves an ordinary folder through the same path as a checkout", async () => {

@@ -231,6 +231,40 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
     return { acquired: true, operation: copy(operation) };
   };
 
+  /** Applies the shared context-registration policy to this atomic map store. */
+  const registerContext = (input: PrepareStackInput): string => {
+    const contextRegistration = decideManagedContextRegistration({
+      requestedId: input.identity.contextId,
+      projectId: input.identity.projectId,
+      checkoutId: input.identity.checkoutId,
+      context: input.context,
+      now: input.now,
+      checkoutScopedExisting:
+        input.context.kind === "branch"
+          ? undefined
+          : [...contexts.values()].find(
+              (candidate) =>
+                candidate.checkoutId === input.identity.checkoutId &&
+                candidate.kind === input.context.kind,
+            ),
+      requestedExisting: contexts.get(input.identity.contextId),
+    });
+    const contextId =
+      contextRegistration.outcome === "create"
+        ? contextRegistration.context.id
+        : contextRegistration.contextId;
+    if (contextRegistration.outcome === "create") {
+      contexts.set(contextId, contextRegistration.context);
+    } else if (contextRegistration.refreshLocator !== undefined) {
+      const existing = contexts.get(contextId);
+      if (existing === undefined) {
+        throw new Error(`Managed context ${contextId} vanished during registration`);
+      }
+      contexts.set(contextId, { ...existing, locator: contextRegistration.refreshLocator });
+    }
+    return contextId;
+  };
+
   const prepareStack = (input: PrepareStackInput): PrepareStackResult => {
     assertManagedOwnerPid(input.ownerPid);
     return atomic(() => {
@@ -249,35 +283,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         kind: input.checkoutKind,
       });
 
-      const contextRegistration = decideManagedContextRegistration({
-        requestedId: input.identity.contextId,
-        projectId: input.identity.projectId,
-        checkoutId: input.identity.checkoutId,
-        context: input.context,
-        now: input.now,
-        checkoutScopedExisting:
-          input.context.kind === "branch"
-            ? undefined
-            : [...contexts.values()].find(
-                (candidate) =>
-                  candidate.checkoutId === input.identity.checkoutId &&
-                  candidate.kind === input.context.kind,
-              ),
-        requestedExisting: contexts.get(input.identity.contextId),
-      });
-      const contextId =
-        contextRegistration.outcome === "create"
-          ? contextRegistration.context.id
-          : contextRegistration.contextId;
-      if (contextRegistration.outcome === "create") {
-        contexts.set(contextId, contextRegistration.context);
-      } else if (contextRegistration.refreshLocator !== undefined) {
-        const existing = contexts.get(contextId);
-        if (existing === undefined) {
-          throw new Error(`Managed context ${contextId} vanished during registration`);
-        }
-        contexts.set(contextId, { ...existing, locator: contextRegistration.refreshLocator });
-      }
+      const contextId = registerContext(input);
 
       const existingLocation = [...locations.values()].find(
         (location) => location.checkoutId === input.identity.checkoutId,
