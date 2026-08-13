@@ -1005,6 +1005,57 @@ describe("managed repository and lifecycle", () => {
     });
   }
 
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`scopes stack projections and preserves ordering and tombstones with the ${adapter} adapter`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root, {
+              clock: () => new Date("2026-08-11T00:00:00.000Z"),
+              idFactory: descendingIdFactory(),
+            })
+          : await makePersistentService(root, {
+              clock: () => new Date("2026-08-11T00:00:00.000Z"),
+              idFactory: descendingIdFactory(),
+            });
+      const workspace = makeWorkspace(root, "scoped");
+      const first = await service.resolveStack({
+        operation: "start",
+        workspacePath: workspace,
+        stackName: "first",
+      });
+      const second = await service.resolveStack({
+        operation: "start",
+        workspacePath: workspace,
+        stackName: "second",
+      });
+      await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "foreign"),
+      });
+      await service.deleteStack(first.stack.id);
+
+      const identity = {
+        projectId: first.identity.projectId,
+        checkoutId: first.identity.checkoutId,
+        contextId: first.identity.contextId,
+      };
+      const live = runRepo(service.repository.listStackProjections({ identity }));
+      expect(live.map((stack) => stack.id)).toEqual([second.stack.id]);
+
+      const withTombstones = runRepo(
+        service.repository.listStackProjections({
+          identity,
+          includeTombstoned: true,
+        }),
+      );
+      expect(withTombstones.map((stack) => stack.id)).toEqual(
+        [first.stack.id, second.stack.id].sort(),
+      );
+      await service.close();
+    });
+  }
+
   it("anchors an injected relative state root so a later chdir cannot split stack state", async () => {
     const service = await makeManagedStackService({
       repository: createInMemoryManagedStackRepository(),

@@ -904,11 +904,16 @@ export class ManagedStackService extends Context.Service<
             : Effect.succeed({ projectId, checkoutId, contextId });
         };
 
-        /** Every live stack of one resolved project, checkout, and context, as a reader sees them. */
+        /**
+         * Every live stack of one resolved project, checkout, and context, as a
+         * reader sees them. The repository identity filter avoids enumerating and
+         * hydrating unrelated stacks; the retained filter protects this service
+         * contract for injected repositories that may not implement that scope.
+         */
         const contextStacks = (
           identity: ManagedIdentityTriple,
         ): Effect.Effect<ReadonlyArray<ManagedStackProjection>> =>
-          Effect.map(repository.listStackProjections(), (stacks) =>
+          Effect.map(repository.listStackProjections({ identity }), (stacks) =>
             stacks.filter(
               (stack) =>
                 stack.projectId === identity.projectId &&

@@ -7,6 +7,7 @@ import {
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
+  DuplicateManagedIdentityError,
   type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
   type ManagedCheckoutScopedContextKind,
@@ -22,7 +23,71 @@ import {
   type ManagedStackProjection,
   type ManagedStackRecord,
 } from "./model.ts";
-import type { DuplicateManagedIdentityError, ManagedOperationOwnershipError } from "./model.ts";
+import type { ManagedOperationOwnershipError } from "./model.ts";
+
+export interface ManagedContextRegistrationInput {
+  readonly requestedId: string;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly context: ManagedContextDescriptor;
+  readonly now: string;
+  readonly checkoutScopedExisting?: ManagedContextRecord;
+  readonly requestedExisting?: ManagedContextRecord;
+}
+
+export type ManagedContextRegistrationDecision =
+  | {
+      readonly outcome: "existing";
+      readonly contextId: string;
+      readonly refreshLocator?: string;
+    }
+  | { readonly outcome: "create"; readonly context: ManagedContextRecord };
+
+/**
+ * Pure policy for resolving the context a registration should use. Storage
+ * adapters supply the rows they observed and apply the returned decision inside
+ * their own atomic boundary.
+ */
+export const decideManagedContextRegistration = (
+  input: ManagedContextRegistrationInput,
+): ManagedContextRegistrationDecision => {
+  if (input.context.kind !== "branch" && input.checkoutScopedExisting !== undefined) {
+    return { outcome: "existing", contextId: input.checkoutScopedExisting.id };
+  }
+
+  const existing = input.requestedExisting;
+  if (existing !== undefined) {
+    const existingClaim = existing.checkoutId ?? existing.projectId;
+    const requestedClaim = input.context.kind === "branch" ? input.projectId : input.checkoutId;
+    if (existing.kind !== input.context.kind || existingClaim !== requestedClaim) {
+      throw new DuplicateManagedIdentityError({
+        identityId: input.requestedId,
+        existingClaim,
+        requestedClaim,
+      });
+    }
+    return {
+      outcome: "existing",
+      contextId: input.requestedId,
+      refreshLocator:
+        input.context.kind === "branch" && existing.locator !== input.context.locator
+          ? input.context.locator
+          : undefined,
+    };
+  }
+
+  return {
+    outcome: "create",
+    context: {
+      id: input.requestedId,
+      projectId: input.projectId,
+      checkoutId: input.context.kind === "branch" ? undefined : input.checkoutId,
+      kind: input.context.kind,
+      locator: input.context.kind === "branch" ? input.context.locator : undefined,
+      createdAt: input.now,
+    },
+  };
+};
 
 /**
  * Everything one stack registration needs, with every identity already minted by
@@ -181,6 +246,8 @@ export interface ManagedStackRepositoryShape {
   ) => Effect.Effect<ManagedStackProjection | undefined>;
   readonly listStackProjections: (options?: {
     readonly includeTombstoned?: boolean;
+    /** When present, filter before hydrating ports for a resolve. */
+    readonly identity?: ManagedIdentityTriple;
   }) => Effect.Effect<ReadonlyArray<ManagedStackProjection>>;
   /**
    * The one context a checkout has of a checkout-scoped kind, if it has one.

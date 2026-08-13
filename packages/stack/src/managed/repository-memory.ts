@@ -12,6 +12,7 @@ import {
   type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
   type ManagedContextRecord,
+  type ManagedIdentityTriple,
   type ManagedOperationRecord,
   type ManagedRuntimeMetadata,
   type ManagedStackConfiguration,
@@ -23,6 +24,7 @@ import {
   assertManagedOwnerPid,
   assertManagedStackUpdatable,
   compareManagedText,
+  decideManagedContextRegistration,
   managedStackOccupiesPorts,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
@@ -229,45 +231,38 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
     return { acquired: true, operation: copy(operation) };
   };
 
-  /** The in-memory counterpart of the SQLite adapter's `registerContext`. */
+  /** Applies the shared context-registration policy to this atomic map store. */
   const registerContext = (input: PrepareStackInput): string => {
-    const requested = input.identity.contextId;
-    if (input.context.kind !== "branch") {
-      const owned = [...contexts.values()].find(
-        (candidate) =>
-          candidate.checkoutId === input.identity.checkoutId &&
-          candidate.kind === input.context.kind,
-      );
-      if (owned !== undefined) {
-        return owned.id;
-      }
-    }
-    const existing = contexts.get(requested);
-    if (existing !== undefined) {
-      const existingClaim = existing.checkoutId ?? existing.projectId;
-      const requestedClaim =
-        input.context.kind === "branch" ? input.identity.projectId : input.identity.checkoutId;
-      if (existing.kind !== input.context.kind || existingClaim !== requestedClaim) {
-        throw new DuplicateManagedIdentityError({
-          identityId: requested,
-          existingClaim,
-          requestedClaim,
-        });
-      }
-      if (input.context.kind === "branch" && existing.locator !== input.context.locator) {
-        contexts.set(requested, { ...existing, locator: input.context.locator });
-      }
-      return requested;
-    }
-    contexts.set(requested, {
-      id: requested,
+    const contextRegistration = decideManagedContextRegistration({
+      requestedId: input.identity.contextId,
       projectId: input.identity.projectId,
-      checkoutId: input.context.kind === "branch" ? undefined : input.identity.checkoutId,
-      kind: input.context.kind,
-      locator: input.context.kind === "branch" ? input.context.locator : undefined,
-      createdAt: input.now,
+      checkoutId: input.identity.checkoutId,
+      context: input.context,
+      now: input.now,
+      checkoutScopedExisting:
+        input.context.kind === "branch"
+          ? undefined
+          : [...contexts.values()].find(
+              (candidate) =>
+                candidate.checkoutId === input.identity.checkoutId &&
+                candidate.kind === input.context.kind,
+            ),
+      requestedExisting: contexts.get(input.identity.contextId),
     });
-    return requested;
+    const contextId =
+      contextRegistration.outcome === "create"
+        ? contextRegistration.context.id
+        : contextRegistration.contextId;
+    if (contextRegistration.outcome === "create") {
+      contexts.set(contextId, contextRegistration.context);
+    } else if (contextRegistration.refreshLocator !== undefined) {
+      const existing = contexts.get(contextId);
+      if (existing === undefined) {
+        throw new Error(`Managed context ${contextId} vanished during registration`);
+      }
+      contexts.set(contextId, { ...existing, locator: contextRegistration.refreshLocator });
+    }
+    return contextId;
   };
 
   const prepareStack = (input: PrepareStackInput): PrepareStackResult => {
@@ -528,6 +523,19 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           compareManagedText(left.id, right.id),
       );
 
+  const listStackProjectionsByIdentity = (
+    identity: ManagedIdentityTriple,
+    options?: { readonly includeTombstoned?: boolean },
+  ): ReadonlyArray<ManagedStackProjection> =>
+    listStackRecords(options)
+      .filter(
+        (stack) =>
+          stack.projectId === identity.projectId &&
+          stack.checkoutId === identity.checkoutId &&
+          stack.contextId === identity.contextId,
+      )
+      .map(projectStack);
+
   return {
     prepareStack: (input) =>
       Effect.try({
@@ -570,7 +578,11 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         return stack === undefined ? undefined : copy(projectStack(stack));
       }),
     listStackProjections: (options) =>
-      Effect.sync(() => listStackRecords(options).map((stack) => copy(projectStack(stack)))),
+      Effect.sync(() =>
+        options?.identity === undefined
+          ? listStackRecords(options).map((stack) => copy(projectStack(stack)))
+          : listStackProjectionsByIdentity(options.identity, options).map(copy),
+      ),
     findCheckoutContext: (checkoutId, kind) =>
       Effect.sync(() => {
         const context = [...contexts.values()].find(
