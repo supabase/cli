@@ -195,6 +195,24 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
 }
 
 /**
+ * The closed set of materially different reasons {@link UnsupportedGitWorkspaceError}
+ * is raised for, so telemetry can fingerprint them separately instead of
+ * collapsing every refusal into one bucket:
+ *
+ * - `inside-git-directory` — the path itself is git metadata (a bare
+ *   repository's directory, or a `.git` directory), not a working tree.
+ * - `malformed-metadata` — the path is a checkout, but its git metadata
+ *   (`.git` link target, `HEAD`, or the ref `HEAD` names) cannot be read or
+ *   makes no sense.
+ * - `reftable` — the repository's refs are stored in a reftable, which this
+ *   package does not read yet.
+ */
+export type UnsupportedGitWorkspaceCause =
+  | "inside-git-directory"
+  | "malformed-metadata"
+  | "reftable";
+
+/**
  * A path that encloses git metadata rather than a working tree: a bare
  * repository's directory, a `.git` directory, or a checkout whose `HEAD` names
  * something no branch context can be derived from.
@@ -207,6 +225,7 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
 export class UnsupportedGitWorkspaceError extends Data.TaggedError("UnsupportedGitWorkspaceError")<{
   readonly path: string;
   readonly reason: string;
+  readonly cause: UnsupportedGitWorkspaceCause;
 }> {
   readonly code = "UNSUPPORTED_GIT_WORKSPACE" as const;
 

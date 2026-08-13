@@ -12,6 +12,7 @@ import {
   InvalidManagedIdentityError,
   UnsupportedGitWorkspaceError,
   type GitCheckoutIdentity,
+  type UnsupportedGitWorkspaceCause,
 } from "./model.ts";
 import { gitCheckoutIdentityPath, gitConfigPath, gitWorktreeConfigPath } from "./paths.ts";
 
@@ -80,8 +81,9 @@ const failsWithIdentity = failsOnlyWith(InvalidManagedIdentityError);
 const unsupported = (
   path: string,
   reason: string,
+  cause: UnsupportedGitWorkspaceCause,
 ): Effect.Effect<never, UnsupportedGitWorkspaceError> =>
-  Effect.fail(new UnsupportedGitWorkspaceError({ path, reason }));
+  Effect.fail(new UnsupportedGitWorkspaceError({ path, reason, cause }));
 
 /**
  * A file git may or may not have written. Absence is an answer throughout git's
@@ -161,12 +163,17 @@ const locateGitCheckoutRoot = (
           return yield* unsupported(
             entry,
             "Cannot read the git directory this .git file points at",
+            "malformed-metadata",
           );
         }
         return { workspaceRoot: directory, gitDirectory: linked };
       }
       if (yield* looksLikeGitDirectory(fs, directory)) {
-        return yield* unsupported(directory, "Refusing to inspect a git directory as a workspace");
+        return yield* unsupported(
+          directory,
+          "Refusing to inspect a git directory as a workspace",
+          "inside-git-directory",
+        );
       }
       const parent = dirname(directory);
       if (parent === directory) {
@@ -213,7 +220,11 @@ const resolveHead = (
   Effect.gen(function* () {
     const head = (yield* readOptionalFile(fs, join(gitDirectory, HEAD_FILE)))?.trim();
     if (head === undefined || head.length === 0) {
-      return yield* unsupported(gitDirectory, "The checkout has no readable HEAD");
+      return yield* unsupported(
+        gitDirectory,
+        "The checkout has no readable HEAD",
+        "malformed-metadata",
+      );
     }
     if (head.startsWith(SYMBOLIC_REF_PREFIX)) {
       const ref = head.slice(SYMBOLIC_REF_PREFIX.length).trim();
@@ -222,14 +233,18 @@ const resolveHead = (
         ? ref.slice(BRANCH_REF_PREFIX.length)
         : undefined;
       if (branch === undefined || branch.length === 0) {
-        return yield* unsupported(gitDirectory, `HEAD does not name a branch under ${ref}`);
+        return yield* unsupported(
+          gitDirectory,
+          `HEAD does not name a branch under ${ref}`,
+          "malformed-metadata",
+        );
       }
       // The compat stub of a reftable repository, which is refused by its
       // `extensions.refStorage` before this runs. Checked again here because the
       // stub is the tripwire that cannot be missed: a repository declaring the
       // extension some other way must still never reach a `.invalid` context.
       if (branch === REFTABLE_HEAD_STUB_BRANCH) {
-        return yield* unsupported(gitDirectory, REFTABLE_UNSUPPORTED_REASON);
+        return yield* unsupported(gitDirectory, REFTABLE_UNSUPPORTED_REASON, "reftable");
       }
       // A branch whose ref does not exist yet is the state a fresh repository
       // starts in, so it names a context even though it has no commit.
@@ -240,7 +255,11 @@ const resolveHead = (
     if (OBJECT_ID_PATTERN.test(head)) {
       return { kind: "detached", commit: head };
     }
-    return yield* unsupported(gitDirectory, "HEAD is neither a branch nor an object id");
+    return yield* unsupported(
+      gitDirectory,
+      "HEAD is neither a branch nor an object id",
+      "malformed-metadata",
+    );
   });
 
 const CONFIG_SECTION_PATTERN = /^\s*\[\s*([\w.-]+)\s*(\]?)/;
@@ -251,14 +270,29 @@ const TRUTHY_CONFIG_VALUES: ReadonlySet<string> = new Set(["", "1", "on", "true"
 const REFTABLE_REF_STORAGE = "reftable";
 
 /**
+ * Strips a value's surrounding double quotes, git config's only quoting form for
+ * the keys read here, with a minimal unescape of `\"` and `\\` inside — not a
+ * full parser, just enough for the bare-word-or-fully-quoted values these keys
+ * actually take.
+ */
+const unquoteConfigValue = (value: string): string =>
+  value.length >= 2 && value.startsWith('"') && value.endsWith('"')
+    ? value.slice(1, -1).replace(/\\(["\\])/g, "$1")
+    : value;
+
+/**
  * The value `key` holds in `[section]`, or `undefined` when the section does not
  * set it.
  *
  * These are the only config reads on the inspection path, so they stay a line
  * scan: a full config parser would be a liability, and reaching for the git
  * binary here would make read-only discovery depend on it. Every key read this
- * way is one git writes itself, as a bare word on its own line, so quoting and
- * line continuations never come up.
+ * way is one git normally writes itself, as a bare word on its own line — but a
+ * hand-edited config may quote the value (`bare = "true"`), which git's own
+ * reader still honors, so this scan unquotes a fully-quoted value before
+ * comparing it. Comment-stripping still runs first, ahead of unquoting: a quoted
+ * value containing `;` or `#` would be mishandled, which is pathological for
+ * every key read here since git itself never writes one that way.
  *
  * The two rules that decide which line answers are git's own: `[section "sub"]`
  * is a different section, whose keys say nothing about the plain one, and a key
@@ -279,7 +313,8 @@ const configValue = (content: string, section: string, key: RegExp): string | un
     const match = inSection ? key.exec(line) : null;
     if (match !== null) {
       // A variable with no value is `true` in git's config syntax.
-      value = match[1]?.split(/[;#]/)[0]?.trim() ?? "";
+      const raw = match[1]?.split(/[;#]/)[0]?.trim() ?? "";
+      value = unquoteConfigValue(raw);
     }
   }
   return value;
@@ -368,7 +403,7 @@ export const inspectWorkspace = (
 
       const repositoryConfig = yield* readRepositoryConfig(fs, commonDirectory);
       if (repositoryConfig.reftable) {
-        return yield* unsupported(commonDirectory, REFTABLE_UNSUPPORTED_REASON);
+        return yield* unsupported(commonDirectory, REFTABLE_UNSUPPORTED_REASON, "reftable");
       }
 
       const checkoutKind: GitCheckoutKind =

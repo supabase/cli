@@ -358,6 +358,26 @@ describe("candidateCleanupTargets", () => {
   });
 });
 
+describe("resolveConfig instanceId validation", () => {
+  it("rejects an instanceId that is not Docker-name-safe", async () => {
+    await expect(resolveConfig({ instanceId: "../bad:id" })).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
+  });
+
+  it("accepts a managed stack's UUID instanceId", async () => {
+    const instanceId = "0f9d2b3c-4a5e-4c7d-8e9f-1a2b3c4d5e6f";
+    const config = await resolveConfig({ instanceId });
+    expect(config.instanceId).toBe(instanceId);
+  });
+
+  it("leaves instanceId undefined when omitted", async () => {
+    const config = await resolveConfig();
+    expect(config.instanceId).toBeUndefined();
+  });
+});
+
 describe("resolveConfig startup mode", () => {
   it("keeps eager startup as the package default", async () => {
     const config = await resolveConfig();

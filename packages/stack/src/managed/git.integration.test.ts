@@ -150,6 +150,34 @@ describe("workspace topology", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
+  it.live("honors a quoted extensions.worktreeConfig and a quoted core.bare it routes to", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const bare = makeBareRepository(root, makeRepository(root));
+      git(bare, "worktree", "add", "-q", join(root, "bare-a"), "-b", "bare-a", "main");
+      git(join(root, "bare-a"), "sparse-checkout", "set", ".");
+
+      // git wrote both flags as bare words; quote them the way a hand-edited
+      // config might, and confirm the scan still agrees with `git config --get`.
+      const sharedConfig = gitConfigPath(bare);
+      writeFileSync(
+        sharedConfig,
+        readFileSync(sharedConfig, "utf8").replace(/(worktreeConfig\s*=\s*)true/i, '$1"true"'),
+      );
+      const worktreeConfig = gitWorktreeConfigPath(bare);
+      writeFileSync(
+        worktreeConfig,
+        readFileSync(worktreeConfig, "utf8").replace(/(bare\s*=\s*)true/i, '$1"true"'),
+      );
+      expect(storedConfigValue(sharedConfig, "extensions.worktreeConfig")).toBe("true");
+      expect(storedConfigValue(worktreeConfig, "core.bare")).toBe("true");
+
+      const worktree = yield* inspectCheckout(join(root, "bare-a"));
+
+      expect(worktree.checkoutKind).toBe("bare-worktree");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("leaves core.bare to the plain section when a subsection shares its name", () =>
     Effect.gen(function* () {
       const root = makeRoot();
@@ -184,6 +212,23 @@ describe("workspace topology", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
+  it.live("classifies a bare repository's worktree when core.bare is quoted", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      git(repository, "worktree", "add", "-q", join(root, "wt-a"), "-b", "feat/a");
+      const config = gitConfigPath(join(repository, ".git"));
+      // A hand-edited config may quote a value git itself always writes bare;
+      // git's own reader still honors the quotes, and so must this scan.
+      appendToConfig(config, '[core]\n\tbare = "true"\n');
+      expect(storedConfigValue(config, "core.bare")).toBe("true");
+
+      const worktree = yield* inspectCheckout(join(root, "wt-a"));
+
+      expect(worktree.checkoutKind).toBe("bare-worktree");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("reads extensions.refStorage from the plain section only", () =>
     Effect.gen(function* () {
       const repository = makeRepository(makeRoot());
@@ -198,6 +243,21 @@ describe("workspace topology", () => {
 
       const refused = yield* Effect.flip(inspectWorkspace(repository));
       expect(refused).toBeInstanceOf(UnsupportedGitWorkspaceError);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("still refuses a repository whose quoted extensions.refStorage names a reftable", () =>
+    Effect.gen(function* () {
+      const repository = makeRepository(makeRoot());
+      const config = gitConfigPath(join(repository, ".git"));
+      // A hand-edited config may quote this value too; the refusal must not
+      // depend on it staying a bare word.
+      appendToConfig(config, '[extensions]\n\trefStorage = "reftable"\n');
+      expect(storedConfigValue(config, "extensions.refStorage")).toBe("reftable");
+
+      const refused = yield* Effect.flip(inspectWorkspace(repository));
+      expect(refused).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      expect(refused.cause).toBe("reftable");
     }).pipe(Effect.provide(gitLayer)),
   );
 
@@ -216,6 +276,7 @@ describe("workspace topology", () => {
       const refused = yield* Effect.flip(inspectWorkspace(reftable));
       expect(refused).toBeInstanceOf(UnsupportedGitWorkspaceError);
       expect(refused.code).toBe("UNSUPPORTED_GIT_WORKSPACE");
+      expect(refused.cause).toBe("reftable");
 
       // The `HEAD` stub is the tripwire behind the extension: a repository whose
       // `extensions.refStorage` cannot be read is still refused rather than
@@ -229,6 +290,7 @@ describe("workspace topology", () => {
       );
       const stillRefused = yield* Effect.flip(inspectWorkspace(reftable));
       expect(stillRefused).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      expect(stillRefused.cause).toBe("reftable");
 
       // A workspace nothing could classify is a workspace nothing claimed.
       expect(existsSync(gitCheckoutIdentityPath(gitDirectory))).toBe(false);
@@ -250,6 +312,7 @@ describe("workspace topology", () => {
         const failure = yield* Effect.flip(inspectWorkspace(path));
         expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
         expect(failure.code).toBe("UNSUPPORTED_GIT_WORKSPACE");
+        expect(failure.cause).toBe("inside-git-directory");
       }
     }).pipe(Effect.provide(gitLayer)),
   );

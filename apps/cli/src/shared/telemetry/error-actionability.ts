@@ -2,6 +2,7 @@ import {
   MANAGED_ERROR_CODES,
   MANAGED_ERROR_TAG_BY_CODE,
   type ManagedErrorCode,
+  type UnsupportedGitWorkspaceCause,
 } from "@supabase/stack/managed-model";
 import { Cause, Option } from "effect";
 import type { CliError as EffectCliError } from "effect/unstable/cli";
@@ -107,7 +108,9 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_url",
   "internal_build",
   "invalid_config",
-  "managed_git_workspace",
+  "managed_git_workspace_inside_git_directory",
+  "managed_git_workspace_malformed_metadata",
+  "managed_git_workspace_reftable",
   "managed_identity",
   "managed_identity_conflict",
   "managed_initialization",
@@ -776,6 +779,33 @@ const effectCliActionabilityByTag = {
 } satisfies Record<EffectCliAdapterTag, ErrorActionabilityAdapter>;
 
 /**
+ * The materially different reasons {@link UnsupportedGitWorkspaceCause} names,
+ * projected onto a distinct closed fingerprint suffix each — so a refusal
+ * because the CLI ran inside git metadata, a malformed-metadata refusal, and a
+ * reftable refusal never group together as repeats of one another.
+ */
+const UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE: Record<
+  UnsupportedGitWorkspaceCause,
+  CliErrorFingerprintSuffix
+> = {
+  "inside-git-directory": "managed_git_workspace_inside_git_directory",
+  "malformed-metadata": "managed_git_workspace_malformed_metadata",
+  reftable: "managed_git_workspace_reftable",
+};
+
+function isUnsupportedGitWorkspaceCause(value: string): value is UnsupportedGitWorkspaceCause {
+  return value === "inside-git-directory" || value === "malformed-metadata" || value === "reftable";
+}
+
+/** Branches on the error's own typed `cause` field, never on `reason`/message text. */
+function unsupportedGitWorkspaceFingerprintSuffix(error: ErrorRecord): CliErrorFingerprintSuffix {
+  const cause = readString(error, "cause");
+  return cause !== undefined && isUnsupportedGitWorkspaceCause(cause)
+    ? UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE[cause]
+    : "managed_git_workspace_malformed_metadata";
+}
+
+/**
  * `@supabase/stack` managed registry failures, keyed by the stable `code`
  * literal each class declares. `code` is the package's wire-level contract: it
  * survives the identifier minification of release builds, and Node/Bun callers
@@ -785,94 +815,103 @@ const effectCliActionabilityByTag = {
  *
  * Keyed by the package's exported {@link ManagedErrorCode} union, so the table
  * is exhaustive by construction: a new managed failure cannot be added in
- * `@supabase/stack` without being classified here.
+ * `@supabase/stack` without being classified here. Values are adapters (not
+ * bare declarations) so an entry — like `UNSUPPORTED_GIT_WORKSPACE` below — can
+ * branch on the raised instance's own fields.
  */
-const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionabilityDeclaration> = {
-  INVALID_MANAGED_IDENTITY: {
+const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAdapter> = {
+  INVALID_MANAGED_IDENTITY: () => ({
     ...actionability.invalidInput,
     fingerprint_suffix: "managed_identity",
-  },
-  DUPLICATE_MANAGED_IDENTITY: {
+  }),
+  DUPLICATE_MANAGED_IDENTITY: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "managed_identity_conflict",
-  },
-  MANAGED_INVALID_STACK_NAME: {
+  }),
+  MANAGED_INVALID_STACK_NAME: () => ({
     ...actionability.invalidInput,
     fingerprint_suffix: "managed_stack_name",
-  },
-  UNSUPPORTED_MANAGED_REGISTRY_VERSION: {
+  }),
+  UNSUPPORTED_MANAGED_REGISTRY_VERSION: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "invalid_config",
-  },
-  MANAGED_STACK_NOT_FOUND: { ...actionability.invalidInput, fingerprint_suffix: "not_found" },
+  }),
+  MANAGED_STACK_NOT_FOUND: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "not_found",
+  }),
   // The directory the command ran in holds git metadata rather than a working
   // tree — a bare repository or a `.git` — so the remediation is to run it from a
-  // checkout instead.
-  UNSUPPORTED_GIT_WORKSPACE: {
+  // checkout instead. The suffix is split by the error's own `cause` field: see
+  // unsupportedGitWorkspaceFingerprintSuffix.
+  UNSUPPORTED_GIT_WORKSPACE: (error) => ({
     ...actionability.invalidInput,
-    fingerprint_suffix: "managed_git_workspace",
-  },
+    fingerprint_suffix: unsupportedGitWorkspaceFingerprintSuffix(error),
+  }),
   // Another caller owns the stack right now; the remediation is to settle that
   // operation before retrying.
-  MANAGED_OPERATION_IN_PROGRESS: {
+  MANAGED_OPERATION_IN_PROGRESS: () => ({
     ...actionability.stopStack,
     fingerprint_suffix: "managed_operation_in_progress",
-  },
-  MANAGED_OPERATION_OWNERSHIP_MISMATCH: {
+  }),
+  MANAGED_OPERATION_OWNERSHIP_MISMATCH: () => ({
     ...actionability.stopStack,
     fingerprint_suffix: "managed_operation_ownership",
-  },
-  MANAGED_STACK_PUBLICATION_TIMEOUT: {
+  }),
+  MANAGED_STACK_PUBLICATION_TIMEOUT: () => ({
     ...actionability.stopStack,
     fingerprint_suffix: "managed_publication_timeout",
-  },
-  MANAGED_OPERATION_REQUIRES_RECONCILIATION: {
+  }),
+  MANAGED_OPERATION_REQUIRES_RECONCILIATION: () => ({
     ...actionability.stopStack,
     fingerprint_suffix: "managed_recovery",
-  },
-  MANAGED_STACK_NOT_STOPPED: {
+  }),
+  MANAGED_STACK_NOT_STOPPED: () => ({
     ...actionability.stopStack,
     fingerprint_suffix: "managed_stack_not_stopped",
-  },
-  MANAGED_RUNNING_STACK_PORT_CHANGE: {
+  }),
+  MANAGED_RUNNING_STACK_PORT_CHANGE: () => ({
     ...actionability.stopStack,
     fingerprint_suffix: "managed_port_change",
-  },
+  }),
   // The operation owner pid comes from the CLI process itself, never from user
   // input, so a rejected pid is a broken internal invariant.
-  MANAGED_INVALID_OWNER_PID: {
+  MANAGED_INVALID_OWNER_PID: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "managed_owner_pid",
-  },
+  }),
   // Only internal misuse of the repository can call `updateStack` on a still
   // unpublished (pending) row; nothing a user does reaches this.
-  MANAGED_PENDING_STACK_UPDATE: {
+  MANAGED_PENDING_STACK_UPDATE: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "managed_pending_update",
-  },
-  MANAGED_PORT_ALREADY_RESERVED: {
+  }),
+  MANAGED_PORT_ALREADY_RESERVED: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "port_conflict",
-  },
+  }),
   // The port number itself is unusable (fractional or outside 1-65535), which
   // is the user's own configured value rather than a conflict with a peer.
-  MANAGED_INVALID_PORT: { ...actionability.invalidConfig, fingerprint_suffix: "managed_port" },
+  MANAGED_INVALID_PORT: () => ({
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "managed_port",
+  }),
   // Two of the user's own port assignments name the same key, which is the
   // user's configured value rather than a conflict with another stack.
-  MANAGED_DUPLICATE_PORT_KEY: {
+  MANAGED_DUPLICATE_PORT_KEY: () => ({
     ...actionability.invalidConfig,
     fingerprint_suffix: "managed_port_duplicate_key",
-  },
+  }),
   // The registry derives every stack root itself, so a path that fails the
   // containment check means the CLI passed a rejected argument.
-  UNSAFE_MANAGED_STACK_PATH: {
+  UNSAFE_MANAGED_STACK_PATH: () => ({
     ...actionability.impossibleState,
     fingerprint_suffix: "bad_argument",
-  },
-  MANAGED_STACK_INITIALIZATION_FAILED: {
+  }),
+  MANAGED_STACK_INITIALIZATION_FAILED: () => ({
     ...actionability.startStack,
     fingerprint_suffix: "managed_initialization",
-  },
+  }),
 };
 
 /**
@@ -884,10 +923,10 @@ const managedActionabilityByCode: Record<ManagedErrorCode, CliErrorActionability
  * through to `unknown`.
  */
 const managedActionabilityByTag: Record<string, ErrorActionabilityAdapter> = Object.fromEntries(
-  MANAGED_ERROR_CODES.map((code) => {
-    const declaration = managedActionabilityByCode[code];
-    return [MANAGED_ERROR_TAG_BY_CODE[code], () => declaration];
-  }),
+  MANAGED_ERROR_CODES.map((code) => [
+    MANAGED_ERROR_TAG_BY_CODE[code],
+    managedActionabilityByCode[code],
+  ]),
 );
 
 /**
