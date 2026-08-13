@@ -25,7 +25,7 @@
 import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "@supabase/config";
-import { Effect, Option, type FileSystem } from "effect";
+import { Clock, Effect, Option, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -414,6 +414,56 @@ const legacyForgetShadowBaselineTar = (
 ): Effect.Effect<void> => fs.remove(filePath).pipe(Effect.orElseSucceed(() => undefined));
 
 /**
+ * Whether `fileName` is one of {@link legacyExportPgDataTar}'s in-flight temp files
+ * (`shadow-baseline-<key>.tar.<pid>.partial`). Pure name check only — whether it is ABANDONED
+ * (crashed/SIGKILLed writer, whose `Effect.onError` cleanup never ran) is an mtime question the
+ * sweep answers separately, so a concurrent writer's live temp file is never a candidate by name
+ * alone.
+ */
+export function legacyIsShadowBaselinePartial(fileName: string): boolean {
+  return /^shadow-baseline-[0-9a-f]{16}\.tar\.\d+\.partial$/u.test(fileName);
+}
+
+/**
+ * A partial older than this is abandoned: the export itself streams ~90MB in seconds, so an
+ * hour-old temp file's writer is long gone. Deliberately enormous relative to a real export so a
+ * slow disk can never get a LIVE temp file swept out from under its writer.
+ */
+const LEGACY_SHADOW_PARTIAL_ABANDON_MS = 60 * 60 * 1000;
+
+/**
+ * Removes abandoned `.partial` temp files (see {@link legacyIsShadowBaselinePartial}) — the one
+ * artifact a SIGKILLed/crashed cold export leaves behind that nothing else ever cleans: later
+ * runs use their own pid in the temp name, and the tar retention sweep deliberately ignores
+ * `.partial` names (review: Codex on #6184). Runs before every cold export (so orphans cannot
+ * accumulate across repeatedly killed provisions) — best-effort throughout, like every other
+ * sweep here.
+ */
+const legacySweepAbandonedShadowBaselinePartials = <E>(
+  input: LegacyShadowSetupInput<E>,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const tempDir = legacyPgDeltaTempPath(input.path, input.workdir);
+    const entries = yield* input.fs
+      .readDirectory(tempDir)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const now = yield* Clock.currentTimeMillis;
+    yield* Effect.forEach(
+      entries.filter(legacyIsShadowBaselinePartial),
+      (entry) =>
+        Effect.gen(function* () {
+          const filePath = input.path.join(tempDir, entry);
+          const info = yield* input.fs.stat(filePath);
+          const mtime = Option.getOrUndefined(info.mtime);
+          if (mtime !== undefined && now - mtime.getTime() > LEGACY_SHADOW_PARTIAL_ABANDON_MS) {
+            yield* legacyForgetShadowBaselineTar(input.fs, filePath);
+          }
+        }).pipe(Effect.orElseSucceed(() => undefined)),
+      { discard: true },
+    );
+  });
+
+/**
  * Applies the "current key only" retention rule: every `shadow-baseline-*.tar` in the temp
  * directory whose key differs from `key` is removed. Best-effort throughout — a snapshot that
  * cannot be swept costs ~90MB of disk, so it must never fail the export that just succeeded.
@@ -517,6 +567,7 @@ const legacyWriteShadowBaselineTar = <E>(
           legacyShadowCacheUnavailable(`failed to create ${tempDir}: ${cause.message}`),
         ),
       );
+    yield* legacySweepAbandonedShadowBaselinePartials(input);
     yield* legacyExportPgDataTar(spawner, containerId, input.fs, tarPath).pipe(
       Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
         legacyShadowCacheUnavailable(cause.reason),
@@ -602,6 +653,7 @@ const legacyUncachedShadow = <E>(
     Effect.map(({ containerId }) => ({
       containerId,
       baselinePresent: false,
+      snapshotRequired: false,
       snapshotBaseline: Effect.void,
     })),
   );
@@ -625,6 +677,7 @@ const legacyColdCachedShadow = <E>(
     Effect.map(({ containerId }) => ({
       containerId,
       baselinePresent: false,
+      snapshotRequired: true,
       snapshotBaseline: legacyExportShadowBaseline(spawner, input, key, tarPath, containerId),
     })),
   );
@@ -677,6 +730,7 @@ const legacyWarmShadow = <E>(
     return {
       containerId,
       baselinePresent: true,
+      snapshotRequired: false,
       snapshotBaseline: Effect.void,
     } satisfies LegacyShadowAcquiredHandle;
   });

@@ -783,12 +783,13 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           },
           setup: baseShadowSetup(),
         });
-        // Two connects, not one: on the cold branch the platform baseline runs in its own scope so
-        // its session is closed before `snapshotBaseline` (which stops the container to take a
-        // disk-level PGDATA snapshot), and the template database + migrations then run on a second
-        // session. The ordering under test is unaffected — the migration listing still precedes
-        // every connect.
-        expect(events).toEqual(["list", "connect", "connect"]);
+        // ONE connect, matching Go's single-connection flow: the default baseline state
+        // (`LEGACY_SHADOW_BASELINE_COLD`) requires no snapshot, so baseline + template +
+        // migrations all share one session — the split-session shape is reserved for the
+        // cache's own snapshotting cold provision (`snapshotRequired: true`), whose disk-level
+        // export must close the session before stopping the container. The ordering under test
+        // is unaffected — the migration listing still precedes the connect.
+        expect(events).toEqual(["list", "connect"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

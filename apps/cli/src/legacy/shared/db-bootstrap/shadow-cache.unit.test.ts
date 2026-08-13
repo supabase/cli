@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Option } from "effect";
 
 import {
+  legacyIsShadowBaselinePartial,
   legacyIsStaleShadowBaselineTar,
   legacyShadowBaselineTarFileName,
   legacyShadowCacheEnabled,
@@ -311,6 +312,23 @@ describe("shadow baseline tar retention", () => {
   it("keeps the current key's snapshot and sweeps every other key's", () => {
     expect(legacyIsStaleShadowBaselineTar(legacyShadowBaselineTarFileName(key), key)).toBe(false);
     expect(legacyIsStaleShadowBaselineTar("shadow-baseline-fedcba9876543210.tar", key)).toBe(true);
+  });
+
+  it("recognizes only this module's own partial temp files as abandoned-sweep candidates", () => {
+    expect(legacyIsShadowBaselinePartial(`shadow-baseline-${key}.tar.4242.partial`)).toBe(true);
+    for (const other of [
+      // The published artifact and other keys' artifacts are the tar sweep's business, not this
+      // predicate's.
+      legacyShadowBaselineTarFileName(key),
+      "shadow-baseline-fedcba9876543210.tar",
+      // Anything not exactly `<prefix><16-hex>.tar.<pid>.partial` is left alone.
+      "shadow-baseline.tar.4242.partial",
+      `shadow-baseline-${key}.tar.partial`,
+      `shadow-baseline-${key}.tar.4242.partial.bak`,
+      "catalog-local-migrations-abc-123.json",
+    ]) {
+      expect(legacyIsShadowBaselinePartial(other), other).toBe(false);
+    }
   });
 
   it("never sweeps a file that is not one of this module's own snapshots", () => {

@@ -774,14 +774,26 @@ export interface LegacyShadowBaselineState {
    */
   readonly baselinePresent: boolean;
   /**
+   * `true` ONLY for a cache-enabled COLD provision — the one state whose
+   * {@link snapshotBaseline} really stops the container. This is what
+   * {@link legacyMigrateShadowDatabase} keys its session structure on: the baseline session must
+   * be closed before a real snapshot (a disk-level export severs any live backend), but when no
+   * snapshot will run, splitting sessions would be a gratuitous behavior change — a reconnect
+   * picks up role-level defaults `roles.sql` may have just installed (e.g. `ALTER ROLE postgres
+   * SET statement_timeout`), which Go's single-connection flow never exposed to migrations
+   * (review: Codex on #6184). So uncached and warm runs keep exactly one session.
+   */
+  readonly snapshotRequired: boolean;
+  /**
    * Runs immediately after a FRESHLY provisioned baseline and strictly before the template
    * database/user migrations — the only point at which `postgres` holds the pristine baseline and
    * nothing else.
    *
    * Takes NO session, and {@link legacyMigrateShadowDatabase} guarantees no session is open
-   * against the shadow while it runs: the snapshot is a disk-level PGDATA export that has to stop
-   * the container, which would sever any live backend. `Effect.Effect<void, never, …>`: a cache
-   * that cannot snapshot must degrade silently, never fail the run.
+   * against the shadow while it runs when {@link snapshotRequired} is set: the snapshot is a
+   * disk-level PGDATA export that has to stop the container, which would sever any live backend.
+   * `Effect.Effect<void, never, …>`: a cache that cannot snapshot must degrade silently, never
+   * fail the run.
    */
   readonly snapshotBaseline: Effect.Effect<void, never, Output | LegacyDbConnection>;
 }
@@ -789,6 +801,7 @@ export interface LegacyShadowBaselineState {
 /** The baseline state every uncached caller passes: provision it, snapshot nothing. */
 export const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
   baselinePresent: false,
+  snapshotRequired: false,
   snapshotBaseline: Effect.void,
 };
 
@@ -811,12 +824,14 @@ export const LEGACY_SHADOW_BASELINE_COLD: LegacyShadowBaselineState = {
  * the template database and the user migrations; a COLD cache-enabled provision passes the same
  * cold sequence plus a `snapshotBaseline` step between the baseline and the template database.
  *
- * The one structural divergence from Go: on the cold branch the baseline runs in its own scope, so
- * its session is CLOSED before {@link LegacyShadowBaselineState.snapshotBaseline}, and the
- * template database + migrations then run on a second session. Go uses a single connection for all
- * of it, but the disk-level PGDATA snapshot stops the container, which severs any live backend —
- * and a session's lifetime ending with the work it was opened for is the right shape anyway. A
- * warm hit still uses exactly one session, and the SQL either path issues is unchanged.
+ * The one structural divergence from Go is confined to the SNAPSHOTTING cold branch
+ * (`baseline.snapshotRequired`): there the baseline runs in its own scope, its session is CLOSED
+ * before {@link LegacyShadowBaselineState.snapshotBaseline} (the disk-level PGDATA snapshot stops
+ * the container, which severs any live backend), and the template database + migrations run on a
+ * second session. Every OTHER state — uncached (cache off / `--no-cache` / OrioleDB) and warm —
+ * uses exactly one session, matching Go's single connection: see
+ * {@link LegacyShadowBaselineState.snapshotRequired} for why the split must not leak into the
+ * uncached path. The SQL every path issues is unchanged.
  */
 const migrateShadowDatabase = <E>(
   spawner: Spawner,
@@ -841,7 +856,7 @@ const migrateShadowDatabase = <E>(
         ),
       );
 
-      if (!baseline.baselinePresent) {
+      if (!baseline.baselinePresent && baseline.snapshotRequired) {
         // Own scope: the baseline session must be closed before `snapshotBaseline` — see this
         // function's own doc comment.
         yield* Effect.scoped(
@@ -858,6 +873,15 @@ const migrateShadowDatabase = <E>(
         yield* baseline.snapshotBaseline;
       }
       const session = yield* legacyConnectShadowDatabase(input.connConfig);
+      if (!baseline.baselinePresent && !baseline.snapshotRequired) {
+        // Go's single-connection flow, verbatim: baseline + template + migrations all on this
+        // one session — see this function's own doc comment.
+        const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+        yield* legacySetupDatabase(
+          spawner,
+          legacyBuildShadowSetupDatabaseInput(input, session, resolved),
+        );
+      }
       yield* legacyCreateShadowTemplateDatabase(session);
       yield* legacyApplyMigrations(
         session,

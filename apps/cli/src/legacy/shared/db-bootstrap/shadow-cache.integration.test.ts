@@ -547,6 +547,35 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
+  it.live("a cold export sweeps abandoned partial temp files but never fresh ones", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheEnv(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tempDir = pgDeltaTempDir(path);
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        // A SIGKILLed export's leftover (writer long gone — hour-plus-old mtime) and a
+        // concurrent writer's live temp file (fresh mtime).
+        const abandoned = path.join(tempDir, "shadow-baseline-0123456789abcdef.tar.99999.partial");
+        const live = path.join(tempDir, "shadow-baseline-fedcba9876543210.tar.88888.partial");
+        yield* fs.writeFileString(abandoned, "stale");
+        yield* fs.writeFileString(live, "in-flight");
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        yield* fs.utimes(abandoned, twoHoursAgo, twoHoursAgo);
+
+        yield* coldRun(docker, shadowInput(fs, path));
+
+        expect(yield* fs.exists(abandoned)).toBe(false);
+        expect(yield* fs.exists(live)).toBe(true);
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
   it.live("publishing a new key's tar sweeps every other key's", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
