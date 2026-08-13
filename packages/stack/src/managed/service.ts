@@ -12,7 +12,11 @@ import {
 } from "effect";
 import {
   DEFAULT_MANAGED_STACK_NAME,
+  DuplicateManagedIdentityError,
   InvalidManagedIdentityError,
+  ManagedCheckoutConflictError,
+  ManagedIdentityTransitionOwnershipError,
+  ManagedInaccessiblePathError,
   InvalidManagedOwnerPidError,
   InvalidManagedStackNameError,
   ManagedAbandonedOperationError,
@@ -29,6 +33,7 @@ import {
   type ManagedContextDescriptor,
   type ManagedContextKind,
   type ManagedIdentityTriple,
+  type ManagedIdentityTransitionRecord,
   type ManagedOperationKind,
   type ManagedOperationRecord,
   type ManagedStackConfiguration,
@@ -64,6 +69,7 @@ import {
   type PrepareStackFailure,
   type UpdateManagedStackFailure,
 } from "./repository.ts";
+import type { ManagedIdentityRecoveryError } from "./repository.ts";
 import { discoverWorkspace, type ManagedWorkspaceDiscovery } from "./discovery.ts";
 
 export interface ManagedStackServiceOptions {
@@ -100,6 +106,17 @@ export interface ResolveManagedStackOptions {
    */
   readonly initialize?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
   readonly validate?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
+}
+
+/** A read observation consumed by an explicit checkout recovery operation. */
+export interface ManagedCheckoutRecoveryRequest {
+  /** The workspace to recover. `path` is accepted as the recovery-operation spelling. */
+  readonly workspacePath?: string;
+  readonly path?: string;
+  /** Expected checkout identity; omitted to use the discovered marker. */
+  readonly checkoutId?: string;
+  /** A discovery report obtained immediately before requesting recovery. */
+  readonly observation?: ManagedWorkspaceDiscovery;
 }
 
 /** What the workspace turned out to be, and where its identities are kept. */
@@ -248,6 +265,7 @@ export type UpdateManagedStackConfigurationFailure =
 
 export type ResolveManagedStackFailure =
   | InvalidManagedIdentityError
+  | ManagedIdentityRecoveryError
   | InvalidManagedStackNameError
   | ManagedAbandonedOperationError
   | ManagedOperationInProgressError
@@ -272,6 +290,33 @@ export interface ManagedStackServiceShape {
   ) => Effect.Effect<
     ManagedWorkspaceDiscovery,
     InvalidManagedIdentityError | UnsupportedGitWorkspaceError
+  >;
+  readonly newCheckout: (
+    options: ManagedCheckoutRecoveryRequest,
+  ) => Effect.Effect<
+    ManagedWorkspaceDiscovery,
+    | InvalidManagedIdentityError
+    | DuplicateManagedIdentityError
+    | UnsupportedGitWorkspaceError
+    | ManagedIdentityRecoveryError
+  >;
+  readonly rebindCheckout: (
+    options: ManagedCheckoutRecoveryRequest,
+  ) => Effect.Effect<
+    ManagedWorkspaceDiscovery,
+    | InvalidManagedIdentityError
+    | UnsupportedGitWorkspaceError
+    | ManagedIdentityRecoveryError
+    | ManagedInaccessiblePathError
+  >;
+  readonly adoptCheckout: (
+    options: ManagedCheckoutRecoveryRequest,
+  ) => Effect.Effect<
+    ManagedWorkspaceDiscovery,
+    | InvalidManagedIdentityError
+    | UnsupportedGitWorkspaceError
+    | ManagedIdentityRecoveryError
+    | ManagedInaccessiblePathError
   >;
   /**
    * The one path from a workspace path to a stack, for every workspace shape and
@@ -801,8 +846,45 @@ export class ManagedStackService extends Context.Service<
         > =>
           Effect.gen(function* () {
             const canonicalPath = report.workspace.canonicalPath;
+            const freshReport = yield* discover(canonicalPath);
+            const winnerPublished =
+              report.state === "unregistered" &&
+              freshReport.state === "healthy" &&
+              freshReport.identity.projectId !== undefined &&
+              freshReport.identity.checkoutId !== undefined &&
+              freshReport.identity.contextId !== undefined &&
+              freshReport.conflicts.length === 0 &&
+              freshReport.activeTransition === undefined &&
+              freshReport.workspace.workspaceRoot === report.workspace.workspaceRoot &&
+              freshReport.workspace.projectIdentityLocation ===
+                report.workspace.projectIdentityLocation &&
+              freshReport.workspace.checkoutIdentityLocation ===
+                report.workspace.checkoutIdentityLocation &&
+              freshReport.context.kind === report.context.kind &&
+              freshReport.context.branch === report.context.branch &&
+              freshReport.context.commit === report.context.commit;
+            if (
+              discoveryObservation(report) !== discoveryObservation(freshReport) &&
+              !winnerPublished
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message:
+                    "Managed workspace changed before identity publication; rediscovery is required",
+                }),
+              );
+            }
+            if (winnerPublished) {
+              return {
+                workspace: freshReport.workspace,
+                context: freshReport.context,
+                contextDescriptor: freshReport.contextDescriptor,
+                identity: freshReport.identity,
+                identityMarkerCreated: false,
+              };
+            }
             const inspection = yield* withWorkspaceServices(inspectWorkspace(canonicalPath));
-            if (!observationMatches(report, inspection)) {
+            if (!observationMatches(freshReport, inspection)) {
               return yield* Effect.fail(
                 new InvalidManagedIdentityError({
                   message: "Managed workspace changed after discovery; rediscovery is required",
@@ -900,6 +982,7 @@ export class ManagedStackService extends Context.Service<
             registryContextId: report.registryContextId,
             stacks: sortJson(report.stacks),
             locations: sortJson(report.locations),
+            conflictingLocations: sortJson(report.conflictingLocations ?? []),
             ownerEvidence:
               report.ownerEvidence === undefined
                 ? undefined
@@ -912,8 +995,424 @@ export class ManagedStackService extends Context.Service<
             conflicts: sortJson(report.conflicts),
             warnings: sortJson(report.warnings),
             recoveryOperations: sortJson(report.recoveryOperations),
+            inaccessiblePaths: report.inaccessiblePaths,
+            historicalPathEvidence: sortJson(report.historicalPathEvidence ?? []),
           });
         };
+
+        const requestedRecoveryPath = (
+          options: ManagedCheckoutRecoveryRequest,
+        ): Effect.Effect<string, InvalidManagedIdentityError> => {
+          const path = options.workspacePath ?? options.path;
+          return path === undefined || path.trim().length === 0
+            ? Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "A workspace path is required for managed checkout recovery",
+                }),
+              )
+            : Effect.succeed(path);
+        };
+
+        const recoveryReport = (
+          options: ManagedCheckoutRecoveryRequest,
+        ): Effect.Effect<
+          ManagedWorkspaceDiscovery,
+          InvalidManagedIdentityError | UnsupportedGitWorkspaceError
+        > =>
+          Effect.gen(function* () {
+            const path = yield* requestedRecoveryPath(options);
+            const current = yield* discover(path);
+            if (
+              options.observation !== undefined &&
+              discoveryObservation(options.observation) !== discoveryObservation(current)
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed workspace changed after discovery; rediscovery is required",
+                }),
+              );
+            }
+            return current;
+          });
+
+        const reserveRecoveryTransition = (
+          report: ManagedWorkspaceDiscovery,
+          kind: "new-checkout" | "rebind-checkout" | "adopt-checkout",
+          checkoutId: string | undefined,
+          path: string,
+        ): Effect.Effect<
+          ManagedIdentityTransitionRecord,
+          InvalidManagedIdentityError | ManagedIdentityRecoveryError
+        > =>
+          Effect.gen(function* () {
+            const existing = report.activeTransition;
+            if (
+              existing !== undefined &&
+              existing.kind === kind &&
+              existing.path === path &&
+              existing.checkoutId === checkoutId
+            ) {
+              return existing;
+            }
+            const id = yield* managedUuid("identity transition");
+            return yield* repository.reserveIdentityTransition({
+              id,
+              kind,
+              projectId: report.identity.projectId,
+              checkoutId,
+              contextId: report.identity.contextId,
+              path,
+              now: now(),
+            });
+          });
+
+        const finishRecoveryTransition = (
+          transition: ManagedIdentityTransitionRecord,
+          report: ManagedWorkspaceDiscovery,
+          checkoutId: string,
+          path: string,
+        ): Effect.Effect<
+          ManagedWorkspaceDiscovery,
+          InvalidManagedIdentityError | ManagedIdentityRecoveryError | UnsupportedGitWorkspaceError
+        > =>
+          Effect.gen(function* () {
+            const transitionTargetMatches =
+              transition.path === path &&
+              transition.kind !== "new-checkout" &&
+              transition.checkoutId === checkoutId &&
+              (transition.projectId === undefined ||
+                transition.projectId === report.identity.projectId) &&
+              (transition.contextId === undefined ||
+                transition.contextId === report.identity.contextId);
+            if (!transitionTargetMatches) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            if (report.inaccessiblePaths !== undefined && report.inaccessiblePaths.length > 0) {
+              return yield* Effect.fail(
+                new ManagedInaccessiblePathError({ path: report.inaccessiblePaths[0] ?? path }),
+              );
+            }
+
+            const rejectHistoricalRecoveryEvidence = (
+              current: ManagedWorkspaceDiscovery,
+            ): Effect.Effect<void, ManagedCheckoutConflictError | ManagedInaccessiblePathError> => {
+              const inaccessible = current.inaccessiblePaths?.[0];
+              if (inaccessible !== undefined) {
+                return Effect.fail(new ManagedInaccessiblePathError({ path: inaccessible }));
+              }
+              const evidence = current.historicalPathEvidence?.find(
+                (candidate) => candidate.probe !== "missing",
+              );
+              if (evidence !== undefined) {
+                return Effect.fail(
+                  new ManagedCheckoutConflictError({
+                    checkoutId,
+                    canonicalPath: evidence.path,
+                    existingCheckoutId: checkoutId,
+                  }),
+                );
+              }
+              const blockedCurrent = current.locations.find(
+                (location) => location.canonicalPath === path && location.state === "blocked",
+              );
+              const conflicting = current.conflictingLocations?.find(
+                (location) => location.canonicalPath === path,
+              );
+              return blockedCurrent === undefined && conflicting === undefined
+                ? Effect.void
+                : Effect.fail(
+                    new ManagedCheckoutConflictError({
+                      checkoutId,
+                      canonicalPath: path,
+                      existingCheckoutId: conflicting?.checkoutId ?? checkoutId,
+                    }),
+                  );
+            };
+
+            const verifyMarker = (current: ManagedWorkspaceDiscovery) =>
+              current.identity.checkoutId === checkoutId &&
+              current.identity.projectId === report.identity.projectId &&
+              current.identity.contextId === report.identity.contextId &&
+              current.workspace.workspaceRoot === path;
+            let current = yield* discover(path);
+            yield* rejectHistoricalRecoveryEvidence(current);
+            if (!verifyMarker(current)) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed checkout marker changed before registry recovery",
+                }),
+              );
+            }
+            if (current.inaccessiblePaths !== undefined && current.inaccessiblePaths.length > 0) {
+              return yield* Effect.fail(
+                new ManagedInaccessiblePathError({ path: current.inaccessiblePaths[0] ?? path }),
+              );
+            }
+
+            let phase = transition.phase;
+            if (phase === "reserved") {
+              // Marker/config publication is verified before advancing the
+              // transition. Registry rows are published only after this CAS.
+              yield* repository.advanceIdentityTransition({
+                id: transition.id,
+                expectedPhase: "reserved",
+                phase: "git-written",
+                now: now(),
+              });
+              phase = "git-written";
+              current = yield* discover(path);
+              yield* rejectHistoricalRecoveryEvidence(current);
+              if (!verifyMarker(current)) {
+                return yield* Effect.fail(
+                  new InvalidManagedIdentityError({
+                    message: "Managed checkout marker changed before registry recovery",
+                  }),
+                );
+              }
+            }
+
+            if (phase === "git-written") {
+              yield* rejectHistoricalRecoveryEvidence(current);
+              const active = current.locations.find(
+                (location) =>
+                  location.checkoutId === checkoutId &&
+                  location.canonicalPath === path &&
+                  location.state === "active",
+              );
+              if (active === undefined) {
+                const decision = yield* repository.applyCheckoutLocation({
+                  checkoutId,
+                  locationId: yield* managedUuid("checkout location"),
+                  canonicalPath: path,
+                  now: now(),
+                });
+                if (decision.outcome === "blocked") {
+                  return yield* Effect.fail(
+                    new ManagedCheckoutConflictError({
+                      checkoutId,
+                      canonicalPath: path,
+                      existingCheckoutId: decision.location.checkoutId,
+                    }),
+                  );
+                }
+              }
+              current = yield* discover(path);
+              yield* rejectHistoricalRecoveryEvidence(current);
+              if (!verifyMarker(current)) {
+                return yield* Effect.fail(
+                  new InvalidManagedIdentityError({
+                    message: "Managed checkout recovery preconditions no longer hold",
+                  }),
+                );
+              }
+              const activeAfter = current.locations.find(
+                (location) =>
+                  location.checkoutId === checkoutId &&
+                  location.canonicalPath === path &&
+                  location.state === "active",
+              );
+              if (activeAfter === undefined) {
+                return yield* Effect.fail(
+                  new InvalidManagedIdentityError({
+                    message: "Managed checkout recovery preconditions no longer hold",
+                  }),
+                );
+              }
+              yield* repository.finalizeIdentityTransition({
+                id: transition.id,
+                expectedPhase: "git-written",
+                now: now(),
+              });
+            }
+            return yield* discover(path);
+          });
+
+        const newCheckout = (
+          options: ManagedCheckoutRecoveryRequest,
+        ): Effect.Effect<
+          ManagedWorkspaceDiscovery,
+          | InvalidManagedIdentityError
+          | DuplicateManagedIdentityError
+          | UnsupportedGitWorkspaceError
+          | ManagedIdentityRecoveryError
+        > =>
+          Effect.gen(function* () {
+            const report = yield* recoveryReport(options);
+            const path = report.workspace.workspaceRoot;
+            if (
+              report.state !== "unregistered" &&
+              !(
+                report.state === "transitioning" &&
+                report.activeTransition?.kind === "new-checkout" &&
+                report.activeTransition.path === path
+              )
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: `Managed workspace ${report.workspace.canonicalPath} is ${report.state}, not unregistered`,
+                }),
+              );
+            }
+            const transition = yield* reserveRecoveryTransition(
+              report,
+              "new-checkout",
+              undefined,
+              path,
+            );
+            if (transition.phase === "reserved") {
+              const beforePublication = yield* discover(path);
+              const beforeClaims = yield* repository.listIdentityClaims();
+              const reserved = beforeClaims.transitions.find(
+                (candidate) => candidate.id === transition.id,
+              );
+              if (
+                reserved === undefined ||
+                reserved.phase !== "reserved" ||
+                reserved.kind !== "new-checkout" ||
+                reserved.path !== path ||
+                beforePublication.identity.projectId !== undefined ||
+                beforePublication.identity.checkoutId !== undefined ||
+                beforePublication.identity.contextId !== undefined
+              ) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+              const claimed = yield* claimUnregisteredWorkspace(beforePublication);
+              const identity = yield* requireResolvedIdentity(claimed);
+              const reread = yield* discover(path);
+              if (
+                reread.identity.projectId !== identity.projectId ||
+                reread.identity.checkoutId !== identity.checkoutId ||
+                reread.identity.contextId !== identity.contextId
+              ) {
+                return yield* Effect.fail(
+                  new InvalidManagedIdentityError({
+                    message: "Managed checkout identity publication did not settle on the winner",
+                  }),
+                );
+              }
+              yield* repository.advanceIdentityTransition({
+                id: transition.id,
+                expectedPhase: "reserved",
+                phase: "git-written",
+                now: now(),
+              });
+            }
+            const published = yield* discover(path);
+            if (
+              published.identity.projectId === undefined ||
+              published.identity.checkoutId === undefined ||
+              published.identity.contextId === undefined
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed checkout identity publication did not settle on the winner",
+                }),
+              );
+            }
+            const latestTransition =
+              (yield* repository.listIdentityClaims()).transitions.find(
+                (candidate) => candidate.id === transition.id,
+              ) ?? transition;
+            if (latestTransition.phase === "git-written") {
+              yield* repository.registerCheckoutIdentity({
+                identity: {
+                  projectId: published.identity.projectId,
+                  checkoutId: published.identity.checkoutId,
+                  contextId: published.identity.contextId,
+                },
+                checkoutKind: published.workspace.checkoutKind,
+                checkoutRootPath: published.workspace.workspaceRoot,
+                locationId: yield* managedUuid("checkout location"),
+                context: published.contextDescriptor,
+                now: now(),
+              });
+              yield* repository.finalizeIdentityTransition({
+                id: latestTransition.id,
+                expectedPhase: "git-written",
+                now: now(),
+              });
+            }
+            return yield* discover(path);
+          });
+
+        const recoverCheckout = (
+          operation: "rebind-checkout" | "adopt-checkout",
+          options: ManagedCheckoutRecoveryRequest,
+        ): Effect.Effect<
+          ManagedWorkspaceDiscovery,
+          InvalidManagedIdentityError | UnsupportedGitWorkspaceError | ManagedIdentityRecoveryError
+        > =>
+          Effect.gen(function* () {
+            const report = yield* recoveryReport(options);
+            const path = report.workspace.workspaceRoot;
+            const checkoutId = options.checkoutId ?? report.identity.checkoutId;
+            if (checkoutId === undefined || report.identity.checkoutId !== checkoutId) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed checkout recovery requires the current checkout identity",
+                }),
+              );
+            }
+            if (report.state === "transitioning") {
+              const transition = report.activeTransition;
+              if (
+                transition === undefined ||
+                transition.kind !== operation ||
+                transition.checkoutId !== checkoutId ||
+                transition.path !== path ||
+                (transition.projectId !== undefined &&
+                  transition.projectId !== report.identity.projectId) ||
+                (transition.contextId !== undefined &&
+                  transition.contextId !== report.identity.contextId)
+              ) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({
+                    transitionId: transition?.id ?? "unknown",
+                  }),
+                );
+              }
+              return yield* finishRecoveryTransition(transition, report, checkoutId, path);
+            }
+            if (report.inaccessiblePaths !== undefined && report.inaccessiblePaths.length > 0) {
+              return yield* Effect.fail(
+                new ManagedInaccessiblePathError({ path: report.inaccessiblePaths[0] ?? path }),
+              );
+            }
+            const validState =
+              operation === "rebind-checkout"
+                ? report.state === "moved" || report.state === "healthy"
+                : report.state === "adoptable" &&
+                  report.recoveryOperations.some(
+                    (recovery) =>
+                      recovery.operation === "adoptCheckout" &&
+                      recovery.checkoutId === checkoutId &&
+                      recovery.path === path,
+                  );
+            if (!validState) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: `Managed workspace ${report.workspace.canonicalPath} is ${report.state}; explicit checkout recovery is required`,
+                }),
+              );
+            }
+            const transition = yield* reserveRecoveryTransition(
+              report,
+              operation,
+              checkoutId,
+              path,
+            );
+            return yield* finishRecoveryTransition(transition, report, checkoutId, path);
+          });
+
+        const rebindCheckout = (options: ManagedCheckoutRecoveryRequest) =>
+          recoverCheckout("rebind-checkout", options);
+
+        const adoptCheckout = (options: ManagedCheckoutRecoveryRequest) =>
+          recoverCheckout("adopt-checkout", options);
 
         /**
          * The identity a mutating resolve must have ended up with. Every claim
@@ -1260,9 +1759,7 @@ export class ManagedStackService extends Context.Service<
               resolveOptions.operation === "start"
                 ? yield* discover(resolveOptions.workspacePath)
                 : report;
-            const benignConcurrentRegistration =
-              report.state === "unregistered" &&
-              settledReport.state === "healthy" &&
+            const sameWorkspaceTopology =
               report.workspace.checkoutKind === settledReport.workspace.checkoutKind &&
               report.workspace.workspaceRoot === settledReport.workspace.workspaceRoot &&
               report.workspace.projectIdentityLocation ===
@@ -1271,9 +1768,27 @@ export class ManagedStackService extends Context.Service<
                 settledReport.workspace.checkoutIdentityLocation &&
               report.context.kind === settledReport.context.kind &&
               report.context.branch === settledReport.context.branch &&
-              report.context.commit === settledReport.context.commit &&
+              report.context.commit === settledReport.context.commit;
+            const settledIdentityPublished =
+              settledReport.identity.projectId !== undefined &&
+              settledReport.identity.checkoutId !== undefined &&
+              settledReport.identity.contextId !== undefined;
+            const settledIdentityPublishing =
+              settledReport.state === "duplicate" &&
+              settledReport.identity.checkoutId === undefined &&
+              (settledReport.identity.projectId !== undefined ||
+                settledReport.identity.contextId !== undefined);
+            const benignConcurrentRegistration =
+              report.state === "unregistered" &&
+              report.identity.projectId === undefined &&
+              report.identity.checkoutId === undefined &&
+              report.identity.contextId === undefined &&
+              sameWorkspaceTopology &&
               settledReport.activeTransition === undefined &&
-              settledReport.conflicts.length === 0;
+              (settledReport.conflicts.length === 0 || settledIdentityPublishing) &&
+              (settledReport.state === "healthy" ||
+                (settledReport.state === "unregistered" && settledIdentityPublished) ||
+                settledIdentityPublishing);
             if (
               resolveOptions.operation === "start" &&
               discoveryObservation(report) !== discoveryObservation(settledReport) &&
@@ -1285,29 +1800,66 @@ export class ManagedStackService extends Context.Service<
                 }),
               );
             }
+            let recoveryReportForStart = settledReport;
+            if (resolveOptions.operation === "start" && settledReport.state === "moved") {
+              recoveryReportForStart = yield* rebindCheckout({
+                workspacePath: resolveOptions.workspacePath,
+                checkoutId: settledReport.identity.checkoutId,
+                observation: settledReport,
+              });
+            }
             const plan: ResolvedWorkspace = {
-              workspace: settledReport.workspace,
-              context: settledReport.context,
-              contextDescriptor: settledReport.contextDescriptor,
-              identity: settledReport.identity,
+              workspace: recoveryReportForStart.workspace,
+              context: recoveryReportForStart.context,
+              contextDescriptor: recoveryReportForStart.contextDescriptor,
+              identity:
+                resolveOptions.operation === "status" &&
+                recoveryReportForStart.registryContextId !== undefined
+                  ? {
+                      ...recoveryReportForStart.identity,
+                      contextId: recoveryReportForStart.registryContextId,
+                    }
+                  : recoveryReportForStart.identity,
               identityMarkerCreated: false,
             };
+            if (
+              resolveOptions.operation === "start" &&
+              recoveryReportForStart.inaccessiblePaths !== undefined &&
+              recoveryReportForStart.inaccessiblePaths.length > 0
+            ) {
+              return yield* Effect.fail(
+                new ManagedInaccessiblePathError({
+                  path: recoveryReportForStart.inaccessiblePaths[0] ?? resolveOptions.workspacePath,
+                }),
+              );
+            }
             if (resolveOptions.operation === "status") {
               return yield* reportResolution(plan, stackName);
             }
+            if (
+              recoveryReportForStart.state === "duplicate" &&
+              recoveryReportForStart.identity.checkoutId !== undefined
+            ) {
+              return yield* Effect.fail(
+                new ManagedCheckoutConflictError({
+                  checkoutId: recoveryReportForStart.identity.checkoutId,
+                  canonicalPath: recoveryReportForStart.workspace.workspaceRoot,
+                }),
+              );
+            }
             const settledPlan =
-              settledReport.state === "unregistered"
-                ? yield* claimUnregisteredWorkspace(settledReport)
-                : settledReport.state === "healthy"
+              recoveryReportForStart.state === "unregistered"
+                ? yield* claimUnregisteredWorkspace(recoveryReportForStart)
+                : recoveryReportForStart.state === "healthy"
                   ? plan
-                  : settledReport.state === "adoptable" &&
-                      settledReport.recoveryOperations.some(
+                  : recoveryReportForStart.state === "adoptable" &&
+                      recoveryReportForStart.recoveryOperations.some(
                         (operation) => operation.operation === "adoptContext",
                       )
                     ? plan
                     : yield* Effect.fail(
                         new InvalidManagedIdentityError({
-                          message: `Managed workspace ${report.workspace.canonicalPath} is ${report.state}`,
+                          message: `Managed workspace ${recoveryReportForStart.workspace.canonicalPath} is ${recoveryReportForStart.state}`,
                         }),
                       );
             return yield* registerStack(
@@ -1550,6 +2102,9 @@ export class ManagedStackService extends Context.Service<
         return {
           stateRoot,
           discoverWorkspace: discover,
+          newCheckout,
+          rebindCheckout,
+          adoptCheckout,
           resolveStack,
           inspectStack: (stackId) => repository.getStackProjection(stackId),
           listStacks: (listOptions) => repository.listStackProjections(listOptions),

@@ -2,7 +2,7 @@ import { BunFileSystem } from "@effect/platform-bun";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
-import { symlinkSync } from "node:fs";
+import { symlinkSync, renameSync } from "node:fs";
 import { writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
 import { ordinaryWorkspaceIdentityPath } from "./managed/paths.ts";
 import {
@@ -151,6 +151,398 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(aliasReport.workspace.canonicalPath).toBe(ordinary);
     const status = await service.resolveStack({ workspacePath: alias, operation: "status" });
     expect(status.identity).toEqual(ordinaryStarted.identity);
+  });
+
+  it("automatically rebinds a checkout whose previous path is definitely missing", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "moved-checkout");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+
+    const report = await inspect(service.repository, next);
+    expect(report.state).toBe("moved");
+    expect(report.recoveryOperations).toEqual([
+      { operation: "rebindCheckout", checkoutId: first.identity.checkoutId, path: next },
+    ]);
+
+    const rebound = await service.resolveStack({ workspacePath: next, operation: "start" });
+    expect(rebound.identity).toEqual(first.identity);
+    expect(rebound.stack.id).toBe(first.stack.id);
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(
+      claims.locations
+        .filter((location) => location.checkoutId === first.identity.checkoutId)
+        .map((location) => [location.canonicalPath, location.state]),
+    ).toEqual(
+      expect.arrayContaining([
+        [previous, "superseded"],
+        [next, "active"],
+      ]),
+    );
+  });
+
+  it("publishes a new checkout identity without claiming a stack", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "new-checkout");
+    const service = await open(root);
+    openHandles.push(service);
+
+    const published = await service.newCheckout({ workspacePath: workspace });
+    expect(published.identity.projectId).toBeDefined();
+    expect(published.identity.checkoutId).toBeDefined();
+    expect(await service.listStacks()).toEqual([]);
+    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    expect(started.identity).toEqual(published.identity);
+  });
+
+  it("does not alias a checkout when its previous path is recycled", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "recycled-checkout");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    makeDirectory(root, previous.slice(root.length + 1));
+    await expect(
+      service.resolveStack({ workspacePath: next, operation: "start" }),
+    ).rejects.toMatchObject({
+      _tag: "ManagedCheckoutConflictError",
+    });
+    const report = await inspect(service.repository, next);
+    expect(report.state).toBe("duplicate");
+    expect(report.identity.checkoutId).toBe(first.identity.checkoutId);
+  });
+
+  it("supports explicit rebind and refuses adoption of a healthy checkout", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "explicit-recovery");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+
+    const rebound = await service.rebindCheckout({
+      workspacePath: next,
+      checkoutId: first.identity.checkoutId,
+    });
+    expect(rebound.identity).toEqual(first.identity);
+    expect(rebound.locations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ canonicalPath: next, state: "active" })]),
+    );
+
+    await expect(
+      service.adoptCheckout({
+        workspacePath: next,
+        checkoutId: first.identity.checkoutId,
+      }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+  });
+
+  it("canonicalizes an explicit recovery alias without registering the alias path", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "canonical-recovery");
+    const alias = join(root, "canonical-recovery-alias");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    symlinkSync(next, alias, "dir");
+
+    const rebound = await service.rebindCheckout({
+      workspacePath: alias,
+      checkoutId: first.identity.checkoutId,
+    });
+    expect(rebound.workspace.workspaceRoot).toBe(next);
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.locations.map((location) => location.canonicalPath)).not.toContain(alias);
+    expect(claims.locations).toEqual(
+      expect.arrayContaining([expect.objectContaining({ canonicalPath: next, state: "active" })]),
+    );
+  }, 15_000);
+
+  it("blocks both the active and historical paths when a superseded path reappears", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "historical-reappearance");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    await service.resolveStack({ workspacePath: next, operation: "start" });
+    symlinkSync(next, previous, "dir");
+
+    for (const workspacePath of [next, previous]) {
+      const report = await inspect(service.repository, workspacePath);
+      expect(report.state).toBe("duplicate");
+      expect(report.identity.checkoutId).toBe(first.identity.checkoutId);
+      await expect(
+        service.resolveStack({ workspacePath, operation: "start" }),
+      ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+    }
+  }, 15_000);
+
+  it("resumes an interrupted rebind when the marker still matches", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "resumable-recovery");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000093",
+        kind: "rebind-checkout",
+        checkoutId: first.identity.checkoutId,
+        projectId: first.identity.projectId,
+        path: next,
+        now: new Date().toISOString(),
+      }),
+    );
+    const report = await inspect(service.repository, next);
+    expect(report.state).toBe("transitioning");
+    const resumed = await service.rebindCheckout({
+      workspacePath: next,
+      checkoutId: first.identity.checkoutId,
+      observation: report,
+    });
+    expect(resumed.state).toBe("healthy");
+    const after = await inspect(service.repository, next);
+    expect(after.activeTransition).toBeUndefined();
+  });
+
+  it("advances a reserved rebind before publishing its registry location", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "phase-order-recovery");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000094",
+        kind: "rebind-checkout",
+        checkoutId: first.identity.checkoutId,
+        projectId: first.identity.projectId,
+        contextId: first.identity.contextId,
+        path: next,
+        now: new Date().toISOString(),
+      }),
+    );
+    const order: string[] = [];
+    const ordered: ManagedStackRepositoryShape = {
+      ...service.repository,
+      advanceIdentityTransition: (input) =>
+        Effect.tap(service.repository.advanceIdentityTransition(input), () =>
+          Effect.sync(() => order.push("advance")),
+        ),
+      applyCheckoutLocation: (input) =>
+        Effect.tap(service.repository.applyCheckoutLocation(input), () =>
+          Effect.sync(() => order.push("location")),
+        ),
+    };
+    const resumedService = await makeManagedStackService({
+      repository: ordered,
+      stateRoot: join(root, "phase-order-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(resumedService);
+    await resumedService.rebindCheckout({
+      workspacePath: next,
+      checkoutId: first.identity.checkoutId,
+    });
+    expect(order).toEqual(["advance", "location"]);
+  });
+
+  it("refuses a reserved recovery when a historical path is inaccessible", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "inaccessible-recovery");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    writeFileSync(previous, "not a checkout\n");
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000095",
+        kind: "rebind-checkout",
+        checkoutId: first.identity.checkoutId,
+        projectId: first.identity.projectId,
+        contextId: first.identity.contextId,
+        path: next,
+        now: new Date().toISOString(),
+      }),
+    );
+    const before = await Effect.runPromise(service.repository.listIdentityClaims());
+    await expect(
+      service.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
+    ).rejects.toMatchObject({ _tag: "ManagedInaccessiblePathError" });
+    const after = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(after.locations).toEqual(before.locations);
+    expect(after.transitions).toEqual(before.transitions);
+  });
+
+  it("refuses an interrupted recovery when its historical path reappears", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "interrupted-reappearance");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000096",
+        kind: "rebind-checkout",
+        checkoutId: first.identity.checkoutId,
+        projectId: first.identity.projectId,
+        contextId: first.identity.contextId,
+        path: next,
+        now: new Date().toISOString(),
+      }),
+    );
+    symlinkSync(next, previous, "dir");
+    const before = await Effect.runPromise(service.repository.listIdentityClaims());
+
+    await expect(
+      service.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+
+    const after = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(after.locations).toEqual(before.locations);
+    expect(after.transitions).toEqual(before.transitions);
+    expect(after.transitions.find((transition) => transition.id.endsWith("0096"))?.phase).toBe(
+      "reserved",
+    );
+  }, 15_000);
+
+  it("does not finalize recovery when a historical path reappears during registry apply", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "apply-race-reappearance");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    const beforeStacks = await Effect.runPromise(service.repository.listStacks());
+    let injected = false;
+    const racingRepository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      applyCheckoutLocation: (input) =>
+        Effect.gen(function* () {
+          if (!injected) {
+            injected = true;
+            symlinkSync(next, previous, "dir");
+          }
+          return yield* service.repository.applyCheckoutLocation(input);
+        }),
+    };
+    const racingService = await makeManagedStackService({
+      repository: racingRepository,
+      stateRoot: join(root, "apply-race-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(racingService);
+
+    await expect(
+      racingService.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const transition = claims.transitions.find(
+      (candidate) => candidate.checkoutId === first.identity.checkoutId,
+    );
+    expect(transition?.phase).toBe("git-written");
+    expect(claims.locations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ canonicalPath: next, state: "active" }),
+        expect.objectContaining({ canonicalPath: previous, state: "superseded" }),
+      ]),
+    );
+    expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
+    const report = await inspect(service.repository, next);
+    expect(report.historicalPathEvidence).toEqual(
+      expect.arrayContaining([expect.objectContaining({ path: previous, probe: "same" })]),
+    );
+  }, 15_000);
+
+  it("refuses checkout adoption for an ownerless branch context", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const ownerless: ManagedStackRepositoryShape = {
+      ...service.repository,
+      listIdentityClaims: (projectId) =>
+        Effect.orDie(
+          Effect.map(service.repository.listIdentityClaims(projectId), (claims) => ({
+            ...claims,
+            contexts: claims.contexts.map((context) =>
+              context.id === started.identity.contextId
+                ? { ...context, ownerBranch: undefined }
+                : context,
+            ),
+          })),
+        ),
+    };
+    const ownerlessService = await makeManagedStackService({
+      repository: ownerless,
+      stateRoot: join(root, "ownerless-recovery"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(ownerlessService);
+    const before = await Effect.runPromise(service.repository.listIdentityClaims());
+
+    await expect(
+      ownerlessService.adoptCheckout({
+        workspacePath: repository,
+        checkoutId: started.identity.checkoutId,
+      }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+
+    const after = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(after.locations).toEqual(before.locations);
+    expect(after.transitions).toEqual(before.transitions);
+  });
+
+  it("settles concurrent rebinds with one CAS winner", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "concurrent-recovery");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    const outcomes = await Promise.allSettled([
+      service.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
+      service.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
+    ]);
+    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
+    const successful = outcomes.flatMap((outcome) =>
+      outcome.status === "fulfilled" ? [outcome.value] : [],
+    );
+    expect(
+      successful.every((result) => result.identity.checkoutId === first.identity.checkoutId),
+    ).toBe(true);
+    for (const outcome of outcomes) {
+      if (outcome.status === "rejected") {
+        expect(outcome.reason).toMatchObject({
+          _tag: "ManagedIdentityTransitionOwnershipError",
+        });
+      }
+    }
+    const report = await inspect(service.repository, next);
+    expect(report.state).toBe("healthy");
+    expect(report.activeTransition).toBeUndefined();
   });
 
   it("reports an active identity transition without attempting recovery", async () => {
@@ -335,7 +727,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.recoveryOperations).toEqual([]);
     await expect(
       service.resolveStack({ workspacePath: workspace, operation: "start" }),
-    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
   });
 
   it("classifies superseded and blocked location reappearance as duplicate", async () => {
@@ -362,7 +754,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.recoveryOperations).toEqual([]);
     await expect(
       service.resolveStack({ workspacePath: workspace, operation: "start" }),
-    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     await Effect.runPromise(
       service.repository.applyCheckoutLocation({
         checkoutId: old.checkoutId,
@@ -432,7 +824,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.state).toBe("duplicate");
     await expect(
       service.resolveStack({ workspacePath: repository, operation: "start" }),
-    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
   });
 
   it("requires adoption when a branch context has no authoritative owner", async () => {

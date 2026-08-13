@@ -26,8 +26,10 @@ import {
   type ManagedStackServiceOptions,
   type ReconcileAbandonedOperationsResult,
   type ResolveManagedStackOperation,
+  type ManagedCheckoutRecoveryRequest,
   type StartedManagedStackResolution,
 } from "./service.ts";
+import type { ManagedWorkspaceDiscovery } from "./discovery.ts";
 
 export interface MakeManagedStackServiceOptions extends ManagedStackServiceOptions {
   readonly repository: ManagedStackRepositoryShape;
@@ -86,6 +88,9 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
     options: ResolveManagedStackRequest & { readonly operation: "start" },
   ): Promise<StartedManagedStackResolution>;
   resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution>;
+  newCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
+  rebindCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
+  adoptCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   inspectStack(stackId: string): Promise<ManagedStackProjection | undefined>;
   listStacks(options?: {
     readonly includeTombstoned?: boolean;
@@ -187,6 +192,9 @@ const managedStackServiceHandle = async <ER>(
     stateRoot: service.stateRoot,
     repository,
     resolveStack,
+    newCheckout: (options) => run(service.newCheckout(options)),
+    rebindCheckout: (options) => run(service.rebindCheckout(options)),
+    adoptCheckout: (options) => run(service.adoptCheckout(options)),
     inspectStack: (stackId) => run(service.inspectStack(stackId)),
     listStacks: (options) => run(service.listStacks(options)),
     updateStack: (stackId, configuration) => run(service.updateStack(stackId, configuration)),

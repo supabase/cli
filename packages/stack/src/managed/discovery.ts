@@ -74,6 +74,14 @@ export interface ManagedBranchOwnerEvidence {
   }>;
 }
 
+export type ManagedHistoricalPathProbe = "missing" | "same" | "recycled" | "inaccessible";
+
+export interface ManagedHistoricalPathEvidence {
+  readonly path: string;
+  readonly locationState: ManagedCheckoutLocation["state"];
+  readonly probe: ManagedHistoricalPathProbe;
+}
+
 export interface ManagedWorkspaceDiscovery {
   readonly state: ManagedWorkspaceDiscoveryState;
   readonly workspace: ManagedWorkspaceDiscoveryWorkspace;
@@ -83,12 +91,18 @@ export interface ManagedWorkspaceDiscovery {
   readonly registryContextId?: string;
   readonly stacks: ReadonlyArray<ManagedStackProjection>;
   readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
+  /** Registry claims by another checkout at the inspected canonical path. */
+  readonly conflictingLocations?: ReadonlyArray<ManagedCheckoutLocation>;
   readonly ownerEvidence?: ManagedBranchOwnerEvidence;
   readonly activeOperations: ReadonlyArray<ManagedOperationRecord>;
   readonly activeTransition?: ManagedIdentityTransitionRecord;
   readonly conflicts: ReadonlyArray<string>;
   readonly warnings: ReadonlyArray<string>;
   readonly recoveryOperations: ReadonlyArray<ManagedRecoveryOperation>;
+  /** Previous claimed paths whose ownership could not be verified safely. */
+  readonly inaccessiblePaths?: ReadonlyArray<string>;
+  /** Probes of previous locations used to guard identity recovery transitions. */
+  readonly historicalPathEvidence?: ReadonlyArray<ManagedHistoricalPathEvidence>;
 }
 
 const checkoutKindOf = (inspection: GitCheckoutInspection): ManagedCheckoutKind =>
@@ -125,6 +139,41 @@ const matchingStacks = (
   identity: ManagedWorkspaceDiscoveryIdentity,
 ): Effect.Effect<ReadonlyArray<ManagedStackProjection>> =>
   completeIdentity(identity) ? repository.listStackProjections({ identity }) : Effect.succeed([]);
+
+type PreviousLocationProbe = ManagedHistoricalPathProbe;
+
+const probePreviousLocation = (
+  fs: FileSystem.FileSystem,
+  path: string,
+  checkoutId: string,
+): Effect.Effect<PreviousLocationProbe, never, FileSystem.FileSystem | GitConfigStore> =>
+  Effect.gen(function* () {
+    const stat = yield* fs.stat(path).pipe(
+      Effect.as<"exists">("exists"),
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed<PreviousLocationProbe>("missing")
+          : Effect.succeed<PreviousLocationProbe>("inaccessible"),
+      ),
+    );
+    if (stat !== "exists") return stat;
+    const inspection = yield* Effect.exit(inspectWorkspace(path));
+    if (inspection._tag === "Failure") return "inaccessible";
+    if (inspection.value.kind === "ordinary-folder") {
+      const marker = yield* Effect.exit(readOrdinaryWorkspaceIdentityWithFileSystem(path));
+      return marker._tag === "Success" && marker.value?.checkoutId === checkoutId
+        ? "same"
+        : marker._tag === "Failure"
+          ? "inaccessible"
+          : "recycled";
+    }
+    const marker = yield* Effect.exit(readGitCheckoutIdentityWithFileSystem(inspection.value));
+    return marker._tag === "Success" && marker.value.checkoutId === checkoutId
+      ? "same"
+      : marker._tag === "Failure"
+        ? "inaccessible"
+        : "recycled";
+  });
 
 const inspectBranchOwners = (
   inspection: GitCheckoutInspection,
@@ -264,6 +313,12 @@ export const discoverWorkspace = (
     }
 
     const claims = yield* repository.listIdentityClaims(identity.projectId);
+    // A new-checkout transition is reserved before the marker has an identity,
+    // so its project scope is intentionally empty. Read the complete transition
+    // set when a marker now supplies a project ID; otherwise an interrupted
+    // publication would disappear from discovery instead of remaining resumable.
+    const transitionClaims =
+      identity.projectId === undefined ? claims : yield* repository.listIdentityClaims();
     const locations =
       identity.checkoutId === undefined
         ? claims.locations
@@ -279,7 +334,7 @@ export const discoverWorkspace = (
     const activeOperations = (yield* repository.listActiveOperations()).filter((operation) =>
       stackIds.has(operation.stackId),
     );
-    const activeTransition = claims.transitions.find((transition) =>
+    const activeTransition = transitionClaims.transitions.find((transition) =>
       transitionMatches(
         transition,
         identity,
@@ -299,6 +354,44 @@ export const discoverWorkspace = (
       (location) => location.canonicalPath === metadata.workspace.workspaceRoot,
     );
     const anyActiveLocation = locations.find((location) => location.state === "active");
+    const previousPathProbes: ReadonlyArray<{
+      readonly path: string;
+      readonly result: PreviousLocationProbe;
+    }> = completeIdentity(identity)
+      ? yield* Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const probes: Array<{ readonly path: string; readonly result: PreviousLocationProbe }> =
+            [];
+          const candidates =
+            activeLocation === undefined
+              ? locations.filter((candidate) => candidate.state === "active")
+              : locations.filter(
+                  (candidate) => candidate.state === "superseded" || candidate.state === "blocked",
+                );
+          for (const location of candidates.filter(
+            (candidate) => candidate.canonicalPath !== metadata.workspace.workspaceRoot,
+          )) {
+            probes.push({
+              path: location.canonicalPath,
+              result: yield* probePreviousLocation(fs, location.canonicalPath, identity.checkoutId),
+            });
+          }
+          return probes;
+        })
+      : [];
+    const inaccessiblePaths = previousPathProbes
+      .filter((probe) => probe.result === "inaccessible")
+      .map((probe) => probe.path);
+    const recycledPaths = previousPathProbes
+      .filter((probe) => probe.result === "recycled")
+      .map((probe) => probe.path);
+    const sameCheckoutReappeared = previousPathProbes.some((probe) => probe.result === "same");
+    const historicalPathEvidence = previousPathProbes.map(({ path, result }) => ({
+      path,
+      locationState:
+        locations.find((location) => location.canonicalPath === path)?.state ?? "active",
+      probe: result,
+    }));
     const sameContextClaims =
       identity.contextId === undefined
         ? []
@@ -332,6 +425,9 @@ export const discoverWorkspace = (
       duplicateLocations ||
       samePathClaims.length > 0 ||
       markerRegistryConflict ||
+      sameCheckoutReappeared ||
+      inaccessiblePaths.length > 0 ||
+      recycledPaths.length > 0 ||
       (ownerEvidence?.authoritativeOwnerBranch !== undefined &&
         metadata.context.kind === "branch" &&
         ownerEvidence.authoritativeOwnerBranch !== metadata.context.branch &&
@@ -397,7 +493,8 @@ export const discoverWorkspace = (
       });
     } else if (
       completeIdentity(identity) &&
-      (context === undefined || (ownerEvidence !== undefined && liveOwnerClaims.length === 0))
+      ((context === undefined && locations.length > 0) ||
+        (ownerEvidence !== undefined && liveOwnerClaims.length === 0))
     ) {
       state = "orphaned";
       if (
@@ -444,11 +541,15 @@ export const discoverWorkspace = (
       registryContextId,
       stacks,
       locations,
+      conflictingLocations: samePathClaims.length === 0 ? undefined : samePathClaims,
       ownerEvidence,
       activeOperations,
       activeTransition,
       conflicts,
       warnings,
       recoveryOperations,
+      inaccessiblePaths: inaccessiblePaths.length === 0 ? undefined : inaccessiblePaths,
+      historicalPathEvidence:
+        historicalPathEvidence.length === 0 ? undefined : historicalPathEvidence,
     };
   });
