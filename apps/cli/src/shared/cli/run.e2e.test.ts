@@ -1,4 +1,4 @@
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -117,37 +117,6 @@ describe("legacy CLI upgrade notice (#5853)", () => {
     expect(stderr).not.toContain("A new version of Supabase CLI is available");
   });
 
-  test("keeps the Go upgrade notice before a proxied command suggestion", async () => {
-    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
-    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
-    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
-
-    const fakeGoBinary = join(workdir, "supabase-go-fixture");
-    writeFileSync(
-      fakeGoBinary,
-      `#!/usr/bin/env node
-if (process.env.SUPABASE_NO_UPDATE_NOTIFIER !== "1") {
-  process.stderr.write("child upgrade notice\\n");
-}
-process.stderr.write("child command suggestion\\n");
-`,
-    );
-    chmodSync(fakeGoBinary, 0o755);
-
-    const { exitCode, stderr } = await runSupabase(["migration", "squash", "--local"], {
-      entrypoint: "legacy",
-      cwd: workdir,
-      env: {
-        SUPABASE_GO_BINARY: fakeGoBinary,
-        SUPABASE_NO_UPDATE_NOTIFIER: "0",
-      },
-    });
-
-    expect(exitCode).toBe(0);
-    expect(stderr).toBe("child upgrade notice\nchild command suggestion\n");
-  });
-
   test("keeps the Go upgrade notice before a native command suggestion", async () => {
     workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
     mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
@@ -173,45 +142,5 @@ process.stderr.write("child command suggestion\\n");
     expect(suppressed.exitCode).toBe(0);
     expect(suppressed.stderr).not.toContain("A new version of Supabase CLI is available");
     expect(suppressed.stderr).toContain("To enable JWT signing keys in your local project:");
-  });
-
-  test("suppresses the captured child notifier and leaves the parent notifier enabled", async () => {
-    workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-e2e-"));
-    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
-    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
-    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
-
-    const fakeGoBinary = join(workdir, "supabase-go-fixture");
-    writeFileSync(
-      fakeGoBinary,
-      `#!/usr/bin/env node
-process.stdout.write("create table captured ();\\n");
-if (process.env.SUPABASE_NO_UPDATE_NOTIFIER !== "1") {
-  process.stderr.write("child upgrade notice\\n");
-}
-`,
-    );
-    chmodSync(fakeGoBinary, 0o755);
-
-    const { exitCode, stdout, stderr } = await runSupabase(
-      ["db", "diff", "--use-pgadmin", "--output-format", "json"],
-      {
-        entrypoint: "legacy",
-        cwd: workdir,
-        env: {
-          SUPABASE_GO_BINARY: fakeGoBinary,
-          SUPABASE_NO_UPDATE_NOTIFIER: "0",
-        },
-      },
-    );
-
-    expect(exitCode).toBe(0);
-    expect(JSON.parse(stdout)).toMatchObject({
-      diff: "create table captured ();\n",
-      engine: "pgadmin",
-      message: "Diff complete.",
-    });
-    expect(stderr).not.toContain("child upgrade notice");
-    expect(stderr).toContain("A new version of Supabase CLI is available: v99.99.99");
   });
 });

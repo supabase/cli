@@ -16,6 +16,7 @@ import { join } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
 import { describe, expect, it } from "vitest";
+import { Effect } from "effect";
 
 import {
   type LegacyUpgradeNoticeDeps,
@@ -23,6 +24,7 @@ import {
   legacyIsNewerCliVersion,
   legacyRunUpgradeNotice,
   legacyUpdateNotifierDisabled,
+  legacyUpgradeNoticeHook,
 } from "./legacy-upgrade-notice.ts";
 
 describe("legacyUpdateNotifierDisabled", () => {
@@ -630,5 +632,61 @@ describe("legacyRunUpgradeNotice", () => {
       expect(ctx.stderr).toBe("");
       ctx.cleanup();
     }
+  });
+});
+
+/**
+ * The `delegatedToGo` guard is why a proxied command doesn't print the notice
+ * twice: the Go child ran its own `checkUpgrade` and already printed one.
+ *
+ * Asserted here rather than by spawning a real Phase 0 command, so the coverage
+ * doesn't depend on which commands are still Go wrappers — that set shrinks
+ * every time one is ported (`docs/go-cli-porting-status.md`), and an e2e test
+ * pinned to one breaks the moment it does.
+ */
+describe("legacyUpgradeNoticeHook", () => {
+  async function stderrFromHook(delegatedToGo: boolean): Promise<string> {
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-upgrade-notice-hook-"));
+    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+    writeFileSync(join(workdir, "supabase", "config.toml"), 'project_id = "demo"\n');
+    // Fresh cache: the hook reads it instead of fetching, so this never touches
+    // the network.
+    writeFileSync(join(workdir, "supabase", ".temp", "cli-latest"), "v99.99.99");
+
+    const written: Array<string> = [];
+    const realWrite = process.stderr.write.bind(process.stderr);
+    const realOptOut = process.env["SUPABASE_NO_UPDATE_NOTIFIER"];
+    process.env["SUPABASE_NO_UPDATE_NOTIFIER"] = "0";
+    process.stderr.write = ((chunk: unknown) => {
+      written.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+
+    try {
+      await Effect.runPromise(
+        legacyUpgradeNoticeHook(["db", "branch", "list"], {
+          cleanShowHelp: false,
+          delegatedToGo,
+          workingDirectory: workdir,
+          isValueTakingFlagToken: () => false,
+        }),
+      );
+    } finally {
+      process.stderr.write = realWrite;
+      if (realOptOut === undefined) delete process.env["SUPABASE_NO_UPDATE_NOTIFIER"];
+      else process.env["SUPABASE_NO_UPDATE_NOTIFIER"] = realOptOut;
+      rmSync(workdir, { recursive: true, force: true });
+    }
+    return stripVTControlCharacters(written.join(""));
+  }
+
+  it("prints the notice for a natively handled command", async () => {
+    expect(await stderrFromHook(false)).toContain(
+      "A new version of Supabase CLI is available: v99.99.99",
+    );
+  });
+
+  it("stays silent when the run delegated to Go, which printed its own notice", async () => {
+    expect(await stderrFromHook(true)).toBe("");
   });
 });
