@@ -29,3 +29,18 @@ usually alongside image bumps), which is why it did not block #6184. Two candida
 
 Either way, add a unit-test mutation case alongside the existing ones in
 `shadow-cache.unit.test.ts`.
+
+## Make the baseline/declarative catalog shadows warm-aware (PR #6184 × CLI-1970 merge)
+
+CLI-1970 (#6162) made `legacyExportBaselineCatalogRef`/`legacyExportDeclarativeCatalogRef`
+(`legacy-pgdelta.cache.ts`) native, so `db schema declarative sync`/`generate` now provision a
+second shadow in-process for the declarative/baseline catalog. Those callers pass an unconditional
+`{ bypassCache: true }` to `exportViaShadowCatalog`: their provisions run the platform baseline via
+`legacySetupShadowDatabase`, which is not baseline-state-aware, so a warm PGDATA hit would
+double-apply the baseline.
+
+The snapshot seam is a natural fit — the tar IS exactly the post-baseline state these provisions
+build (baseline only, no migrations), so a warm hit would need NO further setup at all, saving the
+full ~15s per declarative-catalog miss. Requires threading `LegacyShadowBaselineState` through
+`legacySetupShadowDatabase` (skip when `baselinePresent`) and swapping their
+`legacyWaitForHealthyServices` docker-health wait for `legacyWaitForShadowReady`.
