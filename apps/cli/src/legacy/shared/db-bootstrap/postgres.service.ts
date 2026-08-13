@@ -258,6 +258,13 @@ function legacyPostgresExtraEnv(
  * {@link legacyBuildPostgresStartContainerSpec}), so it never appears in this
  * process's own `docker create` argv (CWE-214/522).
  *
+ * The final command is `exec`'d — a deliberate divergence from Go's script
+ * (which leaves `sh` as PID 1, so SIGTERM is never forwarded and every
+ * `docker stop` burns the full 10s grace period before SIGKILL; with `exec`,
+ * Postgres is PID 1 and stops in ~1s). Applies to all three entrypoint
+ * variants below. Timing is not part of the Go-parity surface (ADR 0016);
+ * see apps/cli/docs/shadow-db-startup-perf-plan.md, workstream B.
+ *
  * Otherwise byte-for-byte derived from Go's raw-string concatenation —
  * `NewContainerConfig(args ...string)` splices `strings.Join(args, " ")`
  * straight after the literal trailing space following `/etc/postgresql`
@@ -276,7 +283,7 @@ function legacyPostgresEntrypointScriptPg15(postgresConfig: string, args = ""): 
     "\n" +
     "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    `docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
+    `exec docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
     `${LEGACY_START_DB_SCHEMA_SQL}\n` +
     `${LEGACY_START_DB_WEBHOOK_SQL}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
@@ -301,7 +308,7 @@ function legacyPostgresEntrypointScriptPg14(postgresConfig: string, args = ""): 
     "\n" +
     "cat <<'EOF' > /docker-entrypoint-initdb.d/supabase_schema.sql && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    `docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
+    `exec docker-entrypoint.sh postgres -D /etc/postgresql ${args}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
     "EOF\n" +
     `${postgresConfig}\n` +
@@ -328,7 +335,7 @@ function legacyPostgresEntrypointScriptRestore(postgresConfig: string): string {
     "cat <<'EOF' > /etc/postgresql.schema.sql && \\\n" +
     "cat <<'EOF' > /docker-entrypoint-initdb.d/migrate.sh && \\\n" +
     "cat <<'EOF' >> /etc/postgresql/postgresql.conf && \\\n" +
-    "docker-entrypoint.sh postgres -D /etc/postgresql\n" +
+    "exec docker-entrypoint.sh postgres -D /etc/postgresql\n" +
     `${LEGACY_START_DB_SCHEMA_SQL}\n` +
     `${LEGACY_START_DB_SUPABASE_SQL}\n` +
     "EOF\n" +

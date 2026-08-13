@@ -149,7 +149,15 @@ becomes connectable, and fails fast when the container exits.
 (measured ~3.5–5s instead of ~10.5s); error behavior on a broken container unchanged in
 shape.
 
-## Workstream B — clean fast shadow shutdown (small, enables C)
+## Workstream B — clean fast shadow shutdown (small, enables C) — IMPLEMENTED
+
+Shipped with the **broader scope**: all three entrypoint script builders in
+`postgres.service.ts` (`legacyPostgresEntrypointScriptPg15` / `…Pg14` / `…Restore`) now
+`exec` the final `docker-entrypoint.sh` command, so the shadow, the long-running `db`
+container, and the `--from-backup` restore container all get a PID-1 Postgres that
+receives the stop signal — `docker stop` in `supabase stop` benefits too. The divergence
+from Go's script is documented at the builders. The spec below is retained as the record
+of what was agreed.
 
 **Problem:** `sh` as PID 1 swallows SIGTERM → every shadow stop (and workstream C's
 cache-release stop) burns the 10s grace period and ends in SIGKILL.

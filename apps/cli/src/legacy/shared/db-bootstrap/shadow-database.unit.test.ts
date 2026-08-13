@@ -208,7 +208,7 @@ describe("legacyCreateShadowDatabase / legacyRemoveShadowDatabase", () => {
           // in argv.
           const script = mock.spawned[createIdx]?.at(-1) ?? "";
           expect(script).toContain(
-            `docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}`,
+            `exec docker-entrypoint.sh postgres -D /etc/postgresql ${LEGACY_SHADOW_ENTRYPOINT_ARGS}`,
           );
         }),
       );
