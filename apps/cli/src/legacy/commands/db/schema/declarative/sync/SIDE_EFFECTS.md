@@ -127,7 +127,9 @@ existing SQL or creates an export manifest.
 The migrations-catalog shadow this command provisions on a cache miss goes through
 `legacyGetMigrationsCatalogRef` -> `exportViaShadowCatalog` (`legacy-pgdelta.cache.ts`), the same
 `legacyWithShadowDatabase` seam `db diff`/`db pull` use, so it inherits the whole lifecycle: ON by
-default, `SUPABASE_SHADOW_CACHE=false`/`=0` opts out. Artifact:
+default, `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (honored from the ambient env AND the
+project's dotenv, e.g. `supabase/.env`); a warm hit skips the platform baseline and therefore the
+`Initialising schema...` progress line. Artifact:
 `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB), a PGDATA snapshot keyed by a hash of
 every input baked into the cluster; retention keeps the current key's tar only. Container
 lifecycle is identical to the uncached path except a cold run drops `--rm` (still removed on

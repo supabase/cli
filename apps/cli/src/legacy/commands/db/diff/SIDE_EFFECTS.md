@@ -210,8 +210,11 @@ when declarative files exist.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
-ON by default; `SUPABASE_SHADOW_CACHE=false`/`=0` opts out, restoring the documented uncached
-lifecycle. Artifact: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB), a PGDATA snapshot
+ON by default; `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (honored from the ambient env AND the
+project's dotenv, e.g. `supabase/.env`), restoring the documented uncached lifecycle. A warm hit
+skips the platform baseline, so the `Initialising schema...` progress line does not print —
+progress text reflects the work actually performed.
+Artifact: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB), a PGDATA snapshot
 keyed by a hash of every input baked into the cluster; retention keeps the current key's tar only.
 Container lifecycle is identical to the uncached path except a cold run drops `--rm` (still removed
 on release). A cache anomaly never fails the command — a warm-path anomaly cold-provisions instead,

@@ -84,11 +84,18 @@ const legacyShadowCacheUnavailable = (reason: string): LegacyShadowCacheUnavaila
  * Unset (or empty) means ON — this is a default-on optimization, not a feature flag. A value that
  * IS set goes through the repo's `viper.GetBool` parser, so `SUPABASE_SHADOW_CACHE=false` and
  * `=0` opt out while `=1`/`=true` are explicit opt-ins.
+ *
+ * `projectEnvValues` (the project's dotenv-merged env, ambient-wins — see
+ * `legacyGetRegistryOverride`'s identical parameter, `legacy-docker-registry.ts`) is consulted
+ * first so an opt-out set only in `supabase/.env` is honored, matching how Go's `loadNestedEnv`
+ * makes project dotenv visible to every viper read (review: Codex on #6184). Falls back to `env`
+ * (ambient) when the record is absent or lacks the key.
  */
 export function legacyShadowCacheEnabled(
   env: Readonly<Record<string, string | undefined>> = process.env,
+  projectEnvValues?: Readonly<Record<string, string>>,
 ): boolean {
-  const raw = env[LEGACY_SHADOW_CACHE_ENV];
+  const raw = projectEnvValues?.[LEGACY_SHADOW_CACHE_ENV] ?? env[LEGACY_SHADOW_CACHE_ENV];
   if (raw === undefined || raw.length === 0) return true;
   return legacyParseBoolEnv(raw);
 }
@@ -668,7 +675,9 @@ export const legacyAcquireShadowDatabase = <E>(
   Output | LegacyDbConnection
 > =>
   Effect.gen(function* () {
-    if (!legacyShadowCacheEnabled()) return yield* legacyUncachedShadow(spawner, input);
+    if (!legacyShadowCacheEnabled(process.env, input.setup.projectEnvValues)) {
+      return yield* legacyUncachedShadow(spawner, input);
+    }
 
     // Interruptible: this runs inside `acquireUseRelease`'s uninterruptible `acquire`, but
     // nothing has been acquired yet — and the JWKS effect inside can be a real third-party

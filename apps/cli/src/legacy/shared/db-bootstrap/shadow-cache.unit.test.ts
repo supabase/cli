@@ -44,6 +44,19 @@ describe("legacyShadowCacheEnabled", () => {
     expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "true" })).toBe(true);
     expect(legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "TRUE" })).toBe(true);
   });
+
+  it("honors an opt-out set only in the project dotenv values", () => {
+    // `supabase/.env` is loaded into `projectEnvValues` (ambient-wins merge, upstream), not into
+    // `process.env` — the gate must consult it, same as the registry override does.
+    expect(legacyShadowCacheEnabled({}, { SUPABASE_SHADOW_CACHE: "false" })).toBe(false);
+    expect(legacyShadowCacheEnabled({}, { SUPABASE_SHADOW_CACHE: "1" })).toBe(true);
+    expect(legacyShadowCacheEnabled({}, {})).toBe(true);
+    // The record's own value is what counts once present — upstream merging already applied
+    // ambient-wins precedence when building it.
+    expect(
+      legacyShadowCacheEnabled({ SUPABASE_SHADOW_CACHE: "1" }, { SUPABASE_SHADOW_CACHE: "0" }),
+    ).toBe(false);
+  });
 });
 
 describe("legacyShadowCacheKey", () => {
