@@ -190,6 +190,7 @@ export const legacyStartEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRunti
     // passed as their zero value: no inspect mode, no `envFilePath`, no
     // `noVerifyJWT`, no `importMapPath`.
     envFile: Option.none(),
+    discoverFunctionEnvFiles: false,
     importMap: Option.none(),
     noVerifyJwt: Option.none(),
     inspectMode: undefined,

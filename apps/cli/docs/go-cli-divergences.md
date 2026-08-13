@@ -65,6 +65,11 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Behavioral divergences from the Go reference
 
+- `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
+  `supabase/functions/<function-name>/.env` overrides matching values from the shared
+  `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the
+  highest-priority source and disables both automatic reads. TS-only feature — the old Go
+  command read only the shared fallback.
 - `functions deploy`/`functions serve` import-map resolution follows the import-maps spec
   (implemented by Deno): a key matches exactly, or as a prefix only when it ends with `/`. The
   old Go walker prefix-matched every key (`pkg/function/deno.go:150-155`, still in-tree), which
