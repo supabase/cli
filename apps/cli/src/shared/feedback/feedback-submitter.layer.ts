@@ -9,26 +9,39 @@ import { FeedbackSubmitError, FeedbackSubmitter } from "./feedback-submitter.ser
  * safe to commit — writes are gated by insert-only RLS on the
  * `interfaces_feedback` table, exactly like the docs feedback widget.
  */
-export interface FeedbackEnvironment {
+interface FeedbackEnvironment {
   readonly url: string;
   readonly key: string;
 }
 
-export const FEEDBACK_STAGING: FeedbackEnvironment = {
+const FEEDBACK_STAGING: FeedbackEnvironment = {
   url: "https://imrwaufzgcaczqmpnxyr.supabase.co",
   key: "sb_publishable_puOyAlqG5J_XfBMTDM2Ckw_L5mieFdb",
 };
 
 // No dedicated production feedback project exists yet (CLI-1946): production
 // intentionally reuses the staging values until one is provisioned.
-export const FEEDBACK_PRODUCTION: FeedbackEnvironment = { ...FEEDBACK_STAGING };
+const FEEDBACK_PRODUCTION: FeedbackEnvironment = { ...FEEDBACK_STAGING };
 
 const SUBMIT_TIMEOUT_MS = 10_000;
 
-export interface FeedbackSubmitterOptions {
+interface FeedbackSubmitterOptions {
   readonly environment: FeedbackEnvironment;
   /** Injectable transport for hermetic tests, like `legacyDohFetch`'s `innerFetch`. */
   readonly fetch?: typeof globalThis.fetch;
+}
+
+// Profile → feedback environment, mirroring how the Management API url follows
+// the resolved profile: staging profiles post to the staging project, with a
+// production fallback for unknown and YAML-file profiles (`legacy-profile.ts`).
+export function legacyFeedbackEnvironment(profile: string): FeedbackEnvironment {
+  switch (profile) {
+    case "supabase-staging":
+    case "supabase-local":
+      return FEEDBACK_STAGING;
+    default:
+      return FEEDBACK_PRODUCTION;
+  }
 }
 
 function toInsertRow(submission: FeedbackSubmission): TablesInsert<"interfaces_feedback"> {

@@ -5,10 +5,8 @@ import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
 import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
 import {
-  FEEDBACK_PRODUCTION,
-  FEEDBACK_STAGING,
-  type FeedbackEnvironment,
   feedbackSubmitterLayer,
+  legacyFeedbackEnvironment,
 } from "../../../../shared/feedback/feedback-submitter.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
@@ -30,19 +28,6 @@ export type LegacyFeedbackAddArgs = CliCommand.Command.Config.Infer<typeof confi
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const legacyFeedbackAddHandler = (args: LegacyFeedbackAddArgs) =>
   legacyFeedbackAdd(args).pipe(withLegacyCommandInstrumentation(), withJsonErrorHandling);
-
-// Profile → feedback environment, mirroring how the Management API url follows
-// the resolved profile: staging profiles post to the staging project, with a
-// production fallback for unknown and YAML-file profiles (`legacy-profile.ts`).
-function legacyFeedbackEnvironment(profile: string): FeedbackEnvironment {
-  switch (profile) {
-    case "supabase-staging":
-    case "supabase-local":
-      return FEEDBACK_STAGING;
-    default:
-      return FEEDBACK_PRODUCTION;
-  }
-}
 
 const legacyFeedbackCliConfigLayer = legacyCliConfigLayer.pipe(
   Layer.provide(legacyDebugLoggerLayer),
