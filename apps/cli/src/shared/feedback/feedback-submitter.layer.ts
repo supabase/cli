@@ -48,11 +48,11 @@ function toInsertRow(submission: FeedbackSubmission): TablesInsert<"interfaces_f
   const { context } = submission;
   return {
     feedback: submission.message,
-    source: "cli",
     user_agent: context.userAgent,
     project_ref: submission.projectRef ?? null,
     metadata: {
       cli_version: context.cliVersion,
+      source: "cli",
       os: context.os,
       arch: context.arch,
       is_agent: context.isAgent,
