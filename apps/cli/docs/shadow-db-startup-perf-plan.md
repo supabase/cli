@@ -1,8 +1,8 @@
 # Shadow database startup performance — implementation plan
 
-Status: **planned, not implemented**. This document is a handoff spec: it contains the
-measured baseline, the agreed design decisions, and file-level work items. An implementing
-agent should be able to execute it without re-deriving the investigation.
+Status: **workstream A implemented; B and C planned**. This document is a handoff spec: it
+contains the measured baseline, the agreed design decisions, and file-level work items. An
+implementing agent should be able to execute it without re-deriving the investigation.
 
 ## Context
 
@@ -11,7 +11,7 @@ agent should be able to execute it without re-deriving the investigation.
 storage / auth one-shot migration jobs), then handed to pg-delta as the isolated shadow
 (`pgdelta … --isolated-shadow`, loader mode `isolatedCluster`). pg-delta requires this
 shadow on a **different Postgres lineage** than the target, so the container is on the hot
-path of *every* plan — the migrations-catalog cache cannot make it go away.
+path of _every_ plan — the migrations-catalog cache cannot make it go away.
 
 Today the shadow is created cold and destroyed (`docker rm -f -v`) on every run.
 
@@ -22,16 +22,16 @@ cache), reproducing the exact container shape `legacyBuildShadowPostgresContaine
 produces (same entrypoint heredoc script, env, healthcheck flags) and the exact one-shot
 job env from `db-setup.ts`. Two cold samples, consistent within ~1s:
 
-| Phase | Time |
-|---|---|
-| `docker create` + secret `docker cp` + `docker start` | ~0.4s |
-| Postgres accepting connections (initdb + bundled init SQL) | ~3.4–4.5s |
-| Docker healthcheck reports `healthy` (**the CLI's current gate**) | ~10.2s |
-| One-shot realtime job (Elixir boot + tenant seed) | ~6.5s |
-| One-shot storage migrate job | ~2.5s |
-| One-shot auth (`gotrue migrate`) job | ~0.7s |
-| Revoke API privileges + `CREATE DATABASE contrib_regression TEMPLATE postgres` | ~0.3s |
-| **Total cold provision** (excl. image pulls, excl. user migrations) | **~20.5s** |
+| Phase                                                                          | Time       |
+| ------------------------------------------------------------------------------ | ---------- |
+| `docker create` + secret `docker cp` + `docker start`                          | ~0.4s      |
+| Postgres accepting connections (initdb + bundled init SQL)                     | ~3.4–4.5s  |
+| Docker healthcheck reports `healthy` (**the CLI's current gate**)              | ~10.2s     |
+| One-shot realtime job (Elixir boot + tenant seed)                              | ~6.5s      |
+| One-shot storage migrate job                                                   | ~2.5s      |
+| One-shot auth (`gotrue migrate`) job                                           | ~0.7s      |
+| Revoke API privileges + `CREATE DATABASE contrib_regression TEMPLATE postgres` | ~0.3s      |
+| **Total cold provision** (excl. image pulls, excl. user migrations)            | **~20.5s** |
 
 Additional measurements that motivate the work items:
 
@@ -43,9 +43,9 @@ Additional measurements that motivate the work items:
 - `docker start` of an already-initialized shadow container → connectable in **~1.0s**
   (also ~1s after a SIGKILL'd stop, via WAL recovery).
 - `CREATE DATABASE … TEMPLATE <db>` on the baseline state: **~0.2s**. `DROP DATABASE …
-  WITH (FORCE)`: ~0.1s.
+WITH (FORCE)`: ~0.1s.
 - `docker stop` on the current container takes **10.3s**: the entrypoint is `sh -c "… &&
-  docker-entrypoint.sh …"`, so PID 1 is `sh`, which does not forward SIGTERM; Docker waits
+docker-entrypoint.sh …"`, so PID 1 is `sh`, which does not forward SIGTERM; Docker waits
   the 10s grace period and SIGKILLs.
 
 Target end state: **~1.5–2s** per plan on a warm cache hit; **~14s** cold (health gate
@@ -80,7 +80,7 @@ fixed); cold path otherwise unchanged.
 Hash (sha256, stable field order) of every input baked into the cluster during cold
 provisioning:
 
-- resolved `supabase/postgres` image tag (full tag, e.g. `17.6.1.158` — *not* major
+- resolved `supabase/postgres` image tag (full tag, e.g. `17.6.1.158` — _not_ major
   version) after registry/pin resolution;
 - resolved one-shot job image tags — `realtime`, `storage`, `auth` via
   `legacyResolvePinnedImage` + `serviceVersionOverrides` — each included **only when its
@@ -100,7 +100,16 @@ not matter for the catalog cache (out of scope here — flag it to a human if to
 the container cache it definitely matters, because the jobs write versioned schema state
 (`auth`, `storage`, `_realtime`) into the cluster.
 
-## Workstream A — shadow readiness gate (independent, ship first)
+## Workstream A — shadow readiness gate (independent, ship first) — IMPLEMENTED
+
+Shipped as `legacyWaitForShadowReady` in
+`apps/cli/src/legacy/shared/db-bootstrap/health-check.ts`, consumed by
+`legacyPrepareRawShadow` (`shadow-database.ts`) and `legacyPrepareShadowSource`
+(`commands/db/shared/legacy-shadow-source.ts`). Two shadow health-waits deliberately stayed
+on the Docker-health gate and are follow-up candidates: `db diff --use-pgadmin`
+(`diff.handler.ts`) and `migration squash` (`squash.handler.ts`) — both provision the same
+shadow container and pay the same ~6.5s. The spec below is retained as the record of what
+was agreed.
 
 **Problem:** `legacyPrepareRawShadow` and `legacyPrepareShadowSource` gate on
 `legacyWaitForHealthyServices` (1s poll of `docker inspect` health), but the container
@@ -174,7 +183,7 @@ once proven.
    `com.supabase.cli.shadow-cache-key=<hash>` label.
 2. Run the existing baseline setup (`legacySetupShadowDatabase` /
    `legacyMigrateShadowDatabase` path unchanged up to the baseline; user migrations are
-   *not* part of the cached state — see reset protocol).
+   _not_ part of the cached state — see reset protocol).
 3. **Snapshot for reuse**, immediately after the baseline (before migrations/declarative
    load):
    - `CREATE DATABASE _supabase_shadow_base TEMPLATE postgres` (requires no other
@@ -193,13 +202,13 @@ once proven.
 ### Warm acquire (cache hit)
 
 1. Compute the key; look up the metadata file **and** the container (`docker ps -a
-   --filter label=com.supabase.cli.shadow-cache-key=<hash>`). Either missing, or container
+--filter label=com.supabase.cli.shadow-cache-key=<hash>`). Either missing, or container
    already running (another concurrent run owns it) ⇒ miss (concurrent case: fall through
    to a one-off uncached cold shadow, do not remove the cached one).
 2. `docker start` (~1s), wait via workstream A's probe.
 3. **Reset to pristine:**
    - reverse the role delta vs. the snapshot: drop roles not in the snapshot (`DROP OWNED
-     BY` in each affected DB is unnecessary once `postgres` is recreated — drop role after
+BY` in each affected DB is unnecessary once `postgres` is recreated — drop role after
      the DB recreate below to avoid dependency errors; simplest safe order: recreate DBs
      first, then `DROP ROLE`), revoke added memberships, re-grant removed ones, delete
      cluster-wide `pg_db_role_setting` rows not in the snapshot;
@@ -222,7 +231,7 @@ once proven.
   catalog cache uses if one exists; otherwise overwrite-on-write is enough (one file per
   key, old keys' containers removed on key mismatch — enumerate by label, keep only the
   current key's container).
-- **Leak window:** unlike today's `--rm` shadow, a crashed CLI leaves a *stopped, labeled*
+- **Leak window:** unlike today's `--rm` shadow, a crashed CLI leaves a _stopped, labeled_
   container. That is the cache working as intended; `supabase stop` and the key-mismatch
   sweep both reclaim it.
 

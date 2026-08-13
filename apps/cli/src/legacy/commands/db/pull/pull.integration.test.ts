@@ -318,6 +318,8 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const execLog: string[] = [];
   const historyUpserts: ReadonlyArray<unknown>[] = [];
   const connectedDatabases: Array<string> = [];
+  /** Same connects as {@link connectedDatabases}, keeping the port that tells target from shadow apart. */
+  const connectTargets: Array<{ readonly database: string; readonly port: number }> = [];
   // The resolver mock's own target connection always dials port 5432; the native
   // shadow (platform baseline, `CREATE_TEMPLATE`, migrations, and — on the
   // declarative branch — the `contrib_regression` override) always dials the
@@ -346,6 +348,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     connect: (cfg: { readonly database: string; readonly port: number }) =>
       Effect.sync(() => {
         connectedDatabases.push(cfg.database);
+        connectTargets.push({ database: cfg.database, port: cfg.port });
         return cfg.port === TARGET_PORT ? targetSession : shadowSession;
       }),
   });
@@ -467,6 +470,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     historyUpserts,
     execLog,
     connectedDatabases,
+    connectTargets,
     poolerFallbackCalls,
     resolveCalls,
     dumpCalls,
@@ -872,9 +876,15 @@ describe("legacy db pull", () => {
         files: ["schemas/public/t.sql"],
       });
       // Declarative mode's bare shadow (`legacyPrepareRawShadow`) never connects to set
-      // up a platform baseline or `contrib_regression` template — the only connect is
-      // the top-level target connect (`resolved.conn`, database "postgres").
-      expect(s.connectedDatabases).toEqual(["postgres"]);
+      // up a platform baseline or `contrib_regression` template. The only connects are
+      // the top-level target connect (`resolved.conn`, port 5432, database "postgres")
+      // and the shadow's own readiness probe on the shadow port — a single short-lived
+      // connect that is now the provisioning gate (`legacyWaitForShadowReady`) in place
+      // of waiting on the shadow container's 10s-interval Docker healthcheck.
+      expect(s.connectTargets).toEqual([
+        { database: "postgres", port: 5432 },
+        { database: "postgres", port: 54320 },
+      ]);
       expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
       expect(s.shadowSpawned.filter((call) => call.args[0] === "rm")).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));

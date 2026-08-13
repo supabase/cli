@@ -42,7 +42,7 @@ import {
 import type { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import type { LegacyImagePrepullError } from "../../../shared/db-bootstrap/image-prepull.ts";
 import type { LegacyHealthCheckTimeoutError } from "../../../shared/db-bootstrap/health-check.ts";
-import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-check.ts";
 import { legacySeedGlobals } from "../../../shared/legacy-migration-apply.ts";
 import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
@@ -95,7 +95,10 @@ export type LegacyPrepareShadowSourceError =
 
 /**
  * Port of Go's `PrepareShadowSource` (`apps/cli-go/internal/db/diff/shadow.go:37-91`):
- * health-wait against an already-`legacyCreateShadowDatabase`-created shadow ->
+ * readiness-wait against an already-`legacyCreateShadowDatabase`-created shadow (a direct
+ * connect probe, `legacyWaitForShadowReady` — NOT the Docker-health gate the long-running `db`
+ * container uses, which the shadow's own 10s-interval healthcheck cannot satisfy until well
+ * after Postgres is connectable; see that function's own doc comment) ->
  * `MigrateShadowDatabase` (platform baseline + local migrations + the `contrib_regression`
  * template database) -> build the diff-source config -> for legacy local targets, the
  * declarative-schema override branch. Pg-delta next always compares that migrations shadow
@@ -145,10 +148,6 @@ export const legacyPrepareShadowSource = <E>(
   Effect.gen(function* () {
     const { containerId } = handle;
 
-    yield* legacyWaitForHealthyServices(spawner, [containerId], {
-      timeoutSeconds: input.healthTimeoutSeconds,
-    });
-
     const connConfig: LegacyPgConnInput = {
       host: input.hostname,
       port: input.shadowPort,
@@ -156,6 +155,11 @@ export const legacyPrepareShadowSource = <E>(
       password: input.password,
       database: "postgres",
     };
+
+    yield* legacyWaitForShadowReady(spawner, containerId, connConfig, {
+      timeoutSeconds: input.healthTimeoutSeconds,
+    });
+
     const migrateShadow =
       input.migrationMode === "pgdelta-next"
         ? legacyMigrateNextShadowDatabase

@@ -24,6 +24,7 @@ import {
   legacySpawnContainerCliWithRuntime,
   type LegacyContainerRuntime,
 } from "../legacy-container-cli.ts";
+import { LegacyDbConnection, type LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { legacyInspectContainerState } from "../legacy-docker-lifecycle.ts";
 import { legacyKongAuthHeaders } from "../legacy-kong-auth.ts";
 
@@ -436,4 +437,129 @@ export function legacyWaitForHealthyServices(
       ),
     );
   });
+}
+
+/**
+ * Bounds a single readiness connect so a dial that hangs (rather than being
+ * refused outright) cannot swallow the whole poll budget. Explicit rather than
+ * inherited from the driver's own local default (`legacy-db-connection.sql-pg.
+ * layer.ts` — `cfg.connectTimeoutSeconds ?? (isLocal ? 2 : 10)`), which happens
+ * to be the same 2 seconds: this probe's budget is a property of the polling
+ * loop, not of whichever driver layer answers it.
+ */
+const LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS = 2;
+
+/**
+ * One round's verdict. `fatal` is what makes an exited container fail fast
+ * instead of burning the remaining budget: nothing about a dead container can
+ * change on a later round, whereas a refused connect (or a transient `docker
+ * container inspect` failure) is just "not ready yet".
+ */
+interface LegacyShadowReadyFailure {
+  readonly reason: string;
+  readonly fatal: boolean;
+}
+
+const legacyShadowNotReady = (reason: string): LegacyShadowReadyFailure => ({
+  reason,
+  fatal: false,
+});
+
+/**
+ * A single short-lived connect attempt against the shadow, dialled exactly the
+ * way `legacyConnectShadowDatabase` (`shadow-database.ts`) dials it — same
+ * `isLocal`/`dnsResolver` pair, so a config that authenticates for the probe
+ * authenticates for the real connection too. `Effect.scoped` closes the session
+ * the moment the probe resolves: the caller opens (and owns) its own connection
+ * afterwards through `legacyConnectShadowDatabase`.
+ */
+const legacyProbeShadowConnect = (
+  connConfig: LegacyPgConnInput,
+): Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const dbConnection = yield* LegacyDbConnection;
+      yield* dbConnection.connect(
+        { ...connConfig, connectTimeoutSeconds: LEGACY_SHADOW_READY_CONNECT_TIMEOUT_SECONDS },
+        { isLocal: true, dnsResolver: "native" },
+      );
+    }),
+  ).pipe(Effect.mapError((cause) => legacyShadowNotReady(cause.message)));
+
+export interface LegacyWaitForShadowReadyOptions {
+  readonly timeoutSeconds?: number;
+}
+
+/**
+ * The shadow database's readiness gate — {@link legacyWaitForHealthyServices}'s
+ * counterpart for the ONE container whose Docker healthcheck cannot answer in
+ * time. The shadow's healthcheck is `interval=10s` with no
+ * `start_period`/`start_interval` (`postgres.service.ts`, deliberately left
+ * unchanged — other tooling reads that config), so Docker's very first probe
+ * runs at t+10s while Postgres has been accepting connections since ~3.5s:
+ * gating on `Health.Status` spends ~6.5s per provision waiting for a verdict
+ * that is already knowable. `--health-start-interval` would fix the container
+ * side, but it needs Docker Engine 25+/API 1.44 and is not reliably supported
+ * by Podman (which `spawnContainerCli` falls back to), so the CLI-side wait
+ * asks Postgres directly instead.
+ *
+ * Each round, on the same 1-second constant backoff and the same
+ * `timeoutSeconds` budget as the health gate:
+ *
+ * 1. {@link legacyInspectContainerState} — still `running`? This preserves the
+ *    crash detection the health gate provided; an exited container fails
+ *    immediately rather than at the end of the budget.
+ * 2. a short {@link legacyProbeShadowConnect} — success ⇒ ready, return now.
+ *
+ * Failure shape is deliberately identical to the health gate's: the same
+ * {@link LegacyHealthCheckTimeoutError}, the same `unhealthy` payload, and the
+ * same `docker logs` dump teed to stderr on the way out, so a broken shadow
+ * still surfaces exactly what it surfaced before.
+ */
+export function legacyWaitForShadowReady(
+  spawner: Spawner,
+  containerId: string,
+  connConfig: LegacyPgConnInput,
+  opts: LegacyWaitForShadowReadyOptions = {},
+): Effect.Effect<void, LegacyHealthCheckTimeoutError, LegacyDbConnection> {
+  const timeoutSeconds = opts.timeoutSeconds ?? LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS;
+
+  const probe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = Effect.gen(
+    function* () {
+      const state = yield* legacyInspectContainerState(spawner, containerId).pipe(
+        Effect.mapError((cause) => legacyShadowNotReady(cause.message)),
+      );
+      if (!state.running) {
+        return yield* Effect.fail({
+          reason: `container is not running: ${state.status}`,
+          fatal: true,
+        });
+      }
+      yield* legacyProbeShadowConnect(connConfig);
+    },
+  );
+
+  // Same policy as `legacyWaitForHealthyServices` (Go's
+  // `NewBackoffPolicy(ctx, timeout)`): a 1-second constant delay, capped at
+  // `timeoutSeconds` retries after the initial attempt.
+  const schedule = Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(timeoutSeconds)]);
+
+  return probe.pipe(
+    Effect.retry({ schedule, while: (failure) => !failure.fatal }),
+    Effect.catch((failure) =>
+      Effect.gen(function* () {
+        // Go skips this dump on context cancellation (`start.go:215`) — an
+        // interrupted fiber never reaches this handler, so no separate check.
+        yield* legacyDumpContainerLogs(spawner, containerId);
+        return yield* Effect.fail(
+          new LegacyHealthCheckTimeoutError({
+            // The health gate's own `<id> <reason>` joining, so both waits read
+            // identically on stderr.
+            message: `${containerId} ${failure.reason}`,
+            unhealthy: [{ containerId, reason: failure.reason }],
+          }),
+        );
+      }),
+    ),
+  );
 }

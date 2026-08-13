@@ -40,6 +40,7 @@ import {
   type LegacyDbSession,
   type LegacyPgConnInput,
 } from "../../../shared/legacy-db-connection.service.ts";
+import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import { LegacyDockerRunError } from "../../../shared/legacy-docker-run.errors.ts";
 import {
   LegacyDockerRun,
@@ -89,8 +90,14 @@ interface SetupOpts {
   // When set, the shadow container never reports healthy — for the interrupt-during-
   // health-wait regression coverage (review: PRRT_kwDOErm0O86XMrID). See
   // `mockLegacyShadowContainerCliSpawner`'s own doc comment for why this is required
-  // (not `Effect.never`) to observe a genuinely suspended retry loop.
+  // (not `Effect.never`) to observe a genuinely suspended retry loop. Only the
+  // `--use-pgadmin` branch still gates on the Docker healthcheck; the shadow-source
+  // branch gates on `neverConnectableShadow` below instead.
   readonly neverHealthyShadow?: boolean;
+  // When set, every connect to the shadow's own port is refused, so the readiness gate
+  // (`legacyWaitForShadowReady`) keeps polling — the shadow-source branch's equivalent of
+  // `neverHealthyShadow`, since that wait no longer consults the Docker healthcheck.
+  readonly neverConnectableShadow?: boolean;
   // `LegacyCliConfig.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
   // to `Option.some("test")`; pass `Option.none()` to exercise the
   // config.toml/workdir-basename fallback `legacyResolveLocalProjectId` provides for
@@ -135,14 +142,28 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
   ),
 );
 
-/** Records every `LegacyDbConnection.connect` target's database name, and every `exec`/`query` SQL run against it. */
-function fakeShadowDbConnection() {
+/** `[db] shadow_port`'s schema default — the port every connect to the shadow itself dials. */
+const LEGACY_SHADOW_PORT = 54320;
+
+/**
+ * Records every `LegacyDbConnection.connect` target's database name, and every `exec`/`query`
+ * SQL run against it.
+ *
+ * `neverConnectableShadow` makes every connect to the SHADOW port fail (leaving the local
+ * target's own connects untouched) — the shadow's readiness gate is now a direct connect probe
+ * (`legacyWaitForShadowReady`), so a shadow that never accepts a connection is what keeps a
+ * provisioning fiber genuinely suspended inside that retry loop.
+ */
+function fakeShadowDbConnection(opts: { readonly neverConnectableShadow?: boolean } = {}) {
   const connectedDatabases: Array<string> = [];
   const execCalls: Array<string> = [];
   const layer = Layer.succeed(LegacyDbConnection, {
     connect: (cfg: LegacyPgConnInput) =>
-      Effect.sync(() => {
+      Effect.gen(function* () {
         connectedDatabases.push(cfg.database);
+        if (opts.neverConnectableShadow === true && cfg.port === LEGACY_SHADOW_PORT) {
+          return yield* Effect.fail(new LegacyDbConnectError({ message: "connection refused" }));
+        }
         const session: LegacyDbSession = {
           exec: (sql) =>
             Effect.sync(() => {
@@ -172,7 +193,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     dbNotRunning: opts.dbNotRunning ?? false,
     dbInspectFailsWith: opts.dbInspectFailsWith,
   });
-  const shadowDbConnection = fakeShadowDbConnection();
+  const shadowDbConnection = fakeShadowDbConnection({
+    neverConnectableShadow: opts.neverConnectableShadow ?? false,
+  });
 
   const explicitDiffCalls: LegacyPgDeltaExplicitDiffInput[] = [];
   const databaseDiffCalls: LegacyPgDeltaDatabaseDiffInput[] = [];
@@ -1910,37 +1933,36 @@ describe("legacy db diff", () => {
   });
 
   it.live(
-    "removes the shadow container on a SIGINT-style interruption during the health wait, without waiting for the health-check timeout",
+    "removes the shadow container on a SIGINT-style interruption during the readiness wait, without waiting for the readiness timeout",
     () => {
       // Regression test for the acquireUseRelease restructuring (review:
       // PRRT_kwDOErm0O86XMrID): an earlier shape passed the ENTIRE
       // `legacyPrepareShadowSource` (create -> health-wait -> migrate ->
       // declarative-apply) as `acquireUseRelease`'s `acquire`, which Effect's
       // `uninterruptibleMask` (no `restore` around `acquire`) made completely
-      // uninterruptible — a SIGINT landing during the health wait (which can run for
-      // up to 30 real seconds, `LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
-      // swallowed until the health check gave up on its own. `acquire` is now ONLY
-      // `legacyCreateShadowDatabase`
-      // (container creation); the health wait runs inside the interruptible `use`
-      // phase instead, so a `Fiber.interrupt` here must land promptly.
-      const s = setup(tmp.current, { neverHealthyShadow: true });
+      // uninterruptible — a SIGINT landing during the readiness wait (which can run
+      // for up to 30 real seconds, `LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
+      // swallowed until the wait gave up on its own. `acquire` is now ONLY
+      // `legacyCreateShadowDatabase` (container creation); the readiness wait runs
+      // inside the interruptible `use` phase instead, so a `Fiber.interrupt` here must
+      // land promptly.
+      const s = setup(tmp.current, { neverConnectableShadow: true });
       return Effect.gen(function* () {
         const fiber = yield* legacyDbDiff(flags()).pipe(
           Effect.provide(s.layer),
           Effect.forkChild({ startImmediately: true }),
         );
-        // Wait until the shadow's own health check has actually probed the
-        // never-healthy container at least once — proving the fiber is genuinely
-        // suspended inside `legacyWaitForHealthyServices`'s retry loop, not merely
-        // past the `create` call.
-        while (!s.shadowSpawned.some((c) => c.args[0] === "container" && c.args[1] === "inspect")) {
+        // Wait until the shadow's readiness gate has actually refused a connect at
+        // least once — proving the fiber is genuinely suspended inside
+        // `legacyWaitForShadowReady`'s retry loop, not merely past the `create` call.
+        while (s.shadowConnectedDatabases.length === 0) {
           yield* Effect.sleep("5 millis");
         }
         // `Fiber.interrupt` only resolves once the target fiber (and its finalizers,
         // including `legacyRemoveShadowDatabase`) has fully completed — if `acquire`
-        // still covered the health wait, this call would hang for up to 30 real
+        // still covered the readiness wait, this call would hang for up to 30 real
         // seconds (or until this test's own timeout), instead of resolving as soon
-        // as the in-flight probe's own subprocess call returns.
+        // as the in-flight probe returns.
         yield* Fiber.interrupt(fiber);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
