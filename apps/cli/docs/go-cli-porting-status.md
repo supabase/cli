@@ -56,6 +56,7 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 | `api`             | [`../src/next/commands/platform/api.command.ts`](../src/next/commands/platform/api.command.ts)                     | Low-level Management API client. It supersedes the old generated tree with explicit discovery via `supabase api routes` and execution via `supabase api request <route> [--method <METHOD>]`. |
 | `stack`           | [`../src/next/cli/root.ts`](../src/next/cli/root.ts)                                                               | TS-only local runtime namespace exposing `stack start`, `stack stop`, `stack status`, `stack list`, and `stack update`. Top-level `start`, `stop`, and `status` remain aliases.               |
 | `branches switch` | [`../src/next/commands/branches/switch/switch.command.ts`](../src/next/commands/branches/switch/switch.command.ts) | No direct Go equivalent. Updates local active-branch state so subsequent commands target the selected branch.                                                                                 |
+| `config pull`     | [`../src/legacy/commands/config/pull/pull.command.ts`](../src/legacy/commands/config/pull/pull.command.ts)         | Compares config-schema-shaped hosted values for an exact preview branch with the local project config.                                                                                        |
 
 ## Quick Start
 

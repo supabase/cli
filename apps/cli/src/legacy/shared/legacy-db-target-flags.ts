@@ -141,6 +141,7 @@ export const VALUE_CONSUMING_LONG_FLAGS = new Set([
   "status",
   "sub",
   "swift-access-control",
+  "target",
   "template",
   "timestamp",
   "to",
