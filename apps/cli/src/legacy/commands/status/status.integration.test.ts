@@ -2,22 +2,36 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 
+import type { ApiClient, V1ListAllBranchesOutput } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stream } from "effect";
+import { Deferred, Effect, Exit, Layer, Option, PlatformError, Sink, Stdio, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
+import * as HttpClientRequestModule from "effect/unstable/http/HttpClientRequest";
 import { afterEach, vi } from "vitest";
 
-import { mockOutput } from "../../../../tests/helpers/mocks.ts";
+import { mockOutput, mockProcessControl } from "../../../../tests/helpers/mocks.ts";
 import {
+  legacyStatusCodeFailure,
+  legacyTransportFailure,
   mockLegacyCliConfig,
+  mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
+import type { LegacyPlatformApiFactoryError } from "../../auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformApiFactory } from "../../auth/legacy-platform-api-factory.service.ts";
+import { LegacyPlatformAuthRequiredError } from "../../auth/legacy-errors.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { withJsonErrorHandling } from "../../../shared/output/json-error-handling.ts";
+import { machineErrorContextLayer } from "../../../shared/output/machine-error-context.layer.ts";
+import { jsonOutputLayer, streamJsonOutputLayer } from "../../../shared/output/output.layer.ts";
 import { legacyServiceContainerIds, localDbContainerId } from "../../shared/legacy-docker-ids.ts";
 import type { LegacyStatusFlags } from "./status.command.ts";
 import { legacyStatus } from "./status.handler.ts";
+
+type LinkedStateBranches = typeof V1ListAllBranchesOutput.Type;
+type LinkedStateBranch = LinkedStateBranches[number];
 
 const tempRoot = useLegacyTempWorkdir("supabase-status-int-");
 
@@ -38,6 +52,121 @@ function writeConfig(workdir: string, contents = 'project_id = "demo"\n') {
   const supabaseDir = join(workdir, "supabase");
   mkdirSync(supabaseDir, { recursive: true });
   writeFileSync(join(supabaseDir, "config.toml"), contents);
+}
+
+// ---------------------------------------------------------------------------
+// Linked-state fixtures (CLI-2167 follow-up: `status` shows the linked
+// project/branch in every output mode). Distinct 20-lowercase-letter refs so
+// it's unambiguous which candidate (branch vs. parent) a given assertion
+// targets.
+// ---------------------------------------------------------------------------
+
+const LINKED_PARENT_REF = "parentprojectrefxxxx";
+const LINKED_BRANCH_REF = "branchprojectrefyyyy";
+const LINKED_PLAIN_REF = "plainprojectrefzzzzz";
+
+const LINKED_BRANCH: LinkedStateBranch = {
+  id: "11111111-2222-4333-8444-555555555555",
+  name: "feature-x",
+  project_ref: LINKED_BRANCH_REF,
+  parent_project_ref: LINKED_PARENT_REF,
+  is_default: false,
+  persistent: false,
+  status: "MIGRATIONS_PASSED",
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  with_data: false,
+};
+
+function tempFile(workdir: string, name: string): string {
+  return join(workdir, "supabase", ".temp", name);
+}
+
+function writeTempContent(workdir: string, name: string, content: string): void {
+  mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+  writeFileSync(tempFile(workdir, name), content);
+}
+
+function writeProjectRefFile(workdir: string, ref: string): void {
+  writeTempContent(workdir, "project-ref", ref);
+}
+
+/**
+ * Writes `linked-project.json`. `orgSlug`/`orgId` default to distinct values
+ * (`"acme"`/`"org_1"`) matching the common real-world case — pass `null`
+ * explicitly to omit a field entirely (the "neither known" org variant).
+ */
+function writeLinkedProjectCacheFile(
+  workdir: string,
+  ref: string,
+  opts: {
+    readonly name?: string;
+    readonly orgSlug?: string | null;
+    readonly orgId?: string | null;
+  } = {},
+): void {
+  const orgSlug = opts.orgSlug === undefined ? "acme" : opts.orgSlug;
+  const orgId = opts.orgId === undefined ? "org_1" : opts.orgId;
+  writeTempContent(
+    workdir,
+    "linked-project.json",
+    JSON.stringify({
+      ref,
+      ...(opts.name === undefined ? {} : { name: opts.name }),
+      ...(orgSlug === null ? {} : { organization_slug: orgSlug }),
+      ...(orgId === null ? {} : { organization_id: orgId }),
+    }),
+  );
+}
+
+function legacyTransportFailureForMock() {
+  return legacyTransportFailure(HttpClientRequestModule.get("https://api.supabase.com/mock"));
+}
+
+/**
+ * Wires `LegacyPlatformApiFactory` directly (`make` resolves immediately to a
+ * stubbed client) — NOT `LegacyPlatformApi`. Pins the actual production
+ * acquisition path `legacyAcquireLinkedStateApi` falls back to when only the
+ * lazy factory is in scope (`status`'s real runtime shape, via
+ * `legacyPlatformApiFactoryLayer` in `status.command.ts`), as opposed to the
+ * direct-service `branches` mock above, which existing tests provide and which
+ * a real `status` invocation never has.
+ */
+function mockLegacyPlatformApiFactoryDirect(opts: {
+  readonly ok?: LinkedStateBranches;
+  readonly fail?: unknown;
+  /** When set, `factory.make` itself fails (e.g. no/invalid token) before any
+   * `v1` call is ever attempted — distinct from `fail`, which lets `make`
+   * succeed and fails the `listAllBranches` call instead. */
+  readonly makeFails?: LegacyPlatformApiFactoryError;
+}) {
+  const requests: Array<{ method: string; input: unknown }> = [];
+  const v1Proxy = new Proxy({} as ApiClient["v1"], {
+    get(_target, prop: string) {
+      return (input: unknown) =>
+        Effect.gen(function* () {
+          requests.push({ method: prop, input });
+          if (prop !== "listAllBranches") {
+            return yield* Effect.die(`Unmocked factory-backed LegacyPlatformApi.v1.${prop}`);
+          }
+          if (opts.fail !== undefined) return yield* Effect.fail(opts.fail);
+          return opts.ok ?? [];
+        });
+    },
+  });
+  const v2Proxy = new Proxy({} as ApiClient["v2"], {
+    get(_target, prop: string) {
+      return () => Effect.die(`Unmocked factory-backed LegacyPlatformApi.v2.${prop}`);
+    },
+  });
+  const client = {
+    v1: v1Proxy,
+    v2: v2Proxy,
+    executeRaw: () => Effect.die("Unmocked executeRaw"),
+  } as ApiClient;
+  const make = opts.makeFails !== undefined ? Effect.fail(opts.makeFails) : Effect.succeed(client);
+  const layer = Layer.succeed(LegacyPlatformApiFactory, { make });
+  return { layer, requests };
 }
 
 interface SpawnRecord {
@@ -174,6 +303,27 @@ interface SetupOpts {
   readonly configContents?: string;
   /** Defaults to `tempRoot.current` — override for `--workdir`-resolution tests. */
   readonly workdir?: string;
+  /**
+   * When set, wires a `LegacyPlatformApi` layer stubbing `listAllBranches` for
+   * `legacyResolveLinkedState`'s branch lookup (CLI-2167 follow-up). Omitted
+   * entirely by default — matching `status`'s real runtime, which never wires
+   * a Management API layer at all — so `Effect.serviceOption(LegacyPlatformApi)`
+   * resolves to `None` unless a test opts in here.
+   */
+  readonly branches?: { readonly ok?: LinkedStateBranches; readonly fail?: unknown };
+  /**
+   * When set INSTEAD of `branches`, wires only `LegacyPlatformApiFactory`
+   * (never `LegacyPlatformApi` directly) — the shape `status`'s real runtime
+   * actually provides. Pins `legacyAcquireLinkedStateApi`'s factory-fallback
+   * path (CLI-2167 follow-up bug fix).
+   */
+  readonly apiFactory?: {
+    readonly ok?: LinkedStateBranches;
+    readonly fail?: unknown;
+    readonly makeFails?: LegacyPlatformApiFactoryError;
+  };
+  /** `SUPABASE_PROJECT_ID` for the linked-state chain — defaults to unset. */
+  readonly projectId?: Option.Option<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -186,11 +336,24 @@ function setup(opts: SetupOpts = {}) {
     interactive: (opts.format ?? "text") === "text",
   });
   const telemetry = mockLegacyTelemetryStateTracked();
-  const cliConfig = mockLegacyCliConfig({ workdir, projectId: Option.none() });
+  const cliConfig = mockLegacyCliConfig({ workdir, projectId: opts.projectId ?? Option.none() });
   const child = mockRoutedContainerCliSpawner(opts.route ?? defaultRoute(), {
     dockerMissing: opts.dockerMissing,
     failSpawnFor: opts.failSpawnFor,
   });
+  const apiMock =
+    opts.branches === undefined
+      ? undefined
+      : mockLegacyPlatformApiService({
+          v1: {
+            listAllBranches:
+              opts.branches.fail !== undefined
+                ? () => Effect.fail(opts.branches?.fail)
+                : () => Effect.succeed(opts.branches?.ok ?? []),
+          },
+        });
+  const apiFactoryMock =
+    opts.apiFactory === undefined ? undefined : mockLegacyPlatformApiFactoryDirect(opts.apiFactory);
 
   const layer = Layer.mergeAll(
     BunServices.layer,
@@ -199,9 +362,102 @@ function setup(opts: SetupOpts = {}) {
     telemetry.layer,
     child.layer,
     Layer.succeed(LegacyOutputFlag, opts.goOutput ?? Option.none()),
+    ...(apiMock === undefined ? [] : [apiMock.layer]),
+    ...(apiFactoryMock === undefined ? [] : [apiFactoryMock.layer]),
   );
 
-  return { workdir, out, telemetry, child, layer };
+  return { workdir, out, telemetry, child, layer, apiMock, apiFactoryMock };
+}
+
+/**
+ * A REAL captured `Stdio` layer (mirrors `output.layer.unit.test.ts`'s local
+ * `mockStdio()`) — needed only by the failure-envelope tests below, since the
+ * `MachineErrorContext` merge they pin lives inside the real
+ * `jsonOutputLayer`/`streamJsonOutputLayer` `fail` implementations, which
+ * `setup()`'s `mockOutput()` fake never replicates.
+ */
+function mockCapturingStdio() {
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+  const layer = Layer.succeed(
+    Stdio.Stdio,
+    Stdio.make({
+      args: Effect.succeed([]),
+      stdin: Stream.empty,
+      stdout: () =>
+        Sink.forEach((item: string | Uint8Array) =>
+          Effect.sync(() => {
+            stdout.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+          }),
+        ),
+      stderr: () =>
+        Sink.forEach((item: string | Uint8Array) =>
+          Effect.sync(() => {
+            stderr.push(typeof item === "string" ? item : new TextDecoder().decode(item));
+          }),
+        ),
+    }),
+  );
+  return { layer, stdout, stderr };
+}
+
+interface FailureEnvelopeOpts {
+  readonly format: "json" | "stream-json";
+  /** Defaults to `true` — pass `false` to reproduce a runtime that never wires
+   * the cell at all (the inertness guard). */
+  readonly withMachineErrorContext?: boolean;
+  readonly branches?: { readonly ok?: LinkedStateBranches; readonly fail?: unknown };
+}
+
+/**
+ * Dedicated setup for the json/stream-json FAILURE-envelope tests (CLI-2167
+ * follow-up): wires the REAL `jsonOutputLayer`/`streamJsonOutputLayer` over a
+ * captured `Stdio`, a real `mockProcessControl()` (failure in these formats
+ * signals via exit code, not `Effect.fail` — see `withJsonErrorHandling`),
+ * and — merged ALONGSIDE the output layer, not nested inside its own
+ * `Layer.provide`, matching how `status.command.ts` composes
+ * `legacyStatusRuntimeLayer` — `machineErrorContextLayer`, so the SAME live
+ * cell both the handler (`legacyStatus`) and the output layer's `fail` see is
+ * one instance. Every scenario forces a daemon-connection failure
+ * (`failSpawnFor: () => true`, the same "docker and podman both missing"
+ * mechanism as the existing text-mode daemon-failure test) so the command
+ * fails with `LegacyStatusDbInspectError` after the linked-state block has
+ * already resolved.
+ */
+function setupFailureEnvelope(opts: FailureEnvelopeOpts) {
+  const workdir = tempRoot.current;
+  writeConfig(workdir);
+  const stdio = mockCapturingStdio();
+  const telemetry = mockLegacyTelemetryStateTracked();
+  const cliConfig = mockLegacyCliConfig({ workdir, projectId: Option.none() });
+  const child = mockRoutedContainerCliSpawner(defaultRoute(), { failSpawnFor: () => true });
+  const processControl = mockProcessControl();
+  const apiMock =
+    opts.branches === undefined
+      ? undefined
+      : mockLegacyPlatformApiService({
+          v1: {
+            listAllBranches:
+              opts.branches.fail !== undefined
+                ? () => Effect.fail(opts.branches?.fail)
+                : () => Effect.succeed(opts.branches?.ok ?? []),
+          },
+        });
+  const outputLayer = opts.format === "json" ? jsonOutputLayer : streamJsonOutputLayer;
+
+  const layer = Layer.mergeAll(
+    BunServices.layer,
+    outputLayer.pipe(Layer.provide(stdio.layer)),
+    cliConfig,
+    telemetry.layer,
+    child.layer,
+    processControl.layer,
+    Layer.succeed(LegacyOutputFlag, Option.none()),
+    ...(opts.withMachineErrorContext === false ? [] : [machineErrorContextLayer]),
+    ...(apiMock === undefined ? [] : [apiMock.layer]),
+  );
+
+  return { workdir, layer, stdio, processControl };
 }
 
 describe("legacy status integration", () => {
@@ -954,5 +1210,1012 @@ project_id = "short"
       yield* Effect.exit(legacyStatus(flags()));
       expect(telemetry.flushed).toBe(true);
     }).pipe(Effect.provide(layer));
+  });
+
+  describe("linked-state display (CLI-2167 follow-up)", () => {
+    it.live(
+      "not linked: prints Not linked. as the first stdout line, then normal status output",
+      () => {
+        const { layer, out } = setup();
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText.startsWith("Not linked.\n")).toBe(true);
+          expect(out.stdoutText).toContain("🌐 APIs");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "linked to a real project: prints the Linked Project block (Org + Project) with zero Management API calls",
+      () => {
+        // An api mock IS wired here (unlike the "no layer at all" test below) so
+        // the assertion is a genuine runtime count, not just "we didn't ask for
+        // one" — the plain-project match must return before ever touching it.
+        const { layer, out, workdir, apiMock } = setup({ branches: { ok: [] } });
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, { name: "My Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n  Org: acme (org_1)\n  Project: My Project (${LINKED_PLAIN_REF})\n`,
+            ),
+          ).toBe(true);
+          expect(apiMock?.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "branch-linked with an api mock: prints the full block (Org + parent Project + resolved Branch) with a Checking linked branch... spinner",
+      () => {
+        const { layer, out, workdir } = setup({ branches: { ok: [LINKED_BRANCH] } });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: feature-x (${LINKED_BRANCH_REF})\n`,
+            ),
+          ).toBe(true);
+          expect(out.progressEvents).toContainEqual({
+            type: "start",
+            message: "Checking linked branch...",
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "branch-linked with the production factory-fallback path (LegacyPlatformApiFactory, not LegacyPlatformApi directly): resolves the branch",
+      () => {
+        // Pins the actual bug this feature shipped to fix: `status`'s real
+        // runtime never wires `LegacyPlatformApi` directly (only the lazy
+        // `LegacyPlatformApiFactory`, via `legacyPlatformApiFactoryLayer` in
+        // `status.command.ts`) — a test using the `branches` mock above
+        // would pass even if `legacyAcquireLinkedStateApi`'s factory fallback
+        // were broken or missing entirely.
+        const { layer, out, workdir, apiFactoryMock } = setup({
+          apiFactory: { ok: [LINKED_BRANCH] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: feature-x (${LINKED_BRANCH_REF})\n`,
+            ),
+          ).toBe(true);
+          expect(apiFactoryMock?.requests).toEqual([
+            { method: "listAllBranches", input: { ref: LINKED_PARENT_REF } },
+          ]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "factory present but make() itself fails (e.g. no/invalid token): degrades the same as no API at all",
+      () => {
+        const { layer, out, workdir, apiFactoryMock } = setup({
+          apiFactory: {
+            makeFails: new LegacyPlatformAuthRequiredError({ message: "no token" }),
+          },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: ${LINKED_BRANCH_REF}\n`,
+            ),
+          ).toBe(true);
+          // `make` failed before any `v1` call was attempted.
+          expect(apiFactoryMock?.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "branch-linked with no Management API layer/factory at all: RICH degraded block (Org + parent Project + bare Branch ref), still succeeds",
+      () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          // The cache CONFIRMS a distinct parent, so the degraded state still
+          // carries it (and the org/name) — only the branch's own name is
+          // missing, rendered as a bare ref so the user still sees they're on
+          // a branch (never silently collapsing to a plain-project line).
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: ${LINKED_BRANCH_REF}\n`,
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "resolves the linked ref from SUPABASE_PROJECT_ID (env) when no project-ref file exists",
+      () => {
+        const { layer, out, workdir } = setup({ projectId: Option.some(LINKED_PLAIN_REF) });
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, { name: "My Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n  Org: acme (org_1)\n  Project: My Project (${LINKED_PLAIN_REF})\n`,
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "branch-linked with no cache file at all and no API confirmation: no-false-claim rule renders the bare project line only",
+      () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        // No linked-project.json and no API at all — the parent-chain's only
+        // candidate (the project-ref file itself) is never trustworthy enough
+        // on its own to claim a branch link; there must be no Org/Branch line.
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(`Linked Project:\n  Project: ${LINKED_BRANCH_REF}\n`),
+          ).toBe(true);
+          // `startsWith` alone would still pass if a Branch:/Org: line were
+          // wrongly appended right after (a real regression this rule guards
+          // against) — assert their absence explicitly, everywhere.
+          expect(out.stdoutText).not.toContain("\n  Branch:");
+          expect(out.stdoutText).not.toContain("\n  Org:");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "no-false-claim rule: no cache, an API IS available but finds no matching branch — still the bare project line, no Branch/parent claim",
+      () => {
+        // Distinct from the "no API at all" test above: here a lookup DOES run
+        // (against the project-ref file's own value as the query target) and
+        // comes back with branches, none of which match — a real, connected
+        // API that simply found nothing is not "positive confirmation" either.
+        const { layer, out, workdir } = setup({
+          branches: { ok: [{ ...LINKED_BRANCH, project_ref: "unrelatedbranchrefaaaa" }] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(`Linked Project:\n  Project: ${LINKED_BRANCH_REF}\n`),
+          ).toBe(true);
+          // Same over-broad-assertion trap as above: a wrongly-appended
+          // Branch:/Org: line would still satisfy a bare `startsWith` check.
+          expect(out.stdoutText).not.toContain("\n  Branch:");
+          expect(out.stdoutText).not.toContain("\n  Org:");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "no-false-claim rule, -o env: no matching branch found emits only LINKED_PROJECT_REF, no LINKED_BRANCH or LINKED_PARENT_PROJECT_REF",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("env"),
+          branches: { ok: [{ ...LINKED_BRANCH, project_ref: "unrelatedbranchrefaaaa" }] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).toContain(`LINKED_PROJECT_REF="${LINKED_BRANCH_REF}"`);
+          expect(out.stdoutText).not.toContain("LINKED_BRANCH");
+          expect(out.stdoutText).not.toContain("LINKED_PARENT_PROJECT_REF");
+          expect(out.stdoutText).not.toContain("LINKED_ORG_");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "linked ref is non-ref-shaped: treated as not linked, the file content never reaches output (PR #6168 review)",
+      () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, "not-a-real-ref!!");
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText.startsWith("Not linked.\n")).toBe(true);
+          expect(out.stdoutText).not.toContain("not-a-real-ref!!");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "-o json: a symlink/garbage project-ref file's content never reaches machine output (PR #6168 review, token-exfiltration vector)",
+      () => {
+        // A malicious worktree can symlink supabase/.temp/project-ref at
+        // ~/.supabase/access-token; the pattern gate must keep any
+        // non-ref-shaped content (e.g. a token) out of every output channel.
+        const { layer, out, workdir } = setup({ goOutput: Option.some("json") });
+        writeProjectRefFile(workdir, "sbp_0102030405060708090a0b0c0d0e0f10111213");
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).not.toContain("sbp_");
+          expect(out.stdoutText).not.toContain("LINKED_PROJECT_REF");
+          expect(out.stdoutText).not.toContain("linked_project_ref");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "linked to a real project with no cached name: bare Project value, Org line still shown",
+      () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        // No `name` field in the cache — org fields are still known.
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF);
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n  Org: acme (org_1)\n  Project: ${LINKED_PLAIN_REF}\n`,
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "--output-format json, linked to a real (non-branch) project with no name: linked_project has project_ref + org fields but no project_name",
+      () => {
+        const { layer, out, workdir } = setup({ format: "json" });
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF);
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          const success = out.messages.find((m) => m.type === "success");
+          const linkedProject = (success?.data as { linked_project?: Record<string, unknown> })
+            ?.linked_project;
+          expect(linkedProject).toEqual({
+            project_ref: LINKED_PLAIN_REF,
+            org_slug: "acme",
+            org_id: "org_1",
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "branch-linked with no cache at all: plain project block, ZERO API calls (cache alone is never proof of a link, PR #6168 review)",
+      () => {
+        // An api mock IS wired (matching LINKED_BRANCH_REF as a self-referential
+        // branch) so the zero-requests assertion below is a genuine runtime
+        // count, not just "we didn't need one" — with no `linked-project.json`,
+        // `legacyResolveLinkedParentRef`'s cache candidate never participates
+        // either (its own fix), so there is no parent to resolve at all, and
+        // `legacyResolveLinkedState` never attempts the old self-referential
+        // branch lookup.
+        const { layer, out, workdir, apiMock } = setup({
+          branches: {
+            ok: [{ ...LINKED_BRANCH, parent_project_ref: LINKED_BRANCH_REF }],
+          },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(`Linked Project:\n  Project: ${LINKED_BRANCH_REF}\n`),
+          ).toBe(true);
+          expect(out.stdoutText).not.toContain("\n  Branch:");
+          expect(out.stdoutText).not.toContain("\n  Org:");
+          expect(apiMock?.requests).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "branch-linked with the branch lookup failing (status error): RICH degraded block, still succeeds",
+      () => {
+        const { layer, out, workdir } = setup({
+          branches: { fail: legacyStatusCodeFailure(500) },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: ${LINKED_BRANCH_REF}\n`,
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "branch-linked with the branch lookup failing (transport error): RICH degraded block, still succeeds",
+      () => {
+        const { layer, out, workdir } = setup({
+          branches: { fail: legacyTransportFailureForMock() },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: ${LINKED_BRANCH_REF}\n`,
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "-o env, branch-linked with the branch lookup failing: degraded machine payload still carries parent/name/org, only LINKED_BRANCH absent",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("env"),
+          branches: { fail: legacyStatusCodeFailure(500) },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).toContain(`LINKED_PROJECT_REF="${LINKED_BRANCH_REF}"`);
+          expect(out.stdoutText).toContain(`LINKED_PARENT_PROJECT_REF="${LINKED_PARENT_REF}"`);
+          expect(out.stdoutText).toContain('LINKED_PROJECT_NAME="Parent Project"');
+          expect(out.stdoutText).toContain('LINKED_ORG_SLUG="acme"');
+          expect(out.stdoutText).toContain('LINKED_ORG_ID="org_1"');
+          expect(out.stdoutText).not.toContain("LINKED_BRANCH=");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "-o json, branch-linked with the branch lookup failing: degraded machine payload still carries parent/name/org, only linked_branch absent",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("json"),
+          branches: { fail: legacyStatusCodeFailure(500) },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+          expect(parsed.linked_project_ref).toBe(LINKED_BRANCH_REF);
+          expect(parsed.linked_parent_project_ref).toBe(LINKED_PARENT_REF);
+          expect(parsed.linked_project_name).toBe("Parent Project");
+          expect(parsed.linked_org_slug).toBe("acme");
+          expect(parsed.linked_org_id).toBe("org_1");
+          expect(parsed.linked_branch).toBeUndefined();
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "--output-format json, branch-linked with the branch lookup failing: structured linked_project still carries parent/name/org, no branch key",
+      () => {
+        const { layer, out, workdir } = setup({
+          format: "json",
+          branches: { fail: legacyStatusCodeFailure(500) },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          const success = out.messages.find((m) => m.type === "success");
+          const linkedProject = (success?.data as { linked_project?: Record<string, unknown> })
+            ?.linked_project;
+          expect(linkedProject).toEqual({
+            project_ref: LINKED_BRANCH_REF,
+            parent_project_ref: LINKED_PARENT_REF,
+            project_name: "Parent Project",
+            org_slug: "acme",
+            org_id: "org_1",
+          });
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "failure preservation: a daemon connection failure still fails with its existing error, with the linked block already on stdout",
+      () => {
+        // Extends the existing "fails when both docker and podman are missing"
+        // scenario: linking a real project must not change the failure, and the
+        // linked-state block — resolved and printed BEFORE any daemon work —
+        // must already be present on stdout when the command fails.
+        const { layer, out, workdir } = setup({
+          failSpawnFor: () => true,
+        });
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, { name: "My Project" });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStatus(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyStatusDbInspectError");
+          }
+          expect(out.stdoutText).toBe(
+            `Linked Project:\n  Org: acme (org_1)\n  Project: My Project (${LINKED_PLAIN_REF})\n`,
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    describe("env-override guard (PR #6168 review)", () => {
+      // SUPABASE_PROJECT_ID (env) always wins before the project-ref FILE is
+      // ever read, so none of these write a project-ref file — the cache
+      // below belongs to the WORKDIR (an unrelated project A), not
+      // necessarily to whatever the env override happens to point at (B).
+      it.live(
+        "SUPABASE_PROJECT_ID overriding an unrelated workdir's cache: no positive lookup match degrades to the plain project line, no parent claim on cache presence alone",
+        () => {
+          const { layer, out, workdir } = setup({
+            projectId: Option.some(LINKED_BRANCH_REF),
+            branches: { ok: [{ ...LINKED_BRANCH, project_ref: "unrelatedbranchrefaaaa" }] },
+          });
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            expect(
+              out.stdoutText.startsWith(`Linked Project:\n  Project: ${LINKED_BRANCH_REF}\n`),
+            ).toBe(true);
+            expect(out.stdoutText).not.toContain("\n  Branch:");
+            expect(out.stdoutText).not.toContain("\n  Org:");
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "--output-format json, SUPABASE_PROJECT_ID override with no positive match: linked_project has only project_ref, no parent/org fields leaking from the unrelated cache",
+        () => {
+          const { layer, out, workdir } = setup({
+            format: "json",
+            projectId: Option.some(LINKED_BRANCH_REF),
+            branches: { ok: [{ ...LINKED_BRANCH, project_ref: "unrelatedbranchrefaaaa" }] },
+          });
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            const success = out.messages.find((m) => m.type === "success");
+            const linkedProject = (success?.data as { linked_project?: Record<string, unknown> })
+              ?.linked_project;
+            expect(linkedProject).toEqual({ project_ref: LINKED_BRANCH_REF });
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "SUPABASE_PROJECT_ID pointing at a real branch of the cached parent: the lookup's POSITIVE confirmation still renders the full branch block (env-override CI workflow)",
+        () => {
+          const { layer, out, workdir } = setup({
+            projectId: Option.some(LINKED_BRANCH_REF),
+            branches: { ok: [LINKED_BRANCH] },
+          });
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            expect(
+              out.stdoutText.startsWith(
+                `Linked Project:\n` +
+                  `  Org: acme (org_1)\n` +
+                  `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                  `  Branch: feature-x (${LINKED_BRANCH_REF})\n`,
+              ),
+            ).toBe(true);
+          }).pipe(Effect.provide(layer));
+        },
+      );
+    });
+
+    it.live(
+      "a branch lookup that never resolves times out and degrades to the RICH block (real 5s wait — LEGACY_LINKED_STATE_LOOKUP_TIMEOUT is a module-private constant in legacy-linked-state.ts, not monkey-patchable; accepted as a real-time test for this one scenario, PR #6168 review)",
+      () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        const neverApi = mockLegacyPlatformApiService({
+          v1: { listAllBranches: () => Effect.never },
+        });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n` +
+                `  Org: acme (org_1)\n` +
+                `  Project: Parent Project (${LINKED_PARENT_REF})\n` +
+                `  Branch: ${LINKED_BRANCH_REF}\n`,
+            ),
+          ).toBe(true);
+        }).pipe(Effect.provide(Layer.mergeAll(layer, neverApi.layer)));
+      },
+      10_000,
+    );
+
+    it.live(
+      "a control-char/ANSI-laden project-ref file is treated as not linked; nothing of it reaches stdout (PR #6168 review)",
+      () => {
+        // Superseded behavior: this used to render a sanitized block. The
+        // pattern gate in legacyResolveSoftLinkedRef now rejects any
+        // non-ref-shaped content outright (stronger: also closes the
+        // symlink-to-secret exfiltration vector), so sanitization is
+        // defense-in-depth behind it.
+        const DIRTY_REF = "\x1b[31mmalicious\x1b[0m";
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, DIRTY_REF);
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText.startsWith("Not linked.\n")).toBe(true);
+          expect(out.stdoutText).not.toContain("\x1b");
+          expect(out.stdoutText).not.toContain("malicious");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "-o json, --override-name collides with the linked_project_ref field name: the overridden base value wins, the linked field never clobbers it (PR #6168 review)",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("json"),
+          branches: { ok: [LINKED_BRANCH] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags({ overrideName: ["api.url=linked_project_ref"] }));
+          const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+          // `values` (the override-renamed field) spreads LAST over
+          // `legacyLinkedStateGoFields`, so the API URL — not the branch ref —
+          // is what ends up under this key.
+          expect(parsed.linked_project_ref).toBe("http://127.0.0.1:54321");
+          expect(parsed.API_URL).toBeUndefined();
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    describe("org line variants", () => {
+      it.live(
+        "slug and id differ: renders `<slug> (<id>)` (Colum's default real-world state)",
+        () => {
+          const { layer, out, workdir } = setup();
+          writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+            name: "My Project",
+            orgSlug: "acme",
+            orgId: "org_1",
+          });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            expect(out.stdoutText).toContain("  Org: acme (org_1)\n");
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "slug === id: renders the bare value once (Colum's real staging state), machine formats still carry both keys",
+        () => {
+          const { layer, out, workdir } = setup({
+            goOutput: Option.some("env"),
+          });
+          writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+            name: "My Project",
+            orgSlug: "sameorg",
+            orgId: "sameorg",
+          });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            expect(out.stdoutText).toContain('LINKED_ORG_SLUG="sameorg"');
+            expect(out.stdoutText).toContain('LINKED_ORG_ID="sameorg"');
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live("slug === id, text mode: renders the bare value once, not duplicated", () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+          name: "My Project",
+          orgSlug: "sameorg",
+          orgId: "sameorg",
+        });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).toContain("  Org: sameorg\n");
+          expect(out.stdoutText).not.toContain("sameorg (sameorg)");
+        }).pipe(Effect.provide(layer));
+      });
+
+      it.live(
+        "neither slug nor id known: the Org line is omitted entirely, and no org machine keys appear",
+        () => {
+          const { layer, out, workdir } = setup({ goOutput: Option.some("env") });
+          writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+            name: "My Project",
+            orgSlug: null,
+            orgId: null,
+          });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            expect(out.stdoutText).not.toContain("LINKED_ORG_");
+            expect(out.stdoutText).toContain(`LINKED_PROJECT_REF="${LINKED_PLAIN_REF}"`);
+            expect(out.stdoutText).toContain('LINKED_PROJECT_NAME="My Project"');
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live("neither slug nor id known, text mode: the Org line is omitted entirely", () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+          name: "My Project",
+          orgSlug: null,
+          orgId: null,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(
+            out.stdoutText.startsWith(
+              `Linked Project:\n  Project: My Project (${LINKED_PLAIN_REF})\n`,
+            ),
+          ).toBe(true);
+          expect(out.stdoutText).not.toContain("Org:");
+        }).pipe(Effect.provide(layer));
+      });
+
+      it.live("only the org slug is known (no id): renders the bare slug value", () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+          name: "My Project",
+          orgSlug: "acme",
+          orgId: null,
+        });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).toContain("  Org: acme\n");
+        }).pipe(Effect.provide(layer));
+      });
+
+      it.live("only the org id is known (no slug): renders the bare id value", () => {
+        const { layer, out, workdir } = setup();
+        writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+          name: "My Project",
+          orgSlug: null,
+          orgId: "org_1",
+        });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).toContain("  Org: org_1\n");
+        }).pipe(Effect.provide(layer));
+      });
+
+      it.live(
+        "--output-format json, neither org field known: linked_project omits org_slug and org_id",
+        () => {
+          const { layer, out, workdir } = setup({ format: "json" });
+          writeProjectRefFile(workdir, LINKED_PLAIN_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PLAIN_REF, {
+            name: "My Project",
+            orgSlug: null,
+            orgId: null,
+          });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags());
+            const success = out.messages.find((m) => m.type === "success");
+            const linkedProject = (success?.data as { linked_project?: Record<string, unknown> })
+              ?.linked_project;
+            expect(linkedProject).toEqual({
+              project_ref: LINKED_PLAIN_REF,
+              project_name: "My Project",
+            });
+          }).pipe(Effect.provide(layer));
+        },
+      );
+    });
+
+    it.live("-o env, branch-linked: emits the six LINKED_ keys alongside the existing keys", () => {
+      const { layer, out, workdir } = setup({
+        goOutput: Option.some("env"),
+        branches: { ok: [LINKED_BRANCH] },
+      });
+      writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+      writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+        expect(out.stdoutText).toContain(`LINKED_PROJECT_REF="${LINKED_BRANCH_REF}"`);
+        expect(out.stdoutText).toContain('LINKED_BRANCH="feature-x"');
+        expect(out.stdoutText).toContain(`LINKED_PARENT_PROJECT_REF="${LINKED_PARENT_REF}"`);
+        expect(out.stdoutText).toContain('LINKED_PROJECT_NAME="Parent Project"');
+        expect(out.stdoutText).toContain('LINKED_ORG_SLUG="acme"');
+        expect(out.stdoutText).toContain('LINKED_ORG_ID="org_1"');
+        expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("-o env, not linked: emits no LINKED_ key at all", () => {
+      const { layer, out } = setup({ goOutput: Option.some("env") });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+        expect(out.stdoutText).not.toContain("LINKED_");
+        expect(out.stdoutText).toContain('API_URL="http://127.0.0.1:54321"');
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "-o json, branch-linked: includes the six linked_ keys alongside the existing keys",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("json"),
+          branches: { ok: [LINKED_BRANCH] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+          expect(parsed.linked_project_ref).toBe(LINKED_BRANCH_REF);
+          expect(parsed.linked_branch).toBe("feature-x");
+          expect(parsed.linked_parent_project_ref).toBe(LINKED_PARENT_REF);
+          expect(parsed.linked_project_name).toBe("Parent Project");
+          expect(parsed.linked_org_slug).toBe("acme");
+          expect(parsed.linked_org_id).toBe("org_1");
+          expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live("-o json, not linked: omits every linked_ key", () => {
+      const { layer, out } = setup({ goOutput: Option.some("json") });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+        const parsed = JSON.parse(out.stdoutText) as Record<string, string>;
+        expect(parsed.linked_project_ref).toBeUndefined();
+        expect(parsed.API_URL).toBe("http://127.0.0.1:54321");
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live(
+      "-o yaml, branch-linked: includes linked_project_ref and linked_org_slug (smoke)",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("yaml"),
+          branches: { ok: [LINKED_BRANCH] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).toContain(`linked_project_ref: ${LINKED_BRANCH_REF}`);
+          expect(out.stdoutText).toContain("linked_org_slug: acme");
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "-o toml, branch-linked: includes linked_project_ref and linked_org_slug (smoke)",
+      () => {
+        const { layer, out, workdir } = setup({
+          goOutput: Option.some("toml"),
+          branches: { ok: [LINKED_BRANCH] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          expect(out.stdoutText).toContain(`linked_project_ref = "${LINKED_BRANCH_REF}"`);
+          expect(out.stdoutText).toContain('linked_org_slug = "acme"');
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "--output-format json, branch-linked: nests linked_project (with org) with zero progress events",
+      () => {
+        const { layer, out, workdir } = setup({
+          format: "json",
+          branches: { ok: [LINKED_BRANCH] },
+        });
+        writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+        writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+        return Effect.gen(function* () {
+          yield* legacyStatus(flags());
+          const success = out.messages.find((m) => m.type === "success");
+          expect(success?.data).toMatchObject({
+            linked_project: {
+              project_ref: LINKED_BRANCH_REF,
+              branch: "feature-x",
+              parent_project_ref: LINKED_PARENT_REF,
+              project_name: "Parent Project",
+              org_slug: "acme",
+              org_id: "org_1",
+            },
+          });
+          expect(out.progressEvents).toEqual([]);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live("--output-format json, not linked: linked_project is null", () => {
+      const { layer, out } = setup({ format: "json" });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+        const success = out.messages.find((m) => m.type === "success");
+        expect(success?.data).toMatchObject({ linked_project: null });
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("--output-format stream-json, branch-linked: nests linked_project (smoke)", () => {
+      const { layer, out, workdir } = setup({
+        format: "stream-json",
+        branches: { ok: [LINKED_BRANCH] },
+      });
+      writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+      writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+      return Effect.gen(function* () {
+        yield* legacyStatus(flags());
+        const success = out.messages.find((m) => m.type === "success");
+        expect(success?.data).toMatchObject({
+          linked_project: { project_ref: LINKED_BRANCH_REF },
+        });
+      }).pipe(Effect.provide(layer));
+    });
+
+    describe("json/stream-json FAILURE envelope carries linked_project (CLI-2167 follow-up)", () => {
+      it.live(
+        "--output-format json, branch-linked, daemon connection failure: envelope carries the full linked_project at the top level, error untouched",
+        () => {
+          const { layer, workdir, stdio, processControl } = setupFailureEnvelope({
+            format: "json",
+            branches: { ok: [LINKED_BRANCH] },
+          });
+          writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
+            expect(stdio.stdout).toHaveLength(1);
+            const envelope = JSON.parse(stdio.stdout[0]!);
+            expect(envelope._tag).toBe("Error");
+            expect(envelope.error.code).toBe("LegacyStatusDbInspectError");
+            expect(envelope.linked_project).toEqual({
+              project_ref: LINKED_BRANCH_REF,
+              branch: "feature-x",
+              parent_project_ref: LINKED_PARENT_REF,
+              project_name: "Parent Project",
+              org_slug: "acme",
+              org_id: "org_1",
+            });
+            expect(Object.keys(envelope).sort()).toEqual(["_tag", "error", "linked_project"]);
+            expect(processControl.exitCode).toBe(1);
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "--output-format json, degraded branch-linked (no Management API layer at all), daemon connection failure: linked_project present without a branch key",
+        () => {
+          const { layer, workdir, stdio } = setupFailureEnvelope({ format: "json" });
+          writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
+            const envelope = JSON.parse(stdio.stdout[0]!);
+            expect(envelope.error.code).toBe("LegacyStatusDbInspectError");
+            expect(envelope.linked_project).toEqual({
+              project_ref: LINKED_BRANCH_REF,
+              parent_project_ref: LINKED_PARENT_REF,
+              project_name: "Parent Project",
+              org_slug: "acme",
+              org_id: "org_1",
+            });
+            expect("branch" in envelope.linked_project).toBe(false);
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "--output-format json, not linked, daemon connection failure: linked_project is explicitly null, not absent",
+        () => {
+          const { layer, stdio } = setupFailureEnvelope({ format: "json" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
+            const envelope = JSON.parse(stdio.stdout[0]!);
+            expect(envelope.error.code).toBe("LegacyStatusDbInspectError");
+            expect("linked_project" in envelope).toBe(true);
+            expect(envelope.linked_project).toBeNull();
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "--output-format stream-json, branch-linked, daemon connection failure: the terminal error event carries linked_project",
+        () => {
+          const { layer, workdir, stdio } = setupFailureEnvelope({
+            format: "stream-json",
+            branches: { ok: [LINKED_BRANCH] },
+          });
+          writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
+            expect(stdio.stdout).toHaveLength(1);
+            const event = JSON.parse(stdio.stdout[0]!);
+            expect(event.type).toBe("error");
+            expect(event.error.code).toBe("LegacyStatusDbInspectError");
+            expect(event.linked_project).toEqual({
+              project_ref: LINKED_BRANCH_REF,
+              branch: "feature-x",
+              parent_project_ref: LINKED_PARENT_REF,
+              project_name: "Parent Project",
+              org_slug: "acme",
+              org_id: "org_1",
+            });
+            expect(Object.keys(event).sort()).toEqual([
+              "error",
+              "linked_project",
+              "timestamp",
+              "type",
+            ]);
+          }).pipe(Effect.provide(layer));
+        },
+      );
+
+      it.live(
+        "inertness guard: without machineErrorContextLayer in scope, the envelope has no linked_project key at all, and the command still fails identically",
+        () => {
+          // Same branch-linked setup as the enriched test above — the point is
+          // that resolving linked state successfully is not enough on its own;
+          // omitting the cell from the layer graph must silently skip both the
+          // handler's `Effect.serviceOption(MachineErrorContext)` write AND the
+          // output layer's read, leaving the envelope byte-identical to the
+          // pre-feature shape.
+          const { layer, workdir, stdio, processControl } = setupFailureEnvelope({
+            format: "json",
+            branches: { ok: [LINKED_BRANCH] },
+            withMachineErrorContext: false,
+          });
+          writeProjectRefFile(workdir, LINKED_BRANCH_REF);
+          writeLinkedProjectCacheFile(workdir, LINKED_PARENT_REF, { name: "Parent Project" });
+          return Effect.gen(function* () {
+            yield* legacyStatus(flags()).pipe(withJsonErrorHandling);
+            expect(stdio.stdout).toHaveLength(1);
+            const envelope = JSON.parse(stdio.stdout[0]!);
+            expect(envelope).toEqual({
+              _tag: "Error",
+              error: {
+                code: "LegacyStatusDbInspectError",
+                message: expect.stringContaining("command not found"),
+              },
+            });
+            expect("linked_project" in envelope).toBe(false);
+            expect(processControl.exitCode).toBe(1);
+          }).pipe(Effect.provide(layer));
+        },
+      );
+    });
   });
 });

@@ -89,6 +89,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "asset_preparation",
   "auth",
   "bad_argument",
+  "branch_not_ready",
   "conflict",
   "cancelled",
   "connect",

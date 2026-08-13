@@ -106,3 +106,108 @@ export class LegacyLinkMissingKeyError extends Data.TaggedError("LegacyLinkMissi
     return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
   }
 }
+
+/**
+ * Both the `[ref-or-branch]` positional argument and `--project-ref` were given
+ * (non-empty). TS-only surface (CLI-2167, no Go counterpart).
+ */
+export class LegacyLinkRefArgConflictError extends Data.TaggedError(
+  "LegacyLinkRefArgConflictError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/**
+ * A non-ref-shaped value was given (treated as a branch name) but no linked
+ * parent project could be resolved to search for that branch — none of
+ * `SUPABASE_PROJECT_ID`, `supabase/.temp/linked-project.json`, or
+ * `supabase/.temp/project-ref` yielded a candidate at all. TS-only surface
+ * (CLI-2167, no Go counterpart).
+ */
+export class LegacyLinkBranchNotLinkedError extends Data.TaggedError(
+  "LegacyLinkBranchNotLinkedError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.projectNotLinked;
+  }
+}
+
+/**
+ * A parent-project candidate exists (`SUPABASE_PROJECT_ID`,
+ * `supabase/.temp/linked-project.json`, or `supabase/.temp/project-ref`) but
+ * none of them is ref-shaped — corrupt or stale linked state. TS-only surface
+ * (CLI-2167, no Go counterpart).
+ */
+export class LegacyLinkParentRefInvalidError extends Data.TaggedError(
+  "LegacyLinkParentRefInvalidError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.relinkProject;
+  }
+}
+
+/**
+ * No branch with the given name/UUID exists on the resolved parent project.
+ * TS-only surface (CLI-2167, no Go counterpart).
+ */
+export class LegacyLinkBranchNotFoundError extends Data.TaggedError(
+  "LegacyLinkBranchNotFoundError",
+)<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
+
+/**
+ * The resolved branch has no `project_ref` yet (e.g. `status: CREATING_PROJECT`).
+ * Guards against silently falling through to an unrelated ref elsewhere in the
+ * resolver chain. TS-only surface (CLI-2167, no Go counterpart).
+ */
+export class LegacyLinkBranchNotReadyError extends Data.TaggedError(
+  "LegacyLinkBranchNotReadyError",
+)<{
+  readonly branch: string;
+  readonly status: string;
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return { ...actionability.apiStatus, fingerprint_suffix: "branch_not_ready" };
+  }
+}
+
+/** Transport (or response-decode) failure while listing branches for a branch-name lookup. */
+export class LegacyLinkBranchListNetworkError extends Data.TaggedError(
+  "LegacyLinkBranchListNetworkError",
+)<{
+  readonly message: string;
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
+
+/** `GET /v1/projects/{ref}/branches` returned a non-200 status during a branch-name lookup. */
+export class LegacyLinkBranchListStatusError extends Data.TaggedError(
+  "LegacyLinkBranchListStatusError",
+)<{
+  readonly status: number;
+  readonly body: string;
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}

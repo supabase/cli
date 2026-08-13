@@ -351,6 +351,12 @@ The legacy shell sends the same PostHog events to the same product analytics pip
 
   Reference pattern for login: `next/commands/login/login.handler.ts:38-62`.
 
+  TS-only extension to the `link` row (CLI-2167, no Go counterpart): when `link` resolves a
+  branch name/UUID (`[ref-or-branch]` positional or `--project-ref`) to its project ref, the
+  legacy shell additionally fires `cli_project_linked` with `linked_via: "branch"` and
+  `parent_project_ref` set, plus a `project` group association (no `groupIdentify` call, since
+  no org/name metadata exists for a branch).
+
 - **Tracing layer is local-only observability**, not PostHog. Span names (`legacy.<command>.<sub>`) and the NDJSON exporter never leave the user's machine. No parity implication.
 
 ---
