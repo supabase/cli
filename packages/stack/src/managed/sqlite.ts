@@ -58,6 +58,8 @@ import type {
   ApplyManagedCheckoutLocationInput,
   ManagedCheckoutLocationDecision,
   RefreshManagedContextOwnerInput,
+  MigrateManagedContextToBranchInput,
+  MigrateManagedContextToBranchFailure,
   ReserveManagedIdentityTransitionInput,
   AdvanceManagedIdentityTransitionInput,
   FinalizeManagedIdentityTransitionInput,
@@ -81,6 +83,7 @@ import {
   decideManagedIdentityTransitionFinalize,
   decideManagedIdentityTransitionReservation,
   decideManagedContextOwnerRefresh,
+  decideManagedContextToBranch,
   decideManagedIdentityMetadataPrune,
   transitionResourceKeys,
   decideManagedCheckoutIdentity,
@@ -1460,6 +1463,44 @@ const refreshContextOwner = (
   return next;
 };
 
+const migrateContextToBranch = (
+  database: ManagedSqliteDatabase,
+  input: MigrateManagedContextToBranchInput,
+): ManagedContextRecord => {
+  const row = database.prepare("SELECT * FROM contexts WHERE id = ?").get([input.contextId]);
+  const branchContexts = database
+    .prepare("SELECT * FROM contexts WHERE project_id = ? AND kind = 'branch'")
+    .all([input.projectId])
+    .map(decodeContext);
+  const existing = row === undefined ? undefined : decodeContext(row);
+  const next = decideManagedContextToBranch({
+    requested: input,
+    existing,
+    branchContexts,
+  });
+  if (
+    existing !== undefined &&
+    (existing.kind !== next.kind ||
+      existing.projectId !== next.projectId ||
+      existing.checkoutId !== next.checkoutId ||
+      existing.locator !== next.locator ||
+      existing.ownerBranch !== next.ownerBranch)
+  ) {
+    database
+      .prepare(
+        "UPDATE contexts SET checkout_id = ?, kind = ?, locator = ?, owner_branch = ? WHERE id = ?",
+      )
+      .run([
+        next.checkoutId ?? null,
+        next.kind,
+        next.locator ?? null,
+        next.ownerBranch ?? null,
+        next.id,
+      ]);
+  }
+  return next;
+};
+
 const reserveIdentityTransition = (
   database: ManagedSqliteDatabase,
   input: ReserveManagedIdentityTransitionInput,
@@ -1642,6 +1683,15 @@ const createSqliteManagedStackRepository = (
           database,
           () => refreshContextOwner(database, input),
           failsWith<ManagedIdentityRecoveryError>(ManagedCopiedBranchConflictError),
+        ),
+      migrateContextToBranch: (input) =>
+        transaction(
+          database,
+          () => migrateContextToBranch(database, input),
+          failsWith<MigrateManagedContextToBranchFailure>(
+            DuplicateManagedIdentityError,
+            ManagedCopiedBranchConflictError,
+          ),
         ),
       reserveIdentityTransition: (input) =>
         transaction(

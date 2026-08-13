@@ -35,6 +35,7 @@ import {
   decideManagedIdentityTransitionReservation,
   decideManagedIdentityTransitionFinalize,
   decideManagedContextOwnerRefresh,
+  decideManagedContextToBranch,
   decideManagedIdentityMetadataPrune,
   transitionResourceKeys,
   decideManagedContextRegistration,
@@ -57,6 +58,8 @@ import {
   type ApplyManagedCheckoutLocationInput,
   type ManagedCheckoutLocationDecision,
   type RefreshManagedContextOwnerInput,
+  type MigrateManagedContextToBranchInput,
+  type MigrateManagedContextToBranchFailure,
   type ReserveManagedIdentityTransitionInput,
   type AdvanceManagedIdentityTransitionInput,
   type PruneManagedIdentityMetadataInput,
@@ -627,6 +630,22 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       return copy(next);
     });
 
+  const migrateContextToBranch = (
+    input: MigrateManagedContextToBranchInput,
+  ): ManagedContextRecord =>
+    atomic(() => {
+      const existing = contexts.get(input.contextId);
+      const next = decideManagedContextToBranch({
+        requested: input,
+        existing,
+        branchContexts: [...contexts.values()],
+      });
+      if (existing === undefined || existing !== next) {
+        contexts.set(next.id, next);
+      }
+      return copy(next);
+    });
+
   const reserveIdentityTransition = (
     input: ReserveManagedIdentityTransitionInput,
   ): ManagedIdentityTransitionRecord =>
@@ -720,6 +739,14 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       Effect.try({
         try: () => refreshContextOwner(input),
         catch: failsWith<ManagedIdentityRecoveryError>(ManagedCopiedBranchConflictError),
+      }),
+    migrateContextToBranch: (input) =>
+      Effect.try({
+        try: () => migrateContextToBranch(input),
+        catch: failsWith<MigrateManagedContextToBranchFailure>(
+          DuplicateManagedIdentityError,
+          ManagedCopiedBranchConflictError,
+        ),
       }),
     reserveIdentityTransition: (input) =>
       Effect.try({

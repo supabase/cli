@@ -382,6 +382,92 @@ export const decideManagedContextOwnerRefresh = (input: {
   };
 };
 
+export interface MigrateManagedContextToBranchInput {
+  readonly contextId: string;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly branch: string;
+  readonly now: string;
+}
+
+export type MigrateManagedContextToBranchFailure =
+  | DuplicateManagedIdentityError
+  | ManagedCopiedBranchConflictError;
+
+/**
+ * Decides the one ownership transition that turns an ordinary-folder context
+ * into a project-scoped branch context. Adapters pass every branch context
+ * observed in the same transaction so a copied branch can never win by racing
+ * the conversion. The context id and creation time are deliberately retained:
+ * stacks already pointing at this context remain attached to the same identity.
+ */
+export const decideManagedContextToBranch = (input: {
+  readonly requested: MigrateManagedContextToBranchInput;
+  readonly existing?: ManagedContextRecord;
+  readonly branchContexts: ReadonlyArray<ManagedContextRecord>;
+}): ManagedContextRecord => {
+  const { requested, existing } = input;
+  if (existing === undefined) {
+    throw new DuplicateManagedIdentityError({
+      identityId: requested.contextId,
+      existingClaim: "missing context",
+      requestedClaim: `${requested.projectId}/${requested.checkoutId}`,
+    });
+  }
+  if (existing.projectId !== requested.projectId) {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: existing.projectId,
+      requestedClaim: requested.projectId,
+    });
+  }
+  const competing = input.branchContexts.find(
+    (candidate) =>
+      candidate.id !== existing.id &&
+      candidate.projectId === requested.projectId &&
+      candidate.kind === "branch" &&
+      (candidate.ownerBranch === requested.branch || candidate.locator === requested.branch),
+  );
+  if (existing.kind === "branch") {
+    if (
+      existing.checkoutId === undefined &&
+      existing.ownerBranch === requested.branch &&
+      existing.locator === requested.branch &&
+      competing === undefined
+    ) {
+      return existing;
+    }
+    throw new ManagedCopiedBranchConflictError({
+      branch: requested.branch,
+      existingContextId: existing.id,
+      requestedContextId: requested.contextId,
+    });
+  }
+  if (existing.kind !== "workspace" || existing.checkoutId !== requested.checkoutId) {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: existing.checkoutId ?? existing.kind,
+      requestedClaim: requested.checkoutId,
+    });
+  }
+
+  if (competing !== undefined) {
+    throw new ManagedCopiedBranchConflictError({
+      branch: requested.branch,
+      existingContextId: competing.id,
+      requestedContextId: requested.contextId,
+    });
+  }
+
+  return {
+    ...existing,
+    checkoutId: undefined,
+    kind: "branch",
+    locator: requested.branch,
+    ownerBranch: requested.branch,
+  };
+};
+
 export interface ReserveManagedIdentityTransitionInput {
   readonly id: string;
   readonly kind: ManagedIdentityTransitionKind;
@@ -735,6 +821,9 @@ export interface ManagedStackRepositoryShape {
   readonly refreshContextOwner: (
     input: RefreshManagedContextOwnerInput,
   ) => Effect.Effect<ManagedContextRecord, ManagedIdentityRecoveryError>;
+  readonly migrateContextToBranch: (
+    input: MigrateManagedContextToBranchInput,
+  ) => Effect.Effect<ManagedContextRecord, MigrateManagedContextToBranchFailure>;
   readonly reserveIdentityTransition: (
     input: ReserveManagedIdentityTransitionInput,
   ) => Effect.Effect<ManagedIdentityTransitionRecord, ManagedIdentityRecoveryError>;

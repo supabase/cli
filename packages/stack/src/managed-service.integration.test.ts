@@ -3217,6 +3217,159 @@ describe("managed repository and lifecycle", () => {
       }
     });
 
+    it("migrates a workspace context to one branch context without changing its stack identity", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          const prepared = seedCheckout(adapter.repository, adapter.name, true);
+          if (prepared.outcome !== "create") throw new Error("Expected seeded stack");
+          const contextId = prepared.stack.contextId;
+          const before = {
+            claims: runRepo(adapter.repository.listIdentityClaims()),
+            stacks: runRepo(adapter.repository.listStacks({ includeTombstoned: true })),
+            operations: runRepo(adapter.repository.listActiveOperations()),
+          };
+          const input = {
+            contextId,
+            projectId: `project-${adapter.name}`,
+            checkoutId: "checkout-a",
+            branch: "main",
+            now: "2026-08-13T00:05:00.000Z",
+          };
+          const migrated = runRepo(adapter.repository.migrateContextToBranch(input));
+          expect(migrated).toMatchObject({
+            id: contextId,
+            projectId: input.projectId,
+            checkoutId: undefined,
+            kind: "branch",
+            locator: "main",
+            ownerBranch: "main",
+          });
+          expect(migrated.createdAt).toBe(
+            before.claims.contexts.find((context) => context.id === contextId)?.createdAt,
+          );
+          expect(runRepo(adapter.repository.getStack(prepared.stack.id))).toMatchObject({
+            id: prepared.stack.id,
+            contextId,
+            checkoutId: "checkout-a",
+          });
+          expect(runRepo(adapter.repository.listIdentityClaims())).toMatchObject({
+            locations: before.claims.locations,
+            transitions: before.claims.transitions,
+          });
+
+          const repeated = runRepo(adapter.repository.migrateContextToBranch(input));
+          expect(repeated).toEqual(migrated);
+          expect(runRepo(adapter.repository.listActiveOperations())).toEqual(before.operations);
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
+
+    it("refuses ownership migration mismatches and copied branches without writes in both adapters", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          const prepared = seedCheckout(adapter.repository, adapter.name);
+          if (prepared.outcome !== "create") throw new Error("Expected seeded stack");
+          const contextId = prepared.stack.contextId;
+          const input = {
+            contextId,
+            projectId: `project-${adapter.name}`,
+            checkoutId: "checkout-a",
+            branch: "main",
+            now: "2026-08-13T00:05:00.000Z",
+          };
+          const expectUnchangedFailure = (
+            migration: Parameters<ManagedStackRepositoryShape["migrateContextToBranch"]>[0],
+            tag: string,
+          ): void => {
+            const before = {
+              claims: runRepo(adapter.repository.listIdentityClaims()),
+              stacks: runRepo(adapter.repository.listStacks({ includeTombstoned: true })),
+              operations: runRepo(adapter.repository.listActiveOperations()),
+            };
+            expectFailureTag(
+              Effect.runSyncExit(adapter.repository.migrateContextToBranch(migration)),
+              tag,
+            );
+            expect(runRepo(adapter.repository.listIdentityClaims())).toEqual(before.claims);
+            expect(runRepo(adapter.repository.listStacks({ includeTombstoned: true }))).toEqual(
+              before.stacks,
+            );
+            expect(runRepo(adapter.repository.listActiveOperations())).toEqual(before.operations);
+          };
+
+          expectUnchangedFailure(
+            { ...input, checkoutId: "wrong-checkout" },
+            "DuplicateManagedIdentityError",
+          );
+          expectUnchangedFailure(
+            { ...input, projectId: "wrong-project" },
+            "DuplicateManagedIdentityError",
+          );
+          runRepo(adapter.repository.migrateContextToBranch(input));
+          expectUnchangedFailure(
+            { ...input, branch: "develop" },
+            "ManagedCopiedBranchConflictError",
+          );
+
+          const second = seedCheckout(
+            adapter.repository,
+            adapter.name,
+            false,
+            "checkout-b",
+            "/b",
+            "loc-b",
+          );
+          if (second.outcome !== "create") throw new Error("Expected second seeded stack");
+          expectUnchangedFailure(
+            {
+              ...input,
+              contextId: second.stack.contextId,
+              checkoutId: "checkout-b",
+            },
+            "ManagedCopiedBranchConflictError",
+          );
+
+          const detached = runRepo(
+            adapter.repository.prepareStack({
+              identity: {
+                projectId: input.projectId,
+                checkoutId: "checkout-detached",
+                contextId: `detached-context-${adapter.name}`,
+              },
+              checkoutKind: "ordinary",
+              checkoutRootPath: `/detached/${adapter.name}`,
+              locationId: `detached-location-${adapter.name}`,
+              context: { kind: "detached" },
+              stackId: `00000000-0000-7000-8000-00000000030${adapter.name === "memory" ? "1" : "2"}`,
+              stackName: "detached",
+              paths: managedStackPaths(
+                `/tmp/${adapter.name}-state`,
+                `00000000-0000-7000-8000-00000000030${adapter.name === "memory" ? "1" : "2"}`,
+              ),
+              operationToken: `00000000-0000-7000-8000-00000000031${adapter.name === "memory" ? "1" : "2"}`,
+              now: "2026-08-13T00:04:00.000Z",
+              configuration: {},
+            }),
+          );
+          if (detached.outcome !== "create") throw new Error("Expected detached stack");
+          expectUnchangedFailure(
+            {
+              ...input,
+              contextId: detached.stack.contextId,
+              checkoutId: "checkout-detached",
+            },
+            "DuplicateManagedIdentityError",
+          );
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
+
     it("reuses active history for prepare and refuses blocked history without writes", async () => {
       const cases = await adapters();
       try {
