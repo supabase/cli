@@ -7,10 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  loadAuthEmailContent,
-  projectDirsFromConfigPath,
-} from "./config-sync.auth-email-content.ts";
+import { loadAuthEmailContent } from "./config-sync.auth-email-content.ts";
 
 const emptyEmail = {
   enable_signup: true,
@@ -23,15 +20,6 @@ const emptyEmail = {
   template: {},
   notification: {},
 };
-
-describe("projectDirsFromConfigPath", () => {
-  it("derives project root and supabase dir from a config file path", () => {
-    expect(projectDirsFromConfigPath("/home/user/myapp/supabase/config.toml")).toEqual({
-      projectRoot: "/home/user/myapp",
-      supabaseDir: "/home/user/myapp/supabase",
-    });
-  });
-});
 
 describe("loadAuthEmailContent", () => {
   let workdir = "";
@@ -96,6 +84,26 @@ describe("loadAuthEmailContent", () => {
     });
 
     expect(content.notification["password_changed"]).toBe("<p>Legacy location</p>");
+  });
+
+  it("falls back when the root-resolved path is a directory, not a file", () => {
+    const { cwd, supabaseDir } = setup();
+    mkdirSync(join(cwd, "templates", "n.html"), { recursive: true });
+    mkdirSync(join(supabaseDir, "templates"), { recursive: true });
+    writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy file</p>");
+
+    const content = loadAuthEmailContent(cwd, {
+      ...emptyEmail,
+      notification: {
+        password_changed: {
+          enabled: true,
+          subject: "s",
+          content_path: "./templates/n.html",
+        },
+      },
+    });
+
+    expect(content.notification["password_changed"]).toBe("<p>Legacy file</p>");
   });
 
   it("prefers the project-root notification path over the legacy fallback", () => {

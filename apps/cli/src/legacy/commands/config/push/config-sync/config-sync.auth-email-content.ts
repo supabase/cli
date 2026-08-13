@@ -12,7 +12,7 @@
 import type { ProjectConfig } from "@supabase/config";
 import { legacyResolveNotificationContentPath } from "../../../../shared/legacy-config-validate.ts";
 import { readFileSync } from "node:fs";
-import { isAbsolute, dirname, join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 type AuthEmail = ProjectConfig["auth"]["email"];
 
@@ -32,41 +32,11 @@ const EMPTY_AUTH_EMAIL_CONTENT: AuthEmailContent = {
 };
 
 /**
- * Derives project root and `supabase/` paths from a loaded config file path.
- *
- * Config lives at `<projectRoot>/supabase/config.{toml,json}` — the same rule
- * `loadProjectConfigFile` uses for env resolution.
- *
- * @param configPath - Absolute path returned by `loadProjectConfig` (`loaded.path`).
- */
-export function projectDirsFromConfigPath(configPath: string): {
-  readonly projectRoot: string;
-  readonly supabaseDir: string;
-} {
-  const projectRoot = dirname(dirname(configPath));
-  return { projectRoot, supabaseDir: join(projectRoot, "supabase") };
-}
-
-/**
- * Resolves a `content_path` to an absolute filesystem path.
- *
- * @param contentPath - Path from `config.toml` (absolute or relative to `baseDir`).
- * @param baseDir - Project root.
- * @returns Absolute path, or `""` when `contentPath` is empty.
- */
-function resolveContentPath(contentPath: string, baseDir: string): string {
-  if (contentPath.length === 0) {
-    return "";
-  }
-  return isAbsolute(contentPath) ? contentPath : join(baseDir, contentPath);
-}
-
-/**
  * Reads a template HTML file and wraps filesystem errors in Go-shaped messages.
  *
  * @param kind - `template` or `notification` (used in the error prefix).
  * @param name - Config key (e.g. `invite`, `password_changed`).
- * @param resolvedPath - Absolute path from {@link resolveContentPath}.
+ * @param resolvedPath - Absolute path to the template HTML.
  * @returns File contents as UTF-8 text.
  * @throws When the file cannot be read.
  */
@@ -104,7 +74,7 @@ export function loadAuthEmailContent(cwd: string, email: AuthEmail): AuthEmailCo
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = resolveContentPath(contentPath, cwd);
+    const resolved = isAbsolute(contentPath) ? contentPath : join(cwd, contentPath);
     template[name] = readTemplateContent("template", name, resolved);
   }
 

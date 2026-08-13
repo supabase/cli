@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import {
@@ -777,11 +777,16 @@ export function legacyResolveEmailTemplateContentPath(args: {
 export function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
   if (isAbsolute(contentPath)) return contentPath;
   const resolved = join(base, contentPath);
-  if (!existsSync(resolved)) {
+  if (!legacyIsExistingFile(resolved)) {
     const legacyResolved = join(base, "supabase", contentPath);
-    if (existsSync(legacyResolved)) return legacyResolved;
+    if (legacyIsExistingFile(legacyResolved)) return legacyResolved;
   }
   return resolved;
+}
+
+/** A directory at the root-resolved path must not suppress the legacy-file fallback. */
+function legacyIsExistingFile(path: string): boolean {
+  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
 }
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */

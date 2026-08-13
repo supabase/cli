@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { findProjectRoot, loadProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -44,10 +45,7 @@ import {
   storageSubsetFromConfig,
   storageToUpdateBody,
 } from "./config-sync/storage.sync.ts";
-import {
-  loadAuthEmailContent,
-  projectDirsFromConfigPath,
-} from "./config-sync/config-sync.auth-email-content.ts";
+import { loadAuthEmailContent } from "./config-sync/config-sync.auth-email-content.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import { legacyPresenceIn } from "./push.raw-presence.ts";
 import {
@@ -195,7 +193,8 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // `[remotes.*]` block introduces.
     const presence = legacyPresenceIn(loaded.document);
 
-    const { projectRoot } = projectDirsFromConfigPath(loaded.path);
+    // Config lives at <projectRoot>/supabase/config.{toml,json}.
+    const projectRoot = dirname(dirname(loaded.path));
 
     // Go's `email.validate` runs during `LoadConfig` before any network call.
     const authEmailContent = authEnabled(config)
