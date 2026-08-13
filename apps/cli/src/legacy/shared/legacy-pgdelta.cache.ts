@@ -783,8 +783,9 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     // `legacyWithShadowDatabase` (`db-bootstrap/shadow-cache.ts`) rather than a bare
     // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc comment: with
     // `SUPABASE_SHADOW_CACHE` unset it IS that pair (identical Docker argv, identical labels), and
-    // with it set a catalog cache miss restores a key-matching PGDATA baseline snapshot instead of
-    // paying the full cold provision — the same swap `db diff`/`db pull`'s own call sites make.
+    // with it set a catalog cache miss restores a key-matching PGDATA snapshot into the fresh
+    // shadow instead of paying the full cold provision — the same swap `db diff`/`db pull`'s own
+    // call sites make.
     const written = yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
       Effect.gen(function* () {
         const shadow = yield* provision(spawner, handle, shadowInput);

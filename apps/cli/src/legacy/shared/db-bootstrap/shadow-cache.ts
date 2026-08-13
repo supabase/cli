@@ -120,6 +120,17 @@ export interface LegacyShadowCacheKeyInputs {
   readonly rootKey: string;
   /** `[db] password` — baked into the cluster as the `postgres` role's password. */
   readonly dbPassword: string;
+  /**
+   * The Storage migration pin read from `supabase/.temp/storage-migration` (written by
+   * `supabase link`), fed as `DB_MIGRATIONS_FREEZE_AT` to the Storage one-shot migrate job
+   * (`legacyStartStorageMigrateEnv`, `db-setup.ts`) — it decides WHICH Storage migrations the
+   * baseline carries, independently of the job image's own tag. `""` when absent (unlinked
+   * project), matching the setup input's own zero value. Hashed ONLY when `services.storage`
+   * is enabled AND `majorVersion >= 15` — the exact compound gate `legacyStartInitSchema15`
+   * (`db-setup.ts`) puts the consuming job behind, mirroring {@link jwks}'s treatment
+   * (review: depthfirst/Codex on #6184).
+   */
+  readonly storageTargetMigration: string;
   readonly dbSettings: ProjectConfig["db"]["settings"];
   /** Effective `api.auto_expose_new_tables` tri-state (unset ≠ explicit `false`: only the former keeps the bundled grants). */
   readonly autoExposeNewTables: Option.Option<boolean>;
@@ -196,6 +207,13 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
       ? `realtime_jwks=${inputs.jwks}`
       : "realtime_jwks=excluded",
   );
+  // Storage's migration pin — same compound enabled+majorVersion gate as the JWKS line above,
+  // because the consuming one-shot job (`legacyStartInitSchema15`) is behind the same gate.
+  lines.push(
+    inputs.services.storage.enabled && inputs.majorVersion >= 15
+      ? `storage_target_migration=${inputs.storageTargetMigration}`
+      : "storage_target_migration=excluded",
+  );
   for (const secret of [...inputs.vault].sort((left, right) =>
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
   )) {
@@ -256,6 +274,7 @@ const legacyResolveShadowCacheKeyInputs = <E>(
       rootKey: input.rootKey ?? "",
       dbPassword: input.password,
       dbSettings: input.db.settings,
+      storageTargetMigration: input.setup.storageTargetMigration,
       autoExposeNewTables: input.setup.apiAutoExposeNewTables,
       rolesSql,
       vault: input.setup.vault,
@@ -526,6 +545,15 @@ const legacyColdCachedShadow = <E>(
  * The readiness failure removes the container here rather than leaving it to the caller, because
  * the caller's fallback creates a REPLACEMENT container and the suspect one must be gone by then
  * (it holds the shadow's published port).
+ *
+ * The readiness wait is explicitly `Effect.interruptible`: this whole function runs inside
+ * `Effect.acquireUseRelease`'s uninterruptible `acquire` ({@link legacyWithShadowDatabase}), and
+ * while the restore itself is short (~2s of `docker create` + `docker cp -`), a restored container
+ * that starts but never accepts connections would otherwise pin a Ctrl-C for the full
+ * `healthTimeoutSeconds` budget — exactly the swallowed-SIGINT shape `legacyPrepareShadowSource`'s
+ * own doc comment (`legacy-shadow-source.ts`) was restructured to avoid. `Effect.onInterrupt`
+ * removes the container on that path, so re-enabling interruption cannot leak it (review: Codex
+ * on #6184).
  */
 const legacyWarmShadow = <E>(
   spawner: Spawner,
@@ -550,6 +578,8 @@ const legacyWarmShadow = <E>(
     );
     yield* legacyAwaitShadowReady(spawner, input, containerId, "restored shadow").pipe(
       Effect.tapError(() => legacyRemoveShadowDatabase(spawner, containerId)),
+      Effect.onInterrupt(() => legacyRemoveShadowDatabase(spawner, containerId)),
+      Effect.interruptible,
     );
     return {
       containerId,
@@ -570,9 +600,10 @@ const legacyWarmShadow = <E>(
  * Either way the container itself is created identically to an uncached one.
  *
  * Runs inside `acquireUseRelease`'s uninterruptible `acquire`, same as
- * `legacyCreateShadowDatabase` — a warm restore adds ~2s of uninterruptible work (a `docker cp -`
- * plus a readiness probe); the multi-second baseline/migration sequence stays in the interruptible
- * `use` phase exactly as before.
+ * `legacyCreateShadowDatabase` — a warm restore adds ~2s of uninterruptible work (a `docker cp -`);
+ * its readiness wait re-enables interruption explicitly (see {@link legacyWarmShadow}), and the
+ * multi-second baseline/migration sequence stays in the interruptible `use` phase exactly as
+ * before.
  *
  * The `E` in the error channel is {@link legacyResolveShadowCacheKeyInputs}'s own JWKS
  * resolution alone (see that function's doc comment): every OTHER failure this function's own

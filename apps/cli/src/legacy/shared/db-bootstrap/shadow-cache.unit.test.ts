@@ -19,6 +19,7 @@ const baseKeyInputs = (): LegacyShadowCacheKeyInputs => ({
   dbPassword: "postgres",
   dbSettings: { effective_cache_size: "128MB", max_connections: 100 },
   autoExposeNewTables: Option.none(),
+  storageTargetMigration: "20240101000000",
   rolesSql: "create role custom_role;\n",
   vault: [{ name: "secret", value: "value", resolved: true }],
   jwks: '{"keys":[]}',
@@ -82,6 +83,14 @@ describe("legacyShadowCacheKey", () => {
         inputs: { ...base, autoExposeNewTables: Option.some(false) },
       },
       { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
+      {
+        label: "storage migration pin (storage enabled, majorVersion >= 15)",
+        inputs: { ...base, storageTargetMigration: "20250607080910" },
+      },
+      {
+        label: "storage migration pin (pinned vs unpinned)",
+        inputs: { ...base, storageTargetMigration: "" },
+      },
       {
         label: "jwks (realtime enabled, majorVersion >= 15)",
         inputs: { ...base, jwks: '{"keys":["rotated"]}' },
@@ -186,6 +195,34 @@ describe("legacyShadowCacheKey", () => {
     const withJwksA: LegacyShadowCacheKeyInputs = { ...pre15, jwks: '{"keys":["a"]}' };
     const withJwksB: LegacyShadowCacheKeyInputs = { ...pre15, jwks: '{"keys":["b"]}' };
     expect(legacyShadowCacheKey(withJwksA)).toBe(legacyShadowCacheKey(withJwksB));
+  });
+
+  it("excludes the storage migration pin when storage is disabled", () => {
+    const base = baseKeyInputs();
+    const disabledStorage: LegacyShadowCacheKeyInputs = {
+      ...base,
+      services: {
+        ...base.services,
+        storage: { ...base.services.storage, enabled: false },
+      },
+    };
+    const withPinA: LegacyShadowCacheKeyInputs = {
+      ...disabledStorage,
+      storageTargetMigration: "20240101000000",
+    };
+    const withPinB: LegacyShadowCacheKeyInputs = {
+      ...disabledStorage,
+      storageTargetMigration: "20250607080910",
+    };
+    expect(legacyShadowCacheKey(withPinA)).toBe(legacyShadowCacheKey(withPinB));
+  });
+
+  it("excludes the storage migration pin when majorVersion is below 15, even with storage enabled", () => {
+    const base = baseKeyInputs();
+    const pre15: LegacyShadowCacheKeyInputs = { ...base, majorVersion: 14 };
+    const withPinA: LegacyShadowCacheKeyInputs = { ...pre15, storageTargetMigration: "a" };
+    const withPinB: LegacyShadowCacheKeyInputs = { ...pre15, storageTargetMigration: "b" };
+    expect(legacyShadowCacheKey(withPinA)).toBe(legacyShadowCacheKey(withPinB));
   });
 
   it("hashes vault secrets in a name-stable order", () => {

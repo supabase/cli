@@ -892,10 +892,26 @@ export function legacyCreateContainer(
     );
     // Sequentially, not concurrently like the secret files: two archives could legitimately
     // overlap in the container's filesystem, so the spec's own order has to be the applied order.
+    //
+    // A failed extraction removes the just-created container (best-effort, `-v` so an anonymous
+    // volume goes with it) before failing. The secret-file/`docker start` steps deliberately do
+    // NOT do this (Go-parity leak window — see `legacyCreateShadowDatabase`'s doc comment,
+    // `shadow-database.ts`), but `preStartArchives` is TS-only with no Go counterpart, and its one
+    // producer (the shadow baseline cache's warm restore) recovers from this exact failure by
+    // provisioning a replacement — which must not accumulate an orphaned created container per
+    // recovery (review: Codex on #6184).
     yield* Effect.forEach(
       finalSpec.preStartArchives ?? [],
       (archive) => legacyExtractPreStartArchiveIntoContainer(spawner, containerId, archive),
       { discard: true },
+    ).pipe(
+      Effect.tapError(() =>
+        containerCliExitCode(spawner, ["rm", "-f", "-v", containerId], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        }).pipe(Effect.orElseSucceed(() => 0)),
+      ),
     );
     yield* legacyDockerStartContainer(spawner, containerId, finalSpec);
     return containerId;

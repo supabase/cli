@@ -793,7 +793,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // `Effect.acquireUseRelease` (an interrupt must not be able to land between creation
             // and the finalizer being attached) and why the cache seam sits here. Note each
             // pooler-retry attempt still acquires and releases its own shadow — on the warm path
-            // that is the SAME restored baseline snapshot, sequentially.
+            // each attempt restores its own fresh container from the same cached snapshot,
+            // sequentially.
             return yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
               Effect.gen(function* () {
                 const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);

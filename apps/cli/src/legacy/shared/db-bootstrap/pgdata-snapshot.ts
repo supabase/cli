@@ -107,7 +107,10 @@ export const legacyExportPgDataTar = (
         const [exitCode, , stderr] = yield* Effect.all(
           [
             child.exitCode.pipe(Effect.map(Number)),
-            Stream.run(child.stdout, fs.sink(tempPath, { flag: "w" })),
+            // `0o600`: the archive is a full PGDATA — vault secret values, the JWT secret, and
+            // role password hashes are all in its pages — so it must not be group/world-readable
+            // on a shared host. `rename` preserves the mode, so the published tar inherits it.
+            Stream.run(child.stdout, fs.sink(tempPath, { flag: "w", mode: 0o600 })),
             legacyCollectText(child.stderr),
           ],
           { concurrency: "unbounded" },

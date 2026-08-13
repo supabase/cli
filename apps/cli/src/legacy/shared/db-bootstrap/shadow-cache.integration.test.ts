@@ -565,6 +565,9 @@ describe("legacyAcquireShadowDatabase", () => {
         // Falls all the way back to a cold provision — a fresh container with no baseline.
         expect(fallback.baselinePresent).toBe(false);
         expect(fallback.containerId).not.toBe(cold.containerId);
+        // The container whose restore failed is removed, not orphaned: with the cold run's own
+        // container already released by `coldRun`, only the fallback's remains.
+        expect(docker.ids()).toEqual([fallback.containerId]);
         // The tar is the suspect and is deleted, so later runs do not retry it forever...
         expect(yield* soleTarName(fs, path)).toEqual([]);
         // ...and the cold fallback republishes one through its own snapshot step.

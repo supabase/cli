@@ -10,7 +10,7 @@
 
 import type { Path } from "effect";
 
-/** `supabase/.temp/pgdelta` — where catalog snapshots, debug bundles, and the shadow-container cache's metadata live (`declarative.go:44`). */
+/** `supabase/.temp/pgdelta` — where catalog snapshots, debug bundles, and the shadow baseline cache's PGDATA tars live (`declarative.go:44`). */
 export function legacyPgDeltaTempPath(path: Path.Path, workdir: string): string {
   return path.join(workdir, "supabase", ".temp", "pgdelta");
 }

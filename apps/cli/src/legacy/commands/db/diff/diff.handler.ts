@@ -687,8 +687,8 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // both halves of the rationale: why the lifecycle is an `Effect.acquireUseRelease` (an
       // interrupt must not be able to land between creation and the finalizer being attached) and
       // why the cache seam sits here (with `SUPABASE_SHADOW_CACHE` unset it IS today's
-      // create/remove pair; with it set it restores a key-matching PGDATA snapshot instead of
-      // rebuilding the platform baseline from scratch).
+      // create/remove pair; otherwise a key-matching PGDATA snapshot is restored into the fresh
+      // container in a few seconds instead of cold-provisioning the baseline in ~15s).
       diffResult = yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
         Effect.gen(function* () {
           const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
