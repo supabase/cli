@@ -1,5 +1,5 @@
 import { Layer } from "effect";
-import { Command, Flag } from "effect/unstable/cli";
+import { Argument, Command, Flag } from "effect/unstable/cli";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import {
@@ -49,7 +49,15 @@ const config = {
   ),
 } as const;
 
-export const legacyFunctionsServeCommand = Command.make("serve", config).pipe(
+const commandConfig = {
+  ...config,
+  legacyFunctionNames: Argument.string("Function name").pipe(
+    Argument.withDescription("Legacy Function names. All Functions are served."),
+    Argument.variadic(),
+  ),
+} as const;
+
+export const legacyFunctionsServeCommand = Command.make("serve", commandConfig).pipe(
   Command.withDescription("Serve all Functions locally."),
   Command.withShortDescription("Serve all Functions locally"),
   Command.withHandler((flags) =>

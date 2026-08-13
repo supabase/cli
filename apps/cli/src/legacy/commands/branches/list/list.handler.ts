@@ -13,6 +13,7 @@ import {
   encodeLegacyGoYaml,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { legacyResolveParentScopedProjectRef } from "../../../shared/legacy-parent-project-ref.ts";
 import {
   LEGACY_GO_BRANCHES_LIST,
   LEGACY_GO_BRANCHES_TOML_WRAPPER,
@@ -44,7 +45,10 @@ export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  // `branches` is PARENT-scoped: after `supabase link <branch>`,
+  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
+  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const fetching =
@@ -89,6 +93,11 @@ export const legacyBranchesList = Effect.fn("legacy.branches.list")(function* (
       return;
     }
 
-    yield* output.raw(renderBranchesListTable(branches));
+    // Pretty text table only: mark the branch matching the CURRENTLY linked
+    // ref as `(active)` — same soft chain `projects list` uses for its "you
+    // are here" marker, never a prompt/failure. TS-only QoL (CLI-2167
+    // follow-up, no Go counterpart); the machine payloads above stay untouched.
+    const activeRef = yield* resolver.resolveOptional(Option.none());
+    yield* output.raw(renderBranchesListTable(branches, Option.getOrUndefined(activeRef)));
   }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
 });
