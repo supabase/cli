@@ -38,6 +38,7 @@ import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
 import { legacyPgDeltaTempPath } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
+import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-setup.ts";
 import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
 import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
@@ -353,7 +354,11 @@ const legacyResolveShadowCacheKeyInputs = <E>(
       shadowPort: input.shadowPort,
       jwtSecret: input.jwtSecret,
       jwtExpiry: input.jwtExpiry,
-      rootKey: input.rootKey ?? "",
+      // The EFFECTIVE value, not the raw input: `legacyBuildShadowPostgresContainerSpec`
+      // (`postgres.service.ts`) falls back to the embedded default when unset, so hashing `""`
+      // would fail to re-key if that security-sensitive default ever rotates between CLI
+      // releases (review: depthfirst on #6184).
+      rootKey: input.rootKey ?? LEGACY_POSTGRES_DEFAULT_ROOT_KEY,
       dbPassword: input.password,
       dbSettings: input.db.settings,
       storageTargetMigration: input.setup.storageTargetMigration,
