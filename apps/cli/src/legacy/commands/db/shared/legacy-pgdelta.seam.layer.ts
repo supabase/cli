@@ -126,6 +126,10 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 new LegacyDeclarativeShadowDbError({
                   message: cause.message,
                   ...(cause.daemonDown === true ? { docker: "daemon" as const } : {}),
+                  // Same propagation as the start-failure catch below: the inspect error's
+                  // Docker-install recovery text (Go's `utils.CmdSuggestion`) must survive the
+                  // seam, or the normalizer falls back to its generic debug hint.
+                  ...(cause.suggestion !== undefined ? { suggestion: cause.suggestion } : {}),
                 }),
             ),
           );

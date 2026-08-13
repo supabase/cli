@@ -28,6 +28,7 @@ import {
   type LegacyEdgeRuntimeRunOpts,
   LegacyEdgeRuntimeScript,
 } from "../../../shared/legacy-edge-runtime-script.service.ts";
+import { LEGACY_SUGGEST_DOCKER_INSTALL } from "../../../shared/legacy-docker-suggest.ts";
 import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { legacyDeclarativeSeamLayer } from "./legacy-pgdelta.seam.layer.ts";
@@ -111,9 +112,15 @@ const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
   requireSslForHost: () => Effect.succeed(false),
 });
 
-function setup(workdir: string, opts: { readonly failCreate?: boolean } = {}) {
+function setup(
+  workdir: string,
+  opts: { readonly failCreate?: boolean; readonly dbInspectFailsWith?: string } = {},
+) {
   const out = mockOutput();
-  const shadowSpawner = mockLegacyShadowContainerCliSpawner({ failCreate: opts.failCreate });
+  const shadowSpawner = mockLegacyShadowContainerCliSpawner({
+    failCreate: opts.failCreate,
+    dbInspectFailsWith: opts.dbInspectFailsWith,
+  });
   const dbConnection = fakeShadowDbConnection();
   const docker = fakeShadowSetupDocker();
   const edge = fakeEdgeRuntime();
@@ -233,4 +240,34 @@ describe("legacyDeclarativeSeamLayer.exportCatalog", () => {
       rmSync(dir, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });
+});
+
+describe("legacyDeclarativeSeamLayer.ensureLocalDatabaseStarted", () => {
+  it.effect(
+    "carries the inspect failure's daemon marker AND recovery suggestion onto the seam error",
+    () => {
+      // Go's `AssertSupabaseDbIsRunning` sets `CmdSuggestion = suggestDockerInstall` on a
+      // daemon-connection failure — the seam's inspect-error mapping must preserve both the
+      // daemon classification and that suggestion, or the normalizer renders its generic
+      // debug hint instead of the actionable Docker recovery text (review: the start-failure
+      // catch below it already propagates `suggestion`; this asserts the inspect mapping does
+      // too).
+      const dir = mkdtempSync(join(tmpdir(), "legacy-pgdelta-seam-"));
+      const { layer } = setup(dir, {
+        dbInspectFailsWith:
+          "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+      });
+      return Effect.gen(function* () {
+        const seam = yield* LegacyDeclarativeSeam;
+        const exit = yield* seam.ensureLocalDatabaseStarted().pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        const error = failError(exit);
+        expect(error).toBeInstanceOf(LegacyDeclarativeShadowDbError);
+        const shadowError = error as LegacyDeclarativeShadowDbError;
+        expect(shadowError.docker).toBe("daemon");
+        expect(shadowError.suggestion).toBe(LEGACY_SUGGEST_DOCKER_INSTALL);
+        rmSync(dir, { recursive: true, force: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });
