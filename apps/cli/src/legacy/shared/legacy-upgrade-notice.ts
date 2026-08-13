@@ -5,8 +5,8 @@
  * Go's own offline backoff.
  */
 
-import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { lstat, mkdir, open, readFile } from "node:fs/promises";
+import { constants as fsConstants, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { stripVTControlCharacters } from "node:util";
 
@@ -150,6 +150,49 @@ export function legacyFormatUpgradeNotice(latestTag: string, currentVersion: str
 }
 
 /**
+ * Writes the cache file refusing to follow a symlink at the FINAL path
+ * component. The `lstat` guard at the call site runs before a network fetch
+ * bounded only by `FETCH_TIMEOUT_MS`, so by write time it only proves the path
+ * was safe seconds ago; a concurrent process that swaps `cli-latest` for a
+ * symlink inside that window makes a plain `writeFile` truncate an arbitrary
+ * user-writable target (CWE-59/TOCTOU). `O_NOFOLLOW` moves that one decision
+ * into the kernel's `open`, which fails with `ELOOP` instead.
+ *
+ * This does NOT close the window for the `supabase/` and `.temp/` DIRECTORY
+ * components: `O_NOFOLLOW` only applies to the last component, and resolving
+ * the rest against a verified directory handle needs `openat`, which Node does
+ * not expose. A directory swapped for a symlink inside the same window is still
+ * followed by the preceding `mkdir -p` and by this `open`. Those components
+ * keep only the advisory `lstat`/`isRealDirOrAbsent` checks — narrower than the
+ * final-component guarantee, and still stricter than Go, which writes through
+ * symlinks at every level.
+ *
+ * Same path, mode, and truncate semantics as the `writeFile` it replaces, so
+ * Go's filesystem side effects are unchanged — including the empty-string
+ * offline backoff write.
+ *
+ * `O_NOFOLLOW` is POSIX-only; Node leaves it undefined on Windows, where this
+ * falls back to the plain flags and the final component drops back to the same
+ * advisory-only footing as the directories. Creating a symlink there needs
+ * Developer Mode or `SeCreateSymbolicLinkPrivilege`.
+ */
+async function writeCacheFileNoFollow(cacheFile: string, contents: string): Promise<void> {
+  const handle = await open(
+    cacheFile,
+    fsConstants.O_WRONLY |
+      fsConstants.O_CREAT |
+      fsConstants.O_TRUNC |
+      (fsConstants.O_NOFOLLOW ?? 0),
+    0o644,
+  );
+  try {
+    await handle.writeFile(contents);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * The directory Go's relative `supabase/.temp` paths resolve against after
  * `ChangeWorkDir`, matching `legacy-cli-config.layer.ts`'s `resolveWorkdir`
  * precedence. Not reused from there: that resolution lives inside a command's
@@ -267,7 +310,11 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
   // A hostile checkout can commit a symlink at any level of this well-known
   // path to clobber an arbitrary user-writable file (CWE-59): a symlink
   // anywhere disables the cache. Do not relax to `stat`/`existsSync`, which
-  // follow links. A check-then-write window remains: Node has no `openat`.
+  // follow links. These checks are advisory only — they run before a fetch that
+  // can take FETCH_TIMEOUT_MS, so they cannot be trusted at write time. The
+  // write re-establishes the guarantee in the kernel for the cache file itself
+  // via `O_NOFOLLOW`; the two directory components stay advisory-only for want
+  // of `openat` (see `writeCacheFileNoFollow`).
   const cacheLstat = await lstat(cacheFile).catch(() => undefined);
   const cachePathIsSafe =
     cacheLstat?.isSymbolicLink() !== true &&
@@ -298,7 +345,7 @@ export async function legacyRunUpgradeNotice(deps: LegacyUpgradeNoticeDeps): Pro
     if (cachePathIsSafe && existsSync(supabaseDir)) {
       notifyError = await mkdir(tempDir, { recursive: true, mode: 0o755 }).then(
         () =>
-          writeFile(cacheFile, latestTag, { mode: 0o644 }).then(
+          writeCacheFileNoFollow(cacheFile, latestTag).then(
             () => undefined,
             (error: unknown) => new Error(`failed to write file: ${errorMessage(error)}`),
           ),

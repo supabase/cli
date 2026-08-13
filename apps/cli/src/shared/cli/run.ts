@@ -40,8 +40,12 @@ import {
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
-// and `legacy/shared/legacy/global-flags.ts`: a value flag missing here would make
-// `extractCommandPath` mistake its value for a command-path segment.
+// and `shared/legacy/global-flags.ts` (both point back here), and with the
+// name-keyed `PERSISTENT_VALUE_FLAG_NAMES` in `shared/cli/cobra-flag-groups.ts`:
+// a value flag missing here would make `extractCommandPath` mistake its value for
+// a command-path segment, and would leave the flag's following token unconsumed
+// for every scanner below — silently mis-resolving `--workdir` for the bare
+// space-separated spelling.
 const globalFlagsWithValues = new Set([
   "--output-format",
   "--output",

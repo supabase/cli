@@ -581,6 +581,31 @@ describe("legacyRunUpgradeNotice", () => {
     ctx.cleanup();
   });
 
+  it("never writes through a cache symlink planted during the release fetch", async () => {
+    const ctx = setup({});
+    const victim = join(workdir, "victim.txt");
+    writeFileSync(victim, "v9.9.9");
+    mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+
+    // The `lstat` guard runs BEFORE the fetch, so it only proves the path was
+    // safe up to FETCH_TIMEOUT_MS ago. Planting the symlink from inside
+    // `fetchLatestTag` lands it in exactly that check-then-write window — a
+    // concurrent process doing this made the old plain `writeFile` follow the
+    // link and truncate `victim`. The `O_NOFOLLOW` open fails with ELOOP.
+    await legacyRunUpgradeNotice({
+      ...ctx.deps,
+      fetchLatestTag: () => {
+        symlinkSync(victim, ctx.cachePath);
+        return Promise.resolve("v2.114.0");
+      },
+    });
+
+    expect(ctx.stderr).toContain("A new version of Supabase CLI is available: v2.114.0");
+    expect(readFileSync(victim, "utf8")).toBe("v9.9.9");
+    expect(lstatSync(ctx.cachePath).isSymbolicLink()).toBe(true);
+    ctx.cleanup();
+  });
+
   it.each(["supabase", "supabase/.temp"])(
     "never writes through a symlinked %s directory",
     async (linked) => {
