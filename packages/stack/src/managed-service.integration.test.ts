@@ -2834,7 +2834,7 @@ describe("managed repository and lifecycle", () => {
         // A read transaction and a write transaction, so neither boundary is
         // covered by the other's locking.
         Effect.flatMap(registry.repository.listStacks(), () =>
-          registry.repository.pruneCheckoutLocations([]),
+          registry.repository.pruneIdentityMetadata({ locationIds: [] }),
         ),
       { discard: true },
     );
@@ -3492,7 +3492,7 @@ describe("managed repository and lifecycle", () => {
       }
     });
 
-    it("protects transitive provenance chains through both prune APIs", async () => {
+    it("protects transitive provenance chains through typed metadata pruning", async () => {
       const cases = await adapters();
       try {
         for (const adapter of cases) {
@@ -3506,9 +3506,6 @@ describe("managed repository and lifecycle", () => {
                 locationIds: ["loc-a", "loc-b", "loc-c"],
               }),
             ).removed,
-          ).toBe(0);
-          expect(
-            runRepo(adapter.repository.pruneCheckoutLocations(["loc-a", "loc-b", "loc-c"])),
           ).toBe(0);
         }
       } finally {

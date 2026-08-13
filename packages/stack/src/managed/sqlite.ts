@@ -1579,20 +1579,6 @@ const selectIdentityTransitions = (
     .all()
     .map(decodeIdentityTransition);
 
-const pruneCheckoutLocations = (
-  database: ManagedSqliteDatabase,
-  locationIds: ReadonlyArray<string>,
-): number => {
-  const decision = decideManagedIdentityMetadataPrune({
-    locations: selectCheckoutLocations(database),
-    locationIds,
-    transitions: selectIdentityTransitions(database),
-  });
-  const statement = database.prepare("DELETE FROM checkout_locations WHERE id = ?");
-  for (const id of decision.prunedRecordIds) statement.run([id]);
-  return decision.removed;
-};
-
 const applyCheckoutLocation = (
   database: ManagedSqliteDatabase,
   input: ApplyManagedCheckoutLocationInput,
@@ -2027,8 +2013,6 @@ const createSqliteManagedStackRepository = (
             ManagedInaccessiblePathError,
           ),
         ),
-      pruneCheckoutLocations: (locationIds) =>
-        transaction(database, () => pruneCheckoutLocations(database, locationIds), neverFails),
     };
   });
 

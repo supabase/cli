@@ -906,15 +906,5 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           ManagedInaccessiblePathError,
         ),
       }),
-    pruneCheckoutLocations: (locationIds) =>
-      Effect.sync(() => {
-        const decision = decideManagedIdentityMetadataPrune({
-          locations: [...locations.values()],
-          locationIds,
-          transitions: [...transitions.values()],
-        });
-        for (const id of decision.prunedRecordIds) locations.delete(id);
-        return decision.removed;
-      }),
   };
 };

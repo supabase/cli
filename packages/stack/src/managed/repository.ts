@@ -918,7 +918,6 @@ export interface ManagedStackRepositoryShape {
     now: string,
   ) => Effect.Effect<ManagedStackRecord, OwnedManagedStackFailure>;
   readonly listCheckoutLocations: () => Effect.Effect<ReadonlyArray<ManagedCheckoutLocation>>;
-  readonly pruneCheckoutLocations: (locationIds: ReadonlyArray<string>) => Effect.Effect<number>;
 }
 
 /**

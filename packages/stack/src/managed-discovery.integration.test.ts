@@ -83,7 +83,6 @@ const mutationDenied = (
     advanceIdentityTransition: touched(repository.advanceIdentityTransition),
     finalizeIdentityTransition: touched(repository.finalizeIdentityTransition),
     pruneIdentityMetadata: touched(repository.pruneIdentityMetadata),
-    pruneCheckoutLocations: touched(repository.pruneCheckoutLocations),
   };
 };
 
