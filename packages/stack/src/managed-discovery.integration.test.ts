@@ -187,18 +187,70 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
 
     const recovered = await inspect(service.repository, next);
     const prune = recovered.recoveryOperations.find((operation) => operation.operation === "prune");
-    const previousLocation = claims.locations.find(
-      (location) => location.canonicalPath === previous,
-    );
-    if (previousLocation === undefined) throw new Error("expected the superseded location");
-    expect(prune).toEqual({
-      operation: "prune",
-      recordIds: [previousLocation.id],
+    expect(prune).toBeUndefined();
+  });
+
+  it("emits an actionable prune operation only for unprotected stale history", async () => {
+    const root = makeRoot();
+    const workspace = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const staleId = "00000000-0000-7000-8000-000000000097";
+    const stalePath = join(root, "stale-history");
+    let stalePresent = true;
+    const repository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      listIdentityClaims: (projectId) =>
+        Effect.map(service.repository.listIdentityClaims(projectId), (claims) => ({
+          ...claims,
+          locations: stalePresent
+            ? [
+                ...claims.locations,
+                {
+                  id: staleId,
+                  checkoutId: started.identity.checkoutId,
+                  canonicalPath: stalePath,
+                  state: "superseded" as const,
+                  lastSeenAt: new Date().toISOString(),
+                },
+              ]
+            : claims.locations,
+        })),
+      pruneIdentityMetadata: (input) =>
+        Effect.map(
+          service.repository.pruneIdentityMetadata({
+            locationIds: input.locationIds.filter((id) => id !== staleId),
+          }),
+          (result) => {
+            if (!stalePresent || !input.locationIds.includes(staleId)) return result;
+            stalePresent = false;
+            return {
+              removed: result.removed + 1,
+              prunedRecordIds: [...result.prunedRecordIds, staleId],
+              preservedRecordIds: result.preservedRecordIds,
+            };
+          },
+        ),
+    };
+    const report = await inspect(repository, workspace);
+    const prune = report.recoveryOperations.find((operation) => operation.operation === "prune");
+    expect(prune).toEqual({ operation: "prune", recordIds: [staleId] });
+
+    const staleService = await makeManagedStackService({
+      repository,
+      stateRoot: join(root, "stale-prune-managed"),
+      publicationPollMs: 1,
     });
-    if (prune?.operation === "prune") {
-      const result = await service.prune(prune);
-      expect(result.preservedRecordIds).toEqual(prune.recordIds);
-    }
+    openHandles.push(staleService);
+    if (prune?.operation !== "prune") throw new Error("expected an actionable prune operation");
+    await expect(staleService.prune(prune)).resolves.toMatchObject({
+      removed: 1,
+      prunedRecordIds: [staleId],
+      preservedRecordIds: [],
+    });
+    expect(stalePresent).toBe(false);
+    expect(await service.inspectStack(started.stack.id)).toMatchObject({ status: "active" });
   });
 
   it("publishes a new checkout identity without claiming a stack", async () => {

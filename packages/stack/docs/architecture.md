@@ -382,16 +382,15 @@ stack UUID:
 
 ```text
 <managedStateRoot>/
-  registry-v4.sqlite3
+  registry.sqlite3
   stacks/<stackId>/
     data/
     logs/
     runtime/
 ```
 
-The registry format is an unreleased internal contract. It is used directly and has no migration,
-legacy-format, or compatibility promise; callers should treat the managed state root as belonging to
-the current build rather than keeping multiple generations side by side.
+The registry format is an unreleased internal contract. It is used directly with no legacy-format or
+compatibility promise; callers should treat the managed state root as belonging to the current build.
 The state root is required to be a non-empty path wherever it is passed explicitly, so a blank
 value fails instead of silently anchoring managed state to the process' working directory. An
 explicit root is a decision and a blank one is a caller bug; a blank environment value is instead
@@ -478,8 +477,8 @@ The managed surface is two `Context.Service` tags, each with layer factories:
   `Layer.succeed(ManagedStackRepository, createInMemoryManagedStackRepository())`, since the
   in-memory factory from `@supabase/stack/testing` returns the Effect-shaped service object directly.
   The contract contains no SQLite types, so the adapter is swappable without the policy layer
-  noticing. Opening a registry whose format marker is neither empty nor the current format fails the
-  layer with `UnsupportedManagedRegistryVersionError`.
+  noticing. A fresh registry creates the current format directly; incomplete existing registries
+  fail closed rather than being migrated.
 - `ManagedStackService` is the policy layer described above: workspace classification, identity
   ownership, provisioning order, publication waiting, deletion, and recovery.
   `ManagedStackService.make(options)` returns a layer requiring
@@ -491,10 +490,9 @@ The managed surface is two `Context.Service` tags, each with layer factories:
 `managedStackLayer(options)` — exported from `managed-bun.ts` and `managed-node.ts` — is those two
 composed with the platform filesystem and the state root resolved by the one resolver that owns that
 policy. It is the assembly an Effect consumer provides _and_ the one the Promise facade runs behind its
-handle, so the two cannot drift apart. It fails with `ManagedStackLayerFailure`: the state-root and
-owner-PID refusals above plus `UnsupportedManagedRegistryVersionError`. Nothing on that path is turned
-into a defect, so the one registry failure a caller can act on — the registry was written by an
-incompatible build — stays recoverable with `catchTag` instead of being unreachable behind an `orDie`.
+handle, so the two cannot drift apart. It fails with `ManagedStackLayerFailure` for state-root and
+owner-PID refusals. Callers receive typed option and managed-operation failures declared by each
+method.
 
 Each method declares only the failures it can actually raise, rather than one service-wide union:
 `resolveStack` carries `ResolveManagedStackFailure`, `updateStack` carries
@@ -587,11 +585,11 @@ than incidental:
 
 - **Acquisition is asynchronous.** Both factories return a `Promise<ManagedStackServiceHandle>` and
   build the runtime's context through `runtime.context()`, because opening the registry is I/O: a
-  file is created and hardened, its current format read, and a cold start may have to wait out another
+  file is created and hardened, and a cold start may have to wait out another
   process' WAL conversion. Everything that can refuse the acquisition arrives as a rejection — a
   blank state root, an owner PID that could never be probed, and a registry written by an
-  incompatible registry format all reject with the same typed error instances, so a caller has one
-  failure channel instead of a throw plus a rejection.
+  option failures reject with typed error instances, so a caller has one failure channel instead of a
+  throw plus a rejection.
 - **Reads are Promises too.** `inspectStack` and `listStacks` return Promises rather than answering
   inline. A handle that read synchronously would only be hiding the registry's I/O from its caller,
   and it is what forced the cold-start retry below to block. The `repository` accessor stays a plain

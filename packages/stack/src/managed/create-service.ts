@@ -7,7 +7,6 @@ import type {
   ManagedStackConfiguration,
   ManagedStackProjection,
   ManagedStackRecord,
-  UnsupportedManagedRegistryVersionError,
 } from "./model.ts";
 import { failsWith } from "./failure.ts";
 import { gitConfigStoreLayer } from "./git.ts";
@@ -230,20 +229,14 @@ const managedStackServiceHandle = async <ER>(
 /**
  * What building a managed stack layer can refuse.
  *
- * {@link UnsupportedManagedRegistryVersionError} is the one an embedder can act
- * on — the registry on disk was written by a newer CLI — so it stays in the error
- * channel rather than being turned into a defect: an Effect consumer must be able
- * to `catchTag` it. The other two are option bugs the layer refuses to start
+ * The state-root and owner-pid errors are option bugs the layer refuses to start
  * with.
  */
-export type ManagedStackLayerFailure =
-  | InvalidManagedOwnerPidError
-  | UnsafeManagedStackPathError
-  | UnsupportedManagedRegistryVersionError;
+export type ManagedStackLayerFailure = InvalidManagedOwnerPidError | UnsafeManagedStackPathError;
 
 const serviceLayer = (
   options: ManagedStackServiceOptions,
-  repositoryLayer: Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
+  repositoryLayer: Layer.Layer<ManagedStackRepository>,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
 ): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
   ManagedStackService.make(options).pipe(
@@ -270,9 +263,7 @@ const serviceLayer = (
  */
 export const managedStackLayerWith = (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
-  openRepository: (
-    registryPath: string,
-  ) => Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
+  openRepository: (registryPath: string) => Layer.Layer<ManagedStackRepository>,
   options: CreateManagedStackServiceOptions,
 ): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
   Layer.unwrap(
@@ -330,9 +321,7 @@ export const makeManagedStackServiceWith = async (
  */
 export const createManagedStackServiceWith = async (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
-  openRepository: (
-    registryPath: string,
-  ) => Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError>,
+  openRepository: (registryPath: string) => Layer.Layer<ManagedStackRepository>,
   options: CreateManagedStackServiceOptions,
 ): Promise<ManagedStackServiceHandle> => {
   // Validated here as well as in the layer, so a caller that supplied an

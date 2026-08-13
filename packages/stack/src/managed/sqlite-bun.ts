@@ -1,6 +1,5 @@
 import { Database } from "bun:sqlite";
 import type { Layer } from "effect";
-import type { UnsupportedManagedRegistryVersionError } from "./model.ts";
 import type { ManagedStackRepository } from "./repository.ts";
 import {
   hardenManagedRegistryFile,
@@ -37,5 +36,5 @@ const openDatabase = (path: string): ManagedSqliteDatabase => {
 
 export const bunSqliteManagedStackRepositoryLayer = (
   path: string,
-): Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError> =>
+): Layer.Layer<ManagedStackRepository> =>
   sqliteManagedStackRepositoryLayer(() => openDatabase(path));

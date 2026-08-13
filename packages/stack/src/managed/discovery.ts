@@ -613,6 +613,36 @@ export const discoverWorkspace = (
       state = "unregistered";
       recoveryOperations.push({ operation: "newCheckout", path: metadata.workspace.workspaceRoot });
     }
+    const protectedLocationIds = new Set(
+      locations
+        .filter((location) => location.state === "active" || location.state === "blocked")
+        .map((location) => location.id),
+    );
+    let expandedProtectedLocations = true;
+    while (expandedProtectedLocations) {
+      expandedProtectedLocations = false;
+      for (const location of locations) {
+        if (
+          location.reboundFromLocationId !== undefined &&
+          protectedLocationIds.has(location.id) &&
+          !protectedLocationIds.has(location.reboundFromLocationId)
+        ) {
+          protectedLocationIds.add(location.reboundFromLocationId);
+          expandedProtectedLocations = true;
+        }
+      }
+    }
+    for (const transition of transitionClaims.transitions) {
+      if (transition.phase === "finalized") continue;
+      for (const location of locations) {
+        if (
+          (transition.checkoutId !== undefined && transition.checkoutId === location.checkoutId) ||
+          (transition.path !== undefined && transition.path === location.canonicalPath)
+        ) {
+          protectedLocationIds.add(location.id);
+        }
+      }
+    }
     if (activeTransition === undefined && conflicts.length === 0) {
       const pruneRecordIds = historicalPathEvidence
         .filter(
@@ -623,7 +653,9 @@ export const discoverWorkspace = (
             (candidate) =>
               candidate.canonicalPath === evidence.path && candidate.state === "superseded",
           );
-          return location === undefined ? [] : [location.id];
+          return location === undefined || protectedLocationIds.has(location.id)
+            ? []
+            : [location.id];
         });
       if (pruneRecordIds.length > 0) {
         recoveryOperations.push({ operation: "prune", recordIds: pruneRecordIds });
