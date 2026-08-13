@@ -27,7 +27,9 @@ const config = {
     Flag.optional,
   ),
   envFile: Flag.string("env-file").pipe(
-    Flag.withDescription("Path to an env file to be populated to the Function environment."),
+    Flag.withDescription(
+      "Path to an env file. Overrides supabase/functions/.env and per-Function .env files.",
+    ),
     Flag.optional,
   ),
   importMap: Flag.string("import-map").pipe(

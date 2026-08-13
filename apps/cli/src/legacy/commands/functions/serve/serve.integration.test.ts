@@ -399,6 +399,208 @@ beforeEach(() => {
 });
 
 describe("legacy functions serve integration", () => {
+  it.live("overlays each Function's env file on the shared fallback", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("world", "index.ts", 'Deno.serve(() => new Response("world"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          join("supabase", "functions", ".env"),
+          ["SHARED=shared", "GLOBAL_ONLY=global", ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile(
+          "hello",
+          ".env",
+          ["SHARED=hello", "FUNCTION_ONLY=hello", "SUPABASE_SKIP=ignored", ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("world", ".env", ["SHARED=world", "FUNCTION_ONLY=world", ""].join("\n")),
+      );
+
+      const { layer, out } = setupServe({ childSpawner });
+      yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+      expect(envs).toContain("SHARED=shared");
+      expect(envs).toContain("GLOBAL_ONLY=global");
+      const functionsConfig = envs.find((entry) =>
+        entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
+      );
+      expect(functionsConfig).toBeDefined();
+      if (functionsConfig === undefined) {
+        throw new Error("missing functions config env");
+      }
+
+      expect(
+        JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
+      ).toEqual({
+        hello: expect.objectContaining({
+          env: { SHARED: "hello", FUNCTION_ONLY: "hello" },
+        }),
+        world: expect.objectContaining({
+          env: { SHARED: "world", FUNCTION_ONLY: "world" },
+        }),
+      });
+      expect(out.stderrText).toContain(
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n",
+      );
+    });
+  });
+
+  it.live("uses an explicit env file instead of automatic Function env files", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          join("supabase", "functions", ".env"),
+          ["SOURCE=shared", "GLOBAL_ONLY=global", ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", ".env", "INVALID-KEY=must-not-be-read\n"),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          "custom.env",
+          ["SOURCE=explicit", "EXPLICIT_ONLY=explicit", ""].join("\n"),
+        ),
+      );
+
+      const { layer } = setupServe({ childSpawner });
+      yield* legacyFunctionsServe(baseFlags({ envFile: Option.some("custom.env") })).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+      expect(envs).toContain("SOURCE=explicit");
+      expect(envs).toContain("EXPLICIT_ONLY=explicit");
+      expect(envs).not.toContain("GLOBAL_ONLY=global");
+      const functionsConfig = envs.find((entry) =>
+        entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
+      );
+      expect(functionsConfig).toBeDefined();
+      if (functionsConfig === undefined) {
+        throw new Error("missing functions config env");
+      }
+      expect(
+        JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
+      ).toEqual({
+        hello: {
+          verifyJWT: true,
+          entrypointPath: "supabase/functions/hello/index.ts",
+        },
+      });
+    });
+  });
+
+  it.live("fails before starting the runtime when a Function env file is malformed", () => {
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      const functionEnvPath = join(tempRoot.current, "supabase", "functions", "hello", ".env");
+      yield* Effect.promise(() => writeFunctionFile("hello", ".env", "API-KEY=secret-value\n"));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
+        expect(error.message).toContain("unexpected character '-' in variable name");
+        expect(error.message).not.toContain("secret-value");
+        expect(error.message).not.toContain('near "API-KEY=secret-value"');
+      }
+      expect(
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toHaveLength(0);
+      expect(deployMockState.networkCalls).toHaveLength(0);
+      expect(deployMockState.volumeCalls).toHaveLength(0);
+    });
+  });
+
   it.live(
     "starts the runtime from config-defined functions and wires env, binds, and telemetry",
     () => {
