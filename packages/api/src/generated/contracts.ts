@@ -1264,8 +1264,16 @@ export const V1CreateAProjectInput = Schema.Struct({
       format: "uri",
     }),
   ),
-  release_channel: Schema.optionalKey(Schema.Null),
-  postgres_engine: Schema.optionalKey(Schema.Null),
+  release_channel: Schema.optionalKey(
+    Schema.Literals(["internal", "alpha", "beta", "ga", "withdrawn", "preview"]).annotate({
+      description: "Release channel. If not provided, GA will be used.",
+    }),
+  ),
+  postgres_engine: Schema.optionalKey(
+    Schema.Literals(["15", "17", "17-oriole"]).annotate({
+      description: "Postgres engine version. If not provided, the latest version will be used.",
+    }),
+  ),
   high_availability: Schema.optionalKey(
     Schema.Boolean.annotate({
       description: "[Experimental] Whether to enable high availability for the project.",

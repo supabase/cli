@@ -344,6 +344,12 @@ Flag divergences from the Go reference:
 - `projects create` has a TS-only `--high-availability` flag (no Go equivalent). It sets
   `high_availability` in the create request body. Default behavior (omitted flag) matches
   Go exactly.
+- `projects create` has TS-only `--release-channel` and `--postgres-engine` flags (no Go
+  equivalent). They set `release_channel` / `postgres_engine` in the create request body —
+  fields the upstream Management API OpenAPI spec deliberately hides even though
+  `POST /v1/projects` accepts them (restored via `packages/api/scripts/openapi-overrides.json`,
+  CLI-2180). Both flags are hidden and gated behind `--experimental` until PROD-548 exposes them
+  officially; omitting them matches Go exactly.
 
 Behavioral divergences from the Go reference:
 

@@ -200,6 +200,8 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       region: undefined,
       size: undefined,
       highAvailability: undefined,
+      releaseChannel: undefined,
+      postgresEngine: undefined,
       templateUrl: starter.url.length > 0 ? starter.url : undefined,
       emitStructuredResult: false,
     });

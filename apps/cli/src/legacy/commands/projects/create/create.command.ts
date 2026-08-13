@@ -1,3 +1,4 @@
+import { V1CreateAProjectInput } from "@supabase/api/effect";
 import { Argument, Command, Flag } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
@@ -25,6 +26,12 @@ const AWS_REGIONS = [
   "us-west-1",
   "us-west-2",
 ] as const;
+
+// Derived from the generated Management API schema so these choices can't
+// drift from `POST /v1/projects`'s `release_channel`/`postgres_engine` fields
+// on regen.
+const RELEASE_CHANNELS = V1CreateAProjectInput.fields.release_channel.schema.literals;
+const POSTGRES_ENGINES = V1CreateAProjectInput.fields.postgres_engine.schema.literals;
 
 const INSTANCE_SIZES = [
   "large",
@@ -76,6 +83,22 @@ const config = {
     Flag.withDescription("Enable high availability for the project."),
     Flag.optional,
   ),
+  // TS-only, no Go CLI equivalent: these target the `release_channel` /
+  // `postgres_engine` fields on `POST /v1/projects`, which the upstream OpenAPI
+  // spec intentionally hides (typed as `{"deprecated": true, "type": "null"}`)
+  // even though the Management API accepts them — restored via
+  // `packages/api/scripts/openapi-overrides.json`. Hidden + gated behind
+  // `--experimental` until PROD-548 exposes them officially (CLI-2180).
+  releaseChannel: Flag.choice("release-channel", RELEASE_CHANNELS).pipe(
+    Flag.withDescription("Select a release channel for the project."),
+    Flag.optional,
+    Flag.withHidden,
+  ),
+  postgresEngine: Flag.choice("postgres-engine", POSTGRES_ENGINES).pipe(
+    Flag.withDescription("Select the Postgres engine for the project."),
+    Flag.optional,
+    Flag.withHidden,
+  ),
   interactive: Flag.boolean("interactive").pipe(
     Flag.withDescription("Enables interactive mode."),
     Flag.withAlias("i"),
@@ -106,8 +129,10 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
       // `org-id` telemetry-safe (`markFlagTelemetrySafe`), and it's a boolean flag
       // anyway — boolean values are always logged verbatim by the instrumentation
       // regardless of `safeFlags`. See the same pattern on `projects api-keys`'s
-      // `--reveal`. `config` is passed so `region`/`size` (both `Flag.choice`)
-      // are auto-detected as telemetry-safe, matching Go's `isEnumFlag`.
+      // `--reveal`. `config` is passed so `region`/`size`/`release-channel`/
+      // `postgres-engine` (all `Flag.choice`) are auto-detected as telemetry-safe,
+      // matching Go's `isEnumFlag` — `release-channel`/`postgres-engine` don't
+      // need a `safeFlags` entry of their own for this reason.
       withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"], config }),
       withJsonErrorHandling,
     ),

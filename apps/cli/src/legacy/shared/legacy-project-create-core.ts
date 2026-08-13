@@ -54,6 +54,8 @@ export interface LegacyProjectCreateInput {
   readonly region: CreateInput["region"];
   readonly size: CreateInput["desired_instance_size"];
   readonly highAvailability: CreateInput["high_availability"];
+  readonly releaseChannel: CreateInput["release_channel"];
+  readonly postgresEngine: CreateInput["postgres_engine"];
   readonly templateUrl: string | undefined;
   /**
    * Standalone `projects create` emits a `--output-format` json/stream-json
@@ -92,6 +94,8 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
   let dbPassword = input.dbPassword;
   const size = input.size;
   const highAvailability = input.highAvailability;
+  const releaseChannel = input.releaseChannel;
+  const postgresEngine = input.postgresEngine;
 
   // promptMissingParams (`create.go:58-85`): prompt for each empty value and
   // echo the resolved value to stderr in text mode.
@@ -124,6 +128,8 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
     ...(region !== undefined ? { region } : {}),
     ...(size !== undefined ? { desired_instance_size: size } : {}),
     ...(highAvailability !== undefined ? { high_availability: highAvailability } : {}),
+    ...(releaseChannel !== undefined ? { release_channel: releaseChannel } : {}),
+    ...(postgresEngine !== undefined ? { postgres_engine: postgresEngine } : {}),
     ...(input.templateUrl !== undefined ? { template_url: input.templateUrl } : {}),
   };
 
