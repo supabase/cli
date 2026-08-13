@@ -39,7 +39,7 @@ const supabase = createClient(stack.url, stack.publishableKey);
 await stack.dispose();
 ```
 
-### Managed ordinary-folder state
+### Managed workspace state
 
 The managed registry is an Effect API. `ManagedStackService` is the policy layer and
 `ManagedStackRepository` is the storage contract; each has layer factories, failures arrive in the
@@ -50,6 +50,7 @@ import { BunFileSystem } from "@effect/platform-bun";
 import { Effect, Layer } from "effect";
 import {
   bunSqliteManagedStackRepositoryLayer,
+  gitConfigStoreLayer,
   managedRegistryPath,
   ManagedStackService,
 } from "@supabase/stack/managed";
@@ -57,13 +58,14 @@ import {
 const stateRoot = "/absolute/managed-state";
 const managedLayer = ManagedStackService.make({ stateRoot }).pipe(
   Layer.provide(bunSqliteManagedStackRepositoryLayer(managedRegistryPath(stateRoot))),
-  Layer.provide(BunFileSystem.layer),
+  Layer.provide(Layer.mergeAll(BunFileSystem.layer, gitConfigStoreLayer)),
 );
 
 const program = Effect.gen(function* () {
   const managed = yield* ManagedStackService;
-  const result = yield* managed.provisionOrdinaryStack({
+  const result = yield* managed.resolveStack({
     workspacePath: "/absolute/project",
+    operation: "start",
     configuration: {
       runtimeRequest: "docker",
       serviceVersions: { postgres: "17.6.1.143" },
@@ -89,15 +91,25 @@ first call that touches it. The handle is an `AsyncDisposable`, so `await using`
 import { createManagedStackService } from "@supabase/stack/managed";
 
 await using managed = await createManagedStackService();
-const result = await managed.provisionOrdinaryStack({
+const result = await managed.resolveStack({
   workspacePath: "/absolute/project",
+  operation: "start",
 });
 
 console.log((await managed.inspectStack(result.stack.id))?.status);
 ```
 
+`resolveStack` is the one path from a workspace path to a stack, for ordinary folders, Git checkouts,
+linked worktrees, and a bare repository's worktrees alike. `operation: "status"` is strictly
+read-only, so it reports what a `start` would resolve without claiming any identity; `operation:
+"start"` claims what is missing and registers the stack. A live stack is unique per checkout,
+context, and name, so sibling worktrees — and several named stacks in one branch context — each get
+their own isolated stack.
+
 Managed state uses opaque project, checkout, context, and stack UUIDs. A non-Git workspace stores
-only its three identity UUIDs in `.supabase/identity.json`; mutable state, logs, runtime metadata,
+only its three identity UUIDs in `.supabase/identity.json`; a Git checkout stores its project and
+branch-context identities in the shared repository config and its checkout identity inside its own
+git directory, so `git clone`, `git branch -m`, and worktree removal do the lifecycle work; mutable state, logs, runtime metadata,
 ports, and lifecycle ownership live under the user-level managed state root. Callers can inject an
 isolated state root for tests, or the in-memory repository from `@supabase/stack/testing`. Stopped stacks keep sticky port
 assignments without holding a host-wide lease; exact configuration takes precedence when a stopped

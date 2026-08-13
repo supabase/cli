@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { dockerRunService, hostHttpHealthCheck, type ServiceDependency } from "./service-utils.ts";
 import bootstrapSource from "./edge-runtime-main.ts" with { type: "text" };
 import { stackHealthBudgets } from "./health-budgets.ts";
@@ -22,7 +23,7 @@ interface NativeEdgeRuntimeOptions extends EdgeRuntimeOptions {
 
 interface DockerEdgeRuntimeOptions extends EdgeRuntimeOptions {
   readonly image: string;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly platformOs: string;
 }
 
@@ -86,7 +87,7 @@ export const makeEdgeRuntimeServiceDocker = (opts: DockerEdgeRuntimeOptions): Se
 
   return dockerRunService({
     name: "edge-runtime",
-    apiPort: opts.apiPort,
+    identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [

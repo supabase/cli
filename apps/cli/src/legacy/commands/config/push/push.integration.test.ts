@@ -612,11 +612,9 @@ function methodsOf(apiMock: ReturnType<typeof setupService>["apiMock"]): Array<s
 describe("legacy config push gated services", () => {
   it.live("pushes auth email HTML loaded from content_path", () => {
     const templateDir = join(tempRoot.current, "templates");
-    const notificationDir = join(tempRoot.current, "supabase", "templates");
     mkdirSync(templateDir, { recursive: true });
-    mkdirSync(notificationDir, { recursive: true });
     writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
-    writeFileSync(join(notificationDir, "password_changed.html"), "<p>Password changed</p>");
+    writeFileSync(join(templateDir, "password_changed.html"), "<p>Password changed</p>");
 
     const toml = `project_id = "test"
 [storage]

@@ -70,6 +70,16 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   old Go walker prefix-matched every key (`pkg/function/deno.go:150-155`, still in-tree), which
   fabricated paths the runtime could never resolve — the ENOTDIR crash family fixed in
   PR #6164 (CLI-2179). Intentional divergence: the spec behavior is the correct one.
+- `config push`/`start` auth email `content_path` resolution: every relative
+  `[auth.email.template.*]` AND `[auth.email.notification.*]` path resolves from the discovered
+  project root, with notifications additionally falling back to the legacy `supabase/`-relative
+  location when the root-resolved file is missing. Go resolves notifications from `supabase/` only
+  (`(*baseConfig).resolve`'s own `// FIXME`-flagged asymmetry). Config validation, `config push`
+  content loading, and Kong's template mount builder all share one resolver
+  (`legacyResolveNotificationContentPath`), so every consumer reads the SAME file — the drift the
+  asymmetry caused (validated against `<root>/supabase/...`, mounted from `<root>/...`) is gone.
+  The `init` scaffold ejects the root-relative form, which is incompatible with Go if uncommented
+  (#6159/#6160).
 - `db remote changes|commit --password <p>`: since CLI-1970, an explicit
   `--password` beats the `SUPABASE_DB_PASSWORD` env var. Before the trim, Go's
   package-wide "last `viper.BindPFlag("DB_PASSWORD", …)` wins" behavior bound

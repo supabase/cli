@@ -112,7 +112,7 @@ keys mirror `config.toml` paths.
 ## Notes
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
-- Auth email `content_path` resolution: `[auth.email.template.*]` paths are relative to the discovered project root; `[auth.email.notification.*]` paths are relative to `supabase/`. Notification HTML is read only when `enabled = true`.
+- Auth email `content_path` resolution: `[auth.email.template.*]` and `[auth.email.notification.*]` paths are relative to the discovered project root; notification paths fall back to the legacy `supabase/`-relative location when the root-resolved file is missing. Notification HTML is read only when `enabled = true`.
 - Diff bytes use the BurntSushi TOML encoder + anchored diff ports.
 - Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw (merged) config document so they are skipped when absent.
 - **`[remotes.*]` overrides are merged before push.** When a `[remotes.<name>]` block declares `project_id == <ref>`, `@supabase/config` merges that block's subtree over the base config at the raw (pre-decode) level — `mergeRemoteConfig` — so only the keys the block declares override the base. `Loading config override: [remotes.<name>]` prints to stderr. Two remotes sharing the target `project_id` abort with a `duplicate project_id for [remotes.<b>] and [remotes.<a>]` message.

@@ -22,3 +22,13 @@ npx prettier -w apps/docs/spec/cli_v1_commands.yaml
 ```
 
 3. If there are new commands added, update [common-cli-sections.json](https://github.com/supabase/supabase/blob/master/apps/docs/spec/common-cli-sections.json) manually
+
+## Maintenance
+
+When adding or changing a command or flag, update the matching entries in
+`src/legacy/docs/legacy-docs-spec.tables.ts` — each table's doc comment says
+when it applies: `TAGS`, `DEFAULT_OVERRIDES`, `REQUIRED`, `EXPERIMENTAL` (and
+`_OPTIONAL`), `EXCLUDED` (whole commands), `EXCLUDED_FLAGS`, `ARG_OVERRIDES`,
+`CHOICE_OVERRIDES`, `EXTRA_FLAGS`. The spec build fails on entries that no
+longer resolve against the command tree, but new commands and flags must be
+added by hand — nothing detects a missing entry for a new surface.

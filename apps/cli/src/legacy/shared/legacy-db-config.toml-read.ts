@@ -2011,10 +2011,8 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       });
     }
 
-    // B3: email — template/notification content is I/O, stays in D. A relative
-    // `content_path` resolves differently per section: TEMPLATE paths are relative to
-    // the PROJECT ROOT, NOTIFICATION paths are relative to the supabase dir;
-    // absolute → as-is.
+    // B3: email — template/notification content is I/O, stays in D. Config loading resolves
+    // every relative `content_path` from the project root; absolute paths remain unchanged.
     const emailRaw = asRecord(authRawResolved["email"]);
     const templatesRaw = asRecord(emailRaw?.["template"]);
     if (templatesRaw !== undefined) {
@@ -2063,7 +2061,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
               name,
               contentPath: str(tmpl, "content_path"),
               contentPresent: tmpl["content"] !== undefined,
-              base: supabaseDir,
+              base: workdir,
             }),
           catch: (cause) =>
             new LegacyDbConfigLoadError({

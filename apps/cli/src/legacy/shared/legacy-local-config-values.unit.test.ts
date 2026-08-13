@@ -2712,17 +2712,20 @@ describe("legacyResolveLocalConfigValues", () => {
       );
     });
 
-    it("resolves a relative notification content_path against <workdir>/supabase", () => {
-      const supabaseDir = join(tempRoot.current, "supabase");
-      mkdirSync(supabaseDir, { recursive: true });
-      writeFileSync(join(supabaseDir, "pw-changed.html"), "<html></html>");
+    it("resolves a relative notification content_path against the workdir", () => {
+      const templateDir = join(tempRoot.current, "supabase", "templates");
+      mkdirSync(templateDir, { recursive: true });
+      writeFileSync(join(templateDir, "pw-changed.html"), "<html></html>");
       const config = baseConfig({
         auth: {
           enabled: true,
           site_url: "http://localhost:3000",
           email: {
             notification: {
-              password_changed: { enabled: true, content_path: "pw-changed.html" },
+              password_changed: {
+                enabled: true,
+                content_path: "supabase/templates/pw-changed.html",
+              },
             },
           },
         },
@@ -2846,9 +2849,7 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     it("lets an env-provided notification content_path override a missing TOML content_path", () => {
-      const supabaseDir = join(tempRoot.current, "supabase");
-      mkdirSync(supabaseDir, { recursive: true });
-      writeFileSync(join(supabaseDir, "pw-changed.html"), "<html></html>");
+      writeFileSync(join(tempRoot.current, "pw-changed.html"), "<html></html>");
       process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT_PATH"] =
         "pw-changed.html";
       const config = baseConfig({
@@ -2969,9 +2970,7 @@ describe("legacyResolveLocalConfigValues", () => {
     });
 
     it("preserves a remote block's valid notification content_path over a missing-file ambient override", () => {
-      const supabaseDir = join(tempRoot.current, "supabase");
-      mkdirSync(supabaseDir, { recursive: true });
-      writeFileSync(join(supabaseDir, "pw-changed.html"), "<html></html>");
+      writeFileSync(join(tempRoot.current, "pw-changed.html"), "<html></html>");
       process.env["SUPABASE_AUTH_EMAIL_NOTIFICATION_PASSWORD_CHANGED_CONTENT_PATH"] =
         "missing.html";
       const config = baseConfig({

@@ -94,8 +94,13 @@ export const requireExplicitManagedStateRoot = (stateRoot: string | undefined): 
   return resolveManagedStateRoot({ stateRoot });
 };
 
+/**
+ * The registry file, named after the schema generation it holds. A generation
+ * has no migration path in this unreleased POC, so the name is what keeps an
+ * older generation's file from being opened and refused by a newer CLI.
+ */
 export const managedRegistryPath = (stateRoot: string): string =>
-  join(stateRoot, "registry-v3.sqlite3");
+  join(stateRoot, "registry-v4.sqlite3");
 
 export const managedStackPaths = (stateRoot: string, stackId: string): ManagedStackPaths => {
   assertManagedUuid(stackId, "stackId");
@@ -123,3 +128,29 @@ export const assertManagedStackRoot = (
 
 export const ordinaryWorkspaceIdentityPath = (workspacePath: string): string =>
   join(workspacePath, ".supabase", "identity.json");
+
+/**
+ * The config file of the repository a checkout shares with its linked
+ * worktrees — the common git directory's own `config`, which is where git keeps
+ * repository-local configuration and which `git clone` never copies.
+ */
+export const gitConfigPath = (commonDirectory: string): string => join(commonDirectory, "config");
+
+/**
+ * The worktree-scoped config beside it, which only applies once
+ * `extensions.worktreeConfig` is enabled. Git enables that extension by itself —
+ * `git sparse-checkout set` does — and moves `core.bare` out of the shared config
+ * into this file, so a reader of `core.bare` has to know about it. The one in the
+ * common directory belongs to the repository's own worktree, bare or not.
+ */
+export const gitWorktreeConfigPath = (commonDirectory: string): string =>
+  join(commonDirectory, "config.worktree");
+
+/**
+ * A checkout's own identity marker, inside its own git directory: the common
+ * directory for a primary checkout, `<common>/worktrees/<name>` for a linked
+ * one. Git ignores files it does not know about there, so the marker needs no
+ * exclusion rule and can never reach the index.
+ */
+export const gitCheckoutIdentityPath = (gitDirectory: string): string =>
+  join(gitDirectory, "supabase-checkout.json");
