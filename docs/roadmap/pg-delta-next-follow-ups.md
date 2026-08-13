@@ -3,7 +3,13 @@
 Deferred review findings that are valid but out of scope for the PR that surfaced them.
 Each entry names the PR it came out of so the context is recoverable.
 
-## Shadow baseline cache key does not cover CLI-embedded init SQL (PR #6184)
+## ~~Shadow baseline cache key does not cover CLI-embedded init SQL~~ (resolved in PR #6184)
+
+Resolved on the PR itself after depthfirst independently flagged it: the key now folds in a
+digest of the embedded init/privilege SQL constants (`LEGACY_SHADOW_BASELINE_SQL_DIGEST`,
+`shadow-cache.ts`). Original write-up kept below for the rationale and the alternative considered.
+
+## Original: shadow baseline cache key does not cover CLI-embedded init SQL (PR #6184)
 
 The cache key (`legacyShadowCacheKey`, `apps/cli/src/legacy/shared/db-bootstrap/shadow-cache.ts`)
 hashes every *config-derived* input baked into the shadow cluster, but not the CLI-embedded init

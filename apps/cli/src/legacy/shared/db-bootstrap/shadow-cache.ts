@@ -38,6 +38,13 @@ import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
 import { legacyPgDeltaTempPath } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
+import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-setup.ts";
+import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
+import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
+import { LEGACY_START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
+import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
+import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
+import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
 import type { LegacyVaultSecret } from "../legacy-vault.ts";
 import { legacyWaitForShadowReady } from "./health-check.ts";
 import { legacyExportPgDataTar, legacyPgDataRestoreArchive } from "./pgdata-snapshot.ts";
@@ -167,6 +174,31 @@ export interface LegacyShadowCacheKeyInputs {
   readonly jwks: string;
 }
 
+/**
+ * Digest of every CLI-EMBEDDED SQL text baked into the baseline cluster — the inputs that change
+ * with a CLI release rather than with the project's config: the PG15+ entrypoint's initdb heredocs
+ * (schema/webhook/_supabase — `postgres.service.ts`), the PG<=14 setup path's globals + initial
+ * schema, and the API privilege revocation. Without this line, a CLI upgrade that edits a grant,
+ * schema statement, or revocation WITHOUT bumping the postgres image would warm-restore the
+ * previous release's baseline (review: depthfirst on #6184). Computed once at module load — these
+ * are compile-time constants. When adding a new embedded SQL step to the baseline
+ * (`legacySetupDatabase`/the entrypoint scripts), add its text here too.
+ */
+const LEGACY_SHADOW_BASELINE_SQL_DIGEST = createHash("sha256")
+  .update(
+    [
+      LEGACY_START_DB_SCHEMA_SQL,
+      LEGACY_START_DB_WEBHOOK_SQL,
+      LEGACY_START_DB_SUPABASE_SQL,
+      LEGACY_START_DB_GLOBALS_SQL,
+      LEGACY_START_DB_INITIAL_SCHEMA_13_SQL,
+      LEGACY_START_DB_INITIAL_SCHEMA_14_SQL,
+      LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
+    ].join("\n--8<--\n"),
+    "utf8",
+  )
+  .digest("hex");
+
 /** JSON with recursively key-sorted objects, so `db.settings`' own property order cannot change the key. */
 function legacyCanonicalJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
@@ -199,6 +231,8 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
     `db_password=${inputs.dbPassword}`,
     `db_settings=${legacyCanonicalJson(inputs.dbSettings)}`,
     `auto_expose_new_tables=${legacyTriStateToken(inputs.autoExposeNewTables)}`,
+    // Not a per-run input — see the digest's own doc comment for what it covers and why.
+    `baseline_sql_digest=${LEGACY_SHADOW_BASELINE_SQL_DIGEST}`,
   ];
   for (const name of ["realtime", "storage", "auth"] as const) {
     const service = inputs.services[name];
