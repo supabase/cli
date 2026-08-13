@@ -93,6 +93,9 @@ Long-running raw log / error events only; there is no terminal `result` event on
 
 ## Notes
 
+- Any legacy Function name positional arguments are accepted and ignored. The command always
+  serves every discovered Function, preserving invocations such as
+  `supabase functions serve <Function name>`.
 - The hidden `--all` flag is still parsed but ignored; the native port always serves every discovered function.
 - Each restart re-reads config, rebuilds per-function bind mounts, recreates the `supabase_edge_runtime_<project>` container, and best-effort reloads Kong afterwards.
 - The command creates or reuses Docker resources derived from the resolved project id:
