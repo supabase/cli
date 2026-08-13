@@ -43,10 +43,17 @@ function renderExpectedGoEject(): string {
   );
 }
 
+function renderExpectedNativeEject(): string {
+  return renderExpectedGoEject().replace(
+    '# content_path = "./templates/password_changed_notification.html"',
+    '# content_path = "./supabase/templates/password_changed_notification.html"',
+  );
+}
+
 describe("project init templates", () => {
-  it("renders config.toml with the same content as the Go CLI ejects", () => {
+  it("renders config.toml with the native notification content_path base", () => {
     expect(normalizeNewlines(renderProjectConfigTemplate("demo-project", true))).toBe(
-      renderExpectedGoEject(),
+      renderExpectedNativeEject(),
     );
   });
 
