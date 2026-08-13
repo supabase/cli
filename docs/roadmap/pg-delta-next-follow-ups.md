@@ -1,0 +1,25 @@
+# pg-delta / shadow-database follow-ups
+
+Deferred review findings that are valid but out of scope for the PR that surfaced them.
+Each entry names the PR it came out of so the context is recoverable.
+
+## Shadow baseline cache key does not cover CLI-embedded init SQL (PR #6184)
+
+The cache key (`legacyShadowCacheKey`, `apps/cli/src/legacy/shared/db-bootstrap/shadow-cache.ts`)
+hashes every *config-derived* input baked into the shadow cluster, but not the CLI-embedded init
+SQL the entrypoint heredocs into the cluster at `initdb` time (`LEGACY_START_DB_SCHEMA_SQL`,
+`LEGACY_START_DB_WEBHOOK_SQL`, `LEGACY_START_DB_SUPABASE_SQL` — `postgres.service.ts`), nor the
+baseline steps `legacySetupDatabase` itself performs (API privileges SQL, vault upsert SQL). If a
+CLI release changes any of those without a `supabase/postgres` image bump, a warm tar produced by
+the older CLI silently restores the older baseline.
+
+Realistic frequency is low (these constants track Go's `start.go` templates and change rarely,
+usually alongside image bumps), which is why it did not block #6184. Two candidate fixes:
+
+- Fold the CLI version into the key — over-invalidates once per release (~one 15s cold run per
+  upgrade), trivially safe, one line.
+- Hash the embedded SQL constants themselves — precise, no per-release invalidation, slightly more
+  surface.
+
+Either way, add a unit-test mutation case alongside the existing ones in
+`shadow-cache.unit.test.ts`.
