@@ -156,13 +156,13 @@ describe("legacy migration up", () => {
       yield* legacyMigrationUp(flags());
       const stderr = stripAnsi(out.stderrText);
       const stdout = stripAnsi(out.stdoutText);
-      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      // The connection banner prints to stderr before dialing.
       expect(stderr).toContain("Connecting to local database...");
       expect(stderr).toContain("Applying migration 20240102000000_b.sql...");
       expect(stderr).toContain("Applying migration 20240103000000_c.sql...");
       expect(stdout).toContain("Local database is up to date.");
-      // Lock Go's channel split: "Applying ..." is stderr (`fmt.Fprintf(os.Stderr, ...)`)
-      // and the final "up to date" is stdout (`fmt.Println`) — neither bleeds across.
+      // Lock the channel split: "Applying ..." is stderr
+      // and the final "up to date" is stdout — neither bleeds across.
       expect(stdout).not.toContain("Applying migration");
       expect(stderr).not.toContain("Local database is up to date.");
       expect(insertedVersions(queries)).toEqual(["20240102000000", "20240103000000"]);
@@ -209,7 +209,7 @@ describe("legacy migration up", () => {
     const { layer, queries } = setup(tmp.current, { remote: ["20240102000000"] });
     return Effect.gen(function* () {
       yield* legacyMigrationUp(flags({ includeAll: true }));
-      // Go appends the trailing pending set after the out-of-order set.
+      // The trailing pending set is appended after the out-of-order set.
       expect(insertedVersions(queries)).toEqual(["20240101000000", "20240103000000"]);
     }).pipe(Effect.provide(layer));
   });
@@ -316,7 +316,6 @@ describe("legacy migration up", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution or cache write.
       expect(execs).toEqual([]);
       expect(queries).toEqual([]);
       expect(cache.cached).toBe(false);

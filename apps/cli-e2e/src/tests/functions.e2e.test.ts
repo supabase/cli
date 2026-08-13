@@ -1,6 +1,6 @@
 import { describe, expect } from "vitest";
 import { isRecording, PROJECT_REF } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 const FUNCTION_NAME = "hello-world";
 
@@ -75,9 +75,6 @@ describe("functions", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["functions", "list", "--project-ref", PROJECT_REF]);
-    testParity(["functions", "list", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("functions:deploy", () => {
@@ -161,11 +158,6 @@ describe("functions", () => {
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["functions", "deploy", FUNCTION_NAME, "--use-api", "--project-ref", PROJECT_REF]);
-    testParity(["functions", "deploy", FUNCTION_NAME, "--use-api", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 
@@ -269,11 +261,6 @@ describe("functions", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["functions", "delete", FUNCTION_NAME, "--project-ref", PROJECT_REF]);
-    testParity(["functions", "delete", FUNCTION_NAME, "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
-    });
   });
 
   describe("functions:download", () => {
@@ -364,11 +351,6 @@ describe("functions", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(
-      ["functions", "download", FUNCTION_NAME, "--use-api", "--project-ref", PROJECT_REF],
-      { failureType: "NON_AUTH" },
-    );
   });
 
   describe("functions:new", () => {
@@ -377,7 +359,5 @@ describe("functions", () => {
       expect(result.exitCode).toBe(0);
       expect(result.stdout).toContain("Created new Function at supabase/functions/testFunction");
     });
-
-    testParity(["functions", "new", "testFunction"]);
   });
 });

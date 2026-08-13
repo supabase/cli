@@ -6,37 +6,32 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 
 /**
- * Byte-faithful reproductions of the Go CLI's `-o yaml` / `-o toml` output for
- * **struct** payloads (CLI-1975).
+ * Byte-faithful reproductions of the established `-o yaml` / `-o toml` output for
+ * **struct** payloads (CLI-1975) — an output contract raw Go structs were
+ * originally passed through `gopkg.in/yaml.v3` and `github.com/BurntSushi/toml` to produce.
+ * Neither library reads `json:` tags, so the emitted keys are derived from
+ * the original Go **field names**, not the snake_case JSON the Management API returns:
  *
- * Go's `utils.EncodeOutput` (`apps/cli-go/internal/utils/output.go`) hands the
- * raw Go structs to `gopkg.in/yaml.v3` and `github.com/BurntSushi/toml`.
- * Neither library reads the `json:` tags, so the emitted keys are derived from
- * the Go **field names**, not the snake_case JSON the Management API returns:
- *
- *   - yaml.v3 lowercases the whole field name (`ProjectRef` → `projectref`)
- *     and renders nil pointers as explicit `null`.
- *   - BurntSushi keeps the PascalCase field name (`ProjectRef`), omits nil
- *     pointers entirely, and renders `time.Time` as a native TOML datetime.
+ * - yaml.v3 lowercases the whole field name (`ProjectRef` → `projectref`)
+ * and renders nil pointers as explicit `null`.
+ * - BurntSushi keeps the PascalCase field name (`ProjectRef`), omits nil
+ * pointers entirely, and renders `time.Time` as a native TOML datetime.
  *
  * Because the TypeScript CLI only ever sees the decoded snake_case JSON, each
- * payload family declares a {@link LegacyGoType} spec mirroring its Go struct
- * (field order = Go declaration order, from `apps/cli-go/pkg/api/types.gen.go`
- * or the command's own package). The two encoders here then reproduce the
- * exact bytes the Go binary prints — including zero-value filling for
+ * payload family declares a {@link LegacyGoType} spec mirroring the original struct
+ * (field order = original declaration order). The two encoders here then reproduce the
+ * exact established bytes — including zero-value filling for
  * non-pointer fields, nil-vs-empty slice handling, yaml.v3's scalar quoting
  * heuristics and 4-space indentation algorithm, and BurntSushi's 2-space table
  * indentation and blank-line placement.
  *
  * Everything in this file is pure and Effect-free so it stays unit-testable.
  * The golden bytes asserted in the unit tests were captured from a scratch Go
- * program running the repo's own `utils.EncodeOutput` (BurntSushi toml v1.6.0,
+ * program (BurntSushi toml v1.6.0,
  * yaml.v3 v3.0.1) over the same payloads.
  */
 
-// ---------------------------------------------------------------------------
 // Go struct specs
-// ---------------------------------------------------------------------------
 
 export type LegacyGoType =
   | { readonly kind: "string" }
@@ -127,9 +122,7 @@ export function legacyGoFieldName(jsonName: string): string {
     .join("");
 }
 
-// ---------------------------------------------------------------------------
 // Normalized Go value tree (decoded JSON + spec → what the Go structs hold)
-// ---------------------------------------------------------------------------
 
 type GoValue =
   | { readonly k: "nil" }
@@ -321,9 +314,7 @@ function normalizeGoTime(value: string): string {
   return `${base}${frac}${zone}`;
 }
 
-// ---------------------------------------------------------------------------
 // Go float formatting (strconv.FormatFloat(f, 'g', -1, bits))
-// ---------------------------------------------------------------------------
 
 /**
  * Shortest round-trip digits for a float32 value (Go marshals via the typed
@@ -446,9 +437,7 @@ export function legacyGoFormatFloat(value: number, bits: 32 | 64): string {
   return `${sign}${digits.slice(0, dp)}.${digits.slice(dp)}`;
 }
 
-// ---------------------------------------------------------------------------
 // YAML encoder (gopkg.in/yaml.v3 v3.0.1 semantics)
-// ---------------------------------------------------------------------------
 
 /**
  * Encode a decoded payload as the Go CLI's `-o yaml` output for the given Go
@@ -922,7 +911,7 @@ function goParseIntBase0(plain: string): boolean {
  */
 function yamlIsTimestamp(s: string): boolean {
   // Fraction separator is `.` OR `,` — yaml.v3 resolves timestamps through
-  // Go's `time.Parse`, which accepts either (`commaOrPeriod`; probed: Go
+  // `time.Parse`, which accepts either (`commaOrPeriod`; probed: Go
   // double-quotes the comma form exactly like the dot form,
   // review r3685767963).
   const match =
@@ -1053,15 +1042,13 @@ function yamlBlockLiteral(s: string, indent: number): string {
   const lines = s.split("\n");
   if (s.endsWith("\n")) lines.pop();
   // yaml.v3 merges a leading empty line's break with the header newline
-  // (verified empirically: "\nx" → `|4-\n    x\n`, "\n\nx" → `|4-\n\n    x\n`).
+  // (verified empirically: "\nx" → `|4-\n x\n`, "\n\nx" → `|4-\n\n x\n`).
   if (lines[0] === "") lines.shift();
   const body = lines.map((line) => (line.length === 0 ? "" : `${pad}${line}`)).join("\n");
   return ` |${indicator}${chomp}\n${body}\n`;
 }
 
-// ---------------------------------------------------------------------------
 // TOML encoder (github.com/BurntSushi/toml v1.6.0 semantics)
-// ---------------------------------------------------------------------------
 
 /**
  * Thrown when BurntSushi would refuse the payload: a populated

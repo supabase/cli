@@ -3,9 +3,8 @@ import * as nodePath from "node:path";
 import { legacySplitBucketPrefix, legacyStorageIsDir } from "../../../shared/legacy-storage-url.ts";
 
 /**
- * Pure destination-key resolution for `storage cp` recursive uploads, ported from
- * Go's `UploadStorageObjectAll` walk callback (`internal/storage/cp/cp.go:124-148`).
- * Kept free of Effect/services so the Go-parity branch matrix stays unit-testable.
+ * Pure destination-key resolution for `storage cp` recursive uploads. Kept
+ * free of Effect/services so the branch matrix stays unit-testable.
  */
 
 export interface LegacyUploadDstPathInput {

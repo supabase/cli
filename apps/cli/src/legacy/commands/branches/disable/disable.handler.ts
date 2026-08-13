@@ -41,7 +41,7 @@ export const legacyBranchesDisable = Effect.fn("legacy.branches.disable")(functi
     );
     yield* disabling?.clear() ?? Effect.void;
 
-    // Go's `disable.go:22` writes to STDOUT via `fmt.Println`.
+    // Established behavior: this message writes to STDOUT.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("Disabled preview branching for project", { project_ref: ref });
       return;

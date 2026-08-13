@@ -46,8 +46,8 @@ describe("legacyBuildBearerJwtClaims", () => {
   });
 
   it("floors only the FINAL iat, applying a sub-second --valid-for before truncating (CLI-1961)", () => {
-    // Verified against the real binary: `--exp 2030-01-01T00:00:00Z --valid-for 1.5s`
-    // yields Go `iat=1893455998` — flooring the 1.5s duration to 1s BEFORE subtracting
+    // `--exp 2030-01-01T00:00:00Z --valid-for 1.5s` must yield
+    // `iat=1893455998` — flooring the 1.5s duration to 1s BEFORE subtracting
     // (this port's previous behavior) would wrongly yield 1893455999.
     const claims = legacyBuildBearerJwtClaims({
       role: "anon",
@@ -61,8 +61,8 @@ describe("legacyBuildBearerJwtClaims", () => {
   });
 
   it("preserves a fractional --exp through the iat subtraction, flooring only the final result (CLI-1961 Codex review finding)", () => {
-    // Verified against the real binary: `--exp 2030-01-01T00:00:00.9Z --valid-for
-    // 1.2s` yields `iat=1893455999`. Flooring `expiresAt` BEFORE the subtraction
+    // `--exp 2030-01-01T00:00:00.9Z --valid-for 1.2s` must yield
+    // `iat=1893455999`. Flooring `expiresAt` BEFORE the subtraction
     // (this port's previous behavior) would wrongly yield `1893455998`.
     const claims = legacyBuildBearerJwtClaims({
       role: "anon",
@@ -76,8 +76,7 @@ describe("legacyBuildBearerJwtClaims", () => {
   });
 
   it("floors exp down (never rounds up) for a near-second nanosecond --exp fraction (CLI-1961 Codex review finding)", () => {
-    // Verified against the Go standard library + `golang-jwt/jwt/v5`'s
-    // `NewNumericDate`: `--exp 2030-01-01T00:00:00.999999999Z` yields Go `exp=1893456000`
+    // `--exp 2030-01-01T00:00:00.999999999Z` must yield `exp=1893456000`
     // — a naive float addition of `wholeSeconds + 0.999999999` (this port's previous
     // behavior) rounds UP to the exact integer `1893456001` in plain JS arithmetic.
     const claims = legacyBuildBearerJwtClaims({
@@ -91,13 +90,12 @@ describe("legacyBuildBearerJwtClaims", () => {
   });
 
   it("adds a sub-second --valid-for to the unfloored current time when --exp is omitted (CLI-1961 Codex review finding)", () => {
-    // Verified against the real binary via `golang-jwt/jwt/v5`'s `NewNumericDate` +
-    // `time.Time.Add`: Go computes `exp = now.Add(validFor)` on the RAW fractional
-    // `now`, then truncates `iat`/`exp` separately — a run at `X.900` with
-    // `--valid-for 200ms` must land in the NEXT second (`exp = X + 1`), not stay in the
-    // current one. Computing `exp` from an already-floored `iat` (this port's previous
-    // behavior) would wrongly keep `exp = X`, shortening the token's lifetime to
-    // effectively zero.
+    // `exp = now.Add(validFor)` is computed on the RAW fractional `now`,
+    // then `iat`/`exp` are truncated separately — a run at `X.900` with
+    // `--valid-for 200ms` must land in the NEXT second (`exp = X + 1`), not
+    // stay in the current one. Computing `exp` from an already-floored
+    // `iat` (this port's previous behavior) would wrongly keep `exp = X`,
+    // shortening the token's lifetime to effectively zero.
     const claims = legacyBuildBearerJwtClaims({
       role: "anon",
       sub: Option.none(),
@@ -110,8 +108,8 @@ describe("legacyBuildBearerJwtClaims", () => {
   });
 
   it("sets is_anonymous when --sub is explicitly passed as an empty string (CLI-1961)", () => {
-    // Go's gate is `len(claims.Subject) == 0` (`cmd/gen.go:195`) — an explicitly-passed
-    // EMPTY `--sub ""` still counts as "no subject", not just an omitted flag.
+    // The gate is emptiness, not presence — an explicitly-passed EMPTY
+    // `--sub ""` still counts as "no subject", not just an omitted flag.
     const claims = legacyBuildBearerJwtClaims({
       role: "authenticated",
       sub: Option.some(""),
@@ -255,11 +253,11 @@ describe("legacyMergeBearerJwtPayload", () => {
   });
 
   it("prioritizes the top-level type-mismatch message over an overflowing scalar payload", () => {
-    // Verified against the real binary: a bare top-level overflowing scalar payload
-    // (`--payload '1e309'`) still reports the STRUCTURAL mismatch, WITHOUT the
-    // literal, because Go's decoder rejects the top-level kind before ever
-    // attempting to decode the number itself — the array/scalar top-level check
-    // must run BEFORE the overflow scan.
+    // A bare top-level overflowing scalar payload (`--payload '1e309'`)
+    // still reports the STRUCTURAL mismatch, WITHOUT the literal, because
+    // the top-level kind is rejected before ever attempting to decode the
+    // number itself — the array/scalar top-level check must run BEFORE the
+    // overflow scan.
     expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "1e309")).toThrow(
       "json: cannot unmarshal number into Go value of type jwt.MapClaims",
     );
@@ -283,9 +281,10 @@ describe("legacyMergeBearerJwtPayload", () => {
   });
 
   it("reports a partial keyword match against Go's exact 'in literal' wording", () => {
-    // `not-json-at-all` starts with `n`, which Go's scanner reads as the start of the
-    // `null` literal; the second byte `o` mismatches `null`'s `u` — Go's own scanner
-    // text for this is `invalid character 'o' in literal null (expecting 'u')`.
+    // `not-json-at-all` starts with `n`, which the established scanner
+    // reads as the start of the `null` literal; the second byte `o`
+    // mismatches `null`'s `u` — the established scanner text for this is
+    // `invalid character 'o' in literal null (expecting 'u')`.
     expect(() => legacyMergeBearerJwtPayload({ role: "anon" }, "not-json-at-all")).toThrow(
       "invalid character 'o' in literal null (expecting 'u')",
     );

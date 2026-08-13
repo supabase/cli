@@ -21,7 +21,7 @@ function dockerConfigDir(): string {
 }
 
 /**
- * Go's `cli.CurrentContext()` name resolution (`docker/cli`
+ * `cli.CurrentContext()` name resolution (`docker/cli`
  * `cli/command/cli.go`'s `resolveContextName`): `DOCKER_CONTEXT` env, else the
  * config file's `currentContext`, else `"default"`. Only reached when
  * `DOCKER_HOST` is unset — `resolveContextName` itself forces `"default"`
@@ -77,10 +77,10 @@ function dockerContextEndpointHost(contextName: string): string | undefined {
 
 /**
  * Extracts the bare host from a `tcp://host:port` daemon endpoint, mirroring
- * Go's `client.ParseHostURL` + `net.SplitHostPort` (`misc.go:307`). Returns
+ * `client.ParseHostURL` + `net.SplitHostPort`. Returns
  * `undefined` for a non-`tcp://` endpoint (e.g. `unix://`, `npipe://`) or an
  * unparseable one, in which case the caller falls back to the loopback
- * default, matching Go's `net.SplitHostPort` failure/non-TCP handling.
+ * default, matching `net.SplitHostPort` failure/non-TCP handling.
  */
 function hostFromTcpEndpoint(endpoint: string): string | undefined {
   try {
@@ -89,7 +89,7 @@ function hostFromTcpEndpoint(endpoint: string): string | undefined {
       return undefined;
     }
     // WHATWG `URL.hostname` returns an IPv6 host bracketed (`[::1]`), but Go's
-    // `net.SplitHostPort` (`misc.go:307`) returns the bare host (`::1`). Strip a
+    // `net.SplitHostPort` returns the bare host (`::1`). Strip a
     // single surrounding bracket pair so local-stack probes dial/compare the
     // same host Go does; IPv4 and named hosts are returned unchanged.
     const host = url.hostname;
@@ -101,25 +101,24 @@ function hostFromTcpEndpoint(endpoint: string): string | undefined {
 
 /**
  * Resolves the hostname used for local Supabase service connections, mirroring
- * Go's `utils.GetHostname` (`apps/cli-go/internal/utils/misc.go:298-311`):
+ * `utils.GetHostname`:
  *
  * 1. `SUPABASE_SERVICES_HOSTNAME` env override — set in dev containers or when
- *    the Docker daemon is not reachable on the container's own loopback.
+ * the Docker daemon is not reachable on the container's own loopback.
  * 2. The Docker daemon host when `DOCKER_HOST` is a `tcp://host:port` endpoint
- *    (Go's `Docker.DaemonHost()` + `client.ParseHostURL` + `net.SplitHostPort`).
+ * (`Docker.DaemonHost()` + `client.ParseHostURL` + `net.SplitHostPort`).
  * 3. Otherwise, the ACTIVE DOCKER CONTEXT's daemon endpoint, when it's a
- *    `tcp://` one — Go's `Docker.DaemonHost()` comes from a client built via
- *    `command.NewDockerCli()` + `cli.Initialize()` (`apps/cli-go/internal/
- *    utils/docker.go:41-54`), whose endpoint resolution walks `DOCKER_HOST` ->
- *    `DOCKER_CONTEXT` -> the config file's `currentContext` -> the context
- *    store (`docker/cli` `cli/command/cli.go`'s `getDockerEndPoint`/
- *    `resolveContextName`) — not just `DOCKER_HOST`. The `docker`/`podman`
- *    binary this module's callers shell out to for `ps`/`inspect` already
- *    resolves the same active context itself, so without this step `status`
- *    could correctly inspect a remote daemon while printing unusable
- *    `127.0.0.1` API/DB/Studio URLs for it.
+ * `tcp://` one — `Docker.DaemonHost()` comes from a client built via
+ * `command.NewDockerCli()` + `cli.Initialize()`, whose endpoint resolution walks `DOCKER_HOST` ->
+ * `DOCKER_CONTEXT` -> the config file's `currentContext` -> the context
+ * store (`docker/cli` `cli/command/cli.go`'s `getDockerEndPoint`/
+ * `resolveContextName`) — not just `DOCKER_HOST`. The `docker`/`podman`
+ * binary this module's callers shell out to for `ps`/`inspect` already
+ * resolves the same active context itself, so without this step `status`
+ * could correctly inspect a remote daemon while printing unusable
+ * `127.0.0.1` API/DB/Studio URLs for it.
  * 4. `127.0.0.1` otherwise (the default unix-socket daemon, or an
- *    unresolvable/malformed context).
+ * unresolvable/malformed context).
  *
  * Shared across legacy commands that connect to the local stack (`gen types`,
  * `test db`, `status`, `stop`, and later `db reset` / `db dump`).

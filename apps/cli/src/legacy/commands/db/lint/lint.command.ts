@@ -61,16 +61,13 @@ export const legacyDbLintCommand = Command.make("lint", config).pipe(
           "fail-on": flags.failOn,
         },
         // level/fail-on are Flag.choice and are auto-detected as safe via
-        // `config` below (Go's isEnumFlag, cmd/root_analytics.go:110-116).
-        // --schema stays redacted: it's a []string slice flag in Go, not an EnumFlag.
-        // --project-ref is a TS-only flag with no Go telemetry-safety baseline
-        // either; Go's nearest --project-ref registrations
-        // (cmd/pgdelta_catalog.go:44 and most others) are unmarked, so it stays
-        // redacted too.
+        // `config` below. --schema stays redacted: it's a string-slice flag,
+        // not a choice. --project-ref has no established telemetry-safety
+        // baseline either, so it stays redacted too.
         config,
-        // Go's changedFlags() uses pflag Visit, which reports the canonical
-        // `schema` name even for the `-s` shorthand (cmd/db.go:506); map it so
-        // `db lint -s public` records the schema flag in telemetry.
+        // Telemetry reports flags under their canonical name even for the
+        // `-s` shorthand; map it so `db lint -s public` records the schema
+        // flag in telemetry.
         aliases: { s: "schema" },
       }),
       withJsonErrorHandling,

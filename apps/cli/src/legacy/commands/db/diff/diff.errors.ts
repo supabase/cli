@@ -6,9 +6,8 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags. Reproduces cobra's
- * `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` `ValidateFlagGroups`
- * error byte-for-byte (`apps/cli-go/cmd/db.go:423`).
+ * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
+ * is an established output contract.
  */
 export class LegacyDbDiffTargetFlagsError extends Data.TaggedError("LegacyDbDiffTargetFlagsError")<{
   readonly message: string;
@@ -19,9 +18,8 @@ export class LegacyDbDiffTargetFlagsError extends Data.TaggedError("LegacyDbDiff
 }
 
 /**
- * Conflicting diff-engine flags. Reproduces cobra's
- * `MarkFlagsMutuallyExclusive("use-migra", "use-pgadmin", "use-pg-schema", "use-pg-delta")`
- * error byte-for-byte (`apps/cli-go/cmd/db.go:416`).
+ * Conflicting diff-engine flags (`use-migra`/`use-pgadmin`/`use-pg-schema`/
+ * `use-pg-delta`); message text is an established output contract.
  */
 export class LegacyDbDiffEngineConflictError extends Data.TaggedError(
   "LegacyDbDiffEngineConflictError",
@@ -34,9 +32,8 @@ export class LegacyDbDiffEngineConflictError extends Data.TaggedError(
 }
 
 /**
- * Only one of `--from` / `--to` was set in explicit diff mode. Byte-matches Go's
- * `"must set both --from and --to when using explicit diff mode"`
- * (`apps/cli-go/cmd/db.go:105`).
+ * Only one of `--from` / `--to` was set in explicit diff mode; message text is
+ * an established output contract.
  */
 export class LegacyDbDiffExplicitFlagsError extends Data.TaggedError(
   "LegacyDbDiffExplicitFlagsError",
@@ -50,9 +47,7 @@ export class LegacyDbDiffExplicitFlagsError extends Data.TaggedError(
 
 /**
  * An explicit `--from`/`--to` ref was neither `local`/`linked`/`migrations` nor a
- * postgres URL. Byte-matches Go's `resolveExplicitDatabaseRef`
- * `"unknown target %q: must be one of 'local', 'linked', 'migrations', or a postgres:// URL"`
- * (`apps/cli-go/internal/db/diff/explicit.go:44`).
+ * postgres URL; message text is an established output contract.
  */
 export class LegacyDbDiffUnknownTargetError extends Data.TaggedError(
   "LegacyDbDiffUnknownTargetError",
@@ -66,7 +61,7 @@ export class LegacyDbDiffUnknownTargetError extends Data.TaggedError(
 
 /**
  * Writing the diff output failed — a `--file` migration, or an explicit-mode
- * `--output` file. Wraps Go's `utils.WriteFile` failure (`internal/utils/misc.go`).
+ * `--output` file.
  */
 export class LegacyDbDiffWriteError extends Data.TaggedError("LegacyDbDiffWriteError")<{
   readonly message: string;
@@ -77,12 +72,9 @@ export class LegacyDbDiffWriteError extends Data.TaggedError("LegacyDbDiffWriteE
 }
 
 /**
- * The local database container is not running, or inspecting it failed —
- * Go's `utils.ErrNotRunning` / `"failed to inspect service: %w"` via
- * `AssertSupabaseDbIsRunning` (`apps/cli-go/internal/db/diff/pgadmin.go:51`,
- * `internal/utils/misc.go:151-166`). Unlike every other engine on this command,
- * `--use-pgadmin` runs this check even for `--linked`/`--db-url` — see
- * `diff.handler.ts`'s pgadmin branch.
+ * The local database container is not running, or inspecting it failed. Unlike
+ * every other engine on this command, `--use-pgadmin` runs this check even for
+ * `--linked`/`--db-url` — see `diff.handler.ts`'s pgadmin branch.
  */
 export class LegacyDbDiffDbNotRunningError extends Data.TaggedError(
   "LegacyDbDiffDbNotRunningError",

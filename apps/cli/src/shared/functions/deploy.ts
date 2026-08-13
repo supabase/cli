@@ -298,7 +298,8 @@ function explicitBooleanFlag(
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
 /**
- * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`): the eszip
+ * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`, deleted
+ * in CLI-1970; last present at commit 7b469f5b3): the eszip
  * bundler container receives only `NPM_CONFIG_REGISTRY` from the host
  * environment. `NPM_AUTH_TOKEN` is deliberately NOT forwarded — the Go-side PR
  * proposing it (supabase/cli#4933) was closed unmerged, and CLI-1985 ruled
@@ -649,7 +650,7 @@ function substituteImportMapValue(
     // Import-maps spec (implemented by Deno): a key matches exactly, or as a
     // prefix only when it ends with "/". Go's walker prefix-matches every key
     // (pkg/function/deno.go:150-155) — intentional divergence, see
-    // go-cli-porting-status.md: the lax match fabricates paths the runtime
+    // go-cli-divergences.md: the lax match fabricates paths the runtime
     // can never resolve (the ENOTDIR family this PR fixes).
     if (prefix.endsWith("/")) {
       // Spec normalization: a `/`-suffixed key whose address lacks a trailing

@@ -53,11 +53,9 @@ export const legacyDbAdvisorsCommand = Command.make("advisors", config).pipe(
           "fail-on": flags.failOn,
         },
         // type/level/fail-on are Flag.choice and are auto-detected as safe via
-        // `config` below (Go's isEnumFlag, cmd/root_analytics.go:110-116);
-        // --db-url stays redacted (plain string, may carry secrets). --project-ref
-        // is a TS-only flag with no Go telemetry-safety baseline either; Go's
-        // nearest --project-ref registrations (cmd/pgdelta_catalog.go:44 and
-        // most others) are unmarked, so it stays redacted too.
+        // `config` below; --db-url stays redacted (plain string, may carry secrets).
+        // --project-ref has no established telemetry-safety baseline either, so
+        // it stays redacted too.
         config,
       }),
       withJsonErrorHandling,

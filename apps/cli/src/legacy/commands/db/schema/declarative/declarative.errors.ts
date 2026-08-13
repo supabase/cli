@@ -11,7 +11,8 @@ import {
  * `[experimental.pgdelta] enabled = true`. Byte-matches Go's gate error
  * `"declarative commands require --experimental flag or pg-delta enabled in config"`
  * plus the `utils.CmdSuggestion`
- * (`apps/cli-go/cmd/db_schema_declarative.go:63-69`).
+ * (`apps/cli-go/cmd/db_schema_declarative.go:63-69`, deleted in CLI-1970;
+ * last present at commit 7b469f5b3).
  */
 export class LegacyDeclarativeNotEnabledError extends Data.TaggedError(
   "LegacyDeclarativeNotEnabledError",
@@ -45,7 +46,8 @@ export class LegacyDeclarativeNonInteractiveError extends Data.TaggedError(
  * `MarkFlagsMutuallyExclusive` `ValidateFlagGroups` error byte-for-byte:
  *  - `generate`: `db-url`/`linked`/`local` (`apps/cli-go/cmd/db_schema_declarative.go:570`)
  *  - `sync`: `apply`/`no-apply` (`apps/cli-go/cmd/db_schema_declarative.go:561`)
- * Both fail before any side effects run, matching cobra's pre-RunE validation.
+ * (both deleted in CLI-1970; last present at commit 7b469f5b3). Both fail
+ * before any side effects run, matching cobra's pre-RunE validation.
  */
 export class LegacyDeclarativeMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyDeclarativeMutuallyExclusiveFlagsError",
@@ -105,7 +107,8 @@ export class LegacyDeclarativeDiffError extends Data.TaggedError("LegacyDeclarat
  * Applying the generated migration to the local database failed. Wraps Go's
  * `applyMigrationToLocal` error; in interactive mode the handler offers a
  * reset+reapply before this surfaces
- * (`apps/cli-go/cmd/db_schema_declarative.go:397-435`).
+ * (`apps/cli-go/cmd/db_schema_declarative.go:397-435`, deleted in CLI-1970;
+ * last present at commit 7b469f5b3).
  */
 export class LegacyDeclarativeApplyError extends Data.TaggedError("LegacyDeclarativeApplyError")<{
   readonly message: string;

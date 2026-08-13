@@ -22,7 +22,7 @@ import {
 } from "../vanity-subdomains.errors.ts";
 import type { LegacyVanitySubdomainsGetFlags } from "./get.command.ts";
 
-/** Mirror of Go's `api.VanitySubdomainConfigResponse` (`types.gen.go`). */
+/** Type shape for `api.VanitySubdomainConfigResponse` (`types.gen.go`). */
 const LEGACY_GO_VANITY_CONFIG_RESPONSE = legacyGoStruct([
   ["custom_domain", legacyGoPtr(legacyGoString)],
   ["status", legacyGoString],

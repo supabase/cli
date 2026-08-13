@@ -1,19 +1,15 @@
 /**
- * Go's embedded default Kong TLS cert/key
- * (`apps/cli-go/pkg/config/templates/certs/kong.local.{crt,key}`,
- * `//go:embed`, `pkg/config/config.go:547-551`), seeded unconditionally onto
- * `Api.Tls.{CertContent,KeyContent}` in `NewConfig` (`config.go:452-455`) —
- * `Config.Validate` only overwrites them from disk when TLS is enabled AND
- * both `api.tls.cert_path`/`key_path` are configured (`config.go:1010-1027`);
- * otherwise this embedded pair survives untouched, and Kong's entrypoint
- * always writes `CertContent`/`KeyContent` to `/home/kong/localhost.{crt,key}`
- * regardless of `api.tls.enabled` (`start.go:585-601`) — only the published
- * host port (8000 vs 8443) depends on that flag.
+ * The default Kong TLS cert/key, seeded unconditionally onto
+ * `Api.Tls.{CertContent,KeyContent}` — config validation only overwrites them
+ * from disk when TLS is enabled AND both `api.tls.cert_path`/`key_path` are
+ * configured; otherwise this embedded pair survives untouched, and Kong's
+ * entrypoint always writes `CertContent`/`KeyContent` to
+ * `/home/kong/localhost.{crt,key}` regardless of `api.tls.enabled` — only the
+ * published host port (8000 vs 8443) depends on that flag.
  *
  * A real (if long-expired-eventually, valid until 2034-07-03) self-signed
- * `CN=localhost` cert/key pair — copied byte-for-byte (including the single
- * trailing newline each source file ends with) from the Go source above.
- * Must stay byte-identical to that source; do not reformat or re-wrap.
+ * `CN=localhost` cert/key pair. This is the canonical source; do not
+ * reformat or re-wrap.
  */
 
 export const LEGACY_KONG_LOCAL_TLS_CERT =

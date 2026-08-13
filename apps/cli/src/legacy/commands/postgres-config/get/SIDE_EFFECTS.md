@@ -48,29 +48,29 @@
 
 ## Output
 
-Text mode mirrors Go's pretty output path: a `- Custom Postgres Config -` heading is written to stderr, the config table is rendered to stdout, then `- End of Custom Postgres Config -` is written to stderr.
+In text mode, a `- Custom Postgres Config -` heading is written to stderr, the config table is rendered to stdout, then `- End of Custom Postgres Config -` is written to stderr.
 
-### `--output-format text` (default) - Go CLI compatible
+### `--output-format text` (default)
 
 Renders the config map as a Glamour ASCII table with `Parameter` / `Value` columns.
 
-### Go `--output pretty`
+### `--output pretty`
 
 Identical to text mode.
 
-### Go `--output json`
+### `--output json`
 
-Go-compatible indented JSON with alphabetical key order and a trailing newline.
+Indented JSON with alphabetical key order and a trailing newline.
 
-### Go `--output yaml`
+### `--output yaml`
 
 YAML representation of the config map.
 
-### Go `--output toml`
+### `--output toml`
 
-TOML representation of the config map. Numeric values arrive through `json.Unmarshal` as Go `float64`, so integral numbers render with `.0` (for example `max_connections = 100.0`).
+TOML representation of the config map. Numeric config values render with a `.0` suffix for whole numbers (for example `max_connections = 100.0`).
 
-### Go `--output env`
+### `--output env`
 
 Flat `KEY="value"` lines for each config entry.
 
@@ -88,12 +88,11 @@ One `result` event on success.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- The `--output` flag wins over `--output-format` when both are provided.
 - Requires `--project-ref` or a linked project (`.supabase/config.json`).
 - `linked-project.json` is written after the project ref resolves, regardless of whether the fetch succeeds.
 - `telemetry.json` is written on every invocation, including failures, but only once the `--experimental` gate is open.
-- `postgres-config` is an experimental command (Go `root.go:63`): `get` requires `--experimental`
-  (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE` gate (`root.go:91-96`),
-  which runs before the `IsManagementAPI` login check (`root.go:105-109`). A closed gate exits 1
+- `postgres-config` is an experimental command: `get` requires `--experimental`
+  (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API call, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.

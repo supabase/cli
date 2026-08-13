@@ -20,7 +20,7 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  *   - **`--linked`** — direct DB connection via the db-config resolver's linked
  *     branch, plus project-ref resolution and the linked-project cache so the
  *     `--linked` run writes supabase/.temp/linked-project.json for telemetry
- *     grouping (Go's PersistentPostRun `ensureProjectGroupsCached`).
+ *     grouping.
  *
  * Mirrors `advisors.layers.ts`. Deliberately does NOT use
  * `legacyManagementApiRuntimeLayer`: that layer exposes an *eagerly* built
@@ -36,9 +36,9 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  *
  * `legacyIdentityStitchLayer` (the one per-command identity stitcher) is provided
  * by the SAME reference to the platform-API factory, the linked-project cache, and
- * the db-config resolver, so memoisation gives all three a single `stitchAttempted`
- * guard — Go's one root-context `sync.Once`. The db-config resolver snapshots that
- * instance into its lazy linked stack's ambient layer.
+ * the db-config resolver, so memoisation gives all three a single
+ * `stitchAttempted` guard. The db-config resolver snapshots that instance
+ * into its lazy linked stack's ambient layer.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
@@ -81,8 +81,8 @@ export const legacyDbLintRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
-  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
-  // exposed at top level so `withLegacyCommandInstrumentation` can read
+  // The one per-command identity stitcher, exposed at top level so
+  // `withLegacyCommandInstrumentation` can read
   // `stitchedDistinctId()` and attribute the cli_command_executed event to the
   // gotrue id. The SAME reference is provided to platformApiFactory /
   // linkedProjectCache / dbConfig above, so memoisation makes the linked

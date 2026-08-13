@@ -13,9 +13,8 @@ import {
 } from "../../shared/legacy-go-struct-output.encoders.ts";
 
 /**
- * Mirror of Go's `api.BranchResponse` (`apps/cli-go/pkg/api/types.gen.go`) —
- * field order and pointer-ness drive the `-o yaml` / `-o toml` byte shape
- * (CLI-1975). Shared by `branches list`, `branches create`, and
+ * Struct spec whose field order and pointer-ness drive the `-o yaml` / `-o toml`
+ * byte shape. Shared by `branches list`, `branches create`, and
  * `branches update`, which all encode this struct.
  */
 export const LEGACY_GO_BRANCH_RESPONSE: LegacyGoType = legacyGoStruct([

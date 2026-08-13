@@ -34,7 +34,7 @@ function fakeSeedSession() {
 // `legacy-path-match.unit.test.ts` (including the `^`-only negation / `!`-is-literal
 // rule this file used to duplicate — and get wrong — in a local `legacyMatchPattern`).
 // This exercises that the seed pipeline's own glob resolution (`legacyGetPendingSeeds`)
-// actually uses it end to end, per Go's `config.Glob.Files` → `fs.Glob` → `path.Match`.
+// actually uses it end to end, per `config.Glob.Files` → `fs.Glob` → `path.Match`.
 describe("legacyGetPendingSeeds (glob character classes)", () => {
   it.effect(
     "treats a leading `!` in a bracket class as literal, not negation (Go path.Match parity)",
@@ -46,7 +46,7 @@ describe("legacyGetPendingSeeds (glob character classes)", () => {
       return Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        // Go's `[!a]` is a positive class of the literal members `!` and `a` — only a
+        // `[!a]` is a positive class of the literal members `!` and `a` — only a
         // leading `^` negates. So this pattern matches `a.sql`, not `b.sql` (the old
         // shell-style bug negated on `!` too, and would have matched `b.sql` instead).
         const pending = yield* legacyGetPendingSeeds(session, fs, path, ["[!a].sql"], dir);
@@ -102,7 +102,7 @@ const runSeed = (
 
 describe("legacySeedData (dirty parse)", () => {
   it.effect("fails on an unreadable dirty seed instead of refreshing its hash", () => {
-    // Go's `ExecBatchWithCache` reads + parses the file UNCONDITIONALLY before the
+    // `ExecBatchWithCache` reads + parses the file UNCONDITIONALLY before the
     // dirty check, so a dirty seed pointing at a missing file must fail (and leave
     // the previous hash) rather than silently upserting the new hash.
     const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));

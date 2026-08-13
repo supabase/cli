@@ -143,19 +143,19 @@ const generatePrivateKey = Effect.fnUntraced(function* (algorithm: SigningAlgori
   } satisfies SigningKeyJwk;
 });
 
-// `gen signing-key` goes through the exact same `flags.LoadConfig` -> `Config.Validate`
-// pipeline as `gen bearer-jwt` (`signingkeys.go:111` vs `bearerjwt.go:20`) — there is no
-// separate, ungated Go code path for this command. Go's `Config.Validate` only reads
-// `[auth].signing_keys_path`'s file INSIDE `if c.Auth.Enabled` (`config.go:1087-1116`), so
-// with auth disabled `utils.Config.Auth.SigningKeys` never advances past `NewConfig()`'s own
-// default single-key array — meaning `--append` appends to (and a subsequent overwrite
-// clobbers) that phantom default set, NOT the file's real content. Verified against the real
-// binary (CLI-1961 Codex review finding): with `auth.enabled = false` and a configured
+// `gen signing-key` goes through the exact same config load and validation
+// pipeline as `gen bearer-jwt` — there is no separate, ungated code path for
+// this command. The `[auth].signing_keys_path` file is only read when auth
+// is enabled, so with auth disabled the signing keys never advance past the
+// default single-key array — meaning `--append` appends to (and a
+// subsequent overwrite clobbers) that phantom default set, NOT the file's
+// real content: with `auth.enabled = false` and a configured
 // `signing_keys_path` pointing at a file containing a real custom key, `gen signing-key
 // --append` overwrote the file with the default ES256 key plus the newly generated one,
-// discarding the original entry entirely — surprising, but this is what Go actually does, so
-// this must gate the read on `paths.authEnabled` exactly like `gen bearer-jwt`'s own
-// `legacyResolveBearerJwtSigningKey` already does.
+// discarding the original entry entirely — surprising, but this is the
+// established behavior, so this must gate the read on `paths.authEnabled`
+// exactly like `gen bearer-jwt`'s own `legacyResolveBearerJwtSigningKey`
+// already does.
 const loadSigningKeysConfig = Effect.fnUntraced(function* (cwd: string) {
   const paths = yield* legacyResolveSigningKeysConfigPaths(
     cwd,
@@ -222,16 +222,15 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
   const warnText = (text: string) => styleIfTty(tty.stdoutIsTty, "yellow", text);
 
   return yield* Effect.gen(function* () {
-    // Go's `flags.LoadConfig` (`signingkeys.go:99`) loads the project `.env` files before the
-    // overwrite prompt reads `viper.GetBool("YES")` (`console.PromptYesNo`, `signingkeys.go:130`),
-    // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too. Resolved inside
-    // this block (not above it) so a malformed/unreadable `.env` still flushes telemetry below,
-    // matching Go: telemetry attaches in root's `PersistentPreRunE` (`cmd/root.go:131-155`)
-    // before this command's own `RunE` runs `flags.LoadConfig`, so `service.Capture` still fires
-    // in Go even when that load fails.
+    // The project `.env` files are loaded before the overwrite prompt reads
+    // the yes flag, so a `SUPABASE_YES` set only in `supabase/.env` must
+    // auto-confirm here too. Resolved inside this block (not above it) so a
+    // malformed/unreadable `.env` still flushes telemetry below — telemetry
+    // must attach before the config load runs, so the capture still fires
+    // even when that load fails.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-    // Match Go's order: LoadConfig validates the configured signing-keys file before any key is
+    // The configured signing-keys file is validated before any key is
     // generated, so a broken config fails fast without doing throwaway crypto work.
     const signingKeysConfig = yield* loadSigningKeysConfig(cliConfig.workdir);
     const key = yield* generatePrivateKey(flags.algorithm);
@@ -262,8 +261,7 @@ export const legacyGenSigningKey = Effect.fn("legacy.gen.signing-key")(function*
                   // `legacyPromptYesNo` checks `output.format !== "text"` BEFORE it checks
                   // TTY, so a non-TTY (piped or empty) invocation under `json`/`stream-json`
                   // would otherwise hit that check first and return the default without
-                  // ever reading stdin. Go's `console.PromptYesNo`
-                  // (apps/cli-go/internal/utils/console.go:64-82) has no concept of output
+                  // ever reading stdin. The confirmation prompt has no concept of output
                   // format at all — it always reads piped stdin — so a piped `y`/`n` answer
                   // must be honored here the same as in text mode. Present a text-shaped
                   // view of `output` to reach that read; `raw`/`promptConfirm` write the

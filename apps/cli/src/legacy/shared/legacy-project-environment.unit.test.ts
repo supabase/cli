@@ -117,8 +117,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   });
 
   it("preserves a literal # in an unquoted value with no leading whitespace, matching godotenv", () => {
-    // godotenv only starts an inline comment at a `#` preceded by whitespace
-    // (`godotenv@v1.5.1/parser.go:144-153`); `foo#bar` keeps the `#` verbatim.
+    // godotenv only starts an inline comment at a `#` preceded by whitespace;
+    // `foo#bar` keeps the `#` verbatim.
     writeFileSync(root + "/.env", "SUPABASE_AUTH_JWT_SECRET=long#secret\n");
     const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_AUTH_JWT_SECRET"]).toBe("long#secret");
@@ -132,7 +132,7 @@ describe("legacyResolveProjectEnvironmentValues", () => {
 
   it("strips a trailing comment after a quoted value, matching godotenv", () => {
     // godotenv's `extractVarValue` locates the quoted span by scanning forward for the
-    // closing quote (`godotenv@v1.5.1/parser.go:160-180`) and discards anything after
+    // closing quote and discards anything after
     // it as a comment — the value is `demo`, not the literal `"demo"` a check that
     // requires the whole trimmed remainder to end with a quote would produce.
     writeFileSync(root + "/.env", 'SUPABASE_PROJECT_ID="demo" # local\n');
@@ -141,8 +141,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   });
 
   it("accepts a colon-separated assignment, matching godotenv's YAML-style key/value form", () => {
-    // godotenv's `locateKeyName` treats `=` and `:` as interchangeable separators
-    // (`godotenv@v1.5.1/parser.go:90-95`), and the repo's other dotenv parser
+    // godotenv's `locateKeyName` treats `=` and `:` as interchangeable separators,
+    // and the repo's other dotenv parser
     // (`packages/config/src/project.ts`'s `parseDotEnv`) already accepts both.
     writeFileSync(root + "/.env", "SUPABASE_PROJECT_ID: colon-project\n");
     const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
@@ -189,8 +189,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   });
 
   it("expands an unquoted $VAR reference to an earlier value in the same file", () => {
-    // godotenv expands unquoted/double-quoted references while loading
-    // (`godotenv@v1.5.1/parser.go:157`), so a later key can reuse an earlier one.
+    // godotenv expands unquoted/double-quoted references while loading,
+    // so a later key can reuse an earlier one.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=$BASE\n");
     const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("demo");
@@ -203,8 +203,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   });
 
   it("does not expand variable references inside single-quoted values", () => {
-    // godotenv never calls expandVariables for single-quoted values
-    // (`parser.go:172-173`) — they stay byte-literal.
+    // godotenv never calls expandVariables for single-quoted values —
+    // they stay byte-literal.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID='$BASE'\n");
     const merged = legacyResolveProjectEnvironmentValues(fakeProjectEnv(), root);
     expect(merged["SUPABASE_PROJECT_ID"]).toBe("$BASE");
@@ -225,7 +225,7 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   it("preserves a backslash-escaped $VAR reference as a literal, matching godotenv's escape rule", () => {
     // godotenv's expandVarRegex captures a leading backslash and strips ONLY
     // that backslash, returning the rest of the match verbatim instead of
-    // doing a lookup (`godotenv@v1.5.1/parser.go:253,264-265`) — even when
+    // doing a lookup — even when
     // BASE is defined, `demo\$BASE` must stay `demo$BASE`, not become
     // `demodemo`.
     writeFileSync(join(root, ".env"), "BASE=demo\nSUPABASE_PROJECT_ID=demo\\$BASE\n");
@@ -246,8 +246,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   });
 
   it("preserves a multiline quoted value alongside an unrelated SUPABASE_* key (godotenv parity)", () => {
-    // godotenv's parser scans the whole buffer with a cursor, not line-by-line
-    // (`godotenv@v1.5.1/parser.go:20-45`), so a quoted value spanning physical
+    // godotenv's parser scans the whole buffer with a cursor, not line-by-line,
+    // so a quoted value spanning physical
     // lines — e.g. a pasted PEM private key — doesn't break parsing of the rest
     // of the file. A naive line-by-line reader would see the continuation line
     // as malformed and abort before SUPABASE_PROJECT_ID is ever read.
@@ -261,8 +261,8 @@ describe("legacyResolveProjectEnvironmentValues", () => {
   });
 
   describe("when no project was found (projectEnv is null)", () => {
-    // Go's `loadNestedEnv` runs unconditionally before `config.toml` is ever
-    // opened (`pkg/config/config.go:786-793`), so a missing config file must
+    // `loadNestedEnv` runs unconditionally before `config.toml` is ever
+    // opened, so a missing config file must
     // not skip dotenv loading — these cover the local fallback that derives
     // `<workdir>/supabase`/`workdir` directly instead of giving up.
 

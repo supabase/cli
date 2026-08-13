@@ -4,7 +4,8 @@ type ApiKey = typeof ApiKeyResponse.Type;
 
 /**
  * Masking placeholder Go substitutes for a nullable-null api key value
- * (`apps/cli-go/internal/projects/apiKeys/api_keys.go:61-66`).
+ * (`apps/cli-go/internal/projects/apiKeys/api_keys.go:61-66`, deleted in
+ * CLI-1970; last present at commit 7b469f5b3).
  */
 const API_KEY_MASK = "******";
 

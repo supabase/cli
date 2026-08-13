@@ -52,9 +52,8 @@ const projectRef = legacyProjectRefLayer.pipe(
   Layer.provide(cliConfig),
 );
 
-// Exposed so the handler can cache the linked project (GET /v1/projects/{ref}) in
-// its post-run finalizer — Go's `ensureProjectGroupsCached` (cmd/root.go:214-234).
-// Shares the single `legacyIdentityStitchLayer` (Go's one `sync.Once`).
+// Exposed so the handler can cache the linked project (GET /v1/projects/{ref})
+// in its post-run finalizer. Shares the single `legacyIdentityStitchLayer`.
 const linkedProjectCache = legacyLinkedProjectCacheLayer.pipe(
   Layer.provide(credentials),
   Layer.provide(cliConfig),
@@ -66,9 +65,9 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
-  // The linked db-config resolver snapshots `LegacyIdentityStitch` (shared with the
-  // lazy platform-API factory + linked-project cache, Go's single `sync.Once`), so
-  // the command runtime must provide it or the bundled binary panics with a
+  // The linked db-config resolver snapshots `LegacyIdentityStitch` (shared with
+  // the lazy platform-API factory + linked-project cache), so the command
+  // runtime must provide it or the bundled binary panics with a
   // missing-service error (legacy CLAUDE.md rule 5). Its Analytics / TelemetryRuntime
   // / FileSystem / Path deps are ambient from the root runtime.
   Layer.provide(legacyIdentityStitchLayer),

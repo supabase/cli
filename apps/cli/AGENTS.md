@@ -36,10 +36,13 @@ Both call `runCli(root)` from `shared/cli/run.ts`.
 
 ## Legacy Port Status and Go CLI Authority
 
-`src/legacy/` started as a from-scratch 1:1 port of the Go CLI (`apps/cli-go/`) and is now largely
-there: see [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md#legacy-shell-command-status)
-for the live per-command tracker. As of writing, 95 of 103 legacy leaf commands are natively ported;
-only a small residual set is still a Phase 0 proxy to the Go binary.
+`src/legacy/` started as a from-scratch 1:1 port of the Go CLI (`apps/cli-go/`) and the port is now
+complete: every legacy leaf command is natively ported except the delegation surface documented in
+[`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md). As of CLI-1970, `apps/cli-go/`
+itself contains only that residual delegation surface — Go source for every other command was
+deleted outright once nothing in the TypeScript CLI could reach it, directly or indirectly. For any
+command whose Go source no longer exists in-tree, the authoritative parity reference is the last
+commit with it intact: `7b469f5b3`.
 
 This changes what "Go CLI is authoritative" means day to day. `apps/cli-go/` is required reading
 only when:
@@ -129,15 +132,15 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 ## Phase 0: Go Binary Wrapper
 
-This phase is now the exception, not the default: only the commands listed as `wrapped` in the
-[Legacy Shell Command Status table](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+This phase is now the exception, not the default: only the commands in the
+[delegation surface table](./docs/go-cli-porting-status.md#the-delegation-surface)
 still need it. A Go CLI command that exists in `apps/cli-go/` but has no TS surface yet is rare at
 this point in the port; when one does show up, the first step is to **wrap** it: define the command
 in the TS command tree and proxy all invocations to the bundled Go binary via subprocess. Wrapping
 only works for a command the Go CLI already implements — there is nothing to proxy to otherwise. A
 genuinely TS-only addition with no Go equivalent (for example a TS-only flag on an already-ported
 command, per the "Flag divergences from the Go reference" list in
-[`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md)) is implemented natively and does
+[`docs/go-cli-divergences.md`](./docs/go-cli-divergences.md)) is implemented natively and does
 not go through Phase 0 at all.
 
 ### Proxy handler pattern
@@ -331,7 +334,7 @@ The legacy shell sends the same PostHog events to the same product analytics pip
 - **The canonical catalog is `shared/telemetry/event-catalog.ts`** — a 1:1 mirror of `apps/cli-go/internal/telemetry/events.go`. Reference its exported constants (`EventCommandExecuted`, `PropFlags`, `EnvSignalPresenceKeys`, …) instead of writing bare strings. When the Go catalog changes, update the TS catalog in the same PR.
 - **Native legacy commands wrap with `withLegacyCommandInstrumentation`** (from `legacy/telemetry/legacy-command-instrumentation.ts`) — _not_ the shared `withCommandInstrumentation`. The legacy variant emits Go-shape properties: a single `flags` map (vs `flags_used`/`flag_values`), `is_agent: boolean` (vs `ai_tool: string`), and `env_signals`.
 - **Pass `flags` to the wrapper** so boolean flag values can be detected and logged verbatim: `handler(flags).pipe(withLegacyCommandInstrumentation({ flags }), ...)`. Sensitive values become the literal string `"<redacted>"` to match Go.
-- **Use `safeFlags: ["flag-name"]`** to whitelist flags that Go marks with `markFlagTelemetrySafe` (grep `apps/cli-go/cmd/*.go`). Today these are `--project-ref` (sso, branches, link, functions, projects/api-keys), `--project-id` (gen/types), `--org-id` (projects/create), and `--version` (migration/squash).
+- **Use `safeFlags: ["flag-name"]`** to whitelist flags that Go marks with `markFlagTelemetrySafe` (historically found by grepping `apps/cli-go/cmd/*.go`). As of CLI-1970, only the retained commands' `cmd/*.go` files still exist in-tree (`db.go`, `functions.go`, `gen.go`, `root*.go`); the flags below came from `sso.go`, `branches.go`, `link.go`, and `projects.go`, all deleted once their commands went fully native — re-grep those at commit `7b469f5b3` if you need to re-derive this list. Today these are `--project-ref` (sso, branches, link, functions, projects/api-keys), `--project-id` (gen/types), `--org-id` (projects/create), and `--version` (migration/squash).
 - **Pass `config` (the command's own flag config record) to the wrapper** if it has any `Flag.choice`/`Flag.choiceWithValue` flags: `withLegacyCommandInstrumentation({ flags, config })`. Every choice flag declared in that command's own `config` is auto-detected and treated as safe, mirroring Go's `isEnumFlag` (`cmd/root_analytics.go:110-116`), which checks `flag.Value.(*utils.EnumFlag)` unconditionally — no per-flag `safeFlags` entry needed, and it stays correct as choices are added or removed. A command's own `config` only ever contains its own locally-declared flags, so this cannot cover the 3 global choice flags (`--output`, `--dns-resolver`, `--agent` in `shared/legacy/global-flags.ts`) — those are handled separately, see below.
 - **Global/persistent flags (`shared/legacy/global-flags.ts`) resolve automatically** — the wrapper reads `legacyGlobalFlagValues` (via `Effect.serviceOption`, so it's a no-op outside the real CLI tree) and falls back to it whenever a changed flag name isn't in the handler's own `flags` record, mirroring Go's `changedFlags()` walking `cmd.Parent()`'s `PersistentFlags()` (`cmd/root_analytics.go:53-76`). No per-command wiring needed. This gives two flag families their real value automatically, via the existing boolean-is-safe rule and a new choice-is-safe rule (`GLOBAL_CHOICE_FLAG_NAMES` — CLI-1904) respectively:
   - Boolean globals: `--debug`, `--yes`, `--experimental`, `--create-ticket`.
@@ -340,14 +343,14 @@ The legacy shell sends the same PostHog events to the same product analytics pip
   Both rules apply ONLY when a command's own `flags` record doesn't already declare that CLI name — a command's own flag always wins. Example: `db diff` declares its own local `output: Flag.string("output")` (a file path, not a choice) in its `flags` record, so `db diff --output diff.sql` stays redacted — matching Go, where `isEnumFlag` type-asserts `db diff`'s own non-enum local flag object instead of root's persistent `*utils.EnumFlag`.
 
 - **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
-- **When promoting a command from proxy to native, reproduce every `phtelemetry.*` call in the Go counterpart.** Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested`. The current Go custom events that legacy ports must reproduce when natively ported:
+- **When promoting a command from proxy to native, reproduce every `phtelemetry.*` call in the Go counterpart.** Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested` — note that most `internal/<command>/` packages were deleted in CLI-1970 once their commands went fully native, so this grep only finds something for the still-`wrapped` commands; check out commit `7b469f5b3` to grep an already-ported command's former Go source. The current Go custom events that legacy ports must reproduce when natively ported (already captured below, so this is only needed for a command not yet in this table):
 
-  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                                                                      |
-  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
-  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                | `internal/login/login.go:283-296`                                                                              |
-  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                        | `internal/link/link.go:60`                                                                                     |
-  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                              | formerly `internal/start/start.go:1245` (deleted as unreachable in CLI-1966; last present at commit a253ccba2) |
-  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (`SuggestUpgradeOnError` is envelope-first; hostnames + vanity get are envelope-only) | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/`                                        |
+  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                                                                                       |
+  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                | `internal/login/login.go:283-296` (deleted in CLI-1970; last present at commit 7b469f5b3)                                       |
+  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                        | `internal/link/link.go:60` (deleted in CLI-1970; last present at commit 7b469f5b3)                                              |
+  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                              | formerly `internal/start/start.go:1245` (deleted as unreachable in CLI-1966; last present at commit a253ccba2)                  |
+  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (`SuggestUpgradeOnError` is envelope-first; hostnames + vanity get are envelope-only) | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/` (deleted in CLI-1970; last present at commit 7b469f5b3) |
 
   Reference pattern for login: `next/commands/login/login.handler.ts:38-62`.
 
@@ -530,12 +533,16 @@ Live tests are black-box CLI subprocess tests — like `*.e2e.test.ts`, but run 
 
 ## Go CLI Parity Tracking
 
-When you add or change CLI commands, subcommands, flags, or parameters in the **legacy shell**, always update [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md).
+The legacy port is complete, so this is no longer a per-command tracking exercise:
 
-- Update status when a Go leaf command moves between `missing`, `partial`, and `ported`.
-- Update missing or extra flag/parameter notes when the command surface changes — including when you add or remove a flag on an already-ported TS command.
-- Keep the tracker focused on final leaf commands, not command groups.
-- If you add a TS-native command with no direct Go equivalent (for example `dev`), record it in the TS-only section instead of marking a Go command as ported.
+- When you add a TS-only flag, positional argument, or behavior on an already-ported **legacy
+  shell** command (no Go equivalent), record it in
+  [`docs/go-cli-divergences.md`](./docs/go-cli-divergences.md) in the same change. Same for a
+  TS-native command with no direct Go equivalent (for example `dev`) — record it in that file's
+  TS-only section.
+- Only touch [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md) if the delegation
+  surface itself changes — a command is added to or removed from the fixed set `LegacyGoProxy`
+  still forwards to the Go binary.
 
 ---
 
@@ -562,13 +569,18 @@ bun run --parallel "*:check"
 
 ### `apps/cli-go/`
 
-The [old Supabase CLI](https://github.com/supabase/cli) written in Go. Use this as the authoritative
-source, matched exactly, when working on one of the remaining wrapped commands (maintaining its
-command/flag definition, or replacing the wrapper with native TS), or when changing an
-already-ported legacy command's established output/flags/behavior/side-effects. It is not required
-reading for other legacy-shell work — see
+The [old Supabase CLI](https://github.com/supabase/cli) written in Go. As of CLI-1970, this tree
+contains only the residual proxied subset — the still-`wrapped` commands, plus the single
+Go-delegated flag paths on `db diff`, `db pull`, and `functions download`. Every other command's
+source was deleted outright once nothing in the TypeScript CLI could reach it, directly or
+indirectly. Use it as the authoritative source, matched exactly, when working on one of the
+remaining wrapped commands (maintaining its command/flag definition, or replacing the wrapper with
+native TS), or when changing an already-ported legacy command's established output/flags/behavior/
+side-effects. It is not required reading for other legacy-shell work — see
 [Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority) and
-[ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md). Exception:
-`internal/start` (Go's `supabase start`) was deleted outright as unreachable once ported (CLI-1966)
-— for that command, the last commit with the source intact
-(`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative reference instead.
+[ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md). For any
+command whose Go source no longer exists in-tree, the last commit with it intact (`7b469f5b3`) is
+the authoritative reference instead. Exception: `internal/start` (Go's `supabase start`) was
+deleted outright as unreachable once ported (CLI-1966) — for that command specifically, the last
+commit with the source intact (`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative
+reference instead.

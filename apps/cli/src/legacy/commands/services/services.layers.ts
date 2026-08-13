@@ -44,11 +44,11 @@ export const legacyServicesRuntimeLayer = (() => {
       Layer.provide(cliConfig),
       Layer.provide(httpClient),
       // The cache GET stitches session identity via the one per-command
-      // `LegacyIdentityStitch` (Go's single root-context `sync.Once`).
+      // `LegacyIdentityStitch` (a single per-command `sync.Once`).
       Layer.provide(legacyIdentityStitchLayer),
     ),
     legacyTelemetryStateLayer,
-    // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+    // The one per-command identity stitcher (a single per-command `sync.Once`),
     // exposed at top level so `withLegacyCommandInstrumentation` can read
     // `stitchedDistinctId()` and attribute the cli_command_executed event to the
     // gotrue id. The SAME reference is provided to linkedProjectCache above, so

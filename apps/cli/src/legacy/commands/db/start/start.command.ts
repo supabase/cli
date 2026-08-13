@@ -21,8 +21,8 @@ export const legacyDbStartCommand = Command.make("start", config).pipe(
   Command.withHandler((flags) =>
     legacyDbStart(flags).pipe(
       withLegacyCommandInstrumentation({
-        // `--from-backup` is not telemetry-safe in Go (no markFlagTelemetrySafe),
-        // so a set value reaches telemetry as `<redacted>`.
+        // `--from-backup` is not telemetry-safe, so a set value reaches
+        // telemetry as `<redacted>`.
         flags: { "from-backup": flags.fromBackup },
       }),
       withJsonErrorHandling,

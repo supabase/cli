@@ -63,9 +63,9 @@ export const legacyDockerRunLayer: Layer.Layer<
               legacyApplyBitbucketDockerFilter(resolvedOpts, legacyIsBitbucketPipeline()),
             );
             // Pipe stdout/stderr (rather than inherit) so the SQL dump can be
-            // captured and redirected to `--file`/post-processing. Go's `dockerExec`
+            // captured and redirected to `--file`/post-processing. `dockerExec`
             // does the same: stdout → caller's writer, stderr → `MultiWriter(os.Stderr,
-            // errBuf)` (`apps/cli-go/internal/db/dump/dump.go:50-90`).
+            // errBuf)`.
             const handle = yield* spawnContainerCli(spawner, args, {
               stdin: "inherit",
               stdout: "pipe",
@@ -131,7 +131,7 @@ export const legacyDockerRunLayer: Layer.Layer<
             // Stream stdout to the caller's sink in arrival order while draining
             // stderr concurrently — reading one pipe to completion before the other
             // would deadlock once the unread pipe's OS buffer fills. Go does the same
-            // via `stdcopy.StdCopy(stdout, stderr, logs)` (`docker.go:394`).
+            // via `stdcopy.StdCopy(stdout, stderr, logs)`.
             yield* Effect.all(
               [
                 // Map the stdout pipe's own read errors to a docker error while letting

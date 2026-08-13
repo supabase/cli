@@ -2,13 +2,13 @@ import { legacyBold } from "./legacy-colors.ts";
 import { legacySortMigrationPathsByVersion } from "./legacy-migration-history.ts";
 
 /**
- * `pkg/migration/file.go` — local migration filenames are `<digits>_<name>.sql`.
+ * Local migration filenames are `<digits>_<name>.sql`.
  * `ListLocalMigrations` guarantees every path in `localMigrations` matches, so the
  * version capture group is always present.
  */
 const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
 
-/** Last path segment, mirroring Go's `filepath.Base`. */
+/** Last path segment, mirroring `filepath.Base`. */
 const baseName = (path: string): string => {
   const normalized = path.replace(/[/\\]+$/u, "");
   const slash = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
@@ -16,8 +16,8 @@ const baseName = (path: string): string => {
 };
 
 /**
- * `pkg/migration/apply.go:14-16` — the exact error strings Go raises so the legacy
- * handler can byte-match them on stderr.
+ * The exact error strings so the legacy
+ * handler can match them on stderr.
  */
 export const LEGACY_ERR_MISSING_REMOTE =
   "Found local migration files to be inserted before the last migration on remote database.";
@@ -26,16 +26,15 @@ export const LEGACY_ERR_MISSING_LOCAL =
 
 /**
  * The outcome of comparing local migration files against the remote
- * `schema_migrations` history. Pure 1:1 port of Go's `FindPendingMigrations`
- * (`pkg/migration/apply.go:21-54`).
+ * `schema_migrations` history. Pure 1:1 port of `FindPendingMigrations`.
  *
- * - `ok`            — `pending` are the local migration paths to apply (those
- *                     beyond the remote history, in order).
+ * - `ok` — `pending` are the local migration paths to apply (those
+ * beyond the remote history, in order).
  * - `missing-local` — remote has versions with no local file (`ErrMissingLocal`).
- *                     `versions` are the offending remote versions.
+ * `versions` are the offending remote versions.
  * - `missing-remote`— local has files ordered before the remote head
- *                     (`ErrMissingRemote`). `paths` are the out-of-order local
- *                     migration paths.
+ * (`ErrMissingRemote`). `paths` are the out-of-order local
+ * migration paths.
  */
 export type LegacyPendingMigrations =
   | { readonly kind: "ok"; readonly pending: ReadonlyArray<string> }
@@ -44,7 +43,7 @@ export type LegacyPendingMigrations =
 
 /**
  * Two-pointer reconciliation of local migration paths vs remote applied versions.
- * Mirrors Go's `FindPendingMigrations`, including its **string** comparison of
+ * Mirrors `FindPendingMigrations`, including its **string** comparison of
  * versions (`remote == local` / `remote < local`).
  * Both sides must agree on ordering, so `localMigrations` is re-sorted by version.
  */
@@ -90,8 +89,8 @@ export function legacyFindPendingMigrations(
 
 /**
  * Computes the `--include-all` pending set when reconciliation reports
- * `missing-remote`. Mirrors Go's `GetPendingMigrations` includeAll branch
- * (`internal/migration/up/up.go:46-48`): the out-of-order paths first, then the
+ * `missing-remote`. Mirrors `GetPendingMigrations` includeAll branch:
+ * the out-of-order paths first, then the
  * local migrations beyond `len(remote)+len(diff)`.
  */
 export function legacyIncludeAllPending(
@@ -106,7 +105,7 @@ export function legacyIncludeAllPending(
   return [...diff, ...sortedLocal.slice(remoteCount + diff.length)];
 }
 
-/** Go's `suggestIgnoreFlag` (`internal/migration/up/up.go:63-67`). */
+/** `suggestIgnoreFlag`. */
 export function legacySuggestIgnoreFlag(paths: ReadonlyArray<string>): string {
   return (
     "\nRerun the command with --include-all flag to apply these migrations:\n" +

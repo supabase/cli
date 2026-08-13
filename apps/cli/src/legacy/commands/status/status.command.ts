@@ -16,8 +16,8 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { legacyStatus } from "./status.handler.ts";
 
-// Go registers both `--override-name` and `--exclude` as pflag `StringSliceVar`
-// (`cmd/status.go:38-39`), which CSV-splits each occurrence and accumulates
+// `--override-name` and `--exclude` are pflag-style string-slice flags, which
+// CSV-split each occurrence and accumulate
 // across repeats — `--override-name a=1,b=2` is two overrides, not one.
 // Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
 // see `legacyStringSliceFlag`).
@@ -42,12 +42,12 @@ const config = {
 
 export type LegacyStatusFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// Go's `status` needs no access token, so this deliberately avoids
-// `legacyManagementApiRuntimeLayer` (the EAGER `LegacyPlatformApi` stack,
-// which resolves a token at layer BUILD time and fails outright with none) —
-// mirrors `unlink`'s runtime shape. `legacyCliConfigLayer` is exposed at the
-// top level directly (nothing else in this runtime needs to consume it
-// internally).
+// `status` makes no Management API calls (it needs no access token), so it
+// deliberately avoids `legacyManagementApiRuntimeLayer` (the EAGER
+// `LegacyPlatformApi` stack, which resolves a token at layer BUILD time and
+// fails outright with none) — mirrors `unlink`'s runtime shape.
+// `legacyCliConfigLayer` is exposed at the top level directly (nothing else in
+// this runtime needs to consume it internally).
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
 // TS-only QoL (CLI-2167 follow-up, no Go counterpart): a LAZY Management API

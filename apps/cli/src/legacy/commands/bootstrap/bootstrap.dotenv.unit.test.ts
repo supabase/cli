@@ -6,7 +6,7 @@ import type { LegacyDbConfig } from "./bootstrap.pgconfig.ts";
 
 type ApiKey = typeof ApiKeyResponse.Type;
 
-// Mirrors Go's `bootstrap_test.go::TestWriteEnv` fixtures.
+// Mirrors the established `TestWriteEnv` fixtures.
 const API_KEYS: ReadonlyArray<ApiKey> = [
   { name: "anon", api_key: "anonkey" },
   { name: "service_role", api_key: "servicekey" },

@@ -48,9 +48,8 @@ migration-history table to match.
   2. after-migration `auth`/`storage` dump — identical env
   3. the final full dump (no schema filter) — `EXCLUDED_SCHEMAS=<InternalSchemas joined "|">`, `EXTRA_SED=/^--/d`, streamed straight into the truncated target file
 
-  Unlike `db diff`/`db pull`, the shadow only ever gets Go's `SetupDatabase` (platform
-  baseline + roles.sql) — **no** `CREATE DATABASE contrib_regression` template database, since
-  squash calls `start.SetupDatabase` directly rather than going through `setupShadowConn`.
+  Unlike `db diff`/`db pull`, the shadow only ever gets `legacySetupDatabase` (platform
+  baseline + roles.sql) — **no** `CREATE DATABASE contrib_regression` template database.
 
 ## API Routes
 
@@ -80,7 +79,7 @@ migration-history table to match.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 stderr, in order (path-dependent):
 
@@ -100,15 +99,15 @@ Connecting to remote database...
 ```
 
 stdout: only `Finished supabase migration squash.` (aqua), printed inline by the
-handler itself — matching Go's per-command `PostRun` (there is no shared
-group-level epilogue that prints it). Local target additionally prints `Run
+handler itself (there is no shared group-level epilogue that prints it). Local
+target additionally prints `Run
 supabase migration repair --status applied to update your remote migration
 history table.` to stderr, after the stdout line.
 
 ### `--output-format json` / `stream-json`
 
-Progress lines stay on stderr (including the confirmation prompt — Go's
-`Console` ignores `--output`/`--output-format` entirely); stdout carries
+Progress lines stay on stderr (including the confirmation prompt, regardless of
+`--output`/`--output-format`); stdout carries
 `output.success("Migrations squashed", { squashedInto, removed, removeFailures,
 alreadyEarliest, isLocal, baselinedVersion })` instead of the `Finished …` line
 and (for the local target) the repair suggestion — both suppressed in machine
@@ -122,39 +121,38 @@ code or the rest of the payload.
 
 ## Notes
 
-- `--local` defaults **true** (Go: `Bool("local", true)`); `[db-url linked local]` and
+- `--local` defaults **true**; `[db-url linked local]` and
   `[db-url password]` are the two mutually-exclusive flag groups.
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
   overrides ONLY the linked-ref resolution used for the connection (flag >
   `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
   passing it with a resolved `--local`/`--db-url` target is a hard error rather
   than a silently discarded flag (deliberately stricter than
-  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
-  a non-linked target).
-- The shadow gets `SetupDatabase` only — **no** `CREATE DATABASE contrib_regression` (unlike
+  `SUPABASE_PROJECT_ID`, which simply goes unused on a non-linked target).
+- The shadow gets `legacySetupDatabase` only — **no** `CREATE DATABASE contrib_regression` (unlike
   `db diff`/`db pull`).
-- `--version` is compared **lexically** against zero-padded timestamps (Go's `v <= version`).
+- `--version` is compared **lexically** against zero-padded timestamps.
 - The baseline version is re-derived from the local migrations directory listing taken
   **after** the merged-file removals — so a removal that failed non-fatally causes the
   baseline to target the surviving **older** version, not the original squash target.
-- A failed full-schema dump leaves the target migration truncated (Go's own behaviour, not
-  recoverable — the file was already truncated before the dump began).
+- A failed full-schema dump leaves the target migration truncated (not recoverable — the
+  file was already truncated before the dump began).
 - A declined "Update remote migration history table?" prompt is a **success** path (exit 0,
   no baseline query, `Finished …` still prints) — the opposite of `migration repair`/`fetch`/
   `down`, which treat a decline as a cancellation.
-- **Atomicity note:** Go sends the baseline `DELETE`/`INSERT` via `pgx.Batch` (a pipeline, not
-  an explicit transaction) — a partial failure could leave the DELETE applied without the
+- **Atomicity note:** the old Go CLI sent the baseline `DELETE`/`INSERT` via a batched pipeline
+  (not an explicit transaction) — a partial failure could leave the DELETE applied without the
   INSERT. The TS port wraps both statements in an explicit `BEGIN`/`COMMIT` with `ROLLBACK` on
-  error (matching `migration repair`'s own equivalent divergence); the success path is
-  byte-identical to Go.
+  error (matching `migration repair`'s own equivalent divergence); the success path produces
+  the same output as before.
 - **Documented divergences** (neither reproduced, both judged strictly worse to replicate):
-  (a) `bufio.Scanner`'s 64 KiB `MaxScanTokenSize` silently truncates `lineByLineDiff`'s output
-  when a single dumped line exceeds it (`scanner.Err()` is never checked in Go) — not
-  reproduced (`squash.diff.ts`); (b) Go's own separator-comment write (`fmt.Fprint`,
-  `squash.go:130`) discards its error return, while the auth/storage diff write right after it
-  is checked — this port combines both into one write, so a hypothetical failure isolated to
-  just the separator bytes would (unlike Go) surface as `failed to write line: …`; not
-  realistically triggerable on a real filesystem for a single already-open file descriptor.
+  (a) the old Go CLI's line-scanning silently truncated `lineByLineDiff`'s output when a
+  single dumped line exceeded 64 KiB, with no error surfaced — not reproduced (`squash.diff.ts`);
+  (b) the old Go CLI's separator-comment write discarded its error return, while the
+  auth/storage diff write right after it was checked — this port combines both into one write,
+  so a hypothetical failure isolated to just the separator bytes now surfaces as
+  `failed to write line: …`; not realistically triggerable on a real filesystem for a single
+  already-open file descriptor.
 - `Initialising schema...` is printed by the shared setup prelude just before
-  `SetupDatabase` rather than from inside it — inherited from CLI-1956, shared with `db
-diff`/`db pull`'s identical shadow-provisioning prelude.
+  `legacySetupDatabase` runs rather than from inside it — inherited from CLI-1956, shared with
+  `db diff`/`db pull`'s identical shadow-provisioning prelude.

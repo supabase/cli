@@ -245,8 +245,8 @@ const scenarios: ReadonlyArray<ParityScenario> = [
   {
     name: "auth.email.smtp present table missing a required field",
     // Both pipelines read every smtp field straight off the raw TOML/document rather than a
-    // schema-decoded, always-defaulted value (Go's presence-based `enabled` default,
-    // config.go:743-748) — L needs the raw `document` (5th param) for this, matching D's raw
+    // schema-decoded, always-defaulted value (this section's presence-based `enabled`
+    // default) — L needs the raw `document` (5th param) for this, matching D's raw
     // smol-toml document.
     toml: ["[auth.email.smtp]", 'user = "u"'],
     overrides: { auth: { enabled: true, site_url: "http://localhost:3000" } },
@@ -262,7 +262,7 @@ const scenarios: ReadonlyArray<ParityScenario> = [
   {
     name: "experimental.webhooks present without enabled = true",
     // Both pipelines read webhooks presence from the raw document rather than the always-defaulted
-    // decoded `enabled` (config.go:1846-1848) — L needs the raw `document` (5th param) for this,
+    // decoded `enabled` — L needs the raw `document` (5th param) for this,
     // matching D's raw smol-toml document. D previously never populated `webhooksPresent`/
     // `webhooksEnabled` on its `LegacyExperimentalInput` at all, so this branch was D-unreachable
     // (review: PRRT_kwDOErm0O86WE42i) — now shared like every other scenario in this table.
@@ -278,7 +278,7 @@ const scenarios: ReadonlyArray<ParityScenario> = [
 // way by both — see the module header in `legacy-config-validate.ts` for the full explicitly
 // out-of-scope list):
 // - `remotes[*].project_id`, `auth.sms`, `auth.external` — D-only, never part of the shared
-//   validator (`LegacyConfigValidationInput` has no fields for these at all).
+// validator (`LegacyConfigValidationInput` has no fields for these at all).
 // - `api.tls`, `project_id`, `studio`, `local_smtp` — L-only, D has no equivalent sections.
 describe("legacyValidateResolvedConfig cross-caller parity (D vs L)", () => {
   for (const scenario of scenarios) {

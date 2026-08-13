@@ -144,8 +144,8 @@ describe("legacyApplyMigrationFile", () => {
   it.effect(
     "wraps a read failure with Go's parse-file error text (Go NewMigrationFromFile parity)",
     () => {
-      // Go's `NewMigrationFromFile`/`parseFile` wraps the open failure as
-      // `"failed to open migration file: %w"` (`pkg/migration/file.go:57-58`) before
+      // `NewMigrationFromFile`/`parseFile` wraps the open failure as
+      // `"failed to open migration file: %w"` before
       // `ApplyMigrations`/`applySchemaFiles` ever get a chance to attach a
       // `CmdSuggestion` — a read failure here must carry the same prefix, not the bare
       // platform error text.
@@ -233,8 +233,8 @@ describe("legacyApplyMigrationFile", () => {
 });
 
 describe("migration failure rendering (Go ExecBatch parity)", () => {
-  // Byte-exact ports of Go's `(*MigrationFile).ExecBatch` error layout
-  // (`pkg/migration/file.go:88-113`): `<pg error>\n[Detail]\n[42704 hint]\n`
+  // Byte-exact ports of `(*MigrationFile).ExecBatch` error layout:
+  // `<pg error>\n[Detail]\n[42704 hint]\n`
   // `At statement: <i>\n<caret-marked statement>`.
   const failing = (
     sql: string,
@@ -348,8 +348,8 @@ describe("migration failure rendering (Go ExecBatch parity)", () => {
 });
 
 describe("legacyMarkError", () => {
-  // Every expectation below is pinned against Go's `markError` output
-  // (`pkg/migration/file.go:117-132`), captured by running the Go function
+  // Every expectation below is pinned against `markError` output,
+  // captured by running the Go function
   // directly on the same inputs.
   it("places the caret under a mid-statement position", () => {
     expect(legacyMarkError("create table t (col ltree)", 21)).toBe(
@@ -390,7 +390,7 @@ describe("legacyMarkError", () => {
 });
 
 describe("legacyIsPipelineIncompatible", () => {
-  // Mirrors Go's `TestIsPipelineIncompatible` (`pkg/migration/file_test.go`, supabase/cli#5156).
+  // Mirrors `TestIsPipelineIncompatible` (`pkg/migration/file_test.go`, supabase/cli#5156).
   const cases: ReadonlyArray<readonly [string, string, boolean]> = [
     [
       "create index concurrently",
@@ -523,18 +523,18 @@ describe("legacyApplySchemaFiles", () => {
   it.effect(
     "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is configured (Go bufio.Scanner: token too long parity)",
     () => {
-      // Go's `parser.Split` (`pkg/parser/token.go:81-119`) only enforces
+      // `parser.Split` only enforces
       // `SUPABASE_SCANNER_BUFFER_SIZE` when it's explicitly set — `parseFile`
       // otherwise auto-grows the scanner to the real file's byte length, so the
       // DEFAULT path can never hit `bufio.ErrTooLong`. With it set below a single
-      // statement's raw byte length, Go fails with `bufio.Scanner: token too long`
+      // statement's raw byte length, this fails with `bufio.Scanner: token too long`
       // instead of silently applying the oversized statement — verified empirically
-      // against `apps/cli-go/pkg/parser` (a `parser.SplitAndTrim` scratch probe).
+      // (a `parser.SplitAndTrim` scratch probe).
       const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });
       const file = join(dir, "supabase", "big.sql");
       // A single, un-splittable statement whose raw text exceeds the 4096-byte floor
-      // (Go's `bufio.Scanner` starts at that size regardless of the configured limit).
+      // (`bufio.Scanner` starts at that size regardless of the configured limit).
       writeFileSync(file, `SELECT 1;\nSELECT '${"a".repeat(5000)}';\n`);
       const { session } = fakeSession();
       const previous = process.env["SUPABASE_SCANNER_BUFFER_SIZE"];
@@ -574,10 +574,10 @@ describe("legacyApplySchemaFiles", () => {
   it.effect(
     "reports the last scanned RAW token in the too-long error even when it trimmed to empty (Go scanner.Text() parity, review CLI-1958)",
     () => {
-      // Go's `token = scanner.Text()` (`pkg/parser/token.go:96`) runs on EVERY
+      // `token = scanner.Text()` runs on EVERY
       // successful `Scan()`, unconditionally — BEFORE the `len(trim) > 0` gate that
       // decides whether to append to `stats`. So when a statement trims to empty
-      // (a lone ";") immediately before an oversized one, Go's `bufio.ErrTooLong`
+      // (a lone ";") immediately before an oversized one, `bufio.ErrTooLong`
       // message still reports that lone ";" as the last-scanned text, not a blank
       // token — `len(stats)` (this port's `emitted`) stays gated on non-empty trim,
       // but the reported RAW text must not share that gate.
@@ -660,13 +660,12 @@ describe("legacyApplySchemaFiles", () => {
   it.effect(
     "falls back to Go's hardcoded default cap when SUPABASE_SCANNER_BUFFER_SIZE is set but unparseable (viper parity, not '5M' == 5MiB)",
     () => {
-      // Verified empirically against `apps/cli-go/pkg/parser` + vendored
-      // `viper@v1.21.0`: a bare multiplier suffix with NO trailing "b"/"B" (e.g. "5M")
+      // Verified empirically: a bare multiplier suffix with NO trailing "b"/"B" (e.g. "5M")
       // is NOT 5 MiB in real Go — `parseSizeInBytes` only recognizes a multiplier when
       // the string's LAST character is literally "b"/"B", so "5M" never strips a
       // suffix and `cast.ToInt("5M")` fails whole, yielding 0. `viper.IsSet` is still
-      // true (the var IS present), so `parseFile`'s file-size auto-growth never runs
-      // — `parser.Split` falls back to its OWN hardcoded default cap
+      // true (the var IS present), so `parseFile`'s file-size auto-growth never runs —
+      // `parser.Split` falls back to its OWN hardcoded default cap
       // (`MaxScannerCapacity`, 256KiB), not to "no limit" and not to a tiny 5-byte
       // limit either. A statement past that hardcoded default must still fail.
       const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-garbage-"));
@@ -692,7 +691,7 @@ describe("legacyApplySchemaFiles", () => {
         if (Exit.isFailure(exit)) {
           const msg = JSON.stringify(exit.cause);
           expect(msg).toContain("bufio.Scanner: token too long");
-          // 256KiB (Go's `parser.MaxScannerCapacity` default), not "5MB" and not ~0KB.
+          // 256KiB (`parser.MaxScannerCapacity` default), not "5MB" and not ~0KB.
           expect(msg).toContain(
             "Try setting SUPABASE_SCANNER_BUFFER_SIZE=5MB (current size is 256KB)",
           );
@@ -865,7 +864,7 @@ describe("legacyApplySchemaFiles", () => {
     () => {
       // "9223372036854775808" is one more than `math.MaxInt64`. Go's
       // `strconv.ParseInt(s, 0, 0)` rejects it with a range error, and `cast.ToInt`
-      // (`spf13/cast@v1.10.0/number.go:407-414`) discards ANY `parseFn` error —
+      // discards ANY `parseFn` error —
       // range or syntax — returning exactly `0`, never the huge (if imprecise)
       // magnitude `Number.parseInt` would otherwise accept. `viper.IsSet` is still
       // true, so this falls back to the 256KiB hardcoded default, same as a
@@ -960,7 +959,7 @@ describe("legacyApplySchemaFiles", () => {
   it.effect(
     "rejects an oversized statement when SUPABASE_SCANNER_BUFFER_SIZE is set only in the project env (Go loadNestedEnv parity)",
     () => {
-      // Go's `loadNestedEnv` (`pkg/config/config.go:1220`) `os.Setenv`s every
+      // `loadNestedEnv` `os.Setenv`s every
       // project-`.env` key that isn't already in the shell env BEFORE the command body
       // runs, so `viper.AutomaticEnv()` sees a `supabase/.env`-only
       // `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported one.
@@ -1007,7 +1006,7 @@ describe("legacyApplySchemaFiles", () => {
     "shell env still wins over the project env for SUPABASE_SCANNER_BUFFER_SIZE (Go godotenv 'never overrides' parity)",
     () => {
       // `godotenv.Load`'s `overload=false` never sets a key already present in
-      // `os.Environ()` (`godotenv@v1.5.1/godotenv.go:184-200`) — the shell value must
+      // `os.Environ()` — the shell value must
       // win even when a (different) project-env value is also threaded through.
       const dir = mkdtempSync(join(tmpdir(), "legacy-schema-files-scanner-shellwins-"));
       mkdirSync(join(dir, "supabase"), { recursive: true });

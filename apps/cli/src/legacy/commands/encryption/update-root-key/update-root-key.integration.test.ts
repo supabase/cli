@@ -66,7 +66,7 @@ describe("legacy encryption update-root-key integration", () => {
       const put = api.requests.find((r) => r.method === "PUT");
       expect(put?.url).toContain(`/v1/projects/${LEGACY_VALID_REF}/pgsodium`);
       expect(put?.body).toEqual({ root_key: "new-key" });
-      // Go parity: prompt to stderr, trailing newline to stdout (defer Println),
+      // Prompt to stderr, trailing newline to stdout (defer Println),
       // finished notice to stderr.
       expect(out.stderrText).toContain("Enter a new root key: ");
       // The command path is wrapped in ANSI (legacyAqua) in colour-capable

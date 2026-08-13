@@ -63,9 +63,9 @@ export const legacyUnlink = Effect.fn("legacy.unlink")(function* () {
 
     const [first, ...rest] = collected;
     if (first !== undefined) {
-      // Mirror Go's `errors.Join(allErrors...)` (unlink.go:41): surface every
+      // Mirror `errors.Join(allErrors...)` (unlink.go:41): surface every
       // collected message, not just the first. Keep the leading failure's tag
-      // (temp removal precedes the credential delete, matching Go's order).
+      // (temp removal precedes the credential delete, matching that order).
       if (rest.length === 0) {
         return yield* Effect.fail(first);
       }

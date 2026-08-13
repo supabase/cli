@@ -68,10 +68,9 @@ const config = {
     Flag.withDescription("Select a desired instance size for your project."),
     Flag.optional,
   ),
-  // TS-only, no Go CLI equivalent: `cmd/projects.go`'s `init()` never registers a
-  // `high-availability` flag, and the `RunE` closure's `api.V1CreateProjectBody{...}`
-  // never sets `HighAvailability` even though the API field exists — disclosed in
-  // SIDE_EFFECTS.md, matching how `--reveal` is disclosed on `projects api-keys`.
+  // TS-only flag with no historical equivalent, even though the API field
+  // exists — disclosed in SIDE_EFFECTS.md, matching how `--reveal` is
+  // disclosed on `projects api-keys`.
   highAvailability: Flag.boolean("high-availability").pipe(
     Flag.withDescription("Enable high availability for the project."),
     Flag.optional,
@@ -107,7 +106,7 @@ export const legacyProjectsCreateCommand = Command.make("create", config).pipe(
       // anyway — boolean values are always logged verbatim by the instrumentation
       // regardless of `safeFlags`. See the same pattern on `projects api-keys`'s
       // `--reveal`. `config` is passed so `region`/`size` (both `Flag.choice`)
-      // are auto-detected as telemetry-safe, matching Go's `isEnumFlag`.
+      // are auto-detected as telemetry-safe.
       withLegacyCommandInstrumentation({ flags, safeFlags: ["org-id"], config }),
       withJsonErrorHandling,
     ),

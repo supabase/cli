@@ -17,10 +17,9 @@ import { LegacyStorageMutuallyExclusiveFlagsError } from "../storage.errors.ts";
 /**
  * `supabase storage ls [path]` — list objects by path prefix.
  *
- * Port of `apps/cli-go/internal/storage/ls/ls.go`. The default path is `ss:///`
- * (all buckets); `--recursive` walks the tree with BFS. Text mode prints one
- * entry per line to **stdout** (Go `fmt.Println`); json/stream-json emit a single
- * `{ paths }` result.
+ * The default path is `ss:///` (all buckets); `--recursive` walks the tree
+ * with BFS. Text mode prints one entry per line to **stdout**;
+ * json/stream-json emit a single `{ paths }` result.
  */
 export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
   flags: LegacyStorageLsFlags,
@@ -52,8 +51,8 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
     const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
 
-    // Config is always loaded (Go's `utils.Config`); a `[remotes.*]` match prints
-    // the override line.
+    // Config is always loaded; a `[remotes.*]` match prints the override
+    // line.
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");

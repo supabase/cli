@@ -17,7 +17,7 @@ import {
   legacyResolvePflagProfile,
 } from "./legacy-pflag-reconcile.ts";
 
-// Go's SAML `nameid-format` enum (`cmd/sso.go:157-158,176`), reused here only
+// Go's SAML `nameid-format` enum, reused here only
 // as sample data for the generic enum-reconciliation helper under test.
 const NAME_ID_FORMATS = [
   "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
@@ -215,7 +215,7 @@ describe("legacyPflagWorkdirValue", () => {
   it("ignores the parsed flag when the --workdir token was consumed by another flag, falling to the env var", () => {
     // `--domains --workdir /x`: pflag hands `--workdir` to `--domains` and
     // never marks workdir changed, so viper falls to SUPABASE_WORKDIR
-    // (binary-verified against apps/cli-go, PR #5974 round 6).
+    // (binary-verified, PR #5974 round 6).
     expect(legacyPflagWorkdirValue(scan([], ["workdir"]), Option.some("/x"), "/env")).toEqual(
       Option.some("/env"),
     );
@@ -335,7 +335,7 @@ describe("legacyPflagProfileValue", () => {
   it("ignores the parsed flag when the --profile token was consumed by another flag, falling to the env var", () => {
     // `--domains --profile alternate.yml`: pflag hands `--profile` to
     // `--domains` and never marks profile changed, so viper falls to
-    // SUPABASE_PROFILE (binary-verified against apps/cli-go, PR #5974
+    // SUPABASE_PROFILE (binary-verified, PR #5974
     // round 7 — the demonstrated divergent input).
     expect(
       legacyPflagProfileValue(scan([], ["profile"]), Option.some("alternate.yml"), "env.yml"),

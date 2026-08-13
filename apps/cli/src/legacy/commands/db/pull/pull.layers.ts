@@ -21,9 +21,8 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
  * `shared/db-bootstrap/shadow-database.ts`), `LegacyDbConnection` (remote connect +
  * `schema_migrations` reconciliation / history update), and `LegacyDockerRun` for the migra
  * fallback. No `LegacyDeclarativeSeam` — neither `db pull` nor `db diff` has a Go-delegate
- * branch that needs it any more (native shadow provisioning replaced the Go seam entirely,
- * CLI-1956/CLI-1959); `--use-pgadmin`/`--use-pg-schema` delegate through `LegacyGoProxy`
- * instead, not this seam.
+ * branch that needs it any more (native shadow provisioning replaced it entirely);
+ * `--use-pgadmin`/`--use-pg-schema` delegate through `LegacyGoProxy` instead, not this seam.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 

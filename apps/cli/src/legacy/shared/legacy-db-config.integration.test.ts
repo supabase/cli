@@ -336,8 +336,8 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
   it.effect(
     "validates the ref-merged config before any network work (Go ParseDatabaseConfig order)",
     () => {
-      // Go runs LoadProjectRef → LoadConfig → NewDbConfigWithPassword
-      // (db_url.go:81-92), so an invalid `[remotes.<ref>]`-merged db.major_version
+      // `ParseDatabaseConfig` runs LoadProjectRef → LoadConfig → NewDbConfigWithPassword,
+      // so an invalid `[remotes.<ref>]`-merged db.major_version
       // fails as a config error before the TCP probe / pooler / Management API. The
       // ref is sourced from the config's top-level project_id; the matching remote
       // block sets an unsupported major_version. If validation happened after the
@@ -376,9 +376,9 @@ describe("legacyDbConfigResolver (linked config ordering)", () => {
   );
 
   it.effect("surfaces a project-ref read failure instead of reporting not-linked", () => {
-    // Go's ParseDatabaseConfig linked branch uses the hard LoadProjectRef (db_url.go:88),
+    // `ParseDatabaseConfig`'s linked branch uses the hard LoadProjectRef,
     // which returns `failed to load project ref` on a real `.temp/project-ref` read error
-    // (project_ref.go:71-72) rather than masking it as not-linked. With no project_id /
+    // rather than masking it as not-linked. With no project_id /
     // env and the ref file seeded as a DIRECTORY, the resolver must surface that.
     const dir = withWorkdir();
     mkdirSync(join(dir, "supabase", ".temp", "project-ref"), { recursive: true });

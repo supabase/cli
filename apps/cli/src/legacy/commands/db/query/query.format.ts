@@ -14,27 +14,27 @@ declare global {
 }
 
 /**
- * Pure output formatters for `db query`, ported 1:1 from Go's
- * `internal/db/query/query.go`. No Effect or service dependencies, so the
- * tablewriter layout, CSV quoting, and JSON envelope stay unit-testable and the
- * Go-parity rules (NULL rendering, key sort order, HTML escaping) are explicit.
+ * Pure output formatters for `db query`. No Effect or service dependencies,
+ * so the tablewriter layout, CSV quoting, and JSON envelope stay unit-testable
+ * and the established output-contract rules (NULL rendering, key sort order,
+ * HTML escaping) are explicit.
  */
 
 /**
- * Reproduce Go's `fmt.Sprintf("%v", v)` for JSON-decoded (`interface{}`) values:
- * objects → `map[k:v ...]` with byte-sorted keys, arrays → `[a b ...]`
- * (space-separated, recursive), booleans → `true`/`false`, numbers via Go's
- * `float64` `%g`, and nested `nil` → `<nil>`.
+ * Format a JSON-decoded (`interface{}`) value the established way: objects →
+ * `map[k:v ...]` with byte-sorted keys, arrays → `[a b ...]` (space-separated,
+ * recursive), booleans → `true`/`false`, numbers via `%g`-style float
+ * formatting, and nested `nil` → `<nil>`.
  */
 function goFormatValue(value: unknown): string {
   if (value === null || value === undefined) return "<nil>";
   if (typeof value === "string") return value;
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") return legacyGoFormatFloat(value);
-  // `bytea` columns: pgx scans them into a Go `[]byte`, so `fmt.Sprintf("%v")`
-  // prints the decimal byte values space-separated in brackets (`[222 173]`).
-  // node-postgres returns a `Buffer` (a `Uint8Array`), which would otherwise hit
-  // the object branch below and render as `map[0:222 1:173 ...]`.
+  // `bytea` columns render as decimal byte values space-separated in brackets
+  // (`[222 173]`, established output contract). node-postgres returns a
+  // `Buffer` (a `Uint8Array`), which would otherwise hit the object branch
+  // below and render as `map[0:222 1:173 ...]`.
   if (value instanceof Uint8Array) return `[${Array.from(value).join(" ")}]`;
   if (Array.isArray(value)) return `[${value.map(goFormatValue).join(" ")}]`;
   if (typeof value === "object") {
@@ -46,9 +46,10 @@ function goFormatValue(value: unknown): string {
 }
 
 /**
- * Go's `formatValue`: `nil` → `"NULL"`, everything else via `fmt.Sprintf("%v")`.
- * JSON object/array column values (common for JSONB on the linked path) render as
- * Go's `map[...]` / `[...]` rather than JS `[object Object]` / comma-joined text.
+ * `nil` → `"NULL"`, everything else via the established `%v`-style
+ * formatting. JSON object/array column values (common for JSONB on the linked
+ * path) render as `map[...]` / `[...]` rather than JS `[object Object]` /
+ * comma-joined text.
  */
 export function legacyFormatValue(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
@@ -58,28 +59,29 @@ export function legacyFormatValue(value: unknown): string {
 }
 
 /**
- * Go's `formatValue` for the `--linked` path, where the API response is
- * unmarshaled into `interface{}` so every JSON number is a `float64`. `nil` →
- * `"NULL"`, everything else via `fmt.Sprintf("%v")` — which prints `float64` with
- * `%g` semantics, so `1000000` renders as `1e+06`. Unlike the local pgx path
- * (whose integer columns stay plain via `legacyFormatValue`), primitive numbers
- * here route through Go's float formatting. Used for `db query --linked`
- * table/CSV cells only; JSON output re-marshals the raw values.
+ * Value formatter for the `--linked` path, where the API response is decoded
+ * into a generic JSON value so every JSON number is a float. `nil` → `"NULL"`,
+ * everything else via the established `%v`-style formatting — which prints
+ * floats with `%g` semantics, so `1000000` renders as `1e+06`. Unlike the
+ * local path (whose integer columns stay plain via `legacyFormatValue`),
+ * primitive numbers here route through the float formatting. Used for
+ * `db query --linked` table/CSV cells only; JSON output re-marshals the raw
+ * values.
  */
 export function legacyFormatLinkedValue(value: unknown): string {
   if (value === null || value === undefined) return "NULL";
   return goFormatValue(value);
 }
 
-// Postgres `float4` / `float8` type OIDs. node-postgres parses both to JS numbers;
-// Go scans them as float32/float64 so table/CSV cells render via `%g`.
+// Postgres `float4` / `float8` type OIDs. node-postgres parses both to JS
+// numbers; table/CSV cells render them via `%g` (established output contract).
 const PG_FLOAT4_OID = 700;
 const PG_FLOAT8_OID = 701;
 
 // Postgres `date` / `timestamp` / `timestamptz` type OIDs. The legacy `queryRaw`
-// type-parser override keeps these as raw Postgres text (not a JS `Date`), so the
-// microseconds Go's pgx `time.Time` preserves survive — a JS `Date` is millisecond
-// resolution and applies the local timezone.
+// type-parser override keeps these as raw Postgres text (not a JS `Date`), so
+// microsecond precision survives — a JS `Date` is millisecond resolution and
+// applies the local timezone.
 const PG_DATE_OID = 1082;
 const PG_TIMESTAMP_OID = 1114;
 const PG_TIMESTAMPTZ_OID = 1184;
@@ -106,11 +108,11 @@ const PG_TIMESTAMP_PATTERN =
  * Parse a Postgres date/timestamp/timestamptz text value into its UTC wall-clock
  * components plus the trimmed sub-second fraction. A `timestamptz` carries a zone
  * offset (`+00`, `-07`, `+05:30`) which is shifted to UTC; a `timestamp` has no
- * offset and is taken as UTC (matching Go's pgx decode); a `date` has neither time
- * nor offset (midnight UTC). Returns `undefined` for anything unrecognized (e.g.
- * `infinity`), so the caller falls back to the raw text. Whole-minute/second zone
- * offsets never touch the sub-second fraction, so the offset shift uses millisecond
- * `Date` math while `fraction` carries over verbatim.
+ * offset and is taken as UTC; a `date` has neither time nor offset (midnight UTC).
+ * Returns `undefined` for anything unrecognized (e.g. `infinity`), so the caller
+ * falls back to the raw text. Whole-minute/second zone offsets never touch the
+ * sub-second fraction, so the offset shift uses millisecond `Date` math while
+ * `fraction` carries over verbatim.
  */
 function parsePgUtcInstant(raw: string): PgUtcInstant | undefined {
   const m = PG_TIMESTAMP_PATTERN.exec(raw);
@@ -118,7 +120,7 @@ function parsePgUtcInstant(raw: string): PgUtcInstant | undefined {
   const [, y, mo, d, hh, mi, ss, frac, sign, oh, om, os] = m;
   // `Date.UTC` remaps years 0–99 to 1900–1999, which would corrupt historical dates
   // (`0001-01-01` → `1901-...`). `setUTCFullYear` does not remap, so build the instant
-  // explicitly to preserve the original year (Go's pgx `time.Time` keeps it).
+  // explicitly to preserve the original year.
   const dt = new Date(0);
   dt.setUTCFullYear(Number(y), Number(mo) - 1, Number(d));
   dt.setUTCHours(Number(hh ?? "0"), Number(mi ?? "0"), Number(ss ?? "0"), 0);
@@ -144,26 +146,28 @@ const pad2 = (n: number): string => String(n).padStart(2, "0");
 const pad4 = (n: number): string => String(n).padStart(4, "0");
 
 /**
- * Render a parsed instant as Go's `time.Time.String()` (`fmt.Sprintf("%v")`):
- * `2006-01-02 15:04:05.999999999 -0700 MST`, in UTC, fractional zeros trimmed. This
- * matches Go's `timestamp` exactly (Go decodes it as UTC). NOTE: Go renders
- * `timestamptz` in the process's LOCAL timezone with its zone name, which depends on
- * the host's `TZ` (not the data) and is not reconstructable; UTC is the stable,
- * correct-instant rendering — the same accepted divergence noted on the JSON path.
+ * Render a parsed instant as the established `time.Time.String()`-style
+ * format: `2006-01-02 15:04:05.999999999 -0700 MST`, in UTC, fractional zeros
+ * trimmed. This matches `timestamp` exactly (decoded as UTC). NOTE:
+ * `timestamptz` is rendered in the process's LOCAL timezone with its zone
+ * name in the established output contract, which depends on the host's `TZ`
+ * (not the data) and is not reconstructable; UTC is the stable,
+ * correct-instant rendering — the same accepted divergence noted on the JSON
+ * path.
  */
 function legacyFormatGoTimestamp(i: PgUtcInstant): string {
   const frac = i.fraction.length > 0 ? `.${i.fraction}` : "";
   return `${pad4(i.year)}-${pad2(i.month)}-${pad2(i.day)} ${pad2(i.hour)}:${pad2(i.minute)}:${pad2(i.second)}${frac} +0000 UTC`;
 }
 
-/** Render a parsed instant as Go's `time.Time` JSON marshal (RFC3339Nano, UTC). */
+/** Render a parsed instant as the established JSON marshal form (RFC3339Nano, UTC). */
 function legacyTimestampToRfc3339(i: PgUtcInstant): string {
   const frac = i.fraction.length > 0 ? `.${i.fraction}` : "";
   return `${pad4(i.year)}-${pad2(i.month)}-${pad2(i.day)}T${pad2(i.hour)}:${pad2(i.minute)}:${pad2(i.second)}${frac}Z`;
 }
 
 /**
- * Format a JS `Date` the way Go renders a pgx `time.Time` via `fmt.Sprintf("%v")`.
+ * Format a JS `Date` in the established `%v`-style timestamp format.
  * Defensive fallback only: with the `queryRaw` raw-text override, date/timestamp
  * columns arrive as strings (see {@link parsePgUtcInstant}), so a `Date` reaches here
  * only if a caller supplies native rows — and then only millisecond precision is
@@ -184,11 +188,12 @@ function formatGoTime(d: Date): string {
 
 /**
  * Per-column cell formatter for the local / `--db-url` path. Renders `date`/
- * `timestamp`/`timestamptz` columns via Go's `time.Time.String()` (microseconds
- * preserved from the raw Postgres text) and `float4`/`float8` columns with Go's `%g`
- * (`select 1000000::float8` → `1e+06`), while every other column keeps the plain
- * `legacyFormatValue` form (so integer columns are not turned into `1e+06`).
- * `fieldTypeIds` is the per-column OID list from `queryRaw`.
+ * `timestamp`/`timestamptz` columns via the established timestamp format
+ * (microseconds preserved from the raw Postgres text) and `float4`/`float8`
+ * columns with `%g`-style formatting (`select 1000000::float8` → `1e+06`),
+ * while every other column keeps the plain `legacyFormatValue` form (so
+ * integer columns are not turned into `1e+06`). `fieldTypeIds` is the
+ * per-column OID list from `queryRaw`.
  */
 export function legacyMakeLocalCellFormatter(
   fieldTypeIds: ReadonlyArray<number>,
@@ -200,7 +205,8 @@ export function legacyMakeLocalCellFormatter(
       if (instant !== undefined) return legacyFormatGoTimestamp(instant);
       // Unrecognized (e.g. `infinity`): fall through to the raw-text default.
     }
-    // Defensive: native rows may still carry a `Date`; render it like Go's `%v`.
+    // Defensive: native rows may still carry a `Date`; render it in the
+    // established `%v`-style format.
     if (value instanceof Date) return formatGoTime(value);
     if (typeof value === "number" && (oid === PG_FLOAT4_OID || oid === PG_FLOAT8_OID)) {
       return legacyGoFormatFloat(value);
@@ -212,7 +218,7 @@ export function legacyMakeLocalCellFormatter(
 // Postgres `int8` / `bigint` type OID. node-postgres returns these as strings.
 const PG_INT8_OID = 20;
 
-/** Standard padded base64, matching Go's `json.Marshal([]byte)`. */
+/** Standard padded base64, the established byte-array JSON encoding. */
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
@@ -220,16 +226,17 @@ function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /**
- * Coerce local/`--db-url` cells to the JSON shape Go's `json.Marshal` produces. Go's
- * pgx scan yields `int64` for `int8`/`bigint`, so `db query -o json` emits a bare
- * number; node-postgres returns the column as a string, which would emit a quoted
- * string. Only coerces when the value round-trips losslessly — JS cannot represent
- * `|n| > 2^53` exactly, so those stay strings (preserving correctness rather than
- * silently corrupting the value). `bytea` columns arrive as a `Buffer`; Go encodes a
- * `[]byte` as a standard base64 string, so coerce those rather than letting
- * `JSON.stringify` emit `{"type":"Buffer","data":[...]}`. `date`/`timestamp`/
- * `timestamptz` columns arrive as raw text; Go marshals a `time.Time` as RFC3339Nano
- * (microseconds preserved), so coerce them to that form rather than emitting the raw
+ * Coerce local/`--db-url` cells to the established JSON output shape. `int8`/
+ * `bigint` columns are established as a bare number, so `db query -o json`
+ * emits one; node-postgres returns the column as a string, which would emit a
+ * quoted string. Only coerces when the value round-trips losslessly — JS
+ * cannot represent `|n| > 2^53` exactly, so those stay strings (preserving
+ * correctness rather than silently corrupting the value). `bytea` columns
+ * arrive as a `Buffer`; the established encoding is a standard base64 string,
+ * so coerce those rather than letting `JSON.stringify` emit
+ * `{"type":"Buffer","data":[...]}`. `date`/`timestamp`/`timestamptz` columns
+ * arrive as raw text; the established encoding is RFC3339Nano (microseconds
+ * preserved), so coerce them to that form rather than emitting the raw
  * Postgres text. Other column types pass through unchanged; JSON re-marshals them.
  */
 export function legacyCoerceLocalJsonRows(
@@ -245,9 +252,9 @@ export function legacyCoerceLocalJsonRows(
         return instant !== undefined ? legacyTimestampToRfc3339(instant) : cell;
       }
       if (oid === PG_INT8_OID && typeof cell === "string" && /^-?\d+$/.test(cell)) {
-        // Go scans int8 as int64 and `json.Marshal` emits a bare number for ANY
-        // magnitude. A JS number loses precision past 2^53, so emit the exact digits
-        // as a raw JSON number token (`JSON.rawJSON`) rather than a quoted string.
+        // int8 is established as a bare number for ANY magnitude. A JS number
+        // loses precision past 2^53, so emit the exact digits as a raw JSON
+        // number token (`JSON.rawJSON`) rather than a quoted string.
         const asNumber = Number(cell);
         return Number.isSafeInteger(asNumber) && String(asNumber) === cell
           ? asNumber
@@ -259,11 +266,12 @@ export function legacyCoerceLocalJsonRows(
 }
 
 /**
- * Go's `json.Encoder` rejects non-finite floats with an `UnsupportedValueError`
- * (`db query -o json` then fails with empty stdout and exit 1), whereas
- * `JSON.stringify` silently coerces `NaN`/`Infinity` to `null`. Returns Go's token
- * (`NaN` / `+Inf` / `-Inf`) for the first non-finite number cell so the caller can
- * fail the command the way Go does; `undefined` when every value is encodable.
+ * The established JSON encoder rejects non-finite floats (`db query -o json`
+ * then fails with empty stdout and exit 1), whereas `JSON.stringify` silently
+ * coerces `NaN`/`Infinity` to `null`. Returns the established token
+ * (`NaN` / `+Inf` / `-Inf`) for the first non-finite number cell so the
+ * caller can fail the command the same way; `undefined` when every value is
+ * encodable.
  */
 export function legacyFindNonFiniteJsonValue(
   data: ReadonlyArray<ReadonlyArray<unknown>>,
@@ -278,16 +286,15 @@ export function legacyFindNonFiniteJsonValue(
   return undefined;
 }
 
-// Go's tablewriter measures cells with `mattn/go-runewidth` (East Asian Wide = 2,
-// zero-width/combining = 0), so column widths/borders align for CJK/emoji output.
-// Counting JS code points would under-measure those cells and misalign the table.
+// Cell width is measured with East Asian Wide = 2, zero-width/combining = 0,
+// so column widths/borders align for CJK/emoji output. Counting JS code
+// points would under-measure those cells and misalign the table.
 const displayWidth = (text: string): number => legacyStringWidth(text);
 
 /**
- * Render rows as the `olekukonko/tablewriter` v1 default box layout with
- * `AutoFormat=Off` (header not upper-cased), matching Go's `writeTable`. Left
- * aligned, one space of padding each side, Unicode box-drawing borders. An empty
- * column set renders nothing (parity with tablewriter's empty-header output).
+ * Render rows as the established box-layout table (header not upper-cased).
+ * Left aligned, one space of padding each side, Unicode box-drawing borders.
+ * An empty column set renders nothing (established empty-header output).
  */
 export function legacyRenderTablewriter(
   cols: ReadonlyArray<string>,
@@ -296,8 +303,8 @@ export function legacyRenderTablewriter(
 ): string {
   if (cols.length === 0) return "";
   const rows = data.map((row) => row.map((cell, columnIndex) => formatCell(cell, columnIndex)));
-  // Column width is the widest visual line: a cell may contain newlines, which Go's
-  // tablewriter splits across stacked lines, so measure each line, not the raw string.
+  // Column width is the widest visual line: a cell may contain newlines,
+  // which split across stacked lines, so measure each line, not the raw string.
   const widths = cols.map((col, i) => {
     let width = displayWidth(col);
     for (const row of rows) {
@@ -312,8 +319,8 @@ export function legacyRenderTablewriter(
   const bottom = `└${widths.map((_, i) => segment(i)).join("┴")}┘`;
   const renderLine = (cells: ReadonlyArray<string>) =>
     `│${cells.map((cell, i) => ` ${cell}${" ".repeat(widths[i]! - displayWidth(cell))} `).join("│")}│`;
-  // Go's tablewriter splits a multiline cell across stacked bordered lines within the
-  // same logical row (other columns blank on continuation lines), no per-row separator.
+  // A multiline cell splits across stacked bordered lines within the same
+  // logical row (other columns blank on continuation lines), no per-row separator.
   const renderRow = (cells: ReadonlyArray<string>): string => {
     const split = cells.map((cell) => cell.split("\n"));
     const lineCount = Math.max(1, ...split.map((s) => s.length));
@@ -328,7 +335,7 @@ export function legacyRenderTablewriter(
   return `${lines.join("\n")}\n`;
 }
 
-/** Go's `encoding/csv` field-quoting rule (`csv.Writer.fieldNeedsQuotes`). */
+/** The established CSV field-quoting rule. */
 function csvFieldNeedsQuotes(field: string): boolean {
   if (field === "") return false;
   if (field === "\\.") return true;
@@ -342,7 +349,7 @@ function csvField(field: string): string {
   return `"${field.replaceAll('"', '""')}"`;
 }
 
-/** Go's `writeCSV` (RFC4180 via `encoding/csv`, `\n` line terminator). */
+/** The established CSV output (RFC4180, `\n` line terminator). */
 export function legacyToCsv(
   cols: ReadonlyArray<string>,
   data: ReadonlyArray<ReadonlyArray<unknown>>,
@@ -356,9 +363,8 @@ export function legacyToCsv(
 }
 
 /**
- * Reproduce Go's default `encoding/json` HTML escaping (`<`, `>`, `&` and the
- * line/paragraph separators), which `json.Encoder` applies unless
- * `SetEscapeHTML(false)` is called — `db query` never disables it. Safe to run on
+ * The established default JSON HTML escaping (`<`, `>`, `&` and the
+ * line/paragraph separators) — `db query` never disables it. Safe to run on
  * the whole serialized document: these characters only occur inside string
  * values, never in JSON structure.
  */
@@ -375,26 +381,27 @@ const byteLess = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
  * A JSON object whose key order is fixed by the builder (not re-sorted by the
- * encoder). Go distinguishes a `map` (keys sorted by byte) from a `struct` (keys in
- * declaration order); both reach the encoder as a `LegacyOrderedJson` with the order
- * already decided. JS objects can't carry this order — `JSON.stringify` reorders
- * integer-like keys numerically (`"2"` before `"10"`), unlike Go's lexicographic
- * `map` order — so the rows/envelope are encoded from explicit entries instead.
+ * encoder). The established contract distinguishes a `map` (keys sorted by
+ * byte) from a `struct` (keys in declaration order); both reach the encoder
+ * as a `LegacyOrderedJson` with the order already decided. JS objects can't
+ * carry this order — `JSON.stringify` reorders integer-like keys numerically
+ * (`"2"` before `"10"`), unlike the established lexicographic `map` order —
+ * so the rows/envelope are encoded from explicit entries instead.
  */
 class LegacyOrderedJson {
   constructor(readonly entries: ReadonlyArray<readonly [string, unknown]>) {}
 }
 
 /**
- * Encode a value as Go's `json.Encoder` (`SetIndent("", "  ")`) would: 2-space
- * indent, arrays in order, `LegacyOrderedJson` in its fixed order, DB-sourced plain
- * objects (e.g. JSONB) as a Go `map` with byte-sorted keys, and `JSON.rawJSON`
- * (exact bigint) / primitives via `JSON.stringify`. HTML escaping is applied by the
+ * Encode a value in the established 2-space-indent JSON output: arrays in
+ * order, `LegacyOrderedJson` in its fixed order, DB-sourced plain objects
+ * (e.g. JSONB) as a `map` with byte-sorted keys, and `JSON.rawJSON` (exact
+ * bigint) / primitives via `JSON.stringify`. HTML escaping is applied by the
  * caller as a whole-string pass.
  */
 function encodeGoJson(value: unknown, indent: number): string {
   if (value === null || value === undefined) return "null";
-  // Go's `json.Encoder` preserves the sign of negative zero (`-0`), but
+  // The established encoding preserves the sign of negative zero (`-0`), but
   // `JSON.stringify(-0)` collapses it to `"0"`; emit `-0` explicitly to match.
   if (typeof value === "number" && Object.is(value, -0)) return "-0";
   if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
@@ -425,10 +432,10 @@ function encodeGoJson(value: unknown, indent: number): string {
 }
 
 /**
- * A row as a Go `map` (column keys sorted by byte), order carried explicitly.
- * Duplicate column names (`select 1 as x, 2 as x`) collapse to a single key with the
- * last value — Go's `writeJSON` builds a map, so the later assignment overwrites the
- * earlier one. (The table/CSV path keeps both columns, matching Go's tablewriter.)
+ * A row as a `map` (column keys sorted by byte), order carried explicitly.
+ * Duplicate column names (`select 1 as x, 2 as x`) collapse to a single key
+ * with the last value — the row is built as a map, so the later assignment
+ * overwrites the earlier one. (The table/CSV path keeps both columns.)
  */
 function orderedRow(
   cols: ReadonlyArray<string>,
@@ -439,7 +446,7 @@ function orderedRow(
   return new LegacyOrderedJson([...byKey].sort(([a], [b]) => byteLess(a, b)));
 }
 
-/** The agent-mode RLS advisory (`internal/db/query/advisory.go` `Advisory`). */
+/** The agent-mode RLS advisory. */
 export interface LegacyAdvisory {
   readonly id: string;
   readonly priority: number;
@@ -451,11 +458,11 @@ export interface LegacyAdvisory {
 }
 
 /**
- * Go's `writeJSON`. Human mode emits a plain rows array; agent mode wraps it in
- * the untrusted-data envelope `{warning, boundary, rows, advisory?}`. The
- * `boundary` is supplied by the caller (Go's `crypto/rand` hex). Output is
- * 2-space indented with a trailing newline, map keys sorted, and HTML-escaped —
- * byte-for-byte with Go's `json.Encoder`.
+ * The established JSON output. Human mode emits a plain rows array; agent
+ * mode wraps it in the untrusted-data envelope `{warning, boundary, rows,
+ * advisory?}`. The `boundary` is supplied by the caller (random hex). Output
+ * is 2-space indented with a trailing newline, map keys sorted, and
+ * HTML-escaped.
  */
 export function legacyRenderJson(
   cols: ReadonlyArray<string>,
@@ -470,10 +477,10 @@ export function legacyRenderJson(
     return `${escapeGoJsonHtml(encodeGoJson(rows, 0))}\n`;
   }
 
-  // Envelope keys in Go map sort order: advisory, boundary, rows, warning.
+  // Envelope keys in the established map sort order: advisory, boundary, rows, warning.
   const envelope: Array<readonly [string, unknown]> = [];
   if (Option.isSome(advisory)) {
-    // The Advisory is a Go struct → declaration field order (NOT sorted).
+    // The advisory uses its declaration field order (NOT sorted).
     const a = advisory.value;
     envelope.push([
       "advisory",
@@ -530,9 +537,9 @@ function readJsonStringToken(
  * Extract column names from the first object of a JSON array, in source order. JS
  * `Object.keys` reorders integer-like keys numerically (`{"10":..,"2":..}` →
  * `["2","10"]`), which would swap columns for a linked query like
- * `select 1 as "10", 2 as "2"`. Go's `orderedKeys` walks `json.Decoder` tokens to keep
- * the raw source order (`apps/cli-go/internal/db/query/query.go:128-159`), so scan the
- * first object's top-level keys textually rather than via `Object.keys`.
+ * `select 1 as "10", 2 as "2"`. Preserving the raw source order requires
+ * scanning the first object's top-level keys textually rather than via
+ * `Object.keys`.
  */
 export function legacyOrderedKeys(body: string): ReadonlyArray<string> {
   let parsed: unknown;
@@ -567,7 +574,7 @@ export function legacyOrderedKeys(body: string): ReadonlyArray<string> {
   return keys;
 }
 
-/** Go's `utils.IsAgentMode`: `yes`→true, `no`→false, `auto`→agent detected. */
+/** Agent-mode resolution: `yes`→true, `no`→false, `auto`→agent detected. */
 export function legacyResolveAgentMode(
   agentFlag: "auto" | "yes" | "no",
   aiToolName: Option.Option<string>,

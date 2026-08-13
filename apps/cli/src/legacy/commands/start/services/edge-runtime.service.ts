@@ -1,16 +1,6 @@
 /**
- * Real bring-up for the Edge Runtime container — Go's "Start all functions"
- * block (`apps/cli-go/internal/start/start.go:1101-1108`):
- *
- * ```go
- * if utils.Config.EdgeRuntime.Enabled && !isContainerExcluded(utils.Config.EdgeRuntime.Image, excluded) {
- *   dbUrl := fmt.Sprintf("postgresql://%s:%s@%s:%d/%s", dbConfig.User, dbConfig.Password, dbConfig.Host, dbConfig.Port, dbConfig.Database)
- *   if err := serve.ServeFunctions(ctx, "", nil, "", dbUrl, serve.RuntimeOption{}, fsys); err != nil {
- *     return err
- *   }
- *   started = append(started, utils.EdgeRuntimeId)
- * }
- * ```
+ * Real bring-up for the Edge Runtime container, gated on
+ * `config.edge_runtime.enabled && !isContainerExcluded(...)`.
  *
  * Unlike its 12 siblings in this directory, this module does NOT build a
  * `LegacyStartContainerSpec` for `legacyCreateContainer`
@@ -48,11 +38,10 @@
  *
  * `SUPABASE_DB_URL` is the one thing that genuinely differs from what
  * `functions serve` sends: standalone `functions serve` hardcodes the `db`
- * network alias (`shared/functions/serve.ts`'s `legacyDefaultServeDbUrl`,
- * matching Go's `restartEdgeRuntime`), but `start`'s own direct call
- * (`start.go:66-72,1103`) uses the real `dbConfig` — the `db` container's own
- * sanitized name and `config.db.password` — exactly like the other 12
- * services' `dbHost`/`dbPassword` derivation
+ * network alias (`shared/functions/serve.ts`'s `legacyDefaultServeDbUrl`),
+ * but `start`'s own direct call uses the real `dbConfig` — the `db`
+ * container's own sanitized name and `config.db.password` — exactly like the
+ * other 12 services' `dbHost`/`dbPassword` derivation
  * (`../../../shared/db-bootstrap/internal-db-connection.ts`). {@link legacyStartEdgeRuntimeContainer}
  * reproduces that real value, not `functions serve`'s alias-based default.
  */
@@ -71,17 +60,16 @@ import {
 } from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
 export interface LegacyEdgeRuntimeBringUpInput {
-  /** Go's `Config.ProjectId`, already sanitized — see `legacyServiceContainerName`'s callers. */
+  /** The sanitized project id — see `legacyServiceContainerName`'s callers. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`/`network.NetworkingConfig` target — the `--network-id` override or `utils.NetId`. */
   readonly networkId: string;
   /** `utils.Config.EdgeRuntime.Image`, already resolved/pulled by the caller (`image-prepull.ts`/`legacyResolveEdgeRuntimeImage`). */
   readonly image: string;
   /**
-   * Go's `cwd`/`utils.CurrentDirAbs` for this call — `cliConfig.workdir` in
-   * `start.handler.ts`. Used as `functions serve`'s `projectRoot`/`flagCwd`
-   * (no separate "flag cwd" exists for `start`) and to derive `supabaseDir`
-   * (`<workdir>/supabase`).
+   * `cliConfig.workdir` in `start.handler.ts` — used as `functions serve`'s
+   * `projectRoot`/`flagCwd` (no separate "flag cwd" exists for `start`) and
+   * to derive `supabaseDir` (`<workdir>/supabase`).
    */
   readonly workdir: string;
   /** `LegacyLocalConfigValues.dbUrl` — reused, not recomputed, to derive the internal DB host/password (matches every other service builder's own `dbUrl` input). */
@@ -90,13 +78,12 @@ export interface LegacyEdgeRuntimeBringUpInput {
   readonly apiPort: number;
   /** `config.edge_runtime.policy`. */
   readonly edgeRuntimePolicy: string;
-  /** `config.edge_runtime.inspector_port` — only published when `inspectMode` is set, which `start` never does (Go's `serve.RuntimeOption{}` zero value). */
+  /** `config.edge_runtime.inspector_port` — only published when `inspectMode` is set, which `start` never does. */
   readonly edgeRuntimeInspectorPort: number;
   /**
-   * `config.edge_runtime.secrets`, already unwrapped — keys UPPERCASED (Go's
-   * `strings.ToUpper` config-load workaround, `pkg/config/config.go:766-771`),
-   * empty and unresolved-`env()` values filtered out (Go's `SHA256 > 0` gate).
-   * Build via `shared/functions/serve.ts`'s exported
+   * `config.edge_runtime.secrets`, already unwrapped — keys UPPERCASED,
+   * empty and unresolved-`env()` values filtered out. Build via
+   * `shared/functions/serve.ts`'s exported
    * `toPlainEdgeRuntimeConfig(config.edge_runtime).secrets` rather than
    * re-deriving the uppercase/`Redacted`-unwrap/zero-hash-filter logic here.
    */
@@ -153,12 +140,11 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * template files this call writes to the host) is intentionally left to the
  * caller, and the caller must NOT invoke it on a successful bring-up. Unlike
  * every other `start` service (`legacyCreateContainer`'s `restartPolicy:
- * "unless-stopped"`), Go's own Edge Runtime bring-up (`serve.ServeFunctions`,
- * `internal/functions/serve/serve.go:218-241`) sets NO Docker restart policy
- * at all — its lifecycle is deliberately reconciled at the CLI level
- * (`restartEdgeRuntime`, `serve.go:108-133`), not the Docker daemon level —
- * so this container's own `docker run` (`shared/functions/serve.ts`)
- * intentionally omits `--restart` too. Its bind-mounted host paths must
+ * "unless-stopped"`), Edge Runtime's bring-up sets NO Docker restart policy
+ * at all — its lifecycle is deliberately reconciled at the CLI level, not
+ * the Docker daemon level — so this container's own `docker run`
+ * (`shared/functions/serve.ts`) intentionally omits `--restart` too. Its
+ * bind-mounted host paths must
  * still exist for as long as the container itself can be reattached to
  * (e.g. a plain `docker start` by the user, or discovery by a later CLI
  * invocation) — unlike Kong/Postgres/Supavisor's `secretFiles`, which
@@ -200,9 +186,9 @@ export const legacyStartEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRunti
     platform: input.platform,
     debug: input.debug,
     networkId: input.networkId,
-    // Go's `start.go:1104` passes `serve.RuntimeOption{}` (its zero value)
-    // and an empty `envFilePath`/`nil` `noVerifyJWT`/empty `importMapPath`
-    // — `start` has no CLI flags of its own for any of these.
+    // `start` has no CLI flags of its own for any of these, so they're all
+    // passed as their zero value: no inspect mode, no `envFilePath`, no
+    // `noVerifyJWT`, no `importMapPath`.
     envFile: Option.none(),
     discoverFunctionEnvFiles: false,
     importMap: Option.none(),

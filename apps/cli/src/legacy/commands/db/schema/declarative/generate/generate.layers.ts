@@ -2,6 +2,7 @@ import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../../../../shared/runtime/stdin.layer.ts";
+import { legacyHttpClientLayer } from "../../../../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../../../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../../../shared/legacy-db-connection.layer.ts";
@@ -17,16 +18,19 @@ import { legacyDeclarativeSeamLayer } from "../../../shared/legacy-pgdelta.seam.
 /**
  * Runtime layer for `supabase db schema declarative generate`.
  *
- * `Output` / `LegacyGoProxy` / global flags come from the legacy root; the Bun
- * platform (FileSystem / Path / ChildProcessSpawner / ProcessControl / Tty) from
- * `runCli`. This layer adds the declarative-specific services: the edge-runtime
- * pg-delta runner and the Go shadow-database seam, plus the db-config resolver
- * for `--linked` / `--db-url`. Per the "provide doesn't share to siblings" rule,
- * `LegacyCliConfig` is provided to every layer that needs it. `legacyDockerRunLayer`
- * is ALSO exposed directly (not just provided to `edgeRuntime`): the smart-target
- * local-reset prompt now calls `legacyResetLocalDatabase` in-process (CLI-2062),
- * whose PG15+ recreate reuses the same one-shot migrate jobs `db start`/`db reset`
- * back with this same layer (see those commands' own `*.layers.ts`).
+ * `Output` / global flags come from the legacy root; the Bun platform (FileSystem / Path /
+ * ChildProcessSpawner / ProcessControl / Tty) from `runCli`. This layer adds the
+ * declarative-specific services: the edge-runtime pg-delta runner and the fully-native shadow
+ * seam, plus the db-config resolver for `--linked` / `--db-url`. Per the "provide doesn't share
+ * to siblings" rule, `LegacyCliConfig` is provided to every layer that needs it — including
+ * `seam`, which (as of the fully-native shadow provisioning) also needs `LegacyDbConnection`/
+ * `LegacyDockerRun`/`LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe`/`HttpClient` (the native
+ * shadow's health-check wait, mirroring `db diff`'s own `diff.layers.ts`) explicitly provided,
+ * not just exposed as sibling entries in the merge below. `legacyDockerRunLayer` is ALSO exposed
+ * directly (not just provided to `edgeRuntime`/`seam`): the smart-target local-reset prompt now
+ * calls `legacyResetLocalDatabase` in-process (CLI-2062), whose PG15+ recreate reuses the same
+ * one-shot migrate jobs `db start`/`db reset` back with this same layer (see those commands' own
+ * `*.layers.ts`).
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
@@ -45,7 +49,16 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(cliConfig),
 );
 
-const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+
+const seam = legacyDeclarativeSeamLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(edgeRuntime),
+  Layer.provide(legacyPgDeltaSslProbeLayer),
+  Layer.provide(httpClient),
+);
 
 export const legacyDbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
   dbConfig,
@@ -53,6 +66,7 @@ export const legacyDbSchemaDeclarativeGenerateRuntimeLayer = Layer.mergeAll(
   legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
+  httpClient,
   seam,
   cliConfig,
   legacyIdentityStitchLayer,

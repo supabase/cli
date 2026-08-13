@@ -63,7 +63,7 @@ describe("legacy storage cp", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       const upload = requests.find((r) => r.url.includes(OBJECT("private/readme.md")));
       expect(upload?.method).toBe("POST");
-      // Single upload does NOT set x-upsert (Go's Overwrite stays false).
+      // Single upload does NOT set x-upsert (Overwrite stays false).
       expect(upload?.headers["x-upsert"]).toBeUndefined();
       expect(upload?.headers["cache-control"]).toBe("max-age=3600");
       expect(upload?.headers["content-type"]).toContain("text/plain");
@@ -343,8 +343,8 @@ describe("legacy storage cp", () => {
       const exit = yield* legacyStorageCp(
         cpFlags({ src: "ss:///private/", dst, recursive: true }),
       ).pipe(Effect.provide(layer), Effect.exit);
-      // Go's errors.Join(walkErr, jq.Collect()) runs the queued a.txt download
-      // (file written) before the walk error surfaces — the command still fails.
+      // The queued a.txt download runs (file written) before the walk error
+      // surfaces — the command still fails.
       expect(Exit.isFailure(exit)).toBe(true);
       expect(readFileSync(join(dst, "a.txt"), "utf8")).toBe("a-content");
     });
@@ -496,7 +496,6 @@ describe("legacy storage cp", () => {
       expect(JSON.stringify(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
       );
-      // The guard fires before any network call or cache write.
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });

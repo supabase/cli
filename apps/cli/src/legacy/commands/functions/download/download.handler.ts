@@ -37,16 +37,14 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
     rawArgs,
     goConfigCompat: legacyFunctionsGoConfigCompat,
     edgeRuntimeVersion,
-    // Go: `utils.Bold` on the `Downloading function:` slug (`downloadOne`,
-    // `download.go:219`, stderr) — matches `legacyBold`'s default TTY gate.
+    // Established styling: bold on the `Downloading function:` slug
+    // (stderr) — matches `legacyBold`'s default TTY gate.
     styleEmphasis: (text) => legacyBold(text),
-    // Go: `utils.Aqua` on the suggested `--legacy-bundle` command
-    // (`suggestLegacyBundle`, `download.go:315`, stderr) — matches
-    // `legacyAqua`'s default TTY gate.
+    // Established styling: aqua on the suggested `--legacy-bundle` command
+    // (stderr) — matches `legacyAqua`'s default TTY gate.
     styleAqua: (text) => legacyAqua(text),
-    // Go: `utils.Yellow` on the `WARNING:` token before "Docker is not
-    // running" (`download.go:146`, stderr) — matches `legacyYellow`'s default
-    // TTY gate.
+    // Established styling: yellow on the `WARNING:` token before "Docker is
+    // not running" (stderr) — matches `legacyYellow`'s default TTY gate.
     styleWarning: (text) => legacyYellow(text),
     resolveProjectRef: (projectRef) =>
       resolver.resolve(projectRef).pipe(

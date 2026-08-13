@@ -16,10 +16,10 @@ import {
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { legacyStatusCommand } from "./status.command.ts";
 
-// Go parity (CLI-2005): `--override-name` and `--exclude` are pflag
-// `StringSliceVar`s (`cmd/status.go:38-39`), so malformed CSV aborts cobra's
-// `ParseFlags` before RunE — before any Docker interaction — with pflag's
-// exact `invalid argument %q for %q flag: %v` line on stderr. These scenarios
+// `--override-name` and `--exclude` are string-slice flags (CLI-2005), so
+// malformed CSV aborts flag parsing before the handler runs — before any Docker
+// interaction — with the exact `invalid argument %q for %q flag: %v` line on
+// stderr. These scenarios
 // run the whole command tree (`Command.runWith`), mirroring the network-bans/
 // network-restrictions prior art from CLI-1983.
 
@@ -73,8 +73,8 @@ function setup() {
 }
 
 describe("legacy status StringSlice flags (pflag CSV parity)", () => {
-  // Every rendered line below was verified against the real Go CLI binary
-  // (apps/cli-go, pflag v1.0.10 → encoding/csv).
+  // Every rendered line below was verified against pflag's actual output
+  // (pflag v1.0.10 → encoding/csv).
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;

@@ -1446,11 +1446,11 @@ describe("legacy functions serve integration", () => {
   it.live("does not remove the existing runtime when interrupted before startup owns it", () => {
     const processControl = mockQueuedProcessControl();
     // Block startup at the DB assertion (`container inspect`) — the last
-    // pre-ownership step under Go's ordering (`serve.go:110-120`: config load
-    // → assert DB → only THEN remove the existing container). The remote-JWKS
-    // fetch is post-assertion (`serve.go:141`), so if the ordering ever
-    // regresses to fetch-first, this test hangs at the pending fetch instead
-    // of reaching the inspect and fails on the waitFor timeout.
+    // pre-ownership step under the established ordering (config load →
+    // assert DB → only THEN remove the existing container). The remote-JWKS
+    // fetch is post-assertion, so if the ordering ever regresses to
+    // fetch-first, this test hangs at the pending fetch instead of reaching
+    // the inspect and fails on the waitFor timeout.
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
@@ -1984,7 +1984,7 @@ describe("legacy functions serve integration", () => {
   it.live(
     "does not fail startup on a malformed third-party provider config when auth is disabled",
     () => {
-      // Go's `Auth.ThirdParty.validate()` (the "required field" check) only runs inside
+      // `Auth.ThirdParty.validate()` (the "required field" check) only runs inside
       // `Config.Validate`'s `if Auth.Enabled` block — `functions serve`'s own JWKS resolution
       // discards `ResolveJWKS`'s error unconditionally, regardless of `auth.enabled`. So a
       // workos provider enabled without an `issuer_url` must not block startup here.
@@ -2141,12 +2141,11 @@ describe("legacy functions serve integration", () => {
   });
 
   it.live("uppercases config secret names, skipping empty and unresolved values", () => {
-    // Go's config loader uppercases every `[edge_runtime.secrets]` key with
-    // `strings.ToUpper` (`pkg/config/config.go:766-771`, viper #1014
-    // workaround) before `set.ListSecrets` (`internal/secrets/set/set.go:48-52`)
-    // reads the map, and ListSecrets keeps only entries with a non-empty
-    // SHA256, i.e. it skips empty values and still-unresolved `env(VAR)`
-    // literals (`pkg/config/secret.go:94-107`).
+    // The established config loader uppercases every `[edge_runtime.secrets]`
+    // key with `strings.ToUpper` (viper #1014 workaround) before
+    // `set.ListSecrets` reads the map, and ListSecrets keeps only entries
+    // with a non-empty SHA256, i.e. it skips empty values and
+    // still-unresolved `env(VAR)` literals.
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
@@ -2536,11 +2535,11 @@ describe("legacy functions serve integration", () => {
 
   it.live("keeps the install hint when no container runtime is installed at all", () => {
     // With no `docker` or `podman` binary on PATH the inspect never spawns —
-    // the shell-out equivalent of Go's missing daemon socket, which
+    // the shell-out equivalent of a missing daemon socket, which
     // `client.IsErrConnectionFailed` classifies as a connection failure and so
-    // gets the Docker Desktop install hint (`internal/utils/misc.go:155-166`,
-    // `docker.go:350`). The spawn-failure cause must survive into the
-    // `failed to inspect service: …` message instead of being blanked.
+    // gets the Docker Desktop install hint. The spawn-failure cause must
+    // survive into the `failed to inspect service: …` message instead of
+    // being blanked.
     const runtimeNotFoundMessage =
       "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
     deployMockState.runHandler = (command, args) => {
@@ -2582,9 +2581,9 @@ describe("legacy functions serve integration", () => {
   });
 
   it.live("fails with the config error, not a docker error, when both are broken", () => {
-    // Go's `restartEdgeRuntime` sanity-checks in order: `flags.LoadConfig`
-    // first, `AssertSupabaseDbIsRunning` second (`serve.go:107-113`) — a
-    // malformed config wins over a down docker daemon.
+    // Established ordering: `restartEdgeRuntime` sanity-checks config load
+    // first, `AssertSupabaseDbIsRunning` second — a malformed config wins
+    // over a down docker daemon.
     deployMockState.runHandler = () => ({
       exitCode: 1,
       stdout: "",
@@ -2670,11 +2669,10 @@ describe("legacy functions serve integration", () => {
   });
 
   it.live("fails with the auth config error, not a docker error, when both are broken", () => {
-    // Go's `jwt_secret` ≥16-chars check runs during config load
-    // (`pkg/config/apikeys.go:43-47` via `config.go:1156`), BEFORE
-    // `AssertSupabaseDbIsRunning` — invalid auth config wins over a down
-    // docker daemon, so the local half of auth resolution must stay ahead of
-    // the DB assertion.
+    // Established ordering: the `jwt_secret` ≥16-chars check runs during
+    // config load, BEFORE `AssertSupabaseDbIsRunning` — invalid auth config
+    // wins over a down docker daemon, so the local half of auth resolution
+    // must stay ahead of the DB assertion.
     deployMockState.runHandler = () => ({
       exitCode: 1,
       stdout: "",

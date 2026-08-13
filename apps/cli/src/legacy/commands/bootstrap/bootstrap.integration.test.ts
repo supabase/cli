@@ -144,7 +144,7 @@ function setup(opts: SetupOpts = {}) {
     // `<workdir>/supabase/.temp/pooler-url`, which the fallback then reads.
     if (recorded.method === "GET" && url.includes("/config/database/pooler")) {
       if (opts.poolerAvailable === false) {
-        // No PRIMARY entry — mirrors Go's `utils.GetPoolerConfig` returning nil.
+        // No PRIMARY entry — mirrors `utils.GetPoolerConfig` returning nil.
         return Effect.succeed(legacyJsonResponse(request, 200, []));
       }
       return Effect.succeed(
@@ -232,7 +232,7 @@ function setup(opts: SetupOpts = {}) {
     cliConfig,
     mockTty({ stdinIsTty: opts.stdinIsTty ?? true, stdoutIsTty: false }),
     // cwd differs from the (absolute) workdir so the "Using workdir" line prints,
-    // matching Go's `cwd != CurrentDirAbs` guard.
+    // matching the established `cwd != CurrentDirAbs` guard.
     mockRuntimeInfo({ cwd: dirname(tempRoot.current) }),
     telemetry.layer,
     linkedCache.layer,
@@ -311,7 +311,6 @@ describe("legacy bootstrap integration", () => {
       yield* legacyBootstrap(flags({ template: Option.some("NextJS") }), FAST_BACKOFF);
       expect(s.downloads).toHaveLength(1);
       expect(s.downloads[0]).toEqual({ url: NEXTJS_TEMPLATE.url, targetDir: s.workdir });
-      // No blank config.toml when a template is downloaded.
       expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(false);
       expect(s.out.stdoutText).toContain(`Downloading: ${NEXTJS_TEMPLATE.url}`);
     }).pipe(Effect.provide(s.layer));
@@ -383,8 +382,8 @@ describe("legacy bootstrap integration", () => {
     writeFileSync(join(tempRoot.current, "existing.txt"), "keep me");
     return Effect.gen(function* () {
       yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
-      // Go's PromptYesNo echoes the auto-accepted overwrite question to stderr
-      // under the global YES flag (`bootstrap.go:47-48`, `console.go:70-72`).
+      // Established behavior: the auto-accepted overwrite question echoes to
+      // stderr under the global YES flag.
       expect(s.out.stderrText).toContain("Do you want to overwrite existing files in ");
       expect(s.out.stderrText).toContain(" directory? [Y/n] y\n");
       expect(existsSync(join(s.workdir, "supabase", "config.toml"))).toBe(true);
@@ -410,7 +409,7 @@ describe("legacy bootstrap integration", () => {
         yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
         const events = s.analytics.captured.map((c) => c.event);
         expect(events).not.toContain("cli_login_completed");
-        // Go's bootstrap calls link.LinkServices (not link.Run) — no cli_project_linked.
+        // Bootstrap calls link.LinkServices (not link.Run) — no cli_project_linked.
         expect(events).not.toContain("cli_project_linked");
       }).pipe(Effect.provide(s.layer));
     },
@@ -524,12 +523,11 @@ describe("legacy bootstrap integration", () => {
     () => {
       // Regression coverage (review thread on CLI-1953): when the direct host is
       // unreachable AND no pooler URL was ever saved, `legacyResolveLinkedConn`
-      // fails with `LegacyDbConfigIpv6Error`. Go's `NewDbConfigWithPassword`
-      // (`db_url.go:161-163`) logs that same error and presses on with its
-      // best-effort direct-host config, letting the retry-wrapped `push.Run`
-      // (`bootstrap.go:115-127`) get real reconnect attempts instead of aborting
-      // bootstrap outright. This asserts the native flow does the same instead of
-      // failing before `legacyDbPushCore` ever runs.
+      // fails with `LegacyDbConfigIpv6Error`. The established resolver logs
+      // that same error and presses on with its best-effort direct-host
+      // config, letting the retry-wrapped push get real reconnect attempts
+      // instead of aborting bootstrap outright. This asserts the native flow
+      // does the same instead of failing before `legacyDbPushCore` ever runs.
       const s = setup({ poolerAvailable: false, pushConnectFailTimes: 1 });
       return Effect.gen(function* () {
         yield* legacyBootstrap(flags({ template: Option.some("scratch") }), FAST_BACKOFF);
@@ -561,9 +559,9 @@ describe("legacy bootstrap integration", () => {
   it.live("pushes with the prompted password when --password is empty", () => {
     // An explicit `--password ""` (e.g. unset `$SUPABASE_DB_PASSWORD` expanded by
     // the shell) leaves the password empty, so the create step prompts — and the
-    // in-process push reuses that exact same resolved connection (Go's push step
-    // always uses the create-resolved password; there is no separate flag/env
-    // channel to preserve once the call is in-process, CLI-1953).
+    // in-process push reuses that exact same resolved connection (the push
+    // step always uses the create-resolved password; there is no separate
+    // flag/env channel to preserve once the call is in-process, CLI-1953).
     const s = setup({ promptPasswordResponses: ["prompted-pw"] });
     const prev = process.env["SUPABASE_DB_PASSWORD"];
     delete process.env["SUPABASE_DB_PASSWORD"];
@@ -626,7 +624,6 @@ describe("legacy bootstrap integration", () => {
         start_command: "supabase start",
         workdir: s.workdir,
       });
-      // No human progress banners on stdout in json mode.
       expect(s.out.stdoutText).not.toContain("To start your app:");
     }).pipe(Effect.provide(s.layer));
   });

@@ -1,6 +1,5 @@
 /**
- * Port of Go's `Secret.MarshalText` + `DecryptSecretHookFunc` hash logic from
- * `apps/cli-go/pkg/config/secret.go` and `utils.go`.
+ * Established secret-hashing rules for TOML serialisation of a Secret field.
  *
  * Rules:
  *   - Empty value → "" (no hash prefix).
@@ -11,14 +10,12 @@
  *
  * `config push`'s handler runs a document-wide decrypt-or-abort pre-check
  * (`push.handler.ts`, reusing `legacyAssertDecryptableSecrets`) immediately
- * after loading `config.toml` and before any network call — mirroring Go's
- * `config.Load` timing, where `DecryptSecretHookFunc` runs as part of the
- * generic decode hook chain, before `internal/config/push.Run` ever reads the
- * cost matrix or any service. By the time the functions below run (deep in
- * the auth service's local/diff computation), decryption is therefore
- * expected to always succeed. They still throw a `failed to parse config:
- * <cause>` error (Go's own wording) rather than silently gating the secret
- * out, in case that invariant is ever violated by a future field addition.
+ * after loading `config.toml` and before any network call. By the time the
+ * functions below run (deep in the auth service's local/diff computation),
+ * decryption is therefore expected to always succeed. They still throw a
+ * `failed to parse config: <cause>` error rather than silently gating the
+ * secret out, in case that invariant is ever violated by a future field
+ * addition.
  */
 
 import { createHmac } from "node:crypto";
@@ -40,12 +37,11 @@ function decryptIfNeeded(value: string, dotenvPrivateKeys: ReadonlyArray<string>
 }
 
 /**
- * Returns the TOML serialisation of a Secret field, mirroring Go's
- * `Secret.MarshalText`. The project ref is the HMAC key. `dotenvPrivateKeys`
- * are Go's `DOTENV_PRIVATE_KEY`/`DOTENV_PRIVATE_KEY_*` values
- * (`legacyCollectDotenvPrivateKeys`), used to decrypt an `encrypted:` value
- * before hashing — Go always hashes the decrypted plaintext, never the
- * ciphertext.
+ * Returns the TOML serialisation of a Secret field. The project ref is the
+ * HMAC key. `dotenvPrivateKeys` are the `DOTENV_PRIVATE_KEY`/
+ * `DOTENV_PRIVATE_KEY_*` values (`legacyCollectDotenvPrivateKeys`), used to
+ * decrypt an `encrypted:` value before hashing — the decrypted plaintext is
+ * always hashed, never the ciphertext.
  *
  * @throws When an `encrypted:` value cannot be decrypted with any key.
  */

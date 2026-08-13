@@ -1,41 +1,40 @@
 /**
- * Pure helpers for `db advisors`, ported from `internal/db/advisors/advisors.go`.
+ * Pure helpers for `db advisors`.
  *
- * The `Lint` shape mirrors Go's struct verbatim (JSON key names + declaration
- * order) so the encoder reproduces Go's pretty-printed output byte-for-byte. The
- * only `omitempty` field is `metadata`.
+ * The `Lint` shape's JSON key names and declaration order are an established
+ * output contract, so the encoder reproduces the pretty-printed output
+ * byte-for-byte. The only `omitempty` field is `metadata`.
  */
 
 import { encodeGoJsonIndented } from "../../../shared/legacy-go-json.ts";
 import { makeLegacyLevelEnum } from "../../../shared/legacy-fail-on.ts";
 
-/** `advisors.AllowedLevels` (`advisors.go:20-24`) — lowest severity first. */
+/** Lowest severity first. */
 const LEGACY_ADVISORS_ALLOWED_LEVELS = ["info", "warn", "error"] as const;
 
-/** Go's `toEnum` (`advisors.go:38-48`): exact, case-insensitive level switch. */
+/** Exact, case-insensitive level switch. */
 export const LEGACY_ADVISORS_LEVEL_ENUM = makeLegacyLevelEnum(
   LEGACY_ADVISORS_ALLOWED_LEVELS,
   "exact-ci",
 );
 
-/** `advisors.Lint` (`advisors.go:50-61`) — fields in struct-declaration order. */
+/** A single advisor lint — fields in the established output-contract order. */
 export interface LegacyAdvisorLint {
   readonly name: string;
   readonly title: string;
   readonly level: string;
   readonly facing: string;
   /**
-   * `null` on the API path when Go's `apiResponseToLints` appends onto a nil
-   * slice with zero iterations (`advisors.go:197-199`): `append(nil, …zero…)`
-   * leaves the slice nil, which `encoding/json` encodes as `"categories":null`.
-   * The local path (`rows.Scan`) always populates the slice, so it is never
-   * null there.
+   * `null` on the API path when there are zero categories: an empty or absent
+   * `categories` array collapses to `null` rather than `[]`, matching the
+   * established output contract. The local path (`rows.Scan`) always
+   * populates the slice, so it is never null there.
    */
   readonly categories: ReadonlyArray<string> | null;
   readonly description: string;
   readonly detail: string;
   readonly remediation: string;
-  /** `*json.RawMessage` (`omitempty`): present only when the source had metadata. */
+  /** `omitempty`: present only when the source had metadata. */
   readonly metadata?: unknown;
   readonly cacheKey: string;
 }
@@ -47,11 +46,10 @@ const asStringArray = (value: unknown): ReadonlyArray<string> =>
   Array.isArray(value) ? value.map(asString) : [];
 
 /**
- * Decodes a JSON value into a Go `string` / `type X string` field. Mirrors
- * `encoding/json`: an absent or `null` value is the zero value `""`; a present
- * non-string (number/bool/object/array) is an `UnmarshalTypeError` → throw. Any
- * string value is accepted (the deliberate unknown-enum tolerance). Used only on
- * the typed-API path (`json.Unmarshal`), not the local `rows.Scan` path.
+ * Decodes a JSON value into a plain string field: an absent or `null` value is
+ * the zero value `""`; a present non-string (number/bool/object/array) throws.
+ * Any string value is accepted (the deliberate unknown-enum tolerance). Used
+ * only on the typed-API path, not the local `rows.Scan` path.
  */
 function requireApiString(value: unknown, field: string): string {
   if (value === undefined || value === null) return "";
@@ -62,25 +60,16 @@ function requireApiString(value: unknown, field: string): string {
 }
 
 /**
- * Decodes a JSON value into Go's `[]string`-alias `categories`, mirroring the
- * append-onto-nil collapse in `apiResponseToLints` (`advisors.go:197-199`):
- *
- *   ```go
- *   for _, c := range l.Categories {
- *     lint.Categories = append(lint.Categories, string(c))
- *   }
- *   ```
- *
- * `append` onto a nil slice with zero iterations leaves the slice nil.
- * `encoding/json` encodes a nil `[]string` as `null` (no `omitempty` on
- * `Categories`), so the key is always present.
+ * Decodes a JSON value into the `categories` string array, matching the
+ * established output contract: an empty result collapses to `null` rather
+ * than `[]`, and the key is always present (no `omitempty`).
  *
  * Mapping:
- *   - absent / `null`           → `null`  (nil slice, encodes as `"categories":null`)
- *   - present `[]`              → `null`  (zero iterations, same nil collapse)
+ *   - absent / `null`           → `null`  (encodes as `"categories":null`)
+ *   - present `[]`              → `null`  (same collapse)
  *   - present `["SECURITY",…]`  → the string array
- *   - present non-array         → `UnmarshalTypeError` → throw
- *   - non-string element        → `UnmarshalTypeError` → throw
+ *   - present non-array         → throw
+ *   - non-string element        → throw
  */
 function requireApiStringArray(value: unknown): ReadonlyArray<string> | null {
   if (value === undefined || value === null) return null;
@@ -89,7 +78,7 @@ function requireApiStringArray(value: unknown): ReadonlyArray<string> | null {
   }
   if (value.length === 0) return null;
   return value.map((element) => {
-    // Go's encoding/json decodes a null array element to the zero string "".
+    // A null array element decodes to the zero string "".
     if (element === null || element === undefined) return "";
     if (typeof element !== "string") {
       throw new TypeError("cannot unmarshal advisor categories element into string");
@@ -101,8 +90,7 @@ function requireApiStringArray(value: unknown): ReadonlyArray<string> | null {
 /**
  * Normalises a local-query `metadata` (jsonb) cell: the `@effect/sql-pg` driver
  * returns jsonb already parsed (object), but tolerate a raw JSON string too.
- * `null` / absent ⇒ omitted, matching Go's `len(metadata) > 0` guard
- * (`advisors.go:142-145`). An empty jsonb object `{}` is preserved.
+ * `null` / absent ⇒ omitted. An empty jsonb object `{}` is preserved.
  */
 function normalizeLocalMetadata(value: unknown): unknown {
   if (value === null || value === undefined) return undefined;
@@ -118,8 +106,7 @@ function normalizeLocalMetadata(value: unknown): unknown {
 }
 
 /**
- * Scans one local-database row into a `Lint`, porting Go's positional
- * `rows.Scan(&l.Name, …)` (`advisors.go:126-146`). The `@effect/sql-pg` driver
+ * Scans one local-database row into a `Lint`. The `@effect/sql-pg` driver
  * keys rows by column name; the `lints.sql` query aliases the ten columns
  * exactly as referenced here.
  */
@@ -140,13 +127,12 @@ export function scanLegacyAdvisorLintRow(row: Record<string, unknown>): LegacyAd
 }
 
 /**
- * The six metadata fields Go's typed struct keeps, in struct-declaration order.
+ * The six metadata fields kept, in the established output-contract order.
  *
- * Go's `metadata` is a `*struct{...}`: a JSON `null`/absent value decodes to a
- * nil pointer (omitted), an object is decoded (unknown fields ignored), and any
- * other JSON type — including a `fkey_columns` that isn't an array — is an
- * `UnmarshalTypeError`. Throw on those so a malformed body fails rather than
- * silently dropping the metadata.
+ * A JSON `null`/absent `metadata` value is omitted, an object is decoded
+ * (unknown fields ignored), and any other JSON type — including a
+ * `fkey_columns` that isn't an array — throws, so a malformed body fails
+ * rather than silently dropping the metadata.
  */
 function projectApiMetadata(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined || value === null) return undefined;
@@ -155,10 +141,9 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
   }
   const record = value as Record<string, unknown>;
   const out: Record<string, unknown> = {};
-  // Go's metadata is a typed struct: each `*string` subfield decodes absent/null
-  // to a nil pointer (omitted) and a present non-string to an UnmarshalTypeError.
-  // Add in Go struct-declaration order: entity, fkey_columns, fkey_name, name,
-  // schema, type.
+  // Each string subfield decodes absent/null to omitted and a present
+  // non-string throws. Add in the established output-contract order: entity,
+  // fkey_columns, fkey_name, name, schema, type.
   const optString = (key: string) => {
     const field = record[key];
     if (field === undefined || field === null) return;
@@ -176,8 +161,7 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
     }
     const normalized: Array<number> = [];
     for (const element of fkeyColumns) {
-      // Go's encoding/json decodes a JSON null array element into the zero value
-      // (0) for float32, not an UnmarshalTypeError. Mirror that here.
+      // A null array element decodes to the zero value (0), not a throw.
       if (element === null || element === undefined) {
         normalized.push(0);
         continue;
@@ -197,20 +181,18 @@ function projectApiMetadata(value: unknown): Record<string, unknown> | undefined
 }
 
 /**
- * Port of Go's `apiResponseToLints` (`advisors.go:184-210`). Reads the advisors
- * API response with plain string narrowing instead of the generated closed-enum
- * schema (which would reject advisor names / metadata types the API can add):
- * `name` / `level` / `facing` / category values pass through as raw strings,
- * exactly like Go's `type X string` aliases.
+ * Reads the advisors API response with plain string narrowing instead of the
+ * generated closed-enum schema (which would reject advisor names / metadata
+ * types the API can add): `name` / `level` / `facing` / category values pass
+ * through as raw strings.
  *
- * Structurally strict, though — Go decodes the 200 body via `json.Unmarshal`
- * into a typed `V1ProjectAdvisorsResponse`, so a top-level non-object, a `lints`
- * / `categories` / `metadata` / `fkey_columns` of the wrong JSON container type,
- * or a non-object lint entry is an `UnmarshalTypeError` that surfaces as a
- * non-zero failure. **Throws** on those so a malformed 200 body fails instead of
- * being reported as "No issues found"; the caller maps the throw to the same
- * `failed to fetch … advisors` error Go produces. A top-level `null` decodes to
- * the zero value (no lints), matching Go.
+ * Structurally strict, though — a top-level non-object, a `lints` /
+ * `categories` / `metadata` / `fkey_columns` of the wrong JSON container type,
+ * or a non-object lint entry throws rather than surfacing as a non-zero
+ * failure. **Throws** on those so a malformed 200 body fails instead of being
+ * reported as "No issues found"; the caller maps the throw to the same
+ * `failed to fetch … advisors` error. A top-level `null` decodes to the zero
+ * value (no lints).
  */
 export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<LegacyAdvisorLint> {
   if (parsed === null) return [];
@@ -224,9 +206,9 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
   }
   const lints: Array<LegacyAdvisorLint> = [];
   for (const entry of lintsRaw) {
-    // Go's encoding/json decodes a null slice element to the zero-value struct
-    // (all fields at their zero values), not an UnmarshalTypeError. Normalise
-    // null/undefined to an empty record so the field decoders produce zero values.
+    // A null slice element decodes to the zero-value struct (all fields at
+    // their zero values), not a throw. Normalise null/undefined to an empty
+    // record so the field decoders produce zero values.
     if (entry === null || entry === undefined) {
       lints.push({
         name: "",
@@ -262,7 +244,7 @@ export function apiResponseToLegacyAdvisorLints(parsed: unknown): ReadonlyArray<
   return lints;
 }
 
-/** Go's `matchesType` (`advisors.go:226-239`). */
+/** Advisor-type match: `all` matches every lint, otherwise checks categories. */
 export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: string): boolean {
   if (advisorType === "all") return true;
   for (const category of lint.categories ?? []) {
@@ -272,7 +254,7 @@ export function matchesLegacyAdvisorType(lint: LegacyAdvisorLint, advisorType: s
   return false;
 }
 
-/** Go's `filterLints` (`advisors.go:212-224`): type + minimum-level filter. */
+/** Type + minimum-level filter. */
 export function filterLegacyAdvisorLints(
   lints: ReadonlyArray<LegacyAdvisorLint>,
   advisorType: string,
@@ -286,7 +268,7 @@ export function filterLegacyAdvisorLints(
   );
 }
 
-/** Re-materialises a lint as a plain object with keys in Go struct order. */
+/** Re-materialises a lint as a plain object with keys in output-contract order. */
 function toEncodableLint(lint: LegacyAdvisorLint): Record<string, unknown> {
   const out: Record<string, unknown> = {
     name: lint.name,
@@ -304,10 +286,10 @@ function toEncodableLint(lint: LegacyAdvisorLint): Record<string, unknown> {
 }
 
 /**
- * Encodes the filtered lints as Go's `outputAndCheck` does (`advisors.go:247-251`):
- * pretty 2-space JSON array, struct-order keys, trailing newline. An empty slice
- * produces no output (Go writes a stderr message instead), so the caller skips
- * emission.
+ * Encodes the filtered lints as the established output contract: pretty
+ * 2-space JSON array, struct-order keys, trailing newline. An empty slice
+ * produces no output (a stderr message is written instead), so the caller
+ * skips emission.
  */
 export function encodeLegacyAdvisorLints(lints: ReadonlyArray<LegacyAdvisorLint>): string {
   return encodeGoJsonIndented(lints.map(toEncodableLint));

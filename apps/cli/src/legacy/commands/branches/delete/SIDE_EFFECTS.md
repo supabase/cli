@@ -6,10 +6,10 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -17,7 +17,7 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 | -------- | ------------------------------------ | ------------ | -------------------------------------------------------------- | ------------------- |
 | `GET`    | `/v1/projects/{ref}/branches/{name}` | Bearer token | branch input is not a UUID and not a `^[a-z]{20}$` ref pattern | `{project_ref}`     |
 | `GET`    | `/v1/branches/{branch_id_or_ref}`    | Bearer token | branch input is a UUID                                         | `{ref}`             |
-| `DELETE` | `/v1/branches/{branch_id_or_ref}`    | Bearer token | always — `force` query param omitted (Go passes nil)           | `{ message: "ok" }` |
+| `DELETE` | `/v1/branches/{branch_id_or_ref}`    | Bearer token | always — `force` query param omitted                           | `{ message: "ok" }` |
 
 ## Environment Variables
 
@@ -40,9 +40,9 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-`Deleted preview branch: <ref>` written to **stderr** (Go `fmt.Fprintln(os.Stderr, …)`).
+`Deleted preview branch: <ref>` written to **stderr**.
 
 ### `--output-format json` / `stream-json`
 

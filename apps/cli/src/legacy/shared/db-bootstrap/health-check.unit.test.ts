@@ -602,7 +602,6 @@ describe("legacyWaitForHealthyServices", () => {
         }).pipe(Effect.provide(layer), Effect.exit);
 
         expect(Exit.isSuccess(exit)).toBe(true);
-        // Never falls back to the Docker healthcheck for PostgREST.
         expect(mock.spawned.some((args) => args[0] === "container" && args[1] === "inspect")).toBe(
           false,
         );
@@ -684,7 +683,6 @@ describe("legacyWaitForHealthyServices", () => {
         ).pipe(Effect.provide(layer), Effect.exit);
 
         expect(Exit.isSuccess(exit)).toBe(true);
-        // Never falls back to the Docker healthcheck for Edge Runtime.
         expect(mock.spawned.some((args) => args[0] === "container" && args[1] === "inspect")).toBe(
           false,
         );

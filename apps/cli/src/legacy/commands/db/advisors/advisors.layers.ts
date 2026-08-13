@@ -79,8 +79,8 @@ export const legacyDbAdvisorsRuntimeLayer = Layer.mergeAll(
   credentials,
   projectRef,
   linkedProjectCache,
-  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
-  // exposed at top level so the raw-HTTP advisor GETs can yield it. The SAME
+  // The one per-command identity stitcher, exposed at top level so the
+  // raw-HTTP advisor GETs can yield it. The SAME
   // reference is provided to platformApiFactory / linkedProjectCache / dbConfig
   // above, so memoisation makes the typed temp-role mint, the advisor GETs, the
   // cache GET, and the linked DB-config stack all share one `stitchAttempted`

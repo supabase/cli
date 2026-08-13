@@ -58,9 +58,8 @@ export const legacyNetworkBansGet = Effect.fn("legacy.network-bans.get")(functio
         return;
       }
 
-      // Go's `get.Run` prints `DB banned IPs:` to stderr unconditionally before
-      // the format switch (`apps/cli-go/internal/bans/get/get.go:19`), including
-      // for `--output env` (which then errors).
+      // Prints `DB banned IPs:` to stderr unconditionally before the format
+      // switch, including for `--output env` (which then errors).
       yield* output.raw("DB banned IPs:\n", "stderr");
 
       if (legacyOutput === "env") {

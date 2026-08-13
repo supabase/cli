@@ -31,8 +31,7 @@ export class LegacySnippetsListUnexpectedStatusError extends Data.TaggedError(
   }
 }
 
-// Mirrors Go's `utils.ErrEnvNotSupported` ("--output env is not supported"),
-// returned from `list.Run` when `OutputFormat.Value == OutputEnv`.
+// Fails with "--output env is not supported" when `-o env` is requested.
 export class LegacySnippetsEnvNotSupportedError extends Data.TaggedError(
   "LegacySnippetsEnvNotSupportedError",
 )<{
@@ -43,9 +42,9 @@ export class LegacySnippetsEnvNotSupportedError extends Data.TaggedError(
   }
 }
 
-// Mirrors Go's `utils.EncodeOutput` TOML failure: `snippets list -o toml`
-// fails whenever a snippet carries a `description`, because BurntSushi
-// refuses the `nullable.Nullable[string]` (`map[bool]string`) field
+// `snippets list -o toml` fails whenever a snippet carries a `description`,
+// because BurntSushi refuses the `nullable.Nullable[string]`
+// (`map[bool]string`) field
 // ("failed to output toml: toml: cannot encode a map with non-string key type").
 export class LegacySnippetsTomlEncodeError extends Data.TaggedError(
   "LegacySnippetsTomlEncodeError",

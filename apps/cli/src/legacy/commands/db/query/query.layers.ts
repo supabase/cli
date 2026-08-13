@@ -23,8 +23,8 @@ import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
  * **lazily** via `LegacyPlatformApiFactory` rather than the eager `LegacyPlatformApi`
  * stack, so building the runtime resolves no token: `db query --local` /
  * `--db-url` run without a login (the handler's `--linked` branch checks
- * `getAccessToken` itself), matching Go, which only requires the token in the
- * `--linked` PreRun.
+ * `getAccessToken` itself), matching the token requirement only kicking in
+ * on the `--linked` path.
  */
 const cliConfig = legacyCliConfigLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
 
@@ -32,10 +32,10 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
-  // The linked db-config resolver + the linked-resolver runtime both snapshot the
-  // single `LegacyIdentityStitch` (Go's one `sync.Once`); provide the SAME layer
-  // reference to each so Effect memoises one shared instance. Without it the
-  // bundled binary panics with a missing-service error (legacy CLAUDE.md rule 5).
+  // The linked db-config resolver + the linked-resolver runtime both snapshot
+  // the single `LegacyIdentityStitch`; provide the SAME layer reference to
+  // each so Effect memoises one shared instance. Without it the bundled
+  // binary panics with a missing-service error (legacy CLAUDE.md rule 5).
   Layer.provide(legacyIdentityStitchLayer),
 );
 

@@ -1,6 +1,6 @@
 import { describe, expect } from "vitest";
 import { isRecording } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 const ORG_NAME = "My Test Org";
 
@@ -70,9 +70,6 @@ describe("orgs", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["orgs", "list"]);
-    testParity(["orgs", "list"], { failureType: "NON_AUTH" });
   });
 
   describe("orgs:create", () => {
@@ -156,8 +153,5 @@ describe("orgs", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["orgs", "create", "Test Org"]);
-    testParity(["orgs", "create", "Test Org"], { failureType: "NON_AUTH" });
   });
 });

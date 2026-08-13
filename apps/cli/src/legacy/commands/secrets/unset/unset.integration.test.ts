@@ -15,10 +15,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySecretsUnset } from "./unset.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 type SecretsList = typeof V1ListAllSecretsOutput.Type;
 
 interface SetupOpts {
@@ -78,16 +74,11 @@ function parseDeleteBody(body: unknown): string[] {
   return body as string[];
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("legacy secrets unset integration", () => {
   it.live("unsets a single secret given explicitly (with --yes)", () => {
     const { layer, out, api } = setup({ yes: true });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // No GET call: names came from args.
       expect(api.requests.filter((r) => r.method === "GET")).toHaveLength(0);
       const deletes = api.requests.filter((r) => r.method === "DELETE");
       expect(deletes).toHaveLength(1);
@@ -161,7 +152,7 @@ describe("legacy secrets unset integration", () => {
     const { layer, out, api } = setup({ yes: false, stdinIsTty: false });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // Go's PromptText prints the label to stderr, the 100ms non-TTY read scans
+      // `PromptText` prints the label to stderr, the 100ms non-TTY read scans
       // nothing, and the empty input is echoed back before the true default wins
       // (`console.go:64-102`).
       expect(out.stderrText).toContain(
@@ -181,7 +172,7 @@ describe("legacy secrets unset integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("LegacySecretsUnsetCancelledError");
       }
-      // The piped answer is echoed to stderr like Go's non-TTY PromptText.
+      // The piped answer is echoed to stderr, matching non-TTY `PromptText`.
       expect(out.stderrText).toContain("[Y/n] n\n");
       expect(api.requests.filter((r) => r.method === "DELETE")).toHaveLength(0);
     }).pipe(Effect.provide(layer));
@@ -202,7 +193,7 @@ describe("legacy secrets unset integration", () => {
     const { layer, out, api } = setup();
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });
-      // Same bytes as Go's `viper.GetBool("YES")` branch (`console.go:70-72`).
+      // Same bytes as the `viper.GetBool("YES")` branch (`console.go:70-72`).
       expect(out.stderrText).toContain(
         "Do you want to unset these function secrets?\n • FOO\n\n [Y/n] y\n",
       );
@@ -308,9 +299,9 @@ describe("legacy secrets unset integration", () => {
   it.live("--output-format=json without --yes takes the Yes default silently", () => {
     // TS-only machine mode has no Go equivalent; `legacyPromptYesNo` documents
     // that json/stream-json never prompts and takes the call site's default —
-    // for unset that is Yes (Go's `unset.go:34`), mirroring Go's non-TTY
-    // default-through behavior for scripts. Deliberate (CLI-1974 review);
-    // pass --yes explicitly in automation for clarity.
+    // for unset that is Yes, mirroring the non-TTY default-through behavior
+    // for scripts. Deliberate (CLI-1974 review); pass --yes explicitly in
+    // automation for clarity.
     const { layer, out, api } = setup({ yes: false, format: "json" });
     return Effect.gen(function* () {
       yield* legacySecretsUnset({ projectRef: Option.none(), names: ["FOO"] });

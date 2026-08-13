@@ -96,9 +96,8 @@ export const legacySsoList = Effect.fn("legacy.sso.list")(function* (flags: Lega
         return;
       }
       if (goFmt === "toml") {
-        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
-        // rejects the payload (e.g. a nil element in an attribute-mapping
-        // `default` array).
+        // TOML encode failure wrapping (e.g. a nil element in an
+        // attribute-mapping `default` array).
         const toml = yield* Effect.try({
           try: () => encodeLegacyGoToml(payload, LEGACY_GO_SSO_PROVIDERS_WRAPPER),
           catch: (cause) =>

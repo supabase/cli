@@ -47,13 +47,11 @@
 | ---------------------- | ------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`; `--enable-db-ssl-enforcement` / `--disable-db-ssl-enforcement` booleans pass through) |
 
-Matches `apps/cli-go/internal/sslenforcement/update/`. Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-### `--output-format text` (default) — Go CLI compatible
+### `--output-format text` (default)
 
-Same status-line shape as `get` (Go's `update.Run` delegates to `get.PrintSSLStatus`):
+Same status-line shape as `get`:
 
 ```
 SSL is being enforced.
@@ -65,11 +63,9 @@ or
 SSL is *NOT* being enforced.
 ```
 
-### Go `--output {json,yaml,toml,env}`
+### `--output {json,yaml,toml,env}`
 
-Byte-identical to the Go CLI's encoders (`apps/cli-go/internal/utils/output.go`).
-
-### Go `--output pretty`
+### `--output pretty`
 
 Same as `text` mode.
 
@@ -92,18 +88,16 @@ One `result` event:
 ## Notes
 
 - `--enable-db-ssl-enforcement` and `--disable-db-ssl-enforcement` are mutually exclusive,
-  enforced at handler entry (Effect CLI has no equivalent of cobra's
-  `MarkFlagsMutuallyExclusive`). The Go binary uses the cobra helper directly.
+  enforced at handler entry rather than at flag-parse time.
 - The request body always carries `database: <enableDbSslEnforcement>`; passing
   `--disable-db-ssl-enforcement` is the user-facing way to send `database: false`.
 - `linked-project.json` is **not** written if flag validation fails (no ref is
-  resolved). `telemetry.json` is written regardless, matching Go's
-  `PersistentPostRun` semantics — but only once the `--experimental` gate is open, since
-  the flag-validation/telemetry-writing handler never runs at all when the gate is closed.
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
-- `ssl-enforcement` is an experimental command (Go `root.go:63`): `update` requires
-  `--experimental` (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE`
-  gate (`root.go:91-96`), which runs before the `IsManagementAPI` login check
-  (`root.go:105-109`). A closed gate exits 1 before the enable/disable mutex check, project-ref
+  resolved). `telemetry.json` is written regardless — but only once the `--experimental` gate
+  is open, since the flag-validation/telemetry-writing handler never runs at all when the gate
+  is closed.
+- The `--output` flag wins over `--output-format` when both are provided.
+- `ssl-enforcement` is an experimental command: `update` requires
+  `--experimental` (or `SUPABASE_EXPERIMENTAL`), checked before the login check.
+  A closed gate exits 1 before the enable/disable mutex check, project-ref
   resolution, the API call, the `linked-project.json` write, the `telemetry.json` write, and the
   `cli_command_executed` event.

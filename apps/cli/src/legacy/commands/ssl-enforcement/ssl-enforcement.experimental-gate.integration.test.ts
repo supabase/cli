@@ -18,7 +18,7 @@ import { legacySslEnforcementCommand } from "./ssl-enforcement.command.ts";
 // rationale: this proves `--experimental` is wired into the actual
 // `.command.ts` handler pipeline AND runs before
 // `legacyManagementApiRuntimeLayer`'s eager access-token resolution
-// (Go's `IsExperimental` check precedes `IsManagementAPI` in
+// (the `IsExperimental` check precedes `IsManagementAPI` in
 // `apps/cli-go/cmd/root.go:91-109`).
 
 const tempRoot = useLegacyTempWorkdir("supabase-ssl-enforcement-experimental-int-");

@@ -12,10 +12,10 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves (Go `PersistentPostRun`) |
+| Path                                           | Format | When                                             |
+| ---------------------------------------------- | ------ | ------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
 
 ## API Routes
 
@@ -49,11 +49,11 @@
 
 ## Output
 
-### `--output-format text` / Go `--output pretty` (Go CLI compatible)
+### `--output-format text` / `--output pretty`
 
-Glamour-styled ASCII table with columns `ID`, `NAME`, `VISIBILITY`, `OWNER`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Literal `|` characters in `name`, `visibility`, or `owner.username` are passed through verbatim (Go applies a `strings.ReplaceAll` markdown-intermediate escape that glamour decodes back; the final ASCII bytes carry the raw `|`).
+Glamour-styled ASCII table with columns `ID`, `NAME`, `VISIBILITY`, `OWNER`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Literal `|` characters in `name`, `visibility`, or `owner.username` are passed through verbatim in the final ASCII bytes (escaped internally during markdown rendering, then decoded back).
 
-API-supplied strings are not stripped of ANSI / terminal control sequences before rendering — matches Go's glamour pass-through.
+API-supplied strings are not stripped of ANSI / terminal control sequences before rendering (inherited from the old Go CLI's glamour pass-through).
 
 ```
   ID           | NAME         | VISIBILITY | OWNER    | CREATED AT (UTC)    | UPDATED AT (UTC)
@@ -61,9 +61,9 @@ API-supplied strings are not stripped of ANSI / terminal control sequences befor
   test-snippet | Create table | user       | supaseed | 2023-10-13 17:48:58 | 2023-10-13 17:48:58
 ```
 
-### Go `--output json`
+### `--output json`
 
-Indented JSON with alphabetically-sorted keys and a trailing newline. Empty `data` is rendered as `null` to match Go's `encoding/json` nil-slice serialization.
+Indented JSON with alphabetically-sorted keys and a trailing newline. Empty `data` is rendered as `null` (not an empty array).
 
 ```json
 {
@@ -73,17 +73,17 @@ Indented JSON with alphabetically-sorted keys and a trailing newline. Empty `dat
 }
 ```
 
-### Go `--output yaml`
+### `--output yaml`
 
 YAML rendering of the full `V1ListAllSnippetsOutput` response.
 
-### Go `--output toml`
+### `--output toml`
 
 TOML rendering of the full `V1ListAllSnippetsOutput` response, with a trailing newline.
 
-### Go `--output env`
+### `--output env`
 
-Not supported — fails with `--output env flag is not supported`. Byte-exact match against Go's `utils.ErrEnvNotSupported` (`apps/cli-go/internal/utils/output.go:41`).
+Not supported — fails with `--output env flag is not supported`.
 
 ### `--output-format json` (TS extension)
 
@@ -95,6 +95,6 @@ NDJSON `success` event with the full response as `data`.
 
 ## Notes
 
-- When both Go `--output` and TS `--output-format` are set, Go's flag wins (matches the precedence used elsewhere in legacy ports).
-- `--output env` is rejected **after** project-ref resolution but **before** the API call, matching Go's lifecycle: cobra resolves `--project-ref` in `PersistentPreRunE`, `list.Run` checks `OutputFormat.Value` before invoking the encoder. The error message is byte-exact with `utils.ErrEnvNotSupported`.
-- The linked-project cache fires after project-ref resolves (Go `PersistentPostRun`); the telemetry state always flushes (Go `Execute`). Both run on success and on every error path — the two `Effect.ensuring` blocks in the handler model the post-run order exactly.
+- When both `--output` and `--output-format` are set, `--output` wins (matches the precedence used elsewhere in legacy ports).
+- `--output env` is rejected **after** project-ref resolution but **before** the API call.
+- The linked-project cache fires after project-ref resolves; the telemetry state always flushes. Both run on success and on every error path via the two `Effect.ensuring` blocks in the handler.

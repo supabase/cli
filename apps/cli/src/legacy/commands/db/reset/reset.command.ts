@@ -64,12 +64,11 @@ export const legacyDbResetCommand = Command.make("reset", config).pipe(
           version: flags.version,
           last: flags.last,
         },
-        // NO safeFlags: `markFlagTelemetrySafe` is per flag INSTANCE, and Go only
-        // marks migration squash's `--version` (cmd/migration.go:134). db reset's
-        // `--version` (cmd/db.go) is unmarked, so Go redacts it — match that.
-        // `--project-ref` is TS-only with no Go telemetry-safety baseline either
-        // (Go's nearest registrations, cmd/pgdelta_catalog.go:44 and most others,
-        // are unmarked too), so it stays redacted as well.
+        // NO safeFlags: telemetry-safe marking is per flag INSTANCE — migration
+        // squash's `--version` is marked safe, but db reset's `--version` is
+        // unmarked, so it stays redacted here. `--project-ref` has no
+        // established telemetry-safety baseline either, so it stays redacted
+        // as well.
       }),
       withJsonErrorHandling,
     ),

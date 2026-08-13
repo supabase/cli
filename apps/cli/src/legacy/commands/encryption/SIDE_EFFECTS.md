@@ -55,11 +55,11 @@ No custom `phtelemetry.*` events in `internal/encryption/`.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-- `get-root-key`: the bare root key followed by a newline, to **stdout** (Go `fmt.Println`).
+- `get-root-key`: the bare root key followed by a newline, to **stdout**.
 - `update-root-key`: `Finished supabase root-key update.` followed by a newline, to **stderr**
-  (Go's `utils.Aqua` color rendered as plain text per the legacy-port convention).
+  (color rendered as plain text per the legacy-port convention).
 
 ### `--output-format json`
 
@@ -78,10 +78,9 @@ One `result` event carrying `{root_key}` (both subcommands).
 - Requires `--project-ref`, `SUPABASE_PROJECT_ID`, or a linked project.
 - `update-root-key` reads the key from stdin: a real TTY is read with a masked
   prompt; piped stdin is decoded as UTF-8 and whitespace-trimmed. An empty or
-  whitespace-only key sends an empty `root_key`, matching Go's `io.Copy` +
-  `strings.TrimSpace` behavior. (The TTY masked prompt also trims, matching Go.)
-- **Known divergence:** Go writes the bare prompt `Enter a new root key: ` to
-  stderr and reads via `term.ReadPassword`. The port uses a clack masked prompt
+  whitespace-only key sends an empty `root_key` (the TTY masked prompt also trims).
+- **Known divergence:** the old Go CLI wrote the bare prompt `Enter a new root key: ` to
+  stderr and read via a raw password reader. The port uses a clack masked prompt
   with the same label text, so the rendered TTY prompt is not byte-identical to
-  Go (clack adds its own framing). Piped (non-TTY) mode does not print the prompt
-  at all — it reads stdin directly, as Go's `io.Copy` branch does.
+  the old CLI's (clack adds its own framing). Piped (non-TTY) mode does not print the
+  prompt at all — it reads stdin directly.

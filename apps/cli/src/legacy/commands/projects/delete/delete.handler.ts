@@ -39,26 +39,25 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
   const cliConfig = yield* LegacyCliConfig;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
-  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320) —
-  // the env var must auto-confirm too, not just the flag (CLI-1974).
+  // `--yes` OR `SUPABASE_YES` — the env var must auto-confirm too, not just
+  // the flag.
   const yes = yield* legacyResolveYes;
   const tty = yield* Tty;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
 
-  // Captured for the PersistentPostRun-parity cache write — Go's
-  // `ensureProjectGroupsCached` caches whatever `flags.ProjectRef` resolved to
-  // (`root.go:213-217`), which delete sets from the arg/prompt before deleting.
+  // Captured for the cache write in `Effect.ensuring` below — whatever
+  // `flags.ProjectRef` resolved to, which delete sets from the arg/prompt
+  // before deleting.
   let resolvedRef: string | undefined;
 
   yield* Effect.gen(function* () {
-    // Ref resolution (Go `projects.go:117-122`): explicit arg, else prompt on a
-    // TTY, else fail. Delete never reads the linked ref file as a source.
+    // Ref resolution: explicit arg, else prompt on a TTY, else fail. Delete
+    // never reads the linked ref file as a source.
     let ref: string;
     if (Option.isSome(flags.ref) && flags.ref.value.length > 0) {
       ref = flags.ref.value;
     } else if (tty.stdinIsTty && output.interactive) {
-      // Go passes this exact title (`projects.go:118`).
       ref = yield* resolver.promptProjectRef("Which project do you want to delete?");
     } else {
       return yield* new LegacyProjectsDeleteRefRequiredError({
@@ -67,19 +66,19 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
     }
     resolvedRef = ref;
 
-    // delete.PreRun (`delete.go:17-28`): validate the ref, then confirm.
+    // Validate the ref, then confirm.
     if (!PROJECT_REF_PATTERN.test(ref)) {
       return yield* new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE });
     }
 
-    // Go passes `utils.Aqua(ref)` inside the title (`delete.go:21`); `legacyAqua`
-    // mirrors lipgloss's profile detection (plain when stderr is not a TTY).
+    // `legacyAqua` mirrors lipgloss's profile detection (plain when stderr
+    // is not a TTY).
     const title = `Do you want to delete project ${legacyAqua(ref)}? This action is irreversible.`;
-    // Go's `PromptYesNo(title, false)` (`delete.go:22`, `console.go:64-82`):
-    // `--yes`/`SUPABASE_YES` auto-confirms with the `<title> [y/N] y` stderr echo;
-    // a non-TTY stdin still prints the label and scans one piped line (100ms), so
-    // `echo y | supabase projects delete <ref>` confirms; empty/unparseable input
-    // falls back to the No default (CLI-1974).
+    // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms with
+    // the `<title> [y/N] y` stderr echo; a non-TTY stdin still prints the
+    // label and scans one piped line (100ms), so
+    // `echo y | supabase projects delete <ref>` confirms; empty/unparseable
+    // input falls back to the No default.
     const confirmed = yield* legacyPromptYesNo(output, yes, title, false);
     if (!confirmed) {
       return yield* new LegacyProjectsDeleteCancelledError({ message: CONTEXT_CANCELED_MESSAGE });
@@ -113,23 +112,21 @@ export const legacyProjectsDelete = Effect.fn("legacy.projects.delete")(function
     );
     yield* deleting?.clear() ?? Effect.void;
 
-    // Go best-effort deletes the per-ref keyring credential (`delete.go:46-48`),
-    // but Go only ever *stores* the profile-scoped access token in the keyring
-    // (`StoreProvider.Set` is only called with `CurrentProfile.Name`, never a
-    // ref). So that delete always targets a non-existent entry — a functional
-    // no-op for both CLIs. The only thing it can emit is Go's keyring-backend
-    // *availability* error ("Keyring is not supported on WSL", e.g. on a
-    // headless CI runner with no D-Bus session); that is environment noise the
-    // cli-e2e parity harness normalizes away (the TS `@napi-rs/keyring` kernel
-    // keyutils backend never hits it). We therefore skip the no-op entirely.
+    // The per-ref keyring credential delete is skipped entirely: the access
+    // token is only ever *stored* under the profile name, never a ref, so
+    // that delete would always target a non-existent entry — a functional
+    // no-op. The only thing it could emit is a keyring-backend *availability*
+    // error ("Keyring is not supported on WSL", e.g. on a headless CI runner
+    // with no D-Bus session), which the TS `@napi-rs/keyring` kernel keyutils
+    // backend never hits anyway.
 
-    // Best-effort unlink (`delete.go:49-56`): when the linked ref file matches
-    // the deleted ref, remove the `supabase/.temp` directory.
+    // Best-effort unlink: when the linked ref file matches the deleted ref,
+    // remove the `supabase/.temp` directory.
     const tempDir = path.join(cliConfig.workdir, "supabase", ".temp");
     const refPath = path.join(tempDir, "project-ref");
-    // Go uses `afero.FileContainsBytes` (substring), but the link file written by
-    // `supabase link` holds exactly the ref. Compare against the trimmed content
-    // so a corrupt/multi-ref file can't trigger an unintended `.temp` removal.
+    // The link file written by `supabase link` holds exactly the ref.
+    // Compare against the trimmed content so a corrupt/multi-ref file can't
+    // trigger an unintended `.temp` removal.
     const matches = yield* fs
       .readFileString(refPath)
       .pipe(Effect.map((content) => content.trim() === ref))

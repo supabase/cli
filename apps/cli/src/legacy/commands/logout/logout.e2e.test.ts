@@ -37,8 +37,8 @@ describe("supabase logout (legacy)", () => {
     },
   );
 
-  // Declining the confirmation must byte-match Go: a single `context canceled`
-  // line on stderr and exit 1, with NO `--debug` troubleshooting hint —
+  // Declining the confirmation must print a single `context canceled` line on
+  // stderr and exit 1, with NO `--debug` troubleshooting hint —
   // `recoverAndExit` skips `SuggestDebugFlag` for `context.Canceled`
   // (apps/cli-go/cmd/root.go:287-303). CLI-1973.
   test(

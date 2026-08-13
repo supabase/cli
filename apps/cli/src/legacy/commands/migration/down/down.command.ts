@@ -7,9 +7,9 @@ import { legacyMigrationDbRuntimeLayer } from "../migration.layers.ts";
 import { legacyMigrationDown } from "./down.handler.ts";
 
 const config = {
-  // Go's `--last` is a `uint` (`down.go`), default 1. Effect has no uint, so reject
-  // negatives explicitly to reproduce cobra's `ParseUint` rejection (the message
-  // differs slightly — an accepted small divergence).
+  // `--last` is conceptually a uint, default 1. Effect has no uint, so reject
+  // negatives explicitly to reproduce the established `ParseUint`-style rejection
+  // (the message differs slightly — an accepted small divergence).
   last: Flag.integer("last").pipe(
     Flag.withDescription("Reset up to the last n migration versions."),
     Flag.withDefault(1),
@@ -34,7 +34,6 @@ const config = {
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Resets applied migrations on the local database."),
-    // Go: `downFlags.Bool("local", true, …)`.
     Flag.withDefault(true),
   ),
   // TS-only override of the linked project ref — see push.command.ts (db push).

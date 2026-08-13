@@ -73,7 +73,6 @@ describe("legacy sso add --domains flag (pflag StringSlice parity)", () => {
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
-      // Byte-matches the Go CLI (`"example.com` is 12 bytes → EOF at column 13).
       expect(normalizeCause(exit.cause).message).toBe(
         'invalid argument "\\"example.com" for "--domains" flag: parse error on line 1, column 13: extraneous or missing " in quoted-field',
       );

@@ -108,7 +108,7 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | Workspace | Purpose |
 | --- | --- |
 | `apps/cli` | Main `supabase` package. Contains command handlers, runtime services, auth, output, telemetry, and docs generation scripts. |
-| `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for parity testing between the Go CLI and the TS Legacy port. |
+| `apps/cli-e2e` | Compatibility e2e test suite. Record-and-replay harness for testing the TS Legacy port against real Supabase Management API responses. |
 | `apps/docs` | Internal docs site built with Next.js and generated from the CLI docs sources. |
 
 ## Packages
@@ -116,7 +116,7 @@ That pulls `.repos/effect/`, which is the local source of truth for Effect v4 AP
 | Workspace | Purpose |
 | --- | --- |
 | `packages/api` | Auto-generated TypeScript client for the Supabase Management API. |
-| `packages/cli-test-helpers` | CLI test harness library — `createHarness`/`exec` API for spawning Go, TS Legacy, and TS Next CLI subprocesses in tests. |
+| `packages/cli-test-helpers` | CLI test harness library — `createHarness`/`exec` API for spawning TS Legacy and TS Next CLI subprocesses in tests. |
 | `packages/config` | JSON Schema and generated TypeScript types for Supabase configuration. |
 | `packages/process-compose` | TypeScript/Bun port of `process-compose` used for multi-service orchestration. |
 | `packages/stack` | Programmatic local Supabase stack used by the CLI and other tooling. |
@@ -176,28 +176,26 @@ pnpm run check:all
 
 ## E2E Compatibility Test Suite
 
-`apps/cli-e2e` implements a record-and-replay test harness for verifying behavioral parity between the Go CLI and the TypeScript Legacy port.
+`apps/cli-e2e` implements a record-and-replay test harness for testing the TypeScript Legacy CLI (`ts-legacy`, the only shipped CLI shell) against real Supabase Management API responses without hitting staging on every run. It still shells out to the bundled Go binary for the handful of commands the TS port proxies (`db diff`, `db pull`, `db branch *`, `db remote *`, `gen keys`, `functions download`), so `apps/cli-go/` is built alongside the TS CLI for this suite, but the suite itself no longer compares Go and TS output — that go-target parity harness was retired once the legacy port and the CLI-1970 Go binary trim landed.
 
 ### Architecture
 
-**The Go CLI is the source of truth.** Fixtures are recorded by running the Go CLI against the Supabase staging API. The TypeScript Legacy CLI is then run against the same fixtures to verify that its output matches.
+Fixtures are recorded by running `ts-legacy` against the real Supabase staging API and capturing the request/response pairs. Every other run replays those committed fixtures against the same CLI, so tests are fast and deterministic with no network access.
 
-The harness works in three modes:
+The harness works in two modes:
 
 | Mode | When | What it does |
 |------|------|-------------|
-| **Replay** (default) | Every PR / local dev | Loads committed fixtures; serves recorded responses to the CLI subprocess. Fast and deterministic — no network access. Default target is `ts-legacy`. |
-| **Record** | `RECORD=true` | Proxies CLI traffic to staging and captures request/response pairs as fixture files. Only the Go harness is used for recording. |
-| **Parity** | `CLI_HARNESS_TARGET=go` | Runs the Go CLI against the committed fixtures — useful for verifying fixture correctness independently of the TS port. |
+| **Replay** (default) | Every PR / local dev | Loads committed fixtures; serves recorded responses to the CLI subprocess. Fast and deterministic — no network access. |
+| **Record** | `RECORD=true` | Proxies CLI traffic to staging and captures request/response pairs as fixture files. |
 
 ### Running the tests
 
 ```sh
 # Replay mode — fast, no credentials needed
 cd apps/cli-e2e
-pnpm test            # TS Legacy parity check (default)
-pnpm test:go         # Go harness explicitly
-pnpm test:legacy     # TS Legacy parity check (explicit, same as above)
+pnpm test            # ts-legacy target (default and only target)
+pnpm test:legacy     # ts-legacy target (explicit, same as above)
 
 # Or via Nx from the repo root
 nx run @supabase/cli-e2e:test:e2e
@@ -214,21 +212,21 @@ SUPABASE_ACCESS_TOKEN=<your-staging-token> SUPABASE_TEST_PROJECT_REF=<your-proje
 
 Review the generated files in `apps/cli-e2e/fixtures/recorded/` before committing — verify that no real tokens, UUIDs, or project refs appear (they should be replaced with `__ACCESS_TOKEN__`, `__UUID__`, `__PROJECT_REF__` placeholders).
 
-### Verifying parity
+### Verifying fixtures
 
-After recording, run the TS Legacy CLI against the committed fixtures:
+After recording, replay must pass with no changes against the freshly committed fixtures:
 
 ```sh
 pnpm test:legacy
 ```
 
-Failing tests identify commands where the TS Legacy port does not yet match the Go CLI output.
+A test failing only after a recording session usually means an assertion needs updating to match the CLI's current real-world output, not the fixture.
 
 ### Fixture layout
 
 ```text
 apps/cli-e2e/fixtures/
-├── recorded/           # Committed fixture pairs (Go CLI = source of truth)
+├── recorded/           # Committed fixture pairs, captured from real staging responses
 │   └── <KEY>/          # e.g. GET_v1_projects/
 │       ├── default.request.json
 │       └── default.response.json
@@ -245,7 +243,7 @@ Test code imports from `@supabase/cli-test-helpers` (`packages/cli-test-helpers`
 ```ts
 import { createHarness, exec } from "@supabase/cli-test-helpers";
 
-const harness = createHarness("go", { apiUrl, accessToken });
+const harness = createHarness("ts-legacy", { apiUrl, accessToken });
 const result = await exec(harness, ["projects", "list"]);
 ```
 

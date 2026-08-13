@@ -90,7 +90,7 @@ describe("legacyReadInspectRules", () => {
 
   it.effect("weakly coerces scalar rule fields to strings, matching Go's decoder", () =>
     Effect.gen(function* () {
-      // Go's viper UnmarshalExact keeps WeaklyTypedInput:true, so an int/bool field
+      // Weakly-typed decoding: an int/bool field
       // coerces to its string form (123 → "123", true → "1") rather than erroring.
       const rules = yield* readRules(
         makeWorkdir(

@@ -6,10 +6,6 @@ import { LegacyDnsResolverFlag } from "../../shared/legacy/global-flags.ts";
 import { LegacyDbConnectError } from "./legacy-db-connection.errors.ts";
 import { buildDohRequest, legacyDohFetch, legacyDohFetchLayer } from "./legacy-http-dns.ts";
 
-// ---------------------------------------------------------------------------
-// buildDohRequest — pure URL-rewrite helper
-// ---------------------------------------------------------------------------
-
 describe("buildDohRequest", () => {
   it("replaces the hostname with the resolved IPv4 address", () => {
     const result = buildDohRequest("https://api.supabase.com/v1/projects", "203.0.113.10");
@@ -55,10 +51,6 @@ describe("buildDohRequest", () => {
     expect(result.serverName).toBe("api.supabase.com");
   });
 });
-
-// ---------------------------------------------------------------------------
-// legacyDohFetch — fetch wrapper with injectable fakes
-// ---------------------------------------------------------------------------
 
 describe("legacyDohFetch", () => {
   type CapturedCall = {
@@ -172,10 +164,6 @@ describe("legacyDohFetch", () => {
     await expect(fetchFn("https://api.supabase.com/v1/projects")).rejects.toThrow();
   });
 });
-
-// ---------------------------------------------------------------------------
-// Effect-layer integration: legacyDohFetchLayer overrides FetchHttpClient.Fetch
-// ---------------------------------------------------------------------------
 
 describe("legacyDohFetchLayer (Effect layer integration)", () => {
   it.effect("installs a DoH-aware fetch when dns-resolver is 'https'", () => {

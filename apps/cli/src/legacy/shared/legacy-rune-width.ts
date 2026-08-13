@@ -1,5 +1,5 @@
 /**
- * Terminal display width, matching Go's `mattn/go-runewidth` with
+ * Terminal display width, matching `mattn/go-runewidth` with
  * `EastAsianWidth=false` — the default in a modern terminal, which is how
  * `olekukonko/tablewriter` measures cells (`db query`'s table/CSV writer). East Asian
  * Wide/Fullwidth code points count as 2 columns, zero-width / combining marks as 0,

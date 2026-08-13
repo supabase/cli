@@ -8,7 +8,6 @@ import {
 } from "./report.queries.ts";
 
 describe("legacyWrapReportQuery", () => {
-  // Ports apps/cli-go/internal/inspect/report_test.go::TestWrapQuery.
   it("wraps a query in CSV COPY with no placeholders", () => {
     expect(legacyWrapReportQuery("SELECT 1")).toBe("COPY (SELECT 1) TO STDOUT WITH CSV HEADER");
   });

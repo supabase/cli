@@ -139,7 +139,7 @@ describe("legacy migration list", () => {
     });
     return Effect.gen(function* () {
       yield* legacyMigrationList(flags());
-      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      // The connection banner prints to stderr before dialing.
       expect(stripAnsi(ctx.out.stderrText)).toContain("Connecting to remote database...");
       const stdout = stripAnsi(ctx.out.stdoutText);
       expect(stdout).toContain("Local");
@@ -216,7 +216,6 @@ describe("legacy migration list", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution or cache write.
       expect(ctx.resolverCalls).toEqual([]);
       expect(ctx.cache.cachedRef).toBeUndefined();
     }).pipe(Effect.provide(ctx.layer));

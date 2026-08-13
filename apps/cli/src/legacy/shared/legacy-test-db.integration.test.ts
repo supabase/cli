@@ -501,7 +501,6 @@ describe("legacy test db integration", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution or container run.
       expect(resolver.calls).toEqual([]);
       expect(connection.execCalls).toEqual([]);
       expect(docker.lastOpts).toBeUndefined();

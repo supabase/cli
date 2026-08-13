@@ -18,7 +18,7 @@ import { legacyPostgresConfigCommand } from "./postgres-config.command.ts";
 // This suite proves the `--experimental` gate is wired into the actual
 // `.command.ts` handler pipeline (not just the shared helper in isolation),
 // and — critically — that it runs BEFORE `legacyManagementApiRuntimeLayer`
-// resolves an access token. Go's root `PersistentPreRunE` checks
+// resolves an access token. The root `PersistentPreRunE` checks
 // `IsExperimental` before the `IsManagementAPI` login check
 // (`apps/cli-go/cmd/root.go:91-109`); `legacyManagementApiRuntimeLayer`
 // eagerly fails on a missing token as part of its own layer construction, so
@@ -109,12 +109,11 @@ describe("legacy postgres-config experimental gate (Go PersistentPreRunE parity)
     });
   }
 
-  // Go parity (CLI-2005): pflag's `readAsCSV` error aborts cobra's
-  // `ParseFlags` BEFORE `PersistentPreRunE`'s experimental-gate check, so the
-  // parse error must win even with `--experimental` unset. The rendered line
-  // byte-matches the real Go CLI (pflag v1.0.10 `errors.go:116` wrapping
-  // `encoding/csv`) — same prior art as network-bans/network-restrictions
-  // (CLI-1983).
+  // pflag's `readAsCSV` error aborts cobra's `ParseFlags` BEFORE
+  // `PersistentPreRunE`'s experimental-gate check, so the parse error must
+  // win even with `--experimental` unset. The rendered line matches pflag's
+  // own diagnostic (pflag v1.0.10 `errors.go:116` wrapping `encoding/csv`) —
+  // same prior art as network-bans/network-restrictions.
   const malformedCsvCases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;

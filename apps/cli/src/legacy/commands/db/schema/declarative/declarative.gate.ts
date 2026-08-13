@@ -6,7 +6,8 @@ import { LegacyDeclarativeNotEnabledError } from "./declarative.errors.ts";
 /**
  * Whether the declarative (pg-delta) code paths are enabled. Mirrors Go's
  * `dbDeclarativeCmd.PersistentPreRunE` net effect
- * (`apps/cli-go/cmd/db_schema_declarative.go:49-77`): passing `--experimental`
+ * (`apps/cli-go/cmd/db_schema_declarative.go:49-77`, deleted in CLI-1970;
+ * last present at commit 7b469f5b3): passing `--experimental`
  * force-enables pg-delta, so the gate is open when either the global
  * `--experimental` flag is set **or** `[experimental.pgdelta] enabled = true`
  * is present in `config.toml` (Go's `utils.IsPgDeltaEnabled`).
@@ -29,7 +30,8 @@ export function legacyPgDeltaSuggestion(configPath: string): string {
 
 /**
  * The Effect-CLI replacement for Go's `dbDeclarativeCmd.PersistentPreRunE` gate
- * (`apps/cli-go/cmd/db_schema_declarative.go:49-99`). Cobra runs
+ * (`apps/cli-go/cmd/db_schema_declarative.go:49-99`, deleted in CLI-1970;
+ * last present at commit 7b469f5b3). Cobra runs
  * `PersistentPreRunE` BEFORE `ValidateFlagGroups()` (mutual-exclusivity checks)
  * and `RunE` (`cobra@v1.10.2/command.go:985,1010,1014`), so this gate must run
  * before the `MarkFlagsMutuallyExclusive` check in the same command — `db-url`/

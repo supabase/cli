@@ -6,8 +6,8 @@ import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-comm
 import type { LegacyInspectConnectionFlags } from "./legacy-inspect-query.ts";
 
 /**
- * The `inspect` persistent flag set, inherited by every `inspect db` subcommand
- * (`apps/cli-go/cmd/inspect.go:259-263`). Shared verbatim across all 25 commands
+ * The `inspect` persistent flag set, inherited by every `inspect db` subcommand.
+ * Shared verbatim across all 25 commands
  * so the flag names and descriptions live in one place. `Command.make` reads this
  * immutable descriptor without mutating it, so a single instance is safe to reuse.
  */

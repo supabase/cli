@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   legacyIsMissingContainerInspectError,
   legacyResolveContainerInspectImageName,
+  legacyToShadowDbError,
 } from "./legacy-pgdelta.seam.layer.ts";
 
 describe("legacyIsMissingContainerInspectError", () => {
@@ -52,5 +53,35 @@ describe("legacyResolveContainerInspectImageName", () => {
     expect(legacyResolveContainerInspectImageName(JSON.stringify([{ Image: "sha256:0123" }]))).toBe(
       "",
     );
+  });
+});
+
+describe("legacyToShadowDbError", () => {
+  it("carries the underlying recovery suggestion onto the seam error", () => {
+    const mapped = legacyToShadowDbError({
+      message: "container supabase_db_x is not ready: exec format error",
+      suggestion: "Run `docker image rm public.ecr.aws/supabase/postgres:17.4.1.056` and retry.",
+    });
+    expect(mapped.suggestion).toBe(
+      "Run `docker image rm public.ecr.aws/supabase/postgres:17.4.1.056` and retry.",
+    );
+    expect(mapped.message).toBe(
+      "failed to provision the shadow database: container supabase_db_x is not ready: exec format error",
+    );
+  });
+
+  it("omits suggestion when the underlying failure has none", () => {
+    const mapped = legacyToShadowDbError({ message: "boom" });
+    expect(mapped.suggestion).toBeUndefined();
+  });
+
+  it("still tags daemon failures while carrying a suggestion", () => {
+    const mapped = legacyToShadowDbError({
+      message: "cannot connect to the Docker daemon",
+      reason: "docker_daemon",
+      suggestion: "Start Docker Desktop and retry.",
+    });
+    expect(mapped.docker).toBe("daemon");
+    expect(mapped.suggestion).toBe("Start Docker Desktop and retry.");
   });
 });

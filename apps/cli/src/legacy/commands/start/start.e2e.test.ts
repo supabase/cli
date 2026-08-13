@@ -18,12 +18,13 @@ describe("supabase start (legacy)", () => {
     rmSync(projectDir, { recursive: true, force: true });
   });
 
-  // Golden-path smoke test for the real subprocess boundary: `validateExcludedContainers`
-  // (`cmd/start.go:49`) runs unconditionally as `RunE`'s very first line, before config
-  // load or any Docker access, so an invalid `--exclude` value must print Go's `WARNING:`
-  // text regardless of what happens afterwards. No `supabase/config.toml` is seeded — an
-  // absent config is not itself a failure (Go/this port both proceed with defaults) — so
-  // the command runs past config loading and reaches a real Docker call, which this test
+  // Golden-path smoke test for the real subprocess boundary: exclude-flag
+  // validation runs unconditionally as the handler's very first step, before
+  // config load or any Docker access, so an invalid `--exclude` value must
+  // print the `WARNING:` text regardless of what happens afterwards. No
+  // `supabase/config.toml` is seeded — an absent config is not itself a
+  // failure, the command proceeds with defaults — so the command runs past
+  // config loading and reaches a real Docker call, which this test
   // forces to fail fast and deterministically via an unreachable `DOCKER_HOST` rather than
   // relying on whether a real Docker daemon happens to be reachable in the sandbox: with a
   // real daemon this pins the test to a fast, predictable failure instead of a slow real

@@ -250,8 +250,8 @@ describe("legacy branches get integration", () => {
       const { layer, out } = setup({ goOutput: "toml" });
       return Effect.gen(function* () {
         yield* legacyBranchesGet({ ...baseFlags, name: Option.some(BRANCH_UUID) });
-        // Go encodes a map[string]string here — BurntSushi keeps map keys as-is
-        // (no PascalCase remap), so the CLI-1975 struct remap must NOT apply.
+        // This encodes a map[string]string here — BurntSushi keeps map keys as-is
+        // (no PascalCase remap), so the struct-field remap must NOT apply.
         expect(out.stdoutText).toContain('SUPABASE_URL = "');
         expect(out.stdoutText).toContain('POSTGRES_URL = "');
       }).pipe(Effect.provide(layer));

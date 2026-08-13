@@ -4,7 +4,7 @@ import { Context } from "effect";
 import type { LegacyLoginVerificationError } from "./login.errors.ts";
 
 /**
- * Subset of Go's `AccessTokenResponse` (`login.go:39-45`) the decrypt step
+ * Subset of `AccessTokenResponse` (`login.go:39-45`) the decrypt step
  * consumes. `id` / `created_at` are returned by the API but unused.
  */
 export type LegacyLoginSessionResponse = {
@@ -16,7 +16,7 @@ export type LegacyLoginSessionResponse = {
 interface LegacyLoginApiShape {
   /**
    * Polls `GET {apiHost}/platform/cli/login/{sessionId}?device_code=<code>`
-   * (Go's `pollForAccessToken`, `login.go:132-157`). Expects HTTP 200 with a
+   * (`pollForAccessToken`, `login.go:132-157`). Expects HTTP 200 with a
    * 10s timeout; any transport / status / parse failure becomes a
    * `LegacyLoginVerificationError` that drives the retry loop.
    */
@@ -27,9 +27,9 @@ interface LegacyLoginApiShape {
   ) => Effect.Effect<LegacyLoginSessionResponse, LegacyLoginVerificationError>;
   /**
    * Best-effort fetch of the authenticated user's `gotrue_id` from
-   * `GET {apiHost}/v1/profile` (Go's `getProfileGotrueID`, `login.go:301-310`).
+   * `GET {apiHost}/v1/profile` (`getProfileGotrueID`, `login.go:301-310`).
    * Returns `None` on any failure so the caller clears the telemetry
-   * `distinct_id`, matching Go's `handleTelemetryAfterLogin` error branch.
+   * `distinct_id`, matching the `handleTelemetryAfterLogin` error branch.
    */
   readonly fetchGotrueId: (apiHost: string, token: string) => Effect.Effect<Option.Option<string>>;
 }

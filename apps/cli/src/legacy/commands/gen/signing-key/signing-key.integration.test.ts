@@ -207,11 +207,11 @@ describe("legacy gen signing-key integration", () => {
     () => {
       const { layer, out } = setup();
       return Effect.gen(function* () {
-        // Go's `Config.Load` (`pkg/config/utils.go:43-48`) has no concept of a JSON project
-        // config file — a stray `supabase/config.json` with no `config.toml` present must be
+        // Config loading has no concept of a JSON project config file — a
+        // stray `supabase/config.json` with no `config.toml` present must be
         // treated exactly like no config at all, never as a substitute config source
-        // (`gen.signing-keys-config.ts`'s `loadProjectConfig(..., { tomlOnly: true })`; Codex
-        // review finding, CLI-1961). Go prints the CWD-relative `supabase/config.toml` in this
+        // (`gen.signing-keys-config.ts`'s `loadProjectConfig(..., { tomlOnly: true })`).
+        // The CWD-relative `supabase/config.toml` is printed in this
         // "absent config" case; the hint must stay relative and must never leak the absolute
         // temp-dir path either.
         yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
@@ -251,7 +251,7 @@ describe("legacy gen signing-key integration", () => {
     },
   );
 
-  // CLI-1865: Go's overwrite prompt reads piped stdin even in non-TTY mode and honors an
+  // The overwrite prompt reads piped stdin even in non-TTY mode and honors an
   // explicit "n" — before this fix, TS returned `true` unconditionally without reading stdin at
   // all, so `echo n | supabase gen signing-key` silently overwrote instead of canceling.
   it.live("cancels the overwrite when a piped non-tty answer of 'n' is read", () => {
@@ -276,7 +276,7 @@ describe("legacy gen signing-key integration", () => {
         readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
       );
       expect(JSON.parse(saved)).toEqual([]);
-      // Go's non-TTY prompt echoes the piped answer back to stderr after the label.
+      // The non-TTY prompt echoes the piped answer back to stderr after the label.
       expect(out.stderrText).toContain("[Y/n] n\n");
     }).pipe(Effect.provide(layer));
   });
@@ -349,12 +349,12 @@ describe("legacy gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // CLI-1961 Codex review finding: Go's `Config.Validate` only reads/decodes the configured
-  // `signing_keys_path` file INSIDE `if c.Auth.Enabled` — `gen signing-key` goes through the
-  // exact same `flags.LoadConfig` pipeline as `gen bearer-jwt` (both call it), so it is subject
-  // to the same gate. Verified against the real binary: with `auth.enabled = false`, a
-  // malformed signing-keys file is never read at all, so the command succeeds instead of
-  // failing on a decode error.
+  // The configured `signing_keys_path` file is only read/decoded when auth
+  // is enabled — `gen signing-key` goes through the exact same config load
+  // pipeline as `gen bearer-jwt` (both call it), so it is subject to the
+  // same gate: with `auth.enabled = false`, a malformed signing-keys file is
+  // never read at all, so the command succeeds instead of failing on a
+  // decode error.
   it.live("does not fail on a malformed signing keys file when [auth] enabled is false", () => {
     const { layer } = setup();
     return Effect.gen(function* () {
@@ -370,12 +370,13 @@ describe("legacy gen signing-key integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Same finding, the more surprising half: Go's `Config.Auth.SigningKeys` never advances past
-  // `NewConfig()`'s own default single-key array when auth is disabled, so `--append` appends
-  // to (and the resulting write clobbers) that phantom default set, NOT the file's real
-  // content — verified against the real binary: appending under `auth.enabled = false` against
-  // a file containing a genuine custom key overwrote it with the default ES256 key plus the
-  // newly generated one, discarding the original entry entirely.
+  // Same finding, the more surprising half: the signing keys never advance
+  // past the default single-key array when auth is disabled, so `--append`
+  // appends to (and the resulting write clobbers) that phantom default set,
+  // NOT the file's real content: appending under `auth.enabled = false`
+  // against a file containing a genuine custom key overwrote it with the
+  // default ES256 key plus the newly generated one, discarding the original
+  // entry entirely.
   it.live(
     "appends to (and overwrites with) the built-in default key, ignoring the real file content, when [auth] enabled is false",
     () => {
@@ -686,10 +687,10 @@ describe("legacy gen signing-key integration", () => {
   it.live(
     "auto-confirms from SUPABASE_YES in the project .env, even with a piped 'n' (CLI-1878)",
     () => {
-      // SUPABASE_YES lives only in supabase/.env, not the shell. Go's `flags.LoadConfig`
-      // (`signingkeys.go:99`) loads the project `.env` files before the overwrite prompt reads
-      // `viper.GetBool("YES")` (`signingkeys.go:130`), so the overwrite auto-confirms and the
-      // piped `n` is never consumed — same precedence as the shell-env case above.
+      // SUPABASE_YES lives only in supabase/.env, not the shell. The project
+      // `.env` files load before the overwrite prompt reads the yes flag, so
+      // the overwrite auto-confirms and the piped `n` is never consumed —
+      // same precedence as the shell-env case above.
       //
       // Defensively clear a shell SUPABASE_YES: this test must prove the project-.env source
       // specifically, not accidentally pass because a prior test in this file left the shell

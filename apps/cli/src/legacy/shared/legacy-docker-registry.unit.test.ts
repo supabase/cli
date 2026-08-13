@@ -87,7 +87,7 @@ describe("legacyGetRegistryImageUrl", () => {
     ).toEqual(["my.mirror.example/supabase/postgres:17.6.1.138"]);
   });
 
-  // Go's `Config.Load` runs `loadNestedEnv`/`godotenv.Load` (`pkg/config/config.go:789,1220-1258`)
+  // `Config.Load` runs `loadNestedEnv`/`godotenv.Load`
   // before any image resolution, so a project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY`
   // (never set in the ambient shell) still reaches `GetRegistry()`.
   it("honors a projectEnvValues (dotenv)-only registry override, matching Go's post-Load os.Getenv", () => {

@@ -29,9 +29,8 @@ function writeConfig(toml: string): void {
   writeFileSync(join(dir, "config.toml"), toml);
 }
 
-// Go's test vector — `apps/cli-go/pkg/config/secret_test.go:9-19` (same one
-// `legacy-vault-decrypt.unit.test.ts` and `config-sync.secret.unit.test.ts` use).
-// Decrypts to the plaintext "value".
+// Shared test vector — same one `legacy-vault-decrypt.unit.test.ts` and
+// `config-sync.secret.unit.test.ts` use. Decrypts to the plaintext "value".
 const DOTENVX_PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const DOTENVX_ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";
@@ -335,9 +334,9 @@ project_id = "abcdefghijklmnopqrst"
   });
 
   it.live("defaults to yes on empty non-TTY stdin, echoing the prompt", () => {
-    // Go's `PromptYesNo(..., true)` (`push.go:36`) prints the label and scans
-    // stdin even on a non-terminal (`console.go:96-102`); with no piped input the
-    // scan is empty and it falls back to the default (`true`), so the push proceeds.
+    // The confirmation prompt prints the label and scans stdin even on a
+    // non-terminal; with no piped input the scan is empty and it falls back
+    // to the default (`true`), so the push proceeds.
     const { layer, api, out } = setup({
       toml: API_ONLY_TOML,
       stdinIsTty: false,
@@ -351,14 +350,14 @@ project_id = "abcdefghijklmnopqrst"
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         true,
       );
-      // Label printed + empty answer echoed (Go's non-TTY `PromptText`).
+      // Label printed + empty answer echoed on non-TTY stdin.
       expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] \n");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors a piped 'n' decline on non-TTY stdin (no update)", () => {
-    // Regression: Go scans piped stdin before defaulting (`console.go:74-82`), so a
-    // piped `n` cancels the push even on a non-terminal — it must not silently apply.
+    // Regression: piped stdin is scanned before defaulting, so a piped `n`
+    // cancels the push even on a non-terminal — it must not silently apply.
     const { layer, api, out } = setup({
       toml: API_ONLY_TOML,
       stdinIsTty: false,
@@ -373,15 +372,15 @@ project_id = "abcdefghijklmnopqrst"
       expect(api.requests.some((r) => r.method === "PATCH" && r.url.includes("/postgrest"))).toBe(
         false,
       );
-      // The consumed answer is echoed to stderr (Go's non-TTY `PromptText`).
+      // The consumed answer is echoed to stderr on non-TTY stdin.
       expect(out.stderrText).toContain("Do you want to push api config to remote? [Y/n] n");
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors SUPABASE_YES from supabase/.env even against a piped 'n'", () => {
-    // Go's config push runs `flags.LoadConfig`, importing `supabase/.env` before
-    // `PromptYesNo`, so a project-local `SUPABASE_YES=true` auto-confirms before
-    // stdin is read — the push proceeds despite the piped `n`.
+    // `config push` imports `supabase/.env` before the confirmation prompt,
+    // so a project-local `SUPABASE_YES=true` auto-confirms before stdin is
+    // read — the push proceeds despite the piped `n`.
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"];
     const { layer, api } = setup({
@@ -412,9 +411,10 @@ project_id = "abcdefghijklmnopqrst"
   });
 
   it.live("loads config-push env from the project root when run from a subdirectory", () => {
-    // Go's ChangeWorkDir moves to the project root before flags.LoadConfig, so a
-    // SUPABASE_YES in <root>/supabase/.env auto-confirms even when invoked from a
-    // subdir. The env load must walk up like loadProjectConfig, not use the raw cwd.
+    // The workdir change moves to the project root before config load, so a
+    // SUPABASE_YES in <root>/supabase/.env auto-confirms even when invoked
+    // from a subdir. The env load must walk up like loadProjectConfig, not
+    // use the raw cwd.
     const prev = process.env["SUPABASE_YES"];
     delete process.env["SUPABASE_YES"];
     const sub = join(tempRoot.current, "nested", "dir");
@@ -515,7 +515,6 @@ file_size_limit = "50MiB"
   });
 
   it.live("aborts with exit 1 when no config.toml exists", () => {
-    // Fresh temp workdir, but no supabase/config.toml written.
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
       handler: (request) =>
@@ -787,8 +786,8 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
   it.live(
     "aborts before any network call when an encrypted: secret cannot be decrypted (CLI-1881)",
     () => {
-      // `auth.enabled = false` on purpose: Go's decrypt hook runs for every
-      // `config.Secret` field during `config.Load`, before any feature gate is
+      // `auth.enabled = false` on purpose: the decrypt hook runs for every
+      // `config.Secret` field during config load, before any feature gate is
       // consulted — an undecryptable secret aborts even when the section that
       // contains it would otherwise be skipped entirely.
       const toml = `project_id = "test"
@@ -822,10 +821,11 @@ secret = "${DOTENVX_ENCRYPTED_VALUE}"
   it.live(
     "aborts on an undecryptable secret config push never itself reads or pushes (CLI-1881)",
     () => {
-      // `studio.openai_api_key` is a `config.Secret` field Go's `DecryptSecretHookFunc`
-      // still decrypts during `config.Load` — but no `config-sync/*.sync.ts` file (api,
-      // db, auth, storage, experimental) ever reads `studio.*`, so this proves the
-      // pre-check is genuinely document-wide, not merely reachable via `auth.*`.
+      // `studio.openai_api_key` is a `config.Secret` field that is still
+      // decrypted during config load — but no `config-sync/*.sync.ts` file
+      // (api, db, auth, storage, experimental) ever reads `studio.*`, so this
+      // proves the pre-check is genuinely document-wide, not merely reachable
+      // via `auth.*`.
       const toml = `project_id = "test"
 [storage]
 enabled = false
@@ -883,11 +883,12 @@ my_secret = "${DOTENVX_ENCRYPTED_VALUE}"
   it.live(
     "aborts on an undecryptable secret in a deprecated [auth.external.slack] block (CLI-1881)",
     () => {
-      // `@supabase/config` strips `auth.external.{linkedin,slack}` from `loaded.document`
-      // before returning it (`normalizeDeprecatedExternalProviders`), matching Go's
-      // `external.validate()` — but Go's decrypt hook runs at DECODE time, strictly before
-      // that later validate-time deletion, so a `secret` hiding in one of these deprecated
-      // blocks still aborts Go's load. This proves the pre-check folds
+      // `@supabase/config` strips `auth.external.{linkedin,slack}` from
+      // `loaded.document` before returning it
+      // (`normalizeDeprecatedExternalProviders`) — but the decrypt hook runs
+      // at DECODE time, strictly before that later validate-time deletion, so
+      // a `secret` hiding in one of these deprecated blocks still aborts the
+      // load. This proves the pre-check folds
       // `removedDeprecatedExternalProviders` back in rather than missing it.
       const toml = `project_id = "test"
 [storage]
