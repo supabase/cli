@@ -386,9 +386,9 @@ describe("StackBuilder", () => {
       const { graph, cleanupTargets } = yield* prepareAndBuild(builder, preparation, managedConfig);
 
       expect(cleanupTargets.dockerContainerNames).toEqual([
-        `supabase-postgres-${firstManagedId}`,
-        `supabase-postgrest-${firstManagedId}`,
-        `supabase-auth-${firstManagedId}`,
+        `supabase-postgres-id-${firstManagedId}`,
+        `supabase-postgrest-id-${firstManagedId}`,
+        `supabase-auth-id-${firstManagedId}`,
       ]);
       expect(candidateCleanupTargets(managedConfig).dockerContainerNames).toEqual(
         cleanupTargets.dockerContainerNames,
@@ -400,7 +400,7 @@ describe("StackBuilder", () => {
       }
 
       for (const def of graph.startOrder) {
-        expect(def.args).toContain(`supabase-${def.name}-${firstManagedId}`);
+        expect(def.args).toContain(`supabase-${def.name}-id-${firstManagedId}`);
         // The label carries the whole identity, so the containers stay findable
         // by it even if the names are ever built differently.
         expect(def.args?.join(" ")).toContain(`--label ${STACK_ID_LABEL}=${firstManagedId}`);
@@ -436,9 +436,9 @@ describe("StackBuilder", () => {
       );
       expect(shared).toEqual([]);
       expect(sibling.cleanupTargets.dockerContainerNames).toEqual([
-        `supabase-postgres-${secondManagedId}`,
-        `supabase-postgrest-${secondManagedId}`,
-        `supabase-auth-${secondManagedId}`,
+        `supabase-postgres-id-${secondManagedId}`,
+        `supabase-postgrest-id-${secondManagedId}`,
+        `supabase-auth-id-${secondManagedId}`,
       ]);
     }).pipe(Effect.provide(layer));
   });

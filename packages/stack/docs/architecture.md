@@ -239,12 +239,12 @@ Every Docker definition has ordinary in-process cleanup and supervisor-owned orp
 local Implementation captures these targets before persistence or orchestrator setup, persists
 them for managed daemons, and uses them as a force-removal safety net after graceful stop. Launch,
 exact cleanup, and candidate cleanup all derive container identity through the same naming
-function, which is keyed by the stack's `instanceId` when the caller supplied one and by its api
-port otherwise. An identified stack's containers also carry that identity as a
-`com.supabase.stack-id` Docker label, so they stay findable by it regardless of their names. Keying
-by identity is what keeps two stacks that share a port — a crashed one's leftovers and the sibling
-that reused its ports — from colliding. Auto-created PostgreSQL, Storage, and runtime paths are also
-removed.
+function, which is keyed by a namespaced form of the stack's `instanceId` when the caller supplied
+one and by its api port otherwise. An identified stack's containers also carry the raw identity as
+a `com.supabase.stack-id` Docker label, so they stay findable by it regardless of their names.
+Keying by identity is what keeps two stacks that share a port — a crashed one's leftovers and the
+sibling that reused its ports — from colliding. Auto-created PostgreSQL, Storage, and runtime paths
+are also removed.
 
 Cleanup is intentionally defensive:
 

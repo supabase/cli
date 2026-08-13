@@ -157,9 +157,13 @@ describe("workspace topology", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
-  it.live("rejects path traversal and empty segments in a symbolic HEAD ref", () =>
+  it.live("rejects unsafe separators and path segments in a symbolic HEAD ref", () =>
     Effect.gen(function* () {
-      for (const ref of ["refs/heads/../../../../etc/shadow", "refs/heads/feature//name"]) {
+      for (const ref of [
+        "refs/heads/../../../../etc/shadow",
+        "refs/heads/feature//name",
+        "refs/heads/..\\..\\target",
+      ]) {
         const repository = makeRepository(makeRoot());
         writeFileSync(join(repository, ".git", "HEAD"), `ref: ${ref}\n`);
 

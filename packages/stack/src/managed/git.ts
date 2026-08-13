@@ -260,6 +260,7 @@ const resolveHead = (
         return yield* unsupported(gitDirectory, REFTABLE_UNSUPPORTED_REASON, "reftable");
       }
       if (
+        branch.includes("\\") ||
         branch
           .split("/")
           .some((segment) => segment.length === 0 || segment === "." || segment === "..")

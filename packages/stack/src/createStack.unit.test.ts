@@ -351,7 +351,7 @@ describe("candidateCleanupTargets", () => {
 
     expect(config.instanceId).toBe(instanceId);
     const { dockerContainerNames } = candidateCleanupTargets(config);
-    expect(dockerContainerNames).toContain(dockerContainerName("postgres", instanceId));
+    expect(dockerContainerNames).toContain(dockerContainerName("postgres", `id-${instanceId}`));
     for (const name of dockerContainerNames) {
       expect(name).not.toContain(String(config.apiPort));
     }
