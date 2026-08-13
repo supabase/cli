@@ -936,7 +936,10 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
     legacyBaselineCatalogFileName(legacyBaselineCatalogKey(setupInputs)),
   );
   if (zeroMigrations && !params.noCache) {
-    const exists = yield* fs.exists(baselinePath).pipe(Effect.orElseSucceed(() => false));
+    // `fs.exists` maps only not-found to `false`, so any other probe failure (permissions,
+    // I/O under `.temp/pgdelta`) propagates — matching Go's `getMigrationsCatalogRef`
+    // returning the `afero.Exists` error immediately, before any Docker side effect.
+    const exists = yield* fs.exists(baselinePath);
     if (exists) return path.relative(ctx.cwd, baselinePath);
   }
 
@@ -1173,7 +1176,10 @@ export const legacyExportBaselineCatalogRef = (
       legacyBaselineCatalogFileName(legacyBaselineCatalogKey(setupInputs)),
     );
     if (!params.noCache) {
-      const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
+      // Same propagation as the zero-migrations probe in `legacyResolveMigrationsCatalogRef`:
+      // `fs.exists` maps only not-found to `false`, so a failing probe (permissions, I/O)
+      // fails the export before any Docker side effect instead of faking a cache miss.
+      const exists = yield* fs.exists(cachePath);
       if (exists) return path.relative(workdir, cachePath);
     }
 
