@@ -126,31 +126,31 @@ export type Database = {
       interfaces_feedback: {
         Row: {
           created_at: string
+          delete_token: string
           feedback: string
           id: number
           metadata: Json | null
           project_ref: string | null
-          source: string
           user_agent: string | null
           user_id: string | null
         }
         Insert: {
           created_at?: string
+          delete_token?: string
           feedback: string
           id?: never
           metadata?: Json | null
           project_ref?: string | null
-          source: string
           user_agent?: string | null
           user_id?: string | null
         }
         Update: {
           created_at?: string
+          delete_token?: string
           feedback?: string
           id?: never
           metadata?: Json | null
           project_ref?: string | null
-          source?: string
           user_agent?: string | null
           user_id?: string | null
         }
@@ -827,6 +827,16 @@ export type Database = {
           subsections: Json[]
           type: string
         }[]
+      }
+      submit_interfaces_feedback: {
+        Args: {
+          feedback: string
+          metadata?: Json
+          project_ref?: string
+          user_agent?: string
+          user_id?: string
+        }
+        Returns: string
       }
       update_last_changed_checksum: {
         Args: {
