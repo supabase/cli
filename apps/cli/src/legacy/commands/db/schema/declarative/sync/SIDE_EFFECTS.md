@@ -140,5 +140,10 @@ cache); a warm hit skips the platform baseline and therefore the
 every input baked into the cluster; retention keeps the current key's tar only. Container
 lifecycle is identical to the uncached path except a cold run drops `--rm` (still removed on
 release). A cache anomaly never fails the command — a warm-path anomaly cold-provisions instead, a
-cold export failure only warns and leaves the run uncached. See `shared/db-bootstrap/
-shadow-cache.ts`'s doc comment for the mechanics. The declarative-catalog shadow is NOT cached.
+cold export failure only warns and leaves the run uncached (one exception: a shadow that fails
+to come back up after the snapshot fails the run rather than reporting a false success). See `shared/db-bootstrap/
+shadow-cache.ts`'s doc comment for the mechanics. The DECLARATIVE-catalog shadow (and `generate`'s
+baseline-catalog shadow) is NOT cached: its provision runs the platform baseline via
+`legacySetupShadowDatabase`, which is not baseline-state-aware, so those callers pass an
+unconditional bypass — making them warm-aware is a recorded follow-up
+(`docs/roadmap/pg-delta-next-follow-ups.md`).

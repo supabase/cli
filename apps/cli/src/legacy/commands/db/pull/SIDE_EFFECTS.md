@@ -87,7 +87,8 @@ Artifact: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB), a PGDATA s
 keyed by a hash of every input baked into the cluster; retention keeps the current key's tar only.
 Container lifecycle is identical to the uncached path except a cold run drops `--rm` (still removed
 on release). A cache anomaly never fails the command — a warm-path anomaly cold-provisions instead,
-a cold export failure only warns and leaves the run uncached. See `shared/db-bootstrap/
+a cold export failure only warns and leaves the run uncached (one exception: a shadow that
+fails to come back up after the snapshot fails the run rather than reporting a false success). See `shared/db-bootstrap/
 shadow-cache.ts`'s doc comment for the mechanics. Each pooler-retry attempt acquires/releases its
 own shadow (a warm hit restores the same tar each time); `--declarative`'s bare shadow runs no
 baseline, so it is never cached.

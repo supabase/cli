@@ -18,15 +18,17 @@
  * {@link LegacyCreateShadowDatabaseInput.autoRemove} for the consequence); the tar is published by
  * an atomic rename, so concurrent writers need no lock file; a cache anomaly never fails the run —
  * a warm-path anomaly cold-provisions (deleting the tar only when its contents are implicated —
- * see `LegacyShadowCacheUnavailable.tarSuspect`), a cold export failure only warns and
- * leaves the run uncached; retention keeps the current key's tar only, sweeping every other one on
+ * see `LegacyShadowCacheUnavailable.tarSuspect`), a cold export failure only warns and leaves the
+ * run uncached (with ONE deliberate exception: a shadow that fails to come back up after the
+ * snapshot fails the run — see `legacyExportShadowBaseline`); retention keeps the current key's
+ * tar only, sweeping every other one on
  * publish. `SUPABASE_SHADOW_CACHE` is ON by default; `false`/`0` opts out.
  */
 
 import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "@supabase/config";
-import { Clock, Effect, Option, type FileSystem } from "effect";
+import { Clock, Effect, Option, Result, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -62,7 +64,7 @@ import {
   legacyCreateShadowDatabase,
   legacyRemoveShadowDatabase,
   type LegacyShadowBaselineState,
-  type LegacyShadowDbError,
+  LegacyShadowDbError,
   type LegacyShadowSetupInput,
 } from "./shadow-database.ts";
 
@@ -616,10 +618,15 @@ const legacyWriteShadowBaselineTar = <E>(
  * entrypoint `exec`s Postgres, so PID 1 receives the SIGTERM instead of `sh` swallowing it and
  * burning the full 10s grace period.
  *
- * Failure is not the run's problem — it only means this run stays uncached. The ONE thing that
- * must happen regardless is bringing the container back up: the caller is about to connect to it
- * again. So the restart runs whether the export succeeded or not, and only its own failure (which
- * dooms the run anyway, via the caller's next connect) outranks an export failure in the warning.
+ * Two failure classes, deliberately NOT one broad catch: a stop/export failure only means this
+ * run stays uncached — it warns and the run continues. A restart/readiness failure is the RUN'S
+ * problem: the caller is about to reconnect to the shadow's published port, and reporting success
+ * over a dead container would make that connect a blind dial — which can even reach a DIFFERENT
+ * Postgres that claimed the port while the container was down (matching default credentials are
+ * common locally), applying the template + migrations to the wrong database. So the restart runs
+ * whether the export succeeded or not (`docker start` on an already-running container — e.g. when
+ * the stop itself failed — is a no-op success), and its failure PROPAGATES as a
+ * {@link LegacyShadowDbError} instead of degrading (review: Codex on #6184).
  */
 const legacyExportShadowBaseline = <E>(
   spawner: Spawner,
@@ -627,26 +634,41 @@ const legacyExportShadowBaseline = <E>(
   key: string,
   tarPath: string,
   containerId: string,
-): Effect.Effect<void, never, Output | LegacyDbConnection> =>
+): Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection> =>
   legacyTimeShadowPhase(
     "baseline-export",
     Effect.gen(function* () {
-      yield* legacyShadowContainerVerb(spawner, "stop", containerId);
-      // From here the container is DOWN; every exit path below has to start it again.
-      const written = yield* Effect.result(
-        legacyWriteShadowBaselineTar(spawner, input, key, tarPath, containerId),
+      // Cache-degradable phase: stop + export. A failure here (including a failed stop, after
+      // which the container is simply still up) only costs this run its snapshot.
+      const exported = yield* Effect.result(
+        Effect.gen(function* () {
+          yield* legacyShadowContainerVerb(spawner, "stop", containerId);
+          yield* legacyWriteShadowBaselineTar(spawner, input, key, tarPath, containerId);
+        }),
       );
-      yield* legacyShadowContainerVerb(spawner, "start", containerId);
-      yield* legacyAwaitShadowReady(spawner, input, containerId, "re-started shadow");
-      return yield* Effect.fromResult(written);
-    }),
-  ).pipe(
-    Effect.catch((cause) =>
-      Effect.gen(function* () {
+      // Run-critical phase: the shadow must be back up and answering before this step reports
+      // success — see this function's own doc comment for why these failures must propagate.
+      const revive = Effect.gen(function* () {
+        yield* legacyShadowContainerVerb(spawner, "start", containerId);
+        yield* legacyAwaitShadowReady(spawner, input, containerId, "re-started shadow");
+      });
+      yield* revive.pipe(
+        Effect.mapError(
+          (cause) =>
+            new LegacyShadowDbError({
+              message: `shadow database did not come back after the baseline snapshot: ${cause.reason}`,
+              reason: "docker_daemon",
+            }),
+        ),
+      );
+      if (Result.isFailure(exported)) {
         const output = yield* Output;
-        yield* output.raw(`Warning: shadow baseline not cached: ${cause.reason}\n`, "stderr");
-      }),
-    ),
+        yield* output.raw(
+          `Warning: shadow baseline not cached: ${exported.failure.reason}\n`,
+          "stderr",
+        );
+      }
+    }),
   );
 
 // ---------------------------------------------------------------------------

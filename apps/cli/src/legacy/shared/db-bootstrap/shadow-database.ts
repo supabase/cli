@@ -792,10 +792,15 @@ export interface LegacyShadowBaselineState {
    * Takes NO session, and {@link legacyMigrateShadowDatabase} guarantees no session is open
    * against the shadow while it runs when {@link snapshotRequired} is set: the snapshot is a
    * disk-level PGDATA export that has to stop the container, which would sever any live backend.
-   * `Effect.Effect<void, never, …>`: a cache that cannot snapshot must degrade silently, never
-   * fail the run.
+   *
+   * A cache that cannot SNAPSHOT degrades silently (warn + uncached run) — but the error channel
+   * is {@link LegacyShadowDbError}, not `never`, for the one failure that is the run's problem
+   * rather than the cache's: a shadow that does not come back up after the export. Reporting
+   * success there would send the caller's next connect to a dead (or worse, someone else's)
+   * Postgres on the shadow port — see `legacyExportShadowBaseline`'s doc comment
+   * (`shadow-cache.ts`).
    */
-  readonly snapshotBaseline: Effect.Effect<void, never, Output | LegacyDbConnection>;
+  readonly snapshotBaseline: Effect.Effect<void, LegacyShadowDbError, Output | LegacyDbConnection>;
 }
 
 /** The baseline state every uncached caller passes: provision it, snapshot nothing. */

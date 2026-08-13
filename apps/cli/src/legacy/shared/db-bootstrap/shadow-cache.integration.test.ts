@@ -14,7 +14,18 @@ import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, FileSystem, Layer, Option, Path, Predicate, Schema, Sink, Stream } from "effect";
+import {
+  Effect,
+  Exit,
+  FileSystem,
+  Layer,
+  Option,
+  Path,
+  Predicate,
+  Schema,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts";
@@ -96,6 +107,8 @@ interface FakeContainer {
   readonly labels: Readonly<Record<string, string>>;
   readonly autoRemove: boolean;
   running: boolean;
+  /** Whether this container has ever been `docker start`ed — distinguishes a RE-start for `failRestart`. */
+  everStarted?: boolean;
   /** What a previous `docker cp - <id>:<path>` unpacked into this container, if anything. */
   restored: string | undefined;
 }
@@ -103,6 +116,8 @@ interface FakeContainer {
 function fakeDockerDaemon(
   opts: {
     readonly failStart?: boolean;
+    /** Fails only RE-starts (a `docker start` after the container has already run once) — the cold export's revive step. */
+    readonly failRestart?: boolean;
     readonly failCopyOut?: boolean;
     readonly failCopyIn?: boolean;
   } = {},
@@ -163,8 +178,16 @@ function fakeDockerDaemon(
         stdout = id;
       } else if (args[0] === "start") {
         const container = containers.get(args[1] ?? "");
-        if (opts.failStart === true || container === undefined) exitCode = 1;
-        else container.running = true;
+        if (
+          opts.failStart === true ||
+          container === undefined ||
+          (opts.failRestart === true && container.everStarted)
+        ) {
+          exitCode = 1;
+        } else {
+          container.running = true;
+          container.everStarted = true;
+        }
       } else if (args[0] === "stop") {
         const id = args[1] ?? "";
         const container = containers.get(id);
@@ -667,6 +690,30 @@ describe("legacyAcquireShadowDatabase", () => {
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
+
+  it.live(
+    "a shadow that cannot come back after the snapshot fails the run, not just the cache",
+    () => {
+      const docker = fakeDockerDaemon({ failRestart: true });
+      const cluster = fakeCluster();
+      const out = mockOutput();
+      return withShadowCacheEnv(
+        "1",
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const handle = yield* legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path));
+          // The export itself succeeds (stop + copy-out are fine); the revive `docker start` fails.
+          // Reporting success here would send the caller's next connect to a dead container's port
+          // — possibly answered by a DIFFERENT Postgres by then — so this must be a failure, not a
+          // "not cached" warning.
+          const exit = yield* handle.snapshotBaseline.pipe(Effect.exit);
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(out.stderrText).not.toContain("Warning: shadow baseline not cached");
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    },
+  );
 
   it.live("a failed export warns, leaves no tar, and still brings the container back up", () => {
     const docker = fakeDockerDaemon({ failCopyOut: true });
