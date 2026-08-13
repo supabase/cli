@@ -18,6 +18,7 @@ import {
   type ManagedCheckoutScopedContextKind,
   type ManagedContextKind,
   type ManagedContextRecord,
+  type ManagedIdentityTriple,
   type ManagedOperationKind,
   type ManagedOperationRecord,
   type ManagedOperationStatus,
@@ -49,6 +50,7 @@ import type {
 import {
   assertManagedOwnerPid,
   assertManagedStackUpdatable,
+  decideManagedContextRegistration,
   managedStackOccupiesPorts,
   ManagedStackRepository,
   reconcileManagedPortAssignments,
@@ -610,6 +612,29 @@ const selectStackProjections = (
   );
 };
 
+const selectStackProjectionsByIdentity = (
+  database: ManagedSqliteDatabase,
+  identity: ManagedIdentityTriple,
+  options?: { readonly includeTombstoned?: boolean },
+): ReadonlyArray<ManagedStackProjection> => {
+  const statusClause =
+    options?.includeTombstoned === true ? "" : " AND stacks.status != 'tombstoned'";
+  const rows = database
+    .prepare(
+      `${STACK_PROJECTION_SELECT}
+       WHERE stacks.project_id = ? AND stacks.checkout_id = ? AND stacks.context_id = ?${statusClause}
+       ORDER BY stacks.created_at, stacks.id`,
+    )
+    .all([identity.projectId, identity.checkoutId, identity.contextId]);
+  const portsByStack = queryPortsByStack(
+    database,
+    rows.map((row) => getString(row, "id")),
+  );
+  return rows.map((row) =>
+    decodeStackProjectionWithPorts(row, portsByStack.get(getString(row, "id")) ?? []),
+  );
+};
+
 const decodeContext = (row: unknown): ManagedContextRecord => ({
   id: getString(row, "id"),
   projectId: getString(row, "project_id"),
@@ -796,32 +821,31 @@ const insertConfiguration = (
  * detached `HEAD` converge on a single context instead of splitting.
  */
 const registerContext = (database: ManagedSqliteDatabase, input: PrepareStackInput): string => {
-  const requested = input.identity.contextId;
-  if (input.context.kind !== "branch") {
-    const owned = findCheckoutContext(database, input.identity.checkoutId, input.context.kind);
-    if (owned !== undefined) {
-      return owned.id;
-    }
-  }
-  const existing = database.prepare("SELECT * FROM contexts WHERE id = ?").get([requested]);
-  if (existing !== undefined) {
-    const context = decodeContext(existing);
-    const existingClaim = context.checkoutId ?? context.projectId;
-    const requestedClaim =
-      input.context.kind === "branch" ? input.identity.projectId : input.identity.checkoutId;
-    if (context.kind !== input.context.kind || existingClaim !== requestedClaim) {
-      throw new DuplicateManagedIdentityError({
-        identityId: requested,
-        existingClaim,
-        requestedClaim,
-      });
-    }
-    if (input.context.kind === "branch" && context.locator !== input.context.locator) {
+  const requestedExistingRow = database
+    .prepare("SELECT * FROM contexts WHERE id = ?")
+    .get([input.identity.contextId]);
+  const requestedExisting =
+    requestedExistingRow === undefined ? undefined : decodeContext(requestedExistingRow);
+  const checkoutScopedExisting =
+    input.context.kind === "branch"
+      ? undefined
+      : findCheckoutContext(database, input.identity.checkoutId, input.context.kind);
+  const decision = decideManagedContextRegistration({
+    requestedId: input.identity.contextId,
+    projectId: input.identity.projectId,
+    checkoutId: input.identity.checkoutId,
+    context: input.context,
+    now: input.now,
+    checkoutScopedExisting,
+    requestedExisting,
+  });
+  if (decision.outcome === "existing") {
+    if (decision.refreshLocator !== undefined) {
       database
         .prepare("UPDATE contexts SET locator = ? WHERE id = ?")
-        .run([input.context.locator, requested]);
+        .run([decision.refreshLocator, decision.contextId]);
     }
-    return requested;
+    return decision.contextId;
   }
   database
     .prepare(
@@ -829,14 +853,14 @@ const registerContext = (database: ManagedSqliteDatabase, input: PrepareStackInp
              VALUES (?, ?, ?, ?, ?, ?)`,
     )
     .run([
-      requested,
-      input.identity.projectId,
-      input.context.kind === "branch" ? null : input.identity.checkoutId,
-      input.context.kind,
-      input.context.kind === "branch" ? input.context.locator : null,
-      input.now,
+      decision.context.id,
+      decision.context.projectId,
+      decision.context.checkoutId ?? null,
+      decision.context.kind,
+      decision.context.locator ?? null,
+      decision.context.createdAt,
     ]);
-  return requested;
+  return decision.context.id;
 };
 
 const prepareStack = (
@@ -1229,7 +1253,11 @@ const createSqliteManagedStackRepository = (
       getStackProjection: (stackId) =>
         readTransaction(database, () => getStackProjection(database, stackId)),
       listStackProjections: (options) =>
-        readTransaction(database, () => selectStackProjections(database, options)),
+        readTransaction(database, () =>
+          options?.identity === undefined
+            ? selectStackProjections(database, options)
+            : selectStackProjectionsByIdentity(database, options.identity, options),
+        ),
       findCheckoutContext: (checkoutId, kind) =>
         readTransaction(database, () => findCheckoutContext(database, checkoutId, kind)),
       claimOperation: (input) =>

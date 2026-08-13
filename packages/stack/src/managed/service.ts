@@ -908,7 +908,7 @@ export class ManagedStackService extends Context.Service<
         const contextStacks = (
           identity: ManagedIdentityTriple,
         ): Effect.Effect<ReadonlyArray<ManagedStackProjection>> =>
-          Effect.map(repository.listStackProjections(), (stacks) =>
+          Effect.map(repository.listStackProjections({ identity }), (stacks) =>
             stacks.filter(
               (stack) =>
                 stack.projectId === identity.projectId &&
