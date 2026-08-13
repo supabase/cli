@@ -1,11 +1,12 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerPgmetaOptions {
   readonly image: string;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly port: number;
   readonly dbHost: string;
   readonly dbPort: number;
@@ -27,7 +28,7 @@ const pgmetaHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
 export const makePgmetaServiceDocker = (opts: DockerPgmetaOptions): ServiceDef =>
   dockerRunService({
     name: "pgmeta",
-    apiPort: opts.apiPort,
+    identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     env: {

@@ -511,6 +511,7 @@ export async function resolveConfig(
   const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
 
   return {
+    instanceId: config.instanceId,
     cacheRoot: roots.cacheRoot,
     stackRoot: roots.stackRoot,
     runtimeRoot: roots.runtimeRoot,

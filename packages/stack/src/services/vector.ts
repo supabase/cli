@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
-import { dockerContainerName } from "../CleanupTargets.ts";
 import { dockerNetworkArgs } from "../Platform.ts";
+import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
 import {
   dockerExecHealthCheck,
   dockerRunService,
@@ -10,7 +10,7 @@ import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerVectorOptions {
   readonly image: string;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly serviceHost: string;
   readonly analyticsPort: number;
   readonly analyticsApiKey: string;
@@ -42,7 +42,7 @@ sinks:
 `;
 
 export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
-  const containerName = dockerContainerName("vector", opts.apiPort);
+  const containerName = dockerContainerName("vector", opts.identity.key);
   const dockerSocket = process.env.DOCKER_HOST?.startsWith("unix://")
     ? process.env.DOCKER_HOST.slice("unix://".length)
     : "/var/run/docker.sock";
@@ -50,7 +50,7 @@ export const makeVectorServiceDocker = (opts: DockerVectorOptions) => {
 
   return dockerRunService({
     name: "vector",
-    apiPort: opts.apiPort,
+    identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, []),
     volumes,

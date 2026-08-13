@@ -239,7 +239,12 @@ Every Docker definition has ordinary in-process cleanup and supervisor-owned orp
 local Implementation captures these targets before persistence or orchestrator setup, persists
 them for managed daemons, and uses them as a force-removal safety net after graceful stop. Launch,
 exact cleanup, and candidate cleanup all derive container identity through the same naming
-function. Auto-created PostgreSQL, Storage, and runtime paths are also removed.
+function, which is keyed by the stack's `instanceId` when the caller supplied one and by its api
+port otherwise. An identified stack's containers also carry that identity as a
+`com.supabase.stack-id` Docker label, so they stay findable by it regardless of their names. Keying
+by identity is what keeps two stacks that share a port — a crashed one's leftovers and the sibling
+that reused its ports — from colliding. Auto-created PostgreSQL, Storage, and runtime paths are also
+removed.
 
 Cleanup is intentionally defensive:
 
@@ -284,7 +289,7 @@ channel, and its resources are owned by scopes. A Promise facade sits at the edg
 do not run an Effect runtime; see "Managed service composition" below.
 
 Managed errors are `Data.TaggedError` classes carrying stable `code` fields, and there is no shared
-base class: `ManagedStackError` is a union type over the seventeen failures, with
+base class: `ManagedStackError` is a union type over every managed failure class, with
 `isManagedStackError` as the runtime guard. `_tag` is the Effect-native discriminant, so a consumer
 can `catchTag` them directly against the union a given method declares; `code` is the wire-level
 contract that survives identifier minification, so Node and Bun callers — and the CLI's telemetry

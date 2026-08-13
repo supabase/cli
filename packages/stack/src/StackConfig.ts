@@ -146,6 +146,14 @@ export interface PoolerConfig {
 }
 
 export interface StackConfig {
+  /**
+   * An opaque identity for this stack, mixed into the names and labels of the
+   * Docker resources it owns so two stacks never collide on them.
+   *
+   * The runtime never parses it — a managed caller passes its stack id, and a
+   * caller that passes nothing keeps the port-derived names it always had.
+   */
+  readonly instanceId?: string;
   readonly cacheRoot?: string;
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
@@ -274,6 +282,8 @@ export interface ResolvedPoolerConfig {
 }
 
 export interface ResolvedStackConfig {
+  /** The opaque identity this stack's Docker resources are keyed by, if any. */
+  readonly instanceId?: string;
   readonly cacheRoot: string;
   readonly stackRoot: string;
   readonly runtimeRoot: string;

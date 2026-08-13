@@ -243,7 +243,7 @@ const resolveHead = (
     return yield* unsupported(gitDirectory, "HEAD is neither a branch nor an object id");
   });
 
-const CONFIG_SECTION_PATTERN = /^\s*\[\s*([\w.-]+)/;
+const CONFIG_SECTION_PATTERN = /^\s*\[\s*([\w.-]+)\s*(\]?)/;
 const CORE_BARE_PATTERN = /^\s*bare\s*(?:=(.*))?$/i;
 const REF_STORAGE_PATTERN = /^\s*refStorage\s*(?:=(.*))?$/i;
 const WORKTREE_CONFIG_PATTERN = /^\s*worktreeConfig\s*(?:=(.*))?$/i;
@@ -259,22 +259,30 @@ const REFTABLE_REF_STORAGE = "reftable";
  * binary here would make read-only discovery depend on it. Every key read this
  * way is one git writes itself, as a bare word on its own line, so quoting and
  * line continuations never come up.
+ *
+ * The two rules that decide which line answers are git's own: `[section "sub"]`
+ * is a different section, whose keys say nothing about the plain one, and a key
+ * a repository sets more than once is worth whatever it was set to last.
  */
 const configValue = (content: string, section: string, key: RegExp): string | undefined => {
   let inSection = false;
+  let value: string | undefined;
   for (const line of content.split("\n")) {
     const heading = CONFIG_SECTION_PATTERN.exec(line);
     if (heading !== null) {
-      inSection = heading[1]?.toLowerCase() === section;
+      // Section names are case-insensitive, and only a heading that closes right
+      // after the name is the plain section: anything else — a subsection, or
+      // another section entirely — ends the one being read.
+      inSection = heading[2] === "]" && heading[1]?.toLowerCase() === section;
       continue;
     }
     const match = inSection ? key.exec(line) : null;
     if (match !== null) {
       // A variable with no value is `true` in git's config syntax.
-      return match[1]?.split(/[;#]/)[0]?.trim() ?? "";
+      value = match[1]?.split(/[;#]/)[0]?.trim() ?? "";
     }
   }
-  return undefined;
+  return value;
 };
 
 const isTruthyConfigValue = (value: string | undefined): boolean =>

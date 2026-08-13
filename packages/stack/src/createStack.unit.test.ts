@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { candidateCleanupTargets, cleanupAutoManagedPaths } from "./cleanup.ts";
-import { dockerContainerName } from "./CleanupTargets.ts";
+import { dockerContainerName } from "./StackIdentity.ts";
 import { runForegroundOperation, type StackHandle } from "./createStack.ts";
 import { StackReadinessError } from "./errors.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
@@ -339,10 +339,22 @@ describe("candidateCleanupTargets", () => {
 
     expect(candidateCleanupTargets(config)).toEqual({
       dockerContainerNames: [
-        dockerContainerName("postgres", config.apiPort),
-        dockerContainerName("postgrest", config.apiPort),
+        dockerContainerName("postgres", String(config.apiPort)),
+        dockerContainerName("postgrest", String(config.apiPort)),
       ],
     });
+  });
+
+  it("keys fallback Docker identities by the stack's own identity when it has one", async () => {
+    const instanceId = "0f9d2b3c-4a5e-4c7d-8e9f-1a2b3c4d5e6f";
+    const config = await resolveConfig({ mode: "docker", instanceId });
+
+    expect(config.instanceId).toBe(instanceId);
+    const { dockerContainerNames } = candidateCleanupTargets(config);
+    expect(dockerContainerNames).toContain(dockerContainerName("postgres", instanceId));
+    for (const name of dockerContainerNames) {
+      expect(name).not.toContain(String(config.apiPort));
+    }
   });
 });
 

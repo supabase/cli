@@ -53,6 +53,17 @@ const inspectCheckout = (
       : Effect.die(new Error(`${path} was classified as ${inspection.kind}`)),
   );
 
+/**
+ * Config git accepts but never writes itself, put where a repository keeps its
+ * own. The inspection path reads config with a line scan, so it has to agree
+ * with git about which line answers a key — not only about the shape git emits.
+ */
+const prependToConfig = (file: string, content: string): void =>
+  writeFileSync(file, `${content}${readFileSync(file, "utf8")}`);
+
+const appendToConfig = (file: string, content: string): void =>
+  writeFileSync(file, `${readFileSync(file, "utf8")}${content}`);
+
 const expectNothingClaimed = (inspection: GitCheckoutInspection, branch: string): void => {
   expect(existsSync(gitCheckoutIdentityPath(inspection.gitDirectory))).toBe(false);
   const config = gitConfigPath(inspection.commonDirectory);
@@ -136,6 +147,57 @@ describe("workspace topology", () => {
 
       expect(worktree.checkoutKind).toBe("bare-worktree");
       expect(worktree.commonDirectory).toBe(bare);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("leaves core.bare to the plain section when a subsection shares its name", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      git(repository, "worktree", "add", "-q", join(root, "wt-a"), "-b", "feat/a");
+      const config = gitConfigPath(join(repository, ".git"));
+      // `[core "fake"]` is a section of its own, and the `bare` under it is not
+      // `core.bare` — git keeps answering with the plain `[core]` below it.
+      prependToConfig(config, '[core "fake"]\n\tbare = true\n');
+      expect(storedConfigValue(config, "core.bare")).toBe("false");
+
+      const worktree = yield* inspectCheckout(join(root, "wt-a"));
+
+      expect(worktree.checkoutKind).toBe("linked-worktree");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("settles on the last core.bare a repository sets", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      git(repository, "worktree", "add", "-q", join(root, "wt-a"), "-b", "feat/a");
+      const config = gitConfigPath(join(repository, ".git"));
+      // A later `[core]` overrides the `bare = false` git wrote at init, so the
+      // repository is bare and its linked checkouts are worktrees of a bare one.
+      appendToConfig(config, "[core]\n\tbare = true\n");
+      expect(storedConfigValue(config, "core.bare")).toBe("true");
+
+      const worktree = yield* inspectCheckout(join(root, "wt-a"));
+
+      expect(worktree.checkoutKind).toBe("bare-worktree");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("reads extensions.refStorage from the plain section only", () =>
+    Effect.gen(function* () {
+      const repository = makeRepository(makeRoot());
+      const config = gitConfigPath(join(repository, ".git"));
+      appendToConfig(config, '[extensions "fake"]\n\trefStorage = reftable\n');
+
+      const unaffected = yield* inspectCheckout(repository);
+      expect(unaffected.checkoutKind).toBe("primary");
+
+      appendToConfig(config, "[extensions]\n\trefStorage = reftable\n");
+      expect(storedConfigValue(config, "extensions.refStorage")).toBe("reftable");
+
+      const refused = yield* Effect.flip(inspectWorkspace(repository));
+      expect(refused).toBeInstanceOf(UnsupportedGitWorkspaceError);
     }).pipe(Effect.provide(gitLayer)),
   );
 
