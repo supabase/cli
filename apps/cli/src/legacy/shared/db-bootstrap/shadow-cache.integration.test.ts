@@ -21,12 +21,8 @@ import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts"
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
-import {
-  LEGACY_SHADOW_CACHE_ENV,
-  LEGACY_SHADOW_PGDATA_PARENT_PATH,
-  LEGACY_SHADOW_PGDATA_PATH,
-  legacyAcquireShadowDatabase,
-} from "./shadow-cache.ts";
+import { LEGACY_PGDATA_PARENT_PATH, LEGACY_PGDATA_PATH } from "./pgdata-snapshot.ts";
+import { LEGACY_SHADOW_CACHE_ENV, legacyAcquireShadowDatabase } from "./shadow-cache.ts";
 import { LEGACY_SHADOW_DEBUG_ENV } from "./shadow-debug.ts";
 import { legacyRemoveShadowDatabase } from "./shadow-database.ts";
 import type { LegacyShadowDbSetupInput, LegacyShadowSetupInput } from "./shadow-database.ts";
@@ -436,7 +432,7 @@ describe("legacyAcquireShadowDatabase", () => {
         ]);
         expect(docker.stepCalls("cp-out")[0]).toEqual([
           "cp",
-          `${handle.containerId}:${LEGACY_SHADOW_PGDATA_PATH}`,
+          `${handle.containerId}:${LEGACY_PGDATA_PATH}`,
           "-",
         ]);
         expect(docker.containers.get(handle.containerId)?.running).toBe(true);
@@ -484,10 +480,10 @@ describe("legacyAcquireShadowDatabase", () => {
         expect(docker.stepCalls("cp-in").at(-1)).toEqual([
           "cp",
           "-",
-          `${warm.containerId}:${LEGACY_SHADOW_PGDATA_PARENT_PATH}`,
+          `${warm.containerId}:${LEGACY_PGDATA_PARENT_PATH}`,
         ]);
         expect(docker.containers.get(warm.containerId)?.restored).toBe(
-          `${LEGACY_SHADOW_PGDATA_PARENT_PATH}::${FAKE_PGDATA_TAR}`,
+          `${LEGACY_PGDATA_PARENT_PATH}::${FAKE_PGDATA_TAR}`,
         );
 
         // Nothing more is exported: the baseline is already on disk.

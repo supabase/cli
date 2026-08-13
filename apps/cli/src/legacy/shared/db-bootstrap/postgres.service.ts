@@ -263,7 +263,8 @@ function legacyPostgresExtraEnv(
  * `docker stop` burns the full 10s grace period before SIGKILL; with `exec`,
  * Postgres is PID 1 and stops in ~1s). Applies to all three entrypoint
  * variants below. Timing is not part of the Go-parity surface (ADR 0016);
- * see apps/cli/docs/shadow-db-provisioning.md.
+ * see `shadow-cache.ts`'s own doc comment for why fast shutdown matters to the shadow baseline
+ * cache's cold path.
  *
  * Otherwise byte-for-byte derived from Go's raw-string concatenation —
  * `NewContainerConfig(args ...string)` splices `strings.Join(args, " ")`

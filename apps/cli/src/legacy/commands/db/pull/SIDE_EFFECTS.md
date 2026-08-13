@@ -76,30 +76,15 @@ disables formatting without disabling safe compaction.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
-- ON by default; set `SUPABASE_SHADOW_CACHE=false` (or `=0`) to opt out, in which case the shadow
-  lifecycle is exactly as documented above.
-- The cached artifact is a **file**, never a container: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar`
-  (~90MB), a tar of the shadow's PGDATA directory taken right after the platform baseline and
-  before `contrib_regression`/any user migration. The key hashes every input baked into the cluster
-  (images, JWT secret, root key, `[db] password`, `db.settings`, vault secrets, `roles.sql`,
-  resolved JWKS, shadow port, major version).
-- The container lifecycle is otherwise IDENTICAL to the uncached path — same project labels, always
-  `docker rm -f -v` on release. Nothing is kept between runs, there is no cache-key Docker label,
-  and no lock file. One forced exception: a COLD cache-enabled run creates the shadow without
-  `--rm`, because it must `docker stop` the container to take a coherent snapshot and Docker
-  destroys an `--rm` container the moment it exits. It is still removed on release.
-- Cold run: `docker stop` -> `docker cp <id>:/var/lib/postgresql/data -` streamed to the tar (temp
-  name + atomic rename) -> `docker start` -> readiness wait -> continue. Publishing a new key's tar
-  deletes every other `shadow-baseline-*.tar` (retention: current key only).
-- Warm run: `docker cp - <id>:/var/lib/postgresql` into the created-but-not-yet-started container,
-  so the entrypoint skips `initdb` and the platform baseline is skipped too.
-- Any warm-path failure removes the container, deletes the tar as suspect, and cold-provisions; any
-  cold export failure only warns on stderr and leaves the run uncached. The cache never fails the
-  command.
-- Each pooler-retry attempt acquires and releases its own shadow; on a warm hit each one restores
-  the same tar into its own fresh container.
-- `--declarative`'s bare shadow runs no platform baseline, so there is nothing to snapshot — it
-  keeps the plain create/remove lifecycle.
+ON by default; `SUPABASE_SHADOW_CACHE=false`/`=0` opts out, restoring the documented uncached
+lifecycle. Artifact: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB), a PGDATA snapshot
+keyed by a hash of every input baked into the cluster; retention keeps the current key's tar only.
+Container lifecycle is identical to the uncached path except a cold run drops `--rm` (still removed
+on release). A cache anomaly never fails the command — a warm-path anomaly cold-provisions instead,
+a cold export failure only warns and leaves the run uncached. See `shared/db-bootstrap/
+shadow-cache.ts`'s doc comment for the mechanics. Each pooler-retry attempt acquires/releases its
+own shadow (a warm hit restores the same tar each time); `--declarative`'s bare shadow runs no
+baseline, so it is never cached.
 
 ## API Routes / DB
 

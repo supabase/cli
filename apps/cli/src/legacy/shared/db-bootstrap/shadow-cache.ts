@@ -1,82 +1,37 @@
 /**
  * Shadow baseline cache — the acquire/release pair `db diff`/`db pull`/the migrations-catalog
  * resolution path use in place of bare `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase`
- * (`shadow-database.ts`).
+ * (`shadow-database.ts`). Caches the shadow's platform baseline (init schema + the PG15+ one-shot
+ * realtime/storage/auth jobs) as a disk-level PGDATA snapshot, never a kept container.
  *
- * The shadow database is on the hot path of every plan: a throwaway `supabase/postgres` container
- * brought to the platform baseline (init schema + the PG15+ one-shot realtime/storage/auth migrate
- * jobs) and then destroyed. That cold provision measures ~30s wall even with the readiness gate
- * fixed, of which ~11s is Postgres's own `initdb` + bundled init SQL and the rest the one-shot
- * jobs. None of it depends on the user's migrations, so it is cached — as a **disk-level PGDATA
- * snapshot**, not as a kept container:
+ * - **Cold** (no snapshot for this key): provision the shadow as an uncached run does, then —
+ *   right after the baseline and before `contrib_regression`/any user migration — stop the
+ *   container, export its PGDATA via {@link legacyExportPgDataTar} (`pgdata-snapshot.ts`), and
+ *   start it again.
+ * - **Warm** (that tar exists): create the shadow with the tar unpacked into it before it starts
+ *   ({@link legacyPgDataRestoreArchive}), so the entrypoint skips `initdb` and the whole baseline;
+ *   the caller applies user migrations straight onto the restored `postgres`.
  *
- *  - **Cold (no snapshot for this key):** create the shadow as an uncached run does (project
- *    labels only) and run today's baseline unchanged, then — immediately after the baseline and
- *    BEFORE `contrib_regression`/any user migration — `docker stop` the container, stream `docker
- *    cp <id>:/var/lib/postgresql/data -` into `supabase/.temp/pgdelta/shadow-baseline-<key>.tar`,
- *    and `docker start` + re-await readiness. Measured ~0.65s to export a 39MB bare-cluster
- *    snapshot (~90MB with the default services' one-shot jobs applied) and ~2s back to ready.
- *  - **Warm (that tar exists):** create the shadow exactly as an uncached run does, but unpack the
- *    tar into the created-but-not-yet-started container (`docker cp - <id>:/var/lib/postgresql`,
- *    ~0.6s) so `docker-entrypoint.sh` sees a `PG_VERSION` file and skips `initdb` entirely. The
- *    container is connectable ~2s after `docker start` with the full baseline cluster in place
- *    (all roles, `_supabase`, the versioned `auth`/`storage`/`_realtime` schemas), so the caller
- *    skips the baseline ({@link LegacyShadowBaselineState.baselinePresent}) and applies user
- *    migrations straight onto the restored `postgres`.
- *
- * **A plain file artifact on purpose.** The snapshot is a tar under the project's own temp
- * directory, not a Docker object, so nothing about the mechanism is Docker-specific: a future
- * NATIVE (non-container) Postgres service can restore the same artifact by unpacking it into its
- * own data directory.
- *
- * **No container outlives a run.** Every shadow this module hands out — cold, warm, or
- * cache-disabled — carries the same two project labels and is removed with `docker rm -f -v` on
- * release. Nothing is kept stopped between runs, there is no cache-key Docker label, and
- * `supabase stop` has nothing extra to sweep. The cache's only footprint outside one run is the
- * ~90MB tar.
- *
- * The single container-shape difference is on the cold path, and it is forced: that path drops
- * `--rm`, because Docker destroys an `AutoRemove` container the moment it exits — `docker stop`
- * included — which would leave nothing to restart after the export. See
- * {@link LegacyCreateShadowDatabaseInput.autoRemove} for the full consequence (a SIGKILLed CLI
- * leaves a stopped, project-labeled container instead of nothing).
- *
- * **Concurrency is safe by construction, with no lock file.** Every run creates its own fresh
- * container, so no two runs can ever contend for one cluster. The tar is published by writing a
- * temp file and `rename`-ing it into place, which is atomic: a reader either sees the previous
- * complete tar or the new complete tar, never a partial one, and a reader that already opened the
- * old inode keeps a valid fd across a rename-over. Two concurrent cold runs on the same key both
- * export and the last `rename` wins — both tars are equally valid, since the key covers every
- * input baked into the cluster.
- *
- * **The cache may never hand back a wrong baseline, and may never fail a run.** Every anomaly on
- * the warm path (the `docker cp` in, the start, the readiness wait) removes the suspect container,
- * DELETES the tar as suspect, and cold-provisions instead — worst case is exactly today's
- * behavior. A cold export that fails only warns on stderr and leaves the run uncached; the
- * container is always restarted afterwards, whether the export succeeded or not.
- *
- * Retention is "current key only": publishing a new key's tar removes every other
- * `shadow-baseline-*.tar` in the same directory, so a project holds ~90MB, not ~90MB per config
- * permutation it has ever used.
- *
- * `SUPABASE_SHADOW_CACHE` is ON by default; set it to `false`/`0` to opt out, in which case
- * `legacyAcquireShadowDatabase` is `legacyCreateShadowDatabase` and the release is
- * `legacyRemoveShadowDatabase` — same argv, same labels, same `--rm`, no extra Docker calls, no
- * files written.
+ * Invariants: the artifact is a plain file, not a Docker object (native-services friendly — see
+ * `pgdata-snapshot.ts`'s own header); no container outlives a run — cold, warm, and cache-off
+ * shadows are all removed with `docker rm -f -v` on release; the cold path alone drops `--rm` (see
+ * {@link LegacyCreateShadowDatabaseInput.autoRemove} for the consequence); the tar is published by
+ * an atomic rename, so concurrent writers need no lock file; a cache anomaly never fails the run —
+ * a warm-path anomaly deletes the tar and cold-provisions, a cold export failure only warns and
+ * leaves the run uncached; retention keeps the current key's tar only, sweeping every other one on
+ * publish. `SUPABASE_SHADOW_CACHE` is ON by default; `false`/`0` opts out.
  */
 
 import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "@supabase/config";
-import { Effect, Option, Stream, type FileSystem } from "effect";
+import { Effect, Option, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import {
   containerCliExitCode,
-  legacyCollectText,
   legacyDescribeContainerCliFailure,
-  spawnContainerCli,
 } from "../legacy-container-cli.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
@@ -84,6 +39,8 @@ import { legacyPgDeltaTempPath } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import type { LegacyVaultSecret } from "../legacy-vault.ts";
 import { legacyWaitForShadowReady } from "./health-check.ts";
+import { legacyExportPgDataTar, legacyPgDataRestoreArchive } from "./pgdata-snapshot.ts";
+import type { LegacyPgDataSnapshotUnavailable } from "./pgdata-snapshot.ts";
 import { legacyResolvePinnedImage } from "./pinned-image.ts";
 import { legacyTimeShadowPhase } from "./shadow-debug.ts";
 import {
@@ -98,22 +55,6 @@ type Spawner = ChildProcessSpawner["Service"];
 
 /** `SUPABASE_SHADOW_CACHE` — the opt-OUT gate for this whole module (default ON). */
 export const LEGACY_SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
-
-/**
- * `PGDATA` in every `supabase/postgres` image — the directory exported on the cold path and
- * restored on the warm one. Hardcoded rather than read from the container's own `PGDATA` env:
- * the entrypoint scripts this codebase generates (`postgres.service.ts`) never override it, and
- * the value is part of the tar's own layout, so a mismatch has to be a deliberate change here.
- */
-export const LEGACY_SHADOW_PGDATA_PATH = "/var/lib/postgresql/data";
-
-/**
- * `docker cp - <id>:<dest>` unpacks the archive's members RELATIVE to `dest`, and
- * {@link LEGACY_SHADOW_PGDATA_PATH}'s export tar has `data/` as its own top-level member, so the
- * restore target is PGDATA's parent. A POSIX constant, not `path.dirname` — this is a container
- * path and must not follow the host's separator.
- */
-export const LEGACY_SHADOW_PGDATA_PARENT_PATH = "/var/lib/postgresql";
 
 /**
  * Internal-only "the cache cannot be used" signal. Deliberately NOT a `Data.TaggedError`: it
@@ -365,16 +306,6 @@ export function legacyIsStaleShadowBaselineTar(fileName: string, key: string): b
   );
 }
 
-/**
- * The temp name a snapshot is streamed to before being `rename`d over the real one. Carries the
- * writing process's pid so two concurrent cold runs of the same key cannot truncate each other's
- * in-progress export — they publish independently, and the last `rename` wins (both tars are
- * equally valid; see this module's own header).
- */
-function legacyShadowBaselineTarTempPath(tarPath: string): string {
-  return `${tarPath}.${process.pid}.partial`;
-}
-
 /** Best-effort removal — a leftover tar only ever costs disk, never correctness. */
 const legacyForgetShadowBaselineTar = (
   fs: FileSystem.FileSystem,
@@ -465,14 +396,9 @@ const legacyAwaitShadowReady = <E>(
 // ---------------------------------------------------------------------------
 
 /**
- * Streams `docker cp <id>:/var/lib/postgresql/data -`'s tar straight to a temp file and `rename`s
- * it into place. The stream never lands in memory: the child's stdout is piped into
- * `FileSystem.sink`, so an ~89MB snapshot costs one buffer's worth of heap.
- *
- * The `rename` is what publishes the entry, and it is the LAST step for exactly that reason: a
- * partially written tar must never be observable under the final name (a reader would restore a
- * truncated data directory and get a Postgres that will not start). Any failure removes the temp
- * file and reports the cache unavailable; nothing is left behind for the next run to find.
+ * Ensures the tar's temp directory exists, delegates the actual export to
+ * {@link legacyExportPgDataTar} (`pgdata-snapshot.ts` — see that function's own doc comment for
+ * the atomic-publish mechanics), then applies the "current key only" retention rule.
  */
 const legacyWriteShadowBaselineTar = <E>(
   spawner: Spawner,
@@ -480,9 +406,8 @@ const legacyWriteShadowBaselineTar = <E>(
   key: string,
   tarPath: string,
   containerId: string,
-): Effect.Effect<void, LegacyShadowCacheUnavailable> => {
-  const tempPath = legacyShadowBaselineTarTempPath(tarPath);
-  return Effect.gen(function* () {
+): Effect.Effect<void, LegacyShadowCacheUnavailable> =>
+  Effect.gen(function* () {
     const tempDir = legacyPgDeltaTempPath(input.path, input.workdir);
     yield* input.fs
       .makeDirectory(tempDir, { recursive: true })
@@ -491,55 +416,13 @@ const legacyWriteShadowBaselineTar = <E>(
           legacyShadowCacheUnavailable(`failed to create ${tempDir}: ${cause.message}`),
         ),
       );
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        const child = yield* spawnContainerCli(
-          spawner,
-          ["cp", `${containerId}:${LEGACY_SHADOW_PGDATA_PATH}`, "-"],
-          { stdin: "ignore", stdout: "pipe", stderr: "pipe" },
-        ).pipe(
-          Effect.mapError((cause) =>
-            legacyShadowCacheUnavailable(
-              `failed to export ${LEGACY_SHADOW_PGDATA_PATH}: ${legacyDescribeContainerCliFailure(cause)}`,
-            ),
-          ),
-        );
-        // stdout is consumed concurrently with awaiting the exit code, not after it: an
-        // unread pipe would block `docker cp` long before it finished writing 89MB.
-        const [exitCode, , stderr] = yield* Effect.all(
-          [
-            child.exitCode.pipe(Effect.map(Number)),
-            Stream.run(child.stdout, input.fs.sink(tempPath, { flag: "w" })),
-            legacyCollectText(child.stderr),
-          ],
-          { concurrency: "unbounded" },
-        ).pipe(
-          Effect.mapError((cause) =>
-            legacyShadowCacheUnavailable(
-              `failed to export ${LEGACY_SHADOW_PGDATA_PATH}: ${legacyDescribeContainerCliFailure(cause)}`,
-            ),
-          ),
-        );
-        if (exitCode !== 0) {
-          const message = stderr.trim();
-          return yield* Effect.fail(
-            legacyShadowCacheUnavailable(
-              `docker cp exited ${exitCode}${message.length > 0 ? `: ${message}` : ""}`,
-            ),
-          );
-        }
-      }),
+    yield* legacyExportPgDataTar(spawner, containerId, input.fs, tarPath).pipe(
+      Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
+        legacyShadowCacheUnavailable(cause.reason),
+      ),
     );
-    yield* input.fs
-      .rename(tempPath, tarPath)
-      .pipe(
-        Effect.mapError((cause) =>
-          legacyShadowCacheUnavailable(`failed to publish ${tarPath}: ${cause.message}`),
-        ),
-      );
     yield* legacySweepStaleShadowBaselineTars(input, key);
-  }).pipe(Effect.onError(() => legacyForgetShadowBaselineTar(input.fs, tempPath)));
-};
+  });
 
 /**
  * The cold path's snapshot step, run at the baseline/migrations seam — after
@@ -658,10 +541,7 @@ const legacyWarmShadow = <E>(
       "baseline-restore",
       legacyCreateShadowDatabase(spawner, {
         ...input,
-        restoreArchive: {
-          containerPath: LEGACY_SHADOW_PGDATA_PARENT_PATH,
-          tar: input.fs.stream(tarPath),
-        },
+        restoreArchive: legacyPgDataRestoreArchive(input.fs, tarPath),
       }),
     ).pipe(
       Effect.mapError((cause) =>
