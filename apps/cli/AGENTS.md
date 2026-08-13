@@ -36,14 +36,13 @@ Both call `runCli(root)` from `shared/cli/run.ts`.
 
 ## Legacy Port Status and Go CLI Authority
 
-`src/legacy/` started as a from-scratch 1:1 port of the Go CLI (`apps/cli-go/`) and is now largely
-there: see [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md#legacy-shell-command-status)
-for the live per-command tracker. As of writing, 96 of 103 legacy leaf commands are natively ported;
-only 7 remain a Phase 0 proxy to the Go binary. As of CLI-1970, `apps/cli-go/` itself contains only
-that residual proxied subset — Go source for every other command was deleted outright once nothing
-in the TypeScript CLI could reach it, directly or indirectly. For any command whose Go source no
-longer exists in-tree, the authoritative parity reference is the last commit with it intact:
-`7b469f5b3`.
+`src/legacy/` started as a from-scratch 1:1 port of the Go CLI (`apps/cli-go/`) and the port is now
+complete: every legacy leaf command is natively ported except the delegation surface documented in
+[`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md). As of CLI-1970, `apps/cli-go/`
+itself contains only that residual delegation surface — Go source for every other command was
+deleted outright once nothing in the TypeScript CLI could reach it, directly or indirectly. For any
+command whose Go source no longer exists in-tree, the authoritative parity reference is the last
+commit with it intact: `7b469f5b3`.
 
 This changes what "Go CLI is authoritative" means day to day. `apps/cli-go/` is required reading
 only when:
@@ -133,15 +132,15 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 ## Phase 0: Go Binary Wrapper
 
-This phase is now the exception, not the default: only the commands listed as `wrapped` in the
-[Legacy Shell Command Status table](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+This phase is now the exception, not the default: only the commands in the
+[delegation surface table](./docs/go-cli-porting-status.md#the-delegation-surface)
 still need it. A Go CLI command that exists in `apps/cli-go/` but has no TS surface yet is rare at
 this point in the port; when one does show up, the first step is to **wrap** it: define the command
 in the TS command tree and proxy all invocations to the bundled Go binary via subprocess. Wrapping
 only works for a command the Go CLI already implements — there is nothing to proxy to otherwise. A
 genuinely TS-only addition with no Go equivalent (for example a TS-only flag on an already-ported
 command, per the "Flag divergences from the Go reference" list in
-[`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md)) is implemented natively and does
+[`docs/go-cli-divergences.md`](./docs/go-cli-divergences.md)) is implemented natively and does
 not go through Phase 0 at all.
 
 ### Proxy handler pattern
@@ -534,12 +533,16 @@ Live tests are black-box CLI subprocess tests — like `*.e2e.test.ts`, but run 
 
 ## Go CLI Parity Tracking
 
-When you add or change CLI commands, subcommands, flags, or parameters in the **legacy shell**, always update [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md).
+The legacy port is complete, so this is no longer a per-command tracking exercise:
 
-- Update status when a Go leaf command moves between `missing`, `partial`, and `ported`.
-- Update missing or extra flag/parameter notes when the command surface changes — including when you add or remove a flag on an already-ported TS command.
-- Keep the tracker focused on final leaf commands, not command groups.
-- If you add a TS-native command with no direct Go equivalent (for example `dev`), record it in the TS-only section instead of marking a Go command as ported.
+- When you add a TS-only flag, positional argument, or behavior on an already-ported **legacy
+  shell** command (no Go equivalent), record it in
+  [`docs/go-cli-divergences.md`](./docs/go-cli-divergences.md) in the same change. Same for a
+  TS-native command with no direct Go equivalent (for example `dev`) — record it in that file's
+  TS-only section.
+- Only touch [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md) if the delegation
+  surface itself changes — a command is added to or removed from the fixed set `LegacyGoProxy`
+  still forwards to the Go binary.
 
 ---
 

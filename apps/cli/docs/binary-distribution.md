@@ -45,9 +45,10 @@ The musl packages only carry the Bun TS binary (compiled for musl). The Go binar
 When a Phase 0 command runs, `go-proxy.layer.ts` resolves the Go binary in this order:
 
 1. **`SUPABASE_GO_BINARY` env var** — explicit override, takes priority.
-2. **Co-located `supabase-go`** — looks next to `process.execPath`. Works in compiled SFE mode because the base shim uses `execFileSync`, making the TS SFE the main process with `process.execPath` pointing to itself.
+2. **Co-located `supabase-go`** — looks next to `process.execPath`. Works in compiled SFE mode because the base shim uses `execFileSync`, making the TS SFE the main process with `process.execPath` pointing to itself. This is also how PATH-installed setups resolve: `supabase-go` ships next to the `supabase` shim.
 3. **npm package resolution** — resolves `@supabase/cli-{platform}/bin/supabase-go`. Works when running from source with the platform packages installed.
-4. **`supabase` on PATH** — final fallback, useful for local development.
+
+There is deliberately **no** `PATH` fallback (CLI-1488): the `supabase` shim itself is what's on `PATH`, so falling back to it would re-invoke the shim and fork-bomb. Resolution failure is a hard error with install guidance.
 
 ## Source of the Go Binary
 
@@ -61,27 +62,22 @@ This must be run after a fresh clone before building a legacy release.
 
 ## Development Workflow
 
-No build step is required to run the legacy CLI from source. The PATH fallback handles Go binary resolution automatically.
+No build step is required to run the legacy CLI from source, but the Go binary must be resolvable — easiest via `SUPABASE_GO_BINARY` (below) or an installed `@supabase/cli-<platform>` package.
 
-1. Install the Go CLI on your PATH (via npm, brew, or building from `apps/cli-go/`).
+1. Build the Go binary once: `cd apps/cli-go && go build -o supabase-go .`
 2. Create a shell alias to run the legacy CLI from source. For example in `.zshrc`:
 
    ```sh
    alias supabase-dev="bun /path/to/dx-lab/apps/cli/src/legacy/main.ts"
    ```
 
-3. Run commands:
+3. Point `SUPABASE_GO_BINARY` at the built binary and run commands:
 
    ```sh
-   supabase-dev db branch list  # Phase 0: proxied to Go binary on PATH
-   supabase-dev login            # Phase 1+: native TypeScript implementation
+   export SUPABASE_GO_BINARY=/path/to/apps/cli-go/supabase-go
+   supabase-dev db branch list  # proxied to the Go binary
+   supabase-dev login           # native TypeScript implementation
    ```
-
-Alternatively, set `SUPABASE_GO_BINARY` to point to a specific binary:
-
-```sh
-export SUPABASE_GO_BINARY=/path/to/supabase
-```
 
 ## Release Workflow
 

@@ -650,7 +650,7 @@ function substituteImportMapValue(
     // Import-maps spec (implemented by Deno): a key matches exactly, or as a
     // prefix only when it ends with "/". Go's walker prefix-matches every key
     // (pkg/function/deno.go:150-155) — intentional divergence, see
-    // go-cli-porting-status.md: the lax match fabricates paths the runtime
+    // go-cli-divergences.md: the lax match fabricates paths the runtime
     // can never resolve (the ENOTDIR family this PR fixes).
     if (prefix.endsWith("/")) {
       // Spec normalization: a `/`-suffixed key whose address lacks a trailing

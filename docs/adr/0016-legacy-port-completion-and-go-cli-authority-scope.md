@@ -11,7 +11,7 @@ command began as a Phase 0 proxy to the Go binary, then moved to a native TypeSc
 touching `src/legacy/` was correct — nearly every change was either wrapping a new command or
 replacing its proxy, and the Go source was the only available spec for what the command should do.
 
-That phase is essentially over. Per [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md#legacy-shell-command-status),
+That phase is essentially over. Per [`apps/cli/docs/go-cli-porting-status.md`](../../apps/cli/docs/go-cli-porting-status.md),
 95 of 103 legacy leaf commands (~92%) are natively ported; only 8 remain Phase 0 proxies. Most
 changes landing in `src/legacy/` today are ordinary engineering on already-ported commands — bug
 fixes, internal refactors, hoisting shared helpers, adding documented TS-only flags, telemetry and
