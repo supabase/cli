@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { makeApiClient, V1CreateABranchOutput } from "@supabase/api/effect";
-import { Effect, Layer, Option } from "effect";
+import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -8,6 +8,7 @@ import type * as HttpClientRequest from "effect/unstable/http/HttpClientRequest"
 import { PlatformApi } from "../../../auth/platform-api.service.ts";
 import { ProjectLinkState } from "../../../config/project-link-state.service.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
+import { classifyCliCauseActionability } from "../../../../shared/telemetry/error-actionability.ts";
 import {
   emptyEnv,
   mockOutput,
@@ -27,7 +28,7 @@ function makeCreatedBranch(
   overrides: Partial<typeof V1CreateABranchOutput.Type> = {},
 ): typeof V1CreateABranchOutput.Type {
   return {
-    id: "00000000-0000-0000-0000-000000000002",
+    id: "00000000-0000-4000-8000-000000000002",
     name: "feature-branch",
     project_ref: "branchrefabcdefghijk",
     parent_project_ref: "parentrefabcdefghijk",
@@ -192,6 +193,26 @@ describe("branches create handler", () => {
             m.message.includes("created and set as active"),
         ),
       ).toBe(true);
+    }),
+  );
+
+  it.live("rejects an explicit empty name before contacting the API", () =>
+    Effect.gen(function* () {
+      const { layer, api } = setup({ env: { GITHUB_HEAD_REF: "fallback-branch" } });
+      const exit = yield* create({ ...BASE_FLAGS, name: Option.some("") }).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+          error_kind: "user_actionable",
+          error_category: "invalid_input",
+          suggestion_type: "provide_flags",
+        });
+      }
+      expect(api.capturedInput).toBeUndefined();
     }),
   );
 

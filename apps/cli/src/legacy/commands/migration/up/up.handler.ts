@@ -18,6 +18,7 @@ import {
   legacyFindPendingMigrations,
   legacyListLocalMigrationPaths,
   legacyListRemoteMigrations,
+  legacySortMigrationPathsByVersion,
   legacySuggestRevertHistory,
 } from "../../../shared/legacy-migration-history.ts";
 import { legacyUpsertVaultSecrets } from "../../../shared/legacy-vault.ts";
@@ -55,6 +56,18 @@ const runUp = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && (target.connType ?? "local") !== "linked") {
+    return yield* Effect.fail(
+      new LegacyMigrationTargetFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
 
   const upBody = Effect.gen(function* () {
@@ -63,6 +76,7 @@ const runUp = Effect.fnUntraced(function* (
       dbUrl: flags.dbUrl,
       connType: target.connType ?? "local",
       dnsResolver,
+      linkedProjectRef: flags.projectRef,
     });
     const ref = Option.getOrUndefined(cfg.ref ?? Option.none());
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, ref);
@@ -106,8 +120,14 @@ const runUp = Effect.fnUntraced(function* (
             );
           }
           // Go's `--include-all`: the out-of-order set + everything after the
-          // applied prefix (`up.go:47`).
-          pending = [...result.paths, ...local.slice(remote.length + result.paths.length)];
+          // applied prefix (`up.go:47`). Slices the same version-ordered list
+          // `result.paths` was taken from — indexing a name-ordered list with a
+          // version-ordered offset would skip a pending migration and re-apply
+          // an already-applied one.
+          pending = [
+            ...result.paths,
+            ...legacySortMigrationPathsByVersion(local).slice(remote.length + result.paths.length),
+          ];
         } else {
           pending = result.paths;
         }
@@ -137,7 +157,7 @@ const runUp = Effect.fnUntraced(function* (
   if ((target.connType ?? "local") === "linked") {
     const projectRef = yield* LegacyProjectRefResolver;
     const linkedProjectCache = yield* LegacyLinkedProjectCache;
-    const linkedRef = yield* projectRef.loadProjectRef(Option.none());
+    const linkedRef = yield* projectRef.loadProjectRef(flags.projectRef);
     return yield* upBody.pipe(Effect.ensuring(linkedProjectCache.cache(linkedRef)));
   }
   return yield* upBody;

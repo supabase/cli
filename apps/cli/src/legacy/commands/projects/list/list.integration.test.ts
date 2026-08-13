@@ -185,7 +185,11 @@ describe("legacy projects list integration", () => {
     return Effect.gen(function* () {
       yield* legacyProjectsList({});
       expect(out.stdoutText).toContain("[[projects]]");
-      expect(out.stdoutText).toContain('name = "alpha"');
+      // Go field names (PascalCase), embedded fields first, `Linked` last,
+      // and the Database sub-table after the primitives (CLI-1975).
+      expect(out.stdoutText).toContain('  Name = "alpha"');
+      expect(out.stdoutText).toContain("  Linked = true");
+      expect(out.stdoutText).toContain("  [projects.Database]");
     }).pipe(Effect.provide(layer));
   });
 

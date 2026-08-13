@@ -5,7 +5,13 @@ import { LegacyPlatformApi } from "../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyOutputFlag } from "../../shared/legacy/global-flags.ts";
 import { Output } from "../../shared/output/output.service.ts";
-import { encodeEnv, encodeGoJson, encodeToml, encodeYaml } from "./legacy-go-output.encoders.ts";
+import { encodeEnv, encodeGoJson } from "./legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoString,
+  legacyGoStruct,
+} from "./legacy-go-struct-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "./legacy-http-errors.ts";
 import {
   LegacyProjectsCreateNetworkError,
@@ -24,6 +30,22 @@ import {
 } from "../commands/projects/projects.prompt.ts";
 
 type CreateInput = typeof V1CreateAProjectInput.Type;
+
+/**
+ * Mirror of Go's `api.V1ProjectResponse` (`apps/cli-go/pkg/api/types.gen.go`)
+ * — `projects create -o yaml|toml` encodes the raw struct, so keys derive
+ * from the Go field names (CLI-1975).
+ */
+const LEGACY_GO_PROJECT_RESPONSE = legacyGoStruct([
+  ["created_at", legacyGoString],
+  ["id", legacyGoString],
+  ["name", legacyGoString],
+  ["organization_id", legacyGoString],
+  ["organization_slug", legacyGoString],
+  ["ref", legacyGoString],
+  ["region", legacyGoString],
+  ["status", legacyGoString],
+]);
 
 export interface LegacyProjectCreateInput {
   readonly name: string;
@@ -145,11 +167,11 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
     return { ref: id, dbPassword };
   }
   if (goFmt === "yaml") {
-    yield* output.raw(encodeYaml(created));
+    yield* output.raw(encodeLegacyGoYaml(created, LEGACY_GO_PROJECT_RESPONSE));
     return { ref: id, dbPassword };
   }
   if (goFmt === "toml") {
-    yield* output.raw(encodeToml(created) + "\n");
+    yield* output.raw(encodeLegacyGoToml(created, LEGACY_GO_PROJECT_RESPONSE));
     return { ref: id, dbPassword };
   }
   if (goFmt === "env") {

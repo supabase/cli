@@ -2,6 +2,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { Deferred, Effect, Sink, Stream } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { classifyCliErrorActionability } from "../../shared/telemetry/error-actionability.ts";
 import {
   LegacyDockerLifecycleInspectError,
   LegacyDockerLifecycleListError,
@@ -290,6 +291,10 @@ describe("legacyInspectContainerState", () => {
           expect(error.message).toBe(
             "failed to inspect container health: Error response from daemon: No such container: supabase_db_my-app",
           );
+          // The dominant "stack isn't running yet" case: not daemon-down, so it
+          // keeps the start-stack classification.
+          expect(error.daemonDown).toBeFalsy();
+          expect(classifyCliErrorActionability(error).error_category).toBe("invalid_config");
         }),
       );
     },
@@ -303,6 +308,14 @@ describe("legacyInspectContainerState", () => {
         expect(error).toBeInstanceOf(LegacyDockerLifecycleInspectError);
         expect(error.message).toBe(
           "failed to inspect container health: Cannot connect to the Docker daemon",
+        );
+        // A daemon-down stderr flips the discriminant so the failure classifies
+        // as docker-not-running instead of a broken running stack.
+        expect(error.daemonDown).toBe(true);
+        const result = classifyCliErrorActionability(error);
+        expect(result.error_category).toBe("docker_not_running");
+        expect(result.error_fingerprint).toBe(
+          "tag:LegacyDockerLifecycleInspectError:docker_not_running",
         );
       }),
     );

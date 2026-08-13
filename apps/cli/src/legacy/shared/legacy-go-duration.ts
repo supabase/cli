@@ -8,7 +8,9 @@
  * (nanoseconds as `int64`). Go itself re-serializes the PARSED value with
  * `fmt.Sprintf("%v", duration)` when building a container's env (e.g.
  * `GOTRUE_SESSIONS_TIMEBOX`, `GOTRUE_SMS_MAX_FREQUENCY` in
- * `apps/cli-go/internal/start/start.go`'s `buildGotrueEnv`), which normalizes
+ * `apps/cli-go/internal/start/start.go`'s `buildGotrueEnv`, deleted along with
+ * the rest of `internal/start` as unreachable, CLI-1966; last present at
+ * commit a253ccba2), which normalizes
  * the string to Go's canonical form — `"1h"` becomes `"1h0m0s"`,
  * `"90s"` becomes `"1m30s"` — so callers needing byte-exact parity must
  * round-trip through both functions below, not just pass the configured
@@ -34,14 +36,26 @@ const NS_PER_MS_BIG = 1_000_000n;
 const NS_PER_US_BIG = 1_000n;
 
 // Go's `time.Duration` ceiling (`math.MaxInt64` nanoseconds, ~292.47 years) — `time.ParseDuration`
-// rejects any value whose accumulated nanosecond count would exceed this. Go's real max parseable
-// duration is `2562047h47m16.854775807s`.
+// rejects any POSITIVE value whose accumulated nanosecond count would exceed this. Go's real max
+// parseable duration is `2562047h47m16.854775807s`.
 const MAX_INT64_NS = 9223372036854775807n;
+
+// Go's `time.ParseDuration` (`src/time/format.go`) accumulates into a `uint64`, checking
+// `d > 1<<63` (NOT `1<<63-1`, i.e. `MAX_INT64_NS`) both per-term and on the running total, and
+// only applies the STRICTER `d > 1<<63-1` check afterwards, and only when the parsed value is NOT
+// negated. A magnitude of exactly `1<<63` therefore survives parsing when the input is negative —
+// `-Duration(d)` on `d == 1<<63` wraps via `int64` two's-complement into exactly `math.MinInt64`,
+// Go's own minimum representable duration (`-2562047h47m16.854775808s`) — but is rejected when the
+// input has no sign, since a positive `time.Duration` can never reach `1<<63` itself. Verified
+// against the real `time` package (CLI-1961 Codex review finding): `time.ParseDuration(
+// "-9223372036854775808ns")` succeeds and returns `math.MinInt64`, while the unsigned form
+// `"9223372036854775808ns"` (identical magnitude, no leading `-`) is rejected as an overflow.
+const UINT64_ACCUMULATOR_BOUND_NS = 1n << 63n;
 
 /**
  * Port of Go `time.ParseDuration`. Returns nanoseconds as a number. Accepts
  * the same grammar Go does: a possibly-signed sequence of decimal numbers,
- * each with a unit suffix (`"ns"`, `"us"`/`"µs"`, `"ms"`, `"s"`, `"m"`, `"h"`),
+ * each with a unit suffix (`"ns"`, `"us"`/`"µs"`/`"μs"`, `"ms"`, `"s"`, `"m"`, `"h"`),
  * e.g. `"5s"`, `"1h30m"`, `"300ms"`. Throws on invalid input, matching Go's
  * own `errors.New("time: invalid duration ...")` failure mode — including
  * overflowing `math.MaxInt64` nanoseconds and a fractional remainder that
@@ -114,7 +128,12 @@ export function legacyParseGoDuration(value: string): number {
     if (s.startsWith("ns")) {
       unitNs = 1n;
       s = s.slice(2);
-    } else if (s.startsWith("us") || s.startsWith("µs")) {
+    } else if (s.startsWith("us") || s.startsWith("µs") || s.startsWith("μs")) {
+      // Go's `unitMap` (`time/format.go:1615-1622`) has THREE microsecond spellings:
+      // "us", "µs" (U+00B5 MICRO SIGN), and "μs" (U+03BC GREEK SMALL LETTER MU) — verified
+      // directly against the Go standard library: `time.ParseDuration("1μs")` succeeds
+      // identically to `"1µs"`. The Greek-mu spelling was previously missing here
+      // (CLI-1961 Codex review finding).
       unitNs = NS_PER_US_BIG;
       s = s.slice(2);
     } else if (s.startsWith("ms")) {
@@ -133,14 +152,35 @@ export function legacyParseGoDuration(value: string): number {
       throw new Error(`time: unknown unit in duration "${orig}"`);
     }
 
-    // Go converts the fractional remainder via `uint64(float64(f) * (float64(unit)/scale))` —
-    // a float64->uint64 conversion, which truncates toward zero, not rounds: `"0.5ns"` becomes
-    // `0`, not `1`. `BigInt` division truncates toward zero unconditionally, so
-    // `(frac * unitNs) / post` matches that exactly, without any intermediate float64 rounding.
-    total += n * unitNs + (frac * unitNs) / post;
-    if (total > MAX_INT64_NS) {
+    // Go converts the fractional remainder via `uint64(float64(f) * (float64(unit)/scale))`
+    // (`time/format.go`'s `ParseDuration`) — an intermediate float64 MULTIPLICATION, THEN a
+    // float64->uint64 conversion that truncates toward zero. That intermediate float64 step
+    // means this is NOT equivalent to an exact BigInt division: once `frac` exceeds float64's
+    // 53-bit integer precision, rounding `frac` itself up to the nearest representable double
+    // can push the product past the next integer, so Go's result rounds UP to a full unit where
+    // an exact-BigInt computation would truncate DOWN — verified against the real `time`
+    // package (CLI-1961 Codex review finding): `time.ParseDuration("0.999999999999999999s")`
+    // (18 nines) returns exactly `1_000_000_000` ns, a full second, not the `999_999_999` an
+    // exact-BigInt truncation produces. Converting `frac`/`unitNs`/`post` to `Number` before
+    // multiplying reproduces Go's float64 step — and its rounding — bit-for-bit: both Go's
+    // `float64(uint64)` and JS's `BigInt`->`Number` conversion round to the nearest
+    // representable double (IEEE 754 round-to-nearest-even), so the same magnitude rounds the
+    // same way in both languages. `Math.trunc` mirrors the truncating `uint64(...)` conversion
+    // (both operands here are always non-negative, so truncation and floor coincide).
+    let term = n * unitNs;
+    if (frac > 0n) {
+      term += BigInt(Math.trunc(Number(frac) * (Number(unitNs) / Number(post))));
+    }
+    total += term;
+    if (total > UINT64_ACCUMULATOR_BOUND_NS) {
       throw new Error(`time: invalid duration "${orig}"`);
     }
+  }
+  // Only a positive result gets the stricter post-loop bound — see
+  // `UINT64_ACCUMULATOR_BOUND_NS`'s doc comment for why a negative result is allowed to reach
+  // one nanosecond further (down to exactly `math.MinInt64`).
+  if (!neg && total > MAX_INT64_NS) {
+    throw new Error(`time: invalid duration "${orig}"`);
   }
 
   return Number(neg ? -total : total);
@@ -208,4 +248,26 @@ export function legacyFormatGoDuration(nanoseconds: number): string {
 /** Formats `totalNs / unitNs` with trailing zeros (and a trailing `.`) trimmed, matching Go's `fmtFrac`. */
 function formatFraction(totalNs: number, unitNs: number): string {
   return (totalNs / unitNs).toFixed(9).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+/**
+ * Go's `Db.HealthTimeout` (`apps/cli-go/internal/db/start/start.go:180`) — a duration STRING
+ * (`"2m"` default, `packages/config/src/db.ts`) decoded via `mapstructure.
+ * StringToTimeDurationHookFunc()` inside the same `v.UnmarshalExact` call every `SUPABASE_*`
+ * override goes through (`pkg/config/config.go:749-756,775-784`) — a malformed value hard-fails
+ * `Config.Load` (`"failed to parse config: %w"`) before either `start`/`db start` ever runs; it is
+ * never silently replaced with a default. A valid-but-degenerate value (e.g. `"0s"`) isn't
+ * special-cased either: Go's backoff policy computes `uint64(timeout.Seconds())` as the retry
+ * count (`internal/db/start/start.go:192-198`), and the backoff library returns `Stop` immediately
+ * when that count is `0` — i.e. exactly one immediate health probe with no wait, not a 30s
+ * fallback. Throws on a malformed value, matching `legacyParseGoDuration`; the caller wraps that
+ * into its own typed config-load-failure error so rollback/cleanup still fires (a plain throw here
+ * would surface as an Effect defect instead of a typed failure).
+ *
+ * Hoisted here (was private to `commands/start/start.handler.ts`) once
+ * `commands/db/start/start.handler.ts`'s own native container bootstrap became a second caller —
+ * see `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+ */
+export function legacyResolveHealthTimeoutSeconds(healthTimeout: string): number {
+  return Math.trunc(legacyParseGoDuration(healthTimeout) / 1_000_000_000);
 }

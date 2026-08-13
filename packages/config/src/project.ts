@@ -166,6 +166,15 @@ function parseDotEnv(
   });
 }
 
+/** Parse one explicit dotenv file without applying ambient or project-local precedence. */
+export const loadDotEnvFile = Effect.fnUntraced(function* (path: string) {
+  const fs = yield* FileSystem.FileSystem;
+  if (!(yield* fs.exists(path))) {
+    return {};
+  }
+  return yield* parseDotEnv(path, yield* fs.readFileString(path));
+});
+
 function applySource(
   target: Record<string, string>,
   sources: Record<string, "ambient" | ".env" | ".env.local">,

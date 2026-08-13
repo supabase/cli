@@ -7,8 +7,11 @@ import {
   legacyDebugBundleMessage,
   legacySaveDebugBundle,
 } from "../shared/legacy-debug-bundle.ts";
-import { legacyPgDeltaTempPath } from "../shared/legacy-pgdelta.cache.ts";
-import { type LegacyPgDeltaContext, legacyExportCatalogPgDelta } from "../shared/legacy-pgdelta.ts";
+import { legacyPgDeltaTempPath } from "../../../shared/legacy-pgdelta.cache.ts";
+import {
+  type LegacyPgDeltaContext,
+  legacyExportCatalogPgDelta,
+} from "../../../shared/legacy-pgdelta.ts";
 
 // Go's `errInSync` (`internal/db/pull/pull.go:33`).
 const ERR_IN_SYNC = "No schema changes found";

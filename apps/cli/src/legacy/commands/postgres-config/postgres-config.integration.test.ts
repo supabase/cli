@@ -62,6 +62,23 @@ describe("legacy postgres-config get", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("renders a large integral config value with Go's float64 %g in the pretty table", () => {
+    // Go decodes the API response with `json.Unmarshal` into `map[string]any`,
+    // so every JSON number is a `float64`; `get.go:32-35`'s `%+v` then prints
+    // it with shortest `%g` — 1000000 renders as `1e+06`, never `1000000`.
+    const out = mockOutput({ format: "text" });
+    const api = mockLegacyPlatformApi({
+      response: { status: 200, body: { max_connections: 1000000 } },
+    });
+    const layer = runtimeWith({ out, api });
+
+    return Effect.gen(function* () {
+      yield* legacyPostgresConfigGet({ projectRef: Option.none() });
+      expect(out.stdoutText).toContain("1e+06");
+      expect(out.stdoutText).not.toContain("1000000");
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("emits TOML bytes for --output toml", () => {
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({

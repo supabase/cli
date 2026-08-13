@@ -4,8 +4,9 @@ import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { type ApiClient, makeApiClient, type SupabaseApiConfigError } from "@supabase/api/effect";
-import { Effect, FileSystem, Layer, Option, Redacted } from "effect";
+import { Effect, FileSystem, Layer, Option, Redacted, Sink, Stream } from "effect";
 import { PlatformError, SystemError } from "effect/PlatformError";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -45,7 +46,14 @@ import type { ProcessControl } from "../../src/shared/runtime/process-control.se
 import type { RuntimeInfo } from "../../src/shared/runtime/runtime-info.service.ts";
 import type { Tty } from "../../src/shared/runtime/tty.service.ts";
 import { Analytics } from "../../src/shared/telemetry/analytics.service.ts";
-import { mockAnalytics, mockProcessControl, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
+import {
+  mockAnalytics,
+  mockProcessControl,
+  mockRuntimeInfo,
+  mockStdin,
+  mockTty,
+  processEnvLayer,
+} from "./mocks.ts";
 
 // ---------------------------------------------------------------------------
 // Constants — Go-parity test fixtures used across every native-port integration
@@ -267,11 +275,20 @@ export function mockLegacyLoginApi(
 export function mockLegacyTelemetryStateTracked(): {
   readonly layer: Layer.Layer<LegacyTelemetryState>;
   readonly flushed: boolean;
+  /**
+   * Number of `flush` calls — beyond the plain `flushed` boolean, this lets a
+   * test prove a command's own `Effect.ensuring` finalizer fired EXACTLY once
+   * even when its body calls an in-process helper (e.g. `legacyResetLocalDatabase`,
+   * CLI-2062) that could, if it wrongly owned a second finalizer, double the
+   * count instead of leaving it at 1.
+   */
+  readonly flushCount: number;
   readonly stitchedDistinctId: string | undefined;
   readonly clearedDistinctId: boolean;
   readonly identityReset: boolean;
 } {
   let flushed = false;
+  let flushCount = 0;
   let stitchedDistinctId: string | undefined;
   let clearedDistinctId = false;
   let identityReset = false;
@@ -279,6 +296,7 @@ export function mockLegacyTelemetryStateTracked(): {
     get flush() {
       return Effect.sync(() => {
         flushed = true;
+        flushCount += 1;
       });
     },
     stitchLogin: (distinctId: string) =>
@@ -301,6 +319,9 @@ export function mockLegacyTelemetryStateTracked(): {
     get flushed() {
       return flushed;
     },
+    get flushCount() {
+      return flushCount;
+    },
     get stitchedDistinctId() {
       return stitchedDistinctId;
     },
@@ -316,15 +337,30 @@ export function mockLegacyTelemetryStateTracked(): {
 export function mockLegacyLinkedProjectCacheTracked(): {
   readonly layer: Layer.Layer<LegacyLinkedProjectCache>;
   readonly cached: boolean;
+  /** Number of `cache` calls — see {@link mockLegacyTelemetryStateTracked}'s own `flushCount`. */
+  readonly cacheCount: number;
   readonly cachedRef: string | undefined;
+  readonly cachedApiUrl: string | undefined;
+  readonly cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
 } {
   let cached = false;
+  let cacheCount = 0;
   let cachedRef: string | undefined;
+  let cachedApiUrl: string | undefined;
+  let cachedAccessToken: Option.Option<Redacted.Redacted<string>> | undefined;
   const layer = Layer.succeed(LegacyLinkedProjectCache, {
-    cache: (ref: string) =>
+    cache: (
+      ref: string,
+      _workdir?: string,
+      apiUrl?: string,
+      accessToken?: Option.Option<Redacted.Redacted<string>>,
+    ) =>
       Effect.sync(() => {
         cached = true;
+        cacheCount += 1;
         cachedRef = ref;
+        cachedApiUrl = apiUrl;
+        cachedAccessToken = accessToken;
       }),
   });
   return {
@@ -332,8 +368,17 @@ export function mockLegacyLinkedProjectCacheTracked(): {
     get cached() {
       return cached;
     },
+    get cacheCount() {
+      return cacheCount;
+    },
     get cachedRef() {
       return cachedRef;
+    },
+    get cachedApiUrl() {
+      return cachedApiUrl;
+    },
+    get cachedAccessToken() {
+      return cachedAccessToken;
     },
   };
 }
@@ -604,8 +649,17 @@ export function mockLegacyPlatformApiService(
     },
   });
 
+  // The legacy shell is a Go-parity port and only calls v1 operations, so v2
+  // has no stub support — any v2 call from legacy code is a wiring bug.
+  const v2Proxy = new Proxy({} as ApiClient["v2"], {
+    get(_target, prop: string) {
+      return () => Effect.die(`Unmocked LegacyPlatformApi.v2.${prop}`);
+    },
+  });
+
   const layer = Layer.succeed(LegacyPlatformApi, {
     v1: v1Proxy,
+    v2: v2Proxy,
     // Direct-service consumers don't exercise the raw-execute escape hatch.
     executeRaw: () => Effect.die("Unmocked LegacyPlatformApi.executeRaw"),
   } as ApiClient);
@@ -642,6 +696,26 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
       return root;
     },
   };
+}
+
+/**
+ * Ambient isolation for tests that construct the REAL `legacyCliConfigLayer` /
+ * `legacyCredentialsLayer` (directly or inside a command runtime layer) against
+ * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and
+ * `<homeDir>/.supabase/access-token`, resolving `SUPABASE_HOME` /
+ * `SUPABASE_PROFILE` from the raw process env — so both the home directory and
+ * the env must be pinned or stale files and ambient variables on the host
+ * machine leak into the test.
+ *
+ * Point `homeDir` at a per-test temp dir (see {@link useLegacyTempWorkdir});
+ * `env` replaces the entire ambient env for the layer's lifetime, so list every
+ * variable the test needs (e.g. `SUPABASE_ACCESS_TOKEN`, `SUPABASE_NO_KEYRING`).
+ */
+export function legacyIsolatedHomeLayer(
+  homeDir: string,
+  env: Readonly<Record<string, string | undefined>> = {},
+): Layer.Layer<RuntimeInfo> {
+  return Layer.mergeAll(mockRuntimeInfo({ homeDir }), processEnvLayer(env));
 }
 
 // ---------------------------------------------------------------------------
@@ -683,6 +757,169 @@ export function legacyFailWriteStringOnNthCallFsLayer(
       });
     }),
   ).pipe(Layer.provide(BunServices.layer));
+}
+
+// ---------------------------------------------------------------------------
+// Shadow-database container-CLI spawner — shared by `db diff`/`db pull`'s native
+// shadow-provisioning integration tests (CLI-1956). Hoisted here (it was a verbatim
+// ~55-line duplicate in both `diff.integration.test.ts` and `pull.integration.test.ts`)
+// per `apps/cli/CLAUDE.md`'s "Hoist Before You Duplicate" rule.
+// ---------------------------------------------------------------------------
+
+/** The shadow container's fake id — used both as `docker create`'s stdout and the `dbHost` `.slice(0, 12)` derives from. */
+export const LEGACY_FAKE_SHADOW_CONTAINER_ID = "abc123456789shadow0".padEnd(64, "0").slice(0, 64);
+
+/** Go's `container.HealthConfig`-shaped inspect JSON for a healthy container. */
+const LEGACY_SHADOW_HEALTHY_STATE =
+  '{"Running":true,"Status":"running","Health":{"Status":"healthy"}}';
+
+/**
+ * A real (Docker-valid) "still starting" state — NOT `Effect.never` — so
+ * {@link legacyWaitForHealthyServices}'s retry loop genuinely retries on its real 1-second
+ * `Schedule.spaced` backoff instead of hanging on a single probe forever. Mirrors
+ * `start.integration.test.ts`'s own "never healthy" containers (same rationale: a fiber
+ * interrupted mid-retry must be observed actually suspended inside the retry loop, not merely
+ * past the initial `create` call).
+ */
+const LEGACY_SHADOW_STARTING_STATE =
+  '{"Running":true,"Status":"running","Health":{"Status":"starting"}}';
+
+/**
+ * Fakes every `docker`/`podman` subprocess call the native shadow-provisioning path issues
+ * (`legacyBuildLocalDbContainerInputs`'s image-cache check, `legacyCreateShadowDatabase`'s
+ * network-create + container create/start, `legacyWaitForHealthyServices`'s container
+ * inspect, and `legacyRemoveShadowDatabase`'s cleanup) — scoped-down port of
+ * `start.integration.test.ts`'s own `mockContainerCliSpawner`, since both callers only ever
+ * create one (shadow) container, never named.
+ *
+ * `neverHealthy` (default `false`) makes every `container inspect` report `"starting"` instead
+ * of `"healthy"` — for the interrupt-during-health-wait regression coverage (review:
+ * PRRT_kwDOErm0O86XMrID): with the default healthy-immediately response, a forked fiber can run
+ * the ENTIRE shadow-provisioning sequence to completion synchronously before a test's own
+ * polling loop is even scheduled, making `Fiber.interrupt` a no-op on an already-finished fiber.
+ *
+ * `failCreate`/`failRemove` (both default `false`) make `docker create`/`docker rm` exit
+ * non-zero instead — hoisted from `migration squash`'s own scoped-down copy of this mock
+ * (CLI-1969 review), which needed these two extra failure knobs `db diff`/`db pull`'s own
+ * scenarios never exercised. Defaulting both to `false` keeps every existing caller
+ * (`pull.integration.test.ts`, `declarative.orchestrate.integration.test.ts`,
+ * `diff.integration.test.ts`) byte-identical.
+ *
+ * `dbNotRunning`/`dbInspectFailsWith` (CLI-1968) fake the SEPARATE `docker container inspect
+ * supabase_db_<projectId>` probe `legacyIsLocalDbRunning` issues before `--use-pgadmin`
+ * provisions anything — distinguished from the shadow's own `container inspect <64-hex-id>`
+ * health probe by the target id's `supabase_db_` prefix, so both options leave the shadow's
+ * own health check on its normal (healthy/never-healthy) path. `dbNotRunning` reports the
+ * Go/Docker "container doesn't exist" shape (`legacyIsContainerNotFoundMessage`); mutually
+ * exclusive with `dbInspectFailsWith`, which instead reports a daemon-unreachable failure
+ * (`legacyIsDockerDaemonUnreachable`) with the given stderr text — enforced below (a test
+ * that sets both throws immediately, rather than one option silently winning).
+ */
+export function mockLegacyShadowContainerCliSpawner(
+  opts: {
+    readonly neverHealthy?: boolean;
+    readonly failCreate?: boolean;
+    readonly failRemove?: boolean;
+    readonly dbNotRunning?: boolean;
+    readonly dbInspectFailsWith?: string;
+  } = {},
+): {
+  readonly layer: Layer.Layer<ChildProcessSpawner.ChildProcessSpawner>;
+  readonly spawned: ReadonlyArray<{ readonly args: ReadonlyArray<string> }>;
+} {
+  if (opts.dbNotRunning === true && opts.dbInspectFailsWith !== undefined) {
+    throw new Error(
+      "mockLegacyShadowContainerCliSpawner: dbNotRunning and dbInspectFailsWith are mutually exclusive",
+    );
+  }
+  const neverHealthy = opts.neverHealthy ?? false;
+  const failCreate = opts.failCreate ?? false;
+  const failRemove = opts.failRemove ?? false;
+  const spawned: Array<{ readonly args: ReadonlyArray<string> }> = [];
+  const encoder = new TextEncoder();
+
+  const layer = Layer.succeed(
+    ChildProcessSpawner.ChildProcessSpawner,
+    ChildProcessSpawner.make((command) =>
+      Effect.gen(function* () {
+        const args = command._tag === "StandardCommand" ? command.args : [];
+        spawned.push({ args });
+        if (command._tag !== "StandardCommand") {
+          return yield* Effect.fail(
+            new PlatformError(
+              new SystemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                description: "spawn failed",
+              }),
+            ),
+          );
+        }
+        const isLocalDbInspect =
+          args[0] === "container" &&
+          args[1] === "inspect" &&
+          (args[2] ?? "").startsWith("supabase_db_");
+        if (
+          isLocalDbInspect &&
+          (opts.dbNotRunning === true || opts.dbInspectFailsWith !== undefined)
+        ) {
+          const stderrText =
+            opts.dbInspectFailsWith ?? `Error response from daemon: No such container: ${args[2]}`;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+            stdout: Stream.empty,
+            stderr: Stream.fromIterable([encoder.encode(stderrText)]),
+            all: Stream.empty,
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            stdin: Sink.drain,
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }
+        let stdoutLines: ReadonlyArray<string> = [];
+        let stderrLines: ReadonlyArray<string> = [];
+        let exitCode = 0;
+        if (args[0] === "create") {
+          if (failCreate) {
+            exitCode = 1;
+            stderrLines = ["network error"];
+          } else {
+            stdoutLines = [LEGACY_FAKE_SHADOW_CONTAINER_ID];
+          }
+        } else if (args[0] === "container" && args[1] === "inspect") {
+          stdoutLines = [neverHealthy ? LEGACY_SHADOW_STARTING_STATE : LEGACY_SHADOW_HEALTHY_STATE];
+        } else if (args[0] === "rm") {
+          if (failRemove) {
+            exitCode = 1;
+            stderrLines = ["boom removing container"];
+          }
+        }
+        // "image inspect", "network create", "start" (and "rm -f -v" when not `failRemove`)
+        // all succeed with no output.
+        const stdoutBytes = stdoutLines.map((line) => encoder.encode(`${line}\n`));
+        const stderrBytes = stderrLines.map((line) => encoder.encode(`${line}\n`));
+        return ChildProcessSpawner.makeHandle({
+          pid: ChildProcessSpawner.ProcessId(7000 + spawned.length),
+          stdout: Stream.fromIterable(stdoutBytes),
+          stderr: Stream.fromIterable(stderrBytes),
+          all: Stream.empty,
+          exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(exitCode)),
+          isRunning: Effect.succeed(false),
+          stdin: Sink.drain,
+          kill: () => Effect.void,
+          unref: Effect.succeed(Effect.void),
+          getInputFd: () => Sink.drain,
+          getOutputFd: () => Stream.empty,
+        });
+      }),
+    ),
+  );
+
+  return { layer, spawned };
 }
 
 // ---------------------------------------------------------------------------

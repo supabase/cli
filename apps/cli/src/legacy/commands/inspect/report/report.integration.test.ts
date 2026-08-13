@@ -1,7 +1,7 @@
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Layer, Option } from "effect";
-import { mkdirSync, mkdtempSync, readdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -162,6 +162,7 @@ const flags = (over: Partial<LegacyInspectReportFlags> = {}): LegacyInspectRepor
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none<string>(),
   outputDir: over.outputDir ?? ".",
 });
 
@@ -197,9 +198,10 @@ describe("legacy inspect report", () => {
   it.live("writes one CSV per inspect query for the linked project", () => {
     const base = tempDir("supabase-report-out-");
     const { layer, connection } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    const prevUmask = process.umask(0);
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base }));
-      const { files } = dateFolderContents(base);
+      const { dir, files } = dateFolderContents(base);
       expect(files.length).toBe(14);
       expect(files).toContain("db_stats.csv");
       expect(files).toContain("unused_indexes.csv");
@@ -211,7 +213,11 @@ describe("legacy inspect report", () => {
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
         ),
       ).toBe(true);
-    }).pipe(Effect.provide(layer));
+      // Go pins the date folder to 0755 and each CSV to 0644 (report.handler.ts
+      // mirrors `internal/utils/misc.go:273,281-284`).
+      expect(statSync(dir).mode & 0o777).toBe(0o755);
+      expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
+    }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
   });
 
   it.live("inspects the local database with --local", () => {
@@ -298,6 +304,44 @@ describe("legacy inspect report", () => {
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base, linked: true }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports on the project given via --project-ref on the default linked path", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const base = tempDir("supabase-report-out-");
+    const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    return Effect.gen(function* () {
+      yield* legacyInspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
+      // `inspect report` never caches the ref — the resolver call it threads the
+      // flag into is the strongest observable this harness offers.
+      const resolveInput = resolver.resolveInput as {
+        connType: string;
+        linkedProjectRef: Option.Option<string>;
+      };
+      expect(resolveInput.connType).toBe("linked");
+      expect(resolveInput.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver } = setupLegacyReport({
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyInspectReport(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      // The guard fires before any connection resolution.
+      expect(resolver.resolveInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 

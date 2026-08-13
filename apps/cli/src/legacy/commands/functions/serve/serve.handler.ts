@@ -1,6 +1,7 @@
 import { Effect } from "effect";
 import { join } from "node:path";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
@@ -34,5 +35,6 @@ export const legacyFunctionsServe = Effect.fn("legacy.functions.serve")(function
     networkId,
     projectIdOverride: cliConfig.projectId,
     goViperCompat: true,
+    goConfigCompat: legacyFunctionsGoConfigCompat,
   }).pipe(Effect.ensuring(telemetryState.flush));
 });

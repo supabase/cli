@@ -1,9 +1,13 @@
+import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
 import {
   downloadFunctions,
-  makeGoProxyDownloadArgs,
+  makeGoProxyLegacyBundleArgs,
 } from "../../../../shared/functions/download.ts";
+import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
 import { LegacyGoProxy } from "../../../../shared/legacy/go-proxy.service.ts";
+import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -22,12 +26,28 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
   const proxy = yield* LegacyGoProxy;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
+  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
+    join(cliConfig.workdir, "supabase"),
+  );
   let resolvedProjectRef = Option.none<string>();
 
   yield* downloadFunctions(flags, {
     api,
     projectRoot: cliConfig.workdir,
     rawArgs,
+    goConfigCompat: legacyFunctionsGoConfigCompat,
+    edgeRuntimeVersion,
+    // Go: `utils.Bold` on the `Downloading function:` slug (`downloadOne`,
+    // `download.go:219`, stderr) — matches `legacyBold`'s default TTY gate.
+    styleEmphasis: (text) => legacyBold(text),
+    // Go: `utils.Aqua` on the suggested `--legacy-bundle` command
+    // (`suggestLegacyBundle`, `download.go:315`, stderr) — matches
+    // `legacyAqua`'s default TTY gate.
+    styleAqua: (text) => legacyAqua(text),
+    // Go: `utils.Yellow` on the `WARNING:` token before "Docker is not
+    // running" (`download.go:146`, stderr) — matches `legacyYellow`'s default
+    // TTY gate.
+    styleWarning: (text) => legacyYellow(text),
     resolveProjectRef: (projectRef) =>
       resolver.resolve(projectRef).pipe(
         Effect.tap((ref) =>
@@ -47,11 +67,13 @@ export const legacyFunctionsDownload = Effect.fn("legacy.functions.download")(fu
     // pattern for the CLI-1546 "stdout is payload-only in machine mode"
     // invariant — `downloadFunctions` emits the `Output` envelope itself.
     proxyDownload: (proxyFlags, projectRef, captureOutput) => {
-      const args = makeGoProxyDownloadArgs(proxyFlags, projectRef);
+      const args = makeGoProxyLegacyBundleArgs(proxyFlags.functionName, projectRef);
       const env = { SUPABASE_TELEMETRY_DISABLED: "1" };
       return captureOutput
-        ? Effect.asVoid(proxy.execCapture(args, { env, stdin: "ignore" }))
-        : proxy.exec(args, { env });
+        ? Effect.asVoid(
+            proxy.execCapture(args, { env, stdin: "ignore", suppressChildTelemetry: true }),
+          )
+        : proxy.exec(args, { env, suppressChildTelemetry: true });
     },
   }).pipe(
     Effect.ensuring(

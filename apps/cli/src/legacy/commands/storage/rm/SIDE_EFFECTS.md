@@ -40,6 +40,7 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 `SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, plus `SUPABASE_YES` (auto-confirm) —
 read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files
 (shell wins; CLI-1878, matching Go's `loadNestedEnv` before `viper.GetBool("YES")`).
+`SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
 
 `storage` is an experimental command (Go `root.go:63`): `rm` requires `--experimental`
 (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
@@ -51,6 +52,7 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success (including a declined confirmation, and a tolerated `Bucket not found`)                                                                                              |
 | `1`  | invalid/parse url, missing bucket (root path), missing `-r` flag (directory or no args), object-not-found (recursive empty prefix), API non-2xx, network, auth, config parse |
+| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                                               |
 
 ## Output
 
@@ -82,6 +84,10 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 
 ## Notes
 
+- **`--project-ref`** (TS-only, no Go equivalent) overrides ONLY the linked-ref
+  resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
+  It never implies `--linked`: passing it with `--local` is a hard error
+  rather than a silently discarded flag.
 - Validation (missing bucket, missing `-r` for a directory) runs before any network call;
   the no-args missing-`-r` error runs after the client is built (matching Go).
 - A declined confirmation skips that bucket and is not an error.

@@ -17,7 +17,7 @@ import {
   legacyMigraDiffShellScript,
 } from "./legacy-migra.deno-templates.ts";
 import { LegacyMigraDiffError, LegacyMigraSchemaLoadError } from "./legacy-migra.errors.ts";
-import { legacyEdgeRuntimeId, type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
+import { legacyEdgeRuntimeId, type LegacyPgDeltaContext } from "../../../shared/legacy-pgdelta.ts";
 
 /**
  * The migra Docker image, parsed by Go from its embedded Dockerfile
@@ -225,7 +225,14 @@ const diffMigraBash = Effect.fnUntraced(function* (params: {
     })
     .pipe(
       Effect.mapError(
-        (cause) => new LegacyMigraDiffError({ message: `error diffing schema: ${cause.message}` }),
+        (cause) =>
+          new LegacyMigraDiffError({
+            message: `error diffing schema: ${cause.message}`,
+            // Thread the docker discriminant so a daemon-down / registry-pull
+            // failure at the docker boundary is not misclassified as user SQL,
+            // mirroring the edge-runtime-script fix.
+            docker: cause.reason === "spawn" || cause.daemonDown ? "daemon" : "pull",
+          }),
       ),
     );
   if (result.exitCode !== 0) {
@@ -265,6 +272,7 @@ export const legacyDiffMigra = Effect.fnUntraced(function* (
       binds: [`${legacyEdgeRuntimeId(ctx.projectId)}:/root/.cache/deno:rw`],
       errPrefix: "error diffing schema",
       denoVersion: ctx.denoVersion,
+      workdir: ctx.cwd,
     })
     .pipe(
       Effect.catch((cause) =>

@@ -55,7 +55,7 @@ vi.mock("@clack/prompts", () => ({
   select: (a: unknown) => mockClack.select(a),
   autocomplete: (a: unknown) => mockClack.autocomplete(a),
   multiselect: (a: unknown) => mockClack.multiselect(a),
-  cancel: (a: unknown) => mockClack.cancel(a),
+  cancel: (a: unknown, b?: unknown) => mockClack.cancel(a, b),
   isCancel: (a: unknown) => mockClack.isCancel(a),
 }));
 
@@ -403,6 +403,57 @@ describe("Output", () => {
         expect(mockClack.autocomplete).not.toHaveBeenCalled();
       }).pipe(Effect.provide(layer));
     });
+
+    it.effect("promptSelect defaults to clack's own stdout when stream is unset", () => {
+      mockClack.select.mockResolvedValue("pro");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.promptSelect("Select a plan", [{ value: "pro", label: "Pro" }]);
+        expect(mockClack.select).toHaveBeenCalledWith(
+          expect.not.objectContaining({ output: expect.anything() }),
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
+    // Go's own interactive picker always writes to stderr (`internal/utils/prompt.go`'s
+    // `PromptChoice`: `tea.WithOutput(os.Stderr)`, "Interactive prompts should always be
+    // written to stderr") — but clack's `select()`/`autocomplete()` default to stdout, which
+    // would corrupt a command whose own stdout is a machine-readable payload even in text
+    // mode (e.g. `gen bearer-jwt`'s signed token — Codex review finding, CLI-1961). `{ stream:
+    // "stderr" }` is the opt-in escape hatch such a command passes.
+    it.effect('promptSelect routes the picker to stderr when stream: "stderr" is requested', () => {
+      mockClack.select.mockResolvedValue("pro");
+      return Effect.gen(function* () {
+        const out = yield* Output;
+        yield* out.promptSelect("Select a plan", [{ value: "pro", label: "Pro" }], {
+          stream: "stderr",
+        });
+        expect(mockClack.select).toHaveBeenCalledWith(
+          expect.objectContaining({ output: process.stderr }),
+        );
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.effect(
+      "promptSelect routes a cancelled stderr-routed picker's cancel message to stderr too",
+      () => {
+        mockClack.select.mockResolvedValue(Symbol("clack-cancel"));
+        mockClack.isCancel.mockReturnValueOnce(true);
+        return Effect.gen(function* () {
+          const out = yield* Output;
+          const exit = yield* Effect.exit(
+            out.promptSelect("Select a plan", [{ value: "pro", label: "Pro" }], {
+              stream: "stderr",
+            }),
+          );
+          expect(Exit.isFailure(exit)).toBe(true);
+          expect(mockClack.cancel).toHaveBeenCalledWith(
+            "Operation cancelled.",
+            expect.objectContaining({ output: process.stderr }),
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
 
     it.effect("promptSelect uses autocomplete for long lists in auto mode", () => {
       mockClack.autocomplete.mockResolvedValue("project-11");

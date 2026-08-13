@@ -1,8 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { existsSync, rmSync } from "node:fs";
 import { Duration, Effect } from "effect";
-import type { CleanupTargets } from "./CleanupTargets.ts";
-import type { ResolvedStackConfig } from "./StackBuilder.ts";
+import { dockerContainerName, type CleanupTargets } from "./CleanupTargets.ts";
+import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
+import type { ResolvedStackConfig } from "./StackConfig.ts";
+
+export const candidateCleanupTargets = (config: ResolvedStackConfig): CleanupTargets => ({
+  dockerContainerNames: SERVICE_NAMES.filter((service) => {
+    const serviceConfig = config[serviceMetadata(service).configKey];
+    return service === "postgres" || serviceConfig !== false;
+  }).map((service) => dockerContainerName(service, config.apiPort)),
+});
 
 /**
  * Force-remove Docker containers by name. Best-effort safety net —

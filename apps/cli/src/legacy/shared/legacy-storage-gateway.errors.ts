@@ -1,4 +1,10 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../shared/telemetry/error-actionability.ts";
 
 /**
  * Errors for the Supabase Storage **service gateway** (Kong), shared by every
@@ -17,7 +23,19 @@ export class LegacyStorageGatewayNetworkError extends Data.TaggedError(
   "LegacyStorageGatewayNetworkError",
 )<{
   readonly message: string;
-}> {}
+  /**
+   * Set when this failure is a 200-response body that failed to decode
+   * (`failParse`) rather than a transport failure — so a malformed-body decode
+   * classifies as an API response problem instead of a network problem.
+   */
+  readonly decode?: boolean;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 
 export class LegacyStorageGatewayStatusError extends Data.TaggedError(
   "LegacyStorageGatewayStatusError",
@@ -25,7 +43,20 @@ export class LegacyStorageGatewayStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // The tenant Storage gateway is not the Management API: a 401/403 here
+    // means stale local service keys, which `supabase login` cannot fix, so
+    // the Management-API auth/permission policy must not apply. This tag also
+    // spans collection and capability-probe routes (including unsupported
+    // vector routes returning 404), so it cannot safely opt every 404 into the
+    // named-resource policy.
+    if (this.status === 401 || this.status === 403) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "gateway_auth" };
+    }
+    return statusCodeActionability(this.status);
+  }
+}
 
 export type LegacyStorageGatewayError =
   | LegacyStorageGatewayNetworkError

@@ -1,5 +1,5 @@
-import { createServer } from "node:net";
-import { Data, Effect, Schema } from "effect";
+import { createServer, type Server } from "node:net";
+import { Data, Effect, Schema, Semaphore } from "effect";
 
 export const DEFAULT_API_PORT = 54321;
 export const DEFAULT_DB_PORT = 54322;
@@ -101,7 +101,7 @@ export const PORT_FIELDS = [
   "poolerApiPort",
 ] as const satisfies ReadonlyArray<keyof AllocatedPorts>;
 
-type PortField = (typeof PORT_FIELDS)[number];
+export type PortField = (typeof PORT_FIELDS)[number];
 
 export const DEFAULT_PORTS: Partial<AllocatedPorts> = {
   apiPort: DEFAULT_API_PORT,
@@ -116,9 +116,12 @@ export const DEFAULT_PORTS: Partial<AllocatedPorts> = {
   edgeRuntimeInspectorPort: DEFAULT_EDGE_RUNTIME_INSPECTOR_PORT,
 };
 
-interface PortAllocationOptions {
+export interface PortSelectionOptions {
   readonly reserved?: ReadonlySet<number>;
   readonly preferred?: Partial<AllocatedPorts>;
+}
+
+interface PortAllocationOptions extends PortSelectionOptions {
   readonly probe?: PortProbe;
 }
 
@@ -184,6 +187,187 @@ const defaultPortProbe: PortProbe = {
   exact: probeExactPort,
   random: probeRandomPort,
 };
+
+const closeServer = (server: Server): Effect.Effect<void> =>
+  Effect.callback<void>((resume) => {
+    server.close(() => resume(Effect.void));
+    return Effect.void;
+  });
+
+interface BoundPort {
+  readonly port: number;
+  readonly server: Server;
+}
+
+const bindPort = (port: number): Effect.Effect<BoundPort, PortAllocationError> =>
+  Effect.callback<BoundPort, PortAllocationError>((resume) => {
+    const server = createServer((socket) => socket.destroy());
+    const onError = (cause: unknown) => {
+      resume(
+        Effect.fail(
+          new PortAllocationError({
+            detail:
+              port === 0 ? "Failed to reserve a random port" : `Port ${port} is not available`,
+            cause,
+          }),
+        ),
+      );
+    };
+    server.once("error", onError);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", onError);
+      const address = server.address();
+      if (address === null || typeof address === "string") {
+        void Effect.runPromise(closeServer(server));
+        resume(
+          Effect.fail(
+            new PortAllocationError({ detail: "Reserved TCP port has no numeric address" }),
+          ),
+        );
+        return;
+      }
+      resume(Effect.succeed({ port: address.port, server }));
+    });
+    return closeServer(server);
+  });
+
+export interface PortLease {
+  readonly ports: AllocatedPorts;
+  readonly reserve: (fields: ReadonlyArray<PortField>) => Effect.Effect<void, PortAllocationError>;
+  readonly release: (fields: ReadonlyArray<PortField>) => Effect.Effect<void>;
+  readonly releaseAll: Effect.Effect<void>;
+}
+
+const releaseReservations = (
+  reservations: Map<PortField, Server>,
+  fields: ReadonlyArray<PortField>,
+) =>
+  Effect.forEach(
+    fields,
+    (field) => {
+      const server = reservations.get(field);
+      if (server === undefined) {
+        return Effect.void;
+      }
+      reservations.delete(field);
+      return closeServer(server);
+    },
+    { discard: true },
+  );
+
+const reserveReservations = (
+  ports: AllocatedPorts,
+  reservations: Map<PortField, Server>,
+  fields: ReadonlyArray<PortField>,
+): Effect.Effect<void, PortAllocationError> =>
+  Effect.suspend(() => {
+    const acquired: Array<PortField> = [];
+    return Effect.forEach(
+      fields,
+      (field) => {
+        if (reservations.has(field)) return Effect.void;
+        return Effect.tap(bindPort(ports[field]), ({ server }) =>
+          Effect.sync(() => {
+            reservations.set(field, server);
+            acquired.push(field);
+          }),
+        );
+      },
+      { discard: true },
+    ).pipe(Effect.onError(() => releaseReservations(reservations, acquired)));
+  });
+
+const makePortLease = (ports: AllocatedPorts, reservations: Map<PortField, Server>): PortLease => {
+  const lock = Semaphore.makeUnsafe(1);
+  return {
+    ports,
+    reserve: (fields) => lock.withPermit(reserveReservations(ports, reservations, fields)),
+    release: (fields) => lock.withPermit(releaseReservations(reservations, fields)),
+    releaseAll: lock.withPermit(
+      Effect.suspend(() => releaseReservations(reservations, [...reservations.keys()])),
+    ),
+  };
+};
+
+const reserveRandomPort = (
+  exclude: ReadonlySet<number>,
+): Effect.Effect<BoundPort, PortAllocationError> =>
+  Effect.flatMap(bindPort(0), (bound) =>
+    exclude.has(bound.port)
+      ? closeServer(bound.server).pipe(Effect.andThen(reserveRandomPort(exclude)))
+      : Effect.succeed(bound),
+  );
+
+/**
+ * Allocate and keep every selected TCP port bound until its lease is released.
+ * This closes the probe-then-bind race for lazily started services.
+ */
+export const reservePorts = (
+  input: PortInput,
+  options: PortSelectionOptions = {},
+): Effect.Effect<PortLease, PortAllocationError> =>
+  Effect.suspend(() => {
+    const reservations = new Map<PortField, Server>();
+    const reserve = Effect.gen(function* () {
+      const reserved = options.reserved ?? new Set<number>();
+      const preferred = options.preferred ?? {};
+      const allocated = new Set<number>();
+      const partial: Partial<Record<PortField, number>> = {};
+
+      for (const field of PORT_FIELDS) {
+        const exclude = new Set([...reserved, ...allocated]);
+        const explicit = input[field];
+        const preferredPort = preferred[field];
+        let bound: BoundPort;
+
+        if (explicit !== undefined) {
+          if (exclude.has(explicit)) {
+            return yield* new PortAllocationError({ detail: `Port ${explicit} is not available` });
+          }
+          bound = yield* bindPort(explicit);
+        } else if (preferredPort !== undefined && !exclude.has(preferredPort)) {
+          bound = yield* bindPort(preferredPort).pipe(
+            Effect.catchTag("PortAllocationError", () => reserveRandomPort(exclude)),
+          );
+        } else {
+          bound = yield* reserveRandomPort(exclude);
+        }
+
+        allocated.add(bound.port);
+        reservations.set(field, bound.server);
+        partial[field] = bound.port;
+      }
+
+      return makePortLease(Schema.decodeUnknownSync(AllocatedPortsSchema)(partial), reservations);
+    });
+
+    return reserve.pipe(
+      Effect.onError(() => releaseReservations(reservations, [...reservations.keys()])),
+    );
+  });
+
+/** Reserve an already-resolved subset of ports, typically in a daemon process. */
+export const reserveAllocatedPorts = (
+  ports: AllocatedPorts,
+  fields: ReadonlyArray<PortField>,
+): Effect.Effect<PortLease, PortAllocationError> =>
+  Effect.suspend(() => {
+    const reservations = new Map<PortField, Server>();
+    const reserve = Effect.forEach(
+      fields,
+      (field) =>
+        Effect.tap(bindPort(ports[field]), ({ server }) =>
+          Effect.sync(() => {
+            reservations.set(field, server);
+          }),
+        ),
+      { discard: true },
+    ).pipe(Effect.as(makePortLease(ports, reservations)));
+
+    return reserve.pipe(
+      Effect.onError(() => releaseReservations(reservations, [...reservations.keys()])),
+    );
+  });
 
 export const allocatePorts = (
   input: PortInput,

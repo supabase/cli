@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -198,141 +197,6 @@ var (
 		},
 		PostRun: func(cmd *cobra.Command, args []string) {
 			fmt.Println("Finished " + utils.Aqua("supabase db pull") + ".")
-		},
-	}
-
-	shadowMode        string
-	shadowTargetLocal bool
-	shadowUsePgDelta  bool
-	shadowSchema      []string
-	shadowProjectRef  string
-
-	// dbShadowCmd is a hidden seam used by the native-TypeScript db diff/pull
-	// commands to provision the throwaway shadow database that the diff "source"
-	// runs against, then leave it running so the TS caller can run the differ
-	// (migra or pg-delta) itself and remove the container afterwards. It prints
-	// three newline-separated lines to stdout: the container id, the source
-	// Postgres URL, and an optional target-override URL (empty unless the
-	// local-target declarative branch redirects the diff target to a second
-	// shadow database). The URLs are emitted WITHOUT the password
-	// (ToPostgresURLWithoutPassword) so we never log a credential to stdout
-	// (CWE-312); the TS caller re-injects the local Postgres password it already
-	// resolves from config.toml, which is the same value the shadow uses. Shadow
-	// provisioning (start.SetupDatabase) is not yet ported, which is why this
-	// stays in Go.
-	dbShadowCmd = &cobra.Command{
-		Use:    "__shadow",
-		Hidden: true,
-		Short:  "Internal: provision a shadow database for the native db diff/pull commands",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			// The hidden __shadow command carries none of the db-url/local/linked
-			// target flags, so the root PersistentPreRunE's ParseDatabaseConfig
-			// never loads supabase/config.toml (it only loads when a target flag
-			// is set, internal/utils/flags/db_url.go:46-90). Load it explicitly so
-			// the shadow is provisioned from the project's [db] settings — shadow
-			// port, Postgres version, service baseline, and especially the
-			// password: the native-TS caller injects the config.toml password into
-			// the seam URLs, so the shadow must be created with that same password.
-			fsys := afero.NewOsFs()
-			// On the linked path the native-TS caller passes the resolved project
-			// ref via --project-ref so the shadow is built from the same
-			// remote-merged config the Go monolith uses: LoadConfig seeds
-			// utils.Config.ProjectId from flags.ProjectRef and merges the matching
-			// [remotes.<ref>] block (pkg/config/config.go). Omitted on local/db-url
-			// shadows, which the monolith never remote-merges, so the base config is
-			// used exactly as before.
-			if len(shadowProjectRef) > 0 {
-				flags.ProjectRef = shadowProjectRef
-			}
-			if err := flags.LoadConfig(fsys); err != nil {
-				return err
-			}
-			var src diff.ShadowSource
-			var err error
-			switch shadowMode {
-			case "declarative":
-				src, err = diff.PrepareRawShadow(cmd.Context())
-			case "diff", "":
-				src, err = diff.PrepareShadowSource(cmd.Context(), shadowSchema, shadowTargetLocal, shadowUsePgDelta, fsys)
-			default:
-				return fmt.Errorf("unknown shadow mode: %s", shadowMode)
-			}
-			if err != nil {
-				return err
-			}
-			fmt.Println(src.Container)
-			fmt.Println(utils.ToPostgresURLWithoutPassword(src.Source))
-			if src.TargetOverride != nil {
-				fmt.Println(utils.ToPostgresURLWithoutPassword(*src.TargetOverride))
-			} else {
-				fmt.Println("")
-			}
-			return nil
-		},
-	}
-
-	bootstrapMode       string
-	bootstrapSqlPaths   []string
-	bootstrapFromBackup string
-	bootstrapVersion    string
-	bootstrapNoSeed     bool
-
-	// dbBootstrapCmd is a hidden seam used by the native-TypeScript `db start` and
-	// `db reset --local` commands to drive the container-bootstrap primitives that
-	// are not yet ported to TypeScript: creating/recreating the local Postgres
-	// container, applying the initial schema, and the storage health gate. The TS
-	// caller orchestrates everything else (the "already running?" check and its
-	// message, version/last resolution, bucket seeding, the git-branch "Finished…"
-	// line, telemetry, and --output-format shaping); the seam stays in Go only for
-	// the Docker lifecycle. It mirrors the existing db __shadow seam: it carries no
-	// db-url/local/linked target flags, so it loads supabase/config.toml explicitly
-	// (the root PersistentPreRunE only loads it when a target flag is set). Progress
-	// goes to stderr; the only stdout output is a single machine-parseable marker
-	// for --mode await-storage ("ready" or "absent").
-	dbBootstrapCmd = &cobra.Command{
-		Use:    "__db-bootstrap",
-		Hidden: true,
-		Short:  "Internal: container bootstrap for the native db start / db reset commands",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			fsys := afero.NewOsFs()
-			if err := flags.LoadConfig(fsys); err != nil {
-				return err
-			}
-			switch bootstrapMode {
-			case "start":
-				// Mirror start.Run minus the "already running?" check, which the TS
-				// caller performs (and prints "Postgres database is already running.").
-				if err := start.StartDatabase(cmd.Context(), bootstrapFromBackup, fsys, os.Stderr); err != nil {
-					if rmErr := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); rmErr != nil {
-						fmt.Fprintln(os.Stderr, rmErr)
-					}
-					return err
-				}
-				return nil
-			case "recreate":
-				// The PG14/PG15 container-recreate half of local db reset. The TS
-				// caller has already printed "Resetting local database…" and validated
-				// the flags. Apply the same seed handling as `db reset` (dbResetCmd):
-				// `--no-seed` disables the seed, `--sql-paths` overrides the seed paths,
-				// before MigrateAndSeed runs inside the recreate.
-				if err := applyDbResetSeedFlags(bootstrapNoSeed, bootstrapSqlPaths); err != nil {
-					return err
-				}
-				return reset.RecreateLocalDatabase(cmd.Context(), bootstrapVersion, fsys)
-			case "await-storage":
-				ready, err := reset.AwaitStorageReady(cmd.Context())
-				if err != nil {
-					return err
-				}
-				if ready {
-					fmt.Println("ready")
-				} else {
-					fmt.Println("absent")
-				}
-				return nil
-			default:
-				return fmt.Errorf("unknown bootstrap mode: %s", bootstrapMode)
-			}
 		},
 	}
 
@@ -678,22 +542,6 @@ func init() {
 	pullFlags.StringVarP(&dbPassword, "password", "p", "", "Password to your remote Postgres database.")
 	cobra.CheckErr(viper.BindPFlag("DB_PASSWORD", pullFlags.Lookup("password")))
 	dbCmd.AddCommand(dbPullCmd)
-	// Build hidden shadow-provisioning seam command
-	shadowFlags := dbShadowCmd.Flags()
-	shadowFlags.StringVar(&shadowMode, "mode", "diff", "Shadow mode: diff (baseline + migrations) or declarative (bare shadow).")
-	shadowFlags.BoolVar(&shadowTargetLocal, "target-local", false, "Whether the diff target is the local database (enables the declarative-schema branch).")
-	shadowFlags.BoolVar(&shadowUsePgDelta, "use-pg-delta", false, "Whether pg-delta is the active diff engine (selects the declarative-apply path).")
-	shadowFlags.StringSliceVarP(&shadowSchema, "schema", "s", []string{}, "Comma separated list of schema to include.")
-	shadowFlags.StringVar(&shadowProjectRef, "project-ref", "", "Linked project ref, so the shadow merges the matching [remotes.<ref>] config override.")
-	dbCmd.AddCommand(dbShadowCmd)
-	// Build hidden container-bootstrap seam command (native db start / db reset)
-	bootstrapFlags := dbBootstrapCmd.Flags()
-	bootstrapFlags.StringVar(&bootstrapMode, "mode", "start", "Bootstrap mode: start, recreate, or await-storage.")
-	bootstrapFlags.StringVar(&bootstrapFromBackup, "from-backup", "", "Path to a logical backup file (start mode).")
-	bootstrapFlags.StringVar(&bootstrapVersion, "version", "", "Reset up to the specified version (recreate mode).")
-	bootstrapFlags.BoolVar(&bootstrapNoSeed, "no-seed", false, "Skip the seed script after recreate (recreate mode).")
-	bootstrapFlags.StringArrayVar(&bootstrapSqlPaths, "sql-paths", nil, "Override [db.seed].sql_paths for the recreate (recreate mode).")
-	dbCmd.AddCommand(dbBootstrapCmd)
 	// Build remote command
 	remoteFlags := dbRemoteCmd.PersistentFlags()
 	remoteFlags.StringSliceVarP(&schema, "schema", "s", []string{}, "Comma separated list of schema to include.")

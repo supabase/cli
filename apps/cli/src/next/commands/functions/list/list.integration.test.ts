@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import { FunctionResponse } from "@supabase/api/effect";
 import { BunServices } from "@effect/platform-bun";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { mkdtempSync } from "node:fs";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -26,6 +26,7 @@ import {
   mockProcessControl,
   mockProjectLinkState,
   mockRuntimeInfo,
+  mockTty,
 } from "../../../../../tests/helpers/mocks.ts";
 import { functionsCommand } from "../functions.command.ts";
 import { functionsList } from "./list.handler.ts";
@@ -485,6 +486,8 @@ describe("functions list", () => {
       analytics.layer,
       processControl.layer,
       mockRuntimeInfo({ cwd: tempDir }),
+      mockTty({ stdinIsTty: false, stdoutIsTty: false }),
+      commandRuntimeLayer(["functions"]),
       commandTreeSupportLayer(tempDir),
       mockProjectLinkState(),
       mockCredentials().layer,

@@ -2,6 +2,7 @@ package reset
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -73,11 +74,19 @@ func TestResetCommand(t *testing.T) {
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
 		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
 		for _, container := range listServicesToRestart() {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
 				Reply(http.StatusOK)
 		}
+		// Kong is not running so the reload is skipped (a successful exec attach is not gock-mockable, see TestExecOnce)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: false},
+			}})
 		// Seeds storage
 		gock.New(utils.Docker.DaemonHost()).
 			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.StorageId + "/json").
@@ -308,11 +317,19 @@ func TestRestartDatabase(t *testing.T) {
 		utils.GotrueId = "test-auth"
 		utils.RealtimeId = "test-realtime"
 		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
 		for _, container := range listServicesToRestart() {
 			gock.New(utils.Docker.DaemonHost()).
 				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
 				Reply(http.StatusOK)
 		}
+		// Kong is not running so the reload is skipped (a successful exec attach is not gock-mockable, see TestExecOnce)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: false},
+			}})
 		// Run test
 		err := RestartDatabase(context.Background(), io.Discard)
 		// Check error
@@ -357,6 +374,152 @@ func TestRestartDatabase(t *testing.T) {
 		assert.ErrorContains(t, err, "failed to restart "+utils.StorageId)
 		assert.ErrorContains(t, err, "failed to restart "+utils.GotrueId)
 		assert.ErrorContains(t, err, "failed to restart "+utils.RealtimeId)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("skips kong reload when kong is not running", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Restarts postgres
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
+					Running: true,
+					Health:  &container.Health{Status: types.Healthy},
+				},
+			}})
+		// Restarts services
+		utils.StorageId = "test-storage"
+		utils.GotrueId = "test-auth"
+		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
+		for _, container := range listServicesToRestart() {
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusOK)
+		}
+		// Kong is excluded from the stack: no exec follows
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/json").
+			Reply(http.StatusNotFound)
+		// Run test
+		err := RestartDatabase(context.Background(), io.Discard)
+		// Check error
+		assert.NoError(t, err)
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on kong inspect failure", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Restarts postgres
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
+					Running: true,
+					Health:  &container.Health{Status: types.Healthy},
+				},
+			}})
+		// Restarts services
+		utils.StorageId = "test-storage"
+		utils.GotrueId = "test-auth"
+		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
+		for _, container := range listServicesToRestart() {
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusOK)
+		}
+		// A daemon error is not the excluded-kong skip case
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/json").
+			Reply(http.StatusServiceUnavailable)
+		// Run test
+		err := RestartDatabase(context.Background(), io.Discard)
+		// Check error
+		assert.ErrorContains(t, err, "failed to inspect kong")
+		assert.Contains(t, utils.CmdSuggestion, "API routes may return 502")
+		assert.Contains(t, utils.CmdSuggestion, "docker restart test-kong")
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
+		assert.Empty(t, apitest.ListUnmatchedRequests())
+	})
+
+	t.Run("throws error on kong reload failure", func(t *testing.T) {
+		utils.DbId = "test-reset"
+		// Setup mock docker
+		require.NoError(t, apitest.MockDocker(utils.Docker))
+		defer gock.OffAll()
+		// Restarts postgres
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/restart").
+			Reply(http.StatusOK)
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.DbId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{
+					Running: true,
+					Health:  &container.Health{Status: types.Healthy},
+				},
+			}})
+		// Restarts services
+		utils.StorageId = "test-storage"
+		utils.GotrueId = "test-auth"
+		utils.RealtimeId = "test-realtime"
+		utils.PoolerId = "test-pooler"
+		utils.KongId = "test-kong"
+		for _, container := range listServicesToRestart() {
+			gock.New(utils.Docker.DaemonHost()).
+				Post("/v" + utils.Docker.ClientVersion() + "/containers/" + container + "/restart").
+				Reply(http.StatusOK)
+		}
+		// Kong is up but the reload exec fails
+		gock.New(utils.Docker.DaemonHost()).
+			Get("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/json").
+			Reply(http.StatusOK).
+			JSON(container.InspectResponse{ContainerJSONBase: &container.ContainerJSONBase{
+				State: &container.State{Running: true},
+			}})
+		gock.New(utils.Docker.DaemonHost()).
+			Post("/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/exec").
+			Reply(http.StatusServiceUnavailable)
+		// The reload must carry bring-up's template — see reloadKong (#6059).
+		execPath := "/v" + utils.Docker.ClientVersion() + "/containers/" + utils.KongId + "/exec"
+		observed := 0
+		gock.Observe(func(r *http.Request, mock gock.Mock) {
+			if r.URL.Path != execPath {
+				return
+			}
+			observed += 1
+			var body container.ExecOptions
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&body))
+			assert.Equal(t, []string{"kong", "reload", "--nginx-conf", "/home/kong/custom_nginx.template"}, body.Cmd)
+		})
+		t.Cleanup(func() { gock.Observe(nil) })
+		// Run test
+		err := RestartDatabase(context.Background(), io.Discard)
+		// Check error
+		assert.Equal(t, 1, observed)
+		assert.ErrorContains(t, err, "failed to reload kong")
+		assert.Contains(t, utils.CmdSuggestion, "API routes may return 502")
+		assert.Contains(t, utils.CmdSuggestion, "docker restart test-kong")
+		t.Cleanup(func() { utils.CmdSuggestion = "" })
 		assert.Empty(t, apitest.ListUnmatchedRequests())
 	})
 

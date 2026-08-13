@@ -1,7 +1,33 @@
 # `supabase start`
 
 Native TypeScript port of Go's `internal/start` (+ the Postgres-container half of
-`internal/db/start`). Talks directly to Docker via subprocess (`docker`/`podman`),
+`internal/db/start`).
+
+> **`internal/start` no longer exists in this repo.** It was deleted outright
+> (CLI-1966), not just excluded from the bundled binary: it was unreachable from
+> the TypeScript CLI, directly (native TS `start` talks to Docker directly and
+> never proxies to Go for it) or indirectly (no other still-live TS→Go
+> delegation seam ever called into it either — confirmed via a repo-wide `grep`
+> of `apps/cli-go` showing the only reference was `internal/start`'s own cobra
+> registration). Every `apps/cli-go/internal/start/start.go:NNN` /
+> `start_test.go:NNN` citation throughout this command's files (and the shared
+> files `legacy-service-catalog.ts`, `legacy-go-duration.ts`,
+> `legacy-local-config-values.ts` + its unit test, `shared/auth/jwks.ts`,
+> `shared/cli/run.ts`, `shared/functions/serve.ts`,
+> `legacy/commands/db/start/start.handler.ts`, and
+> `legacy/commands/db/shared/legacy-pgdelta.seam.service.ts`) refers to that
+> file's last state, permanently viewable at commit
+> `a253ccba25c21356ccd33044c4474aecb77d1ae4`:
+> https://github.com/supabase/cli/blob/a253ccba25c21356ccd33044c4474aecb77d1ae4/apps/cli-go/internal/start/start.go
+> (and `.../internal/start/start_test.go`, `.../internal/start/templates/`).
+> `internal/db/start` (referenced throughout this doc, and still present at
+> `apps/cli-go/internal/db/start/start.go`) is a separate, still-live package
+> and is unaffected — a bare `start.go:NNN` below 435 lines could otherwise be
+> mistaken for it; `start.handler.ts`, `postgres.service.ts`, and
+> `start.rollback.ts` carry their own explicit per-citation disambiguation
+> since they cite both files.
+
+This port talks directly to Docker via subprocess (`docker`/`podman`),
 mirroring Go's sequential per-container `DockerStart` — it does not use Docker Compose
 (the one `docker/compose` import Go has is an internal, best-effort concurrent
 image-pre-pull helper this port never depends on) and it does not go through
@@ -30,7 +56,7 @@ documented at its exact Go call site in `start.handler.ts`:
 
 Ported: Go's `SetupLocalDatabase` → `initSchema` →
 `initRealtimeJob`/`initStorageJob`/`initAuthJob` pipeline (`internal/db/start/`). Gated on
-`isFreshVolume` (`legacyStartVolumeExists` on the Postgres volume, checked BEFORE the
+`isFreshVolume` (`legacyVolumeExists` on the Postgres volume, checked BEFORE the
 volume is created), matching Go's `NoBackupVolume` — this same check also selects which of
 `Starting database...`/`Starting database from backup...` prints to stderr immediately
 before Postgres's container is created (`db/start/start.go:165-175`). Runs immediately
@@ -42,7 +68,11 @@ session; PG>=15: runs three one-shot `LegacyDockerRun` jobs instead, gated indep
 seeds `supabase/roles.sql`: matching Go's own print-before-read ordering
 (`pkg/migration/seed.go:88`), the `Seeding globals from roles.sql...` stderr line always
 prints, whether or not the file exists — a missing file is silently tolerated (no SQL runs),
-any other read/exec error still fails the run. Finally runs every pending migration + seed.
+any other read/exec error still fails the run. Finally runs every pending migration + seed —
+UNLESS `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled`
+is false, in which case `db.migrations.schema_paths` files are applied INSTEAD of
+`migrations/*.sql` (Go's `apply.MigrateAndSeed`, `internal/migration/apply/apply.go:19-26`);
+seed still runs either way.
 A failure at any step rolls back the whole `start` run (same as any other bring-up failure).
 
 `legacyStartInitCurrentBranch` (writes `supabase/.branches/_current_branch` = `"main"` if
@@ -88,6 +118,7 @@ command (Go's `return seedErr` instead of the downgraded `return err`).
 | GCP JWT credentials file                                                                        | JSON   | when `analytics.backend = "bigquery"`                                                                                                                                            |
 | `<workdir>/supabase/roles.sql`                                                                  | SQL    | on a fresh volume (custom-roles seed) — the "Seeding globals..." message always prints first; the file itself is only read if it exists, tolerating a missing file               |
 | `<workdir>/supabase/migrations/*.sql`, `supabase/seed.sql`                                      | SQL    | on a fresh volume, via the standard migration-apply + seed pipeline                                                                                                              |
+| `<workdir>/supabase/<db.migrations.schema_paths entries>` (files/directories/globs)             | SQL    | on a fresh volume, INSTEAD of `migrations/*.sql`, when `--experimental`/`SUPABASE_EXPERIMENTAL` is set and `[experimental.pgdelta] enabled` is false                             |
 | `<workdir>/supabase/.branches/_current_branch`                                                  | text   | on every start, existence check before writing (see "Files Written")                                                                                                             |
 | `<workdir>/supabase/functions/**`                                                               | —      | when Edge Runtime starts, and independently when Studio starts (function discovery/config resolution + Docker bind mounts, regardless of whether Edge Runtime itself is enabled) |
 | `<workdir>/supabase/.temp/storage-migration`                                                    | text   | always — linked-project Storage migration pin (`DB_MIGRATIONS_FREEZE_AT`), written by `supabase link`; absent/unreadable resolves to no pin                                      |
@@ -96,11 +127,12 @@ command (Go's `return seedErr` instead of the downgraded `return err`).
 
 ## Files Written
 
-| Path                                                                                          | Format | When                                                                                                                      |
-| --------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                          |
-| `<workdir>/supabase/.temp/start-secrets/<containerName>/secret-<n>`                           | varies | for Kong (`kong.yml`, TLS cert, TLS key), Postgres (`pgsodium_root.key`), and Supavisor (`pooler_tenant.exs`) — see below |
-| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                           |
+| Path                                                                                          | Format | When                                                                                                                                                                                                                                                       |
+| --------------------------------------------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                                                                                                                                                           |
+| `<tmpdir>/supabase-start-secret-<random>/secret` (short-lived, `docker cp`'d away)            | varies | for Kong (`kong.yml`, TLS cert, TLS key), Postgres (`pgsodium_root.key`), and Supavisor (`pooler_tenant.exs`) — see below                                                                                                                                  |
+| `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                                                                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`                  | JSON   | best-effort, on a fresh volume, after `MigrateAndSeed`, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails `start` (Go's `pgcache.TryCacheMigrationsCatalog`) |
 
 Kong's `custom_nginx.template`, Vector's `vector.yaml`, and Postgres's own bootstrap
 script (`postgresql.conf`-equivalent setup) are all rendered in memory and injected
@@ -108,22 +140,22 @@ directly into each container's entrypoint (a `sh -c '... heredoc ...'` command) 
 never written to the host filesystem, since none of them carries secret content.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
-key, TLS private key material, and the DB password respectively) and are instead
-written to `<workdir>/supabase/.temp/start-secrets/<containerName>/` (directory mode
-`0700`, files mode `0644` — world-readable, since Kong (uid 100) and Postgres's
-post-privilege-drop `postgres` user read these bind-mounted files as non-root, and a
-Linux/Podman bind mount preserves the host file's mode verbatim) and
-bind-mounted `:ro` into the container at the exact path each container's
-entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s `legacyStageStartSecretFiles`
+key, TLS private key material, and the DB password respectively). As of
+supabase/cli#6022 these are delivered via `docker cp` straight into the created (not
+yet started) container, never a host bind mount: each one is written to a SHORT-LIVED
+`os.tmpdir()` temp file (mode `0644` — world-readable, since Kong (uid 100) and
+Postgres's post-privilege-drop `postgres` user read them back as non-root, and
+`docker cp`'s tar transfer preserves the host file's mode verbatim), `docker cp`'d into
+the container at the exact path each container's entrypoint/`Cmd` expects, then removed
+immediately — see `container-lifecycle.ts`'s `legacyCopyStartSecretFileIntoContainer`
 doc comment for the full rationale (CWE-214/522: keeping secret content out of the
-`docker create` argv the host can see via `ps`/`/proc/<pid>/cmdline`) and for why this
-directory is a DETERMINISTIC, PERSISTENT path under the project's own workdir rather
-than an ephemeral OS temp dir — every one of these three containers runs with
-`restartPolicy: "unless-stopped"`, so the files must survive a host/Docker-daemon
-restart for dockerd to successfully re-attach the bind mount. The directory is
-recreated fresh (any stale contents removed first) on every `start` invocation that
-reaches container creation, and is cleaned up immediately if `docker create`/`docker
-start` itself fails — otherwise it is left in place for the life of the container.
+`docker create`/`docker cp` argv the host can see via `ps`/`/proc/<pid>/cmdline`; and why
+`docker cp`, unlike a bind mount, works identically against a remote `DOCKER_HOST`/
+Docker-context daemon). Nothing from this delivery persists on host disk beyond the
+brief window between writing the temp file and the matching `docker cp` call returning —
+unlike the bind-mount approach this replaced, these containers' `restartPolicy:
+"unless-stopped"` restarts need nothing re-attached, since the content already lives
+inside the container's own filesystem.
 Studio reads/writes SQL snippets under `<workdir>/supabase/snippets/` at its own
 runtime — that's Studio's behavior, not something `start` itself writes.
 
@@ -132,7 +164,7 @@ script + value files, and bootstrap `index.ts` template (`shared/functions/serve
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) are
 staged the same way, under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
 containerName>/{env,multiline-env,main}/` (directory mode `0700`, files mode `0600`),
-bind-mounted `:ro` into the container — a deterministic, persistent path rather than
+bind-mounted `:ro,Z` into the container — a deterministic, persistent path rather than
 `os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
 `legacyCleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
 them on `stop` or a failed-start rollback, exactly like the Kong/Postgres/Supavisor
@@ -154,37 +186,45 @@ not implemented.
 
 ## Environment Variables
 
-| Variable                               | Purpose                                                                                                                                                         | Required? |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `SUPABASE_*` (any dotted config field) | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                      | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY`     | Overrides the image registry used to resolve every service's image                                                                                              | no        |
-| `SUPABASE_PROJECT_ID`                  | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                  | no        |
-| `SUPABASE_WORKDIR`                     | Resolves `LegacyCliConfig.workdir`                                                                                                                              | no        |
-| `BITBUCKET_CLONE_DIR`                  | When non-empty, drops named volumes and `--security-opt` from every container create                                                                            | no        |
-| `DOCKER_HOST`                          | Read to discover the Docker daemon's own address, then re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection | no        |
-| `KONG_NGINX_WORKER_PROCESSES`          | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                             | no        |
+| Variable                                                                                                             | Purpose                                                                                                                                                                                                                                                                                           | Required? |
+| -------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_*` (any dotted config field)                                                                               | Generic Viper-style `AutomaticEnv` override of any `config.toml` field (e.g. `SUPABASE_AUTH_ENABLED`, `SUPABASE_API_PORT`)                                                                                                                                                                        | no        |
+| `SUPABASE_EXPERIMENTAL` (or `--experimental`)                                                                        | Fresh volume + no pg-delta: applies `db.migrations.schema_paths` files instead of `migrations/*.sql` (see "Fresh-volume DB setup" above)                                                                                                                                                          | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                                     | Enables the post-`MigrateAndSeed` migrations-catalog cache warmup when `[experimental.pgdelta].enabled` is unset                                                                                                                                                                                  | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                                   | Overrides the image registry used to resolve every service's image                                                                                                                                                                                                                                | no        |
+| `SUPABASE_PROJECT_ID`                                                                                                | Overrides the resolved local project id (env → config.toml → workdir basename)                                                                                                                                                                                                                    | no        |
+| `SUPABASE_WORKDIR`                                                                                                   | Resolves `LegacyCliConfig.workdir`                                                                                                                                                                                                                                                                | no        |
+| `BITBUCKET_CLONE_DIR`                                                                                                | When non-empty, drops named volumes and `--security-opt` from every container create                                                                                                                                                                                                              | no        |
+| `DOCKER_HOST` / `DOCKER_CONTEXT` / `DOCKER_TLS_VERIFY` / `DOCKER_CERT_PATH` / `DOCKER_API_VERSION` / `DOCKER_CONFIG` | Read (ambient shell OR a project `.env`/`.env.<env>`/`.env.local` file — matching Go's `godotenv.Load`) to discover the Docker daemon this whole command talks to; `DOCKER_HOST` is also re-derived and set on Vector's container env so it can reach the host's Docker socket for log collection | no        |
+| `KONG_NGINX_WORKER_PROCESSES`                                                                                        | Read (ambient shell or project dotenv) into Kong's own container env (defaults to `"1"` when unset)                                                                                                                                                                                               | no        |
 
 `docker`/`podman` must be resolvable on `PATH` — same fallback behavior as `stop`/`status`.
 
+`--debug` tees the fresh-volume PG15+ one-shot migrate jobs' (realtime/storage/auth) own
+stderr to the parent process's stderr in real time, matching Go's `utils.GetDebugLogger()`
+(`os.Stderr` under `--debug`, else discarded) — outside `--debug` only each job's exit code is
+surfaced on failure.
+
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                                      |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success — every started container passed its health check                                                                                                                                                                                                                                                      |
-| `0`  | the stack was already running — shows status instead of restarting                                                                                                                                                                                                                                             |
-| `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                                                                                                                                           |
-| `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                              |
-| `1`  | malformed `config.toml` / `Config.Validate` failure                                                                                                                                                                                                                                                            |
-| `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                |
-| `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                  |
-| `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                 |
-| `1`  | image pull exhausted across every registry candidate                                                                                                                                                                                                                                                           |
-| `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                               |
-| `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                          |
-| `1`  | Postgres itself fails to start or its own health wait times out, **without** `--ignore-health-check` — rolls back                                                                                                                                                                                              |
-| `0`  | `--ignore-health-check` set and Postgres's own health wait times out — the failure is printed and swallowed, no rollback; no OTHER service is ever created (Postgres's failure is returned before any other bring-up step runs), but the command still prints "Started..." + the (config-derived) status table |
-| `1`  | fresh-volume DB setup failure (schema SQL / one-shot migrate job / vault upsert / roles seed / migration-apply) — rolls back                                                                                                                                                                                   |
-| `1`  | fresh-volume bucket-seeding failure — rolls back                                                                                                                                                                                                                                                               |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                                                        |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success — every started container passed its health check                                                                                                                                                                                                                                                                                                                        |
+| `0`  | the stack was already running — shows status instead of restarting                                                                                                                                                                                                                                                                                                               |
+| `0`  | `--ignore-health-check` set and one or more containers timed out — the failure is printed and swallowed, no rollback                                                                                                                                                                                                                                                             |
+| `1`  | `--ignore-health-check` set, the fresh-volume/Storage-healthy recheck-and-seed path ran (see "Storage bucket seeding"), and that seed itself failed — rolls back despite the flag                                                                                                                                                                                                |
+| `1`  | malformed CSV in an `--exclude`/`-x` value — fails during flag parsing, before the handler and telemetry, with pflag's exact diagnostic on stderr; the shorthand makes pflag frame it with both spellings (e.g. `invalid argument "a\"b" for "-x, --exclude" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
+| `1`  | malformed `config.toml` / `Config.Validate` failure                                                                                                                                                                                                                                                                                                                              |
+| `1`  | stopped Postgres detected but the project id sanitizes to empty — aborts before recovery removes any containers                                                                                                                                                                                                                                                                  |
+| `1`  | `docker`/`podman` not spawnable, or the daemon is unreachable                                                                                                                                                                                                                                                                                                                    |
+| `1`  | stopped-stack recovery cannot list, stop, or prune current-project containers, or prune matching networks — aborts before startup; named volumes are preserved                                                                                                                                                                                                                   |
+| `1`  | image pull exhausted across every registry candidate, or the Docker daemon becomes unreachable during the pre-pull — even with `--ignore-health-check` (intentional divergence from Go's exit-0 swallow quirk; see the CLI-1987 note under "Notes")                                                                                                                              |
+| `1`  | network, volume, container create, or container start failure (including a port conflict) — rolls back everything created so far                                                                                                                                                                                                                                                 |
+| `1`  | health check timeout **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                                                                                            |
+| `1`  | Postgres itself fails to start or its own health wait times out, **without** `--ignore-health-check` — rolls back                                                                                                                                                                                                                                                                |
+| `0`  | `--ignore-health-check` set and Postgres's own health wait times out — the failure is printed and swallowed, no rollback; no OTHER service is ever created (Postgres's failure is returned before any other bring-up step runs), but the command still prints "Started..." + the (config-derived) status table                                                                   |
+| `1`  | fresh-volume DB setup failure (schema SQL / one-shot migrate job / vault upsert / roles seed / migration-apply) — rolls back                                                                                                                                                                                                                                                     |
+| `1`  | fresh-volume bucket-seeding failure — rolls back                                                                                                                                                                                                                                                                                                                                 |
 
 Rollback (`legacyRollbackStart`) tears down everything created so far by Docker label,
 matching Go's `DockerRemoveAll`, and never masks the original failure — a rollback error
@@ -200,8 +240,12 @@ container prune` has actually removed them (not at the initial listing), so clea
 ever targets containers this failed run itself created AND actually tore down. Each
 container's directory is located via its own `com.supabase.cli.workdir` label (stamped on
 every container `start` creates); this run's own workdir is only the fallback for a
-container missing that label. A later successful `stop` reclaims the same directories for
-a normal (non-rollback) teardown — see `stop`'s own `SIDE_EFFECTS.md`.
+container missing that label. As of supabase/cli#6022 this reclaim step is a no-op for
+Kong/Postgres/Supavisor (nothing under their own `<containerName>` directory anymore —
+their `secretFiles` never touch host disk, see "Files Written" above); it remains
+load-bearing for Edge Runtime's own still-host-persisted staging under the same tree. A
+later successful `stop` reclaims the same directories for a normal (non-rollback)
+teardown — see `stop`'s own `SIDE_EFFECTS.md`.
 
 ## Telemetry Events Fired
 
@@ -274,6 +318,30 @@ prose, not structured data.
   healthy, buckets are seeded anyway — a failure in THAT seed step still rolls back and
   fails the command despite the flag (see "Storage bucket seeding" and the `Exit Codes`
   table).
+- **Intentional divergence from Go — image-pull/daemon failure under
+  `--ignore-health-check` (CLI-1987, ruled 2026-07-30):** Go's `start.IsUnhealthyError`
+  (`internal/db/start/start.go:227-231`) classifies ANY `errors.Join`-shaped error as
+  "unhealthy", which accidentally also matches `ensureImagesCached`'s joined pull errors
+  (`internal/start/start.go:257-260`). So in Go, with `--ignore-health-check` set, a
+  total image-pull failure — every registry candidate exhausted, or the Docker daemon
+  becoming unreachable during the pre-pull — is swallowed: Go prints the error, skips
+  rollback, prints `Started supabase local development setup.` + the status table + the
+  security notice, and exits 0 even though no container ever started. That is an
+  unintended quirk of Go's shape-based check (its own comment reads "Health check always
+  returns a joinError"), and it is deliberately NOT reproduced here — enforced by
+  control flow, not by a classifier: unlike Go's single outer check on the whole `run()`
+  result, this port consults `legacyIsUnhealthyStartError` (`start.rollback.ts`) only
+  inside its two health-wait failure branches, and the image pre-pull runs before
+  bring-up, so its failure propagates out without ever reaching a downgrade branch. The
+  same scenario exits 1 with no success banner and no status table, flag or no flag.
+  `--ignore-health-check` downgrades health-check timeouts only. Rollback is NOT part of
+  the divergence — the pre-pull runs before any container/network is created, so there
+  is nothing to roll back in either CLI; the observable delta is exit code + success
+  banner + status table + security notice (Go prints all three of the latter
+  unconditionally at `Run()`'s tail, `start.go:84-87`; this port's failure exits before
+  any of them). Note the flag's own help text ("Ignore unhealthy services and exit 0",
+  byte-matched to Go's) over-promises in this scenario — a pre-pull failure is not an
+  "unhealthy service", but a user reading only `--help` may still expect exit 0 here.
 - `--preview` is a hidden, parsed-but-inert flag, matching Go exactly (never read by
   Go's own `start.Run`).
 - The already-running check uses `docker container inspect` on the Postgres container,
@@ -284,7 +352,20 @@ prose, not structured data.
   `<invoking-workdir>/supabase/.temp/start-secrets/<containerName>` only for containers
   whose workdir label matches the invoking workdir, or whose missing label uses that
   workdir as a fallback. Removed containers labeled with another workdir keep their
-  `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory.
+  `<labeled-workdir>/supabase/.temp/start-secrets/<containerName>` directory. As of
+  supabase/cli#6022 this is a no-op for a removed Kong/Postgres/Supavisor container
+  (nothing under its own directory anymore); it still matters for a removed Edge Runtime
+  container, whose own env-file/multiline-env-script/serve-main-template staging is
+  unaffected by that change.
 - Docker status `created` is not considered a recoverable stopped stack: the container and
   named volume are preserved because the volume may not have completed its first database
   initialization, and `start` reports the existing not-running status instead.
+- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled
+  2026-08-12):** Edge Runtime bind mounts are computed by the same functions import scanner
+  as `functions deploy`/`functions serve` (`walkImportPaths`/`substituteImportMapValue`,
+  shared code), which now matches import-map keys per the import-maps spec Deno/edge-runtime
+  implement (exact match, or prefix match only for a `/`-suffixed key) instead of Go's
+  any-key `strings.HasPrefix` (`pkg/function/deno.go:150-155`). Bind mounts may shrink vs
+  the Go CLI for maps that relied on bare-key prefix matching; an unwalkable target
+  (`ENOTDIR` — a value routed through a file) is skipped with a `WARN`, matching the same
+  divergence documented on the `functions deploy`/`functions serve` SIDE_EFFECTS.md.

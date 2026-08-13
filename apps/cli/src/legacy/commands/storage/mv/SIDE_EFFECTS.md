@@ -34,6 +34,7 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME` — same roles as `storage ls`.
+`SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
 
 `storage` is an experimental command (Go `root.go:63`): `mv` requires `--experimental`
 (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
@@ -45,6 +46,7 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 | ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                                              |
 | `1`  | invalid/parse url, missing object path (both roots), cross-bucket move, object-not-found (recursive empty), API non-2xx, network, auth, config parse |
+| `1`  | `--project-ref` set with `--local` (see Notes)                                                                                                       |
 
 ## Output
 
@@ -75,6 +77,10 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 
 ## Notes
 
+- **`--project-ref`** (TS-only, no Go equivalent) overrides ONLY the linked-ref
+  resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
+  It never implies `--linked`: passing it with `--local` is a hard error
+  rather than a silently discarded flag.
 - Both `src` and `dst` must be `ss://` URLs (Go uses `ParseStorageURL`, not the lenient
   `url.Parse` that `cp` uses).
 - The cross-bucket and missing-path checks run before any network call.

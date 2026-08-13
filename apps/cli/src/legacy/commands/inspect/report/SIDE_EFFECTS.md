@@ -38,9 +38,23 @@ is used as-is.
 
 Re-running on the same day reuses the existing dated folder (mkdir is recursive /
 idempotent) and **overwrites** the previous run's CSVs silently — no `--force`,
-matching Go. If a `COPY` fails partway through, the CSVs written before the failure
-remain on disk (Go writes each file before running the next query), the command
-aborts with exit code 1, and the rules summary is not printed.
+matching Go. If a `COPY` fails partway through, the CSVs from queries that already
+completed remain on disk (both sides write each file before running the next query),
+the command aborts with exit code 1, and the rules summary is not printed.
+
+**Divergence on the query that was in flight when `COPY` failed:** Go's
+`copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`) opens the output file
+with `O_TRUNC` _before_ running the query, then streams `COPY ... TO STDOUT` directly
+into it — so a failing/erroring `COPY` still leaves that query's `<name>.csv` on disk,
+empty or partially written. TS buffers the `COPY` result in memory
+(`session.copyToCsv`) and only calls `fs.writeFile` after it succeeds
+(`report.handler.ts`) — so on a fresh run, TS leaves **no file at all** for the query
+that failed, where Go leaves an empty (or partial) one. On a same-day **re-run**, the
+difference is the opposite way round: Go's `O_TRUNC` destroys that query's previous
+CSV (leaving it empty), while TS never touches the file at all, so the **previous
+run's stale CSV is left in place** — a user re-reading that file gets old data with no
+indication it wasn't refreshed this run, where Go at least makes the failure visible
+as an empty file.
 
 ## API Routes
 
@@ -71,6 +85,7 @@ resolve the connection (via `LegacyDbConfigResolver`).
 | `1`  | COPY failure (`failed to copy output`) / file-write failure (`failed to create output file`) |
 | `1`  | malformed `config.toml`                                                                      |
 | `1`  | more than one of `--db-url` / `--linked` / `--local`                                         |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                     |
 
 A **per-rule** csvq evaluation error does **not** fail the command — it becomes the
 rule's STATUS cell, matching Go.
@@ -107,3 +122,13 @@ instead a structured result is emitted:
 ```json
 { "outputDir": "<abs path>", "files": [{ "name": "locks", "path": "..." }, ...], "rules": [{ "name": "...", "status": "...", "matches": "..." }, ...] }
 ```
+
+## Notes
+
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution `LegacyDbConfigResolver` performs
+  (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies
+  `--linked`: passing it with a resolved `--local`/`--db-url` target is a hard
+  error rather than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  a non-linked target).

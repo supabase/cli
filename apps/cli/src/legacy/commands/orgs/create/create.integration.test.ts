@@ -109,7 +109,8 @@ describe("legacy orgs create integration", () => {
     return Effect.gen(function* () {
       yield* legacyOrgsCreate({ name: "Acme" });
       expect(out.stdoutText).toContain("Created organization: combined-fuchsia-lion\n");
-      expect(out.stdoutText).toContain('name = "Acme"');
+      // Go field names (PascalCase) at the top level — no table header (CLI-1975).
+      expect(out.stdoutText).toContain('Name = "Acme"');
     }).pipe(Effect.provide(layer));
   });
 

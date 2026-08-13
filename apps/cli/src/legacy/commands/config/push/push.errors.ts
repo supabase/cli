@@ -1,4 +1,10 @@
 import { Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+  statusCodeActionability,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * Tagged errors for `supabase config push`, one per Go error path
@@ -20,6 +26,17 @@ interface NetworkErrorArgs {
   readonly message: string;
 }
 
+/**
+ * A network-error shape that may instead represent a 200-response body decode
+ * failure (`SchemaError` folded in by `mapLegacyHttpError`).
+ * `decode: true` reclassifies the failure as an API-response problem rather
+ * than a transport/network problem.
+ */
+interface DecodableNetworkErrorArgs {
+  readonly message: string;
+  readonly decode?: boolean;
+}
+
 interface StatusErrorArgs {
   readonly status: number;
   readonly body: string;
@@ -29,113 +46,258 @@ interface StatusErrorArgs {
 /** TOML parse failure (rewraps the packages/config parse error). Aborts before any network call. */
 export class LegacyConfigPushLoadConfigError extends Data.TaggedError(
   "LegacyConfigPushLoadConfigError",
-)<NetworkErrorArgs> {}
+)<NetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 // --- cost matrix (list addons) ---------------------------------------------
 
 export class LegacyConfigPushListAddonsNetworkError extends Data.TaggedError(
   "LegacyConfigPushListAddonsNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    if (this.decode === true) {
+      return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+    }
+    return actionability.externalNetwork;
+  }
+}
 
 export class LegacyConfigPushListAddonsStatusError extends Data.TaggedError(
   "LegacyConfigPushListAddonsStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // --- api --------------------------------------------------------------------
 
 export class LegacyConfigPushApiReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushApiReadNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushApiReadStatusError extends Data.TaggedError(
   "LegacyConfigPushApiReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 export class LegacyConfigPushApiUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushApiUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushApiUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushApiUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // --- db.settings ------------------------------------------------------------
 
 export class LegacyConfigPushDbReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushDbReadNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushDbReadStatusError extends Data.TaggedError(
   "LegacyConfigPushDbReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 export class LegacyConfigPushDbUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushDbUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushDbUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushDbUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // --- db.network_restrictions ------------------------------------------------
 
 export class LegacyConfigPushNetworkRestrictionsReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsReadNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushNetworkRestrictionsReadStatusError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 export class LegacyConfigPushNetworkRestrictionsUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushNetworkRestrictionsUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushNetworkRestrictionsUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // --- db.ssl_enforcement -----------------------------------------------------
 
 export class LegacyConfigPushSslEnforcementReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementReadNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushSslEnforcementReadStatusError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 export class LegacyConfigPushSslEnforcementUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushSslEnforcementUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushSslEnforcementUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // --- auth -------------------------------------------------------------------
 
 export class LegacyConfigPushAuthReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushAuthReadNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushAuthReadStatusError extends Data.TaggedError(
   "LegacyConfigPushAuthReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 export class LegacyConfigPushAuthUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushAuthUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushAuthUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushAuthUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // --- storage ----------------------------------------------------------------
 
 export class LegacyConfigPushStorageReadNetworkError extends Data.TaggedError(
   "LegacyConfigPushStorageReadNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushStorageReadStatusError extends Data.TaggedError(
   "LegacyConfigPushStorageReadStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 export class LegacyConfigPushStorageUpdateNetworkError extends Data.TaggedError(
   "LegacyConfigPushStorageUpdateNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushStorageUpdateStatusError extends Data.TaggedError(
   "LegacyConfigPushStorageUpdateStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}
 
 // --- experimental.webhooks --------------------------------------------------
 
 export class LegacyConfigPushEnableWebhookNetworkError extends Data.TaggedError(
   "LegacyConfigPushEnableWebhookNetworkError",
-)<NetworkErrorArgs> {}
+)<DecodableNetworkErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return this.decode === true
+      ? { ...actionability.apiStatus, fingerprint_suffix: "api_response" }
+      : actionability.externalNetwork;
+  }
+}
 export class LegacyConfigPushEnableWebhookStatusError extends Data.TaggedError(
   "LegacyConfigPushEnableWebhookStatusError",
-)<StatusErrorArgs> {}
+)<StatusErrorArgs> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return statusCodeActionability(this.status, { notFoundIsInvalidInput: true });
+  }
+}

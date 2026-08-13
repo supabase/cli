@@ -3,47 +3,27 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { legacyParseStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
+import { legacyStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { LEGACY_SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { legacySsoUpdate } from "./update.handler.ts";
 
-const NAME_ID_FORMATS = [
-  "urn:oasis:names:tc:SAML:1.1:nameid-format:emailAddress",
-  "urn:oasis:names:tc:SAML:1.1:nameid-format:unspecified",
-  "urn:oasis:names:tc:SAML:2.0:nameid-format:persistent",
-  "urn:oasis:names:tc:SAML:2.0:nameid-format:transient",
-] as const;
-
-export const legacySsoUpdateDomainsFlag = Flag.string("domains").pipe(
-  Flag.atLeast(0),
-  Flag.withDescription("Replace domains with this comma separated list of email domains."),
-  Flag.mapTryCatch(
-    (rawValues) => legacyParseStringSliceFlag(rawValues),
-    (err) => (err instanceof Error ? err.message : String(err)),
-  ),
-  Flag.withDefault([] as ReadonlyArray<string>),
+// Go declares all three domain flags with pflag's `StringSliceVar`
+// (`cmd/sso.go:170-172`); malformed CSV fails at parse time with pflag's
+// exact diagnostic (CLI-2005, see `legacyStringSliceFlag`).
+export const legacySsoUpdateDomainsFlag = legacyStringSliceFlag(
+  "domains",
+  "Replace domains with this comma separated list of email domains.",
 );
 
-export const legacySsoUpdateAddDomainsFlag = Flag.string("add-domains").pipe(
-  Flag.atLeast(0),
-  Flag.withDescription("Add this comma separated list of email domains to the identity provider."),
-  Flag.mapTryCatch(
-    (rawValues) => legacyParseStringSliceFlag(rawValues),
-    (err) => (err instanceof Error ? err.message : String(err)),
-  ),
-  Flag.withDefault([] as ReadonlyArray<string>),
+export const legacySsoUpdateAddDomainsFlag = legacyStringSliceFlag(
+  "add-domains",
+  "Add this comma separated list of email domains to the identity provider.",
 );
 
-export const legacySsoUpdateRemoveDomainsFlag = Flag.string("remove-domains").pipe(
-  Flag.atLeast(0),
-  Flag.withDescription(
-    "Remove this comma separated list of email domains from the identity provider.",
-  ),
-  Flag.mapTryCatch(
-    (rawValues) => legacyParseStringSliceFlag(rawValues),
-    (err) => (err instanceof Error ? err.message : String(err)),
-  ),
-  Flag.withDefault([] as ReadonlyArray<string>),
+export const legacySsoUpdateRemoveDomainsFlag = legacyStringSliceFlag(
+  "remove-domains",
+  "Remove this comma separated list of email domains from the identity provider.",
 );
 
 const config = {
@@ -77,7 +57,7 @@ const config = {
     ),
     Flag.optional,
   ),
-  nameIdFormat: Flag.choice("name-id-format", NAME_ID_FORMATS).pipe(
+  nameIdFormat: Flag.choice("name-id-format", LEGACY_SSO_NAME_ID_FORMATS).pipe(
     Flag.withDescription(
       "URI reference representing the classification of string-based identifier information.",
     ),

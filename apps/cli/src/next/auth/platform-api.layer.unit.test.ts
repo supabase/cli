@@ -166,7 +166,7 @@ describe("platformApiLayer", () => {
           return Effect.succeed(
             jsonResponse(request, 200, [
               {
-                id: "00000000-0000-0000-0000-000000000001",
+                id: "00000000-0000-4000-8000-000000000001",
                 name: "main",
                 project_ref: "mainrefghijklmnopqrst",
                 parent_project_ref: "parentrefabcdefghijk",
@@ -219,7 +219,7 @@ describe("platformApiLayer", () => {
           return Effect.succeed(
             jsonResponse(request, 200, [
               {
-                id: "00000000-0000-0000-0000-000000000001",
+                id: "00000000-0000-4000-8000-000000000001",
                 name: "main",
                 project_ref: "mainrefghijklmnopqrst",
                 parent_project_ref: "parentrefabcdefghijk",

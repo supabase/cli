@@ -30,6 +30,7 @@ import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.t
 import { makeTelemetryIdentity } from "../../../../shared/telemetry/identity.ts";
 import { legacyGenCommand } from "../gen.command.ts";
 import { legacyGenSigningKey } from "./signing-key.handler.ts";
+import { LEGACY_DEFAULT_SIGNING_KEY } from "../../../shared/legacy-go-jwt.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-gen-signing-key-int-");
 
@@ -118,8 +119,8 @@ async function initGitDir() {
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyGenCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 describe("legacy gen signing-key integration", () => {
@@ -201,18 +202,27 @@ describe("legacy gen signing-key integration", () => {
     }).pipe(Effect.provide(layer)) as Effect.Effect<void>;
   });
 
-  it.live("uses the project-relative config file path in the local setup hint", () => {
-    const { layer, out } = setup();
-    return Effect.gen(function* () {
-      yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
-      yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
+  it.live(
+    "ignores a stray config.json and uses the default config.toml path in the local setup hint (CLI-1961)",
+    () => {
+      const { layer, out } = setup();
+      return Effect.gen(function* () {
+        // Go's `Config.Load` (`pkg/config/utils.go:43-48`) has no concept of a JSON project
+        // config file — a stray `supabase/config.json` with no `config.toml` present must be
+        // treated exactly like no config at all, never as a substitute config source
+        // (`gen.signing-keys-config.ts`'s `loadProjectConfig(..., { tomlOnly: true })`; Codex
+        // review finding, CLI-1961). Go prints the CWD-relative `supabase/config.toml` in this
+        // "absent config" case; the hint must stay relative and must never leak the absolute
+        // temp-dir path either.
+        yield* Effect.tryPromise(() => writeJsonConfig("{}\n"));
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: false });
 
-      // Go prints the CWD-relative `supabase/config.toml`; the hint must stay relative and must
-      // never leak the absolute temp-dir path.
-      expect(out.stderrText).toContain(join("supabase", "config.json"));
-      expect(out.stderrText).not.toContain(join(tempRoot.current, "supabase", "config.json"));
-    }).pipe(Effect.provide(layer));
-  });
+        expect(out.stderrText).toContain(join("supabase", "config.toml"));
+        expect(out.stderrText).not.toContain("config.json");
+        expect(out.stderrText).not.toContain(tempRoot.current);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live(
     "overwrites the configured signing keys file and defaults to yes on non-tty when stdin has no piped answer",
@@ -338,6 +348,61 @@ describe("legacy gen signing-key integration", () => {
       expect(parsed[1]?.alg).toBe("ES256");
     }).pipe(Effect.provide(layer));
   });
+
+  // CLI-1961 Codex review finding: Go's `Config.Validate` only reads/decodes the configured
+  // `signing_keys_path` file INSIDE `if c.Auth.Enabled` — `gen signing-key` goes through the
+  // exact same `flags.LoadConfig` pipeline as `gen bearer-jwt` (both call it), so it is subject
+  // to the same gate. Verified against the real binary: with `auth.enabled = false`, a
+  // malformed signing-keys file is never read at all, so the command succeeds instead of
+  // failing on a decode error.
+  it.live("does not fail on a malformed signing keys file when [auth] enabled is false", () => {
+    const { layer } = setup();
+    return Effect.gen(function* () {
+      yield* Effect.tryPromise(() =>
+        writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+      );
+      yield* Effect.tryPromise(() =>
+        writeFile(join(tempRoot.current, "supabase", "signing_keys.json"), "not valid json {\n"),
+      );
+
+      const exit = yield* Effect.exit(legacyGenSigningKey({ algorithm: "ES256", append: true }));
+      expect(Exit.isFailure(exit)).toBe(false);
+    }).pipe(Effect.provide(layer));
+  });
+
+  // Same finding, the more surprising half: Go's `Config.Auth.SigningKeys` never advances past
+  // `NewConfig()`'s own default single-key array when auth is disabled, so `--append` appends
+  // to (and the resulting write clobbers) that phantom default set, NOT the file's real
+  // content — verified against the real binary: appending under `auth.enabled = false` against
+  // a file containing a genuine custom key overwrote it with the default ES256 key plus the
+  // newly generated one, discarding the original entry entirely.
+  it.live(
+    "appends to (and overwrites with) the built-in default key, ignoring the real file content, when [auth] enabled is false",
+    () => {
+      const { layer } = setup();
+      return Effect.gen(function* () {
+        yield* Effect.tryPromise(() =>
+          writeConfig('[auth]\nenabled = false\nsigning_keys_path = "./signing_keys.json"\n'),
+        );
+        yield* Effect.tryPromise(() =>
+          writeFile(
+            join(tempRoot.current, "supabase", "signing_keys.json"),
+            `${JSON.stringify([{ kty: "EC", kid: "existing-key", x: "existing-x" }])}\n`,
+          ),
+        );
+
+        yield* legacyGenSigningKey({ algorithm: "ES256", append: true });
+
+        const saved = yield* Effect.tryPromise(() =>
+          readFile(join(tempRoot.current, "supabase", "signing_keys.json"), "utf8"),
+        );
+        const parsed = JSON.parse(saved) as ReadonlyArray<Record<string, unknown>>;
+        expect(parsed).toHaveLength(2);
+        expect(parsed[0]?.kid).toBe(LEGACY_DEFAULT_SIGNING_KEY.kid);
+        expect(parsed.some((key) => key["kid"] === "existing-key")).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("fails when the configured signing keys file is not a JSON array of objects", () => {
     const { layer } = setup();

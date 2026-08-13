@@ -1,4 +1,4 @@
-import { Clock, Effect, FileSystem, Path } from "effect";
+import { Clock, Effect, FileSystem, Option, Path } from "effect";
 
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import { LegacyDnsResolverFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -96,10 +96,24 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
 
   // Go's `--linked` defaults to true, so absence of the others resolves to linked.
   const connType = target.connType ?? "linked";
+
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // (db push) for the full TS-only rationale.
+  if (Option.isSome(flags.projectRef) && connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyInspectMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const cfg = yield* resolver.resolve({
     dbUrl: flags.dbUrl,
     connType,
     dnsResolver,
+    linkedProjectRef: flags.projectRef,
   });
 
   // `outDir = <output-dir>/<date>`, resolved against the process CWD when relative
@@ -109,8 +123,10 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   if (!path.isAbsolute(outDir)) {
     outDir = path.join(runtimeInfo.cwd, outDir);
   }
+  // Go pins the output dir to 0755 (`MkdirIfNotExistFS`, `report.go:32`,
+  // `misc.go:273`) and each CSV to 0644 (`report.go:66`).
   yield* fs
-    .makeDirectory(outDir, { recursive: true })
+    .makeDirectory(outDir, { recursive: true, mode: 0o755 })
     .pipe(
       Effect.mapError(
         (error) => new LegacyInspectReportMkdirError({ message: `failed to mkdir: ${error}` }),
@@ -136,7 +152,7 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
           legacyWrapReportQuery(sql, ignoreSchemas, dbLiteral),
         );
         const filePath = path.join(outDir, `${fileName}.csv`);
-        yield* fs.writeFile(filePath, bytes).pipe(
+        yield* fs.writeFile(filePath, bytes, { mode: 0o644 }).pipe(
           Effect.mapError(
             (error) =>
               new LegacyInspectReportWriteError({

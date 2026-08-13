@@ -22,7 +22,15 @@ const config = {
     Flag.optional,
   ),
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
-    Flag.withDescription("Use pg-schema-diff to generate schema diff."),
+    // CLI-1960: deprecated in favor of the pg-delta engine (or the default
+    // migra engine); a keep-in-Go exception (in-process stripe/pg-schema-diff
+    // library, no TS/container equivalent — see SIDE_EFFECTS.md), not a pending
+    // port. The flag itself is not marked deprecated in Go (no `MarkDeprecated`
+    // upstream), so this description-only notice is TS-only — see
+    // diff.handler.ts's runtime warning for the enforced half of the deprecation.
+    Flag.withDescription(
+      "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
+    ),
     Flag.optional,
   ),
   usePgDelta: Flag.boolean("use-pg-delta").pipe(
@@ -57,6 +65,11 @@ const config = {
   ),
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Diffs local migration files against the local database."),
+    Flag.optional,
+  ),
+  // TS-only override of the linked project ref — see push.command.ts.
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
   file: Flag.string("file").pipe(
@@ -97,9 +110,13 @@ export const legacyDbDiffCommand = Command.make("diff", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           file: flags.file,
           schema: flags.schema,
         },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
         aliases: { o: "output", f: "file", s: "schema" },
       }),
       withJsonErrorHandling,

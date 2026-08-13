@@ -7,7 +7,17 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  type LegacyGoType,
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoBool,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+  legacyGoTomlListWrapper,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacyProjectsEnvNotSupportedError,
@@ -20,6 +30,39 @@ import {
   renderProjectsListTable,
 } from "../projects.format.ts";
 import type { LegacyProjectsListFlags } from "./list.command.ts";
+
+/**
+ * Mirror of Go's `linkedProject` (`apps/cli-go/internal/projects/list/list.go`):
+ * an embedded `api.V1ProjectWithDatabaseResponse` (fields inlined first, in
+ * declaration order) plus the CLI-added `Linked bool` (CLI-1975).
+ */
+const LEGACY_GO_LINKED_PROJECT: LegacyGoType = legacyGoStruct([
+  ["created_at", legacyGoString],
+  [
+    "database",
+    legacyGoStruct([
+      ["host", legacyGoString],
+      ["postgres_engine", legacyGoString],
+      ["release_channel", legacyGoString],
+      ["version", legacyGoString],
+    ]),
+  ],
+  ["id", legacyGoString],
+  ["name", legacyGoString],
+  ["organization_id", legacyGoString],
+  ["organization_slug", legacyGoString],
+  ["ref", legacyGoString],
+  ["region", legacyGoString],
+  ["status", legacyGoString],
+  ["linked", legacyGoBool],
+]);
+
+const LEGACY_GO_PROJECTS_LIST = legacyGoSlice(LEGACY_GO_LINKED_PROJECT);
+
+const LEGACY_GO_PROJECTS_TOML_WRAPPER = legacyGoTomlListWrapper(
+  "projects",
+  LEGACY_GO_LINKED_PROJECT,
+);
 
 export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
   _flags: LegacyProjectsListFlags,
@@ -71,6 +114,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
             status: response.status,
             body: "",
             message: `Unexpected error retrieving projects: ${cause}`,
+            decode: true,
           }),
       ),
     );
@@ -80,6 +124,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
         status: response.status,
         body: "",
         message: "Unexpected error retrieving projects: response was not an array",
+        decode: true,
       });
     }
     yield* fetching?.clear() ?? Effect.void;
@@ -110,11 +155,18 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(projects));
+      yield* output.raw(encodeLegacyGoYaml(projects, LEGACY_GO_PROJECTS_LIST));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml({ projects }) + "\n");
+      // Go builds the list with `append` (`list.go:36-42`), so an empty list
+      // stays a nil slice and BurntSushi emits nothing for the wrapper.
+      yield* output.raw(
+        encodeLegacyGoToml(
+          { projects: projects.length > 0 ? projects : undefined },
+          LEGACY_GO_PROJECTS_TOML_WRAPPER,
+        ),
+      );
       return;
     }
 

@@ -1,6 +1,7 @@
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
+import { legacyAqua } from "../../../shared/legacy-colors.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
@@ -59,9 +60,10 @@ export const legacyEncryptionUpdateRootKey = Effect.fn("legacy.encryption.update
         return;
       }
 
-      // text — Go prints a plain finished notice to stderr (`fmt.Fprintln`,
-      // `utils.Aqua` rendered as plain text per the legacy-port convention).
-      yield* output.raw("Finished supabase root-key update.\n", "stderr");
+      // text — Go: `fmt.Fprintln(os.Stderr, "Finished "+utils.Aqua("supabase
+      // root-key update")+".")` (`internal/encryption/update/update.go:26`).
+      // `legacyAqua` renders cyan on a TTY and plain when piped, like lipgloss.
+      yield* output.raw(`Finished ${legacyAqua("supabase root-key update")}.\n`, "stderr");
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)), Effect.ensuring(telemetryState.flush));
   },
 );

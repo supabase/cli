@@ -10,12 +10,13 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
+import { encodeEnv, encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
 import {
-  encodeEnv,
-  encodeGoJson,
-  encodeToml,
-  encodeYaml,
-} from "../../../shared/legacy-go-output.encoders.ts";
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoString,
+  legacyGoStruct,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacyDesiredSubdomainRequiredError,
@@ -23,6 +24,9 @@ import {
   LegacyVanitySubdomainsActivateUnexpectedStatusError,
 } from "../vanity-subdomains.errors.ts";
 import type { LegacyVanitySubdomainsActivateFlags } from "./activate.command.ts";
+
+/** Mirror of Go's `api.ActivateVanitySubdomainResponse` (`types.gen.go`). */
+const LEGACY_GO_ACTIVATE_VANITY_RESPONSE = legacyGoStruct([["custom_domain", legacyGoString]]);
 
 const mapActivateError = mapLegacyHttpError({
   networkError: LegacyVanitySubdomainsActivateNetworkError,
@@ -76,12 +80,20 @@ export const legacyVanitySubdomainsActivate = Effect.fn("legacy.vanity-subdomain
                 // tagged error before deciding whether to suggest an upgrade, then re-fail.
                 const mapped = yield* Effect.flip(mapActivateError(cause));
                 if (mapped._tag === "LegacyVanitySubdomainsActivateUnexpectedStatusError") {
-                  yield* legacySuggestUpgrade({
+                  const upgradeSuggested = yield* legacySuggestUpgrade({
                     projectRef: ref,
                     featureKey: "vanity_subdomain",
                     statusCode: mapped.status,
                     response: legacyGateResponse(cause),
                   });
+                  return yield* Effect.fail(
+                    new LegacyVanitySubdomainsActivateUnexpectedStatusError({
+                      status: mapped.status,
+                      body: mapped.body,
+                      message: mapped.message,
+                      upgradeSuggested,
+                    }),
+                  );
                 }
                 return yield* Effect.fail(mapped);
               }),
@@ -96,11 +108,11 @@ export const legacyVanitySubdomainsActivate = Effect.fn("legacy.vanity-subdomain
           return;
         }
         if (legacyOutput === "yaml") {
-          yield* output.raw(encodeYaml(response));
+          yield* output.raw(encodeLegacyGoYaml(response, LEGACY_GO_ACTIVATE_VANITY_RESPONSE));
           return;
         }
         if (legacyOutput === "toml") {
-          yield* output.raw(encodeToml({ CustomDomain: response.custom_domain }) + "\n");
+          yield* output.raw(encodeLegacyGoToml(response, LEGACY_GO_ACTIVATE_VANITY_RESPONSE));
           return;
         }
         if (legacyOutput === "env") {

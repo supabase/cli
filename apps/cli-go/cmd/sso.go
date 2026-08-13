@@ -163,8 +163,6 @@ func init() {
 	ssoAddFlags.Var(&ssoNameIDFormat, "name-id-format", "URI reference representing the classification of string-based identifier information.")
 	ssoAddCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	cobra.CheckErr(ssoAddCmd.MarkFlagRequired("type"))
-	cobra.CheckErr(ssoAddCmd.MarkFlagFilename("metadata-file", "xml"))
-	cobra.CheckErr(ssoAddCmd.MarkFlagFilename("attribute-mapping-file", "json"))
 
 	ssoUpdateFlags := ssoUpdateCmd.Flags()
 	ssoUpdateFlags.StringSliceVar(&ssoDomains, "domains", []string{}, "Replace domains with this comma separated list of email domains.")
@@ -178,8 +176,6 @@ func init() {
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("metadata-file", "metadata-url")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("domains", "add-domains")
 	ssoUpdateCmd.MarkFlagsMutuallyExclusive("domains", "remove-domains")
-	cobra.CheckErr(ssoUpdateCmd.MarkFlagFilename("metadata-file", "xml"))
-	cobra.CheckErr(ssoUpdateCmd.MarkFlagFilename("attribute-mapping-file", "json"))
 
 	ssoShowFlags := ssoShowCmd.Flags()
 	ssoShowFlags.BoolVar(&ssoMetadata, "metadata", false, "Show SAML 2.0 XML Metadata only")

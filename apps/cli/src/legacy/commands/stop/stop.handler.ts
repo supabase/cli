@@ -5,6 +5,7 @@ import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
+import { LegacyDebugFlag } from "../../../shared/legacy/global-flags.ts";
 import { legacyCliProjectFilterValue } from "../../shared/legacy-docker-ids.ts";
 import {
   legacyListVolumesByLabel,
@@ -122,6 +123,9 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
   const telemetryState = yield* LegacyTelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
+  // Threaded into `legacyDockerRemoveAll` below — Go's `--debug` gates that
+  // function's `Pruned …:` stderr reports (`docker.go:123-143`).
+  const debug = yield* LegacyDebugFlag;
 
   yield* Effect.gen(function* () {
     // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
@@ -196,7 +200,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // LATER stages (volume prune, network prune) can still independently fail AFTER `container
     // prune` has already confirmed removal, and a plain `yield*` below would never run once that
     // later failure propagates — leaking staged secret directories for containers a later `stop`
-    // can no longer rediscover (they're already gone). `legacyRollbackStart` (`start.rollback.ts`)
+    // can no longer rediscover (they're already gone). `legacyRollbackStart` (`legacy/shared/db-bootstrap/rollback.ts`)
     // already runs this same cleanup unconditionally after its own `legacyDockerRemoveAll` call for
     // the identical reason; this makes `stop` consistent with that sibling caller, just without
     // swallowing the teardown error itself. The finalizer is wrapped in `Effect.suspend` so
@@ -204,9 +208,15 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // `onContainersRemoved` has fired) — same pattern as
     // `storage/ls/ls.handler.ts`/`storage/rm/rm.handler.ts`.
     let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-    yield* legacyDockerRemoveAll(spawner, filterValue, deleteVolumes, (containers) => {
-      removedContainers = containers;
-    }).pipe(
+    yield* legacyDockerRemoveAll(
+      spawner,
+      filterValue,
+      deleteVolumes,
+      (containers) => {
+        removedContainers = containers;
+      },
+      debug,
+    ).pipe(
       Effect.catchTags({
         LegacyDockerRemoveAllListError: (error) =>
           Effect.fail(new LegacyStopListError({ message: error.message })),

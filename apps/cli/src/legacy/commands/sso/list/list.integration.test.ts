@@ -16,10 +16,12 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { EventUpgradeSuggested } from "../../../../shared/telemetry/event-catalog.ts";
 import { legacySsoList } from "./list.handler.ts";
 
+// Mirrors what the Management API returns: neither `saml.id` nor
+// `domains[].id` is part of the provider response (nor of Go's
+// `api.ListProvidersResponse`).
 const PROVIDER_ITEM = {
   id: "0b0d48f6-878b-4190-88d7-2ca33ed800bc",
   saml: {
-    id: "8682fcf4-4056-455c-bd93-f33295604929",
     entity_id: "https://example.com",
     metadata_url: "https://example.com",
     metadata_xml: '<?xml version="2.0"?>',
@@ -27,7 +29,6 @@ const PROVIDER_ITEM = {
   },
   domains: [
     {
-      id: "9484591c-a203-4500-bea7-d0aaa845e2f5",
       domain: "example.com",
       created_at: "2023-03-28T13:50:14.464Z",
       updated_at: "2023-03-28T13:50:14.464Z",
@@ -35,16 +36,6 @@ const PROVIDER_ITEM = {
   ],
   created_at: "2023-03-28T13:50:14.464Z",
   updated_at: "2023-03-28T13:50:14.464Z",
-};
-
-const PROVIDER_ITEM_WITHOUT_SAML_ID = {
-  ...PROVIDER_ITEM,
-  saml: {
-    entity_id: "https://example.com",
-    metadata_url: "https://example.com",
-    metadata_xml: '<?xml version="2.0"?>',
-    attribute_mapping: { keys: { a: { name: "xyz", default: 3 } } },
-  },
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-list-int-");
@@ -161,12 +152,20 @@ describe("legacy sso list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("lists providers when the API omits items[].saml.id", () => {
-    const { layer, out } = setup({ body: { items: [PROVIDER_ITEM_WITHOUT_SAML_ID] } });
+  // Some projects still echo the nested IDs the spec dropped. Go ignores them
+  // (no struct field), so they must neither break decoding nor reach `-o json`.
+  it.live("ignores nested saml.id / domains[].id when the API still sends them", () => {
+    const item = {
+      ...PROVIDER_ITEM,
+      saml: { ...PROVIDER_ITEM.saml, id: "8682fcf4-4056-455c-bd93-f33295604929" },
+      domains: [{ ...PROVIDER_ITEM.domains[0], id: "9484591c-a203-4500-bea7-d0aaa845e2f5" }],
+    };
+    const { layer, out } = setup({ goOutput: "json", body: { items: [item] } });
     return Effect.gen(function* () {
       yield* legacySsoList({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("0b0d48f6-878b-4190-88d7-2ca33ed800bc");
-      expect(out.stdoutText).toContain("example.com");
+      expect(out.stdoutText).not.toContain("8682fcf4-4056-455c-bd93-f33295604929");
+      expect(out.stdoutText).not.toContain("9484591c-a203-4500-bea7-d0aaa845e2f5");
     }).pipe(Effect.provide(layer));
   });
 
@@ -211,6 +210,27 @@ describe("legacy sso list integration", () => {
     return Effect.gen(function* () {
       yield* legacySsoList({ projectRef: Option.none() });
       expect(out.stdoutText.length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Go --output=toml fails like BurntSushi on a nil attribute-mapping array element", () => {
+    const item = {
+      ...PROVIDER_ITEM,
+      saml: {
+        ...PROVIDER_ITEM.saml,
+        attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
+      },
+    };
+    const { layer, out } = setup({ goOutput: "toml", body: { items: [item] } });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySsoList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoTomlEncodeError");
+        expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
+      }
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

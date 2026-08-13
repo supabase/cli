@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   LEGACY_CLI_PROJECT_LABEL,
@@ -7,7 +7,10 @@ import {
   legacySanitizeProjectId,
   legacyServiceContainerIds,
   localDbContainerId,
+  localNetworkId,
 } from "./legacy-docker-ids.ts";
+import { resolveDockerNetworkMode } from "../../shared/functions/functions-docker.ts";
+import { legacyViperEnvStringWithProjectFallback } from "../../shared/legacy/legacy-viper-env.ts";
 
 describe("legacyResolveLocalProjectId", () => {
   it("prefers SUPABASE_PROJECT_ID (env) over config.toml and the basename", () => {
@@ -78,6 +81,62 @@ describe("legacyCliProjectFilterValue", () => {
     expect(legacyCliProjectFilterValue(legacySanitizeProjectId(dirty))).toBe(
       `${LEGACY_CLI_PROJECT_LABEL}=My_App_`,
     );
+  });
+});
+
+describe("resolveDockerNetworkMode composed with legacyViperEnvStringWithProjectFallback (start/db start call shape)", () => {
+  const KEY = "SUPABASE_NETWORK_ID";
+
+  afterEach(() => {
+    delete process.env[KEY];
+  });
+
+  // `start`/`db start` resolve the network exactly like the `functions`
+  // Docker paths: the shared 3-way resolver fed by the viper-shaped
+  // shell/project-dotenv env read — one home, per the review round on
+  // CLI-1963 that deleted `legacyResolveNetworkId`'s divergent copy.
+  function resolve(flagValue: string | undefined, projectEnv: Record<string, string>) {
+    return resolveDockerNetworkMode({
+      explicit: flagValue,
+      envOverride: legacyViperEnvStringWithProjectFallback(KEY, projectEnv),
+      projectId: "my-app",
+    });
+  }
+
+  it("prefers an explicit --network-id flag over everything else", () => {
+    process.env[KEY] = "env-network";
+    expect(resolve("flag-network", { [KEY]: "toml-network" })).toBe("flag-network");
+  });
+
+  it("falls back to SUPABASE_NETWORK_ID (shell) when the flag is absent", () => {
+    process.env[KEY] = "shell-network";
+    expect(resolve(undefined, {})).toBe("shell-network");
+  });
+
+  it("falls back to SUPABASE_NETWORK_ID (project .env) when both the flag and shell are absent", () => {
+    delete process.env[KEY];
+    expect(resolve(undefined, { [KEY]: "project-network" })).toBe("project-network");
+  });
+
+  it("prefers the shell value over the project .env value (presence wins, matching godotenv.Load)", () => {
+    process.env[KEY] = "shell-network";
+    expect(resolve(undefined, { [KEY]: "project-network" })).toBe("shell-network");
+  });
+
+  it("falls back to the generated network name when the flag and env are all absent/empty", () => {
+    delete process.env[KEY];
+    expect(resolve(undefined, {})).toBe(localNetworkId("my-app"));
+    expect(resolve("", {})).toBe(localNetworkId("my-app"));
+  });
+
+  it("an explicit-but-empty --network-id= skips the env var entirely (viper: a Changed pflag resolves before AutomaticEnv)", () => {
+    process.env[KEY] = "env-network";
+    expect(resolve("", { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
+  });
+
+  it("treats an empty shell value as present (blocks the project value) and falls to generated", () => {
+    process.env[KEY] = "";
+    expect(resolve(undefined, { [KEY]: "project-network" })).toBe(localNetworkId("my-app"));
   });
 });
 

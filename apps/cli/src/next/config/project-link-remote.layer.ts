@@ -1,5 +1,10 @@
 import { Data, Duration, Effect, Exit, Layer } from "effect";
 import { FetchHttpClient, HttpClient, HttpClientRequest } from "effect/unstable/http";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { PlatformApi } from "../auth/platform-api.service.ts";
 import { CliConfig } from "./cli-config.service.ts";
 import {
@@ -10,13 +15,23 @@ import {
 } from "./project-link-remote.service.ts";
 import type { LinkedServiceVersions } from "./project-link-state.service.ts";
 
-class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
+export class ServiceVersionNotFoundError extends Data.TaggedError("ServiceVersionNotFoundError")<{
   readonly service: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
 
-class NoProjectApiKeyError extends Data.TaggedError("NoProjectApiKeyError")<{
+export class NoProjectApiKeyError extends Data.TaggedError("NoProjectApiKeyError")<{
   readonly projectRef: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    // A successful api-keys response with no usable key — an API response
+    // problem, not a raw status failure.
+    return { ...actionability.apiStatus, fingerprint_suffix: "api_response" };
+  }
+}
 
 type ProjectApiKey = {
   readonly name: string;

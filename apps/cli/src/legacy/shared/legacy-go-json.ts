@@ -6,8 +6,17 @@
  * Unlike `legacy-go-output.encoders.ts`'s `encodeGoJson`, this encoder does NOT
  * sort object keys — Go serializes structs in field-declaration order, so the
  * caller builds plain objects whose key insertion order is the Go struct order
- * (JS preserves string-key insertion order). `omitempty` is likewise the
- * caller's responsibility: simply omit the key.
+ * (JS preserves string-key insertion order, EXCEPT for integer-like keys — see
+ * the `Map` handling below). `omitempty` is likewise the caller's responsibility:
+ * simply omit the key.
+ *
+ * A caller that needs Go's true lexicographic map-key order (e.g.
+ * `legacy-go-output.encoders.ts`'s `sortKeysDeep`, for a genuine Go map like
+ * `jwt.MapClaims`) must pass a `Map<string, unknown>` rather than a plain object at
+ * that level: a plain object silently reorders integer-like string keys ("2", "10")
+ * into ascending NUMERIC order on enumeration, regardless of insertion order, which
+ * would undo a lexicographic sort for any numeric-looking key. `Map` iteration order
+ * is true insertion order for every key shape, so this walker special-cases it.
  *
  * The two behaviours `JSON.stringify(x, null, 2)` gets wrong for Go parity are:
  *   1. HTML escaping — Go's default encoder escapes `<`, `>`, `&` as
@@ -70,7 +79,7 @@ export function escapeGoJsonString(value: string): string {
   return out + '"';
 }
 
-function walk(value: unknown, depth: number): string {
+function walk(value: unknown, depth: number, pretty: boolean): string {
   if (value === null || value === undefined) return "null";
   switch (typeof value) {
     case "string":
@@ -78,24 +87,49 @@ function walk(value: unknown, depth: number): string {
     case "number":
       // Finite numbers from JSON parsing render identically to Go for the
       // integer and ordinary-float cases relevant here; defer to JSON.stringify
-      // for the canonical shortest representation.
-      return Number.isFinite(value) ? JSON.stringify(value) : "null";
+      // for the canonical shortest representation — EXCEPT negative zero, which
+      // `JSON.stringify(-0)` collapses to `"0"` (ECMA-262's `Number::toString`
+      // prints no sign for negative zero) while Go's `encoding/json` marshals a
+      // `float64` negative zero as `-0`. Reachable via `gen bearer-jwt`'s
+      // `--payload '{"extra":-0}'` (or an underflowing literal like `-1e-10000`):
+      // `json.Unmarshal` into `jwt.MapClaims` (a real `map[string]any`) decodes
+      // the number as `float64(-0)`, and the signed payload segment carries that
+      // sign through to `-0` — verified against the real binary (CLI-1961 Codex
+      // review finding): the compiled Go CLI's signed token payload literally
+      // contains `"extra":-0`. Special-case it so the signed bytes match.
+      if (!Number.isFinite(value)) return "null";
+      return Object.is(value, -0) ? "-0" : JSON.stringify(value);
     case "boolean":
       return value ? "true" : "false";
   }
-  const indent = "  ".repeat(depth + 1);
-  const closeIndent = "  ".repeat(depth);
+  const indent = pretty ? "  ".repeat(depth + 1) : "";
+  const closeIndent = pretty ? "  ".repeat(depth) : "";
+  const open = pretty ? "\n" : "";
+  const separator = pretty ? ",\n" : ",";
+  const close = pretty ? "\n" : "";
   if (Array.isArray(value)) {
     if (value.length === 0) return "[]";
-    const items = value.map((item) => indent + walk(item, depth + 1));
-    return `[\n${items.join(",\n")}\n${closeIndent}]`;
+    const items = value.map((item) => indent + walk(item, depth + 1, pretty));
+    return `[${open}${items.join(separator)}${close}${closeIndent}]`;
   }
-  const entries = Object.entries(value as Record<string, unknown>);
+  // A plain object silently reorders integer-like string keys ("2", "10") into ascending
+  // NUMERIC order on any enumeration (`Object.keys`/`Object.entries`), regardless of insertion
+  // order (ECMA-262 `OrdinaryOwnPropertyKeys`) — Go's `encoding/json` has no such special case,
+  // so a real Go map's string keys sort purely lexicographically (`"10"` before `"2"`). Callers
+  // that need that exact order (e.g. `legacy-go-output.encoders.ts`'s `sortKeysDeep`) pass a
+  // `Map` instead of a plain object specifically to carry the sort through intact — `Map`
+  // iteration order is true insertion order for every key shape, unlike a plain object
+  // (CLI-1961 Codex review finding: `{"10":"a","2":"b"}` must stay "10" before "2").
+  const entries =
+    value instanceof Map
+      ? [...(value as Map<string, unknown>).entries()]
+      : Object.entries(value as Record<string, unknown>);
   if (entries.length === 0) return "{}";
+  const colon = pretty ? ": " : ":";
   const lines = entries.map(
-    ([key, val]) => `${indent}${escapeGoJsonString(key)}: ${walk(val, depth + 1)}`,
+    ([key, val]) => `${indent}${escapeGoJsonString(key)}${colon}${walk(val, depth + 1, pretty)}`,
   );
-  return `{\n${lines.join(",\n")}\n${closeIndent}}`;
+  return `{${open}${lines.join(separator)}${close}${closeIndent}}`;
 }
 
 /**
@@ -104,5 +138,35 @@ function walk(value: unknown, depth: number): string {
  * Go string escaping, and a trailing newline.
  */
 export function encodeGoJsonIndented(value: unknown): string {
-  return walk(value, 0) + "\n";
+  return walk(value, 0, true) + "\n";
+}
+
+/**
+ * Encodes a value the way Go's `json.Marshal` does: compact separators
+ * (`{"k":v}`), object keys in insertion (struct) order, Go string escaping
+ * (HTML characters included), and no trailing newline.
+ */
+export function encodeGoJsonCompact(value: unknown): string {
+  return walk(value, 0, false);
+}
+
+/**
+ * Go's `encoding/json` type names for the JSON-representable kinds `json.Unmarshal`
+ * rejects. Shared by every legacy command that reproduces Go's exact `"json: cannot
+ * unmarshal <kind> into Go value of type <target>"` wording against its own target
+ * type — `gen bearer-jwt`'s `jwt.MapClaims` (`bearer-jwt.claims.ts`) and `config.JWK`
+ * (`bearer-jwt.signing-key.ts`) are today's two callers.
+ */
+export function legacyGoJsonKindName(value: unknown): string {
+  if (Array.isArray(value)) return "array";
+  switch (typeof value) {
+    case "number":
+      return "number";
+    case "string":
+      return "string";
+    case "boolean":
+      return "bool";
+    default:
+      return "value";
+  }
 }

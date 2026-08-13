@@ -1,4 +1,10 @@
 import { Option } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
  * A bounded, hand-written evaluator for the subset of the csvq SQL dialect that
@@ -47,7 +53,12 @@ import { Option } from "effect";
 
 /** Thrown for grammar or evaluation outside the supported csvq subset. */
 export class LegacyInspectCsvqError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyInspectCsvqError";
   override readonly name = "LegacyInspectCsvqError";
+
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.impossibleState;
+  }
 }
 
 // ---------------------------------------------------------------------------

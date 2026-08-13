@@ -1,5 +1,7 @@
 import type { ServiceDef } from "@supabase/process-compose";
-import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
+import { dockerNetworkArgs } from "../Platform.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
+import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
 interface AuthServiceOptions {
   readonly dbPort: number;
@@ -12,10 +14,7 @@ interface AuthServiceOptions {
   readonly smtpPort?: number;
   readonly smtpAdminEmail?: string;
   readonly smtpSenderName?: string;
-  readonly dependencies: ReadonlyArray<{
-    readonly service: string;
-    readonly condition: "healthy" | "completed";
-  }>;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
 interface NativeAuthOptions extends AuthServiceOptions {
@@ -25,7 +24,7 @@ interface NativeAuthOptions extends AuthServiceOptions {
 interface DockerAuthOptions extends AuthServiceOptions {
   readonly image: string;
   readonly dbHost: string;
-  readonly networkArgs: readonly string[];
+  readonly platformOs: string;
   readonly apiPort: number;
 }
 
@@ -66,8 +65,7 @@ const authHealthCheck = (port: number) => ({
     path: "/health",
     scheme: "http" as const,
   },
-  periodSeconds: 0.5,
-  failureThreshold: 20,
+  ...stackHealthBudgets.auth,
 });
 
 export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef => ({
@@ -82,17 +80,13 @@ export const makeAuthServiceNative = (opts: NativeAuthOptions): ServiceDef => ({
 
 export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef => {
   const env = authEnv(opts, opts.dbHost);
-  const envArgs = Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]);
-  const containerName = `supabase-auth-${opts.apiPort}`;
-
-  return {
+  return dockerRunService({
     name: "auth",
-    command: "docker",
-    args: ["run", "--rm", "--name", containerName, ...opts.networkArgs, ...envArgs, opts.image],
+    apiPort: opts.apiPort,
+    image: opts.image,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.authPort]),
+    env,
     dependencies: opts.dependencies,
     healthCheck: authHealthCheck(opts.authPort),
-    cleanup: dockerServiceCleanup(containerName),
-    supervision: { orphanCleanup: dockerServiceOrphanCleanup(containerName) },
-    restart: "unless-stopped",
-  };
+  });
 };

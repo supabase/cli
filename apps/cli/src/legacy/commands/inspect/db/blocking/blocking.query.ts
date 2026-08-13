@@ -1,4 +1,5 @@
 import {
+  legacyInspectBacktickStmt,
   legacyInspectInt,
   legacyInspectStmt,
   legacyInspectText,
@@ -25,7 +26,10 @@ WHERE NOT bl.granted`;
 /**
  * `inspect db blocking` — queries holding locks and the queries waiting on them.
  * Port of `apps/cli-go/internal/inspect/blocking/blocking.go`. Both statement
- * columns are whitespace-collapsed.
+ * columns are whitespace-collapsed; Go's row format (`blocking.go:56`,
+ * `` |`%d`|`%s`|`%s`|`%d`|%s|`%s`|\n ``) backtick-wraps every column EXCEPT
+ * `blocked_statement` (col 5), so `blocking_statement` (col 2) uses the
+ * backtick variant and col 5 stays bare.
  */
 export const legacyBlockingSpec: LegacyInspectQuerySpec = {
   name: "blocking",
@@ -41,7 +45,7 @@ export const legacyBlockingSpec: LegacyInspectQuerySpec = {
   ],
   project: (row) => [
     legacyInspectInt(row["blocked_pid"]),
-    legacyInspectStmt(row["blocking_statement"]),
+    legacyInspectBacktickStmt(row["blocking_statement"]),
     legacyInspectText(row["blocking_duration"]),
     legacyInspectInt(row["blocking_pid"]),
     legacyInspectStmt(row["blocked_statement"]),
