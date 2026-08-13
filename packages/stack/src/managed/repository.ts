@@ -507,6 +507,7 @@ export interface PruneManagedIdentityMetadataResult {
 export const decideManagedIdentityMetadataPrune = (input: {
   readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
   readonly locationIds: ReadonlyArray<string>;
+  readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;
 }): PruneManagedIdentityMetadataResult => {
   const selected = new Set(input.locationIds);
   const protectedIds = new Set(
@@ -523,6 +524,17 @@ export const decideManagedIdentityMetadataPrune = (input: {
           protectedIds.add(location.reboundFromLocationId);
           expanded = true;
         }
+      }
+    }
+  }
+  for (const transition of input.transitions) {
+    if (transition.phase === "finalized") continue;
+    for (const location of input.locations) {
+      if (
+        (transition.checkoutId !== undefined && transition.checkoutId === location.checkoutId) ||
+        (transition.path !== undefined && transition.path === location.canonicalPath)
+      ) {
+        protectedIds.add(location.id);
       }
     }
   }

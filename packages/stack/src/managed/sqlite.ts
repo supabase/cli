@@ -1380,6 +1380,14 @@ const selectCheckoutLocations = (
       }),
     );
 
+const selectIdentityTransitions = (
+  database: ManagedSqliteDatabase,
+): ReadonlyArray<ManagedIdentityTransitionRecord> =>
+  database
+    .prepare("SELECT * FROM identity_transitions ORDER BY created_at, id")
+    .all()
+    .map(decodeIdentityTransition);
+
 const pruneCheckoutLocations = (
   database: ManagedSqliteDatabase,
   locationIds: ReadonlyArray<string>,
@@ -1387,6 +1395,7 @@ const pruneCheckoutLocations = (
   const decision = decideManagedIdentityMetadataPrune({
     locations: selectCheckoutLocations(database),
     locationIds,
+    transitions: selectIdentityTransitions(database),
   });
   const statement = database.prepare("DELETE FROM checkout_locations WHERE id = ?");
   for (const id of decision.prunedRecordIds) statement.run([id]);
@@ -1582,6 +1591,7 @@ const pruneIdentityMetadata = (
   const decision = decideManagedIdentityMetadataPrune({
     locations,
     locationIds: input.locationIds,
+    transitions: selectIdentityTransitions(database),
   });
   const statement = database.prepare("DELETE FROM checkout_locations WHERE id = ?");
   for (const id of decision.prunedRecordIds) statement.run([id]);

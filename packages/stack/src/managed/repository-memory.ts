@@ -685,6 +685,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       const decision = decideManagedIdentityMetadataPrune({
         locations: [...locations.values()],
         locationIds: input.locationIds,
+        transitions: [...transitions.values()],
       });
       for (const id of decision.prunedRecordIds) locations.delete(id);
       return decision;
@@ -910,6 +911,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         const decision = decideManagedIdentityMetadataPrune({
           locations: [...locations.values()],
           locationIds,
+          transitions: [...transitions.values()],
         });
         for (const id of decision.prunedRecordIds) locations.delete(id);
         return decision.removed;
