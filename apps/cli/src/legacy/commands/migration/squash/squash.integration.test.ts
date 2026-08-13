@@ -15,6 +15,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyShadowContainerCliSpawner,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import {
@@ -428,6 +429,10 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 };
 
 const tmp = useLegacyTempWorkdir();
+// The shadow baseline cache is ON by default and would otherwise add a `docker stop`/`docker cp`/
+// `docker start` round trip plus a snapshot tar to every shadow this suite provisions. This suite
+// is about the command, not the cache, so it asserts the plain shadow lifecycle.
+useLegacyShadowCacheDisabled();
 
 describe("legacy migration squash", () => {
   describe("flag surface & ordering", () => {

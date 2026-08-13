@@ -34,15 +34,16 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 
 ## Files Written
 
-| Path                                                        | Format | When                                                                                                               |
-| ----------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | non-empty `--file` diff; bundled pg-delta may emit ordered transaction-aware files, while pgAdmin always emits one |
-| `<path>` (from `--output` / `-o`)                           | SQL    | explicit `--from/--to` mode with `--output`                                                                        |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                   | JSON   | legacy opt-out's explicit migrations catalog                                                                       |
-| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`    | PEM    | legacy opt-out, for a Supabase TLS target                                                                          |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                |
-| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | `--linked` (post-run cache)                                                                                        |
-| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)                                                                                        |
+| Path                                                         | Format | When                                                                                                               |
+| ------------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`  | SQL    | non-empty `--file` diff; bundled pg-delta may emit ordered transaction-aware files, while pgAdmin always emits one |
+| `<path>` (from `--output` / `-o`)                            | SQL    | explicit `--from/--to` mode with `--output`                                                                        |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                    | JSON   | legacy opt-out's explicit migrations catalog                                                                       |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`     | PEM    | legacy opt-out, for a Supabase TLS target                                                                          |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`      | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar` | tar    | shadow baseline cache enabled (default) — the shadow's PGDATA snapshot, ~90MB, current key only                    |
+| `~/.supabase/<workdir-hash>/linked-project.json`             | JSON   | `--linked` (post-run cache)                                                                                        |
+| `~/.supabase/telemetry.json`                                 | JSON   | every invocation (post-run)                                                                                        |
 
 ## Docker
 
@@ -92,6 +93,7 @@ of this command's own target resolve, ahead of the differ container.
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                    | no        |
 | `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
+| `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; ON by default, set to `false`/`0` to opt out — the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                        | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                               | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
 | `SUPABASE_USE_PG_DELTA_NEXT`                                                          | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                     | no        |
@@ -205,6 +207,30 @@ when declarative files exist.
   shadow database (CLI-1956 — `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`,
   no longer the `db __shadow` seam) plus a native pg-delta catalog export. No hidden Go
   `db schema declarative __catalog` subprocess runs for this path any more.
+
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
+
+- ON by default; set `SUPABASE_SHADOW_CACHE=false` (or `=0`) to opt out, in which case the shadow
+  lifecycle is exactly as documented above.
+- The cached artifact is a **file**, never a container: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar`
+  (~90MB), a tar of the shadow's PGDATA directory taken right after the platform baseline and
+  before `contrib_regression`/any user migration. The key hashes every input baked into the cluster
+  (images, JWT secret, root key, `[db] password`, `db.settings`, vault secrets, `roles.sql`,
+  resolved JWKS, shadow port, major version).
+- The container lifecycle is otherwise IDENTICAL to the uncached path — same project labels, always
+  `docker rm -f -v` on release. Nothing is kept between runs, there is no cache-key Docker label,
+  and no lock file. One forced exception: a COLD cache-enabled run creates the shadow without
+  `--rm`, because it must `docker stop` the container to take a coherent snapshot and Docker
+  destroys an `--rm` container the moment it exits. It is still removed on release.
+- Cold run: `docker stop` -> `docker cp <id>:/var/lib/postgresql/data -` streamed to the tar (temp
+  name + atomic rename) -> `docker start` -> readiness wait -> continue. Publishing a new key's tar
+  deletes every other `shadow-baseline-*.tar` (retention: current key only).
+- Warm run: `docker cp - <id>:/var/lib/postgresql` into the created-but-not-yet-started container,
+  so the entrypoint skips `initdb` and the platform baseline is skipped too.
+- Any warm-path failure removes the container, deletes the tar as suspect, and cold-provisions; any
+  cold export failure only warns on stderr and leaves the run uncached. The cache never fails the
+  command.
+- `--use-pgadmin` is NOT cached — its shadow keeps the plain create/remove lifecycle.
 
 ### `--use-pgadmin` parity quirks and deliberate divergence (CLI-1968)
 

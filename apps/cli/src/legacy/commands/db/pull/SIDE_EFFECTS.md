@@ -58,6 +58,7 @@ disables formatting without disabling safe compaction.
 | `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`         | PEM    | legacy opt-out, for a Supabase TLS target                                                                                                              |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`          | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                    |
 | `<workdir>/supabase/schemas/**`, `<workdir>/supabase/cluster/**` | SQL    | `--experimental` structured dump (delegated to Go; both dirs are `RemoveAll`'d then rewritten by `format.WriteStructuredSchemas`, not just written to) |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`     | tar    | shadow baseline cache enabled (default) — the shadow's PGDATA snapshot, ~90MB, one file for the current key only                                       |
 | `~/.supabase/<workdir-hash>/linked-project.json`                 | JSON   | linked (post-run cache)                                                                                                                                |
 | `~/.supabase/telemetry.json`                                     | JSON   | every invocation (post-run)                                                                                                                            |
 
@@ -67,10 +68,38 @@ disables formatting without disabling safe compaction.
 - Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource` in
   `legacy/commands/db/shared/legacy-shadow-source.ts` / `legacyPrepareRawShadow` in
   `legacy/shared/db-bootstrap/shadow-database.ts`, which also owns the lower-level primitives
-  both build on), no longer via a Go seam.
+  both build on), no longer via a Go seam. Torn down with `docker rm -f -v` on every run,
+  cache or no cache — see the shadow baseline cache section below.
 - `supabase/migra` container — the migra OOM bash fallback only.
 - `pg_dump` container — the initial-migra pull's native remote-schema dump
   (`legacyStreamPgDump`, shared with `db dump`).
+
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
+
+- ON by default; set `SUPABASE_SHADOW_CACHE=false` (or `=0`) to opt out, in which case the shadow
+  lifecycle is exactly as documented above.
+- The cached artifact is a **file**, never a container: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar`
+  (~90MB), a tar of the shadow's PGDATA directory taken right after the platform baseline and
+  before `contrib_regression`/any user migration. The key hashes every input baked into the cluster
+  (images, JWT secret, root key, `[db] password`, `db.settings`, vault secrets, `roles.sql`,
+  resolved JWKS, shadow port, major version).
+- The container lifecycle is otherwise IDENTICAL to the uncached path — same project labels, always
+  `docker rm -f -v` on release. Nothing is kept between runs, there is no cache-key Docker label,
+  and no lock file. One forced exception: a COLD cache-enabled run creates the shadow without
+  `--rm`, because it must `docker stop` the container to take a coherent snapshot and Docker
+  destroys an `--rm` container the moment it exits. It is still removed on release.
+- Cold run: `docker stop` -> `docker cp <id>:/var/lib/postgresql/data -` streamed to the tar (temp
+  name + atomic rename) -> `docker start` -> readiness wait -> continue. Publishing a new key's tar
+  deletes every other `shadow-baseline-*.tar` (retention: current key only).
+- Warm run: `docker cp - <id>:/var/lib/postgresql` into the created-but-not-yet-started container,
+  so the entrypoint skips `initdb` and the platform baseline is skipped too.
+- Any warm-path failure removes the container, deletes the tar as suspect, and cold-provisions; any
+  cold export failure only warns on stderr and leaves the run uncached. The cache never fails the
+  command.
+- Each pooler-retry attempt acquires and releases its own shadow; on a warm hit each one restores
+  the same tar into its own fresh container.
+- `--declarative`'s bare shadow runs no platform baseline, so there is nothing to snapshot — it
+  keeps the plain create/remove lifecycle.
 
 ## API Routes / DB
 
@@ -92,6 +121,7 @@ disables formatting without disabling safe compaction.
 | `SUPABASE_DB_MAJOR_VERSION` / `SUPABASE_DB_HEALTH_TIMEOUT` / `SUPABASE_DB_SETTINGS_*` | shadow container-config overrides, same as `db start`/`db reset`                                                                                                                                                    | no        |
 | `SUPABASE_PROJECT_ID`                                                                 | overrides the shadow container's project id/labels, same as `db start`/`db reset` (`utils.DbId`); ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag | no        |
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
+| `SUPABASE_SHADOW_CACHE`                                                               | shadow baseline cache; ON by default, set to `false`/`0` to opt out — the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes)                        | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta diff engine                                                                                                                                                                                          | no        |
 | `SUPABASE_EXPERIMENTAL`                                                               | selects the deprecated structured-dump branch (still delegates to Go, see below)                                                                                                                                    | no        |
 | `SUPABASE_USE_PG_DELTA_NEXT`                                                          | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                     | no        |

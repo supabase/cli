@@ -24,13 +24,15 @@ import {
 } from "./db-bootstrap/local-container-inputs.ts";
 import { legacyWaitForHealthyServices } from "./db-bootstrap/health-check.ts";
 import {
-  legacyCreateShadowDatabase,
-  legacyRemoveShadowDatabase,
+  legacyWithShadowDatabase,
+  type LegacyShadowAcquiredHandle,
+} from "./db-bootstrap/shadow-cache.ts";
+import {
   legacySetupShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
-  type LegacyShadowDatabaseHandle,
   type LegacyShadowSetupInput,
 } from "./db-bootstrap/shadow-database.ts";
+import { legacyPgDeltaTempPath } from "./legacy-pgdelta.paths.ts";
 import { legacyCompareUtf8Bytes } from "./legacy-glob.ts";
 import { LegacyMigrationsReadError } from "./legacy-migration.errors.ts";
 import { legacyToPostgresURL } from "./legacy-postgres-url.ts";
@@ -225,11 +227,6 @@ export function legacyDeclarativeCatalogFileName(
   timestampMillis: number,
 ): string {
   return `catalog-${legacySanitizedCatalogPrefix(prefix)}-declarative-${hash}-${timestampMillis}.json`;
-}
-
-/** `supabase/.temp/pgdelta` — where catalog snapshots + debug bundles live. */
-export function legacyPgDeltaTempPath(path: Path.Path, workdir: string): string {
-  return path.join(workdir, "supabase", ".temp", "pgdelta");
 }
 
 /**
@@ -768,7 +765,7 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
   built: LegacyShadowCatalogInputs,
   provision: (
     spawner: Spawner,
-    handle: LegacyShadowDatabaseHandle,
+    handle: LegacyShadowAcquiredHandle,
     shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
   ) => Effect.Effect<LegacyProvisionedShadow, EP, RP>,
   persist: (snapshot: string) => Effect.Effect<string, E, R>,
@@ -783,18 +780,20 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
       fs,
       path,
     );
-    const written = yield* Effect.acquireUseRelease(
-      legacyCreateShadowDatabase(spawner, shadowInput),
-      (handle) =>
-        Effect.gen(function* () {
-          const shadow = yield* provision(spawner, handle, shadowInput);
-          const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
-            targetRef: shadow.sourceUrl,
-            role: "postgres",
-          });
-          return yield* persist(snapshot);
-        }),
-      (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+    // `legacyWithShadowDatabase` (`db-bootstrap/shadow-cache.ts`) rather than a bare
+    // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc comment: with
+    // `SUPABASE_SHADOW_CACHE` unset it IS that pair (identical Docker argv, identical labels), and
+    // with it set a catalog cache miss restores a key-matching PGDATA baseline snapshot instead of
+    // paying the full cold provision — the same swap `db diff`/`db pull`'s own call sites make.
+    const written = yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
+      Effect.gen(function* () {
+        const shadow = yield* provision(spawner, handle, shadowInput);
+        const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
+          targetRef: shadow.sourceUrl,
+          role: "postgres",
+        });
+        return yield* persist(snapshot);
+      }),
     );
     return path.relative(ctx.cwd, written);
   });
@@ -811,7 +810,7 @@ const legacyProvisionMigrationsShadow = (
   ctx: LegacyPgDeltaContext,
   toml: LegacyDbTomlValues,
   spawner: Spawner,
-  handle: LegacyShadowDatabaseHandle,
+  handle: LegacyShadowAcquiredHandle,
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   legacyPrepareShadowSource(spawner, handle, {
@@ -1050,7 +1049,7 @@ const legacyProvisionBaselineShadow = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
   ctx: LegacyPgDeltaContext,
-  handle: LegacyShadowDatabaseHandle,
+  handle: LegacyShadowAcquiredHandle,
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   Effect.gen(function* () {
@@ -1092,7 +1091,7 @@ const legacyProvisionDeclarativeShadow = (
   ctx: LegacyPgDeltaContext,
   declarativeDirAbs: string,
   declarativeDirRel: string,
-  handle: LegacyShadowDatabaseHandle,
+  handle: LegacyShadowAcquiredHandle,
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   Effect.gen(function* () {

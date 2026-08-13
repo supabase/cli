@@ -46,11 +46,11 @@ import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-ch
 import { legacySeedGlobals } from "../../../shared/legacy-migration-apply.ts";
 import { LEGACY_BAD_PATTERN_MESSAGE, legacyPathMatch } from "../../../shared/legacy-path-match.ts";
 import { legacyToPostgresURL } from "../../../shared/legacy-postgres-url.ts";
+import type { LegacyShadowAcquiredHandle } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyMigrateShadowDatabase,
   legacyMigrateNextShadowDatabase,
   LegacyShadowDbError,
-  type LegacyShadowDatabaseHandle,
   type LegacyShadowSetupInput,
   type LegacyShadowSourceResult,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
@@ -126,7 +126,7 @@ export type LegacyPrepareShadowSourceError =
  */
 export const legacyPrepareShadowSource = <E>(
   spawner: Spawner,
-  handle: LegacyShadowDatabaseHandle,
+  handle: LegacyShadowAcquiredHandle,
   input: LegacyPrepareShadowSourceInput<E>,
 ): Effect.Effect<
   LegacyShadowSourceResult,
@@ -160,20 +160,29 @@ export const legacyPrepareShadowSource = <E>(
       timeoutSeconds: input.healthTimeoutSeconds,
     });
 
+    // `handle` doubles as the baseline state: on a warm shadow-cache hit the cluster it carries
+    // already holds the platform baseline (so only the template database + user migrations run),
+    // and on a cache-enabled cold provision it carries the snapshot step that runs between the
+    // two — see `shadow-cache.ts`/`LegacyShadowBaselineState`. An uncached acquire hands over the
+    // always-cold state, which reproduces today's sequence exactly.
     const migrateShadow =
       input.migrationMode === "pgdelta-next"
         ? legacyMigrateNextShadowDatabase
         : legacyMigrateShadowDatabase;
-    yield* migrateShadow(spawner, {
-      fs: input.fs,
-      path: input.path,
-      workdir: input.workdir,
-      projectId: input.projectId,
-      container: containerId,
-      networkId: input.networkId,
-      connConfig,
-      setup: input.setup,
-    });
+    yield* migrateShadow(
+      spawner,
+      {
+        fs: input.fs,
+        path: input.path,
+        workdir: input.workdir,
+        projectId: input.projectId,
+        container: containerId,
+        networkId: input.networkId,
+        connConfig,
+        setup: input.setup,
+      },
+      handle,
+    );
 
     const sourceUrl = legacyToPostgresURL(connConfig);
 

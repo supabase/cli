@@ -10,7 +10,7 @@
  * and only the final timeout's failures surface to the caller.
  */
 
-import { Data, Effect, Schedule, Stream } from "effect";
+import { Clock, Data, Effect, Result, Schedule, Stream } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
@@ -27,6 +27,7 @@ import {
 import { LegacyDbConnection, type LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { legacyInspectContainerState } from "../legacy-docker-lifecycle.ts";
 import { legacyKongAuthHeaders } from "../legacy-kong-auth.ts";
+import { legacyShadowDebugEnabled, legacyShadowDebugTruncate } from "./shadow-debug.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
@@ -523,8 +524,15 @@ export function legacyWaitForShadowReady(
   opts: LegacyWaitForShadowReadyOptions = {},
 ): Effect.Effect<void, LegacyHealthCheckTimeoutError, LegacyDbConnection> {
   const timeoutSeconds = opts.timeoutSeconds ?? LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS;
+  // Checked once per call (never cached at module load — a test, or a long-lived process,
+  // mutates `process.env` and expects the next call to see it) — see `shadow-debug.ts`'s own
+  // doc comment. `Output` is not in this function's own context (only `LegacyDbConnection` is),
+  // so debug lines here go straight to stderr via `process.stderr.write` rather than widening
+  // this function's `R` just for a debug-only concern — the same tradeoff
+  // `legacyStreamContainerLogsOnce` above already makes for its own log-teeing.
+  const debug = legacyShadowDebugEnabled();
 
-  const probe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = Effect.gen(
+  const rawProbe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = Effect.gen(
     function* () {
       const state = yield* legacyInspectContainerState(spawner, containerId).pipe(
         Effect.mapError((cause) => legacyShadowNotReady(cause.message)),
@@ -539,12 +547,40 @@ export function legacyWaitForShadowReady(
     },
   );
 
+  let attempts = 0;
+  // The most recent attempt's failure reason, kept even once a later attempt succeeds — the
+  // summary line reports it either way (see the doc comment below on the completion line).
+  let lastError: string | undefined;
+
+  // Debug-only per-attempt line: `shadow-debug: ready-attempt <n> <ms>ms <ok|error: reason>`.
+  // Exploration 1a's key data point — whether a cold attempt burns the full connect timeout.
+  const probe: Effect.Effect<void, LegacyShadowReadyFailure, LegacyDbConnection> = !debug
+    ? rawProbe
+    : Effect.gen(function* () {
+        attempts += 1;
+        const attemptNumber = attempts;
+        const start = yield* Clock.currentTimeMillis;
+        const outcome = yield* Effect.result(rawProbe);
+        const elapsed = (yield* Clock.currentTimeMillis) - start;
+        if (Result.isFailure(outcome)) lastError = outcome.failure.reason;
+        yield* Effect.sync(() => {
+          globalThis.process.stderr.write(
+            `shadow-debug: ready-attempt ${attemptNumber} ${elapsed}ms ${
+              Result.isSuccess(outcome)
+                ? "ok"
+                : `error: ${legacyShadowDebugTruncate(outcome.failure.reason)}`
+            }\n`,
+          );
+        });
+        return yield* Effect.fromResult(outcome);
+      });
+
   // Same policy as `legacyWaitForHealthyServices` (Go's
   // `NewBackoffPolicy(ctx, timeout)`): a 1-second constant delay, capped at
   // `timeoutSeconds` retries after the initial attempt.
   const schedule = Schedule.max([Schedule.spaced("1 seconds"), Schedule.recurs(timeoutSeconds)]);
 
-  return probe.pipe(
+  const waited: Effect.Effect<void, LegacyHealthCheckTimeoutError, LegacyDbConnection> = probe.pipe(
     Effect.retry({ schedule, while: (failure) => !failure.fatal }),
     Effect.catch((failure) =>
       Effect.gen(function* () {
@@ -562,4 +598,22 @@ export function legacyWaitForShadowReady(
       }),
     ),
   );
+
+  if (!debug) return waited;
+
+  // Debug-only completion line, emitted on success OR failure:
+  // `shadow-debug: ready-wait <ms>ms attempts=<n>[ last-error="<reason>"]`.
+  return Effect.gen(function* () {
+    const start = yield* Clock.currentTimeMillis;
+    const outcome = yield* Effect.result(waited);
+    const elapsed = (yield* Clock.currentTimeMillis) - start;
+    const lastErrorSegment =
+      lastError === undefined ? "" : ` last-error="${legacyShadowDebugTruncate(lastError)}"`;
+    yield* Effect.sync(() => {
+      globalThis.process.stderr.write(
+        `shadow-debug: ready-wait ${elapsed}ms attempts=${attempts}${lastErrorSegment}\n`,
+      );
+    });
+    return yield* Effect.fromResult(outcome);
+  });
 }

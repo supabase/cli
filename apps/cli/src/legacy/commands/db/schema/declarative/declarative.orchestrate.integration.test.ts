@@ -5,7 +5,10 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 
-import { mockLegacyShadowContainerCliSpawner } from "../../../../../../tests/helpers/legacy-mocks.ts";
+import {
+  mockLegacyShadowContainerCliSpawner,
+  useLegacyShadowCacheDisabled,
+} from "../../../../../../tests/helpers/legacy-mocks.ts";
 import { alwaysReadyHttpClientLayer } from "../../../../../../tests/helpers/legacy-local-reset.ts";
 import { mockOutput, mockRuntimeInfo } from "../../../../../../tests/helpers/mocks.ts";
 import { CliArgs } from "../../../../../shared/cli/cli-args.service.ts";
@@ -389,6 +392,10 @@ const toml: LegacyDbTomlValues = {
 };
 
 describe("legacyDiffDeclarativeToMigrations", () => {
+  // The shadow baseline cache is ON by default and would otherwise add a `docker stop`/`docker
+  // cp`/`docker start` round trip plus a snapshot tar to every shadow this suite provisions. This
+  // suite is about the orchestration, not the cache, so it asserts the plain shadow lifecycle.
+  useLegacyShadowCacheDisabled();
   it.effect(
     "resolves the migrations catalog natively and diffs it against the seam-provisioned declarative catalog",
     () => {

@@ -29,6 +29,7 @@ import { legacyFindDropStatements } from "../../../shared/legacy-sql-split.ts";
 import { legacyBuildLocalDbContainerInputs } from "../../../shared/db-bootstrap/local-container-inputs.ts";
 import { legacyIsLocalDbRunning } from "../../../shared/db-bootstrap/local-db-running.ts";
 import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyCreateShadowDatabase,
   legacyMigrateShadowDatabase,
@@ -681,57 +682,60 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         pgDelta: cfg.pgDelta,
         ctx,
       };
-      // Register cleanup atomically with creation; prepare and diff remain interruptible.
-      diffResult = yield* Effect.acquireUseRelease(
-        legacyCreateShadowDatabase(spawner, shadowInput),
-        (handle) =>
-          Effect.gen(function* () {
-            const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
-            const target = shadow.targetUrlOverride ?? targetUrl;
-            yield* output.raw(
-              flags.schema.length > 0
-                ? `Diffing schemas: ${flags.schema.join(",")}\n`
-                : "Diffing schemas...\n",
-              "stderr",
-            );
-            if (useDelta) {
-              const result = yield* pgDelta.diffDatabase({
-                context: ctx,
-                source: {
-                  kind: "database",
-                  ref: shadow.sourceUrl,
-                  connectOptions: { isLocal: true, dnsResolver: "native" },
+      // `legacyWithShadowDatabase` (`shadow-cache.ts`) rather than a bare
+      // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc comment for
+      // both halves of the rationale: why the lifecycle is an `Effect.acquireUseRelease` (an
+      // interrupt must not be able to land between creation and the finalizer being attached) and
+      // why the cache seam sits here (with `SUPABASE_SHADOW_CACHE` unset it IS today's
+      // create/remove pair; with it set it restores a key-matching PGDATA snapshot instead of
+      // rebuilding the platform baseline from scratch).
+      diffResult = yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
+        Effect.gen(function* () {
+          const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+          const target = shadow.targetUrlOverride ?? targetUrl;
+          yield* output.raw(
+            flags.schema.length > 0
+              ? `Diffing schemas: ${flags.schema.join(",")}\n`
+              : "Diffing schemas...\n",
+            "stderr",
+          );
+          if (useDelta) {
+            const result = yield* pgDelta.diffDatabase({
+              context: ctx,
+              source: {
+                kind: "database",
+                ref: shadow.sourceUrl,
+                connectOptions: { isLocal: true, dnsResolver: "native" },
+              },
+              target: {
+                kind: "database",
+                ref: target,
+                ...(shadow.targetUrlOverride === undefined ? { connection: resolved.conn } : {}),
+                connectOptions: {
+                  isLocal: shadow.targetUrlOverride !== undefined || resolved.isLocal,
+                  dnsResolver,
                 },
-                target: {
-                  kind: "database",
-                  ref: target,
-                  ...(shadow.targetUrlOverride === undefined ? { connection: resolved.conn } : {}),
-                  connectOptions: {
-                    isLocal: shadow.targetUrlOverride !== undefined || resolved.isLocal,
-                    dnsResolver,
-                  },
-                },
-                schema: flags.schema,
-                formatOptions,
-                debug: legacyIsPgDeltaDebugEnabled(),
-                strictCoverage: flags.strictCoverage,
-              });
-              // Keep the per-unit plan files so a multi-unit plan can be written as one
-              // migration file each; `sql` stays the flattened join for stdout review +
-              // machine payloads.
-              return { sql: result.sql, files: result.files, hazards: result.hazards };
-            }
-            const sql = yield* legacyDiffMigra(ctx, {
-              source: shadow.sourceUrl,
-              target,
+              },
               schema: flags.schema,
-              connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+              formatOptions,
+              debug: legacyIsPgDeltaDebugEnabled(),
+              strictCoverage: flags.strictCoverage,
             });
-            // The migra engine has no execution-aware plan units, so it always writes a
-            // single migration file.
-            return { sql, files: undefined };
-          }),
-        (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+            // Keep the per-unit plan files so a multi-unit plan can be written as one
+            // migration file each; `sql` stays the flattened join for stdout review +
+            // machine payloads.
+            return { sql: result.sql, files: result.files, hazards: result.hazards };
+          }
+          const sql = yield* legacyDiffMigra(ctx, {
+            source: shadow.sourceUrl,
+            target,
+            schema: flags.schema,
+            connectOptions: { isLocal: resolved.isLocal, dnsResolver },
+          });
+          // The migra engine has no execution-aware plan units, so it always writes a
+          // single migration file.
+          return { sql, files: undefined };
+        }),
       );
     }
     const out = diffResult.sql;

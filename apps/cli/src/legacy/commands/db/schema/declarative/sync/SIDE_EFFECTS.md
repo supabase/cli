@@ -28,12 +28,13 @@ disabling safe compaction.
 
 ## Files Written
 
-| Path                                                               | Format | When                                              |
-| ------------------------------------------------------------------ | ------ | ------------------------------------------------- |
-| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql` | SQL    | changes; bundled engine may emit ordered segments |
-| `<workdir>/supabase/schemas/extension.sql`                         | SQL    | accepted legacy-extension repair                  |
-| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out's catalog cache                    |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | bundled engine with `PGDELTA_DEBUG`               |
+| Path                                                               | Format | When                                                                                            |
+| ------------------------------------------------------------------ | ------ | ------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql` | SQL    | changes; bundled engine may emit ordered segments                                               |
+| `<workdir>/supabase/schemas/extension.sql`                         | SQL    | accepted legacy-extension repair                                                                |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out's catalog cache                                                                  |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | bundled engine with `PGDELTA_DEBUG`                                                             |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`       | tar    | shadow baseline cache enabled (default) — the shadow's PGDATA snapshot, ~90MB, current key only |
 
 ## Subprocesses / Containers
 
@@ -47,13 +48,14 @@ disabling safe compaction.
 
 ## Environment Variables
 
-| Variable                     | Purpose                                            | Required? |
-| ---------------------------- | -------------------------------------------------- | --------- |
-| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta    | no        |
-| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry              | no        |
-| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                     | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate           | no        |
-| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback | no        |
+| Variable                     | Purpose                                                                                                                                                                                      | Required? |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta                                                                                                                                              | no        |
+| `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                                                        | no        |
+| `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; ON by default, set to `false`/`0` to opt out — the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes) | no        |
+| `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                               | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                     | no        |
+| `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                           | no        |
 
 ## Exit Codes
 
@@ -119,3 +121,32 @@ existing SQL or creates an export manifest.
   shadows. Under the legacy opt-out, both catalog shadows are provisioned
   in-process using the same primitives as `db diff`; catalog export,
   declarative apply, and diff run through the edge-runtime pg-delta scripts.
+
+### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
+
+The migrations-catalog shadow this command provisions on a cache miss goes through
+`legacyGetMigrationsCatalogRef` -> `exportViaShadowCatalog` (`legacy-pgdelta.cache.ts`), which
+uses the same `legacyWithShadowDatabase` seam `db diff`/`db pull` do — so this command reads
+`SUPABASE_SHADOW_CACHE` and inherits its whole lifecycle:
+
+- ON by default; set `SUPABASE_SHADOW_CACHE=false` (or `=0`) to opt out, in which case the shadow
+  lifecycle is exactly as documented above.
+- The cached artifact is a **file**, never a container: `supabase/.temp/pgdelta/shadow-baseline-<key>.tar`
+  (~90MB), a tar of the shadow's PGDATA directory taken right after the platform baseline and
+  before `contrib_regression`/any user migration. The key hashes every input baked into the cluster
+  (images, JWT secret, root key, `[db] password`, `db.settings`, vault secrets, `roles.sql`,
+  resolved JWKS, shadow port, major version).
+- The container lifecycle is otherwise IDENTICAL to the uncached path — same project labels, always
+  `docker rm -f -v` on release. Nothing is kept between runs, there is no cache-key Docker label,
+  and no lock file. One forced exception: a COLD cache-enabled run creates the shadow without
+  `--rm`, because it must `docker stop` the container to take a coherent snapshot and Docker
+  destroys an `--rm` container the moment it exits. It is still removed on release.
+- Cold run: `docker stop` -> `docker cp <id>:/var/lib/postgresql/data -` streamed to the tar (temp
+  name + atomic rename) -> `docker start` -> readiness wait -> continue. Publishing a new key's tar
+  deletes every other `shadow-baseline-*.tar` (retention: current key only).
+- Warm run: `docker cp - <id>:/var/lib/postgresql` into the created-but-not-yet-started container,
+  so the entrypoint skips `initdb` and the platform baseline is skipped too.
+- Any warm-path failure removes the container, deletes the tar as suspect, and cold-provisions; any
+  cold export failure only warns on stderr and leaves the run uncached. The cache never fails the
+  command.
+- The declarative-catalog shadow is NOT cached — it is provisioned and torn down per run.

@@ -24,6 +24,7 @@ import {
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyPlatformApiService,
   mockLegacyTelemetryStateTracked,
+  useLegacyShadowCacheDisabled,
   useLegacyTempWorkdir,
 } from "../../../../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../../../../shared/cli/cli-args.service.ts";
@@ -432,6 +433,10 @@ const legacyUuidLoadError = () =>
 
 describe("legacy db schema declarative sync integration", () => {
   const tmp = useLegacyTempWorkdir();
+  // The shadow baseline cache is ON by default and would otherwise add a `docker stop`/`docker cp`/
+  // `docker start` round trip plus a snapshot tar to every shadow this suite provisions. This suite
+  // is about the command, not the cache, so it asserts the plain shadow lifecycle.
+  useLegacyShadowCacheDisabled();
 
   it.effect("gate: fails when pg-delta is not enabled", () => {
     seedDeclarative(tmp.current);

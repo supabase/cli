@@ -699,6 +699,33 @@ export function useLegacyTempWorkdir(prefix = "supabase-legacy-test-"): {
 }
 
 /**
+ * Pins `SUPABASE_SHADOW_CACHE=0` for every test in the calling file, restoring whatever the host
+ * had afterwards. Like {@link useLegacyTempWorkdir} it calls vitest's `beforeEach`/`afterEach`
+ * internally, so it must be invoked at module scope (or inside the surrounding `describe`).
+ *
+ * The shadow baseline cache (`db-bootstrap/shadow-cache.ts`) is ON by default and reads
+ * `process.env` directly, so ANY suite that provisions a shadow through
+ * `legacyWithShadowDatabase` with a mocked spawner — `db diff`, `db pull`, declarative sync — now
+ * exercises the cache path unless it opts out: the cold path adds a `docker stop`/`docker cp`/
+ * `docker start` round trip and writes a ~90MB-shaped tar into the test's workdir. Suites whose
+ * subject is anything OTHER than the cache should call this so they keep asserting the plain
+ * container lifecycle; the cache's own suites deliberately do not.
+ */
+export function useLegacyShadowCacheDisabled(): void {
+  const name = "SUPABASE_SHADOW_CACHE";
+  let previous: string | undefined;
+  beforeEach(() => {
+    previous = process.env[name];
+    process.env[name] = "0";
+  });
+  afterEach(() => {
+    if (previous === undefined) delete process.env[name];
+    else process.env[name] = previous;
+    previous = undefined;
+  });
+}
+
+/**
  * Ambient isolation for tests that construct the REAL `legacyCliConfigLayer` /
  * `legacyCredentialsLayer` (directly or inside a command runtime layer) against
  * a real filesystem. Those layers read `<homeDir>/.supabase/profile` and

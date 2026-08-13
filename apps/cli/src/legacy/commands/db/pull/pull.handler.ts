@@ -40,6 +40,7 @@ import {
   legacyBuildLocalDbContainerInputs,
   type LegacyLocalDbContainerInputs,
 } from "../../../shared/db-bootstrap/local-container-inputs.ts";
+import { legacyWithShadowDatabase } from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyCreateShadowDatabase,
   legacyPrepareRawShadow,
@@ -786,59 +787,62 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               pgDelta: toml.pgDelta,
               ctx,
             };
-            // Register cleanup atomically with shadow acquisition.
-            return yield* Effect.acquireUseRelease(
-              legacyCreateShadowDatabase(spawner, shadowInput),
-              (handle) =>
-                Effect.gen(function* () {
-                  const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
-                  const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
-                  yield* output.raw(
-                    diffSchema.length > 0
-                      ? `Diffing schemas: ${diffSchema.join(",")}\n`
-                      : "Diffing schemas...\n",
-                    "stderr",
-                  );
-                  if (usePgDeltaDiff) {
-                    return yield* pgDeltaEngine.diffDatabase({
-                      context: ctx,
-                      source: {
-                        kind: "database",
-                        ref: shadow.sourceUrl,
-                        connectOptions: { isLocal: true, dnsResolver: "native" },
-                      },
-                      target: {
-                        kind: "database",
-                        ref: target,
-                        ...(shadow.targetUrlOverride === undefined
-                          ? {
-                              ...(targetEndpoint.connection !== undefined
-                                ? { connection: targetEndpoint.connection }
-                                : {}),
-                              connectOptions: targetEndpoint.connectOptions,
-                            }
-                          : {
-                              connectOptions: { isLocal: true, dnsResolver },
-                            }),
-                      },
-                      schema: diffSchema,
-                      formatOptions,
-                      debug: legacyIsPgDeltaDebugEnabled(),
-                      strictCoverage: flags.strictCoverage,
-                    });
-                  }
-                  const sql = yield* legacyDiffMigra(ctx, {
-                    source: shadow.sourceUrl,
-                    target,
+            // `legacyWithShadowDatabase` (`shadow-cache.ts`) rather than a bare
+            // `legacyCreateShadowDatabase`/`legacyRemoveShadowDatabase` pair — see its doc
+            // comment for both halves of the rationale: why the lifecycle is an
+            // `Effect.acquireUseRelease` (an interrupt must not be able to land between creation
+            // and the finalizer being attached) and why the cache seam sits here. Note each
+            // pooler-retry attempt still acquires and releases its own shadow — on the warm path
+            // that is the SAME restored baseline snapshot, sequentially.
+            return yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
+              Effect.gen(function* () {
+                const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+                const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
+                yield* output.raw(
+                  diffSchema.length > 0
+                    ? `Diffing schemas: ${diffSchema.join(",")}\n`
+                    : "Diffing schemas...\n",
+                  "stderr",
+                );
+                if (usePgDeltaDiff) {
+                  return yield* pgDeltaEngine.diffDatabase({
+                    context: ctx,
+                    source: {
+                      kind: "database",
+                      ref: shadow.sourceUrl,
+                      connectOptions: { isLocal: true, dnsResolver: "native" },
+                    },
+                    target: {
+                      kind: "database",
+                      ref: target,
+                      ...(shadow.targetUrlOverride === undefined
+                        ? {
+                            ...(targetEndpoint.connection !== undefined
+                              ? { connection: targetEndpoint.connection }
+                              : {}),
+                            connectOptions: targetEndpoint.connectOptions,
+                          }
+                        : {
+                            connectOptions: { isLocal: true, dnsResolver },
+                          }),
+                    },
                     schema: diffSchema,
-                    connectOptions:
-                      shadow.targetUrlOverride === undefined
-                        ? targetEndpoint.connectOptions
-                        : { isLocal: true, dnsResolver },
+                    formatOptions,
+                    debug: legacyIsPgDeltaDebugEnabled(),
+                    strictCoverage: flags.strictCoverage,
                   });
-                  return { sql, files: undefined, debug: undefined };
-                }),
-              (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
+                }
+                const sql = yield* legacyDiffMigra(ctx, {
+                  source: shadow.sourceUrl,
+                  target,
+                  schema: diffSchema,
+                  connectOptions:
+                    shadow.targetUrlOverride === undefined
+                      ? targetEndpoint.connectOptions
+                      : { isLocal: true, dnsResolver },
+                });
+                return { sql, files: undefined, debug: undefined };
+              }),
             );
           });
         const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);

@@ -783,7 +783,12 @@ describe("legacySetupShadowDatabase / legacyMigrateShadowDatabase", () => {
           },
           setup: baseShadowSetup(),
         });
-        expect(events).toEqual(["list", "connect"]);
+        // Two connects, not one: on the cold branch the platform baseline runs in its own scope so
+        // its session is closed before `snapshotBaseline` (which stops the container to take a
+        // disk-level PGDATA snapshot), and the template database + migrations then run on a second
+        // session. The ordering under test is unaffected — the migration listing still precedes
+        // every connect.
+        expect(events).toEqual(["list", "connect", "connect"]);
       }).pipe(
         Effect.provide(
           Layer.mergeAll(

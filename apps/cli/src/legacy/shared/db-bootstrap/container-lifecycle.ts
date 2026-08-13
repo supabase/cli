@@ -45,6 +45,11 @@ import {
 /** Structural element type of {@link LegacyStartContainerSpec.secretFiles} — not exported from `docker-create-args.ts`, so referenced positionally here. */
 type LegacyStartSecretFileSpec = NonNullable<LegacyStartContainerSpec["secretFiles"]>[number];
 
+/** Structural element type of {@link LegacyStartContainerSpec.preStartArchives} — same reasoning as {@link LegacyStartSecretFileSpec}. */
+type LegacyStartPreStartArchiveSpec = NonNullable<
+  LegacyStartContainerSpec["preStartArchives"]
+>[number];
+
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
@@ -766,6 +771,50 @@ function legacyCopyStartSecretFilesIntoContainer(
 }
 
 /**
+ * `docker cp - <containerId>:<containerPath>` with one
+ * {@link LegacyStartContainerSpec.preStartArchives} entry's tar bytes on stdin — the ONE `docker
+ * cp` form that preserves each archive member's uid/gid inside the container (the host-path form
+ * rewrites ownership to root, which a restored Postgres data directory cannot survive; see that
+ * field's own doc comment).
+ *
+ * Sequenced by {@link legacyCreateContainer} between `docker create` and `docker start`, for the
+ * same two reasons the secret-file copies are: the container must exist for `docker cp` to have a
+ * target, and must not be running yet so its entrypoint never races the copy — which for an
+ * archive is not merely a race but the whole point, since the entrypoint's behavior depends on
+ * what it finds already unpacked.
+ */
+function legacyExtractPreStartArchiveIntoContainer(
+  spawner: Spawner,
+  containerId: string,
+  archive: LegacyStartPreStartArchiveSpec,
+): Effect.Effect<void, LegacyContainerCreateError> {
+  const failure = (detail: string) =>
+    new LegacyContainerCreateError({
+      message: `failed to create docker container: failed to restore archive into container${detail}`,
+      reason: "runtime",
+    });
+  return Effect.scoped(
+    Effect.gen(function* () {
+      const child = yield* spawnContainerCli(
+        spawner,
+        ["cp", "-", `${containerId}:${archive.containerPath}`],
+        { stdin: archive.tar, stdout: "ignore", stderr: "pipe" },
+      ).pipe(Effect.mapError((cause) => failure(`: ${legacyDescribeContainerCliFailure(cause)}`)));
+      const [exitCode, stderr] = yield* Effect.all(
+        [child.exitCode.pipe(Effect.map(Number)), legacyCollectText(child.stderr)],
+        { concurrency: "unbounded" },
+      ).pipe(Effect.mapError(() => failure("")));
+      if (exitCode !== 0) {
+        const message = stderr.trim();
+        return yield* Effect.fail(
+          failure(message.length > 0 ? `: ${message}` : `: exit ${exitCode}`),
+        );
+      }
+    }),
+  );
+}
+
+/**
  * Port of Go's `DockerStart` (`apps/cli-go/internal/utils/docker.go:363-440`),
  * minus image resolution (already done by `image-prepull.ts`) and network
  * creation (hoisted, see {@link legacyEnsureNetwork}):
@@ -783,7 +832,11 @@ function legacyCopyStartSecretFilesIntoContainer(
  *    Runs strictly between `docker create` and `docker start`: the container
  *    must already exist for `docker cp` to have a target, and must not be
  *    running yet so its entrypoint never races the copy.
- * 6. `docker start`.
+ * 6. Unpack any `preStartArchives` into the same created-but-unstarted
+ *    container via `docker cp -` (`legacyExtractPreStartArchiveIntoContainer`)
+ *    — also TS-port-only, and for the shadow baseline cache's restored PGDATA
+ *    the "not started yet" half of step 5's ordering is the entire point.
+ * 7. `docker start`.
  *
  * Resolves to the created container's id/name on success.
  */
@@ -836,6 +889,13 @@ export function legacyCreateContainer(
       spawner,
       containerId,
       finalSpec.secretFiles ?? [],
+    );
+    // Sequentially, not concurrently like the secret files: two archives could legitimately
+    // overlap in the container's filesystem, so the spec's own order has to be the applied order.
+    yield* Effect.forEach(
+      finalSpec.preStartArchives ?? [],
+      (archive) => legacyExtractPreStartArchiveIntoContainer(spawner, containerId, archive),
+      { discard: true },
     );
     yield* legacyDockerStartContainer(spawner, containerId, finalSpec);
     return containerId;
