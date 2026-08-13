@@ -60,8 +60,8 @@ disables formatting without disabling safe compaction.
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`          | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                    |
 | `<workdir>/supabase/schemas/**`, `<workdir>/supabase/cluster/**` | SQL    | `--experimental` structured dump (delegated to Go; both dirs are `RemoveAll`'d then rewritten by `format.WriteStructuredSchemas`, not just written to) |
 | `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`     | tar    | cache-enabled (default) COLD shadow provision, migration-style pull only (never `--declarative`'s bare shadow, the delegated `--experimental` path, or a warm hit) — the shadow's PGDATA snapshot, ~90MB, one file for the current key only |
-| `~/.supabase/<workdir-hash>/linked-project.json`                 | JSON   | linked (post-run cache)                                                                                                                                |
-| `~/.supabase/telemetry.json`                                     | JSON   | every invocation (post-run)                                                                                                                            |
+| `~/.supabase/<workdir-hash>/linked-project.json`                 | JSON   | linked (post-run cache)                                                                                                                                                                                                                     |
+| `~/.supabase/telemetry.json`                                     | JSON   | every invocation (post-run)                                                                                                                                                                                                                 |
 
 ## Docker
 
