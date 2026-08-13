@@ -148,6 +148,8 @@ export interface ManagedContextRecord {
   readonly kind: ManagedContextKind;
   /** The branch name a branch context was last resolved under; display-only. */
   readonly locator?: string;
+  /** Authoritative branch owner; locator is display-only and may be refreshed. */
+  readonly ownerBranch?: string;
   readonly createdAt: string;
 }
 
@@ -166,7 +168,42 @@ export interface ManagedCheckoutLocation {
   readonly id: string;
   readonly checkoutId: string;
   readonly canonicalPath: string;
+  readonly state: ManagedCheckoutLocationState;
+  readonly reboundFromLocationId?: string;
   readonly lastSeenAt: string;
+}
+
+export type ManagedCheckoutLocationState = "active" | "blocked" | "superseded";
+
+export type ManagedIdentityTransitionKind =
+  | "adopt-checkout"
+  | "adopt-context"
+  | "branch-copy"
+  | "folder-to-git"
+  | "new-checkout"
+  | "rebind-checkout";
+
+export type ManagedIdentityTransitionPhase = "finalized" | "git-written" | "reserved";
+
+export interface ManagedIdentityTransitionRecord {
+  readonly id: string;
+  readonly kind: ManagedIdentityTransitionKind;
+  readonly phase: ManagedIdentityTransitionPhase;
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+  readonly branch?: string;
+  readonly path?: string;
+  readonly expectedGitValue?: string;
+  readonly targetGitValue?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ManagedIdentityClaims {
+  readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly contexts: ReadonlyArray<ManagedContextRecord>;
+  readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;
 }
 
 export interface ManagedStackConfiguration {
@@ -261,6 +298,55 @@ export class DuplicateManagedIdentityError extends Data.TaggedError(
 
   override get message(): string {
     return `Managed identity ${this.identityId} is already claimed by ${this.existingClaim}; refusing a second claim from ${this.requestedClaim}`;
+  }
+}
+
+export class ManagedCheckoutConflictError extends Data.TaggedError("ManagedCheckoutConflictError")<{
+  readonly checkoutId: string;
+  readonly canonicalPath: string;
+  readonly existingCheckoutId?: string;
+}> {
+  readonly code = "MANAGED_CHECKOUT_CONFLICT" as const;
+
+  override get message(): string {
+    return `Managed checkout path ${this.canonicalPath} conflicts with ${this.existingCheckoutId ?? "another claim"}`;
+  }
+}
+
+export class ManagedInaccessiblePathError extends Data.TaggedError("ManagedInaccessiblePathError")<{
+  readonly path: string;
+}> {
+  readonly code = "MANAGED_INACCESSIBLE_PATH" as const;
+
+  override get message(): string {
+    return `Managed checkout path is inaccessible: ${JSON.stringify(this.path)}`;
+  }
+}
+
+export class ManagedCopiedBranchConflictError extends Data.TaggedError(
+  "ManagedCopiedBranchConflictError",
+)<{
+  readonly branch: string;
+  readonly existingContextId?: string;
+  readonly requestedContextId?: string;
+}> {
+  readonly code = "MANAGED_COPIED_BRANCH_CONFLICT" as const;
+
+  override get message(): string {
+    return `Copied branch ${this.branch} conflicts with existing managed context`;
+  }
+}
+
+export class ManagedIdentityTransitionOwnershipError extends Data.TaggedError(
+  "ManagedIdentityTransitionOwnershipError",
+)<{
+  readonly transitionId: string;
+  readonly resource?: string;
+}> {
+  readonly code = "MANAGED_IDENTITY_TRANSITION_OWNERSHIP" as const;
+
+  override get message(): string {
+    return `Identity transition ${this.transitionId} is owned by another transition`;
   }
 }
 
@@ -458,6 +544,8 @@ export class ManagedAbandonedOperationError extends Data.TaggedError(
  * runtime equivalent of the old `instanceof` check.
  */
 export type ManagedStackError =
+  | ManagedCheckoutConflictError
+  | ManagedCopiedBranchConflictError
   | DuplicateManagedIdentityError
   | DuplicateManagedPortKeyError
   | InvalidManagedIdentityError
@@ -467,6 +555,8 @@ export type ManagedStackError =
   | ManagedAbandonedOperationError
   | ManagedOperationInProgressError
   | ManagedOperationOwnershipError
+  | ManagedIdentityTransitionOwnershipError
+  | ManagedInaccessiblePathError
   | ManagedPendingStackUpdateError
   | ManagedPortReservationError
   | ManagedRunningStackPortChangeError
@@ -518,6 +608,8 @@ function exhaustiveArrayOf<T extends string>() {
  * under Bun and Node alike, without pulling in a SQLite driver.
  */
 export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
+  "MANAGED_CHECKOUT_CONFLICT",
+  "MANAGED_COPIED_BRANCH_CONFLICT",
   "DUPLICATE_MANAGED_IDENTITY",
   "INVALID_MANAGED_IDENTITY",
   "MANAGED_DUPLICATE_PORT_KEY",
@@ -526,6 +618,8 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "MANAGED_INVALID_STACK_NAME",
   "MANAGED_OPERATION_IN_PROGRESS",
   "MANAGED_OPERATION_OWNERSHIP_MISMATCH",
+  "MANAGED_IDENTITY_TRANSITION_OWNERSHIP",
+  "MANAGED_INACCESSIBLE_PATH",
   "MANAGED_OPERATION_REQUIRES_RECONCILIATION",
   "MANAGED_PENDING_STACK_UPDATE",
   "MANAGED_PORT_ALREADY_RESERVED",
@@ -552,6 +646,8 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
  * new error class that is not registered here is a compile error.
  */
 export const MANAGED_ERROR_TAG_BY_CODE = {
+  MANAGED_CHECKOUT_CONFLICT: "ManagedCheckoutConflictError",
+  MANAGED_COPIED_BRANCH_CONFLICT: "ManagedCopiedBranchConflictError",
   DUPLICATE_MANAGED_IDENTITY: "DuplicateManagedIdentityError",
   INVALID_MANAGED_IDENTITY: "InvalidManagedIdentityError",
   MANAGED_DUPLICATE_PORT_KEY: "DuplicateManagedPortKeyError",
@@ -560,6 +656,8 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_INVALID_STACK_NAME: "InvalidManagedStackNameError",
   MANAGED_OPERATION_IN_PROGRESS: "ManagedOperationInProgressError",
   MANAGED_OPERATION_OWNERSHIP_MISMATCH: "ManagedOperationOwnershipError",
+  MANAGED_IDENTITY_TRANSITION_OWNERSHIP: "ManagedIdentityTransitionOwnershipError",
+  MANAGED_INACCESSIBLE_PATH: "ManagedInaccessiblePathError",
   MANAGED_OPERATION_REQUIRES_RECONCILIATION: "ManagedAbandonedOperationError",
   MANAGED_PENDING_STACK_UPDATE: "ManagedPendingStackUpdateError",
   MANAGED_PORT_ALREADY_RESERVED: "ManagedPortReservationError",

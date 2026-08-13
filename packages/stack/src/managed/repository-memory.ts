@@ -5,6 +5,10 @@ import {
   InvalidManagedOwnerPidError,
   InvalidManagedPortError,
   ManagedOperationOwnershipError,
+  ManagedCheckoutConflictError,
+  ManagedCopiedBranchConflictError,
+  ManagedIdentityTransitionOwnershipError,
+  ManagedInaccessiblePathError,
   ManagedPendingStackUpdateError,
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
@@ -18,12 +22,21 @@ import {
   type ManagedStackConfiguration,
   type ManagedStackProjection,
   type ManagedStackRecord,
+  type ManagedIdentityTransitionRecord,
+  type ManagedIdentityClaims,
 } from "./model.ts";
 import { failsWith } from "./failure.ts";
 import {
   assertManagedOwnerPid,
   assertManagedStackUpdatable,
   compareManagedText,
+  decideManagedCheckoutLocation,
+  decideManagedIdentityTransitionAdvance,
+  decideManagedIdentityTransitionReservation,
+  decideManagedIdentityTransitionFinalize,
+  decideManagedContextOwnerRefresh,
+  decideManagedIdentityMetadataPrune,
+  transitionResourceKeys,
   decideManagedContextRegistration,
   managedStackOccupiesPorts,
   reconcileManagedPortAssignments,
@@ -40,6 +53,14 @@ import {
   type ReconcileManagedOperationResult,
   type UpdateManagedStackFailure,
   type UpdateManagedStackInput,
+  type ApplyManagedCheckoutLocationInput,
+  type ManagedCheckoutLocationDecision,
+  type RefreshManagedContextOwnerInput,
+  type ReserveManagedIdentityTransitionInput,
+  type AdvanceManagedIdentityTransitionInput,
+  type PruneManagedIdentityMetadataInput,
+  type PruneManagedIdentityMetadataResult,
+  type ManagedIdentityRecoveryError,
 } from "./repository.ts";
 
 interface InMemoryCheckout {
@@ -93,6 +114,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
   const checkouts = new Map<string, InMemoryCheckout>();
   const contexts = new Map<string, ManagedContextRecord>();
   const locations = new Map<string, ManagedCheckoutLocation>();
+  const transitions = new Map<string, ManagedIdentityTransitionRecord>();
   const stacks = new Map<string, ManagedStackRecord>();
   const stackIdentities = new Map<string, string>();
   const operations = new Map<string, ManagedOperationRecord>();
@@ -105,6 +127,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       checkouts: structuredClone([...checkouts]),
       contexts: structuredClone([...contexts]),
       locations: structuredClone([...locations]),
+      transitions: structuredClone([...transitions]),
       stacks: structuredClone([...stacks]),
       stackIdentities: structuredClone([...stackIdentities]),
       operations: structuredClone([...operations]),
@@ -122,6 +145,8 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       for (const [key, value] of snapshot.contexts) contexts.set(key, value);
       locations.clear();
       for (const [key, value] of snapshot.locations) locations.set(key, value);
+      transitions.clear();
+      for (const [key, value] of snapshot.transitions) transitions.set(key, value);
       stacks.clear();
       for (const [key, value] of snapshot.stacks) stacks.set(key, value);
       stackIdentities.clear();
@@ -285,35 +310,23 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
 
       const contextId = registerContext(input);
 
-      const existingLocation = [...locations.values()].find(
-        (location) => location.checkoutId === input.identity.checkoutId,
-      );
-      if (
-        existingLocation !== undefined &&
-        existingLocation.canonicalPath !== input.checkoutRootPath
-      ) {
-        throw new DuplicateManagedIdentityError({
-          identityId: input.identity.checkoutId,
-          existingClaim: existingLocation.canonicalPath,
-          requestedClaim: input.checkoutRootPath,
-        });
-      }
-      const pathOwner = [...locations.values()].find(
-        (location) => location.canonicalPath === input.checkoutRootPath,
-      );
-      if (pathOwner !== undefined && pathOwner.checkoutId !== input.identity.checkoutId) {
-        throw new DuplicateManagedIdentityError({
-          identityId: input.checkoutRootPath,
-          existingClaim: pathOwner.checkoutId,
-          requestedClaim: input.identity.checkoutId,
-        });
-      }
-      locations.set(existingLocation?.id ?? input.locationId, {
-        id: existingLocation?.id ?? input.locationId,
-        checkoutId: input.identity.checkoutId,
-        canonicalPath: input.checkoutRootPath,
-        lastSeenAt: input.now,
+      const locationDecision = decideManagedCheckoutLocation({
+        requested: {
+          checkoutId: input.identity.checkoutId,
+          locationId: input.locationId,
+          canonicalPath: input.checkoutRootPath,
+          now: input.now,
+        },
+        checkoutLocations: [...locations.values()],
+        checkoutExists: true,
       });
+      if (locationDecision.outcome !== "active") {
+        throw new ManagedCheckoutConflictError({
+          checkoutId: input.identity.checkoutId,
+          canonicalPath: input.checkoutRootPath,
+        });
+      }
+      locations.set(locationDecision.location.id, locationDecision.location);
 
       const identityKey = stackIdentityKey(input.identity.checkoutId, contextId, input.stackName);
       const existingStackId = stackIdentities.get(identityKey);
@@ -505,12 +518,121 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       ...stack,
       checkoutKind: checkout.kind,
       canonicalPath: [...locations.values()].find(
-        (location) => location.checkoutId === stack.checkoutId,
+        (location) => location.checkoutId === stack.checkoutId && location.state === "active",
       )?.canonicalPath,
       contextKind: context.kind,
       contextLocator: context.locator,
     };
   };
+
+  const listIdentityClaims = (projectId?: string): ManagedIdentityClaims => {
+    const projectCheckoutIds = new Set(
+      [...checkouts.values()]
+        .filter((checkout) => projectId === undefined || checkout.projectId === projectId)
+        .map((checkout) => checkout.id),
+    );
+    const projectContextIds = new Set(
+      [...contexts.values()]
+        .filter((context) => projectId === undefined || context.projectId === projectId)
+        .map((context) => context.id),
+    );
+    return {
+      locations: [...locations.values()]
+        .filter((location) => {
+          if (projectId === undefined) return true;
+          return projectCheckoutIds.has(location.checkoutId);
+        })
+        .sort((left, right) => compareManagedText(left.canonicalPath, right.canonicalPath))
+        .map(copy),
+      contexts: [...contexts.values()]
+        .filter((context) => projectContextIds.has(context.id))
+        .sort((left, right) => compareManagedText(left.id, right.id))
+        .map(copy),
+      transitions: [...transitions.values()]
+        .filter(
+          (transition) =>
+            projectId === undefined ||
+            transition.projectId === projectId ||
+            (transition.checkoutId !== undefined &&
+              projectCheckoutIds.has(transition.checkoutId)) ||
+            (transition.contextId !== undefined && projectContextIds.has(transition.contextId)),
+        )
+        .sort(
+          (left, right) =>
+            compareManagedText(left.createdAt, right.createdAt) ||
+            compareManagedText(left.id, right.id),
+        )
+        .map(copy),
+    };
+  };
+
+  const applyCheckoutLocation = (
+    input: ApplyManagedCheckoutLocationInput,
+  ): ManagedCheckoutLocationDecision =>
+    atomic(() => {
+      const decision = decideManagedCheckoutLocation({
+        requested: input,
+        checkoutLocations: [...locations.values()],
+        checkoutExists: checkouts.has(input.checkoutId),
+      });
+      if (decision.updates !== undefined) {
+        for (const updated of decision.updates) locations.set(updated.id, updated);
+      }
+      locations.set(decision.location.id, decision.location);
+      return { ...decision, location: copy(decision.location) };
+    });
+
+  const refreshContextOwner = (input: RefreshManagedContextOwnerInput): ManagedContextRecord =>
+    atomic(() => {
+      const context = contexts.get(input.contextId);
+      const next = decideManagedContextOwnerRefresh({ existing: context, requested: input });
+      contexts.set(next.id, next);
+      return copy(next);
+    });
+
+  const reserveIdentityTransition = (
+    input: ReserveManagedIdentityTransitionInput,
+  ): ManagedIdentityTransitionRecord =>
+    atomic(() => {
+      const existing = transitions.get(input.id);
+      const requestedKeys = transitionResourceKeys(input);
+      const resourceOwner = [...transitions.values()].find(
+        (candidate) =>
+          candidate.phase !== "finalized" &&
+          transitionResourceKeys(candidate).some((key) => requestedKeys.includes(key)),
+      );
+      const next = decideManagedIdentityTransitionReservation({
+        requested: input,
+        existing,
+        resourceOwner,
+      });
+      transitions.set(next.id, next);
+      return copy(next);
+    });
+
+  const advanceIdentityTransition = (
+    input: AdvanceManagedIdentityTransitionInput,
+  ): ManagedIdentityTransitionRecord =>
+    atomic(() => {
+      const existing = transitions.get(input.id);
+      if (existing === undefined)
+        throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+      const next = decideManagedIdentityTransitionAdvance(existing, input);
+      transitions.set(next.id, next);
+      return copy(next);
+    });
+
+  const pruneIdentityMetadata = (
+    input: PruneManagedIdentityMetadataInput,
+  ): PruneManagedIdentityMetadataResult =>
+    atomic(() => {
+      const decision = decideManagedIdentityMetadataPrune({
+        locations: [...locations.values()],
+        locationIds: input.locationIds,
+      });
+      for (const id of decision.prunedRecordIds) locations.delete(id);
+      return decision;
+    });
 
   const listStackRecords = (options?: {
     readonly includeTombstoned?: boolean;
@@ -537,11 +659,53 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       .map(projectStack);
 
   return {
+    listIdentityClaims: (projectId) => Effect.sync(() => listIdentityClaims(projectId)),
+    applyCheckoutLocation: (input) =>
+      Effect.try({
+        try: () => applyCheckoutLocation(input),
+        catch: failsWith<ManagedIdentityRecoveryError>(
+          ManagedCheckoutConflictError,
+          ManagedCopiedBranchConflictError,
+          ManagedIdentityTransitionOwnershipError,
+          ManagedInaccessiblePathError,
+        ),
+      }),
+    refreshContextOwner: (input) =>
+      Effect.try({
+        try: () => refreshContextOwner(input),
+        catch: failsWith<ManagedIdentityRecoveryError>(ManagedCopiedBranchConflictError),
+      }),
+    reserveIdentityTransition: (input) =>
+      Effect.try({
+        try: () => reserveIdentityTransition(input),
+        catch: failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
+      }),
+    advanceIdentityTransition: (input) =>
+      Effect.try({
+        try: () => advanceIdentityTransition(input),
+        catch: failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
+      }),
+    finalizeIdentityTransition: (input) =>
+      Effect.try({
+        try: () => {
+          const existing = transitions.get(input.id);
+          if (existing === undefined)
+            throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+          const next = decideManagedIdentityTransitionFinalize(existing, input);
+          transitions.set(next.id, next);
+          return copy(next);
+        },
+        catch: failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
+      }),
     prepareStack: (input) =>
       Effect.try({
         try: () => prepareStack(input),
         catch: failsWith<PrepareStackFailure>(
           DuplicateManagedIdentityError,
+          ManagedCheckoutConflictError,
+          ManagedCopiedBranchConflictError,
+          ManagedIdentityTransitionOwnershipError,
+          ManagedInaccessiblePathError,
           DuplicateManagedPortKeyError,
           InvalidManagedOwnerPidError,
           InvalidManagedPortError,
@@ -658,15 +822,24 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           .sort((left, right) => compareManagedText(left.canonicalPath, right.canonicalPath))
           .map(copy),
       ),
+    pruneIdentityMetadata: (input) =>
+      Effect.try({
+        try: () => pruneIdentityMetadata(input),
+        catch: failsWith<ManagedIdentityRecoveryError>(
+          ManagedCheckoutConflictError,
+          ManagedCopiedBranchConflictError,
+          ManagedIdentityTransitionOwnershipError,
+          ManagedInaccessiblePathError,
+        ),
+      }),
     pruneCheckoutLocations: (locationIds) =>
       Effect.sync(() => {
-        let removed = 0;
-        for (const id of new Set(locationIds)) {
-          if (locations.delete(id)) {
-            removed += 1;
-          }
-        }
-        return removed;
+        const decision = decideManagedIdentityMetadataPrune({
+          locations: [...locations.values()],
+          locationIds,
+        });
+        for (const id of decision.prunedRecordIds) locations.delete(id);
+        return decision.removed;
       }),
   };
 };

@@ -23,7 +23,7 @@ import {
   ordinaryWorkspaceIdentityPath,
 } from "./managed/paths.ts";
 import {
-  DuplicateManagedIdentityError,
+  ManagedCheckoutConflictError,
   DuplicateManagedPortKeyError,
   InvalidManagedIdentityError,
   MANAGED_REGISTRY_SCHEMA_VERSION,
@@ -40,6 +40,7 @@ import {
   ManagedStackNotFoundError,
   ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
+  ManagedIdentityTransitionOwnershipError,
   UnsafeManagedStackPathError,
   UnsupportedManagedRegistryVersionError,
   type ManagedStackConfiguration,
@@ -61,6 +62,13 @@ import {
  * run a contract call inline instead of awaiting it.
  */
 const runRepo = Effect.runSync;
+
+const expectFailureTag = <A, E>(exit: Exit.Exit<A, E>, tag: string): void => {
+  expect(Exit.isFailure(exit)).toBe(true);
+  if (Exit.isFailure(exit)) {
+    expect(Cause.squash(exit.cause)).toMatchObject({ _tag: tag });
+  }
+};
 
 /**
  * Opens a registry the way production does, as a scoped layer, for the tests that
@@ -650,7 +658,7 @@ describe("ordinary-folder managed stack contract", () => {
 
     await expect(
       service.resolveStack({ operation: "start", workspacePath: secondWorkspace }),
-    ).rejects.toBeInstanceOf(DuplicateManagedIdentityError);
+    ).rejects.toBeInstanceOf(ManagedCheckoutConflictError);
     expect(await service.listStacks()).toHaveLength(1);
     expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
     await service.close();
@@ -2636,8 +2644,8 @@ describe("managed repository and lifecycle", () => {
     const pruned = await service.pruneCheckoutLocations(() => true);
 
     expect(contract.expected.outcome).toBe("update");
-    expect(pruned).toBe(1);
-    expect(runRepo(service.repository.listCheckoutLocations())).toEqual([]);
+    expect(pruned).toBe(0);
+    expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
     expect((await service.inspectStack(created.stack.id))?.status).toBe("active");
     expect(readFileSync(dataFile, "utf8")).toBe("preserve me");
     await service.close();
@@ -2897,5 +2905,528 @@ describe("managed repository and lifecycle", () => {
     });
     database.close();
     expect(databasePath.endsWith("registry-v4.sqlite3")).toBe(true);
+  });
+
+  describe("managed identity repository decisions", () => {
+    const adapters = async () => {
+      const root = makeRoot();
+      const sqlite = await openRegistry(managedRegistryPath(join(root, "identity")));
+      return [
+        {
+          name: "memory",
+          repository: createInMemoryManagedStackRepository(),
+          close: async () => {},
+        },
+        { name: "sqlite", repository: sqlite.repository, close: sqlite.close },
+      ] as const;
+    };
+
+    const location = (checkoutId: string, locationId: string, canonicalPath: string) => ({
+      checkoutId,
+      locationId,
+      canonicalPath,
+      now: "2026-08-13T00:00:00.000Z",
+    });
+
+    const seedCheckout = (
+      repository: ManagedStackRepositoryShape,
+      adapterName: string,
+      keep = false,
+      checkoutId = "checkout-a",
+      checkoutPath = "/a",
+      locationId = checkoutId === "checkout-a" ? "loc-a" : "loc-b",
+    ) => {
+      const stackId = `00000000-0000-7000-8000-00000000010${adapterName === "memory" ? "1" : "2"}`;
+      const operationToken = `00000000-0000-7000-8000-00000000011${adapterName === "memory" ? "1" : "2"}`;
+      const identity = {
+        projectId: `project-${adapterName}`,
+        checkoutId,
+        contextId: `00000000-0000-7000-8000-0000000001${adapterName === "memory" ? "1" : "2"}${checkoutId === "checkout-a" ? "1" : "2"}`,
+      };
+      const prepared = runRepo(
+        repository.prepareStack({
+          identity,
+          checkoutKind: "ordinary",
+          checkoutRootPath: checkoutPath,
+          locationId,
+          context: { kind: "workspace" },
+          stackId,
+          stackName: "seed",
+          paths: managedStackPaths(`/tmp/${adapterName}-state`, stackId),
+          operationToken,
+          now: "2026-08-13T00:00:00.000Z",
+          configuration: {},
+        }),
+      );
+      if (prepared.outcome === "create" && !keep)
+        runRepo(repository.abortPendingStack(stackId, operationToken));
+      return prepared;
+    };
+
+    it.each(["rebind", "one-active", "blocked", "prune", "owner", "transition", "competing"])(
+      "%s decisions have parity across adapters",
+      async (caseName) => {
+        const cases = await adapters();
+        try {
+          for (const adapter of cases) {
+            if (caseName === "rebind") {
+              const prepared = seedCheckout(adapter.repository, adapter.name, true);
+              runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")),
+              );
+              const decision = runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-b", "/b")),
+              );
+              expect(decision.outcome, adapter.name).toBe("rebound");
+              expect(runRepo(adapter.repository.listIdentityClaims()).locations).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({ id: "loc-a", state: "superseded" }),
+                  expect.objectContaining({
+                    id: "loc-b",
+                    state: "active",
+                    reboundFromLocationId: "loc-a",
+                  }),
+                ]),
+              );
+              if (prepared.outcome === "create") {
+                expect(
+                  runRepo(adapter.repository.getStackProjection(prepared.stack.id)),
+                ).toMatchObject({
+                  canonicalPath: "/b",
+                });
+              }
+            }
+
+            if (caseName === "one-active") {
+              seedCheckout(adapter.repository, adapter.name);
+              runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")),
+              );
+              runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-b", "/b")),
+              );
+              expect(
+                runRepo(adapter.repository.listIdentityClaims()).locations.filter(
+                  (candidate) =>
+                    candidate.checkoutId === "checkout-a" && candidate.state === "active",
+                ),
+              ).toHaveLength(1);
+            }
+
+            if (caseName === "blocked") {
+              seedCheckout(adapter.repository, adapter.name);
+              runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")),
+              );
+              runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-b", "/b")),
+              );
+              const decision = runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")),
+              );
+              expect(decision.outcome, adapter.name).toBe("blocked");
+              expect(runRepo(adapter.repository.listIdentityClaims()).locations).toEqual(
+                expect.arrayContaining([
+                  expect.objectContaining({ id: "loc-a", state: "blocked" }),
+                  expect.objectContaining({ id: "loc-b", state: "blocked" }),
+                ]),
+              );
+            }
+
+            if (caseName === "prune") {
+              seedCheckout(adapter.repository, adapter.name);
+              runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")),
+              );
+              runRepo(
+                adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-b", "/b")),
+              );
+              const result = runRepo(
+                adapter.repository.pruneIdentityMetadata({ locationIds: ["loc-a", "loc-b"] }),
+              );
+              expect(result.removed, adapter.name).toBe(0);
+              expect(result.preservedRecordIds, adapter.name).toEqual(["loc-a", "loc-b"]);
+            }
+
+            if (caseName === "owner") {
+              const identity = {
+                projectId: `project-${adapter.name}`,
+                checkoutId: `checkout-${adapter.name}`,
+                contextId: `context-${adapter.name}`,
+              };
+              const prepared = runRepo(
+                adapter.repository.prepareStack({
+                  identity,
+                  checkoutKind: "ordinary",
+                  checkoutRootPath: `/tmp/${adapter.name}`,
+                  locationId: "owner-location",
+                  context: { kind: "branch", locator: "display-main" },
+                  stackId: `00000000-0000-7000-8000-00000000000${adapter.name === "memory" ? "1" : "2"}`,
+                  stackName: "default",
+                  paths: managedStackPaths(
+                    `/tmp/${adapter.name}-state`,
+                    `00000000-0000-7000-8000-00000000000${adapter.name === "memory" ? "1" : "2"}`,
+                  ),
+                  operationToken: `00000000-0000-7000-8000-00000000001${adapter.name === "memory" ? "1" : "2"}`,
+                  now: "2026-08-13T00:00:00.000Z",
+                  configuration: {},
+                }),
+              );
+              const refreshed = runRepo(
+                adapter.repository.refreshContextOwner({
+                  contextId: prepared.stack.contextId,
+                  ownerBranch: "owner-main",
+                  locator: "display-renamed",
+                  now: "2026-08-13T00:01:00.000Z",
+                }),
+              );
+              expect(refreshed, adapter.name).toMatchObject({
+                ownerBranch: "owner-main",
+                locator: "display-renamed",
+              });
+            }
+
+            if (caseName === "transition" || caseName === "competing") {
+              const input = {
+                id: "transition-a",
+                kind: "rebind-checkout" as const,
+                checkoutId: "checkout-a",
+                path: "/a",
+                now: "2026-08-13T00:00:00.000Z",
+              };
+              const first = runRepo(adapter.repository.reserveIdentityTransition(input));
+              const repeated = runRepo(adapter.repository.reserveIdentityTransition(input));
+              expect(repeated, adapter.name).toEqual(first);
+              if (caseName === "competing") {
+                expect(() =>
+                  runRepo(
+                    adapter.repository.reserveIdentityTransition({
+                      ...input,
+                      id: "transition-b",
+                    }),
+                  ),
+                ).toThrow(ManagedIdentityTransitionOwnershipError);
+              }
+            }
+          }
+        } finally {
+          await Promise.all(cases.map((adapter) => adapter.close()));
+        }
+      },
+    );
+
+    it("rejects location ownership collisions and unknown checkouts in both adapters", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          const unknownCheckoutBefore = runRepo(adapter.repository.listIdentityClaims());
+          const unknownCheckoutExit = Effect.runSyncExit(
+            adapter.repository.applyCheckoutLocation(
+              location("missing", "loc-missing", "/missing"),
+            ),
+          );
+          expectFailureTag(unknownCheckoutExit, "ManagedCheckoutConflictError");
+          expect(runRepo(adapter.repository.listIdentityClaims())).toEqual(unknownCheckoutBefore);
+          seedCheckout(adapter.repository, adapter.name);
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")));
+          seedCheckout(adapter.repository, adapter.name, false, "checkout-b", "/b");
+          const before = runRepo(adapter.repository.listIdentityClaims());
+          const collisionExit = Effect.runSyncExit(
+            adapter.repository.applyCheckoutLocation(location("checkout-b", "loc-a", "/other")),
+          );
+          expectFailureTag(collisionExit, "ManagedCheckoutConflictError");
+          expect(runRepo(adapter.repository.listIdentityClaims())).toEqual(before);
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
+
+    it("reuses active history for prepare and refuses blocked history without writes", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          const prepared = seedCheckout(adapter.repository, adapter.name, true);
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-b", "/b")));
+          if (prepared.outcome !== "create") throw new Error("Expected seeded stack");
+          expect(runRepo(adapter.repository.getStackProjection(prepared.stack.id))).toMatchObject({
+            canonicalPath: "/b",
+          });
+          const nextId = `00000000-0000-7000-8000-00000000020${adapter.name === "memory" ? "1" : "2"}`;
+          const nextToken = `00000000-0000-7000-8000-00000000021${adapter.name === "memory" ? "1" : "2"}`;
+          const activePrepare = Effect.runSyncExit(
+            adapter.repository.prepareStack({
+              identity: {
+                projectId: `project-${adapter.name}`,
+                checkoutId: "checkout-a",
+                contextId: `context-${adapter.name}-unused`,
+              },
+              checkoutKind: "ordinary",
+              checkoutRootPath: "/b",
+              locationId: "loc-c",
+              context: { kind: "workspace" },
+              stackId: nextId,
+              stackName: "second",
+              paths: managedStackPaths(`/tmp/${adapter.name}-state`, nextId),
+              operationToken: nextToken,
+              now: "2026-08-13T00:02:00.000Z",
+              configuration: {},
+            }),
+          );
+          expect(Exit.isSuccess(activePrepare)).toBe(true);
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")));
+          const blockedBefore = runRepo(adapter.repository.listIdentityClaims());
+          const blockedPrepare = Effect.runSyncExit(
+            adapter.repository.prepareStack({
+              identity: {
+                projectId: `project-${adapter.name}`,
+                checkoutId: "checkout-a",
+                contextId: `context-${adapter.name}-blocked`,
+              },
+              checkoutKind: "ordinary",
+              checkoutRootPath: "/a",
+              locationId: "loc-d",
+              context: { kind: "workspace" },
+              stackId: `00000000-0000-7000-8000-00000000022${adapter.name === "memory" ? "1" : "2"}`,
+              stackName: "blocked",
+              paths: managedStackPaths(
+                `/tmp/${adapter.name}-state`,
+                `00000000-0000-7000-8000-00000000022${adapter.name === "memory" ? "1" : "2"}`,
+              ),
+              operationToken: `00000000-0000-7000-8000-00000000023${adapter.name === "memory" ? "1" : "2"}`,
+              now: "2026-08-13T00:03:00.000Z",
+              configuration: {},
+            }),
+          );
+          expectFailureTag(blockedPrepare, "ManagedCheckoutConflictError");
+          expect(runRepo(adapter.repository.listIdentityClaims())).toEqual(blockedBefore);
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
+
+    it("protects transitive provenance chains through both prune APIs", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          seedCheckout(adapter.repository, adapter.name);
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")));
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-b", "/b")));
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-c", "/c")));
+          expect(
+            runRepo(
+              adapter.repository.pruneIdentityMetadata({
+                locationIds: ["loc-a", "loc-b", "loc-c"],
+              }),
+            ).removed,
+          ).toBe(0);
+          expect(
+            runRepo(adapter.repository.pruneCheckoutLocations(["loc-a", "loc-b", "loc-c"])),
+          ).toBe(0);
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
+
+    it("enforces transition resource overlap and true phase CAS in both adapters", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          seedCheckout(adapter.repository, adapter.name);
+          const first = runRepo(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-transition-a`,
+              kind: "rebind-checkout",
+              checkoutId: "checkout-a",
+              path: "/a",
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          const other = runRepo(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-transition-b`,
+              kind: "rebind-checkout",
+              checkoutId: "checkout-b",
+              path: "/b",
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          expect(other.id).not.toBe(first.id);
+          const competingExit = Effect.runSyncExit(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-transition-c`,
+              kind: "rebind-checkout",
+              checkoutId: "checkout-a",
+              path: "/different",
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          expectFailureTag(competingExit, "ManagedIdentityTransitionOwnershipError");
+          const malformedBefore = runRepo(adapter.repository.listIdentityClaims());
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.reserveIdentityTransition({
+                id: `${adapter.name}-transition-blank-path`,
+                kind: "new-checkout",
+                path: "  ",
+                now: "2026-08-13T00:00:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.reserveIdentityTransition({
+                id: `${adapter.name}-transition-blank-checkout`,
+                kind: "rebind-checkout",
+                checkoutId: "  ",
+                now: "2026-08-13T00:00:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.reserveIdentityTransition({
+                id: `${adapter.name}-transition-blank-branch`,
+                kind: "adopt-context",
+                projectId: " ",
+                branch: "\t",
+                now: "2026-08-13T00:00:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.reserveIdentityTransition({
+                id: `${adapter.name}-transition-irrelevant-path`,
+                kind: "adopt-context",
+                path: "/only-path",
+                now: "2026-08-13T00:00:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          expect(runRepo(adapter.repository.listIdentityClaims())).toEqual(malformedBefore);
+          const changedReservationExit = Effect.runSyncExit(
+            adapter.repository.reserveIdentityTransition({
+              id: first.id,
+              kind: "rebind-checkout",
+              checkoutId: "checkout-a",
+              path: "/a",
+              now: "2026-08-13T00:00:00.000Z",
+              projectId: "project-other",
+            }),
+          );
+          expectFailureTag(changedReservationExit, "ManagedIdentityTransitionOwnershipError");
+          const skip = runRepo(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-transition-skip`,
+              kind: "new-checkout",
+              path: "/skip",
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.advanceIdentityTransition({
+                id: skip.id,
+                expectedPhase: "reserved",
+                phase: "finalized",
+                now: "2026-08-13T00:00:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          const advanced = runRepo(
+            adapter.repository.advanceIdentityTransition({
+              id: first.id,
+              expectedPhase: "reserved",
+              phase: "git-written",
+              now: "2026-08-13T00:01:00.000Z",
+            }),
+          );
+          expect(
+            runRepo(
+              adapter.repository.advanceIdentityTransition({
+                id: first.id,
+                expectedPhase: "reserved",
+                phase: "git-written",
+                now: "2026-08-13T00:02:00.000Z",
+              }),
+            ),
+          ).toEqual(advanced);
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.advanceIdentityTransition({
+                id: first.id,
+                expectedPhase: "reserved",
+                phase: "finalized",
+                now: "2026-08-13T00:03:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          const finalized = runRepo(
+            adapter.repository.finalizeIdentityTransition({
+              id: first.id,
+              expectedPhase: "git-written",
+              now: "2026-08-13T00:04:00.000Z",
+            }),
+          );
+          expect(finalized.phase).toBe("finalized");
+          expect(
+            runRepo(
+              adapter.repository.finalizeIdentityTransition({
+                id: first.id,
+                expectedPhase: "git-written",
+                now: "2026-08-13T00:05:00.000Z",
+              }),
+            ),
+          ).toEqual(finalized);
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.advanceIdentityTransition({
+                id: first.id,
+                expectedPhase: "reserved",
+                phase: "finalized",
+                now: "2026-08-13T00:06:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.advanceIdentityTransition({
+                id: first.id,
+                expectedPhase: "reserved",
+                phase: "git-written",
+                now: "2026-08-13T00:07:00.000Z",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          expect(
+            runRepo(
+              adapter.repository.reserveIdentityTransition({
+                id: `${adapter.name}-transition-e`,
+                kind: "rebind-checkout",
+                checkoutId: "checkout-a",
+                path: "/different",
+                now: "2026-08-13T00:08:00.000Z",
+              }),
+            ).phase,
+          ).toBe("reserved");
+          expect(
+            runRepo(adapter.repository.listIdentityClaims(`project-${adapter.name}`)).transitions,
+          ).toEqual(expect.arrayContaining([expect.objectContaining({ id: first.id })]));
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
   });
 });
