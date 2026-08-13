@@ -35,7 +35,7 @@ import type { PreparedStackArtifacts, ServiceResolution } from "./StackPreparati
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
-import type { ResolvedStackConfig } from "./StackConfig.ts";
+import { INSTANCE_ID_PATTERN, type ResolvedStackConfig } from "./StackConfig.ts";
 import { dockerContainerName, stackIdentity } from "./StackIdentity.ts";
 import type { VersionManifest } from "./versions.ts";
 
@@ -101,6 +101,15 @@ export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
   Effect.gen(function* () {
+    if (config.instanceId !== undefined && !INSTANCE_ID_PATTERN.test(config.instanceId)) {
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
+          reason: "invalid_config",
+        }),
+      );
+    }
+
     if (config.mode === "native") {
       const enabledDockerOnly = dockerOnlyServices.filter(
         (service) => resolvedConfigForService(config, service) !== false,

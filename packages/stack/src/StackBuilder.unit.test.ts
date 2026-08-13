@@ -4,7 +4,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { mockBinaryResolver } from "../tests/helpers/mocks.ts";
 import { defaultPublishableKey, defaultSecretKey, generateJwt } from "./JwtGenerator.ts";
 import { candidateCleanupTargets } from "./cleanup.ts";
-import { StackBuilder } from "./StackBuilder.ts";
+import { StackBuilder, validateResolvedConfig } from "./StackBuilder.ts";
 import type { BuildResult } from "./StackBuilder.ts";
 import { DEFAULT_STACK_READINESS_POLICY, type ResolvedStackConfig } from "./StackConfig.ts";
 import { STACK_ID_LABEL } from "./StackIdentity.ts";
@@ -406,6 +406,18 @@ describe("StackBuilder", () => {
         expect(def.args?.join(" ")).toContain(`--label ${STACK_ID_LABEL}=${firstManagedId}`);
       }
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects an invalid instanceId supplied to the builder directly", () => {
+    return Effect.gen(function* () {
+      const error = yield* validateResolvedConfig({
+        ...dockerConfig,
+        instanceId: "../bad:id",
+      }).pipe(Effect.flip);
+
+      expect(error._tag).toBe("StackBuildError");
+      expect(error.reason).toBe("invalid_config");
+    });
   });
 
   it.effect("keeps sibling stacks sharing every port on separate containers", () => {

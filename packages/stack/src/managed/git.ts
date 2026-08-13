@@ -98,6 +98,19 @@ const readOptionalFile = (
     error.reason._tag === "NotFound" ? Effect.succeed(undefined) : Effect.fail(error),
   );
 
+const realPathOrMalformed = (
+  fs: FileSystem.FileSystem,
+  path: string,
+  reason: string,
+): Effect.Effect<string, PlatformError.PlatformError | UnsupportedGitWorkspaceError> =>
+  Effect.catch(
+    fs.realPath(path),
+    (error): Effect.Effect<never, PlatformError.PlatformError | UnsupportedGitWorkspaceError> =>
+      error.reason._tag === "NotFound"
+        ? unsupported(path, reason, "malformed-metadata")
+        : Effect.fail(error),
+  );
+
 const firstLine = (content: string): string | undefined =>
   content
     .split("\n")
@@ -246,6 +259,17 @@ const resolveHead = (
       if (branch === REFTABLE_HEAD_STUB_BRANCH) {
         return yield* unsupported(gitDirectory, REFTABLE_UNSUPPORTED_REASON, "reftable");
       }
+      if (
+        branch
+          .split("/")
+          .some((segment) => segment.length === 0 || segment === "." || segment === "..")
+      ) {
+        return yield* unsupported(
+          gitDirectory,
+          "HEAD names a branch with an invalid path segment",
+          "malformed-metadata",
+        );
+      }
       // A branch whose ref does not exist yet is the state a fresh repository
       // starts in, so it names a context even though it has no commit.
       return (yield* branchRefExists(fs, commonDirectory, ref))
@@ -386,7 +410,11 @@ export const inspectWorkspace = (
         return ordinary;
       }
 
-      const gitDirectory = yield* fs.realPath(checkout.gitDirectory);
+      const gitDirectory = yield* realPathOrMalformed(
+        fs,
+        checkout.gitDirectory,
+        "Cannot read the git directory this .git file points at",
+      );
       // A linked worktree's git directory names the repository it belongs to,
       // relative to itself; a primary checkout's git directory *is* that
       // repository and has no `commondir` at all.
@@ -394,12 +422,22 @@ export const inspectWorkspace = (
         fs,
         join(gitDirectory, COMMON_DIRECTORY_FILE),
       ))?.trim();
-      const commonDirectory =
-        commonLink === undefined || commonLink.length === 0
-          ? gitDirectory
-          : yield* fs.realPath(
-              isAbsolute(commonLink) ? commonLink : resolve(gitDirectory, commonLink),
-            );
+      let commonDirectory: string;
+      if (commonLink === undefined) {
+        commonDirectory = gitDirectory;
+      } else if (commonLink.length === 0) {
+        return yield* unsupported(
+          join(gitDirectory, COMMON_DIRECTORY_FILE),
+          "The linked worktree has an empty commondir target",
+          "malformed-metadata",
+        );
+      } else {
+        commonDirectory = yield* realPathOrMalformed(
+          fs,
+          isAbsolute(commonLink) ? commonLink : resolve(gitDirectory, commonLink),
+          "Cannot read the common git directory this commondir file points at",
+        );
+      }
 
       const repositoryConfig = yield* readRepositoryConfig(fs, commonDirectory);
       if (repositoryConfig.reftable) {

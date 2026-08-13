@@ -103,6 +103,74 @@ describe("workspace topology", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
+  it.live("rejects a checkout whose .git target is dangling metadata", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const workspace = makeDirectory(root, "workspace");
+      const dangling = join(root, "missing-git-directory");
+      writeFileSync(join(workspace, ".git"), `gitdir: ${dangling}\n`);
+
+      const failure = yield* Effect.flip(inspectWorkspace(workspace));
+
+      expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      expect(failure.cause).toBe("malformed-metadata");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("rejects a linked worktree whose commondir metadata is dangling", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const worktree = join(root, "wt-a");
+      git(repository, "worktree", "add", "-q", worktree, "-b", "feat/a");
+      const gitDirectory = join(repository, ".git", "worktrees", "wt-a");
+      writeFileSync(join(gitDirectory, "commondir"), "../../missing-common-directory\n");
+
+      const failure = yield* Effect.flip(inspectWorkspace(worktree));
+
+      expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      expect(failure.cause).toBe("malformed-metadata");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("rejects an empty linked-worktree commondir instead of treating it as primary", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const worktree = join(root, "wt-a");
+      git(repository, "worktree", "add", "-q", worktree, "-b", "feat/a");
+      const gitDirectory = join(repository, ".git", "worktrees", "wt-a");
+      writeFileSync(join(gitDirectory, "commondir"), "  \n\t");
+
+      const failure = yield* Effect.flip(inspectWorkspace(worktree));
+
+      expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      expect(failure.cause).toBe("malformed-metadata");
+      expect(existsSync(gitCheckoutIdentityPath(gitDirectory))).toBe(false);
+      expect(storedConfigValue(gitConfigPath(join(repository, ".git")), GIT_PROJECT_ID_KEY)).toBe(
+        undefined,
+      );
+      expect(storedConfigValue(gitConfigPath(gitDirectory), GIT_PROJECT_ID_KEY)).toBe(undefined);
+      expect(
+        storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("feat/a")),
+      ).toBe(undefined);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("rejects path traversal and empty segments in a symbolic HEAD ref", () =>
+    Effect.gen(function* () {
+      for (const ref of ["refs/heads/../../../../etc/shadow", "refs/heads/feature//name"]) {
+        const repository = makeRepository(makeRoot());
+        writeFileSync(join(repository, ".git", "HEAD"), `ref: ${ref}\n`);
+
+        const failure = yield* Effect.flip(inspectWorkspace(repository));
+
+        expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
+        expect(failure.cause).toBe("malformed-metadata");
+      }
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("reports a detached HEAD with the commit it is parked on", () =>
     Effect.gen(function* () {
       const repository = makeRepository(makeRoot());
