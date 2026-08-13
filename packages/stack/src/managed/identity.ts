@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Effect } from "effect";
+import { Effect, FileSystem, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
 import {
   InvalidManagedIdentityError,
@@ -85,6 +85,31 @@ export const canonicalizeManagedWorkspacePath = (
     }),
   );
 
+/** Effect FileSystem variant used by managed discovery. */
+export const canonicalizeManagedWorkspacePathWithFileSystem = (
+  workspacePath: string,
+): Effect.Effect<string, InvalidManagedIdentityError, FileSystem.FileSystem> =>
+  failsWithIdentity(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const info = yield* fs.stat(workspacePath);
+      if (info.type !== "Directory") {
+        return yield* Effect.fail(
+          new InvalidManagedIdentityError({ message: `${workspacePath} is not a directory` }),
+        );
+      }
+      return yield* fs.realPath(workspacePath);
+    }).pipe(
+      Effect.catchTag("PlatformError", (error: PlatformError.PlatformError) =>
+        Effect.fail(
+          new InvalidManagedIdentityError({
+            message: `Cannot canonicalize ${workspacePath}: ${error.message}`,
+          }),
+        ),
+      ),
+    ),
+  );
+
 const readIdentity = async (
   workspacePath: string,
 ): Promise<OrdinaryWorkspaceIdentity | undefined> => {
@@ -103,6 +128,38 @@ export const readOrdinaryWorkspaceIdentity = (
   workspacePath: string,
 ): Effect.Effect<OrdinaryWorkspaceIdentity | undefined, InvalidManagedIdentityError> =>
   failsWithIdentity(Effect.tryPromise({ try: () => readIdentity(workspacePath), catch: asRaised }));
+
+/** Read-only marker probe through Effect FileSystem; absence remains undefined. */
+export const readOrdinaryWorkspaceIdentityWithFileSystem = (
+  workspacePath: string,
+): Effect.Effect<
+  OrdinaryWorkspaceIdentity | undefined,
+  InvalidManagedIdentityError,
+  FileSystem.FileSystem
+> =>
+  failsWithIdentity(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      try {
+        return decodeIdentity(
+          yield* fs.readFileString(ordinaryWorkspaceIdentityPath(workspacePath)),
+        );
+      } catch (error) {
+        if (error instanceof InvalidManagedIdentityError) return yield* Effect.fail(error);
+        throw error;
+      }
+    }).pipe(
+      Effect.catchTag("PlatformError", (error: PlatformError.PlatformError) =>
+        error.reason._tag === "NotFound"
+          ? Effect.succeed(undefined)
+          : Effect.fail(
+              new InvalidManagedIdentityError({
+                message: `Ordinary workspace identity is inaccessible (${error.message})`,
+              }),
+            ),
+      ),
+    ),
+  );
 
 export interface EnsureOrdinaryWorkspaceIdentityResult {
   readonly identity: OrdinaryWorkspaceIdentity;

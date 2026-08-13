@@ -37,18 +37,12 @@ import {
   type ManagedStackRecord,
   type ManagedStackSelection,
 } from "./model.ts";
-import {
-  canonicalizeManagedWorkspacePath,
-  ensureOrdinaryWorkspaceIdentity,
-  readOrdinaryWorkspaceIdentity,
-} from "./identity.ts";
+import { ensureOrdinaryWorkspaceIdentity } from "./identity.ts";
 import {
   ensureBranchContextId,
   ensureGitCheckoutIdentity,
   GitConfigStore,
   inspectWorkspace,
-  readBranchContextId,
-  readGitCheckoutIdentity,
   type GitCheckoutInspection,
 } from "./git.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
@@ -70,6 +64,7 @@ import {
   type PrepareStackFailure,
   type UpdateManagedStackFailure,
 } from "./repository.ts";
+import { discoverWorkspace, type ManagedWorkspaceDiscovery } from "./discovery.ts";
 
 export interface ManagedStackServiceOptions {
   readonly stateRoot: string;
@@ -272,6 +267,12 @@ export type DeleteManagedStackFailure =
 
 export interface ManagedStackServiceShape {
   readonly stateRoot: string;
+  readonly discoverWorkspace: (
+    workspacePath: string,
+  ) => Effect.Effect<
+    ManagedWorkspaceDiscovery,
+    InvalidManagedIdentityError | UnsupportedGitWorkspaceError
+  >;
   /**
    * The one path from a workspace path to a stack, for every workspace shape and
    * both operations. Nothing else in the managed surface classifies a workspace
@@ -347,6 +348,29 @@ const dataRetained = (error: unknown): DeleteManagedStackResult["dataReclamation
  */
 const checkoutKindOf = (inspection: GitCheckoutInspection): ManagedCheckoutKind =>
   inspection.checkoutKind === "primary" ? "git" : inspection.checkoutKind;
+
+const observationMatches = (
+  report: ManagedWorkspaceDiscovery,
+  inspection:
+    | GitCheckoutInspection
+    | { readonly kind: "ordinary-folder"; readonly canonicalPath: string },
+): boolean => {
+  if (inspection.kind === "ordinary-folder") {
+    return (
+      report.workspace.checkoutKind === "ordinary" &&
+      report.workspace.workspaceRoot === inspection.canonicalPath
+    );
+  }
+  const branch = inspection.head.kind === "detached" ? undefined : inspection.head.branch;
+  const commit = inspection.head.kind === "detached" ? inspection.head.commit : undefined;
+  return (
+    report.workspace.workspaceRoot === inspection.workspaceRoot &&
+    report.workspace.projectIdentityLocation === inspection.commonDirectory &&
+    report.workspace.checkoutIdentityLocation === inspection.gitDirectory &&
+    report.context.branch === branch &&
+    report.context.commit === commit
+  );
+};
 
 /**
  * What a workspace resolved to before any stack is looked up: where the
@@ -749,41 +773,15 @@ export class ManagedStackService extends Context.Service<
          * -m` or a branch deletion takes it along. A read-only resolve reports the
          * absence of one rather than claiming it.
          */
-        const branchContextId = (
-          inspection: GitCheckoutInspection,
-          branch: string,
-          claim: boolean,
-        ): Effect.Effect<
-          string | undefined,
-          InvalidManagedIdentityError | UnsupportedGitWorkspaceError
-        > =>
-          withWorkspaceServices(
-            claim
-              ? ensureBranchContextId(inspection, branch, idFactory)
-              : readBranchContextId(inspection, branch),
-          );
-
-        /**
-         * The detached context of a checkout, which git records nowhere: a
-         * detached `HEAD` names no ref to hang a context off, and keying one per
-         * commit would strand a stack on every checkout. The registry owns it
-         * instead — one per checkout, reused for every commit that checkout is
-         * parked on — so a `start` only mints a candidate, and the registry
-         * decides whether a concurrent start's row already won.
-         */
         const detachedContextId = (
-          checkoutId: string | undefined,
-          claim: boolean,
-        ): Effect.Effect<string | undefined, InvalidManagedIdentityError> =>
+          checkoutId: string,
+        ): Effect.Effect<string, InvalidManagedIdentityError> =>
           Effect.gen(function* () {
-            const existing =
-              checkoutId === undefined
-                ? undefined
-                : yield* repository.findCheckoutContext(checkoutId, "detached");
+            const existing = yield* repository.findCheckoutContext(checkoutId, "detached");
             if (existing !== undefined) {
               return existing.id;
             }
-            return claim ? yield* managedUuid("contextId") : undefined;
+            return yield* managedUuid("contextId");
           });
 
         /**
@@ -795,27 +793,27 @@ export class ManagedStackService extends Context.Service<
          * same context from the same `HEAD`, and differ only in whether an absent
          * identity is minted or reported.
          */
-        const resolveWorkspace = (
-          workspacePath: string,
-          operation: ResolveManagedStackOperation,
+        const claimUnregisteredWorkspace = (
+          report: ManagedWorkspaceDiscovery,
         ): Effect.Effect<
           ResolvedWorkspace,
           InvalidManagedIdentityError | UnsupportedGitWorkspaceError
         > =>
           Effect.gen(function* () {
-            const claim = operation === "start";
-            const canonicalPath = yield* canonicalizeManagedWorkspacePath(workspacePath);
+            const canonicalPath = report.workspace.canonicalPath;
             const inspection = yield* withWorkspaceServices(inspectWorkspace(canonicalPath));
+            if (!observationMatches(report, inspection)) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed workspace changed after discovery; rediscovery is required",
+                }),
+              );
+            }
 
             if (inspection.kind === "ordinary-folder") {
               const markerPath = ordinaryWorkspaceIdentityPath(canonicalPath);
-              const marker = claim
-                ? yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory)
-                : undefined;
-              const identity =
-                marker === undefined
-                  ? yield* readOrdinaryWorkspaceIdentity(canonicalPath)
-                  : marker.identity;
+              const marker = yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
+              const identity = marker.identity;
               const ownedContext =
                 identity?.checkoutId === undefined
                   ? undefined
@@ -841,17 +839,10 @@ export class ManagedStackService extends Context.Service<
               };
             }
 
-            const claimed = claim
-              ? yield* withWorkspaceServices(ensureGitCheckoutIdentity(inspection, idFactory))
-              : undefined;
-            // Read so a non-claiming `status` still has an identity to report;
-            // a claiming `start` uses the authoritative result of its ensure
-            // call, not a redundant read that racing claimants could both see
-            // as absent.
-            const stored = claim
-              ? undefined
-              : yield* withWorkspaceServices(readGitCheckoutIdentity(inspection));
-            const checkoutId = claimed?.checkoutId ?? stored?.checkoutId;
+            const claimed = yield* withWorkspaceServices(
+              ensureGitCheckoutIdentity(inspection, idFactory),
+            );
+            const checkoutId = claimed.checkoutId;
             const head = inspection.head;
             return {
               workspace: {
@@ -873,16 +864,56 @@ export class ManagedStackService extends Context.Service<
                   ? { kind: "detached" }
                   : { kind: "branch", locator: head.branch },
               identity: {
-                projectId: claimed?.projectId ?? stored?.projectId,
+                projectId: claimed.projectId,
                 checkoutId,
                 contextId:
                   head.kind === "detached"
-                    ? yield* detachedContextId(checkoutId, claim)
-                    : yield* branchContextId(inspection, head.branch, claim),
+                    ? yield* detachedContextId(checkoutId)
+                    : yield* withWorkspaceServices(
+                        ensureBranchContextId(inspection, head.branch, idFactory),
+                      ),
               },
               identityMarkerCreated: claimed?.checkoutIdentityCreated ?? false,
             };
           });
+
+        const discover = (workspacePath: string) =>
+          withWorkspaceServices(
+            discoverWorkspace(workspacePath).pipe(
+              Effect.provideService(ManagedStackRepository, repository),
+            ),
+          );
+
+        const compareText = (left: string, right: string): number =>
+          left < right ? -1 : left > right ? 1 : 0;
+        const discoveryObservation = (report: ManagedWorkspaceDiscovery): string => {
+          const sortJson = <T>(values: ReadonlyArray<T>): ReadonlyArray<T> =>
+            [...values].sort((left, right) =>
+              compareText(JSON.stringify(left) ?? "", JSON.stringify(right) ?? ""),
+            );
+          return JSON.stringify({
+            state: report.state,
+            workspace: report.workspace,
+            context: report.context,
+            contextDescriptor: report.contextDescriptor,
+            identity: report.identity,
+            registryContextId: report.registryContextId,
+            stacks: sortJson(report.stacks),
+            locations: sortJson(report.locations),
+            ownerEvidence:
+              report.ownerEvidence === undefined
+                ? undefined
+                : {
+                    ...report.ownerEvidence,
+                    claims: sortJson(report.ownerEvidence.claims),
+                  },
+            activeOperations: sortJson(report.activeOperations),
+            activeTransition: report.activeTransition,
+            conflicts: sortJson(report.conflicts),
+            warnings: sortJson(report.warnings),
+            recoveryOperations: sortJson(report.recoveryOperations),
+          });
+        };
 
         /**
          * The identity a mutating resolve must have ended up with. Every claim
@@ -1106,6 +1137,23 @@ export class ManagedStackService extends Context.Service<
                   configuration: resolveOptions.configuration ?? {},
                 });
                 if (prepared.outcome === "existing") {
+                  if (plan.contextDescriptor.kind === "branch") {
+                    const claims = yield* repository.listIdentityClaims(identity.projectId);
+                    const context = claims.contexts.find(
+                      (candidate) => candidate.id === identity.contextId,
+                    );
+                    if (
+                      context !== undefined &&
+                      context.ownerBranch !== plan.contextDescriptor.locator
+                    ) {
+                      yield* repository.refreshContextOwner({
+                        contextId: identity.contextId,
+                        ownerBranch: plan.contextDescriptor.locator,
+                        locator: plan.contextDescriptor.locator,
+                        now: now(),
+                      });
+                    }
+                  }
                   return yield* restore(reuseRegisteredStack(resolveOptions, plan, prepared));
                 }
 
@@ -1113,6 +1161,23 @@ export class ManagedStackService extends Context.Service<
                 const operation = prepared.operation;
                 return yield* restore(
                   Effect.gen(function* () {
+                    if (plan.contextDescriptor.kind === "branch") {
+                      const claims = yield* repository.listIdentityClaims(identity.projectId);
+                      const context = claims.contexts.find(
+                        (candidate) => candidate.id === identity.contextId,
+                      );
+                      if (
+                        context !== undefined &&
+                        context.ownerBranch !== plan.contextDescriptor.locator
+                      ) {
+                        yield* repository.refreshContextOwner({
+                          contextId: identity.contextId,
+                          ownerBranch: plan.contextDescriptor.locator,
+                          locator: plan.contextDescriptor.locator,
+                          now: now(),
+                        });
+                      }
+                    }
                     yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
                     yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
                     yield* fs.makeDirectory(pending.paths.runtime, {
@@ -1190,18 +1255,67 @@ export class ManagedStackService extends Context.Service<
             if (!stackNamePattern.test(stackName)) {
               return yield* Effect.fail(new InvalidManagedStackNameError({ stackName }));
             }
-            const plan = yield* resolveWorkspace(
-              resolveOptions.workspacePath,
-              resolveOptions.operation,
+            const report = yield* discover(resolveOptions.workspacePath);
+            const settledReport =
+              resolveOptions.operation === "start"
+                ? yield* discover(resolveOptions.workspacePath)
+                : report;
+            const benignConcurrentRegistration =
+              report.state === "unregistered" &&
+              settledReport.state === "healthy" &&
+              report.workspace.checkoutKind === settledReport.workspace.checkoutKind &&
+              report.workspace.workspaceRoot === settledReport.workspace.workspaceRoot &&
+              report.workspace.projectIdentityLocation ===
+                settledReport.workspace.projectIdentityLocation &&
+              report.workspace.checkoutIdentityLocation ===
+                settledReport.workspace.checkoutIdentityLocation &&
+              report.context.kind === settledReport.context.kind &&
+              report.context.branch === settledReport.context.branch &&
+              report.context.commit === settledReport.context.commit &&
+              settledReport.activeTransition === undefined &&
+              settledReport.conflicts.length === 0;
+            if (
+              resolveOptions.operation === "start" &&
+              discoveryObservation(report) !== discoveryObservation(settledReport) &&
+              !benignConcurrentRegistration
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed workspace changed during discovery; rediscovery is required",
+                }),
+              );
+            }
+            const plan: ResolvedWorkspace = {
+              workspace: settledReport.workspace,
+              context: settledReport.context,
+              contextDescriptor: settledReport.contextDescriptor,
+              identity: settledReport.identity,
+              identityMarkerCreated: false,
+            };
+            if (resolveOptions.operation === "status") {
+              return yield* reportResolution(plan, stackName);
+            }
+            const settledPlan =
+              settledReport.state === "unregistered"
+                ? yield* claimUnregisteredWorkspace(settledReport)
+                : settledReport.state === "healthy"
+                  ? plan
+                  : settledReport.state === "adoptable" &&
+                      settledReport.recoveryOperations.some(
+                        (operation) => operation.operation === "adoptContext",
+                      )
+                    ? plan
+                    : yield* Effect.fail(
+                        new InvalidManagedIdentityError({
+                          message: `Managed workspace ${report.workspace.canonicalPath} is ${report.state}`,
+                        }),
+                      );
+            return yield* registerStack(
+              resolveOptions,
+              stackName,
+              settledPlan,
+              yield* requireResolvedIdentity(settledPlan),
             );
-            return resolveOptions.operation === "status"
-              ? yield* reportResolution(plan, stackName)
-              : yield* registerStack(
-                  resolveOptions,
-                  stackName,
-                  plan,
-                  yield* requireResolvedIdentity(plan),
-                );
           });
         }
 
@@ -1435,6 +1549,7 @@ export class ManagedStackService extends Context.Service<
 
         return {
           stateRoot,
+          discoverWorkspace: discover,
           resolveStack,
           inspectStack: (stackId) => repository.getStackProjection(stackId),
           listStacks: (listOptions) => repository.listStackProjections(listOptions),

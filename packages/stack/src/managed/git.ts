@@ -225,7 +225,7 @@ const locateGitCheckoutRoot = (
     }
   });
 
-const branchRefExists = (
+export const branchRefExists = (
   fs: FileSystem.FileSystem,
   commonDirectory: string,
   ref: string,
@@ -508,6 +508,14 @@ export interface GitConfigStoreShape {
     file: string,
     key: string,
   ) => Effect.Effect<ReadonlyArray<string>, UnsupportedGitWorkspaceError>;
+  /** Read-only regexp query returning matching keys and values in file order. */
+  readonly getRegexp: (
+    file: string,
+    regexp: string,
+  ) => Effect.Effect<
+    ReadonlyArray<{ readonly key: string; readonly value: string }>,
+    UnsupportedGitWorkspaceError
+  >;
   /** Appends a value to `key`, replacing nothing. */
   readonly add: (
     file: string,
@@ -648,6 +656,16 @@ export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(Gi
         .split("\n")
         .map((value) => value.trim())
         .filter((value) => value.length > 0),
+    ),
+  getRegexp: (file, regexp) =>
+    Effect.map(
+      gitConfig(["--file", file, "--null", "--get-regexp", regexp], true, file),
+      (stdout) =>
+        (stdout ?? "").split("\0").flatMap((record) => {
+          const separator = record.indexOf("\n");
+          if (separator <= 0) return [];
+          return [{ key: record.slice(0, separator), value: record.slice(separator + 1) }];
+        }),
     ),
   add: (file, key, value) => gitConfigWrite(["--file", file, "--add", key, value], file),
   replace: (file, key, value) =>
@@ -950,6 +968,53 @@ export const readGitCheckoutIdentity = (
         try: () => readCheckoutIdentity(inspection.gitDirectory),
         catch: asRaised,
       });
+      return {
+        projectId,
+        checkoutId: identity?.checkoutId,
+        projectIdentityLocation: inspection.commonDirectory,
+        checkoutIdentityLocation: inspection.gitDirectory,
+      };
+    }),
+  );
+
+/** Read-only checkout marker probe through Effect FileSystem. */
+export const readGitCheckoutIdentityWithFileSystem = (
+  inspection: GitCheckoutInspection,
+): Effect.Effect<
+  GitCheckoutIdentityState,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore | FileSystem.FileSystem
+> =>
+  failsWithIdentity(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const projectId = yield* readConfigId(
+        gitConfigPath(inspection.commonDirectory),
+        GIT_PROJECT_ID_KEY,
+        "projectId",
+      );
+      const content = yield* fs
+        .readFileString(gitCheckoutIdentityPath(inspection.gitDirectory))
+        .pipe(
+          Effect.catchTag("PlatformError", (error) =>
+            error.reason._tag === "NotFound"
+              ? Effect.succeed(undefined)
+              : Effect.fail(
+                  new UnsupportedGitWorkspaceError({
+                    path: gitCheckoutIdentityPath(inspection.gitDirectory),
+                    reason: `Git checkout identity is inaccessible (${error.message})`,
+                    workspaceCause: "metadata-inaccessible",
+                  }),
+                ),
+          ),
+        );
+      const identity =
+        content === undefined
+          ? undefined
+          : yield* Effect.try({
+              try: () => decodeCheckoutIdentity(content),
+              catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+            });
       return {
         projectId,
         checkoutId: identity?.checkoutId,
