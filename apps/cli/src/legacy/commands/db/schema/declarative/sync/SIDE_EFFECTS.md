@@ -26,6 +26,7 @@ disabling safe compaction.
 | `<workdir>/supabase/schemas/.pgdelta-export.json`               | JSON       | bundled export metadata, when present                                                      |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                       | JSON       | legacy opt-out's migrations/declarative catalog cache                                      |
 | `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`    | tar        | warm shadow-cache hit on a migrations-catalog miss — snapshot streamed into the fresh shadow container before it starts                     |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar.<pid>.partial` | tar        | during a cold export's abandoned-partial sweep — enumerated and `stat`ed, and removed when older than an hour (a crashed/SIGKILLed earlier export's leftover) |
 
 ## Files Written
 
