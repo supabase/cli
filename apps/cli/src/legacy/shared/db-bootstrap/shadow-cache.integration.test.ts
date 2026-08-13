@@ -658,36 +658,41 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
-  it.live("a failed warm restore deletes the suspect tar and falls back to a cold run", () => {
-    const docker = fakeDockerDaemon({ failCopyIn: true });
-    const cluster = fakeCluster();
-    const out = mockOutput();
-    return withShadowCacheEnv(
-      "1",
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const input = shadowInput(fs, path);
-        // A cold run first, so a snapshot for this exact key exists to be restored.
-        const cold = yield* coldRun(docker, input);
-        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+  it.live(
+    "a failed warm restore falls back cold, keeping the tar until its export replaces it",
+    () => {
+      const docker = fakeDockerDaemon({ failCopyIn: true });
+      const cluster = fakeCluster();
+      const out = mockOutput();
+      return withShadowCacheEnv(
+        "1",
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const input = shadowInput(fs, path);
+          // A cold run first, so a snapshot for this exact key exists to be restored.
+          const cold = yield* coldRun(docker, input);
+          expect(yield* soleTarName(fs, path)).toHaveLength(1);
 
-        const fallback = yield* legacyAcquireShadowDatabase(docker.spawner, input);
-        expect(out.stderrText).toContain("cached shadow baseline unusable");
-        // Falls all the way back to a cold provision — a fresh container with no baseline.
-        expect(fallback.baselinePresent).toBe(false);
-        expect(fallback.containerId).not.toBe(cold.containerId);
-        // The container whose restore failed is removed, not orphaned: with the cold run's own
-        // container already released by `coldRun`, only the fallback's remains.
-        expect(docker.ids()).toEqual([fallback.containerId]);
-        // The tar is the suspect and is deleted, so later runs do not retry it forever...
-        expect(yield* soleTarName(fs, path)).toEqual([]);
-        // ...and the cold fallback republishes one through its own snapshot step.
-        yield* fallback.snapshotBaseline;
-        expect(yield* soleTarName(fs, path)).toHaveLength(1);
-      }),
-    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
-  });
+          const fallback = yield* legacyAcquireShadowDatabase(docker.spawner, input);
+          expect(out.stderrText).toContain("cached shadow baseline unusable");
+          // Falls all the way back to a cold provision — a fresh container with no baseline.
+          expect(fallback.baselinePresent).toBe(false);
+          expect(fallback.containerId).not.toBe(cold.containerId);
+          // The container whose restore failed is removed, not orphaned: with the cold run's own
+          // container already released by `coldRun`, only the fallback's remains.
+          expect(docker.ids()).toEqual([fallback.containerId]);
+          // An extraction failure does NOT implicate the tar's contents (it could just as well be
+          // a daemon hiccup), so the tar survives the fallback decision...
+          expect(yield* soleTarName(fs, path)).toHaveLength(1);
+          // ...and the cold fallback's own export atomically republishes over it, so a genuinely
+          // corrupt tar still self-heals within this one run.
+          yield* fallback.snapshotBaseline;
+          expect(yield* soleTarName(fs, path)).toHaveLength(1);
+        }),
+      ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+    },
+  );
 
   it.live("a restored shadow that never becomes ready is removed before the cold retry", () => {
     const docker = fakeDockerDaemon();

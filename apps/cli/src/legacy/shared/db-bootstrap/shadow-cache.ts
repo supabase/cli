@@ -17,7 +17,8 @@
  * shadows are all removed with `docker rm -f -v` on release; the cold path alone drops `--rm` (see
  * {@link LegacyCreateShadowDatabaseInput.autoRemove} for the consequence); the tar is published by
  * an atomic rename, so concurrent writers need no lock file; a cache anomaly never fails the run —
- * a warm-path anomaly deletes the tar and cold-provisions, a cold export failure only warns and
+ * a warm-path anomaly cold-provisions (deleting the tar only when its contents are implicated —
+ * see `LegacyShadowCacheUnavailable.tarSuspect`), a cold export failure only warns and
  * leaves the run uncached; retention keeps the current key's tar only, sweeping every other one on
  * publish. `SUPABASE_SHADOW_CACHE` is ON by default; `false`/`0` opts out.
  */
@@ -75,9 +76,23 @@ export const LEGACY_SHADOW_CACHE_ENV = "SUPABASE_SHADOW_CACHE";
  */
 interface LegacyShadowCacheUnavailable {
   readonly reason: string;
+  /**
+   * `true` only when the failure implicates the TAR'S CONTENTS — today, exactly one producer: a
+   * restored cluster that started but never accepted connections ({@link legacyWarmShadow}'s
+   * readiness wait). Everything else (a `docker create`/`cp`/`start` failure — daemon outage,
+   * port collision, or even a corrupt archive's failed extraction) leaves the tar in place: an
+   * infra failure says nothing about the tar, and a genuinely corrupt one is atomically
+   * REPLACED by the cold fallback's own export in the same run, so deleting up front would only
+   * throw away a valid ~15s-to-rebuild baseline on transient Docker failures (review: Codex on
+   * #6184).
+   */
+  readonly tarSuspect?: boolean;
 }
 
-const legacyShadowCacheUnavailable = (reason: string): LegacyShadowCacheUnavailable => ({ reason });
+const legacyShadowCacheUnavailable = (
+  reason: string,
+  opts: { readonly tarSuspect?: boolean } = {},
+): LegacyShadowCacheUnavailable => ({ reason, ...opts });
 
 /**
  * Whether the shadow baseline cache is enabled for this invocation.
@@ -728,6 +743,9 @@ const legacyWarmShadow = <E>(
       ),
     );
     yield* legacyAwaitShadowReady(spawner, input, containerId, "restored shadow").pipe(
+      // The ONE failure that implicates the tar's contents: the restored cluster started but
+      // never accepted connections — see {@link LegacyShadowCacheUnavailable.tarSuspect}.
+      Effect.mapError((cause) => legacyShadowCacheUnavailable(cause.reason, { tarSuspect: true })),
       Effect.tapError(() => legacyRemoveShadowDatabase(spawner, containerId)),
       Effect.onInterrupt(() => legacyRemoveShadowDatabase(spawner, containerId)),
       Effect.interruptible,
@@ -804,9 +822,13 @@ export const legacyAcquireShadowDatabase = <E>(
             `Warning: cached shadow baseline unusable (${cause.reason}); recreating.\n`,
             "stderr",
           );
-          // The tar is the suspect: a restore that produced an unstartable cluster will produce
-          // one again on every later run, so it is deleted rather than retried forever.
-          yield* legacyForgetShadowBaselineTar(input.fs, tarPath);
+          // Delete ONLY when the failure implicates the tar's contents (a restored cluster that
+          // came up broken) — see {@link LegacyShadowCacheUnavailable.tarSuspect} for why an
+          // infra or extraction failure leaves it in place (the cold fallback's own export
+          // republishes over a genuinely bad tar anyway).
+          if (cause.tarSuspect === true) {
+            yield* legacyForgetShadowBaselineTar(input.fs, tarPath);
+          }
           return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
         }),
       ),
