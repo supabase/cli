@@ -1,6 +1,4 @@
-# `supabase feedback [message...]`
-
-Alias: `supabase btw [message...]`
+# `supabase feedback add [message...]`
 
 ## Files Read
 
@@ -22,7 +20,7 @@ Alias: `supabase btw [message...]`
 | ------ | ------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
 | `POST` | `<feedback-env-url>/rest/v1/interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, source: "cli", user_agent, project_ref (or null), metadata: { cli_version, os, arch, is_agent, agent_name? } }` | none (fire-and-forget; only the error status is checked) |
 
-`<feedback-env-url>` follows the resolved profile (`feedback.command.ts`):
+`<feedback-env-url>` follows the resolved profile (`add.command.ts`):
 `supabase-staging` / `supabase-local` → the staging feedback project;
 every other profile (incl. YAML-file profiles) → production. Production
 currently reuses the staging project until a dedicated one is provisioned
@@ -61,7 +59,7 @@ every command.
 The feedback message content is NEVER included in any telemetry event: the
 message is a positional argument, which `extractChangedFlagNames` structurally
 excludes from the `flags` property (it only scans `-`-prefixed argv tokens).
-Regression-tested in `feedback.integration.test.ts`. The message goes only to
+Regression-tested in `add.integration.test.ts`. The message goes only to
 the `interfaces_feedback` table via the API route above.
 
 ## Output
@@ -91,10 +89,9 @@ text prompt collects it first.
 ## Notes
 
 - TS-only command — no Go CLI counterpart, so no Go-parity constraints apply.
-- `btw` is a first-class command alias (`Command.withAlias`); telemetry always
-  records `command: "feedback"` regardless of which name was invoked.
+- Telemetry records `command: "feedback add"`.
 - Messages starting with a dash need the `--` end-of-options sentinel:
-  `supabase feedback -- "--yes should be the default"`.
+  `supabase feedback add -- "--yes should be the default"`.
 - Message resolution order: positional args → piped stdin (non-TTY) →
   interactive prompt (TTY, text mode) → error.
 - Submission context: CLI version, user agent (`SupabaseCLI/<version>` from

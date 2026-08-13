@@ -3,13 +3,13 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Stdio } from "effect";
-import type { FeedbackSubmission } from "../../../shared/feedback/feedback-submitter.service.ts";
+import type { FeedbackSubmission } from "../../../../shared/feedback/feedback-submitter.service.ts";
 import {
   FeedbackSubmitError,
   FeedbackSubmitter,
-} from "../../../shared/feedback/feedback-submitter.service.ts";
-import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
-import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
+} from "../../../../shared/feedback/feedback-submitter.service.ts";
+import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
+import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import {
   mockContextualAnalytics,
   mockOutput,
@@ -17,17 +17,17 @@ import {
   mockRuntimeInfo,
   mockStdin,
   mockTelemetryRuntime,
-} from "../../../../tests/helpers/mocks.ts";
+} from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
   useLegacyTempWorkdir,
-} from "../../../../tests/helpers/legacy-mocks.ts";
-import { legacyFeedbackHandler } from "./feedback.command.ts";
-import { LEGACY_FEEDBACK_EMPTY_MESSAGE } from "./feedback.errors.ts";
-import { legacyFeedback } from "./feedback.handler.ts";
+} from "../../../../../tests/helpers/legacy-mocks.ts";
+import { legacyFeedbackAddHandler } from "./add.command.ts";
+import { LEGACY_FEEDBACK_EMPTY_MESSAGE } from "./add.errors.ts";
+import { legacyFeedbackAdd } from "./add.handler.ts";
 
-const tempRoot = useLegacyTempWorkdir("supabase-feedback-int-");
+const tempRoot = useLegacyTempWorkdir("supabase-feedback-add-int-");
 
 // Seeds `<workdir>/supabase/.temp/project-ref`, the file `supabase link` writes.
 // Passing `asDirectory` creates the path as a directory instead, which makes the
@@ -102,7 +102,7 @@ function setupLegacyFeedback(
   return { layer, out, submitter };
 }
 
-// Extra layers required by the wrapped `legacyFeedbackHandler` (the exact
+// Extra layers required by the wrapped `legacyFeedbackAddHandler` (the exact
 // wiring `Command.withHandler` uses): instrumentation + json error handling.
 function setupLegacyFeedbackHandler(
   opts: Parameters<typeof setupLegacyFeedback>[0] & { args?: ReadonlyArray<string> } = {},
@@ -114,17 +114,17 @@ function setupLegacyFeedbackHandler(
     base.layer,
     analytics.layer,
     processControl.layer,
-    commandRuntimeLayer(["feedback"]),
-    Stdio.layerTest({ args: Effect.succeed([...(opts.args ?? ["feedback"])]) }),
+    commandRuntimeLayer(["feedback", "add"]),
+    Stdio.layerTest({ args: Effect.succeed([...(opts.args ?? ["feedback", "add"])]) }),
   );
   return { ...base, layer, analytics, processControl };
 }
 
-describe("legacy feedback", () => {
+describe("legacy feedback add", () => {
   it.live("submits a quoted message with CLI version, os, and arch attached", () => {
     const { layer, out, submitter } = setupLegacyFeedback();
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["port conflicts when running two stacks"] });
+      yield* legacyFeedbackAdd({ message: ["port conflicts when running two stacks"] });
 
       expect(submitter.submissions).toEqual([
         {
@@ -147,7 +147,7 @@ describe("legacy feedback", () => {
   it.live("joins bare words into a single message", () => {
     const { layer, submitter } = setupLegacyFeedback();
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["ports", "conflict", "a", "lot"] });
+      yield* legacyFeedbackAdd({ message: ["ports", "conflict", "a", "lot"] });
 
       expect(submitter.submissions[0]?.message).toBe("ports conflict a lot");
     }).pipe(Effect.provide(layer));
@@ -156,7 +156,7 @@ describe("legacy feedback", () => {
   it.live("marks the submission as agent feedback when an AI tool is detected", () => {
     const { layer, submitter } = setupLegacyFeedback({ agentName: "claude_code" });
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["agents need --yes everywhere"] });
+      yield* legacyFeedbackAdd({ message: ["agents need --yes everywhere"] });
 
       expect(submitter.submissions[0]?.context.isAgent).toBe(true);
       expect(submitter.submissions[0]?.context.agentName).toBe("claude_code");
@@ -167,7 +167,7 @@ describe("legacy feedback", () => {
     const { layer, submitter } = setupLegacyFeedback();
     writeLinkedProjectRef(tempRoot.current, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["linked project feedback"] });
+      yield* legacyFeedbackAdd({ message: ["linked project feedback"] });
 
       expect(submitter.submissions[0]?.projectRef).toBe(LEGACY_VALID_REF);
     }).pipe(Effect.provide(layer));
@@ -177,7 +177,7 @@ describe("legacy feedback", () => {
     const { layer, submitter } = setupLegacyFeedback({ projectIdEnv: "envenvenvenvenvenvre" });
     writeLinkedProjectRef(tempRoot.current, LEGACY_VALID_REF);
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["env override feedback"] });
+      yield* legacyFeedbackAdd({ message: ["env override feedback"] });
 
       expect(submitter.submissions[0]?.projectRef).toBe("envenvenvenvenvenvre");
     }).pipe(Effect.provide(layer));
@@ -186,7 +186,7 @@ describe("legacy feedback", () => {
   it.live("sends no project ref when the workdir is not linked", () => {
     const { layer, submitter } = setupLegacyFeedback();
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["unlinked feedback"] });
+      yield* legacyFeedbackAdd({ message: ["unlinked feedback"] });
 
       expect(submitter.submissions[0]?.projectRef).toBeUndefined();
     }).pipe(Effect.provide(layer));
@@ -197,7 +197,7 @@ describe("legacy feedback", () => {
     const { layer, out, submitter } = setupLegacyFeedback();
     writeLinkedProjectRef(tempRoot.current, LEGACY_VALID_REF, { asDirectory: true });
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["broken ref file feedback"] });
+      yield* legacyFeedbackAdd({ message: ["broken ref file feedback"] });
 
       expect(submitter.submissions[0]?.projectRef).toBeUndefined();
       expect(out.messages).toContainEqual(
@@ -212,7 +212,7 @@ describe("legacy feedback", () => {
       pipedInput: "piped feedback\n",
     });
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: [] });
+      yield* legacyFeedbackAdd({ message: [] });
 
       expect(submitter.submissions[0]?.message).toBe("piped feedback");
     }).pipe(Effect.provide(layer));
@@ -223,7 +223,7 @@ describe("legacy feedback", () => {
       output: { interactive: true, promptTextResponses: ["typed feedback"] },
     });
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: [] });
+      yield* legacyFeedbackAdd({ message: [] });
 
       expect(submitter.submissions[0]?.message).toBe("typed feedback");
     }).pipe(Effect.provide(layer));
@@ -238,7 +238,7 @@ describe("legacy feedback", () => {
       pipedInput: "   \n",
     });
     return Effect.gen(function* () {
-      const error = yield* legacyFeedback({ message: [" ", ""] }).pipe(Effect.flip);
+      const error = yield* legacyFeedbackAdd({ message: [" ", ""] }).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "LegacyFeedbackEmptyMessageError",
@@ -251,7 +251,7 @@ describe("legacy feedback", () => {
   it.live("emits a machine-readable acknowledgement in json output format", () => {
     const { layer, out, submitter } = setupLegacyFeedback({ output: { format: "json" } });
     return Effect.gen(function* () {
-      yield* legacyFeedback({ message: ["json mode feedback"] });
+      yield* legacyFeedbackAdd({ message: ["json mode feedback"] });
 
       expect(submitter.submissions).toHaveLength(1);
       // Fire-and-forget: the ack carries no receipt payload, just the message.
@@ -271,7 +271,7 @@ describe("legacy feedback", () => {
       stdinIsTTY: false,
     });
     return Effect.gen(function* () {
-      yield* legacyFeedbackHandler({ message: [] });
+      yield* legacyFeedbackAddHandler({ message: [] });
 
       expect(submitter.submissions).toHaveLength(0);
       expect(out.messages).toContainEqual(
@@ -284,7 +284,7 @@ describe("legacy feedback", () => {
   it.live("surfaces a submitter failure", () => {
     const { layer, out } = setupLegacyFeedback({ submitFailWith: "backend unavailable" });
     return Effect.gen(function* () {
-      const error = yield* legacyFeedback({ message: ["doomed message"] }).pipe(Effect.flip);
+      const error = yield* legacyFeedbackAdd({ message: ["doomed message"] }).pipe(Effect.flip);
 
       expect(error).toMatchObject({
         _tag: "FeedbackSubmitError",
@@ -296,10 +296,10 @@ describe("legacy feedback", () => {
 
   it.live("never sends the feedback message content to PostHog", () => {
     const { layer, analytics, submitter } = setupLegacyFeedbackHandler({
-      args: ["feedback", "my", "secret", "papercut", "--debug"],
+      args: ["feedback", "add", "my", "secret", "papercut", "--debug"],
     });
     return Effect.gen(function* () {
-      yield* legacyFeedbackHandler({ message: ["my", "secret", "papercut"] });
+      yield* legacyFeedbackAddHandler({ message: ["my", "secret", "papercut"] });
 
       expect(submitter.submissions[0]?.message).toBe("my secret papercut");
       const events = analytics.captured.filter((c) => c.event === "cli_command_executed");

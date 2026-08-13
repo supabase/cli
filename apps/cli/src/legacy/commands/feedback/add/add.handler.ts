@@ -1,23 +1,20 @@
 import { Effect, FileSystem, Option, Path } from "effect";
-import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
-import { legacyReadProjectRefFile } from "../../shared/legacy-temp-paths.ts";
-import { FeedbackSubmitter } from "../../../shared/feedback/feedback-submitter.service.ts";
-import { Output } from "../../../shared/output/output.service.ts";
-import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { Stdin } from "../../../shared/runtime/stdin.service.ts";
-import { AiTool } from "../../../shared/telemetry/ai-tool.service.ts";
-import { TelemetryRuntime } from "../../../shared/telemetry/runtime.service.ts";
-import type { LegacyFeedbackArgs } from "./feedback.command.ts";
-import {
-  LEGACY_FEEDBACK_EMPTY_MESSAGE,
-  LegacyFeedbackEmptyMessageError,
-} from "./feedback.errors.ts";
+import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { legacyReadProjectRefFile } from "../../../shared/legacy-temp-paths.ts";
+import { FeedbackSubmitter } from "../../../../shared/feedback/feedback-submitter.service.ts";
+import { Output } from "../../../../shared/output/output.service.ts";
+import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
+import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
+import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
+import type { LegacyFeedbackAddArgs } from "./add.command.ts";
+import { LEGACY_FEEDBACK_EMPTY_MESSAGE, LegacyFeedbackEmptyMessageError } from "./add.errors.ts";
 
 // Resolution order: positional words → piped stdin (non-TTY) → interactive
 // prompt (TTY, text mode only — json/stream-json layers report
 // interactive: false) → LegacyFeedbackEmptyMessageError. Whitespace-only
 // input falls through to the next source.
-const legacyResolveFeedbackMessage = Effect.fnUntraced(function* (args: LegacyFeedbackArgs) {
+const legacyResolveFeedbackMessage = Effect.fnUntraced(function* (args: LegacyFeedbackAddArgs) {
   const fromArgs = args.message.join(" ").trim();
   if (fromArgs.length > 0) return fromArgs;
 
@@ -63,7 +60,9 @@ const legacyResolveFeedbackProjectRef = Effect.fnUntraced(function* (
   );
 });
 
-export const legacyFeedback = Effect.fn("legacy.feedback")(function* (args: LegacyFeedbackArgs) {
+export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
+  args: LegacyFeedbackAddArgs,
+) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
   const runtimeInfo = yield* RuntimeInfo;
