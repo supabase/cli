@@ -922,6 +922,15 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
   const migrations = yield* legacyListLocalMigrations(fs, path, migrationsDir);
   const zeroMigrations = migrations.length === 0;
 
+  // Built BEFORE the cache probes below, not just before the banner: this is a SECOND
+  // `@supabase/config` load (`legacyBuildLocalDbContainerInputs`) whose failure (e.g. an
+  // enabled API TLS's unreadable cert/key files) must surface regardless of cache state —
+  // Go's config loading (all of it) ran once in the root `PersistentPreRunE`, strictly
+  // before any catalog cache lookup and before `declarative.go`'s `createShadowContainer`
+  // ever prints the banner (`declarative.go:490`). Probing first would make an invalid
+  // project succeed or fail depending on whether a cache file happens to exist.
+  const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
+
   const baselinePath = path.join(
     tempDir,
     legacyBaselineCatalogFileName(legacyBaselineCatalogKey(setupInputs)),
@@ -943,14 +952,6 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
     if (Option.isSome(cached)) return path.relative(ctx.cwd, cached.value);
   }
 
-  // Built BEFORE the banner below, not after: this is a SECOND `@supabase/config` load
-  // (`legacyBuildLocalDbContainerInputs`) whose failure (e.g. an enabled API TLS's
-  // unreadable cert/key files) must surface before "Creating shadow database..." prints,
-  // matching Go's config loading (all of it) running once in the root `PersistentPreRunE`,
-  // strictly before `declarative.go`'s `createShadowContainer` ever prints that banner
-  // (`declarative.go:490`) — see `legacyBuildShadowCatalogInputs`'s own doc comment, and
-  // `diff.handler.ts`'s identical `localInputs` build for the same reasoning.
-  const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
   yield* output.raw("Creating shadow database...\n", "stderr");
   return yield* exportViaShadowCatalog(
     fs,
@@ -1161,6 +1162,12 @@ export const legacyExportBaselineCatalogRef = (
       Option.getOrUndefined(toml.orioledbVersion),
       toml.baseline,
     );
+    // Built BEFORE the cache probe below, not just before the banner: this is the SECOND
+    // `@supabase/config` load, and the Go `__catalog` child ran its equivalent in the command
+    // pre-run unconditionally — so an invalid project (e.g. an unreadable `[api.tls]` cert)
+    // failed consistently whether or not a cached catalog existed. Probing first would make
+    // that failure appear and disappear with cache state.
+    const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
     const cachePath = path.join(
       tempDir,
       legacyBaselineCatalogFileName(legacyBaselineCatalogKey(setupInputs)),
@@ -1170,11 +1177,6 @@ export const legacyExportBaselineCatalogRef = (
       if (exists) return path.relative(workdir, cachePath);
     }
 
-    // Built BEFORE the banner below — see `legacyBuildShadowCatalogInputs`'s own doc comment:
-    // this is a SECOND `@supabase/config` load whose failure must surface before "Creating
-    // shadow database..." prints, matching Go's config loading running once, strictly before
-    // `declarative.go`'s `createShadowContainer` ever prints that banner.
-    const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
     const output = yield* Output;
     yield* output.raw("Creating shadow database...\n", "stderr");
     return yield* exportViaShadowCatalog(
@@ -1237,13 +1239,14 @@ export const legacyExportDeclarativeCatalogRef = (
     const hash = legacyDeclarativeCatalogCacheKey(setupToken, schemaHash);
     const prefix = "local";
 
+    // Built BEFORE the cache probe — see `legacyExportBaselineCatalogRef`'s own comment above:
+    // config validation must not depend on cache state.
+    const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
     if (!params.noCache) {
       const cached = yield* legacyResolveDeclarativeCatalogPath(fs, path, tempDir, hash, prefix);
       if (Option.isSome(cached)) return path.relative(workdir, cached.value);
     }
 
-    // Built BEFORE the banner below — see `legacyExportBaselineCatalogRef`'s own comment above.
-    const built = yield* legacyBuildShadowCatalogInputs(ctx, toml, params);
     const output = yield* Output;
     yield* output.raw("Creating shadow database...\n", "stderr");
     return yield* exportViaShadowCatalog(
