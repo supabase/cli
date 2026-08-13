@@ -118,6 +118,105 @@ export interface ManagedCheckoutLocationDecisionInput {
   readonly checkoutExists: boolean;
 }
 
+export interface RegisterManagedCheckoutIdentityInput {
+  readonly identity: ManagedIdentityTriple;
+  readonly checkoutKind: ManagedCheckoutKind;
+  readonly checkoutRootPath: string;
+  readonly locationId: string;
+  readonly context: ManagedContextDescriptor;
+  readonly now: string;
+}
+
+export interface ManagedCheckoutIdentityRegistration {
+  readonly identity: ManagedIdentityTriple;
+  readonly checkoutKind: ManagedCheckoutKind;
+  readonly contextId: string;
+  readonly context: ManagedContextRecord;
+  readonly location: ManagedCheckoutLocation;
+}
+
+export type ManagedCheckoutIdentityRegistrationFailure =
+  | DuplicateManagedIdentityError
+  | ManagedIdentityRecoveryError;
+
+export interface ManagedCheckoutIdentityDecisionInput {
+  readonly requested: RegisterManagedCheckoutIdentityInput;
+  readonly existingCheckout?: { readonly projectId: string; readonly kind: ManagedCheckoutKind };
+  readonly checkoutLocations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly checkoutScopedExisting?: ManagedContextRecord;
+  readonly requestedExisting?: ManagedContextRecord;
+}
+
+export interface ManagedCheckoutIdentityDecision {
+  readonly registration: ManagedCheckoutIdentityRegistration;
+  readonly locationDecision: ManagedCheckoutLocationDecision;
+}
+
+export const decideManagedCheckoutIdentity = (
+  input: ManagedCheckoutIdentityDecisionInput,
+): ManagedCheckoutIdentityDecision => {
+  if (
+    input.existingCheckout !== undefined &&
+    input.existingCheckout.projectId !== input.requested.identity.projectId
+  ) {
+    throw new DuplicateManagedIdentityError({
+      identityId: input.requested.identity.checkoutId,
+      existingClaim: input.existingCheckout.projectId,
+      requestedClaim: input.requested.identity.projectId,
+    });
+  }
+  const contextDecision = decideManagedContextRegistration({
+    requestedId: input.requested.identity.contextId,
+    projectId: input.requested.identity.projectId,
+    checkoutId: input.requested.identity.checkoutId,
+    context: input.requested.context,
+    now: input.requested.now,
+    checkoutScopedExisting: input.checkoutScopedExisting,
+    requestedExisting: input.requestedExisting,
+  });
+  const context =
+    contextDecision.outcome === "create"
+      ? contextDecision.context
+      : input.requestedExisting === undefined
+        ? input.checkoutScopedExisting
+        : {
+            ...input.requestedExisting,
+            locator: contextDecision.refreshLocator ?? input.requestedExisting.locator,
+          };
+  if (context === undefined) {
+    throw new Error("Managed context decision did not identify a context row");
+  }
+  const locationDecision = decideManagedCheckoutLocation({
+    requested: {
+      checkoutId: input.requested.identity.checkoutId,
+      locationId: input.requested.locationId,
+      canonicalPath: input.requested.checkoutRootPath,
+      now: input.requested.now,
+    },
+    checkoutLocations: input.checkoutLocations,
+    checkoutExists: true,
+  });
+  if (locationDecision.outcome === "blocked") {
+    throw new ManagedCheckoutConflictError({
+      checkoutId: input.requested.identity.checkoutId,
+      canonicalPath: input.requested.checkoutRootPath,
+    });
+  }
+  return {
+    registration: {
+      identity: {
+        ...input.requested.identity,
+        contextId: context.id,
+      },
+      checkoutKind: input.requested.checkoutKind,
+      contextId: context.id,
+      context,
+      location: locationDecision.location,
+    },
+    locationDecision,
+  };
+};
+
 /** Shared location policy. Adapters only persist the returned rows atomically. */
 export const decideManagedCheckoutLocation = (
   input: ManagedCheckoutLocationDecisionInput,
@@ -623,6 +722,12 @@ export type OwnedManagedStackFailure = ManagedOperationOwnershipError | ManagedS
  * driver error — are defects instead: they are not outcomes a caller can act on.
  */
 export interface ManagedStackRepositoryShape {
+  readonly registerCheckoutIdentity: (
+    input: RegisterManagedCheckoutIdentityInput,
+  ) => Effect.Effect<
+    ManagedCheckoutIdentityRegistration,
+    ManagedCheckoutIdentityRegistrationFailure
+  >;
   readonly listIdentityClaims: (projectId?: string) => Effect.Effect<ManagedIdentityClaims>;
   readonly applyCheckoutLocation: (
     input: ApplyManagedCheckoutLocationInput,

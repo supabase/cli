@@ -3142,6 +3142,81 @@ describe("managed repository and lifecycle", () => {
       }
     });
 
+    it("registers an identity without creating a stack or operation in both adapters", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          const registered = runRepo(
+            adapter.repository.registerCheckoutIdentity({
+              identity: {
+                projectId: `identity-project-${adapter.name}`,
+                checkoutId: `identity-checkout-${adapter.name}`,
+                contextId: `identity-context-${adapter.name}`,
+              },
+              checkoutKind: "ordinary",
+              checkoutRootPath: `/identity/${adapter.name}`,
+              locationId: `identity-location-${adapter.name}`,
+              context: { kind: "workspace" },
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          expect(registered.identity).toEqual({
+            projectId: `identity-project-${adapter.name}`,
+            checkoutId: `identity-checkout-${adapter.name}`,
+            contextId: `identity-context-${adapter.name}`,
+          });
+          expect(registered.contextId).toBe(`identity-context-${adapter.name}`);
+          expect(registered.location).toMatchObject({
+            checkoutId: `identity-checkout-${adapter.name}`,
+            canonicalPath: `/identity/${adapter.name}`,
+            state: "active",
+          });
+          expect(registered.context).toMatchObject({
+            id: `identity-context-${adapter.name}`,
+            kind: "workspace",
+          });
+          expect(runRepo(adapter.repository.listStacks())).toEqual([]);
+          expect(runRepo(adapter.repository.listActiveOperations())).toEqual([]);
+          const repeated = runRepo(
+            adapter.repository.registerCheckoutIdentity({
+              identity: {
+                projectId: `identity-project-${adapter.name}`,
+                checkoutId: `identity-checkout-${adapter.name}`,
+                contextId: `identity-context-${adapter.name}-new`,
+              },
+              checkoutKind: "ordinary",
+              checkoutRootPath: `/identity/${adapter.name}`,
+              locationId: `identity-location-${adapter.name}-new`,
+              context: { kind: "workspace" },
+              now: "2026-08-13T00:01:00.000Z",
+            }),
+          );
+          expect(repeated.identity).toEqual(registered.identity);
+          expect(repeated.contextId).toBe(registered.contextId);
+          expect(repeated.location.id).toBe(registered.location.id);
+          const beforeCollision = runRepo(adapter.repository.listIdentityClaims());
+          const collision = Effect.runSyncExit(
+            adapter.repository.registerCheckoutIdentity({
+              identity: {
+                projectId: `identity-project-${adapter.name}-other`,
+                checkoutId: `identity-checkout-${adapter.name}-other`,
+                contextId: `identity-context-${adapter.name}-other`,
+              },
+              checkoutKind: "ordinary",
+              checkoutRootPath: `/identity/${adapter.name}`,
+              locationId: `identity-location-${adapter.name}-other`,
+              context: { kind: "workspace" },
+              now: "2026-08-13T00:02:00.000Z",
+            }),
+          );
+          expectFailureTag(collision, "ManagedCheckoutConflictError");
+          expect(runRepo(adapter.repository.listIdentityClaims())).toEqual(beforeCollision);
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
+
     it("reuses active history for prepare and refuses blocked history without writes", async () => {
       const cases = await adapters();
       try {

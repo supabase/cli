@@ -38,6 +38,7 @@ import {
   decideManagedIdentityMetadataPrune,
   transitionResourceKeys,
   decideManagedContextRegistration,
+  decideManagedCheckoutIdentity,
   managedStackOccupiesPorts,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
@@ -61,6 +62,9 @@ import {
   type PruneManagedIdentityMetadataInput,
   type PruneManagedIdentityMetadataResult,
   type ManagedIdentityRecoveryError,
+  type RegisterManagedCheckoutIdentityInput,
+  type ManagedCheckoutIdentityRegistration,
+  type ManagedCheckoutIdentityRegistrationFailure,
 } from "./repository.ts";
 
 interface InMemoryCheckout {
@@ -289,6 +293,39 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
     }
     return contextId;
   };
+
+  const registerCheckoutIdentity = (
+    input: RegisterManagedCheckoutIdentityInput,
+  ): ManagedCheckoutIdentityRegistration =>
+    atomic(() => {
+      const existingCheckout = checkouts.get(input.identity.checkoutId);
+      const decision = decideManagedCheckoutIdentity({
+        requested: input,
+        existingCheckout,
+        checkoutLocations: [...locations.values()],
+        checkoutScopedExisting:
+          input.context.kind === "branch"
+            ? undefined
+            : [...contexts.values()].find(
+                (candidate) =>
+                  candidate.checkoutId === input.identity.checkoutId &&
+                  candidate.kind === input.context.kind,
+              ),
+        requestedExisting: contexts.get(input.identity.contextId),
+      });
+      projects.add(input.identity.projectId);
+      checkouts.set(input.identity.checkoutId, {
+        id: input.identity.checkoutId,
+        projectId: input.identity.projectId,
+        kind: input.checkoutKind,
+      });
+      contexts.set(decision.registration.context.id, decision.registration.context);
+      for (const updated of decision.locationDecision.updates ?? []) {
+        locations.set(updated.id, updated);
+      }
+      locations.set(decision.registration.location.id, decision.registration.location);
+      return copy(decision.registration);
+    });
 
   const prepareStack = (input: PrepareStackInput): PrepareStackResult => {
     assertManagedOwnerPid(input.ownerPid);
@@ -659,6 +696,15 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       .map(projectStack);
 
   return {
+    registerCheckoutIdentity: (input) =>
+      Effect.try({
+        try: () => registerCheckoutIdentity(input),
+        catch: failsWith<ManagedCheckoutIdentityRegistrationFailure>(
+          DuplicateManagedIdentityError,
+          ManagedCheckoutConflictError,
+          ManagedInaccessiblePathError,
+        ),
+      }),
     listIdentityClaims: (projectId) => Effect.sync(() => listIdentityClaims(projectId)),
     applyCheckoutLocation: (input) =>
       Effect.try({

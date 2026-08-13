@@ -64,6 +64,9 @@ import type {
   PruneManagedIdentityMetadataInput,
   PruneManagedIdentityMetadataResult,
   ManagedIdentityRecoveryError,
+  RegisterManagedCheckoutIdentityInput,
+  ManagedCheckoutIdentityRegistration,
+  ManagedCheckoutIdentityRegistrationFailure,
 } from "./repository.ts";
 import {
   assertManagedOwnerPid,
@@ -80,6 +83,7 @@ import {
   decideManagedContextOwnerRefresh,
   decideManagedIdentityMetadataPrune,
   transitionResourceKeys,
+  decideManagedCheckoutIdentity,
 } from "./repository.ts";
 import { errorCode } from "./error-code.ts";
 import { failsWith, neverFails } from "./failure.ts";
@@ -122,6 +126,19 @@ const getString = (row: unknown, field: string): string => {
     throw new Error(`SQLite column ${field} is not a string`);
   }
   return value;
+};
+
+const getCheckoutKind = (row: unknown): ManagedCheckoutKind => {
+  const kind = getString(row, "kind");
+  if (
+    kind === "bare-worktree" ||
+    kind === "git" ||
+    kind === "linked-worktree" ||
+    kind === "ordinary"
+  ) {
+    return kind;
+  }
+  throw new Error(`SQLite row has invalid checkout kind ${kind}`);
 };
 
 const getOptionalString = (row: unknown, field: string): string | undefined => {
@@ -958,6 +975,106 @@ const registerContext = (database: ManagedSqliteDatabase, input: PrepareStackInp
   return decision.context.id;
 };
 
+const registerCheckoutIdentity = (
+  database: ManagedSqliteDatabase,
+  input: RegisterManagedCheckoutIdentityInput,
+): ManagedCheckoutIdentityRegistration => {
+  database
+    .prepare("INSERT OR IGNORE INTO projects (id, created_at) VALUES (?, ?)")
+    .run([input.identity.projectId, input.now]);
+  const checkoutRow = database
+    .prepare("SELECT project_id, kind FROM checkouts WHERE id = ?")
+    .get([input.identity.checkoutId]);
+  const existingCheckout =
+    checkoutRow === undefined
+      ? undefined
+      : {
+          projectId: getString(checkoutRow, "project_id"),
+          kind: getCheckoutKind(checkoutRow),
+        };
+  const requestedExistingRow = database
+    .prepare("SELECT * FROM contexts WHERE id = ?")
+    .get([input.identity.contextId]);
+  const requestedExisting =
+    requestedExistingRow === undefined ? undefined : decodeContext(requestedExistingRow);
+  const checkoutScopedExisting =
+    input.context.kind === "branch"
+      ? undefined
+      : findCheckoutContext(database, input.identity.checkoutId, input.context.kind);
+  const decision = decideManagedCheckoutIdentity({
+    requested: input,
+    existingCheckout,
+    checkoutLocations: selectCheckoutLocations(database),
+    checkoutScopedExisting,
+    requestedExisting,
+  });
+  database
+    .prepare(
+      `INSERT INTO checkouts (id, project_id, kind, created_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET kind = excluded.kind`,
+    )
+    .run([input.identity.checkoutId, input.identity.projectId, input.checkoutKind, input.now]);
+  const contextRow = database
+    .prepare("SELECT id FROM contexts WHERE id = ?")
+    .get([decision.registration.context.id]);
+  if (contextRow === undefined) {
+    database
+      .prepare(
+        `INSERT INTO contexts (id, project_id, checkout_id, kind, locator, owner_branch, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run([
+        decision.registration.context.id,
+        decision.registration.context.projectId,
+        decision.registration.context.checkoutId ?? null,
+        decision.registration.context.kind,
+        decision.registration.context.locator ?? null,
+        decision.registration.context.ownerBranch ?? null,
+        decision.registration.context.createdAt,
+      ]);
+  } else {
+    database
+      .prepare("UPDATE contexts SET locator = ? WHERE id = ?")
+      .run([decision.registration.context.locator ?? null, decision.registration.context.id]);
+  }
+  for (const updated of decision.locationDecision.updates ?? []) {
+    database
+      .prepare("UPDATE checkout_locations SET state = ?, last_seen_at = ? WHERE id = ?")
+      .run([updated.state, updated.lastSeenAt, updated.id]);
+  }
+  const locationRow = database
+    .prepare("SELECT id FROM checkout_locations WHERE id = ?")
+    .get([decision.registration.location.id]);
+  if (locationRow === undefined) {
+    database
+      .prepare(
+        `INSERT INTO checkout_locations
+                (id, checkout_id, canonical_path, state, rebound_from_location_id, last_seen_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run([
+        decision.registration.location.id,
+        decision.registration.location.checkoutId,
+        decision.registration.location.canonicalPath,
+        decision.registration.location.state,
+        decision.registration.location.reboundFromLocationId ?? null,
+        decision.registration.location.lastSeenAt,
+      ]);
+  } else {
+    database
+      .prepare(
+        "UPDATE checkout_locations SET state = ?, rebound_from_location_id = ?, last_seen_at = ? WHERE id = ?",
+      )
+      .run([
+        decision.registration.location.state,
+        decision.registration.location.reboundFromLocationId ?? null,
+        decision.registration.location.lastSeenAt,
+        decision.registration.location.id,
+      ]);
+  }
+  return decision.registration;
+};
+
 const prepareStack = (
   database: ManagedSqliteDatabase,
   input: PrepareStackInput,
@@ -1497,6 +1614,16 @@ const createSqliteManagedStackRepository = (
     yield* initializeRegistry(database);
 
     return {
+      registerCheckoutIdentity: (input) =>
+        transaction(
+          database,
+          () => registerCheckoutIdentity(database, input),
+          failsWith<ManagedCheckoutIdentityRegistrationFailure>(
+            DuplicateManagedIdentityError,
+            ManagedCheckoutConflictError,
+            ManagedInaccessiblePathError,
+          ),
+        ),
       listIdentityClaims: (projectId) =>
         readTransaction(database, () => listIdentityClaims(database, projectId)),
       applyCheckoutLocation: (input) =>
