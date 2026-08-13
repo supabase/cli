@@ -692,6 +692,48 @@ describe("legacy db start", () => {
   });
 
   it.live(
+    "honors a SUPABASE_DEBUG set only in the project .env: the rollback's Pruned reports fire without --debug",
+    () => {
+      // Every Go debug read on this path went through `viper.GetBool("DEBUG")` under
+      // `AutomaticEnv` after `loadNestedEnv` had `os.Setenv`'d the project `supabase/.env` into
+      // the process — so a `SUPABASE_DEBUG` set only there, never in the shell or via `--debug`,
+      // still gated the rollback's `Pruned …:` stderr reports. Delete any shell `SUPABASE_DEBUG`
+      // first: shell *presence* (even `false`) suppresses the project value entirely, per
+      // `legacyViperEnvBoolWithProjectFallback`'s own semantics.
+      const previous = process.env["SUPABASE_DEBUG"];
+      delete process.env["SUPABASE_DEBUG"];
+      const { layer, child } = setup({
+        configContents: 'project_id = "test"\n[db]\nhealth_timeout = "1s"\n',
+        route: freshVolumeRoute(defaultRoute({ neverHealthy: true })),
+      });
+      writeFileSync(join(tempRoot.current, "supabase", ".env"), "SUPABASE_DEBUG=true\n");
+      // `reportPruned` writes straight to the real process stderr (matching Go's unconditional
+      // `os.Stderr`), never the mocked `Output` service — intercept it like
+      // `health-check.unit.test.ts`'s own log-dump assertions do.
+      const writes: Array<string> = [];
+      const originalWrite = globalThis.process.stderr.write.bind(globalThis.process.stderr);
+      globalThis.process.stderr.write = ((chunk: string | Uint8Array) => {
+        writes.push(typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk));
+        return true;
+      }) as typeof globalThis.process.stderr.write;
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(rollbackWasAttempted(child.spawned)).toBe(true);
+        expect(writes.some((chunk) => chunk.includes("Pruned containers:"))).toBe(true);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            globalThis.process.stderr.write = originalWrite;
+            if (previous === undefined) delete process.env["SUPABASE_DEBUG"];
+            else process.env["SUPABASE_DEBUG"] = previous;
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
     "a health-check timeout WITH --from-backup is swallowed: the command still succeeds and writes _current_branch",
     () => {
       const { layer, child } = setup({

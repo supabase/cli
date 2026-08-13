@@ -30,7 +30,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../shared/legacy/global-flags.ts";
+import {
+  LegacyNetworkIdFlag,
+  legacyResolveDebugWithProjectEnv,
+} from "../../../shared/legacy/global-flags.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { legacyCheckDbToml } from "../legacy-db-config.toml-read.ts";
 import { LegacyDbConfigLoadError } from "../legacy-db-config.errors.ts";
@@ -119,13 +122,6 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   const runtimeInfo = yield* RuntimeInfo;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
-  // Threaded into `legacyRollbackStart`'s own `legacyDockerRemoveAll` teardown —
-  // `--debug` gates that function's `Pruned …:` stderr reports, matching
-  // `supabase start`'s own handler — and into
-  // `legacyBuildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume
-  // Realtime/Storage/Auth migrate job tees its own stderr (`db-setup.ts`'s
-  // `legacyRunStartMigrateJob`).
-  const debug = yield* LegacyDebugFlag;
 
   // Config is loaded first thing: a missing config is tolerated (defaults), but a present
   // config that is malformed, references an undecryptable `encrypted:` secret, or fails
@@ -133,6 +129,18 @@ export const legacyStartLocalDatabase = Effect.fnUntraced(function* (fromBackupF
   // load+validate — call it here (not via `legacyIsLocalDbRunning`'s best-effort read, which
   // swallows config errors) so a start fails fast on a broken config.
   const dbTomlValues = yield* legacyCheckDbToml(fs, path, cliConfig.workdir);
+
+  // Threaded into `legacyRollbackStart`'s own `legacyDockerRemoveAll` teardown —
+  // `--debug` gates that function's `Pruned …:` stderr reports, matching
+  // `supabase start`'s own handler — and into
+  // `legacyBuildLocalDbContainerInputs`'s own `setup.debug`, so a failed fresh-volume
+  // Realtime/Storage/Auth migrate job tees its own stderr (`db-setup.ts`'s
+  // `legacyRunStartMigrateJob`). Resolved with the `SUPABASE_DEBUG` shell/project-`.env`
+  // fallback, not the bare flag: every Go debug read on this path went through
+  // `viper.GetBool("DEBUG")` under `AutomaticEnv`, and the sibling shadow-provision path
+  // (`legacy-pgdelta.cache.ts`'s `legacyBuildShadowCatalogInputs`) already resolves it the
+  // same way.
+  const debug = yield* legacyResolveDebugWithProjectEnv(dbTomlValues.projectEnv);
 
   // This warning is printed unconditionally, right after the `project_id` check and BEFORE
   // any `api.enabled`/`auth.enabled` gate — so it fires regardless of those flags, and

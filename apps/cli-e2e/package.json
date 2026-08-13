@@ -68,6 +68,26 @@
           "default",
           "{workspaceRoot}/apps/cli/dist/**/*"
         ]
+      },
+      "record": {
+        "dependsOn": [
+          {
+            "projects": [
+              "supabase"
+            ],
+            "target": "build"
+          },
+          {
+            "projects": [
+              "cli-go"
+            ],
+            "target": "build"
+          }
+        ],
+        "inputs": [
+          "default",
+          "{workspaceRoot}/apps/cli/dist/**/*"
+        ]
       }
     },
     "implicitDependencies": [
