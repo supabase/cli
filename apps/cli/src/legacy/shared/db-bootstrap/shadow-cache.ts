@@ -159,7 +159,11 @@ export interface LegacyShadowCacheKeyInputs {
   readonly autoExposeNewTables: Option.Option<boolean>;
   /** `supabase/roles.sql`'s contents, `""` when absent. */
   readonly rolesSql: string;
-  /** `[db.vault]` secrets — names AND values, both of which land in `vault.secrets`. */
+  /**
+   * `[db.vault]` secrets — names AND values, both of which land in `vault.secrets`. Only
+   * RESOLVED entries are hashed ({@link legacyShadowCacheKey}), because the upsert skips
+   * unresolved ones entirely — see the loop's own comment there.
+   */
   readonly vault: ReadonlyArray<LegacyVaultSecret>;
   readonly services: {
     readonly realtime: LegacyShadowCacheServiceInput;
@@ -228,14 +232,20 @@ const legacyTriStateToken = (value: Option.Option<boolean>) =>
  * collision, not a missed field. Short enough to read in a filename.
  */
 export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string {
+  // Every UNRESTRICTED string is JSON-encoded before interpolation (`quoted`): a raw newline in
+  // one field could otherwise forge a whole extra payload line, letting two distinct
+  // configurations collide (review: Codex on #6184 — same class as the vault tuples below).
+  // Numbers and closed tokens need no quoting; `rolesSql` stays raw because it is the
+  // documented LAST field, with nothing after it to forge.
+  const quoted = (value: string) => JSON.stringify(value);
   const lines: Array<string> = [
-    `postgres_image=${inputs.postgresImage}`,
+    `postgres_image=${quoted(inputs.postgresImage)}`,
     `major_version=${inputs.majorVersion}`,
     `shadow_port=${inputs.shadowPort}`,
-    `jwt_secret=${inputs.jwtSecret}`,
+    `jwt_secret=${quoted(inputs.jwtSecret)}`,
     `jwt_expiry=${inputs.jwtExpiry}`,
-    `root_key=${inputs.rootKey}`,
-    `db_password=${inputs.dbPassword}`,
+    `root_key=${quoted(inputs.rootKey)}`,
+    `db_password=${quoted(inputs.dbPassword)}`,
     `db_settings=${legacyCanonicalJson(inputs.dbSettings)}`,
     `auto_expose_new_tables=${legacyTriStateToken(inputs.autoExposeNewTables)}`,
     // Not a per-run input — see the digest's own doc comment for what it covers and why.
@@ -245,7 +255,7 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
     const service = inputs.services[name];
     lines.push(
       service.enabled
-        ? `service=${name} enabled=true image=${service.image}`
+        ? `service=${name} enabled=true image=${quoted(service.image)}`
         : `service=${name} enabled=false`,
     );
   }
@@ -254,19 +264,23 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
   // the PG15+ gate the one-shot job itself is behind).
   lines.push(
     inputs.services.realtime.enabled && inputs.majorVersion >= 15
-      ? `realtime_jwks=${inputs.jwks}`
+      ? `realtime_jwks=${quoted(inputs.jwks)}`
       : "realtime_jwks=excluded",
   );
   // Storage's migration pin — same compound enabled+majorVersion gate as the JWKS line above,
   // because the consuming one-shot job (`legacyStartInitSchema15`) is behind the same gate.
   lines.push(
     inputs.services.storage.enabled && inputs.majorVersion >= 15
-      ? `storage_target_migration=${inputs.storageTargetMigration}`
+      ? `storage_target_migration=${quoted(inputs.storageTargetMigration)}`
       : "storage_target_migration=excluded",
   );
-  for (const secret of [...inputs.vault].sort((left, right) =>
-    left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
-  )) {
+  // ONLY resolved entries: `legacyUpsertVaultSecrets` (`legacy-vault.ts`) filters on
+  // `secret.resolved` before touching `vault.secrets`, so an unresolved entry never lands in
+  // the cluster and must not affect the key — hashing exactly what the upsert processes
+  // (review: Codex on #6184).
+  for (const secret of inputs.vault
+    .filter((secret) => secret.resolved)
+    .sort((left, right) => (left.name < right.name ? -1 : left.name > right.name ? 1 : 0))) {
     // JSON-encoded tuple, not `name=value`: both halves are unrestricted strings, so a bare
     // `=` join would let (`a=b`, `c`) and (`a`, `b=c`) collide — and a value containing a
     // newline could forge a whole extra payload line (review: Codex on #6184).
@@ -559,6 +573,17 @@ const legacyExportShadowBaseline = <E>(
 // ---------------------------------------------------------------------------
 
 /**
+ * Per-invocation cache controls a CALLER passes (as opposed to the user-level
+ * {@link LEGACY_SHADOW_CACHE_ENV} env gate). `bypassCache` is `db schema declarative sync
+ * --no-cache`'s hook: that flag documents "force fresh shadow database setup", so a run carrying
+ * it must neither restore an existing snapshot nor publish a new one — exactly the uncached
+ * lifecycle, regardless of the env gate (review: Codex on #6184).
+ */
+export interface LegacyShadowCacheOpts {
+  readonly bypassCache?: boolean;
+}
+
+/**
  * What `Effect.acquireUseRelease`'s `acquire` hands the `use` phase: the container, whether its
  * cluster already carries the platform baseline, and the snapshot step to run once a fresh
  * baseline is in place. Release needs nothing extra — every shadow this module hands out is
@@ -682,13 +707,17 @@ const legacyWarmShadow = <E>(
 export const legacyAcquireShadowDatabase = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
+  opts: LegacyShadowCacheOpts = {},
 ): Effect.Effect<
   LegacyShadowAcquiredHandle,
   LegacyShadowDbError | E,
   Output | LegacyDbConnection
 > =>
   Effect.gen(function* () {
-    if (!legacyShadowCacheEnabled(process.env, input.setup.projectEnvValues)) {
+    if (
+      opts.bypassCache === true ||
+      !legacyShadowCacheEnabled(process.env, input.setup.projectEnvValues)
+    ) {
       return yield* legacyUncachedShadow(spawner, input);
     }
 
@@ -765,7 +794,8 @@ export const legacyWithShadowDatabase = <E, A, E2, R2>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
   use: (handle: LegacyShadowAcquiredHandle) => Effect.Effect<A, E2, R2>,
+  opts: LegacyShadowCacheOpts = {},
 ): Effect.Effect<A, E2 | LegacyShadowDbError | E, R2 | Output | LegacyDbConnection> =>
-  Effect.acquireUseRelease(legacyAcquireShadowDatabase(spawner, input), use, (handle) =>
+  Effect.acquireUseRelease(legacyAcquireShadowDatabase(spawner, input, opts), use, (handle) =>
     legacyRemoveShadowDatabase(spawner, handle.containerId),
   );

@@ -386,6 +386,34 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
+  it.live("bypassCache acquires an uncached shadow even when a warm tar exists", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheEnv(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+        // A published tar for this exact key — `sync --no-cache`'s bypass must ignore it.
+        yield* coldRun(docker, input);
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+
+        const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
+          bypassCache: true,
+        });
+        expect(handle.baselinePresent).toBe(false);
+        // No restore in, no export out: the bypassed run neither reads nor rewrites the tar.
+        const bypassSteps = docker.steps().slice(docker.steps().lastIndexOf("create"));
+        expect(bypassSteps).toEqual(["create", "cp-secret", "start"]);
+        expect(docker.calls("create").at(-1) ?? []).toContain("--rm");
+        yield* handle.snapshotBaseline;
+        expect(docker.stepCalls("cp-out")).toHaveLength(1); // the initial cold run's only
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
   it.live("stays uncached for an OrioleDB cluster even with the cache enabled", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();

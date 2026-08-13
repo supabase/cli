@@ -238,6 +238,39 @@ describe("legacyShadowCacheKey", () => {
     expect(legacyShadowCacheKey(withPinA)).toBe(legacyShadowCacheKey(withPinB));
   });
 
+  it("cannot collide scalar fields across line boundaries", () => {
+    const base = baseKeyInputs();
+    // A newline embedded in one unrestricted scalar must not be able to forge the next
+    // payload line: rootKey `p\ndb_password="q"` + password `r` vs rootKey `p` + a password
+    // whose tail mimics the same text.
+    const left = legacyShadowCacheKey({
+      ...base,
+      rootKey: 'p"\ndb_password="q',
+      dbPassword: "r",
+    });
+    const right = legacyShadowCacheKey({
+      ...base,
+      rootKey: "p",
+      dbPassword: 'q"\ndb_password="r',
+    });
+    expect(left).not.toBe(right);
+  });
+
+  it("excludes unresolved vault secrets, which the upsert never processes", () => {
+    const base = baseKeyInputs();
+    const withUnresolved = legacyShadowCacheKey({
+      ...base,
+      vault: [...base.vault, { name: "pending", value: "", resolved: false }],
+    });
+    expect(withUnresolved).toBe(legacyShadowCacheKey(base));
+    // A RESOLVED empty value does land in the cluster, so it must re-key.
+    const withResolvedEmpty = legacyShadowCacheKey({
+      ...base,
+      vault: [...base.vault, { name: "pending", value: "", resolved: true }],
+    });
+    expect(withResolvedEmpty).not.toBe(legacyShadowCacheKey(base));
+  });
+
   it("cannot collide vault name/value pairs across the tuple boundary", () => {
     const base = baseKeyInputs();
     // `name=a=b, value=c` vs `name=a, value=b=c` — a bare `=`-joined encoding serializes both

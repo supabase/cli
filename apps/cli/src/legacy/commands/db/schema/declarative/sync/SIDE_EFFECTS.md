@@ -35,7 +35,7 @@ disabling safe compaction.
 | `<workdir>/supabase/schemas/extension.sql`                         | SQL    | accepted legacy-extension repair                                                                |
 | `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out's catalog cache                                                                  |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | bundled engine with `PGDELTA_DEBUG`                                                             |
-| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`       | tar    | cache-enabled (default) COLD shadow provision on a migrations-catalog cache miss only (a catalog hit provisions no shadow; a warm hit rewrites nothing) — the shadow's PGDATA snapshot, ~90MB, current key only |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`       | tar    | cache-enabled (default) COLD shadow provision on a migrations-catalog cache miss only (a catalog hit provisions no shadow; a warm hit rewrites nothing; `--no-cache` bypasses the snapshot cache entirely — neither read nor written) — the shadow's PGDATA snapshot, ~90MB, current key only |
 
 ## Subprocesses / Containers
 
@@ -130,7 +130,9 @@ The migrations-catalog shadow this command provisions on a cache miss goes throu
 `legacyGetMigrationsCatalogRef` -> `exportViaShadowCatalog` (`legacy-pgdelta.cache.ts`), the same
 `legacyWithShadowDatabase` seam `db diff`/`db pull` use, so it inherits the whole lifecycle: ON by
 default, `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (honored from the ambient env AND the
-project's dotenv, e.g. `supabase/.env`); a warm hit skips the platform baseline and therefore the
+project's dotenv, e.g. `supabase/.env`), and `--no-cache` bypasses it for that invocation (the
+flag promises fresh shadow setup, so it disables the snapshot cache along with the catalog
+cache); a warm hit skips the platform baseline and therefore the
 `Initialising schema...` progress line. Artifact:
 `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB), a PGDATA snapshot keyed by a hash of
 every input baked into the cluster; retention keeps the current key's tar only. Container

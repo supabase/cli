@@ -26,6 +26,7 @@ import { legacyWaitForHealthyServices } from "./db-bootstrap/health-check.ts";
 import {
   legacyWithShadowDatabase,
   type LegacyShadowAcquiredHandle,
+  type LegacyShadowCacheOpts,
 } from "./db-bootstrap/shadow-cache.ts";
 import {
   legacySetupShadowDatabase,
@@ -769,6 +770,7 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
   ) => Effect.Effect<LegacyProvisionedShadow, EP, RP>,
   persist: (snapshot: string) => Effect.Effect<string, E, R>,
+  shadowCacheOpts: LegacyShadowCacheOpts = {},
 ) =>
   Effect.gen(function* () {
     const { spawner, localInputs } = built;
@@ -785,16 +787,21 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     // `SUPABASE_SHADOW_CACHE` unset it IS that pair (identical Docker argv, identical labels), and
     // with it set a catalog cache miss restores a key-matching PGDATA snapshot into the fresh
     // shadow instead of paying the full cold provision — the same swap `db diff`/`db pull`'s own
-    // call sites make.
-    const written = yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
-      Effect.gen(function* () {
-        const shadow = yield* provision(spawner, handle, shadowInput);
-        const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
-          targetRef: shadow.sourceUrl,
-          role: "postgres",
-        });
-        return yield* persist(snapshot);
-      }),
+    // call sites make. `shadowCacheOpts` carries `sync --no-cache`'s bypass — see
+    // `LegacyShadowCacheOpts`.
+    const written = yield* legacyWithShadowDatabase(
+      spawner,
+      shadowInput,
+      (handle) =>
+        Effect.gen(function* () {
+          const shadow = yield* provision(spawner, handle, shadowInput);
+          const snapshot = yield* legacyExportCatalogPgDelta(ctx, {
+            targetRef: shadow.sourceUrl,
+            role: "postgres",
+          });
+          return yield* persist(snapshot);
+        }),
+      shadowCacheOpts,
     );
     return path.relative(ctx.cwd, written);
   });
@@ -988,6 +995,10 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
           timestamp,
         );
       }),
+    // `--no-cache` promises "force fresh shadow database setup" (`declarative.shared.ts`), so it
+    // must ALSO bypass the shadow baseline snapshot, not just the catalog cache — otherwise a
+    // warm tar would skip the very setup the flag exists to force (review: Codex on #6184).
+    { bypassCache: params.noCache },
   );
 });
 
