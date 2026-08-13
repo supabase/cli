@@ -386,12 +386,11 @@ export const discoverWorkspace = (
         ? claims.locations
         : claims.locations.filter((location) => location.checkoutId === identity.checkoutId);
     const folderClaimCheckoutIds = new Set(folderToGitClaims.map((claim) => claim.checkoutId));
-    const samePathClaims = claims.locations.filter(
+    const samePathClaims = allClaims.locations.filter(
       (location) =>
         location.canonicalPath === metadata.workspace.workspaceRoot &&
-        (identity.checkoutId !== undefined
-          ? location.checkoutId !== identity.checkoutId
-          : !folderClaimCheckoutIds.has(location.checkoutId)),
+        location.checkoutId !== identity.checkoutId &&
+        !folderClaimCheckoutIds.has(location.checkoutId),
     );
 
     const stacks = yield* matchingStacks(repository, identity);

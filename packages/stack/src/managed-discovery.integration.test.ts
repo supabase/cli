@@ -4,7 +4,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { symlinkSync, renameSync } from "node:fs";
 import { writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
-import { gitCheckoutIdentityPath, ordinaryWorkspaceIdentityPath } from "./managed/paths.ts";
+import {
+  gitCheckoutIdentityPath,
+  gitConfigPath,
+  ordinaryWorkspaceIdentityPath,
+} from "./managed/paths.ts";
 import {
   git,
   makeDirectory,
@@ -1262,6 +1266,80 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     const report = await inspect(wrapped, workspace);
     expect(report.state).toBe("healthy");
     expect(report.identity).toEqual(started.identity);
+  });
+
+  it("reports a global Git path collision and refuses start without mutation", async () => {
+    const root = makeRoot();
+    const workspace = makeRepository(root, "global-path-collision");
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const foreignProjectId = "00000000-0000-7000-8000-000000000201";
+    const foreignCheckoutId = "00000000-0000-7000-8000-000000000202";
+    const foreignContextId = "00000000-0000-7000-8000-000000000203";
+    const claimedAt = new Date().toISOString();
+    const base = service.repository;
+    const globalClaims: ManagedStackRepositoryShape = {
+      ...base,
+      listIdentityClaims: (projectId) =>
+        Effect.map(base.listIdentityClaims(projectId), (claims) =>
+          projectId === undefined
+            ? {
+                ...claims,
+                locations: [
+                  ...claims.locations,
+                  {
+                    id: "00000000-0000-7000-8000-000000000204",
+                    checkoutId: foreignCheckoutId,
+                    canonicalPath: workspace,
+                    state: "active" as const,
+                    lastSeenAt: claimedAt,
+                  },
+                ],
+                contexts: [
+                  ...claims.contexts,
+                  {
+                    id: foreignContextId,
+                    projectId: foreignProjectId,
+                    checkoutId: foreignCheckoutId,
+                    kind: "branch" as const,
+                    locator: "foreign",
+                    ownerBranch: "foreign",
+                    createdAt: claimedAt,
+                  },
+                ],
+              }
+            : claims,
+        ),
+    };
+    const beforeClaims = await Effect.runPromise(base.listIdentityClaims());
+    const beforeStacks = await service.listStacks();
+    const markerPath = gitCheckoutIdentityPath(join(workspace, ".git"));
+    const configPath = gitConfigPath(join(workspace, ".git"));
+    const beforeMarker = readFileSync(markerPath, "utf8");
+    const beforeConfig = readFileSync(configPath, "utf8");
+    const guarded = await makeManagedStackService({
+      repository: mutationDenied(globalClaims, { count: 0 }),
+      stateRoot: join(root, "global-path-collision-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(guarded);
+
+    const report = await inspect(globalClaims, workspace);
+    expect(report.state).toBe("duplicate");
+    expect(report.conflictingLocations).toEqual([
+      expect.objectContaining({ checkoutId: foreignCheckoutId, canonicalPath: workspace }),
+    ]);
+    await expect(
+      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({
+      _tag: "ManagedCheckoutConflictError",
+    });
+    expect(readFileSync(markerPath, "utf8")).toBe(beforeMarker);
+    expect(readFileSync(configPath, "utf8")).toBe(beforeConfig);
+    expect(await Effect.runPromise(base.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await service.listStacks()).toEqual(beforeStacks);
+    expect(started.identity.checkoutId).toBeDefined();
   });
 
   it("finalizes after a crash that migrated registry context and location", async () => {

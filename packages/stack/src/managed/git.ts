@@ -534,7 +534,11 @@ export interface GitConfigStoreShape {
     key: string,
     expected: string,
     value: string,
-  ) => Effect.Effect<void, UnsupportedGitWorkspaceError | InvalidManagedIdentityError>;
+  ) => Effect.Effect<
+    void,
+    UnsupportedGitWorkspaceError | InvalidManagedIdentityError,
+    FileSystem.FileSystem
+  >;
 }
 
 /**
@@ -656,6 +660,97 @@ const gitConfigWrite = (
   file: string,
 ): Effect.Effect<void, UnsupportedGitWorkspaceError> => Effect.asVoid(gitConfig(args, false, file));
 
+/**
+ * Reads one config key without retrying on the config lock.  Conditional
+ * replacement uses this while it owns the lock itself; retrying here would
+ * wait on the lock held by this very operation.
+ */
+const gitConfigOnce = (
+  args: ReadonlyArray<string>,
+  tolerateUnset: boolean,
+  file: string,
+): Effect.Effect<string | undefined, UnsupportedGitWorkspaceError> =>
+  Effect.flatMap(
+    Effect.promise(() => runGitConfig(args, tolerateUnset, file)),
+    (result) => {
+      if (result.kind === "answered") return Effect.succeed(result.stdout);
+      if (result.kind === "unset") return Effect.succeed(undefined);
+      if (result.kind === "failed" && result.status === 128) {
+        return unsupported(
+          file,
+          `Git config is malformed (${result.detail})`,
+          "malformed-metadata",
+        );
+      }
+      return unsupported(
+        file,
+        `Git config is inaccessible (${result.kind === "failed" || result.kind === "retryable" ? result.detail : "unknown failure"})`,
+        "metadata-inaccessible",
+      );
+    },
+  );
+
+/**
+ * Holds Git's real config lock while validating and publishing a replacement.
+ * The lock itself is acquired with an exclusive create, then a separate copy
+ * is edited by Git and atomically renamed over the config before the lock is
+ * released.  This keeps ordinary `git config` writers out of the entire
+ * read/modify/publish window.
+ */
+const gitConfigReplaceExpected = (
+  file: string,
+  key: string,
+  expected: string,
+  value: string,
+): Effect.Effect<
+  void,
+  UnsupportedGitWorkspaceError | InvalidManagedIdentityError,
+  FileSystem.FileSystem
+> =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const lockPath = `${file}.lock`;
+    const acquireLock = fs.writeFileString(lockPath, "", { flag: "wx" }).pipe(
+      Effect.retry({
+        while: (error) => error.reason._tag === "AlreadyExists",
+        schedule: Schedule.exponential(Duration.millis(10)).pipe(
+          Schedule.upTo({ duration: Duration.millis(400) }),
+        ),
+      }),
+    );
+    yield* Effect.acquireUseRelease(
+      acquireLock,
+      () =>
+        Effect.gen(function* () {
+          const current = yield* gitConfigOnce(["--file", file, "--get-all", key], true, file);
+          if ((current ?? "").trim() !== expected) {
+            return yield* Effect.fail(
+              new InvalidManagedIdentityError({
+                message: `${key} changed before conditional replacement`,
+              }),
+            );
+          }
+          const original = yield* fs.stat(file);
+          const temporary = yield* fs.makeTempFile({
+            directory: dirname(file),
+            prefix: ".supabase-git-config-",
+          });
+          return yield* Effect.acquireUseRelease(
+            Effect.succeed(temporary),
+            (path) =>
+              Effect.gen(function* () {
+                yield* fs.copyFile(file, path);
+                yield* fs.chmod(path, original.mode);
+                yield* gitConfigWrite(["--file", path, "--replace-all", key, value], path);
+                yield* fs.rename(path, file);
+              }),
+            (path) => fs.remove(path, { force: true }).pipe(Effect.orDie),
+          );
+        }),
+      () => fs.remove(lockPath, { force: true }).pipe(Effect.orDie),
+    );
+  }).pipe(Effect.catchTag("PlatformError", (error) => inaccessiblePlatformError(file, error)));
+
 export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(GitConfigStore, {
   getAll: (file, key) =>
     Effect.map(gitConfig(["--file", file, "--get-all", key], true, file), (stdout) =>
@@ -678,18 +773,7 @@ export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(Gi
   replace: (file, key, value) =>
     gitConfigWrite(["--file", file, "--replace-all", key, value], file),
   replaceExpected: (file, key, expected, value) =>
-    Effect.gen(function* () {
-      const current = yield* gitConfig(["--file", file, "--get-all", key], true, file);
-      const settled = current ?? "";
-      if (settled.trim() !== expected) {
-        return yield* Effect.fail(
-          new InvalidManagedIdentityError({
-            message: `${key} changed before conditional replacement`,
-          }),
-        );
-      }
-      yield* gitConfigWrite(["--file", file, "--replace-all", key, value], file);
-    }),
+    gitConfigReplaceExpected(file, key, expected, value),
 });
 
 const requireUuid = (
@@ -1111,7 +1195,7 @@ export const replaceBranchContextId = (
 ): Effect.Effect<
   void,
   InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
-  GitConfigStore
+  GitConfigStore | FileSystem.FileSystem
 > =>
   failsWithIdentity(
     Effect.gen(function* () {
