@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -35,6 +36,20 @@ import { gitCheckoutIdentityPath, gitConfigPath, gitWorktreeConfigPath } from ".
  */
 
 const { makeRoot, removeAll } = temporaryRoots("managed-git-test-");
+
+const reftableInitSupported = (() => {
+  const root = mkdtempSync(join(tmpdir(), "managed-git-reftable-capability-"));
+  try {
+    git(root, "init", "-q", "--ref-format=reftable");
+    return true;
+  } catch {
+    return false;
+  } finally {
+    rmSync(root, { force: true, recursive: true });
+  }
+})();
+
+const reftableTest = it.live.skipIf(!reftableInitSupported);
 
 afterEach(removeAll);
 
@@ -414,7 +429,7 @@ describe("workspace topology", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
-  it.live("refuses a repository whose refs are stored in a reftable", () =>
+  reftableTest("refuses a repository whose refs are stored in a reftable", () =>
     Effect.gen(function* () {
       // A reftable repository keeps its refs in `reftable/` and leaves a compat
       // stub at `HEAD` naming `refs/heads/.invalid`, so reading it as a ref-file
