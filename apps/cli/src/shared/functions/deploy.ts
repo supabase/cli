@@ -1851,14 +1851,12 @@ export const discoverFunctionSlugs = Effect.fnUntraced(function* (
   const functionsDir = join(projectRoot, SUPABASE_FUNCTIONS_DIR);
   const slugs: string[] = [];
 
-  const entries = yield* Effect.tryPromise(() =>
-    readdir(functionsDir, { withFileTypes: true }),
-  ).pipe(
+  const entries = yield* Effect.tryPromise({
+    try: () => readdir(functionsDir, { withFileTypes: true }),
+    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  }).pipe(
     Effect.catch((error) => {
-      // `Effect.tryPromise`'s default failure is a `Cause.UnknownError`, which stores the
-      // original rejection on `.cause` (inherited from `Error`) — NOT `.error`.
-      const cause = error.cause;
-      return cause instanceof Error && "code" in cause && cause.code === "ENOENT"
+      return "code" in error && error.code === "ENOENT"
         ? Effect.succeed(undefined)
         : Effect.fail(error);
     }),

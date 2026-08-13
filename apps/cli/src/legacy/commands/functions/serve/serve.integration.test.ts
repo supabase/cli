@@ -1,9 +1,21 @@
-import { existsSync, readFileSync, readdirSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, realpathSync, writeFileSync } from "node:fs";
 import { chmod, mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Duration, Effect, Exit, Fiber, Layer, Option, PubSub, Queue, Sink, Stream } from "effect";
+import {
+  Cause,
+  Duration,
+  Effect,
+  Exit,
+  Fiber,
+  Layer,
+  Option,
+  PubSub,
+  Queue,
+  Sink,
+  Stream,
+} from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { beforeEach, vi } from "vitest";
 
@@ -2765,6 +2777,117 @@ describe("legacy functions serve integration", () => {
           (call) => call.command === "docker" && call.args[0] === "run",
         ),
       ).toHaveLength(0);
+    });
+  });
+
+  it.live("surfaces the real filesystem error when the functions path is not a directory", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        writeFileSync(join(tempRoot.current, "supabase", "functions"), "not a directory\n");
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(
+          [
+            'project_id = "test-project"',
+            "[functions.hello]",
+            'entrypoint = "./functions/hello/index.ts"',
+            "",
+          ].join("\n"),
+        ),
+      );
+
+      const { layer, out } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("ENOTDIR");
+        expect(error.message).toContain(join("supabase", "functions"));
+        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
+      }
+      expect(out.stderrText).toContain("Setting up Edge Functions runtime...\n");
+      expect(deployMockState.runCalls.map((call) => call.args.slice(0, 2))).toEqual([
+        ["container", "inspect"],
+        ["container", "rm"],
+      ]);
+      expect(
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toHaveLength(0);
+      expect(deployMockState.networkCalls).toHaveLength(0);
+      expect(deployMockState.volumeCalls).toHaveLength(0);
+    });
+  });
+
+  it.live("preserves the primary error when artifact cleanup also fails", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          join("supabase", "functions", ".env"),
+          ['FOO.BAR="line-1\nline-2"', ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(join("supabase", ".temp", "start-secrets"), "not a directory\n"),
+      );
+
+      const { layer, out } = setupServe();
+      const exit = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isSuccess(exit)) {
+        throw new Error("expected functions serve to fail");
+      }
+      const error = Cause.squash(exit.cause);
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain("invalid multiline environment variable name");
+        expect(error.message).toContain("FOO.BAR");
+        expect(error.message).not.toContain("ENOTDIR");
+        expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
+      }
+      expect(out.stderrText).toContain("Warning: failed to clean up Edge Runtime artifacts:");
+      expect(out.stderrText).toContain("ENOTDIR");
+      expect(out.stderrText).toContain(join("supabase", ".temp", "start-secrets"));
+      expect(out.stderrText).not.toContain("An error occurred in Effect.tryPromise");
+      expect(deployMockState.runCalls.filter((call) => call.args[0] === "run")).toHaveLength(0);
     });
   });
 
