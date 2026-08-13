@@ -35,7 +35,7 @@ disabling safe compaction.
 | `<workdir>/supabase/schemas/extension.sql`                         | SQL    | accepted legacy-extension repair                                                                |
 | `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out's catalog cache                                                                  |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | bundled engine with `PGDELTA_DEBUG`                                                             |
-| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`       | tar    | shadow baseline cache enabled (default) — the shadow's PGDATA snapshot, ~90MB, current key only |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`       | tar    | cache-enabled (default) COLD shadow provision on a migrations-catalog cache miss only (a catalog hit provisions no shadow; a warm hit rewrites nothing) — the shadow's PGDATA snapshot, ~90MB, current key only |
 
 ## Subprocesses / Containers
 

@@ -42,7 +42,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | `<workdir>/supabase/.temp/pgdelta/*.json`                    | JSON   | legacy opt-out's explicit migrations catalog                                                                       |
 | `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`     | PEM    | legacy opt-out, for a Supabase TLS target                                                                          |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`      | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                |
-| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar` | tar    | shadow baseline cache enabled (default) — the shadow's PGDATA snapshot, ~90MB, current key only                    |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar` | tar    | cache-enabled (default) COLD shadow provision only (native diff targets + the explicit `--from/--to migrations` catalog miss; never `--use-pgadmin`/`--use-pg-schema`, never a warm hit) — the shadow's PGDATA snapshot, ~90MB, current key only |
 | `~/.supabase/<workdir-hash>/linked-project.json`             | JSON   | `--linked` (post-run cache)                                                                                        |
 | `~/.supabase/telemetry.json`                                 | JSON   | every invocation (post-run)                                                                                        |
 
