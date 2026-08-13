@@ -45,11 +45,20 @@ type Branch = typeof BranchResponse.Type;
  * backticks. `renderGlamourTable` lays out cells directly, so raw values are
  * passed through — including any literal `|` in the name / git branch — and
  * the byte output matches the established fixture.
+ *
+ * `activeRef`, when given, marks the row whose `project_ref` matches by
+ * rendering its NAME cell as `<name> (active)` — mirroring the `next/` shell's
+ * convention (`next/commands/branches/list/list.handler.ts`). TS-only QoL
+ * (CLI-2167 follow-up, no Go counterpart): the pretty table only, never the
+ * `-o json|yaml|toml` / `--output-format json|stream-json` payloads.
  */
-export function renderBranchesListTable(branches: ReadonlyArray<Branch>): string {
+export function renderBranchesListTable(
+  branches: ReadonlyArray<Branch>,
+  activeRef?: string,
+): string {
   const rows = branches.map((b) => [
     b.project_ref,
-    b.name,
+    b.project_ref === activeRef ? `${b.name} (active)` : b.name,
     b.is_default ? "true" : "false",
     b.git_branch ?? " ",
     b.with_data ? "true" : "false",

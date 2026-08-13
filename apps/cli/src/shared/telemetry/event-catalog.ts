@@ -14,6 +14,13 @@ export const EventUpgradeSuggested = "cli_upgrade_suggested";
 export const PropFeatureKey = "feature_key";
 export const PropOrgSlug = "org_slug";
 
+// TS-only extension to `cli_project_linked` (CLI-2167): `link` accepts a branch
+// name/UUID in addition to a project ref (no Go counterpart), so these two
+// properties distinguish a branch-name link from a plain ref link. Absent from
+// the Go catalog.
+export const PropLinkedVia = "linked_via";
+export const PropParentProjectRef = "parent_project_ref";
+
 export const PropPlatform = "platform";
 export const PropSchemaVersion = "schema_version";
 export const PropDeviceId = "device_id";

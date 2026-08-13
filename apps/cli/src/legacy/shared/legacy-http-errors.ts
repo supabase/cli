@@ -28,6 +28,18 @@ export function sanitizeLegacyErrorBody(input: string): string {
   return sanitizeErrorBody(capped);
 }
 
+/**
+ * Sanitizes an API-provided NAME (branch/project/org) for inline embedding in
+ * a single-line terminal message. `sanitizeLegacyErrorBody` deliberately
+ * preserves `\n`/`\t` so JSON response bodies stay readable — but inside an
+ * inline name those characters let a hostile name forge additional CLI output
+ * lines (PR #6168 review). Collapse them to a single space on top of the
+ * body sanitizer's control-char stripping and length cap.
+ */
+export function legacySanitizeInlineName(input: string): string {
+  return sanitizeLegacyErrorBody(input).replace(/[\n\t]+/g, " ");
+}
+
 // Strip ASCII control characters from the response body before embedding it in an error
 // message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
 // could fracture a structured log line, and `\x00` could truncate output in shells that

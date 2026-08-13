@@ -61,6 +61,20 @@ describe("services", () => {
 // status
 // ---------------------------------------------------------------------------
 
+// CLI-2167: `status` (ts-legacy only) resolves and prints the current linked
+// project/branch on stdout, before any Docker/daemon work runs, in every
+// output mode — an adjudicated, deliberate TS-only extension with no Go
+// counterpart (Go's `status` never had a link-state concept). Go's stdout for
+// this command is otherwise empty here since the stack isn't running, so the
+// linked-state block is the entire stdout diff — strip both shapes
+// `legacyFormatLinkedStateBlock` can print: the unlinked workspace this test
+// uses ("Not linked.") and the multi-line "Linked Project:" block (Org/
+// Project/Branch lines), future-proofing against a linked fixture later.
+const STATUS_LINKED_STATE_STDOUT_STRIP: readonly RegExp[] = [
+  /^Not linked\.\n/,
+  /^Linked Project:\n(?:  .+\n)*/,
+];
+
 describe("status", () => {
   testStack("exits 1 when stack is not running", async ({ workspace, stackRun }) => {
     setupStackWorkspace(workspace.path);
