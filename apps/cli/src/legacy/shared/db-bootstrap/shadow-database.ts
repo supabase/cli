@@ -415,6 +415,28 @@ export interface LegacyShadowSetupInput<E> extends LegacyShadowConnectionInput {
 }
 
 /**
+ * Memoizes `effect`'s first SUCCESS; failures are never cached, so a retry re-runs the real
+ * effect. Deliberately not `Effect.cached` (which returns `Effect<Effect<A, E>>` and needs an
+ * effectful construction site — {@link legacyShadowRunInputFromLocalContainerInputs} is a plain
+ * function) and not concurrency-guarded: the two consumers of the one field this wraps (`jwks` —
+ * see its construction inside that function) evaluate sequentially on the same fiber.
+ */
+function legacyMemoizeSuccess<A, E>(effect: Effect.Effect<A, E>): Effect.Effect<A, E> {
+  let succeeded: Effect.Effect<A, E> | undefined;
+  return Effect.suspend(
+    () =>
+      succeeded ??
+      effect.pipe(
+        Effect.tap((value) =>
+          Effect.sync(() => {
+            succeeded = Effect.succeed(value);
+          }),
+        ),
+      ),
+  );
+}
+
+/**
  * Adapts {@link LegacyLocalDbContainerInputs} (`local-container-inputs.ts`, the SAME
  * config/image/JWKS resolution prelude `db start`/`db reset` share) plus the caller's own
  * already-loaded `config.toml` slice into {@link LegacyShadowSetupInput} — every field
@@ -497,7 +519,14 @@ export function legacyShadowRunInputFromLocalContainerInputs(
         database: "postgres",
       }),
       jwtSecret: localInputs.setup.jwtSecret,
-      jwks: localInputs.setup.jwks,
+      // Memoized: with the shadow baseline cache enabled this effect is evaluated TWICE on a
+      // cold run — once by `legacyResolveShadowCacheKeyInputs` (`shadow-cache.ts`) for the cache
+      // key, once by `legacyResolveDbSetupPrelude` for the baseline itself — and third-party
+      // JWKS discovery can be a real network request. Memoizing the first success keeps the run
+      // to one request AND guarantees the published snapshot carries the exact value its key was
+      // computed from, even if the issuer rotates mid-run (review: Codex on #6184). Failures are
+      // not cached — a transient discovery failure fails the run either way.
+      jwks: legacyMemoizeSuccess(localInputs.setup.jwks),
       apiUrl: localInputs.setup.apiUrl,
       authExternalUrl: localInputs.setup.authExternalUrl,
       siteUrl: localInputs.setup.siteUrl,
