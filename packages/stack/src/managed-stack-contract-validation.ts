@@ -14,7 +14,7 @@ const factPrimaryId = (fact: ManagedStackContractFact): string | undefined => {
     case "direct-stack-state":
       return fact.handle;
     case "identity-claim":
-      return `${fact.scope}:${fact.id}`;
+      return `${fact.scope}:${fact.id}:${fact.path ?? ""}`;
     case "identity-marker":
       return fact.markerId;
     case "managed-record":
@@ -48,6 +48,9 @@ const containsNonFiniteNumber = (value: unknown): boolean => {
 
 const snakeToCamel = (key: string): string =>
   key.replace(/_([a-z0-9])/g, (_match, character: string) => character.toUpperCase());
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
 
 export const validateManagedStackContractFixtures = (
   fixtures: ReadonlyArray<ManagedStackContractScenario>,
@@ -212,6 +215,8 @@ export const validateManagedStackContractFixtures = (
     }
 
     const declaredIds = new Set<string>();
+    const declaredPaths = new Set<string>();
+    const declaredBranches = new Set<string>();
     const factsByPrimaryId = new Map<string, ManagedStackContractFact>();
     const declareId = (id: string): void => {
       if (id.trim().length === 0) {
@@ -233,12 +238,32 @@ export const validateManagedStackContractFixtures = (
       }
 
       switch (fact.kind) {
+        case "workspace":
+          declaredPaths.add(fact.path);
+          if (fact.previousPath !== undefined) {
+            declaredPaths.add(fact.previousPath);
+          }
+          break;
+        case "workspace-history":
+          declaredPaths.add(fact.path);
+          break;
+        case "git-state":
+          declaredPaths.add(fact.workspacePath);
+          if (fact.branch !== undefined) {
+            declaredBranches.add(fact.branch);
+          }
+          break;
+        case "branch-ref":
+          declaredBranches.add(fact.name);
+          break;
         case "branch":
           declareId(fact.contextId);
+          declaredBranches.add(fact.name);
           break;
         case "checkout":
           declareId(fact.projectId);
           declareId(fact.checkoutId);
+          declaredPaths.add(fact.path);
           break;
         case "credential-state":
           declareId(fact.valuesId);
@@ -254,6 +279,9 @@ export const validateManagedStackContractFixtures = (
           break;
         case "identity-claim":
           declareId(fact.id);
+          if (fact.path !== undefined) {
+            declaredPaths.add(fact.path);
+          }
           break;
         case "identity-marker":
           declareId(fact.markerId);
@@ -314,6 +342,118 @@ export const validateManagedStackContractFixtures = (
         errors.push(
           `${scenario.id}: ${write.target} ${write.operation} references undeclared ID ${write.id}`,
         );
+      }
+    }
+
+    const recoveryEntries = (
+      value: unknown,
+      diagnostic: "error" | "warning",
+    ): ReadonlyArray<unknown> => {
+      if (value === undefined) {
+        return [];
+      }
+      if (!Array.isArray(value)) {
+        errors.push(`${scenario.id}: ${diagnostic} recovery operations must be an array`);
+        return [];
+      }
+      return value;
+    };
+    const recoveryOperations = [
+      ...recoveryEntries(scenario.expected.error?.recoveryOperations, "error"),
+      ...recoveryEntries(scenario.expected.warning?.recoveryOperations, "warning"),
+    ];
+    for (const recovery of recoveryOperations) {
+      if (!isRecord(recovery)) {
+        errors.push(`${scenario.id}: recovery operation must be an object`);
+        continue;
+      }
+      const operation = recovery.operation;
+      if (operation === undefined || operation === null) {
+        errors.push(`${scenario.id}: recovery operation name is required`);
+        continue;
+      }
+      if (typeof operation !== "string") {
+        errors.push(`${scenario.id}: recovery operation name must be a string`);
+        continue;
+      }
+      if (operation.trim().length === 0) {
+        errors.push(`${scenario.id}: recovery operation name is required`);
+        continue;
+      }
+      const operationName = operation;
+
+      const declareRecoveryId = (id: unknown, field: string): void => {
+        if (id === undefined || id === null) {
+          errors.push(`${scenario.id}: recovery operation ${operationName} ${field} is required`);
+        } else if (typeof id !== "string") {
+          errors.push(
+            `${scenario.id}: recovery operation ${operationName} ${field} must be a string`,
+          );
+        } else if (id.trim().length === 0) {
+          errors.push(`${scenario.id}: recovery operation ${operationName} ${field} is required`);
+        } else if (!declaredIds.has(id)) {
+          errors.push(
+            `${scenario.id}: recovery operation ${operationName} references undeclared ${field} ${id}`,
+          );
+        }
+      };
+      const declareRecoveryPath = (path: unknown): void => {
+        if (path === undefined || path === null) {
+          errors.push(`${scenario.id}: recovery operation ${operationName} path is required`);
+        } else if (typeof path !== "string") {
+          errors.push(`${scenario.id}: recovery operation ${operationName} path must be a string`);
+        } else if (path.trim().length === 0) {
+          errors.push(`${scenario.id}: recovery operation ${operationName} path is required`);
+        } else if (!declaredPaths.has(path)) {
+          errors.push(
+            `${scenario.id}: recovery operation ${operationName} references undeclared path ${path}`,
+          );
+        }
+      };
+      const declareRecoveryBranch = (branch: unknown): void => {
+        if (branch === undefined || branch === null) {
+          errors.push(`${scenario.id}: recovery operation ${operationName} branch is required`);
+        } else if (typeof branch !== "string") {
+          errors.push(
+            `${scenario.id}: recovery operation ${operationName} branch must be a string`,
+          );
+        } else if (branch.trim().length === 0) {
+          errors.push(`${scenario.id}: recovery operation ${operationName} branch is required`);
+        } else if (!declaredBranches.has(branch)) {
+          errors.push(
+            `${scenario.id}: recovery operation ${operationName} references undeclared branch ${branch}`,
+          );
+        }
+      };
+
+      switch (operationName) {
+        case "newCheckout":
+          declareRecoveryPath(recovery.path);
+          break;
+        case "rebindCheckout":
+        case "adoptCheckout":
+          declareRecoveryId(recovery.checkoutId, "checkout ID");
+          declareRecoveryPath(recovery.path);
+          break;
+        case "adoptContext":
+          declareRecoveryId(recovery.contextId, "context ID");
+          declareRecoveryBranch(recovery.branch);
+          break;
+        case "prune":
+          if (!Array.isArray(recovery.recordIds)) {
+            errors.push(`${scenario.id}: recovery operation prune record IDs must be an array`);
+            break;
+          }
+          if (recovery.recordIds.length === 0) {
+            errors.push(`${scenario.id}: recovery operation prune requires record IDs`);
+          }
+          for (const recordId of recovery.recordIds) {
+            declareRecoveryId(recordId, "record ID");
+          }
+          break;
+        default:
+          errors.push(`${scenario.id}: unknown recovery operation ${operationName}`);
+          break;
       }
     }
 

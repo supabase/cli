@@ -19,6 +19,7 @@ import {
   type ManagedStackContractScenario,
   validateManagedStackContractFixtures,
 } from "./testing.ts";
+import type { ManagedStackContractRecoveryOperation } from "./managed-stack-contract.ts";
 import { DEFAULT_VERSIONS, SERVICE_NAMES } from "./versions.ts";
 
 const { createdTempRoots } = vi.hoisted(() => ({ createdTempRoots: new Array<string>() }));
@@ -517,6 +518,84 @@ describe("managed stack acceptance contract", () => {
     }
   });
 
+  it("validates recovery operations as executable diagnostic contracts", () => {
+    const scenario: ManagedStackContractScenario | undefined = managedStackContractFixtures.find(
+      ({ id }) => id === "identity.recycled-previous-path-rebinds-checkout",
+    );
+    if (scenario === undefined) {
+      throw new Error("recovery operation fixture is required");
+    }
+    const recoveryOperation: ManagedStackContractRecoveryOperation | undefined =
+      scenario.expected.warning?.recoveryOperations?.[0];
+    expect(recoveryOperation?.operation).toBe("rebindCheckout");
+
+    const emptyOperation = JSON.parse(JSON.stringify(scenario));
+    emptyOperation.expected.warning.recoveryOperations[0].operation = "";
+    expect(validateManagedStackContractFixtures([emptyOperation])).toContain(
+      `${scenario.id}: recovery operation name is required`,
+    );
+
+    const undeclaredId = JSON.parse(JSON.stringify(scenario));
+    undeclaredId.expected.warning.recoveryOperations[0].checkoutId = "checkout-unknown";
+    expect(validateManagedStackContractFixtures([undeclaredId])).toContain(
+      `${scenario.id}: recovery operation rebindCheckout references undeclared checkout ID checkout-unknown`,
+    );
+
+    const undeclaredPath = JSON.parse(JSON.stringify(scenario));
+    undeclaredPath.expected.warning.recoveryOperations[0].path = "/unknown/project";
+    expect(validateManagedStackContractFixtures([undeclaredPath])).toContain(
+      `${scenario.id}: recovery operation rebindCheckout references undeclared path /unknown/project`,
+    );
+
+    const missingId = JSON.parse(JSON.stringify(scenario));
+    delete missingId.expected.warning.recoveryOperations[0].checkoutId;
+    expect(validateManagedStackContractFixtures([missingId])).toContain(
+      `${scenario.id}: recovery operation rebindCheckout checkout ID is required`,
+    );
+
+    const missingPath = JSON.parse(JSON.stringify(scenario));
+    delete missingPath.expected.warning.recoveryOperations[0].path;
+    expect(validateManagedStackContractFixtures([missingPath])).toContain(
+      `${scenario.id}: recovery operation rebindCheckout path is required`,
+    );
+
+    const nonStringId = JSON.parse(JSON.stringify(scenario));
+    nonStringId.expected.warning.recoveryOperations[0].checkoutId = 42;
+    expect(validateManagedStackContractFixtures([nonStringId])).toContain(
+      `${scenario.id}: recovery operation rebindCheckout checkout ID must be a string`,
+    );
+
+    const nonStringPath = JSON.parse(JSON.stringify(scenario));
+    nonStringPath.expected.warning.recoveryOperations[0].path = 42;
+    expect(validateManagedStackContractFixtures([nonStringPath])).toContain(
+      `${scenario.id}: recovery operation rebindCheckout path must be a string`,
+    );
+
+    const nonArrayRecordIds = JSON.parse(JSON.stringify(scenario));
+    nonArrayRecordIds.expected.warning.recoveryOperations[0] = {
+      operation: "prune",
+      recordIds: null,
+    };
+    expect(validateManagedStackContractFixtures([nonArrayRecordIds])).toContain(
+      `${scenario.id}: recovery operation prune record IDs must be an array`,
+    );
+
+    const nullRecordId = JSON.parse(JSON.stringify(scenario));
+    nullRecordId.expected.warning.recoveryOperations[0] = {
+      operation: "prune",
+      recordIds: [null],
+    };
+    expect(validateManagedStackContractFixtures([nullRecordId])).toContain(
+      `${scenario.id}: recovery operation prune record ID is required`,
+    );
+
+    const nullEntry = JSON.parse(JSON.stringify(scenario));
+    nullEntry.expected.warning.recoveryOperations = [null];
+    expect(validateManagedStackContractFixtures([nullEntry])).toContain(
+      `${scenario.id}: recovery operation must be an object`,
+    );
+  });
+
   it("covers the approved identity journeys through public commands and APIs", () => {
     expect(
       managedStackContractFixtures
@@ -543,6 +622,7 @@ describe("managed stack acceptance contract", () => {
         "identity.fresh-clone-creates-project-and-checkout",
         "identity.fresh-clone-ignores-tracked-marker",
         "identity.inaccessible-previous-path-fails",
+        "identity.in-place-ref-update-preserves-context",
         "identity.invalid-stack-name-double-dot-fails",
         "identity.invalid-stack-name-leading-hyphen-fails",
         "identity.invalid-stack-name-repeated-dot-fails",
@@ -551,7 +631,6 @@ describe("managed stack acceptance contract", () => {
         "identity.invalid-stack-name-trailing-hyphen-fails",
         "identity.invalid-stack-name-uppercase-underscore-fails",
         "identity.linked-worktrees-share-project-not-checkout",
-        "identity.manual-ref-replacement-orphans-context",
         "identity.missing-previous-path-rebinds-checkout",
         "identity.moved-checkout-reuses-identity",
         "identity.named-stacks-are-context-scoped",
@@ -559,12 +638,15 @@ describe("managed stack acceptance contract", () => {
         "identity.non-git-folder-first-start-persists-identity",
         "identity.non-git-folder-recovers-persisted-identity",
         "identity.original-gone-turns-copy-into-rename",
+        "identity.recycled-previous-path-rebinds-checkout",
         "identity.read-only-unregistered-checkout-does-not-write",
         "identity.return-to-branch-reuses-stack",
         "identity.same-branch-in-two-worktrees-is-isolated",
         "identity.same-checkout-branch-and-name-reuses-stack",
         "identity.same-commit-different-branches-are-independent",
         "identity.symlink-alias-reuses-checkout",
+        "identity.superseded-path-reappearance-blocks-both-claims",
+        "identity.interrupted-folder-to-git-transition-reports-without-starting",
         "identity.valid-stack-names-resolve-deterministically",
         "identity.bare-repository-linked-worktrees-share-project",
       ].sort(),
@@ -876,6 +958,7 @@ describe("managed stack acceptance contract", () => {
         "reclamation.delete-orphan-by-stack-id",
         "reclamation.delete-repeat-is-idempotent",
         "reclamation.prune-removes-metadata-only",
+        "reclamation.prune-preserves-conflict-evidence",
         "reclamation.selectors-stack-and-all-conflict",
         "reclamation.selectors-stack-and-stack-id-conflict",
         "reclamation.selectors-stack-id-and-all-conflict",
