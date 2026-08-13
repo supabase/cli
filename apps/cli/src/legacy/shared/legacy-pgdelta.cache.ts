@@ -351,6 +351,12 @@ export const legacyHashMigrations = Effect.fnUntraced(function* (
  * case (deterministic empty hash; callers gate on the dir existing before catalog export) —
  * `fs.exists` maps only not-found to `false`, so any other root failure (permissions, I/O)
  * propagates instead of masquerading as an empty tree.
+ *
+ * Deliberate divergence from the old Go walk: a declarative root that is ITSELF a directory
+ * symlink is followed (entries beneath it still aren't). Go's lstat-rooted walk hashed such a
+ * root as an empty tree while the apply path followed the link and applied the target's files —
+ * a hash≠apply mismatch of exactly the stale-catalog class this function guards against. The
+ * cost is a one-time cache miss for symlinked-root setups.
  */
 export const legacyHashDeclarativeSchemas = Effect.fnUntraced(function* (
   fs: FileSystem.FileSystem,

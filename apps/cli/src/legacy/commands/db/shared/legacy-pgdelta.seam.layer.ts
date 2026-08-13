@@ -56,15 +56,17 @@ function legacyHasDaemonSignal(cause: {
  * class in that stack declares `message: string`, so this accepts the whole union structurally
  * rather than enumerating each tag.
  */
-const legacyToShadowDbError = (cause: {
+export const legacyToShadowDbError = (cause: {
   readonly message: string;
   readonly reason?: unknown;
   readonly docker?: unknown;
   readonly daemonDown?: unknown;
+  readonly suggestion?: unknown;
 }) =>
   new LegacyDeclarativeShadowDbError({
     message: `failed to provision the shadow database: ${cause.message}`,
     ...(legacyHasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
+    ...(typeof cause.suggestion === "string" ? { suggestion: cause.suggestion } : {}),
   });
 
 /**
@@ -136,6 +138,9 @@ export const legacyDeclarativeSeamLayer = Layer.effect(
                 new LegacyDeclarativeShadowDbError({
                   message: `failed to start local database: ${cause.message}`,
                   ...(legacyHasDaemonSignal(cause) ? { docker: "daemon" as const } : {}),
+                  ...("suggestion" in cause && typeof cause.suggestion === "string"
+                    ? { suggestion: cause.suggestion }
+                    : {}),
                 }),
               ),
             ),
