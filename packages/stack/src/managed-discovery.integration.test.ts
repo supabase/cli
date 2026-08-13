@@ -3,7 +3,7 @@ import { Effect, Layer, ManagedRuntime } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { join } from "node:path";
 import { symlinkSync, renameSync } from "node:fs";
-import { writeFileSync, readFileSync, existsSync, readdirSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, readdirSync, mkdirSync, rmSync } from "node:fs";
 import {
   gitCheckoutIdentityPath,
   gitConfigPath,
@@ -13,6 +13,7 @@ import {
   git,
   makeDirectory,
   makeRepository,
+  storedConfigValue,
   temporaryRoots,
 } from "../tests/helpers/git-workspace.ts";
 import { GIT_PROJECT_ID_KEY, gitBranchContextIdKey, gitConfigStoreLayer } from "./managed/git.ts";
@@ -270,6 +271,110 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(started.identity).toEqual(published.identity);
   });
 
+  it("completes an explicitly requested new checkout from partial Git identity", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const projectId = "00000000-0000-7000-8000-000000000101";
+    const contextId = "00000000-0000-7000-8000-000000000102";
+    git(repository, "config", GIT_PROJECT_ID_KEY, projectId);
+    git(repository, "config", gitBranchContextIdKey("main"), contextId);
+    const service = await open(root);
+    openHandles.push(service);
+
+    const before = await inspect(service.repository, repository);
+    expect(before.state).toBe("unregistered");
+    expect(before.identity).toEqual({ projectId, contextId });
+    const published = await service.newCheckout({ workspacePath: repository });
+
+    expect(published.identity.projectId).toBe(projectId);
+    expect(published.identity.contextId).toBe(contextId);
+    expect(published.identity.checkoutId).toBeDefined();
+    expect(published.state).toBe("healthy");
+  });
+
+  it("refuses a project winner that appears before field-specific publication", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const winnerProject = "00000000-0000-7000-8000-000000000108";
+    const targetProject = "00000000-0000-7000-8000-000000000109";
+    const targetCheckout = "00000000-0000-7000-8000-000000000110";
+    const targetContext = "00000000-0000-7000-8000-000000000111";
+    const generated = [
+      "00000000-0000-7000-8000-000000000112",
+      targetProject,
+      targetCheckout,
+      targetContext,
+      "00000000-0000-7000-8000-000000000113",
+      "00000000-0000-7000-8000-000000000114",
+      "00000000-0000-7000-8000-000000000115",
+    ];
+    let calls = 0;
+    const idFactory = (): string => {
+      const id = generated[calls] ?? crypto.randomUUID();
+      calls += 1;
+      if (calls === 5) git(repository, "config", GIT_PROJECT_ID_KEY, winnerProject);
+      return id;
+    };
+    const service =
+      _name === "in-memory"
+        ? await makeManagedStackService({
+            repository: createInMemoryManagedStackRepository(),
+            stateRoot: join(root, "managed"),
+            publicationPollMs: 1,
+            idFactory,
+          })
+        : await createManagedStackService({
+            stateRoot: join(root, "managed"),
+            publicationPollMs: 1,
+            idFactory,
+          });
+    openHandles.push(service);
+
+    await expect(service.newCheckout({ workspacePath: repository })).rejects.toMatchObject({
+      _tag: "ManagedIdentityTransitionOwnershipError",
+    });
+    expect(storedConfigValue(gitConfigPath(join(repository, ".git")), GIT_PROJECT_ID_KEY)).toBe(
+      winnerProject,
+    );
+    expect(existsSync(gitCheckoutIdentityPath(join(repository, ".git")))).toBe(false);
+    expect(
+      storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("main")),
+    ).toBeUndefined();
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.transitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "new-checkout",
+          phase: "reserved",
+          projectId: expect.any(String),
+          checkoutId: expect.any(String),
+          contextId: expect.any(String),
+        }),
+      ]),
+    );
+  });
+
+  it("completes a detached checkout whose context registry row is missing", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const branch = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "checkout", "-q", "--detach", "HEAD");
+
+    const before = await inspect(service.repository, repository);
+    expect(before.state).toBe("unregistered");
+    expect(before.identity.projectId).toBe(branch.identity.projectId);
+    expect(before.identity.checkoutId).toBe(branch.identity.checkoutId);
+    expect(before.identity.contextId).toBeUndefined();
+    const published = await service.newCheckout({ workspacePath: repository });
+
+    expect(published.identity.projectId).toBe(branch.identity.projectId);
+    expect(published.identity.checkoutId).toBe(branch.identity.checkoutId);
+    expect(published.identity.contextId).toBeDefined();
+    expect(published.state).toBe("healthy");
+  });
+
   it("does not alias a checkout when its previous path is recycled", async () => {
     const root = makeRoot();
     const previous = makeRepository(root);
@@ -387,6 +492,219 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(resumed.state).toBe("healthy");
     const after = await inspect(service.repository, next);
     expect(after.activeTransition).toBeUndefined();
+  });
+
+  it("releases a stale reserved rebind through the guarded service operation", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "abandon-recovery");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    const reserved = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000103",
+        kind: "rebind-checkout",
+        projectId: first.identity.projectId,
+        checkoutId: first.identity.checkoutId,
+        path: next,
+        now: new Date().toISOString(),
+      }),
+    );
+    const report = await inspect(service.repository, next);
+    expect(report.state).toBe("transitioning");
+    await expect(
+      service.abandonIdentityTransition({
+        transitionId: reserved.id,
+        workspacePath: next,
+        observation: report,
+      }),
+    ).resolves.toEqual({ outcome: "abandoned" });
+    expect((await inspect(service.repository, next)).activeTransition).toBeUndefined();
+  });
+
+  it("refuses to abandon a partially published new-checkout transition", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const projectId = "00000000-0000-7000-8000-000000000104";
+    const checkoutId = "00000000-0000-7000-8000-000000000106";
+    const contextId = "00000000-0000-7000-8000-000000000107";
+    git(repository, "config", GIT_PROJECT_ID_KEY, projectId);
+    git(repository, "config", gitBranchContextIdKey("main"), contextId);
+    const service = await open(root);
+    openHandles.push(service);
+    const reserved = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000105",
+        kind: "new-checkout",
+        projectId,
+        checkoutId,
+        contextId,
+        path: repository,
+        targetGitValue: "00000000-0000-7000-8000-000000000107",
+        now: new Date().toISOString(),
+      }),
+    );
+    writeFileSync(
+      gitCheckoutIdentityPath(join(repository, ".git")),
+      JSON.stringify({ version: 1, checkoutId }),
+    );
+    await expect(
+      service.abandonIdentityTransition({
+        transitionId: reserved.id,
+        workspacePath: repository,
+      }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect((await inspect(service.repository, repository)).activeTransition?.id).toBe(reserved.id);
+  });
+
+  it("refuses abandonment when the same path publishes a different identity", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "different-publisher");
+    const service = await open(root);
+    openHandles.push(service);
+    const reserved = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000116",
+        kind: "new-checkout",
+        projectId: "00000000-0000-7000-8000-000000000117",
+        checkoutId: "00000000-0000-7000-8000-000000000118",
+        contextId: "00000000-0000-7000-8000-000000000119",
+        path: workspace,
+        now: new Date().toISOString(),
+      }),
+    );
+    mkdirSync(join(workspace, ".supabase"), { recursive: true });
+    writeFileSync(
+      ordinaryWorkspaceIdentityPath(workspace),
+      JSON.stringify({
+        version: 1,
+        projectId: "00000000-0000-7000-8000-000000000120",
+        checkoutId: "00000000-0000-7000-8000-000000000121",
+        contextId: "00000000-0000-7000-8000-000000000122",
+      }),
+    );
+    await expect(
+      service.abandonIdentityTransition({
+        transitionId: reserved.id,
+        workspacePath: workspace,
+      }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect((await inspect(service.repository, workspace)).activeTransition?.id).toBe(reserved.id);
+  });
+
+  it("refuses abandonment after a reserved transition path is recycled", async () => {
+    const root = makeRoot();
+    const original = makeRepository(root);
+    const moved = join(root, "recycled-transition");
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: original, operation: "start" });
+    renameSync(original, moved);
+    const reserved = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000123",
+        kind: "rebind-checkout",
+        projectId: started.identity.projectId,
+        checkoutId: started.identity.checkoutId,
+        path: moved,
+        now: new Date().toISOString(),
+      }),
+    );
+    rmSync(moved, { recursive: true, force: true });
+    mkdirSync(moved, { recursive: true });
+    await expect(
+      service.abandonIdentityTransition({
+        transitionId: reserved.id,
+        workspacePath: moved,
+      }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect((await inspect(service.repository, moved)).activeTransition?.id).toBe(reserved.id);
+  });
+
+  it("refuses abandonment when a different Git checkout replaces the transition path", async () => {
+    const root = makeRoot();
+    const checkoutA = makeRepository(root, "checkout-a");
+    const path = join(root, "transition-path");
+    renameSync(checkoutA, path);
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: path, operation: "start" });
+    const movedA = join(root, "checkout-a-moved");
+    renameSync(path, movedA);
+    await Effect.runPromise(
+      service.repository.applyCheckoutLocation({
+        checkoutId: started.identity.checkoutId,
+        locationId: "00000000-0000-7000-8000-000000000125",
+        canonicalPath: movedA,
+        now: new Date().toISOString(),
+      }),
+    );
+    const checkoutB = makeRepository(root, "checkout-b");
+    renameSync(checkoutB, path);
+    const reserved = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000124",
+        kind: "rebind-checkout",
+        projectId: started.identity.projectId,
+        checkoutId: started.identity.checkoutId,
+        contextId: started.identity.contextId,
+        path,
+        branch: "main",
+        now: new Date().toISOString(),
+      }),
+    );
+    const replaced = await inspect(service.repository, path);
+    expect(replaced.state).toBe("transitioning");
+    expect(replaced.conflicts).toEqual([]);
+    expect(replaced.workspace.checkoutKind).not.toBe("ordinary");
+
+    await expect(
+      service.abandonIdentityTransition({
+        transitionId: reserved.id,
+        workspacePath: path,
+      }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect((await inspect(service.repository, path)).activeTransition?.id).toBe(reserved.id);
+  });
+
+  it.each([
+    ["branch-copy", "00000000-0000-7000-8000-000000000126"],
+    ["adopt-context", "00000000-0000-7000-8000-000000000127"],
+  ] as const)("refuses %s abandonment when Git path is replaced", async (kind, transitionId) => {
+    const root = makeRoot();
+    const original = makeRepository(root, `${kind}-original`);
+    const path = join(root, `${kind}-transition-path`);
+    renameSync(original, path);
+    const service = await open(root);
+    openHandles.push(service);
+    const replacement = makeRepository(root, `${kind}-replacement`);
+    renameSync(replacement, join(root, `${kind}-replacement-moved`));
+    renameSync(path, join(root, `${kind}-original-moved`));
+    renameSync(join(root, `${kind}-replacement-moved`), path);
+    const reserved = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: transitionId,
+        kind,
+        projectId: "00000000-0000-7000-8000-000000000128",
+        checkoutId: "00000000-0000-7000-8000-000000000129",
+        contextId: "00000000-0000-7000-8000-000000000130",
+        branch: "main",
+        path,
+        expectedGitValue:
+          kind === "branch-copy" ? "00000000-0000-7000-8000-000000000130" : undefined,
+        targetGitValue: kind === "branch-copy" ? "00000000-0000-7000-8000-000000000131" : undefined,
+        now: new Date().toISOString(),
+      }),
+    );
+    const replaced = await inspect(service.repository, path);
+    expect(replaced.state).toBe("transitioning");
+    expect(replaced.workspace.checkoutKind).not.toBe("ordinary");
+    await expect(
+      service.abandonIdentityTransition({ transitionId: reserved.id, workspacePath: path }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect((await inspect(service.repository, path)).activeTransition?.id).toBe(reserved.id);
   });
 
   it("advances a reserved rebind before publishing its registry location", async () => {

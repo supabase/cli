@@ -16,7 +16,10 @@ import {
   resolveManagedStateRoot,
 } from "./paths.ts";
 import { assertManagedOwnerPid, ManagedStackRepository } from "./repository.ts";
-import type { ManagedStackRepositoryShape } from "./repository.ts";
+import type {
+  AbandonManagedIdentityTransitionResult,
+  ManagedStackRepositoryShape,
+} from "./repository.ts";
 import {
   ManagedStackService,
   type DeleteManagedStackResult,
@@ -25,6 +28,7 @@ import {
   type ReconcileAbandonedOperationsResult,
   type ResolveManagedStackOperation,
   type ManagedCheckoutRecoveryRequest,
+  type ManagedIdentityTransitionAbandonRequest,
   type StartedManagedStackResolution,
   type ManagedPruneRequest,
   type ManagedPruneResult,
@@ -93,6 +97,9 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   rebindCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   adoptCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   adoptContext(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
+  abandonIdentityTransition(
+    options: ManagedIdentityTransitionAbandonRequest,
+  ): Promise<AbandonManagedIdentityTransitionResult>;
   inspectStack(stackId: string): Promise<ManagedStackProjection | undefined>;
   listStacks(options?: {
     readonly includeTombstoned?: boolean;
@@ -197,6 +204,7 @@ const managedStackServiceHandle = async <ER>(
     rebindCheckout: (options) => run(service.rebindCheckout(options)),
     adoptCheckout: (options) => run(service.adoptCheckout(options)),
     adoptContext: (options) => run(service.adoptContext(options)),
+    abandonIdentityTransition: (options) => run(service.abandonIdentityTransition(options)),
     inspectStack: (stackId) => run(service.inspectStack(stackId)),
     listStacks: (options) => run(service.listStacks(options)),
     updateStack: (stackId, configuration) => run(service.updateStack(stackId, configuration)),

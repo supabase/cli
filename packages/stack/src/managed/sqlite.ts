@@ -61,6 +61,7 @@ import type {
   ReserveManagedIdentityTransitionInput,
   AdvanceManagedIdentityTransitionInput,
   FinalizeManagedIdentityTransitionInput,
+  AbandonManagedIdentityTransitionInput,
   PruneManagedIdentityMetadataInput,
   PruneManagedIdentityMetadataResult,
   ManagedIdentityRecoveryError,
@@ -79,6 +80,7 @@ import {
   decideManagedCheckoutLocation,
   decideManagedIdentityTransitionAdvance,
   decideManagedIdentityTransitionFinalize,
+  decideManagedIdentityTransitionAbandon,
   decideManagedIdentityTransitionReservation,
   decideManagedContextOwnerRefresh,
   decideManagedContextToBranch,
@@ -1760,6 +1762,23 @@ const finalizeIdentityTransition = (
   return next;
 };
 
+const abandonIdentityTransition = (
+  database: ManagedSqliteDatabase,
+  input: AbandonManagedIdentityTransitionInput,
+) => {
+  const row = database.prepare("SELECT * FROM identity_transitions WHERE id = ?").get([input.id]);
+  const decision = decideManagedIdentityTransitionAbandon(
+    row === undefined ? undefined : decodeIdentityTransition(row),
+    input,
+  );
+  if (decision.outcome === "abandoned") {
+    database
+      .prepare("DELETE FROM identity_transitions WHERE id = ? AND phase = 'reserved'")
+      .run([input.id]);
+  }
+  return decision;
+};
+
 const pruneIdentityMetadata = (
   database: ManagedSqliteDatabase,
   input: PruneManagedIdentityMetadataInput,
@@ -1916,6 +1935,12 @@ const createSqliteManagedStackRepository = (
               ManagedStackNotFoundError,
             ),
           ),
+        ),
+      abandonIdentityTransition: (input) =>
+        transaction(
+          database,
+          () => abandonIdentityTransition(database, input),
+          failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
         ),
       publishPendingStack: (stackId, operationToken, now) =>
         transaction(

@@ -494,6 +494,23 @@ export interface FinalizeManagedIdentityTransitionInput {
   readonly now: string;
 }
 
+export interface AbandonManagedIdentityTransitionInput {
+  readonly id: string;
+  readonly expectedPhase: "reserved";
+  readonly kind: ManagedIdentityTransitionKind;
+  readonly path: string;
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+  readonly branch?: string;
+  readonly expectedGitValue?: string;
+  readonly targetGitValue?: string;
+}
+
+export type AbandonManagedIdentityTransitionResult =
+  | { readonly outcome: "abandoned" }
+  | { readonly outcome: "already-absent" };
+
 export interface PruneManagedIdentityMetadataInput {
   readonly locationIds: ReadonlyArray<string>;
 }
@@ -690,6 +707,26 @@ export const decideManagedIdentityTransitionFinalize = (
   });
 };
 
+export const decideManagedIdentityTransitionAbandon = (
+  existing: ManagedIdentityTransitionRecord | undefined,
+  input: AbandonManagedIdentityTransitionInput,
+): AbandonManagedIdentityTransitionResult => {
+  if (existing === undefined) return { outcome: "already-absent" };
+  const exact =
+    existing.id === input.id &&
+    existing.phase === input.expectedPhase &&
+    existing.kind === input.kind &&
+    existing.path === input.path &&
+    existing.projectId === input.projectId &&
+    existing.checkoutId === input.checkoutId &&
+    existing.contextId === input.contextId &&
+    existing.branch === input.branch &&
+    existing.expectedGitValue === input.expectedGitValue &&
+    existing.targetGitValue === input.targetGitValue;
+  if (!exact) throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  return { outcome: "abandoned" };
+};
+
 /**
  * Everything one stack registration needs, with every identity already minted by
  * the service: the registry stores the decision, it never makes it.
@@ -845,6 +882,9 @@ export interface ManagedStackRepositoryShape {
   readonly finalizeIdentityTransition: (
     input: FinalizeManagedIdentityTransitionInput,
   ) => Effect.Effect<ManagedIdentityTransitionRecord, ManagedIdentityRecoveryError>;
+  readonly abandonIdentityTransition: (
+    input: AbandonManagedIdentityTransitionInput,
+  ) => Effect.Effect<AbandonManagedIdentityTransitionResult, ManagedIdentityRecoveryError>;
   readonly pruneIdentityMetadata: (
     input: PruneManagedIdentityMetadataInput,
   ) => Effect.Effect<PruneManagedIdentityMetadataResult, ManagedIdentityRecoveryError>;

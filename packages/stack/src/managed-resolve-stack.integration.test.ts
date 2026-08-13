@@ -18,6 +18,7 @@ import {
   gitConfigPath,
   InvalidManagedStackNameError,
   ManagedPortReservationError,
+  ManagedIdentityTransitionOwnershipError,
   type ManagedStackServiceHandle,
   type ResolveManagedStackRequest,
 } from "./managed-bun.ts";
@@ -472,6 +473,88 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(
       storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("copied")),
     ).toBe(copied.identity.contextId);
+  });
+
+  it("resumes a copied branch after Git won but transition advancement failed", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const base = await openService(root);
+    const owner = await base.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-c", "main", "copy-after-advance-failure");
+    git(repository, "checkout", "-q", "copy-after-advance-failure");
+    let failAfterGitWrite = true;
+    const racingRepository = {
+      ...base.repository,
+      advanceIdentityTransition: (
+        input: Parameters<typeof base.repository.advanceIdentityTransition>[0],
+      ) =>
+        Effect.gen(function* () {
+          if (failAfterGitWrite) {
+            failAfterGitWrite = false;
+            return yield* Effect.fail(
+              new ManagedIdentityTransitionOwnershipError({ transitionId: input.id }),
+            );
+          }
+          return yield* base.repository.advanceIdentityTransition(input);
+        }),
+    };
+    const racing = await makeManagedStackService({
+      repository: racingRepository,
+      stateRoot: join(root, "racing-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(racing);
+
+    await expect(
+      racing.resolveStack({ workspacePath: repository, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    const resumed = await racing.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(resumed.outcome).toBe("create");
+    expect(resumed.identity.contextId).not.toBe(owner.identity.contextId);
+    expect(
+      storedConfigValue(
+        gitConfigPath(join(repository, ".git")),
+        gitBranchContextIdKey("copy-after-advance-failure"),
+      ),
+    ).toBe(resumed.identity.contextId);
+  });
+
+  it("does not overwrite a competing branch owner discovered during registration", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const base = await openService(root);
+    const first = await base.resolveStack({ workspacePath: repository, operation: "start" });
+    let raced = false;
+    const racingRepository = {
+      ...base.repository,
+      prepareStack: (input: Parameters<typeof base.repository.prepareStack>[0]) =>
+        Effect.gen(function* () {
+          const prepared = yield* base.repository.prepareStack(input);
+          if (!raced) {
+            raced = true;
+            yield* base.repository.refreshContextOwner({
+              contextId: first.identity.contextId,
+              ownerBranch: "competing-owner",
+              locator: "competing-owner",
+              now: new Date().toISOString(),
+            });
+          }
+          return prepared;
+        }),
+    };
+    const racing = await makeManagedStackService({
+      repository: racingRepository,
+      stateRoot: join(root, "owner-race-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(racing);
+    await racing.resolveStack({ workspacePath: repository, operation: "start" });
+    const claims = await Effect.runPromise(
+      base.repository.listIdentityClaims(first.identity.projectId),
+    );
+    expect(
+      claims.contexts.find((context) => context.id === first.identity.contextId)?.ownerBranch,
+    ).toBe("competing-owner");
   });
 
   it("refuses a copied-branch transition with a missing target without changing the branch key", async () => {

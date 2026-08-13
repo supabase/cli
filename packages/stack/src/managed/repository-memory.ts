@@ -34,6 +34,7 @@ import {
   decideManagedIdentityTransitionAdvance,
   decideManagedIdentityTransitionReservation,
   decideManagedIdentityTransitionFinalize,
+  decideManagedIdentityTransitionAbandon,
   decideManagedContextOwnerRefresh,
   decideManagedContextToBranch,
   decideManagedIdentityMetadataPrune,
@@ -64,6 +65,7 @@ import {
   type AdvanceManagedIdentityTransitionInput,
   type PruneManagedIdentityMetadataInput,
   type PruneManagedIdentityMetadataResult,
+  type AbandonManagedIdentityTransitionInput,
   type ManagedIdentityRecoveryError,
   type RegisterManagedCheckoutIdentityInput,
   type ManagedCheckoutIdentityRegistration,
@@ -702,6 +704,13 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           compareManagedText(left.id, right.id),
       );
 
+  const abandonIdentityTransition = (input: AbandonManagedIdentityTransitionInput) =>
+    atomic(() => {
+      const decision = decideManagedIdentityTransitionAbandon(transitions.get(input.id), input);
+      if (decision.outcome === "abandoned") transitions.delete(input.id);
+      return decision;
+    });
+
   const listStackProjectionsByIdentity = (
     identity: ManagedIdentityTriple,
     options?: { readonly includeTombstoned?: boolean },
@@ -769,6 +778,11 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           transitions.set(next.id, next);
           return copy(next);
         },
+        catch: failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
+      }),
+    abandonIdentityTransition: (input) =>
+      Effect.try({
+        try: () => abandonIdentityTransition(input),
         catch: failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
       }),
     prepareStack: (input) =>

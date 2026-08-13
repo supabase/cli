@@ -8,6 +8,7 @@ import { claimFileAtomically } from "./atomic-claim.ts";
 import { errorCode } from "./error-code.ts";
 import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
+import { decodeGitCheckoutIdentity } from "./git-identity.ts";
 import {
   GIT_CHECKOUT_IDENTITY_VERSION,
   InvalidManagedIdentityError,
@@ -875,38 +876,11 @@ const ensureConfigId = (
     return id;
   });
 
-const decodeCheckoutIdentity = (content: string): GitCheckoutIdentity => {
-  let value: unknown;
-  try {
-    value = JSON.parse(content);
-  } catch (cause: unknown) {
-    throw new InvalidManagedIdentityError({
-      message: `The git checkout identity is not JSON: ${cause}`,
-    });
-  }
-  if (typeof value !== "object" || value === null) {
-    throw new InvalidManagedIdentityError({
-      message: "The git checkout identity must be an object",
-    });
-  }
-  const version = Reflect.get(value, "version");
-  if (version !== GIT_CHECKOUT_IDENTITY_VERSION) {
-    throw new InvalidManagedIdentityError({
-      message: `Unsupported git checkout identity version ${String(version)}`,
-    });
-  }
-  const checkoutId = Reflect.get(value, "checkoutId");
-  if (typeof checkoutId !== "string") {
-    throw new InvalidManagedIdentityError({ message: "checkoutId must be an opaque UUID" });
-  }
-  return { version, checkoutId: assertManagedUuid(checkoutId, "checkoutId") };
-};
-
 const readCheckoutIdentity = async (
   gitDirectory: string,
 ): Promise<GitCheckoutIdentity | undefined> => {
   try {
-    return decodeCheckoutIdentity(await readFile(gitCheckoutIdentityPath(gitDirectory), "utf8"));
+    return decodeGitCheckoutIdentity(await readFile(gitCheckoutIdentityPath(gitDirectory), "utf8"));
   } catch (error: unknown) {
     if (errorCode(error) === "ENOENT") {
       return undefined;
@@ -1116,7 +1090,7 @@ export const readGitCheckoutIdentityWithFileSystem = (
         content === undefined
           ? undefined
           : yield* Effect.try({
-              try: () => decodeCheckoutIdentity(content),
+              try: () => decodeGitCheckoutIdentity(content),
               catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
             });
       return {

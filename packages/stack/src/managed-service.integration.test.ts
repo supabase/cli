@@ -3830,5 +3830,108 @@ describe("managed repository and lifecycle", () => {
         await Promise.all(cases.map((adapter) => adapter.close()));
       }
     });
+
+    it("abandons only an exact reserved transition and never a published one", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          const reserved = runRepo(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-abandon-a`,
+              kind: "new-checkout",
+              projectId: "project-abandon",
+              checkoutId: "checkout-abandon",
+              contextId: "context-abandon",
+              path: "/abandon-exact",
+              expectedGitValue: "absent",
+              targetGitValue: "context-abandon",
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          expect(
+            runRepo(
+              adapter.repository.abandonIdentityTransition({
+                id: reserved.id,
+                expectedPhase: "reserved",
+                kind: reserved.kind,
+                path: reserved.path ?? "",
+                projectId: reserved.projectId,
+                checkoutId: reserved.checkoutId,
+                contextId: reserved.contextId,
+                branch: reserved.branch,
+                expectedGitValue: reserved.expectedGitValue,
+                targetGitValue: reserved.targetGitValue,
+              }),
+            ),
+          ).toEqual({ outcome: "abandoned" });
+          expect(
+            runRepo(
+              adapter.repository.abandonIdentityTransition({
+                id: reserved.id,
+                expectedPhase: "reserved",
+                kind: reserved.kind,
+                path: reserved.path ?? "",
+                projectId: reserved.projectId,
+                checkoutId: reserved.checkoutId,
+                contextId: reserved.contextId,
+                branch: reserved.branch,
+                expectedGitValue: reserved.expectedGitValue,
+                targetGitValue: reserved.targetGitValue,
+              }),
+            ),
+          ).toEqual({ outcome: "already-absent" });
+          const mismatch = runRepo(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-abandon-mismatch`,
+              kind: "rebind-checkout",
+              checkoutId: "checkout-abandon-mismatch",
+              path: "/abandon-mismatch",
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.abandonIdentityTransition({
+                id: mismatch.id,
+                expectedPhase: "reserved",
+                kind: mismatch.kind,
+                path: "/different-path",
+                checkoutId: mismatch.checkoutId,
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+          const published = runRepo(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-abandon-b`,
+              kind: "new-checkout",
+              path: "/abandon-published",
+              now: "2026-08-13T00:00:00.000Z",
+            }),
+          );
+          runRepo(
+            adapter.repository.advanceIdentityTransition({
+              id: published.id,
+              expectedPhase: "reserved",
+              phase: "git-written",
+              now: "2026-08-13T00:01:00.000Z",
+            }),
+          );
+          expectFailureTag(
+            Effect.runSyncExit(
+              adapter.repository.abandonIdentityTransition({
+                id: published.id,
+                expectedPhase: "reserved",
+                kind: published.kind,
+                path: published.path ?? "",
+              }),
+            ),
+            "ManagedIdentityTransitionOwnershipError",
+          );
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
   });
 });

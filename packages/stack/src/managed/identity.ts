@@ -11,7 +11,8 @@ import {
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
-import { asRaised, failsOnlyWith } from "./failure.ts";
+import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
+import { decodeGitCheckoutIdentity } from "./git-identity.ts";
 import { errorCode } from "./error-code.ts";
 import { gitCheckoutIdentityPath, ordinaryWorkspaceIdentityPath } from "./paths.ts";
 
@@ -223,6 +224,63 @@ export const ensureOrdinaryWorkspaceIdentity = (
   );
 
 /**
+ * Publishes an exact ordinary-folder identity without adopting or replacing a
+ * competing marker. Recovery transitions use this when their reserved target
+ * was already chosen before publication began.
+ */
+export const publishOrdinaryWorkspaceIdentity = (
+  workspacePath: string,
+  identity: Pick<OrdinaryWorkspaceIdentity, "projectId" | "checkoutId" | "contextId">,
+  temporaryId: string = randomUUID(),
+): Effect.Effect<EnsureOrdinaryWorkspaceIdentityResult, InvalidManagedIdentityError> =>
+  failsWithIdentity(
+    Effect.tryPromise({
+      try: async () => {
+        const existing = await readIdentity(workspacePath);
+        const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
+        const target: OrdinaryWorkspaceIdentity = {
+          version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
+          projectId: assertManagedUuid(identity.projectId, "projectId"),
+          checkoutId: assertManagedUuid(identity.checkoutId, "checkoutId"),
+          contextId: assertManagedUuid(identity.contextId, "contextId"),
+        };
+        if (existing !== undefined) {
+          if (
+            existing.projectId !== target.projectId ||
+            existing.checkoutId !== target.checkoutId ||
+            existing.contextId !== target.contextId
+          ) {
+            throw new InvalidManagedIdentityError({
+              message: "Ordinary workspace identity changed before recovery publication",
+            });
+          }
+          return { identity: existing, created: false, markerPath };
+        }
+        await mkdir(dirname(markerPath), { recursive: true });
+        const outcome = await claimFileAtomically(
+          markerPath,
+          `${JSON.stringify(target, null, 2)}\n`,
+          { mode: 0o600, temporaryId: assertManagedUuid(temporaryId, "identity temporary id") },
+        );
+        if (outcome === "claimed") return { identity: target, created: true, markerPath };
+        const winner = await readIdentity(workspacePath);
+        if (
+          winner === undefined ||
+          winner.projectId !== target.projectId ||
+          winner.checkoutId !== target.checkoutId ||
+          winner.contextId !== target.contextId
+        ) {
+          throw new InvalidManagedIdentityError({
+            message: "Ordinary workspace identity publication raced without the requested winner",
+          });
+        }
+        return { identity: winner, created: false, markerPath };
+      },
+      catch: asRaised,
+    }),
+  );
+
+/**
  * Publish a caller-selected checkout identity into a git directory without
  * ever replacing a winner. Folder-to-Git conversion uses this primitive after
  * reserving its registry transition; an existing matching marker is already
@@ -232,6 +290,7 @@ export const ensureOrdinaryWorkspaceIdentity = (
 export const publishGitCheckoutIdentity = (
   gitDirectory: string,
   checkoutId: string,
+  temporaryId: string = randomUUID(),
 ): Effect.Effect<void, InvalidManagedIdentityError, FileSystem.FileSystem> =>
   failsWithIdentity(
     Effect.gen(function* () {
@@ -242,19 +301,12 @@ export const publishGitCheckoutIdentity = (
         checkoutId: assertManagedUuid(checkoutId, "checkoutId"),
       };
       const existing = yield* fs.readFileString(markerPath).pipe(
-        Effect.map((content) => {
-          try {
-            const value: unknown = JSON.parse(content);
-            if (typeof value !== "object" || value === null) return undefined;
-            const version = Reflect.get(value, "version");
-            const valueId = Reflect.get(value, "checkoutId");
-            return version === GIT_CHECKOUT_IDENTITY_VERSION && typeof valueId === "string"
-              ? assertManagedUuid(valueId, "checkoutId")
-              : undefined;
-          } catch {
-            return undefined;
-          }
-        }),
+        Effect.flatMap((content) =>
+          Effect.try({
+            try: () => decodeGitCheckoutIdentity(content).checkoutId,
+            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+          }),
+        ),
         Effect.catchTag("PlatformError", (error) =>
           error.reason._tag === "NotFound"
             ? Effect.succeed<string | undefined>(undefined)
@@ -279,26 +331,18 @@ export const publishGitCheckoutIdentity = (
         try: () =>
           claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
             mode: 0o600,
-            temporaryId: createManagedUuid(randomUUID, "git checkout identity temporary id"),
+            temporaryId: assertManagedUuid(temporaryId, "git checkout identity temporary id"),
           }),
         catch: asRaised,
       });
       if (outcome === "claimed") return;
       const winner = yield* fs.readFileString(markerPath).pipe(
-        Effect.map((content) => {
-          try {
-            const value: unknown = JSON.parse(content);
-            const valueId =
-              typeof value === "object" && value !== null
-                ? Reflect.get(value, "checkoutId")
-                : undefined;
-            return typeof valueId === "string"
-              ? assertManagedUuid(valueId, "checkoutId")
-              : undefined;
-          } catch {
-            return undefined;
-          }
-        }),
+        Effect.flatMap((content) =>
+          Effect.try({
+            try: () => decodeGitCheckoutIdentity(content).checkoutId,
+            catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+          }),
+        ),
         Effect.catchTag("PlatformError", () => Effect.succeed<string | undefined>(undefined)),
       );
       if (winner !== identity.checkoutId) {

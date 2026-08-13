@@ -15,6 +15,8 @@ export type {
   ClaimManagedOperationInput,
   ClaimManagedOperationResult,
   ManagedStackRepositoryShape,
+  AbandonManagedIdentityTransitionInput,
+  AbandonManagedIdentityTransitionResult,
   ManagedIdentityRecoveryError,
   OwnedManagedStackFailure,
   PrepareStackFailure,
@@ -39,4 +41,5 @@ export type {
   ManagedPruneFailure,
   ManagedPruneRequest,
   ManagedPruneResult,
+  ManagedIdentityTransitionAbandonRequest,
 } from "./managed/service.ts";

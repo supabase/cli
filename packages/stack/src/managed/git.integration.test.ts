@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach } from "vitest";
-import { Effect, FileSystem, Layer, PlatformError } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
 import {
   git,
   makeBareRepository,
@@ -25,7 +25,8 @@ import {
   replaceBranchContextId,
   type GitCheckoutInspection,
 } from "./git.ts";
-import { UnsupportedGitWorkspaceError } from "./model.ts";
+import { publishGitCheckoutIdentity } from "./identity.ts";
+import { InvalidManagedIdentityError, UnsupportedGitWorkspaceError } from "./model.ts";
 import { gitCheckoutIdentityPath, gitConfigPath, gitWorktreeConfigPath } from "./paths.ts";
 
 /**
@@ -488,6 +489,51 @@ describe("workspace topology", () => {
 });
 
 describe("git-stored identity", () => {
+  it.live("refuses a raced checkout marker with an unsupported version", () =>
+    Effect.gen(function* () {
+      const gitDirectory = makeDirectory(makeRoot(), "git-directory");
+      const markerPath = gitCheckoutIdentityPath(gitDirectory);
+      const checkoutId = "00000000-0000-7000-8000-000000000304";
+      const baseFileSystem = yield* FileSystem.FileSystem;
+      let firstRead = true;
+      const racingFileSystem = {
+        ...baseFileSystem,
+        readFileString: (path: string, encoding?: string) => {
+          if (path !== markerPath || !firstRead)
+            return baseFileSystem.readFileString(path, encoding);
+          firstRead = false;
+          return Effect.sync(() => {
+            writeFileSync(markerPath, JSON.stringify({ version: 2, checkoutId }));
+          }).pipe(
+            Effect.flatMap(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "test",
+                  method: "readFileString",
+                  pathOrDescriptor: markerPath,
+                }),
+              ),
+            ),
+          );
+        },
+      };
+
+      const exit = yield* Effect.exit(
+        publishGitCheckoutIdentity(gitDirectory, checkoutId).pipe(
+          Effect.provideService(FileSystem.FileSystem, racingFileSystem),
+        ),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.hasDies(exit.cause)).toBe(false);
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(InvalidManagedIdentityError);
+      }
+      expect(readFileSync(markerPath, "utf8")).toContain('"version":2');
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("holds the Git config lock across validation and publication", () =>
     Effect.gen(function* () {
       const root = makeRoot();

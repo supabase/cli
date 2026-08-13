@@ -42,10 +42,15 @@ import {
   type ManagedStackRecord,
   type ManagedStackSelection,
 } from "./model.ts";
-import { ensureOrdinaryWorkspaceIdentity, publishGitCheckoutIdentity } from "./identity.ts";
+import {
+  ensureOrdinaryWorkspaceIdentity,
+  publishGitCheckoutIdentity,
+  publishOrdinaryWorkspaceIdentity,
+} from "./identity.ts";
 import {
   ensureBranchContextId,
   ensureGitCheckoutIdentity,
+  GIT_PROJECT_ID_KEY,
   GitConfigStore,
   gitBranchContextIdKey,
   inspectWorkspace,
@@ -69,6 +74,7 @@ import {
   assertManagedOwnerPid,
   isUsableManagedOwnerPid,
   ManagedStackRepository,
+  type AbandonManagedIdentityTransitionResult,
   type ClaimManagedOperationFailure,
   type OwnedManagedStackFailure,
   type PrepareStackFailure,
@@ -131,6 +137,13 @@ export interface ManagedCheckoutRecoveryRequest {
   readonly branch?: string;
   readonly contextId?: string;
   /** A discovery report obtained immediately before requesting recovery. */
+  readonly observation?: ManagedWorkspaceDiscovery;
+}
+
+export interface ManagedIdentityTransitionAbandonRequest {
+  readonly transitionId: string;
+  readonly workspacePath?: string;
+  readonly path?: string;
   readonly observation?: ManagedWorkspaceDiscovery;
 }
 
@@ -349,6 +362,15 @@ export interface ManagedStackServiceShape {
   ) => Effect.Effect<
     ManagedWorkspaceDiscovery,
     InvalidManagedIdentityError | UnsupportedGitWorkspaceError | ManagedIdentityRecoveryError
+  >;
+  readonly abandonIdentityTransition: (
+    options: ManagedIdentityTransitionAbandonRequest,
+  ) => Effect.Effect<
+    AbandonManagedIdentityTransitionResult,
+    | InvalidManagedIdentityError
+    | DuplicateManagedIdentityError
+    | UnsupportedGitWorkspaceError
+    | ManagedIdentityRecoveryError
   >;
   /**
    * The one path from a workspace path to a stack, for every workspace shape and
@@ -872,9 +894,13 @@ export class ManagedStackService extends Context.Service<
          */
         const claimUnregisteredWorkspace = (
           report: ManagedWorkspaceDiscovery,
+          targetIdentity?: ManagedIdentityTriple,
+          transitionId = "identity-publication",
         ): Effect.Effect<
           ResolvedWorkspace,
-          InvalidManagedIdentityError | UnsupportedGitWorkspaceError
+          | InvalidManagedIdentityError
+          | UnsupportedGitWorkspaceError
+          | ManagedIdentityTransitionOwnershipError
         > =>
           Effect.gen(function* () {
             const canonicalPath = report.workspace.canonicalPath;
@@ -915,6 +941,33 @@ export class ManagedStackService extends Context.Service<
                 identityMarkerCreated: false,
               };
             }
+            if (
+              targetIdentity !== undefined &&
+              ((freshReport.identity.projectId !== undefined &&
+                freshReport.identity.projectId !== targetIdentity.projectId) ||
+                (freshReport.identity.checkoutId !== undefined &&
+                  freshReport.identity.checkoutId !== targetIdentity.checkoutId) ||
+                (freshReport.identity.contextId !== undefined &&
+                  freshReport.identity.contextId !== targetIdentity.contextId))
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId }),
+              );
+            }
+            if (
+              targetIdentity !== undefined &&
+              freshReport.identity.projectId === targetIdentity.projectId &&
+              freshReport.identity.checkoutId === targetIdentity.checkoutId &&
+              freshReport.identity.contextId === targetIdentity.contextId
+            ) {
+              return {
+                workspace: freshReport.workspace,
+                context: freshReport.context,
+                contextDescriptor: freshReport.contextDescriptor,
+                identity: targetIdentity,
+                identityMarkerCreated: false,
+              };
+            }
             const inspection = yield* withWorkspaceServices(inspectWorkspace(canonicalPath));
             if (!observationMatches(freshReport, inspection)) {
               return yield* Effect.fail(
@@ -926,7 +979,14 @@ export class ManagedStackService extends Context.Service<
 
             if (inspection.kind === "ordinary-folder") {
               const markerPath = ordinaryWorkspaceIdentityPath(canonicalPath);
-              const marker = yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
+              const marker =
+                targetIdentity === undefined
+                  ? yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory)
+                  : yield* publishOrdinaryWorkspaceIdentity(
+                      canonicalPath,
+                      targetIdentity,
+                      yield* managedUuid("identity temporary id"),
+                    );
               const identity = marker.identity;
               const ownedContext =
                 identity?.checkoutId === undefined
@@ -953,6 +1013,60 @@ export class ManagedStackService extends Context.Service<
               };
             }
 
+            if (targetIdentity !== undefined) {
+              const targetTemporaryId = yield* managedUuid("git checkout identity temporary id");
+              const exactConfig = (key: string, value: string) =>
+                withWorkspaceServices(
+                  Effect.gen(function* () {
+                    const store = yield* GitConfigStore;
+                    const file = gitConfigPath(inspection.commonDirectory);
+                    const existing = yield* store.getAll(file, key);
+                    if (existing.length === 0) yield* store.add(file, key, value);
+                    const winner = yield* store.getAll(file, key);
+                    if (winner.length === 0 || winner.some((candidate) => candidate !== value)) {
+                      return yield* Effect.fail(
+                        new ManagedIdentityTransitionOwnershipError({
+                          transitionId,
+                        }),
+                      );
+                    }
+                  }),
+                );
+              yield* exactConfig(GIT_PROJECT_ID_KEY, targetIdentity.projectId);
+              yield* withWorkspaceServices(
+                publishGitCheckoutIdentity(
+                  inspection.gitDirectory,
+                  targetIdentity.checkoutId,
+                  targetTemporaryId,
+                ),
+              );
+              if (inspection.head.kind !== "detached") {
+                yield* exactConfig(
+                  gitBranchContextIdKey(inspection.head.branch),
+                  targetIdentity.contextId,
+                );
+              }
+              const head = inspection.head;
+              return {
+                workspace: {
+                  checkoutKind: checkoutKindOf(inspection),
+                  canonicalPath: inspection.canonicalPath,
+                  workspaceRoot: inspection.workspaceRoot,
+                  projectIdentityLocation: inspection.commonDirectory,
+                  checkoutIdentityLocation: inspection.gitDirectory,
+                },
+                context:
+                  head.kind === "detached"
+                    ? { kind: "detached", commit: head.commit }
+                    : { kind: "branch", branch: head.branch },
+                contextDescriptor:
+                  head.kind === "detached"
+                    ? { kind: "detached" }
+                    : { kind: "branch", locator: head.branch },
+                identity: targetIdentity,
+                identityMarkerCreated: true,
+              };
+            }
             const claimed = yield* withWorkspaceServices(
               ensureGitCheckoutIdentity(inspection, idFactory),
             );
@@ -1547,12 +1661,41 @@ export class ManagedStackService extends Context.Service<
                 }),
               );
             }
-            const transition = yield* reserveRecoveryTransition(
-              report,
-              "new-checkout",
-              undefined,
-              path,
-            );
+            const transition =
+              report.activeTransition?.kind === "new-checkout"
+                ? report.activeTransition
+                : yield* Effect.gen(function* () {
+                    const targetIdentity: ManagedIdentityTriple = {
+                      projectId: report.identity.projectId ?? (yield* managedUuid("projectId")),
+                      checkoutId: report.identity.checkoutId ?? (yield* managedUuid("checkoutId")),
+                      contextId: report.identity.contextId ?? (yield* managedUuid("contextId")),
+                    };
+                    return yield* repository.reserveIdentityTransition({
+                      id: yield* managedUuid("identity transition"),
+                      kind: "new-checkout",
+                      ...targetIdentity,
+                      path,
+                      expectedGitValue: report.identity.contextId,
+                      targetGitValue: targetIdentity.contextId,
+                      now: now(),
+                    });
+                  });
+            if (
+              transition.kind !== "new-checkout" ||
+              transition.path !== path ||
+              transition.projectId === undefined ||
+              transition.checkoutId === undefined ||
+              transition.contextId === undefined
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            const targetIdentity: ManagedIdentityTriple = {
+              projectId: transition.projectId,
+              checkoutId: transition.checkoutId,
+              contextId: transition.contextId,
+            };
             if (transition.phase === "reserved") {
               const beforePublication = yield* discover(path);
               const beforeClaims = yield* repository.listIdentityClaims();
@@ -1564,21 +1707,38 @@ export class ManagedStackService extends Context.Service<
                 reserved.phase !== "reserved" ||
                 reserved.kind !== "new-checkout" ||
                 reserved.path !== path ||
-                beforePublication.identity.projectId !== undefined ||
-                beforePublication.identity.checkoutId !== undefined ||
-                beforePublication.identity.contextId !== undefined
+                (beforePublication.identity.projectId !== undefined &&
+                  beforePublication.identity.projectId !== targetIdentity.projectId) ||
+                (beforePublication.identity.checkoutId !== undefined &&
+                  beforePublication.identity.checkoutId !== targetIdentity.checkoutId) ||
+                (beforePublication.identity.contextId !== undefined &&
+                  beforePublication.identity.contextId !== targetIdentity.contextId)
               ) {
                 return yield* Effect.fail(
                   new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
                 );
               }
-              const claimed = yield* claimUnregisteredWorkspace(beforePublication);
+              const claimed = yield* claimUnregisteredWorkspace(
+                beforePublication,
+                targetIdentity,
+                transition.id,
+              );
               const identity = yield* requireResolvedIdentity(claimed);
+              if (
+                identity.projectId !== targetIdentity.projectId ||
+                identity.checkoutId !== targetIdentity.checkoutId ||
+                identity.contextId !== targetIdentity.contextId
+              ) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
               const reread = yield* discover(path);
               if (
-                reread.identity.projectId !== identity.projectId ||
-                reread.identity.checkoutId !== identity.checkoutId ||
-                reread.identity.contextId !== identity.contextId
+                reread.identity.projectId !== targetIdentity.projectId ||
+                reread.identity.checkoutId !== targetIdentity.checkoutId ||
+                (reread.context.kind !== "detached" &&
+                  reread.identity.contextId !== targetIdentity.contextId)
               ) {
                 return yield* Effect.fail(
                   new InvalidManagedIdentityError({
@@ -1595,9 +1755,10 @@ export class ManagedStackService extends Context.Service<
             }
             const published = yield* discover(path);
             if (
-              published.identity.projectId === undefined ||
-              published.identity.checkoutId === undefined ||
-              published.identity.contextId === undefined
+              published.identity.projectId !== targetIdentity.projectId ||
+              published.identity.checkoutId !== targetIdentity.checkoutId ||
+              (published.context.kind !== "detached" &&
+                published.identity.contextId !== targetIdentity.contextId)
             ) {
               return yield* Effect.fail(
                 new InvalidManagedIdentityError({
@@ -1612,9 +1773,9 @@ export class ManagedStackService extends Context.Service<
             if (latestTransition.phase === "git-written") {
               yield* repository.registerCheckoutIdentity({
                 identity: {
-                  projectId: published.identity.projectId,
-                  checkoutId: published.identity.checkoutId,
-                  contextId: published.identity.contextId,
+                  projectId: targetIdentity.projectId,
+                  checkoutId: targetIdentity.checkoutId,
+                  contextId: targetIdentity.contextId,
                 },
                 checkoutKind: published.workspace.checkoutKind,
                 checkoutRootPath: published.workspace.workspaceRoot,
@@ -1815,7 +1976,8 @@ export class ManagedStackService extends Context.Service<
               if (
                 current.identity.projectId !== projectId ||
                 current.identity.checkoutId !== checkoutId ||
-                current.identity.contextId !== contextId ||
+                (current.identity.contextId !== contextId &&
+                  current.identity.contextId !== target) ||
                 current.context.kind !== "branch" ||
                 current.context.branch !== branch
               ) {
@@ -1836,14 +1998,16 @@ export class ManagedStackService extends Context.Service<
               const observed = yield* withWorkspaceServices(
                 readBranchContextId(inspection, branch),
               );
-              if (observed !== contextId) {
+              if (observed !== contextId && observed !== target) {
                 return yield* Effect.fail(
                   new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
                 );
               }
-              yield* withWorkspaceServices(
-                replaceBranchContextId(inspection, branch, contextId, target),
-              );
+              if (observed === contextId) {
+                yield* withWorkspaceServices(
+                  replaceBranchContextId(inspection, branch, contextId, target),
+                );
+              }
               const winner = yield* withWorkspaceServices(readBranchContextId(inspection, branch));
               if (winner !== target) {
                 return yield* Effect.fail(
@@ -2003,6 +2167,143 @@ export class ManagedStackService extends Context.Service<
               });
             }
             return yield* discover(path);
+          });
+
+        const abandonIdentityTransition = (
+          options: ManagedIdentityTransitionAbandonRequest,
+        ): Effect.Effect<
+          AbandonManagedIdentityTransitionResult,
+          | InvalidManagedIdentityError
+          | DuplicateManagedIdentityError
+          | UnsupportedGitWorkspaceError
+          | ManagedIdentityRecoveryError
+        > =>
+          Effect.gen(function* () {
+            const path = yield* requestedRecoveryPath(options);
+            const report = yield* recoveryReport({
+              workspacePath: path,
+              observation: options.observation,
+            });
+            const claims = yield* repository.listIdentityClaims();
+            const transition = claims.transitions.find(
+              (candidate) => candidate.id === options.transitionId,
+            );
+            if (transition === undefined) return { outcome: "already-absent" as const };
+            if (
+              report.state !== "transitioning" ||
+              report.conflicts.length > 0 ||
+              transition.phase !== "reserved" ||
+              transition.path !== report.workspace.workspaceRoot ||
+              report.activeTransition === undefined ||
+              report.activeTransition.id !== transition.id ||
+              report.activeTransition.kind !== transition.kind ||
+              report.activeTransition.path !== transition.path ||
+              report.activeTransition.projectId !== transition.projectId ||
+              report.activeTransition.checkoutId !== transition.checkoutId ||
+              report.activeTransition.contextId !== transition.contextId ||
+              report.activeTransition.branch !== transition.branch ||
+              report.activeTransition.expectedGitValue !== transition.expectedGitValue ||
+              report.activeTransition.targetGitValue !== transition.targetGitValue
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            if (
+              (transition.kind === "branch-copy" || transition.kind === "adopt-context") &&
+              ((transition.projectId !== undefined &&
+                transition.projectId !== report.identity.projectId) ||
+                (transition.checkoutId !== undefined &&
+                  transition.checkoutId !== report.identity.checkoutId) ||
+                (transition.contextId !== undefined &&
+                  transition.contextId !== report.identity.contextId) ||
+                (transition.branch !== undefined &&
+                  (report.context.kind !== "branch" ||
+                    report.context.branch !== transition.branch)))
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            if (transition.kind === "new-checkout") {
+              if (
+                report.identity.projectId !== undefined ||
+                report.identity.checkoutId !== undefined ||
+                report.identity.contextId !== undefined
+              ) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+            } else if (transition.kind === "folder-to-git") {
+              if (
+                report.identity.projectId !== undefined ||
+                report.identity.checkoutId !== undefined ||
+                report.identity.contextId !== undefined
+              ) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+            } else if (transition.kind === "branch-copy") {
+              if (report.identity.contextId === transition.targetGitValue) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+            } else if (transition.kind === "adopt-context") {
+              const context = claims.contexts.find(
+                (candidate) => candidate.id === transition.contextId,
+              );
+              if (context?.ownerBranch === transition.branch) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+              if (context?.ownerBranch !== undefined) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+            } else if (
+              (transition.kind === "rebind-checkout" || transition.kind === "adopt-checkout") &&
+              (report.workspace.checkoutKind === "ordinary" ||
+                report.locations.some(
+                  (location) =>
+                    location.state === "active" &&
+                    location.canonicalPath === report.workspace.workspaceRoot,
+                ) ||
+                (transition.projectId !== undefined &&
+                  transition.projectId !== report.identity.projectId) ||
+                (transition.checkoutId !== undefined &&
+                  transition.checkoutId !== report.identity.checkoutId) ||
+                (transition.contextId !== undefined &&
+                  transition.contextId !== report.identity.contextId) ||
+                (transition.branch !== undefined &&
+                  transition.branch !==
+                    (report.context.kind === "branch" ? report.context.branch : undefined)))
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            if (transition.path === undefined) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            return yield* repository.abandonIdentityTransition({
+              id: transition.id,
+              expectedPhase: "reserved",
+              kind: transition.kind,
+              path: transition.path,
+              projectId: transition.projectId,
+              checkoutId: transition.checkoutId,
+              contextId: transition.contextId,
+              branch: transition.branch,
+              expectedGitValue: transition.expectedGitValue,
+              targetGitValue: transition.targetGitValue,
+            });
           });
 
         /**
@@ -2227,23 +2528,6 @@ export class ManagedStackService extends Context.Service<
                   configuration: resolveOptions.configuration ?? {},
                 });
                 if (prepared.outcome === "existing") {
-                  if (plan.contextDescriptor.kind === "branch") {
-                    const claims = yield* repository.listIdentityClaims(identity.projectId);
-                    const context = claims.contexts.find(
-                      (candidate) => candidate.id === identity.contextId,
-                    );
-                    if (
-                      context !== undefined &&
-                      context.ownerBranch !== plan.contextDescriptor.locator
-                    ) {
-                      yield* repository.refreshContextOwner({
-                        contextId: identity.contextId,
-                        ownerBranch: plan.contextDescriptor.locator,
-                        locator: plan.contextDescriptor.locator,
-                        now: now(),
-                      });
-                    }
-                  }
                   return yield* restore(reuseRegisteredStack(resolveOptions, plan, prepared));
                 }
 
@@ -2251,23 +2535,6 @@ export class ManagedStackService extends Context.Service<
                 const operation = prepared.operation;
                 return yield* restore(
                   Effect.gen(function* () {
-                    if (plan.contextDescriptor.kind === "branch") {
-                      const claims = yield* repository.listIdentityClaims(identity.projectId);
-                      const context = claims.contexts.find(
-                        (candidate) => candidate.id === identity.contextId,
-                      );
-                      if (
-                        context !== undefined &&
-                        context.ownerBranch !== plan.contextDescriptor.locator
-                      ) {
-                        yield* repository.refreshContextOwner({
-                          contextId: identity.contextId,
-                          ownerBranch: plan.contextDescriptor.locator,
-                          locator: plan.contextDescriptor.locator,
-                          now: now(),
-                        });
-                      }
-                    }
                     yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
                     yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
                     yield* fs.makeDirectory(pending.paths.runtime, {
@@ -2747,6 +3014,7 @@ export class ManagedStackService extends Context.Service<
           rebindCheckout,
           adoptCheckout,
           adoptContext,
+          abandonIdentityTransition,
           resolveStack,
           inspectStack: (stackId) => repository.getStackProjection(stackId),
           listStacks: (listOptions) => repository.listStackProjections(listOptions),
