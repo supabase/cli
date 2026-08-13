@@ -547,6 +547,39 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
+  it.live("a pre-created permissive temp file cannot leak into the published tar's mode", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheEnv(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+        const tempDir = pgDeltaTempDir(path);
+        yield* fs.makeDirectory(tempDir, { recursive: true });
+        // An adversarially (or crash-) pre-created temp file at THIS process's own temp path,
+        // world-readable. The export must not inherit its mode: the pre-remove + `wx`
+        // exclusive-create guarantees a fresh 0600 inode.
+        yield* coldRun(docker, input); // publish once to learn the tar name
+        const [tarName = ""] = yield* soleTarName(fs, path);
+        const tarPath = path.join(tempDir, tarName);
+        const tempPath = `${tarPath}.${process.pid}.partial`;
+        yield* fs.remove(tarPath); // force the next run cold
+        yield* fs.writeFileString(tempPath, "poisoned");
+        yield* fs.chmod(tempPath, 0o666);
+
+        yield* coldRun(docker, input);
+
+        const info = yield* fs.stat(tarPath);
+        // 0o600 exactly — not the pre-created file's 0o666.
+        expect((Number(info.mode) & 0o777).toString(8)).toBe("600");
+        expect(yield* fs.readFileString(tarPath)).toBe(FAKE_PGDATA_TAR);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
   it.live("a cold export sweeps abandoned partial temp files but never fresh ones", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();

@@ -89,6 +89,10 @@ export const legacyExportPgDataTar = (
 ): Effect.Effect<void, LegacyPgDataSnapshotUnavailable> => {
   const tempPath = `${tarPath}.${process.pid}.partial`;
   return Effect.gen(function* () {
+    // Clear any pre-existing file at the temp path (a crashed same-pid predecessor, or an
+    // adversarially pre-created one on a shared host) so the exclusive-create below starts from
+    // a genuinely fresh inode — see the sink's own comment.
+    yield* fs.remove(tempPath).pipe(Effect.orElseSucceed(() => undefined));
     yield* Effect.scoped(
       Effect.gen(function* () {
         const child = yield* spawnContainerCli(
@@ -110,7 +114,12 @@ export const legacyExportPgDataTar = (
             // `0o600`: the archive is a full PGDATA — vault secret values, the JWT secret, and
             // role password hashes are all in its pages — so it must not be group/world-readable
             // on a shared host. `rename` preserves the mode, so the published tar inherits it.
-            Stream.run(child.stdout, fs.sink(tempPath, { flag: "w", mode: 0o600 })),
+            // `wx` (O_EXCL), not `w`: a plain truncating open would inherit an attacker-
+            // PRE-CREATED file's permissive mode instead of applying `mode` (which only governs
+            // creation). With the best-effort remove above, `wx` only ever fails if someone
+            // recreated the path in the race window — and that failure degrades to an uncached
+            // run, never to a world-readable tar (review: depthfirst on #6184).
+            Stream.run(child.stdout, fs.sink(tempPath, { flag: "wx", mode: 0o600 })),
             legacyCollectText(child.stderr),
           ],
           { concurrency: "unbounded" },
