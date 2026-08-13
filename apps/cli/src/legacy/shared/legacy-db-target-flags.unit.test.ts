@@ -205,11 +205,12 @@ describe("VALUE_CONSUMING_LONG_FLAGS / VALUE_CONSUMING_SHORT_FLAGS completeness 
   // string argument to `Flag.string`/`Flag.integer`/`Flag.choice`/
   // `Flag.choiceWithValue`/`Flag.float` — it cannot trace a name passed
   // through a helper function (`issue.command.ts`'s
-  // `legacyIssueOptionalTextFlag`, `status.command.ts`'s
-  // `csvStringSliceFlag`), so those two files are excluded below; their flag
-  // names are registered by hand in `VALUE_CONSUMING_LONG_FLAGS` instead.
+  // `legacyIssueOptionalTextFlag`, and the shared `legacyStringSliceFlag`
+  // builder — CLI-2005), so such files/flags are simply not discovered by the
+  // scan; their flag names are registered by hand in
+  // `VALUE_CONSUMING_LONG_FLAGS` instead.
   const commandsDir = fileURLToPath(new URL("../commands", import.meta.url));
-  const INDIRECT_NAME_FILES = new Set(["issue.command.ts", "status.command.ts"]);
+  const INDIRECT_NAME_FILES = new Set(["issue.command.ts"]);
   const VALUE_FLAG_KINDS = ["string", "integer", "choice", "choiceWithValue", "float"];
 
   function walk(dir: string): Array<string> {

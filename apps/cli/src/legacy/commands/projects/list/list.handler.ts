@@ -7,7 +7,18 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import { legacyResolveLinkedParentRef } from "../../../shared/legacy-parent-project-ref.ts";
+import {
+  type LegacyGoType,
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+  legacyGoBool,
+  legacyGoSlice,
+  legacyGoString,
+  legacyGoStruct,
+  legacyGoTomlListWrapper,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { sanitizeLegacyErrorBody } from "../../../shared/legacy-http-errors.ts";
 import {
   LegacyProjectsEnvNotSupportedError,
@@ -20,6 +31,39 @@ import {
   renderProjectsListTable,
 } from "../projects.format.ts";
 import type { LegacyProjectsListFlags } from "./list.command.ts";
+
+/**
+ * Mirror of Go's `linkedProject` (`apps/cli-go/internal/projects/list/list.go`):
+ * an embedded `api.V1ProjectWithDatabaseResponse` (fields inlined first, in
+ * declaration order) plus the CLI-added `Linked bool` (CLI-1975).
+ */
+const LEGACY_GO_LINKED_PROJECT: LegacyGoType = legacyGoStruct([
+  ["created_at", legacyGoString],
+  [
+    "database",
+    legacyGoStruct([
+      ["host", legacyGoString],
+      ["postgres_engine", legacyGoString],
+      ["release_channel", legacyGoString],
+      ["version", legacyGoString],
+    ]),
+  ],
+  ["id", legacyGoString],
+  ["name", legacyGoString],
+  ["organization_id", legacyGoString],
+  ["organization_slug", legacyGoString],
+  ["ref", legacyGoString],
+  ["region", legacyGoString],
+  ["status", legacyGoString],
+  ["linked", legacyGoBool],
+]);
+
+const LEGACY_GO_PROJECTS_LIST = legacyGoSlice(LEGACY_GO_LINKED_PROJECT);
+
+const LEGACY_GO_PROJECTS_TOML_WRAPPER = legacyGoTomlListWrapper(
+  "projects",
+  LEGACY_GO_LINKED_PROJECT,
+);
 
 export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
   _flags: LegacyProjectsListFlags,
@@ -71,6 +115,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
             status: response.status,
             body: "",
             message: `Unexpected error retrieving projects: ${cause}`,
+            decode: true,
           }),
       ),
     );
@@ -80,6 +125,7 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
         status: response.status,
         body: "",
         message: "Unexpected error retrieving projects: response was not an array",
+        decode: true,
       });
     }
     yield* fetching?.clear() ?? Effect.void;
@@ -93,9 +139,28 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       yield* output.raw("Cannot find project ref. Have you run supabase link?\n", "stderr");
     }
 
+    // CLI-2167 follow-up: after `link <branch>`, `linkedRef` is the BRANCH's
+    // own ref, which never matches a row here (this endpoint only returns
+    // real projects), so the "you are here" marker silently vanished. An
+    // exact match always wins outright; only when it misses do we fall back
+    // to the PARENT chain (env → `linked-project.json` → `project-ref` file)
+    // and mark that ref's row instead. `linkedRef` itself (used below for the
+    // stderr message and the linked-project-cache write) is untouched — only
+    // the marker comparison changes. TS-only QoL, no Go counterpart.
+    let markerRef = linkedRef;
+    if (Option.isSome(linkedRef)) {
+      const hasExactMatch = parsed.some(
+        (project) => readProjectField(project, "id") === linkedRef.value,
+      );
+      if (!hasExactMatch) {
+        const parent = yield* legacyResolveLinkedParentRef();
+        markerRef = parent.kind === "resolved" ? Option.some(parent.ref) : Option.none();
+      }
+    }
+
     const projects: ReadonlyArray<LegacyLinkedProject> = parsed.map((project) => ({
       ...(typeof project === "object" && project !== null ? project : {}),
-      linked: Option.isSome(linkedRef) && readProjectField(project, "id") === linkedRef.value,
+      linked: Option.isSome(markerRef) && readProjectField(project, "id") === markerRef.value,
     }));
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
@@ -110,11 +175,18 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(projects));
+      yield* output.raw(encodeLegacyGoYaml(projects, LEGACY_GO_PROJECTS_LIST));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml({ projects }) + "\n");
+      // Go builds the list with `append` (`list.go:36-42`), so an empty list
+      // stays a nil slice and BurntSushi emits nothing for the wrapper.
+      yield* output.raw(
+        encodeLegacyGoToml(
+          { projects: projects.length > 0 ? projects : undefined },
+          LEGACY_GO_PROJECTS_TOML_WRAPPER,
+        ),
+      );
       return;
     }
 

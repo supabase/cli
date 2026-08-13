@@ -198,6 +198,26 @@ describe("subcommand flag placement suggestions", () => {
     );
   });
 
+  it("passes a complete pflag-format diagnostic through verbatim (Go stderr parity, CLI-1983)", () => {
+    // Legacy flags that byte-match Go pflag's parse-time diagnostics
+    // (`legacyStringSliceFlag`'s malformed-CSV failure) emit the COMPLETE Go
+    // message as `expected`. Wrapping it in the `Invalid value for flag ...`
+    // template would double-frame it — pflag prints the bare line.
+    const pflagMessage =
+      'invalid argument "\\"1.2.3.4" for "--db-unban-ip" flag: parse error on line 1, column 9: extraneous or missing " in quoted-field';
+    const errors = formatCliErrorsForDisplay([
+      new CliError.InvalidValue({
+        option: "db-unban-ip",
+        value: '"1.2.3.4',
+        expected: pflagMessage,
+        kind: "flag",
+      }),
+    ]);
+
+    expect(errors.changed).toBe(true);
+    expect(errors.errors[0]?.message).toBe(pflagMessage);
+  });
+
   it("does not corrupt a value that itself contains the literal 'Expected: Expected' text", () => {
     // Regression test: the fix must anchor on `error.expected` (the field the
     // buggy primitive actually populates) rather than searching the fully

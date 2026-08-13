@@ -16,6 +16,11 @@ import { legacyFunctionsDelete } from "./delete.handler.ts";
 
 const tempRoot = useLegacyTempWorkdir("supabase-functions-delete-legacy-");
 
+// Strip ANSI SGR (aqua slug/ref via `legacyAqua`) so byte-assertions are
+// stable whether or not the test stdout supports color.
+// eslint-disable-next-line no-control-regex
+const stripSgr = (text: string) => text.replace(/\x1b\[[0-9;]*m/gu, "");
+
 describe("legacy functions delete", () => {
   it.live("deletes a function natively through the Management API", () => {
     const out = mockOutput({ format: "text" });
@@ -41,7 +46,9 @@ describe("legacy functions delete", () => {
       expect(api.requests[0]?.url).toBe(
         "https://api.supabase.com/v1/projects/abcdefghijklmnopqrst/functions/hello-world",
       );
-      expect(out.stdoutText).toBe(
+      // The slug and ref are wrapped in ANSI (legacyAqua) in colour-capable
+      // environments — strip SGR so the byte assertion stays stable.
+      expect(stripSgr(out.stdoutText)).toBe(
         "Deleted Function hello-world from project abcdefghijklmnopqrst.\n",
       );
       expect(linkedProjectCache.cached).toBe(true);

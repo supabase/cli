@@ -19,8 +19,8 @@ const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 
 const PROVIDER = {
   id: VALID_PROVIDER_ID,
-  saml: { id: "x", entity_id: "https://example.com" },
-  domains: [{ id: "d1", domain: "example.com" }],
+  saml: { entity_id: "https://example.com" },
+  domains: [{ domain: "example.com" }],
 };
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-remove-int-");
@@ -195,6 +195,32 @@ describe("legacy sso remove integration", () => {
     return Effect.gen(function* () {
       yield* legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID });
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Go --output=toml fails like Go's EncodeOutput on an unencodable payload", () => {
+    // BurntSushi rejects a nil array element; Go surfaces it as an ordinary
+    // `failed to output toml: …` command error, not a crash (review
+    // r3684270640 — the same wrapping list/show gained in the prior round).
+    const body = {
+      ...PROVIDER,
+      saml: {
+        ...PROVIDER.saml,
+        attribute_mapping: { keys: { a: { name: "xyz", default: [null, "x"] } } },
+      },
+    };
+    const { layer, out } = setup({ goOutput: "toml", body });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacySsoRemove({ projectRef: Option.none(), providerId: VALID_PROVIDER_ID }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySsoTomlEncodeError");
+        expect(dump).toContain("failed to output toml: toml: cannot encode array with nil element");
+      }
+      expect(out.stdoutText).toBe("");
     }).pipe(Effect.provide(layer));
   });
 

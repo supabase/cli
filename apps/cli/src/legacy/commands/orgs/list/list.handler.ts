@@ -5,8 +5,13 @@ import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts"
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
-import { encodeGoJson, encodeToml, encodeYaml } from "../../../shared/legacy-go-output.encoders.ts";
+import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import {
+  encodeLegacyGoToml,
+  encodeLegacyGoYaml,
+} from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { LEGACY_GO_ORGS_LIST, LEGACY_GO_ORGS_TOML_WRAPPER } from "../orgs.go-payload.ts";
 import {
   LegacyOrgsEnvNotSupportedError,
   LegacyOrgsListNetworkError,
@@ -57,11 +62,11 @@ export const legacyOrgsList = Effect.fn("legacy.orgs.list")(function* (
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(orgs));
+      yield* output.raw(encodeLegacyGoYaml(orgs, LEGACY_GO_ORGS_LIST));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml({ organizations: orgs }) + "\n");
+      yield* output.raw(encodeLegacyGoToml({ organizations: orgs }, LEGACY_GO_ORGS_TOML_WRAPPER));
       return;
     }
 

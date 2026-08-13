@@ -25,8 +25,8 @@ import { legacyVanitySubdomainsCommand } from "./vanity-subdomains.command.ts";
 const tempRoot = useLegacyTempWorkdir("supabase-vanity-subdomains-experimental-int-");
 
 const testRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyVanitySubdomainsCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function setup() {

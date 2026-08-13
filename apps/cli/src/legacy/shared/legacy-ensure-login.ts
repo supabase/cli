@@ -137,7 +137,14 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
         Effect.gen(function* () {
           const failures = failuresSoFar + 1;
           if (failures > MAX_LOGIN_RETRIES) {
-            return yield* Effect.fail(new LegacyLoginFailedError({ message: err.message }));
+            return yield* Effect.fail(
+              new LegacyLoginFailedError({
+                message: err.message,
+                statusCode: err.statusCode,
+                network: err.network,
+                decode: err.decode,
+              }),
+            );
           }
           yield* output.raw(`${err.message}\nRetry (${failures}/${MAX_LOGIN_RETRIES}): `, "stderr");
           return yield* verifyWithRetries(failures);

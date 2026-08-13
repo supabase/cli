@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BunServices } from "@effect/platform-bun";
+import { BunPath, BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, FileSystem, Option, Path } from "effect";
 
@@ -11,6 +11,7 @@ import {
   legacyLoadProjectEnv,
   legacyReadDbToml,
   legacyResolveDeclarativeDir,
+  legacyResolveSeedSqlPath,
 } from "./legacy-db-config.toml-read.ts";
 
 function withConfig(content: string | undefined, poolerUrl?: string) {
@@ -70,6 +71,31 @@ describe("read (lenient) vs check (throws) split", () => {
               "failed to parse config: missing private key",
             );
           }
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("can skip vault resolution without skipping the rest of config validation", () => {
+    const dir = withConfig(
+      [
+        "[db.vault]",
+        'local_secret = "encrypted:not-valid"',
+        "[remotes.preview]",
+        'project_id = "abcdefghijklmnopqrst"',
+        "[remotes.preview.db.vault]",
+        'remote_secret = "encrypted:not-valid"',
+        "",
+      ].join("\n"),
+    );
+    return withServices(dir, (fs, path) =>
+      legacyCheckDbToml(fs, path, dir, undefined, { resolveVaultSecrets: false }),
+    ).pipe(
+      Effect.tap((values) =>
+        Effect.sync(() => {
+          expect(values.vault).toEqual([]);
+          expect(values.baseline.vaultNames).toEqual(["local_secret"]);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -293,6 +319,486 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "weakly coerces non-string db.seed.sql_paths array elements (Go mapstructure parity)",
+    () => {
+      // Same `config.Glob` decode path as schema_paths below — a bool/number element
+      // is coerced to its Go string form ("1"/"0" for bool, decimal for a number),
+      // not dropped.
+      const dir = withConfig(["[db.seed]", 'sql_paths = [42, true, "seed.sql"]', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.sqlPaths).toEqual(["supabase/42", "supabase/1", "supabase/seed.sql"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
+    () => {
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "a.sql, b.sql";
+      const dir = withConfig(["[db.migrations]", 'schema_paths = ["ignored.sql"]', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "decodes a STRING db.migrations.schema_paths via StringToSliceHookFunc (comma, no trim)",
+    () => {
+      const dir = withConfig(["[db.migrations]", 'schema_paths = "a.sql,b.sql"', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/b.sql"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "on Windows, resolves a leading-slash schema/seed path pattern under supabase/ instead of treating it as absolute (Go filepath.IsAbs parity)",
+    () => {
+      // Go's `resolve()` gates the `supabase/`-join on `!filepath.IsAbs(pattern)`
+      // (`config.go:976-980`), and `filepath.IsAbs` on Windows requires a volume name —
+      // a drive letter (`C:\`) or UNC prefix (`\\server\share`) — before a path counts as
+      // absolute (`internal/filepathlite/path_windows.go`'s `IsAbs`/`volumeNameLen`). A
+      // bare leading `/` has no volume name, so Go treats `/schemas/*.sql` as RELATIVE and
+      // joins it to `supabase/schemas/*.sql`. Node's `path.win32.isAbsolute`, backing the
+      // injected `Path.Path` service on an actual Windows host, instead treats a leading
+      // separator as rooted at the current drive — i.e. absolute — which would otherwise
+      // skip Go's `supabase/`-join entirely. Exercises `legacyResolveSeedSqlPath` (the
+      // single function `[db.migrations].schema_paths` and `[db.seed].sql_paths` both
+      // resolve through) directly with `BunPath.layerWin32`, rather than through the full
+      // `legacyReadDbToml` pipeline: that pipeline's OWN config-file lookup also runs
+      // through the same injected `Path.Path` service to open the real (POSIX-pathed,
+      // since this test host isn't Windows) temp config file on disk, so forcing win32
+      // path semantics there breaks the read itself rather than exercising the fix.
+      const originalPlatform = process.platform;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      return Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const resolved = legacyResolveSeedSqlPath(path, "/schemas/*.sql");
+        expect(resolved).toBe("supabase/schemas/*.sql");
+      }).pipe(
+        Effect.provide(BunPath.layerWin32),
+        Effect.ensuring(
+          Effect.sync(() => {
+            Object.defineProperty(process, "platform", { value: originalPlatform });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "weakly coerces non-string db.migrations.schema_paths array elements (Go mapstructure parity)",
+    () => {
+      // Go's `v.UnmarshalExact` never sets `WeaklyTypedInput: false`, so viper's
+      // `defaultDecoderConfig` default of `true` stands — mapstructure's `decodeString`
+      // coerces a bool to "1"/"0" and a number to its decimal string rather than
+      // erroring or dropping the element. Verified empirically against `apps/cli-go`:
+      // `schema_paths = [42, true, "schemas/*.sql"]` resolves to
+      // `supabase/{42,1,schemas/*.sql}`, not a filtered two-element list.
+      const dir = withConfig(
+        ["[db.migrations]", 'schema_paths = [42, true, "schemas/*.sql"]', ""].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/42", "supabase/1", "supabase/schemas/*.sql"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "formats a large numeric db.migrations.schema_paths entry as fixed decimal, not scientific notation (Go strconv.FormatFloat parity)",
+    () => {
+      // Go's `decodeString` renders a weakly-converted float via
+      // `strconv.FormatFloat(v, 'f', -1, 64)` — format `'f'` is ALWAYS fixed decimal,
+      // never scientific, regardless of magnitude. JS's bare `String(1e21)` switches to
+      // exponential notation ("1e+21") once the magnitude crosses 1e21, which would
+      // record (and later search for) the wrong file path. Verified empirically against
+      // Go's stdlib: `strconv.FormatFloat(1e21, 'f', -1, 64)` returns
+      // `"1000000000000000000000"`, not `"1e+21"`.
+      const dir = withConfig(["[db.migrations]", "schema_paths = [1e21]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/1000000000000000000000"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "formats TOML special-float db.migrations.schema_paths entries like Go's strconv.FormatFloat, not JS's toString (Go parity)",
+    () => {
+      // `strconv.FormatFloat` special-cases the three non-finite values BEFORE the
+      // format verb is even consulted, so `'f'` never applies to them — it renders
+      // `+Inf` / `-Inf` / `NaN` (verified empirically against `apps/cli-go`: a real
+      // `schema_paths = [inf, -inf, nan]` config load resolves to exactly
+      // `supabase/{+Inf,-Inf,NaN}`). JS's own `Number.prototype.toString()` renders
+      // the two infinities as `"Infinity"`/`"-Infinity"` instead — a naive port would
+      // record (and later glob) the wrong path. TOML v1.0's bare `inf`/`-inf`/`nan`
+      // float literals parse to exactly these JS values (smol-toml).
+      const dir = withConfig(["[db.migrations]", "schema_paths = [inf, -inf, nan]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/+Inf", "supabase/-Inf", "supabase/NaN"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "weakly coerces a TOP-LEVEL scalar db.migrations.schema_paths (Go mapstructure weak-decode of a []string field)",
+    () => {
+      // Go's `decodeSlice` wraps a non-array/non-string value into a synthetic
+      // single-element `[]any{value}` and decodes it through the same per-element
+      // rules as a real array entry — it does NOT fall back to the `[]` default the
+      // way an absent key does. Verified empirically against `apps/cli-go`:
+      // `schema_paths = 42` → `["42"]` (resolves to `supabase/42`), `= true` → `["1"]`.
+      const dirNumber = withConfig(["[db.migrations]", "schema_paths = 42", ""].join("\n"));
+      const dirBool = withConfig(["[db.migrations]", "schema_paths = true", ""].join("\n"));
+      return Effect.all([read(dirNumber), read(dirBool)]).pipe(
+        Effect.tap(([numberResult, boolResult]) =>
+          Effect.sync(() => {
+            expect(numberResult.schemaPaths).toEqual(["supabase/42"]);
+            expect(boolResult.schemaPaths).toEqual(["supabase/1"]);
+            rmSync(dirNumber, { recursive: true, force: true });
+            rmSync(dirBool, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "treats a TOP-LEVEL empty-table db.migrations.schema_paths as no patterns (Go mapstructure zero-length-map special case)",
+    () => {
+      // Go's `decodeSlice` special-cases a zero-length map BEFORE the generic weak-typing
+      // wrap above: it decodes straight to an empty slice. Verified empirically against
+      // `apps/cli-go`: `schema_paths = {}` → `[]`.
+      const dir = withConfig(["[db.migrations]", "schema_paths = {}", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect.each([
+    { name: "offset date-time", literal: "1979-05-27T07:32:00Z", goType: "time.Time" },
+    { name: "local date-time", literal: "1979-05-27T07:32:00", goType: "toml.LocalDateTime" },
+    { name: "local date", literal: "1979-05-27", goType: "toml.LocalDate" },
+    { name: "local time", literal: "07:32:00", goType: "toml.LocalTime" },
+  ])(
+    "aborts the whole config load on a TOP-LEVEL bare $name db.migrations.schema_paths instead of silently treating it as empty (Go mapstructure UnconvertibleTypeError, review CLI-1958)",
+    ({ literal, goType }) => {
+      // `smol-toml` parses every TOML datetime variant to a `TomlDate` (a `Date`
+      // subclass) that stores its value internally, not as an enumerable own
+      // property — so `Object.keys(tomlDate).length === 0`, same as a genuine empty
+      // inline table (`schema_paths = {}`, tested above). Without excluding `TomlDate`
+      // from that zero-length-map special case, this would silently resolve to `[]`
+      // instead of aborting. Verified empirically against the real `apps/cli-go`
+      // `config.Load`: a bare datetime literal here fails with exactly this message,
+      // never resolving to an empty/partial glob list — one distinct Go type per TOML
+      // datetime variant (`time.Time` for the offset form, `toml.Local*` wrappers for
+      // the 3 zone-less "local" forms).
+      const dir = withConfig(["[db.migrations]", `schema_paths = ${literal}`, ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                `'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '${goType}'`,
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a bare datetime db.migrations.schema_paths ARRAY element (Go mapstructure UnconvertibleTypeError, review CLI-1958)",
+    () => {
+      // Same `TomlDate`-vs-generic-object collision as the top-level scalar case above,
+      // but reached through the real-array branch (`legacyGoUnconvertibleType`) instead
+      // of the scalar fallback. Verified empirically against `apps/cli-go`:
+      // `schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]` fails config load with
+      // exactly this message — the valid glob entry never masks the datetime's failure.
+      const dir = withConfig(
+        ["[db.migrations]", 'schema_paths = ["schemas/*.sql", 1979-05-27T07:32:00Z]', ""].join(
+          "\n",
+        ),
+      );
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'time.Time'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a TOP-LEVEL bare datetime db.seed.sql_paths (same UnmarshalExact call as schema_paths, review CLI-1958)",
+    () => {
+      const dir = withConfig(["[db.seed]", "sql_paths = 1979-05-27T07:32:00Z", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type 'time.Time'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a TOP-LEVEL table db.migrations.schema_paths (Go mapstructure UnconvertibleTypeError, synthetic index 0)",
+    () => {
+      // A non-empty map isn't weakly coercible, so Go's `decodeSlice` wraps it into
+      // `[]any{value}` and fails decoding element 0 the same way a nested-array/table
+      // ARRAY element does. Verified empirically against `apps/cli-go`:
+      // `[db.migrations.schema_paths]\nfoo = "bar"` fails with this exact message.
+      const dir = withConfig(["[db.migrations.schema_paths]", 'foo = "bar"', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "weakly coerces a TOP-LEVEL scalar db.seed.sql_paths instead of falling back to the ['seed.sql'] default",
+    () => {
+      // The absent-key default (`["seed.sql"]`) only applies when the key is missing
+      // entirely — a PRESENT scalar still goes through Go's weak-decode wrap, same as
+      // schema_paths above. Verified empirically against `apps/cli-go`:
+      // `[db.seed]\nenabled = true\nsql_paths = 42` → `["42"]`, not `["seed.sql"]`.
+      const dir = withConfig(["[db.seed]", "enabled = true", "sql_paths = 42", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.seed.sqlPaths).toEqual(["supabase/42"]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a non-scalar db.migrations.schema_paths element (Go mapstructure UnconvertibleTypeError)",
+    () => {
+      // Unlike a bool/number (weakly coerced above), a nested array/table is
+      // mapstructure's `UnconvertibleTypeError`, which fails `UnmarshalExact` entirely
+      // rather than dropping just that element. Verified empirically against
+      // `apps/cli-go`: `schema_paths = [[]]` fails config load with exactly this
+      // message, never resolving to an empty/partial glob list.
+      const dir = withConfig(["[db.migrations]", "schema_paths = [[]]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "failed to parse config: decoding failed due to the following error(s):\\n\\n'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a table db.migrations.schema_paths element, reporting every bad index (Go mapstructure parity)",
+    () => {
+      // Verified empirically against `apps/cli-go`: a second bad entry is reported
+      // alongside the first (mapstructure aggregates every `UnmarshalExact` error from
+      // the same decode call), and an inline table decodes as `map[string]interface {}`.
+      const dir = withConfig(
+        ["[db.migrations]", 'schema_paths = ["schemas/*.sql", { path = "x.sql" }]', ""].join("\n"),
+      );
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.migrations.schema_paths[1]' expected type 'string', got unconvertible type 'map[string]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aborts the whole config load on a non-scalar db.seed.sql_paths element (same UnmarshalExact call as schema_paths)",
+    () => {
+      const dir = withConfig(["[db.seed]", "sql_paths = [[]]", ""].join("\n"));
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain(
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'",
+              );
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "aggregates unconvertible-entry issues from BOTH db.seed.sql_paths and db.migrations.schema_paths in one error (Go UnmarshalExact single-pass parity, review CLI-1958)",
+    () => {
+      // Go's `UnmarshalExact` decodes the WHOLE config in a SINGLE mapstructure pass:
+      // `decodeStructFromMap`'s per-field loop never stops at the first field's error
+      // — it visits every field, collects every error, then joins them all together
+      // at the end. So a config invalid in BOTH `Glob` fields reports BOTH, not just
+      // whichever field is checked first. Verified empirically against `apps/cli-go`
+      // (`config.Load` with `sql_paths = [[]]` + `schema_paths = [[]]`): the single
+      // returned error contains both lines, `db.migrations.schema_paths[0]` BEFORE
+      // `db.seed.sql_paths[0]` — Go's `db` struct declares `Migrations` before `Seed`
+      // (`pkg/config/db.go:90-91`), so mapstructure visits (and therefore reports)
+      // `schema_paths` first regardless of which field this reader happens to resolve
+      // first internally.
+      const dir = withConfig(
+        ["[db.seed]", "sql_paths = [[]]", "", "[db.migrations]", "schema_paths = [[]]", ""].join(
+          "\n",
+        ),
+      );
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              const message = JSON.stringify(exit.cause);
+              const schemaIssue =
+                "'db.migrations.schema_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+              const seedIssue =
+                "'db.seed.sql_paths[0]' expected type 'string', got unconvertible type '[]interface {}'";
+              expect(message).toContain(schemaIssue);
+              expect(message).toContain(seedIssue);
+              // Both issues in ONE combined error, schema_paths first (Go's struct
+              // field declaration order), not two separate failures.
+              expect(message.indexOf(schemaIssue)).toBeLessThan(message.indexOf(seedIssue));
+            }
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+    () => {
+      // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
+      // (config.go:635-637), so an explicit remote value wins over the env var.
+      const ref = "schmschmschmschmschm";
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-only.sql";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          'db.migrations.schema_paths = ["remote-only.sql"]',
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/remote-only.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("decodes a numeric db.seed.enabled = 0 as false (Go weak-bool decode)", () => {
     const dir = withConfig(["[db.seed]", "enabled = 0", ""].join("\n"));
     return read(dir).pipe(
@@ -352,7 +858,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote db.migrations.enabled beats SUPABASE_DB_MIGRATIONS_ENABLED", () => {
     // Go applies each matched-remote key via v.Set (override tier) above AutomaticEnv
-    // (config.go:635-637), so an explicit remote value wins over the env var.
+    // (config.go:724), so an explicit remote value wins over the env var.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_DB_MIGRATIONS_ENABLED"];
     process.env["SUPABASE_DB_MIGRATIONS_ENABLED"] = "false";
@@ -398,9 +904,103 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect("collapses . and .. in relative db.migrations.schema_paths like Go's path.Join", () => {
+    // Go prefixes each relative pattern with `path.Join("supabase", pattern)`
+    // (`config.go:976-978`), which runs `path.Clean` — same helper `db.seed.sql_paths`
+    // uses above (`legacyResolveSeedSqlPath`), so `./schemas/a.sql` and `schemas/a.sql`
+    // resolve to the identical string instead of aliasing as two different glob patterns.
+    const dir = withConfig(
+      [
+        "[db.migrations]",
+        'schema_paths = ["../schema.sql", "sub/../other.sql", "./schemas/a.sql"]',
+        "",
+      ].join("\n"),
+    );
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.schemaPaths).toEqual([
+            "schema.sql",
+            "supabase/other.sql",
+            "supabase/schemas/a.sql",
+          ]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "honors SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS over the TOML array (comma split, no trim)",
+    () => {
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "a.sql, b.sql";
+      const dir = withConfig(["[db.migrations]", 'schema_paths = ["ignored.sql"]', ""].join("\n"));
+      return read(dir).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/a.sql", "supabase/ b.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect("defaults db.migrations.schema_paths to [] when absent (Go's Glob zero value)", () => {
+    const dir = withConfig(["[db]", "port = 54322", ""].join("\n"));
+    return read(dir).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.schemaPaths).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "an explicit remote db.migrations.schema_paths beats SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS",
+    () => {
+      // Same override-tier precedence as db.migrations.enabled above (config.go:724).
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+      process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = "env-wins.sql";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.db.migrations]",
+          'schema_paths = ["remote-wins.sql"]',
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.schemaPaths).toEqual(["supabase/remote-wins.sql"]);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"];
+            else process.env["SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("an explicit remote experimental.pgdelta.enabled beats its SUPABASE_* env var", () => {
     // Go's mergeRemoteConfig applies EVERY matched-block key via v.Set (above AutomaticEnv,
-    // config.go:635-637), not just db/seed — so a remote experimental.pgdelta.enabled wins
+    // config.go:718-730), not just db/seed — so a remote experimental.pgdelta.enabled wins
     // over SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED"];
@@ -455,7 +1055,7 @@ describe("legacyReadDbToml", () => {
 
   it.effect("an explicit remote auth.enabled beats its SUPABASE_AUTH_ENABLED env var", () => {
     // Same v.Set-above-AutomaticEnv precedence as db.migrations.enabled / pgdelta.enabled
-    // (config.go:635-637), but for auth.enabled specifically (CLI-1878): a matched remote
+    // (config.go:724), but for auth.enabled specifically (CLI-1878): a matched remote
     // block's auth.enabled must win over SUPABASE_AUTH_ENABLED.
     const ref = "abcdefghijklmnopqrst";
     const previous = process.env["SUPABASE_AUTH_ENABLED"];
@@ -507,6 +1107,106 @@ describe("legacyReadDbToml", () => {
       ),
     );
   });
+
+  it.effect(
+    "an explicit remote experimental.webhooks.enabled beats its SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED env var",
+    () => {
+      // Same v.Set-above-AutomaticEnv precedence as auth.enabled/pgdelta.enabled
+      // (config.go:724): a matched remote block's experimental.webhooks.enabled must win
+      // over SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED. Without the fix, the suppressed env value
+      // (false) would win instead, and the merged [experimental.webhooks] section (present via
+      // the remote block) would then fail validation ("Webhooks cannot be deactivated").
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.experimental.webhooks]",
+          "enabled = true",
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED still wins when the remote block omits webhooks",
+    () => {
+      // Control: the env override is suppressed only for keys the matched block explicitly
+      // set; a block that omits experimental.webhooks leaves the env override in force — a
+      // base [experimental.webhooks] section (present, default true) flipped off by the env
+      // var still fails Go's "cannot be deactivated" validation.
+      const ref = "abcdefghijklmnopqrst";
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "false";
+      const dir = withConfig(
+        [
+          "[experimental.webhooks]",
+          "enabled = true",
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "",
+        ].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            if (Exit.isFailure(exit)) {
+              expect(JSON.stringify(exit.cause)).toContain("Webhooks cannot be deactivated");
+            }
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
+  it.effect(
+    "ignores a malformed SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED when [experimental.webhooks] is absent",
+    () => {
+      // Verified empirically against apps/cli-go/pkg/config (config.Load with an in-memory fs,
+      // no [experimental.webhooks] section, env override set to a non-boolean string): Go's
+      // Load() succeeds and Experimental.Webhooks stays nil — the env override is never applied
+      // because the key is only "known" to viper (and thus AutomaticEnv-bindable) when the
+      // section is declared, unlike experimental.pgdelta.enabled (always known via the Eject
+      // template merged into defaults). Before the presence gate, this reader parsed the env
+      // override unconditionally and failed the whole config load on the bogus value.
+      const previous = process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+      process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = "bogus";
+      const dir = withConfig("");
+      return read(dir).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isSuccess(exit)).toBe(true);
+            if (previous === undefined)
+              delete process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"];
+            else process.env["SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED"] = previous;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 
   it.effect("matches a remote block by a SUPABASE_REMOTES_<NAME>_PROJECT_ID env override", () => {
     // Viper AutomaticEnv supplies/overrides remotes.prod.project_id, so the block merges
@@ -694,7 +1394,7 @@ describe("legacyReadDbToml", () => {
     });
 
     it.effect("forces db.seed.enabled false when the matched remote block omits it", () => {
-      // Go's mergeRemoteConfig (config.go:638-640) forces db.seed.enabled=false when the
+      // Go's mergeRemoteConfig (config.go:726-728) forces db.seed.enabled=false when the
       // matched remote block itself doesn't set it — even if the base config enables it.
       const dir = withConfig(
         [
@@ -1424,6 +2124,50 @@ describe("legacyReadDbToml", () => {
     );
   });
 
+  it.effect(
+    "warnOnUnresolvedEnv: false suppresses the S3 env WARN (review: Codex, PR #6022)",
+    () => {
+      // `start`/`db start`'s fresh-volume bootstrap reads this same config.toml more
+      // than once per invocation (an earlier, authoritative preflight call already
+      // warned) — internal re-reads pass `warnOnUnresolvedEnv: false` so Go's
+      // exactly-once `flags.LoadConfig` WARN isn't printed a second/third time.
+      delete process.env["LEGACY_S3_KEY_QUIET"];
+      const writes: Array<string> = [];
+      const original = process.stderr.write.bind(process.stderr);
+      process.stderr.write = ((chunk: string | Uint8Array): boolean => {
+        writes.push(typeof chunk === "string" ? chunk : Buffer.from(chunk).toString());
+        return true;
+      }) as typeof process.stderr.write;
+      const dir = withConfig(
+        [
+          "[db]",
+          "major_version = 15",
+          "[experimental]",
+          'orioledb_version = "15.1.0.55"',
+          's3_access_key = "env(LEGACY_S3_KEY_QUIET)"',
+          "",
+        ].join("\n"),
+      );
+      return Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyReadDbToml(fs, path, dir, undefined, { warnOnUnresolvedEnv: false });
+      }).pipe(
+        Effect.provide(BunServices.layer),
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            // Config load still succeeds and still resolves the value; only the
+            // stderr WARN side effect is suppressed.
+            expect(Option.getOrNull(v.orioledbVersion)).toBe("15.1.0.55");
+            expect(writes.join("")).not.toContain("WARN: environment variable is unset");
+            process.stderr.write = original;
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
+
   it.effect("keeps the literal password when its env var is unset/empty", () => {
     // Go's LoadEnvHook only substitutes when len(os.Getenv(name)) > 0; otherwise it
     // preserves the literal string. Password is a plain string field, so an
@@ -1884,36 +2628,45 @@ describe("legacyReadDbToml", () => {
   });
 
   it.effect(
-    "legacyApplyProjectEnv sets only the allowlisted key in-scope, never overrides, reverts on close",
+    "legacyApplyProjectEnv sets only the allowlisted keys in-scope, never overrides, reverts on close",
     () => {
       // Go's loadNestedEnv os.Setenv's the project .env, but its root globals
       // (project-ref, SUPABASE_ENV, workdir/profile) are resolved from the shell
       // BEFORE loadNestedEnv. Our resolvers read process.env lazily, so we apply only
-      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` (the one process.env-only
-      // reader): a .env project-ref must not retarget the lazy ref/pooler resolvers,
-      // and a .env SUPABASE_ENV must not switch the env-file set.
+      // the allowlisted `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY`
+      // (the two process.env-only readers): a .env project-ref must not retarget the
+      // lazy ref/pooler resolvers, and a .env SUPABASE_ENV must not switch the
+      // env-file set.
       const saved: Record<string, string | undefined> = {};
-      for (const k of ["SUPABASE_INTERNAL_IMAGE_REGISTRY", "SUPABASE_PROJECT_ID", "SUPABASE_ENV"]) {
+      for (const k of [
+        "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+        "PGDELTA_NPM_REGISTRY",
+        "SUPABASE_PROJECT_ID",
+        "SUPABASE_ENV",
+      ]) {
         saved[k] = process.env[k];
         delete process.env[k];
       }
       const loaded = {
         SUPABASE_INTERNAL_IMAGE_REGISTRY: "my-mirror.example.com",
+        PGDELTA_NPM_REGISTRY: "https://npm.example.com",
         SUPABASE_PROJECT_ID: "envonlyref",
         SUPABASE_ENV: "staging",
       };
       return Effect.gen(function* () {
-        // Inside the scope: only the registry key is applied; the ref/env selector are not.
+        // Inside the scope: only the registry keys are applied; the ref/env selector are not.
         yield* Effect.scoped(
           Effect.gen(function* () {
             yield* legacyApplyProjectEnv(loaded);
             expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBe("my-mirror.example.com");
+            expect(process.env["PGDELTA_NPM_REGISTRY"]).toBe("https://npm.example.com");
             expect(process.env["SUPABASE_PROJECT_ID"]).toBeUndefined();
             expect(process.env["SUPABASE_ENV"]).toBeUndefined();
           }),
         );
-        // After the scope closes the applied key is reverted (no test-worker leak).
+        // After the scope closes the applied keys are reverted (no test-worker leak).
         expect(process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]).toBeUndefined();
+        expect(process.env["PGDELTA_NPM_REGISTRY"]).toBeUndefined();
 
         // An existing process.env value is never overridden, and is NOT deleted on close.
         process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"] = "shell-wins.example.com";
@@ -2153,8 +2906,8 @@ describe("legacyReadDbToml auth.Enabled validation (Go config.Validate parity)",
   it.effect("accepts a comma-separated rp_origins string instead of rejecting it as missing", () =>
     // Go decodes `rp_origins` (a `[]string`) through the same `StringToSliceHookFunc(",")`
     // mapstructure hook as every other `[]string` field, so a raw string (not just a literal
-    // TOML array) must split, not read as absent — matches start.handler.ts's own
-    // resolveGotruePasskeyWebauthn/legacyStrToArr handling of this identical field.
+    // TOML array) must split, not read as absent — matches legacy-local-config-values.ts's own
+    // legacyResolveGotruePasskeyWebauthn/legacyStrToArr handling of this identical field.
     succeeds([
       "[auth.passkey]",
       "enabled = true",
@@ -2624,4 +3377,163 @@ describe("legacyReadDbToml SUPABASE_PROJECT_ID override (Go AutomaticEnv parity)
       Effect.ensuring(restore(previous)),
     );
   });
+
+  it.effect(
+    "prefers a matched [remotes.<ref>]'s project_id over a conflicting SUPABASE_PROJECT_ID",
+    () => {
+      // Regression (review: PRRT_kwDOErm0O86XHGDL) — Go's `mergeRemoteConfig` installs the
+      // matched block's OWN `project_id` at viper's override tier, above `AutomaticEnv`
+      // (`apps/cli-go/pkg/config/config.go:718-724`); that block is selected BECAUSE its
+      // `project_id` equals the resolved ref, so it must win even when an unrelated
+      // `SUPABASE_PROJECT_ID` is set to something else entirely.
+      const previous = process.env["SUPABASE_PROJECT_ID"];
+      process.env["SUPABASE_PROJECT_ID"] = "local";
+      const ref = "abcdefghijklmnopqrst";
+      const dir = withConfig(
+        ['project_id = "toml-project"', "[remotes.prod]", `project_id = "${ref}"`, ""].join("\n"),
+      );
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.appliedRemote).toBe("prod");
+            expect(v.remoteOverrideKeys.has("project_id")).toBe(true);
+            expect(Option.getOrNull(v.projectId)).toBe(ref);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.ensuring(restore(previous)),
+      );
+    },
+  );
+
+  it.effect("still applies SUPABASE_PROJECT_ID when no [remotes.*] block matches the ref", () => {
+    const previous = process.env["SUPABASE_PROJECT_ID"];
+    process.env["SUPABASE_PROJECT_ID"] = "env-project";
+    const ref = "abcdefghijklmnopqrst";
+    const dir = withConfig(['project_id = "toml-project"', ""].join("\n"));
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBeUndefined();
+          expect(Option.getOrNull(v.projectId)).toBe("env-project");
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.ensuring(restore(previous)),
+    );
+  });
+});
+
+describe("legacyReadDbToml remoteOverrideKeys — auth.captcha.provider / auth.email.template/notification", () => {
+  const ref = "abcdefghijklmnopqrst";
+
+  it.effect("tracks auth.captcha.provider when a matched remote block supplies it", () => {
+    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `provider` is a plain string leaf, not one of
+    // `applyRemoteOverride`'s dynamically-keyed sections, so it must be tracked via
+    // `LEGACY_ENV_OVERRIDABLE_KEYS` like any other fixed-name field.
+    const dir = withConfig(
+      [
+        "[auth.captcha]",
+        'provider = "hcaptcha"',
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.auth.captcha]",
+        'provider = "turnstile"',
+        "",
+      ].join("\n"),
+    );
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBe("prod");
+          expect(v.remoteOverrideKeys.has("auth.captcha.provider")).toBe(true);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("tracks a matched remote block's auth.email.template.<name> leaves dynamically", () => {
+    // Regression (review: PRRT_kwDOErm0O86XLAYn) — `auth.email.template.<name>.*` is a
+    // genuinely arbitrarily-keyed map, same shape as `auth.external.<name>.*`, so it must be
+    // flattened dynamically instead of relying on a fixed `LEGACY_ENV_OVERRIDABLE_KEYS` entry.
+    const dir = withConfig(
+      [
+        "[remotes.prod]",
+        `project_id = "${ref}"`,
+        "[remotes.prod.auth.email.template.invite]",
+        'content_path = "remote-invite.html"',
+        "",
+      ].join("\n"),
+    );
+    // Template `content_path` resolves relative to the project root (`workdir`, i.e. `dir`).
+    writeFileSync(join(dir, "remote-invite.html"), "<html></html>");
+    return readRef(dir, ref).pipe(
+      Effect.tap((v) =>
+        Effect.sync(() => {
+          expect(v.appliedRemote).toBe("prod");
+          expect(v.remoteOverrideKeys.has("auth.email.template.invite.content_path")).toBe(true);
+          expect(v.remoteOverrideKeys.has("auth.email.template.invite.subject")).toBe(false);
+        }),
+      ),
+      Effect.ensuring(
+        Effect.sync(() => {
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect(
+    "tracks a matched remote block's auth.email.notification.<name> leaves dynamically",
+    () => {
+      // Regression (review: PRRT_kwDOErm0O86XLAYo) — `auth.email.notification.<name>.*`'s
+      // sibling case, including `enabled` (a direct `legacyEnvOverrideBool` throw site).
+      const dir = withConfig(
+        [
+          "[remotes.prod]",
+          `project_id = "${ref}"`,
+          "[remotes.prod.auth.email.notification.password_changed]",
+          "enabled = true",
+          'content_path = "remote-pw-changed.html"',
+          "",
+        ].join("\n"),
+      );
+      // Notification `content_path` resolves relative to the project root, like a template.
+      writeFileSync(join(dir, "remote-pw-changed.html"), "<html></html>");
+      return readRef(dir, ref).pipe(
+        Effect.tap((v) =>
+          Effect.sync(() => {
+            expect(v.appliedRemote).toBe("prod");
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.enabled"),
+            ).toBe(true);
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.content_path"),
+            ).toBe(true);
+            expect(
+              v.remoteOverrideKeys.has("auth.email.notification.password_changed.subject"),
+            ).toBe(false);
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+      );
+    },
+  );
 });

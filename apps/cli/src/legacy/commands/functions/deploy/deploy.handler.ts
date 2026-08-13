@@ -1,8 +1,9 @@
-import { DEFAULT_VERSIONS } from "@supabase/stack/effect";
-import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Effect, Option, Stdio } from "effect";
 import { deployFunctions } from "../../../../shared/functions/deploy.ts";
+import { resolveEdgeRuntimeVersionPin } from "../../../../shared/functions/functions.shared.ts";
+import { legacyAqua, legacyBold, legacyYellow } from "../../../shared/legacy-colors.ts";
+import { legacyFunctionsGoConfigCompat } from "../../../shared/legacy-functions-go-config.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
@@ -28,12 +29,8 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
   const runtimeInfo = yield* RuntimeInfo;
   const stdio = yield* Stdio.Stdio;
   const rawArgs = yield* stdio.args;
-  const edgeRuntimeVersion = yield* Effect.tryPromise(() =>
-    readFile(join(cliConfig.workdir, "supabase", ".temp", "edge-runtime-version"), "utf8"),
-  ).pipe(
-    Effect.map((version) => version.trim()),
-    Effect.catch(() => Effect.succeed("")),
-    Effect.map((version) => version || DEFAULT_VERSIONS["edge-runtime"]),
+  const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersionPin(
+    join(cliConfig.workdir, "supabase"),
   );
   let resolvedProjectRef = Option.none<string>();
 
@@ -44,7 +41,7 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
     projectRoot: cliConfig.workdir,
     supabaseDir: join(cliConfig.workdir, "supabase"),
     dashboardUrl: legacyDashboardUrl(cliConfig.profile),
-    goViperCompat: true,
+    goConfigCompat: legacyFunctionsGoConfigCompat,
     yes,
     rawArgs,
     edgeRuntimeVersion,
@@ -56,6 +53,18 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
           }),
         ),
       ),
+    // Go: `fmt.Printf("Deployed Functions on project %s: %s\n",
+    // utils.Aqua(flags.ProjectRef), …)` (`internal/functions/deploy/deploy.go:70`)
+    // — stdout-bound, so the TTY gate must check stdout.
+    styleIdentifier: (text) => legacyAqua(text, process.stdout),
+    // Go: `utils.Bold` on the `Bundling Function:` slug (`bundle.go:30`, stderr)
+    // and the no-functions error dir (`deploy.go:35`, rendered on stderr) —
+    // both stderr-bound, matching `legacyBold`'s default TTY gate.
+    styleEmphasis: (text) => legacyBold(text),
+    // Go: `utils.Yellow` on the `WARNING:` token before "Docker is not
+    // running" (`deploy.go:60`, stderr) — matches `legacyYellow`'s default
+    // TTY gate.
+    styleWarning: (text) => legacyYellow(text),
   }).pipe(
     Effect.ensuring(
       Effect.suspend(() =>

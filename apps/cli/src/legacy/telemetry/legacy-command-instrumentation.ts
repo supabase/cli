@@ -1,4 +1,4 @@
-import { Clock, Effect, Exit, Option, Stdio } from "effect";
+import { Cause, Clock, Effect, Exit, Option, Stdio } from "effect";
 import { Param } from "effect/unstable/cli";
 import {
   CommandRuntime,
@@ -15,11 +15,22 @@ import { ProcessControl } from "../../shared/runtime/process-control.service.ts"
 import { withAnalyticsContext } from "../../shared/telemetry/analytics-context.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
+  type CliErrorActionability,
+  classifyCliErrorActionability,
+  unknownProcessControlledFailureActionability,
+} from "../../shared/telemetry/error-actionability.ts";
+import { LegacyDbAdvisorsFailOnError } from "../commands/db/advisors/advisors.errors.ts";
+import { LegacyDbLintFailOnError } from "../commands/db/lint/lint.errors.ts";
+import {
   EventCommandExecuted,
   PropDurationMs,
   PropExitCode,
   PropOutputFormat,
 } from "../../shared/telemetry/event-catalog.ts";
+import {
+  failureTelemetryPropertiesForCause,
+  toFailureTelemetryProperties,
+} from "../../shared/telemetry/failure-metadata.ts";
 import {
   LEGACY_RESOURCE_OUTPUT_FORMATS,
   LegacyInvalidOutputFormatError,
@@ -31,6 +42,24 @@ import {
   VALUE_CONSUMING_LONG_FLAGS,
   VALUE_CONSUMING_SHORT_FLAGS,
 } from "../shared/legacy-db-target-flags.ts";
+import { legacyUnwrapToSingleParam } from "../shared/legacy-param-introspection.ts";
+
+/**
+ * Classifies a command that succeeded its Effect but recorded a nonzero exit
+ * code through ProcessControl. `db lint`/`db advisors` do this deliberately in
+ * machine mode after a `--fail-on` trigger (to keep the JSON payload on stdout
+ * intact), so their telemetry derives from the same typed error their text
+ * mode raises — the classification stays declared on the error class itself.
+ */
+function processControlledFailureActionability(command: string): CliErrorActionability {
+  if (command === "db lint") {
+    return classifyCliErrorActionability(new LegacyDbLintFailOnError({ message: "" }));
+  }
+  if (command === "db advisors") {
+    return classifyCliErrorActionability(new LegacyDbAdvisorsFailOnError({ message: "" }));
+  }
+  return unknownProcessControlledFailureActionability;
+}
 
 interface LegacyCommandInstrumentationOptions<Flags extends Record<string, unknown> = never> {
   readonly analytics?: boolean;
@@ -216,40 +245,6 @@ function normalizeFlagValue(value: unknown): unknown | undefined {
   return normalizeFlagValue(value.value);
 }
 
-// A `Map`/`Transform`/`Optional`/`Variadic` param wraps an inner `param` of the
-// same shape (e.g. `.pipe(Flag.optional)`, `.pipe(Flag.withDefault(...))`, which
-// composes as `Map(Optional(Single))`). `effect/unstable/cli` already ships the
-// exact unwrap this needs — `Param.extractSingleParams`, the same function
-// `--help` rendering uses — but it (and `Primitive.getChoiceKeys`) are
-// `@internal`-tagged and confirmed absent from this package's published `.d.ts`
-// (present in the compiled `.js`, so calling them would only type-check via an
-// `as` cast, which this repo forbids). This predicate reimplements the
-// `isSingle`-or-has-a-`.param`-field check using only type-visible public
-// fields; every non-`Single` variant publicly declares `.param` per its own
-// interface, and the variant union is closed as of this effect version, so an
-// unrecognized future variant fails *closed* (silently not detected as a
-// choice flag, i.e. stays redacted) rather than open. Delete this in favor of
-// `Param.extractSingleParams` if effect ever publishes it.
-interface WrappedParam {
-  readonly param: Param.Any;
-}
-function isWrappedParam(param: Param.Any): param is Param.Any & WrappedParam {
-  return "param" in param;
-}
-
-// Unwraps down to the underlying `Single` param the same way `--help`
-// rendering does. Shared by `getChoiceFlagNames` and `GLOBAL_SHORT_ALIASES`
-// below — both need the leaf `Single` to read its type-visible `name`/
-// `aliases`/`primitiveType` fields. Returns `undefined` only if the variant
-// union gains an unrecognized future case (fails closed, see the
-// `isWrappedParam` doc above for why this hand-rolled unwrap exists instead of
-// the `@internal` `Param.extractSingleParams`).
-function unwrapToSingleParam(param: Param.Any): Param.Single<Param.ParamKind, unknown> | undefined {
-  if (Param.isSingle(param)) return param;
-  if (isWrappedParam(param)) return unwrapToSingleParam(param.param);
-  return undefined;
-}
-
 // Mirrors Go's `isEnumFlag` (`cmd/root_analytics.go:110-116`), which checks
 // `flag.Value.(*utils.EnumFlag)` unconditionally — every enum flag is
 // telemetry-safe, no per-flag annotation needed. Checks the unwrapped
@@ -261,7 +256,7 @@ function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): Read
   if (config === undefined) return names;
 
   for (const param of Object.values(config)) {
-    const single = unwrapToSingleParam(param);
+    const single = legacyUnwrapToSingleParam(param);
     if (
       single !== undefined &&
       single.kind === Param.flagKind &&
@@ -289,7 +284,7 @@ function getChoiceFlagNames(config: Record<string, Param.Any> | undefined): Read
 const GLOBAL_SHORT_ALIASES: Readonly<Record<string, string>> = (() => {
   const aliases: Record<string, string> = {};
   for (const globalFlag of LEGACY_GLOBAL_FLAGS) {
-    const single = unwrapToSingleParam(globalFlag.flag);
+    const single = legacyUnwrapToSingleParam(globalFlag.flag);
     if (single === undefined) continue;
     for (const alias of single.aliases) {
       aliases[alias] = single.name;
@@ -474,6 +469,11 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
           onNone: () => analyticsContext,
           onSome: (distinct_id) => ({ ...analyticsContext, distinct_id }),
         });
+        const failureMetadata = Exit.isFailure(exit)
+          ? failureTelemetryPropertiesForCause(exit.cause)
+          : recordedExitCode === 1
+            ? toFailureTelemetryProperties(processControlledFailureActionability(command))
+            : {};
 
         yield* analytics
           .capture(EventCommandExecuted, {
@@ -482,8 +482,17 @@ function withLegacyCommandAnalyticsImplementation<Flags extends Record<string, u
             [PropOutputFormat]: Option.isSome(resolvedOutputFormat)
               ? resolvedOutputFormat.value
               : resolveOutputFormatForTelemetry(args, output.format),
+            ...failureMetadata,
           })
-          .pipe(withAnalyticsContext(captureContext));
+          .pipe(
+            withAnalyticsContext(captureContext),
+            // Best-effort: a capture failure or defect must never replace the
+            // command's own result, but fiber interruption (Ctrl+C landing
+            // during this trailing capture) must still propagate.
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.void,
+            ),
+          );
 
         if (Exit.isFailure(exit)) {
           return yield* Effect.failCause(exit.cause);

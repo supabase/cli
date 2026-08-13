@@ -40,7 +40,6 @@ function mockLegacyGoProxy() {
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([
     legacyStartCommand,
     legacyStopCommand,
@@ -50,6 +49,7 @@ const legacyTestRoot = Command.make("supabase").pipe(
     legacyBranchesCommand,
     legacyDbCommand,
   ]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 const silentCliOutputFormatter: CliOutput.Formatter = {
@@ -137,13 +137,34 @@ describe("native hidden flags", () => {
             "--backup=false",
           ]).pipe(Effect.exit);
           expect(JSON.stringify(stopExit)).not.toContain("UnrecognizedFlag");
+          // `functions download --use-docker` now runs the native Docker-unbundle
+          // path (CLI-1963) instead of forwarding to `LegacyGoProxy` — the
+          // deliberately-invalid slug makes it fail at `validateSlug`
+          // (`download.ts`, checked BEFORE `isDockerRunning`/any image pull),
+          // so the invocation stays fast and side-effect-free even on a CI
+          // runner with a live Docker daemon (a valid slug here triggered a
+          // real multi-second `docker pull` and timed this test out), while
+          // still proving the hidden flag parses by exact name.
+          // `--legacy-bundle` is the one remaining case that still forwards to the
+          // proxy, asserted below.
+          const downloadUseDockerExit = yield* Command.runWith(legacyTestRoot, {
+            version: "0.0.0-test",
+          })([
+            "functions",
+            "download",
+            "Not_A_Valid-Slug!",
+            "--project-ref",
+            "abcdefghijklmnopqrst",
+            "--use-docker",
+          ]).pipe(Effect.exit);
+          expect(JSON.stringify(downloadUseDockerExit)).not.toContain("UnrecognizedFlag");
           yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
             "functions",
             "download",
             "hello",
             "--project-ref",
             "abcdefghijklmnopqrst",
-            "--use-docker",
+            "--legacy-bundle",
           ]);
           const useDockerExit = yield* Command.runWith(legacyTestRoot, {
             version: "0.0.0-test",
@@ -171,7 +192,14 @@ describe("native hidden flags", () => {
     );
 
     expect(proxy.calls).toEqual([
-      ["functions", "download", "hello", "--project-ref", "abcdefghijklmnopqrst", "--use-docker"],
+      [
+        "functions",
+        "download",
+        "hello",
+        "--project-ref",
+        "abcdefghijklmnopqrst",
+        "--legacy-bundle",
+      ],
     ]);
   });
 
@@ -225,11 +253,13 @@ describe("legacy hidden subcommands", () => {
   });
 
   it("still executes hidden subcommands by exact name", async () => {
+    // `db branch *` / `db remote *` are still Phase 0 proxy wrappers, so a
+    // successful proxy call is direct proof that cobra-style `Hidden` doesn't
+    // block exact-name dispatch through `effect/unstable/cli`.
     const proxy = mockLegacyGoProxy();
 
     await Effect.runPromise(
       Effect.gen(function* () {
-        yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "branch", "list"]);
         yield* Command.runWith(legacyTestRoot, { version: "0.0.0-test" })([
           "db",
@@ -242,9 +272,56 @@ describe("legacy hidden subcommands", () => {
     );
 
     expect(proxy.calls).toEqual([
-      ["db", "test"],
       ["db", "branch", "list"],
       ["db", "remote", "changes"],
     ]);
+  });
+
+  it("still executes the native `db test` hidden alias by exact name (CLI-1962)", async () => {
+    // `db test` was ported off the Go proxy in CLI-1962, so it no longer calls
+    // `LegacyGoProxy` — this test only needs to prove dispatch still reaches the
+    // real (now-native) handler, not that the handler fully succeeds (this file's
+    // minimal layer doesn't wire the docker/db/telemetry services the native
+    // handler needs, matching how `start`/`stop` are treated above). A genuinely
+    // unresolved subcommand fails BEFORE any handler runs, with a distinct typed
+    // `UnknownSubcommand` CliError; the native handler instead defects on a
+    // missing service once dispatch has already succeeded — that defect is the
+    // proof, mirrored against a deliberately unknown sibling subcommand below.
+    const proxy = mockLegacyGoProxy();
+    const layer = Layer.mergeAll(proxy.layer, CliOutput.layer(textCliOutputFormatter()));
+
+    const causeOf = (exit: unknown) =>
+      (exit as { cause: { reasons: Array<{ _tag: string; defect?: unknown; error?: unknown }> } })
+        .cause;
+
+    const dbTestExit = await Effect.runPromise(
+      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "test"]).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      ) as Effect.Effect<unknown, never, never>,
+    );
+    expect((dbTestExit as { _tag: string })._tag).toBe("Failure");
+    // The real defect is `Error: Service not found: supabase/telemetry/Analytics`
+    // — asserting it directly (rather than a negative `not.toContain` on the
+    // near-empty JSON serialization of the defect) proves dispatch reached the
+    // native handler and it defected on a missing ambient service, not merely
+    // that the failure happens not to mention `UnknownSubcommand`.
+    expect(causeOf(dbTestExit).reasons[0]?._tag).toBe("Die"); // handler ran, then defected on a missing service
+    expect(String(causeOf(dbTestExit).reasons[0]?.defect)).toContain(
+      "Service not found: supabase/telemetry/Analytics",
+    );
+
+    const unknownExit = await Effect.runPromise(
+      Command.runWith(legacyTestRoot, { version: "0.0.0-test" })(["db", "not-a-real-command"]).pipe(
+        Effect.provide(layer),
+        Effect.exit,
+      ) as Effect.Effect<unknown, never, never>,
+    );
+    // Effect CLI's own raw `_tag` for this error is misspelled "UnknownSubcomand"
+    // (`CliError.js`, upstream typo); `cliErrorCode()`/`normalize-error.ts` already
+    // correct it for user-facing output, but this assertion checks the raw,
+    // un-normalized tag, so it must match the upstream spelling as-is.
+    expect(JSON.stringify(unknownExit)).toContain("UnknownSubcomand");
+    expect(causeOf(unknownExit).reasons[0]?._tag).toBe("Fail"); // typed CliError, pre-handler — dispatch never reached a handler
   });
 });

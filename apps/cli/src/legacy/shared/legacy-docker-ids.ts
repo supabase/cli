@@ -12,16 +12,23 @@ import { basename } from "node:path";
  * Resolve the project id Go feeds into `utils.DbId`/`utils.NetId`. viper sets
  * `Config.ProjectId` from config.toml's `project_id`, then `AutomaticEnv` overrides it
  * with `SUPABASE_PROJECT_ID`; when both are absent Go falls back to the working
- * directory basename (`utils.Config.ProjectId` default). So the precedence is
- * `SUPABASE_PROJECT_ID` → config.toml `project_id` → workdir basename.
+ * directory basename (`utils.Config.ProjectId` default) — UNLESS a `--project-ref`
+ * was resolved for this invocation, in which case `flags.LoadConfig` pre-sets
+ * `Config.ProjectId = ProjectRef` before ever merging the file
+ * (`pkg/config/config.go:561-570`), so `Eject` only reaches the basename fallback
+ * when that default is itself empty. `projectRefDefault` is `undefined` for
+ * `start`/`stop`/`status`, which have no such flag. So the full precedence is
+ * `SUPABASE_PROJECT_ID` → config.toml `project_id` → `--project-ref` → workdir basename.
  */
 export function legacyResolveLocalProjectId(
   envProjectId: string | undefined,
   tomlProjectId: string | undefined,
   workdir: string,
+  projectRefDefault?: string,
 ): string {
   if (envProjectId !== undefined && envProjectId.length > 0) return envProjectId;
   if (tomlProjectId !== undefined && tomlProjectId.length > 0) return tomlProjectId;
+  if (projectRefDefault !== undefined && projectRefDefault.length > 0) return projectRefDefault;
   return basename(workdir);
 }
 
@@ -75,6 +82,14 @@ export function localNetworkId(projectId: string) {
   return legacyServiceContainerName("network", projectId);
 }
 
+// `utils.NetId`/`DockerStart`'s network-mode resolution has ONE home:
+// `resolveDockerNetworkMode` (`shared/functions/functions-docker.ts`). An
+// earlier `legacyResolveNetworkId` here fell through to `SUPABASE_NETWORK_ID`
+// on an explicit-but-empty `--network-id=`, which viper's `find()` never does
+// (a `Changed` pflag resolves BEFORE the env branch — see the shared helper's
+// doc comment); `start`/`db start` now call the shared helper directly
+// (review round on CLI-1963).
+
 /** Go's `utils.CliProjectLabel` (`apps/cli-go/internal/utils/docker.go:59`) — the
  * Docker label every container/volume/network created by `supabase start` carries. */
 export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
@@ -83,7 +98,7 @@ export const LEGACY_CLI_PROJECT_LABEL = "com.supabase.cli.project";
  * TS-port-only Docker label (no Go equivalent — Go never stages secrets on host disk in
  * the first place, see `legacy-start-secrets-cleanup.ts`'s doc comment) recording the
  * absolute `LegacyCliConfig.workdir` a container was created under, set on every
- * container `start` creates (`container-lifecycle.ts`'s `legacyStartContainer`).
+ * container `start` creates (`container-lifecycle.ts`'s `legacyCreateContainer`).
  *
  * Read back by `legacyListContainerIdsAndNames` (`legacy-docker-lifecycle.ts`) so a later
  * `stop`/`legacyRollbackStart` can reclaim `legacyCleanupStartSecrets`'s staged-secret

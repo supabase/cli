@@ -1,4 +1,6 @@
-import type { ServiceDef } from "@supabase/process-compose";
+import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compose";
+import type { ServiceName } from "../ServiceName.ts";
+import { dockerContainerName, STACK_ID_LABEL, type StackIdentity } from "../StackIdentity.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 export interface ServiceDependency {
@@ -7,8 +9,8 @@ export interface ServiceDependency {
 }
 
 interface DockerRunServiceOptions {
-  readonly name: string;
-  readonly containerName: string;
+  readonly name: ServiceName;
+  readonly identity: StackIdentity;
   readonly image: string;
   readonly networkArgs?: ReadonlyArray<string>;
   readonly env?: Record<string, string>;
@@ -16,11 +18,11 @@ interface DockerRunServiceOptions {
   readonly cmd?: ReadonlyArray<string>;
   readonly entrypoint?: string;
   readonly volumes?: ReadonlyArray<string>;
-  readonly dependsOn?: ReadonlyArray<ServiceDependency>;
+  readonly dependencies: ReadonlyArray<ServiceDependency>;
   readonly healthCheck?: ServiceDef["healthCheck"];
   readonly restart?: ServiceDef["restart"];
   readonly shutdown?: ServiceDef["shutdown"];
-  readonly orphanCleanup?: ReadonlyArray<any>;
+  readonly orphanCleanup?: ReadonlyArray<ExternalCleanupAction>;
 }
 
 const envArgs = (env: Record<string, string>): ReadonlyArray<string> =>
@@ -56,11 +58,17 @@ export const dockerExecHealthCheck = (
 });
 
 export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
+  const containerName = dockerContainerName(opts.name, opts.identity.key);
   const dockerArgs = [
     "run",
     "--rm",
     "--name",
-    opts.containerName,
+    containerName,
+    // Keep the identity available to a future label-keyed cleanup path when a
+    // caller supplies it; current cleanup removes the exact name below.
+    ...(opts.identity.stackId === undefined
+      ? []
+      : ["--label", `${STACK_ID_LABEL}=${opts.identity.stackId}`]),
     ...(opts.networkArgs ?? []),
     ...(opts.volumes ?? []).flatMap((volume) => ["-v", volume]),
     ...(opts.entrypoint === undefined ? [] : ["--entrypoint", opts.entrypoint]),
@@ -74,15 +82,12 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     name: opts.name,
     command: "docker",
     args: dockerArgs,
-    dependencies: opts.dependsOn,
+    dependencies: opts.dependencies,
     healthCheck: opts.healthCheck,
     shutdown: opts.shutdown,
-    cleanup: dockerServiceCleanup(opts.containerName),
+    cleanup: dockerServiceCleanup(containerName),
     supervision: {
-      orphanCleanup: [
-        ...dockerServiceOrphanCleanup(opts.containerName),
-        ...(opts.orphanCleanup ?? []),
-      ],
+      orphanCleanup: [...dockerServiceOrphanCleanup(containerName), ...(opts.orphanCleanup ?? [])],
     },
     restart: opts.restart ?? "unless-stopped",
   };

@@ -121,8 +121,8 @@ function legacyCredentialsMock(accessToken?: string) {
 }
 
 const legacyTestRoot = Command.make("supabase").pipe(
-  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
   Command.withSubcommands([legacyServicesCommand]),
+  Command.withGlobalFlags(LEGACY_GLOBAL_FLAGS),
 );
 
 function makeProjectWithConfig(config: string): string {
@@ -542,7 +542,9 @@ major_version = 15
       yield* legacyServices({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("[[services]]");
-      expect(out.stdoutText).toContain('name = "supabase/postgres"');
+      // Go's hand-written imageVersion struct emits PascalCase field names in
+      // declaration order (Name, Local, Remote) with 2-space indent (CLI-1975).
+      expect(out.stdoutText).toContain('  Name = "supabase/postgres"');
     });
   });
 
@@ -564,6 +566,21 @@ major_version = 15
       const exit = yield* legacyServices({}).pipe(Effect.provide(layer), Effect.exit);
       expectFailureTag(exit, "LegacyServicesEnvNotSupportedError");
     });
+  });
+
+  it.live("warns to stderr when the project-ref file exists but cannot be read", () => {
+    // A directory at the ref path makes `exists()` true but `readFileString()` fail
+    // (EISDIR), exercising the READ-error branch distinct from "file absent".
+    const workdir = mkdtempSync(join(tmpdir(), "supabase-services-"));
+    mkdirSync(join(workdir, "supabase", ".temp", "project-ref"), { recursive: true });
+    const { layer, out } = setup({ workdir });
+
+    return Effect.gen(function* () {
+      yield* legacyServices({}).pipe(Effect.provide(layer));
+
+      expect(out.stderrText).toContain("failed to load project ref: ");
+      expect(out.stdoutText).toContain("supabase/postgres");
+    }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
   it.live("flushes telemetry state after the command finishes", () => {

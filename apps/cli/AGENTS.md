@@ -34,6 +34,32 @@ Both call `runCli(root)` from `shared/cli/run.ts`.
 
 ---
 
+## Legacy Port Status and Go CLI Authority
+
+`src/legacy/` started as a from-scratch 1:1 port of the Go CLI (`apps/cli-go/`) and is now largely
+there: see [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+for the live per-command tracker. As of writing, 95 of 103 legacy leaf commands are natively ported;
+only a small residual set is still a Phase 0 proxy to the Go binary.
+
+This changes what "Go CLI is authoritative" means day to day. `apps/cli-go/` is required reading
+only when:
+
+- Working on one of the remaining Phase 0 wrapped commands — maintaining its command/flag
+  definition and proxy handler (these gate which invocations reach the Go binary and must still
+  match it exactly) or replacing the wrapper with a native implementation, or
+- Changing something on an already-ported command's established parity surface: command/flag
+  names, stdout/stderr text, exit codes, all documented side effects (filesystem, database,
+  Docker/subprocess, API requests), or telemetry semantics (which events fire, when, and their
+  payload shape).
+
+For everything else in `src/legacy/` — bug fixes that don't touch that surface, internal refactors,
+hoisting shared helpers, adding a documented TS-only flag/feature, tests, tooling — treat it like any
+other TypeScript workspace. Go behavior is not the deciding standard, and there's no need to consult
+`apps/cli-go/`. See [ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md)
+for the full rationale.
+
+---
+
 ## Learning more about the "effect" library
 
 This project uses **Effect V4**. The full source code for the `effect` library is in `.repos/effect/`.
@@ -86,7 +112,7 @@ Always check `src/shared/` before writing new infrastructure. Do not duplicate w
 | `shared/output/json-error-handling.ts` | `withJsonErrorHandling` middleware                                              |
 | `shared/output/errors.ts`              | `NonInteractiveError`                                                           |
 | `shared/runtime/`                      | `Browser`, `Stdin`, `Tty`, `ProcessControl`, `RuntimeInfo` services + layers    |
-| `shared/telemetry/`                    | `withCommandInstrumentation`, `Analytics`, tracing                              |
+| `shared/telemetry/`                    | `withCommandInstrumentation`, `Analytics`, tracing, `error-actionability.ts`    |
 
 Also check the following `legacy/` infrastructure before writing equivalent helpers from scratch:
 
@@ -104,7 +130,16 @@ Also check the following `legacy/` infrastructure before writing equivalent help
 
 ## Phase 0: Go Binary Wrapper
 
-Before any command is natively implemented in TypeScript, the first step for each command is to **wrap** it: define the command in the TS command tree and proxy all invocations to the bundled Go binary via subprocess.
+This phase is now the exception, not the default: only the commands listed as `wrapped` in the
+[Legacy Shell Command Status table](./docs/go-cli-porting-status.md#legacy-shell-command-status)
+still need it. A Go CLI command that exists in `apps/cli-go/` but has no TS surface yet is rare at
+this point in the port; when one does show up, the first step is to **wrap** it: define the command
+in the TS command tree and proxy all invocations to the bundled Go binary via subprocess. Wrapping
+only works for a command the Go CLI already implements — there is nothing to proxy to otherwise. A
+genuinely TS-only addition with no Go equivalent (for example a TS-only flag on an already-ported
+command, per the "Flag divergences from the Go reference" list in
+[`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md)) is implemented natively and does
+not go through Phase 0 at all.
 
 ### Proxy handler pattern
 
@@ -161,6 +196,7 @@ src/legacy/commands/<command>/
   <command>.layers.ts         # runtime layer composition for the command family
   <command>.format.ts         # text formatters (timestamps, regions, booleans)
   <command>.encoders.ts       # Go-compatible JSON / YAML / TOML / env encoders
+  <command>.go-payload.ts     # Go struct specs mirroring types.gen.go — drive `-o yaml|toml` key casing (CLI-1975)
   SIDE_EFFECTS.md
 ```
 
@@ -256,6 +292,15 @@ The legacy shell is a **strict 1:1 port** — not a redesign. The compatibility 
 
 When in doubt about expected output or behavior, run the equivalent command against the Go CLI reference at `apps/cli-go/` and match it exactly.
 
+This contract governs behavior a command has already established — it does not mean every change in
+`src/legacy/` requires consulting Go. It applies when working on one of the remaining Phase 0
+wrapped commands (its command/flag definition or its native replacement), or changing an
+already-ported command in a way that could affect the surface above — which, per each command's
+`SIDE_EFFECTS.md`, also includes database mutations and Docker/subprocess behavior, and per the
+Telemetry Parity section below also includes which events fire and when, not just payload shape. It
+does not apply to internal refactors, TS-only additions, or bug fixes that leave that surface
+unchanged — see [Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority).
+
 ---
 
 ## Legacy Port: Go Parity Checklist
@@ -275,6 +320,8 @@ When porting a Management-API-style command, verify each item before marking the
 6. **Both `--output` (Go) and `--output-format` (TS) must be honored** — Go's `--output` (`pretty|json|yaml|toml|env`) takes priority when set. Pattern in `backups/list/list.handler.ts:85-113`: branch on `goOutputFlag` first, then fall through to TS `--output-format` text/json/stream-json.
 
 7. **PostHog telemetry payload matches Go 1:1** — see the next section.
+
+8. **Go API type regen re-syncs `*.go-payload.ts` specs** — when `apps/cli-go/pkg/api/types.gen.go` regenerates, re-audit every `*.go-payload.ts`/inline `LegacyGoType` struct spec that mirrors it (field order, JSON/Go name pairs); nothing checks this mechanically today (CLI-1975, review kanadgupta).
 
 ---
 
@@ -296,14 +343,20 @@ The legacy shell sends the same PostHog events to the same product analytics pip
 - **Proxy handlers (`LegacyGoProxy.exec`) must NOT wrap with any instrumentation.** The Go subprocess fires its own telemetry; a TS wrapper would double-count `cli_command_executed`.
 - **When promoting a command from proxy to native, reproduce every `phtelemetry.*` call in the Go counterpart.** Grep `apps/cli-go/internal/<command>/` for `service.Capture`, `service.Alias`, `service.Identify`, `service.GroupIdentify`, and `TrackUpgradeSuggested`. The current Go custom events that legacy ports must reproduce when natively ported:
 
-  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                               |
-  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                | `internal/login/login.go:283-296`                                       |
-  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                        | `internal/link/link.go:60`                                              |
-  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                              | `internal/start/start.go:1245`                                          |
-  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (`SuggestUpgradeOnError` is envelope-first; hostnames + vanity get are envelope-only) | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/` |
+  | Command                                                                                                                                       | Event                   | Identity / groups                                                                                                                                                         | Go source                                                                                                      |
+  | --------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+  | `login`                                                                                                                                       | `cli_login_completed`   | `analytics.alias(gotrueId, deviceId)` after token persists                                                                                                                | `internal/login/login.go:283-296`                                                                              |
+  | `link`                                                                                                                                        | `cli_project_linked`    | `analytics.groupIdentify("organization", slug, …)` + `analytics.groupIdentify("project", ref, …)` after link write                                                        | `internal/link/link.go:60`                                                                                     |
+  | `start`                                                                                                                                       | `cli_stack_started`     | none — fired after stack health check passes                                                                                                                              | formerly `internal/start/start.go:1245` (deleted as unreachable in CLI-1966; last present at commit a253ccba2) |
+  | `sso/{list,create,update,remove}`, `branches/{create,update}`, `hostnames/{create,activate,get,reverify}`, `vanity_subdomains/{activate,get}` | `cli_upgrade_suggested` | none — payload is `{feature_key, org_slug}`, fired inside billing-gate error branch (`SuggestUpgradeOnError` is envelope-first; hostnames + vanity get are envelope-only) | call-sites under `internal/{sso,branches,hostnames,vanity_subdomains}/`                                        |
 
   Reference pattern for login: `next/commands/login/login.handler.ts:38-62`.
+
+  TS-only extension to the `link` row (CLI-2167, no Go counterpart): when `link` resolves a
+  branch name/UUID (`[ref-or-branch]` positional or `--project-ref`) to its project ref, the
+  legacy shell additionally fires `cli_project_linked` with `linked_via: "branch"` and
+  `parent_project_ref` set, plus a `project` group association (no `groupIdentify` call, since
+  no org/name metadata exists for a branch).
 
 - **Tracing layer is local-only observability**, not PostHog. Span names (`legacy.<command>.<sub>`) and the NDJSON exporter never leave the user's machine. No parity implication.
 
@@ -336,6 +389,35 @@ Every legacy command port must include a `SIDE_EFFECTS.md` in its command direct
 - **Exit codes** — including error conditions
 
 Use the template at `src/legacy/SIDE_EFFECTS_TEMPLATE.md`. This document is the compatibility checklist for the port and the primary input to the E2E test suite.
+
+---
+
+## Error Classification
+
+Every error the CLI raises carries a classification used for KPI reporting: is this failure the user's to fix, an external service problem, or a CLI bug? `shared/telemetry/error-actionability.ts` owns the closed vocabulary. Classification is declared on the error class itself and is never inferred later from message text. This applies to both shells.
+
+**When you add an error class anywhere in `apps/cli/src`**, export it and give it an own `[ErrorActionabilityId]` getter:
+
+```ts
+export class LegacyThingMissingError extends Data.TaggedError("LegacyThingMissingError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.provideFlags;
+  }
+}
+```
+
+- **Reuse a preset from `actionability`** rather than assembling fields by hand: `authLogin`, `authToken`, `provideFlags`, `invalidInput`, `invalidConfig`, `dbConnection`, `dbFinding`, `migrationDrift`, `permission`, `accountAccess`, `planLimit`, `projectNotLinked`, `missingProjectRef`, `relinkProject`, `dockerNotRunning`, `startStack`, `stopStack`, `externalNetwork`, `apiStatus`, `cancelled`, `internalPanic`, `impossibleState`, `unknown`. For an error carrying a Management API status, return `statusCodeActionability(this.status)` instead of mapping status codes yourself.
+- **Branch only on typed fields the error already carries** — `this.status`, a closed `reason` union, a boolean the producer set. Never parse `message`.
+- **Nothing user-controlled may appear in a declaration.** The result is sent to PostHog, so no paths, SQL, project refs, hostnames, URLs, tokens, or response bodies — only closed enum values.
+- **Split materially different causes with `fingerprint_suffix`**, choosing a value from `CLI_ERROR_FINGERPRINT_SUFFIXES` (module-private — extend it in place), so unrelated failures sharing one class do not group together as repeats.
+- **An instance-dependent getter must stay valid when its fields are absent** — the drift guard evaluates it against a field-less probe.
+- **A plain `Error` subclass (no `_tag`) also declares its fingerprint identifier**: `static readonly [ErrorActionabilityFingerprintId] = "<ExportName>"`, matching the export name exactly. Tagged errors skip this — their fingerprint comes from the tag. The static identifier is what keeps `error:` fingerprints stable in minified release builds, where `constructor.name` is renamed.
+
+**Errors defined outside `apps/cli/src`** (`@supabase/stack`, `@supabase/config`, `@supabase/process-compose`, `@supabase/api`, `effect`) cannot carry a declaration. Add a structural adapter keyed by `_tag` to `externalActionabilityByTag` in that same module, branching on the producer's typed fields.
+
+`error-actionability-coverage.unit.test.ts` enforces this. It scans every `TaggedError("Tag")`, every `*Error("Tag")` factory, and every `class X extends Error` under `apps/cli/src`, and fails when a class is unexported, has no own declaration, or is untagged without its matching static fingerprint identifier. A failure there is the guard working: classify the new error rather than loosening the guard, because `unknown` in production telemetry must mean a genuinely unforeseen failure, not one nobody categorized.
 
 ---
 
@@ -427,6 +509,7 @@ Read https://www.effect.solutions/testing for Effect testing patterns. Note that
 - If a test needs multiple service replacements or `Layer.mergeAll(...)`, it likely belongs in `*.integration.test.ts`.
 - Prefer assertions on outputs and accumulated state over spy-heavy interaction tests.
 - Keep `*.e2e.test.ts` focused on golden paths, CLI surface behavior, and subprocess correctness, not branch-by-branch coverage.
+- **Hermeticity:** a test whose layer graph includes a real filesystem (`BunServices.layer`) and code that reads or writes under `RuntimeInfo.homeDir` or `TelemetryRuntime.configDir` must pin those paths to a per-test temp dir — never rely on the mock defaults (`mockRuntimeInfo` / `mockTelemetryRuntime` default to a path that is intentionally never created). Use `useLegacyTempWorkdir` for the temp dir, and `legacyIsolatedHomeLayer` (in `tests/helpers/legacy-mocks.ts`) when the test builds the real `legacyCliConfigLayer` / `legacyCredentialsLayer`, since those also resolve `SUPABASE_HOME` / `SUPABASE_PROFILE` / tokens from ambient `process.env`.
 - **Forbidden pattern (do not add):** spawning the CLI to assert that `--help` renders a flag. Help text is dynamic over flag wiring and is exercised by the integration test's flag parser. The two backups e2e files removed alongside this guidance update are the canonical example of what not to write.
 
 ### Live tests (`*.live.test.ts`)
@@ -480,4 +563,13 @@ bun run --parallel "*:check"
 
 ### `apps/cli-go/`
 
-The [old Supabase CLI](https://github.com/supabase/cli) written in Go. When porting a command to the legacy shell, use this as the authoritative source for expected output, flags, and behavior. Match it exactly.
+The [old Supabase CLI](https://github.com/supabase/cli) written in Go. Use this as the authoritative
+source, matched exactly, when working on one of the remaining wrapped commands (maintaining its
+command/flag definition, or replacing the wrapper with native TS), or when changing an
+already-ported legacy command's established output/flags/behavior/side-effects. It is not required
+reading for other legacy-shell work — see
+[Legacy Port Status and Go CLI Authority](#legacy-port-status-and-go-cli-authority) and
+[ADR 0016](../../docs/adr/0016-legacy-port-completion-and-go-cli-authority-scope.md). Exception:
+`internal/start` (Go's `supabase start`) was deleted outright as unreachable once ported (CLI-1966)
+— for that command, the last commit with the source intact
+(`a253ccba25c21356ccd33044c4474aecb77d1ae4`) is the authoritative reference instead.

@@ -1,5 +1,6 @@
-import type { SupabaseApiError } from "@supabase/api/effect";
+import { SupabaseApiInputError, type SupabaseApiError } from "@supabase/api/effect";
 import { Effect } from "effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 
 // HttpClientError reasons that indicate the server returned an actual response (vs a transport
@@ -27,6 +28,18 @@ export function sanitizeLegacyErrorBody(input: string): string {
   return sanitizeErrorBody(capped);
 }
 
+/**
+ * Sanitizes an API-provided NAME (branch/project/org) for inline embedding in
+ * a single-line terminal message. `sanitizeLegacyErrorBody` deliberately
+ * preserves `\n`/`\t` so JSON response bodies stay readable — but inside an
+ * inline name those characters let a hostile name forge additional CLI output
+ * lines (PR #6168 review). Collapse them to a single space on top of the
+ * body sanitizer's control-char stripping and length cap.
+ */
+export function legacySanitizeInlineName(input: string): string {
+  return sanitizeLegacyErrorBody(input).replace(/[\n\t]+/g, " ");
+}
+
 // Strip ASCII control characters from the response body before embedding it in an error
 // message. The Management API is trusted, but defence-in-depth: a body containing `\r\n`
 // could fracture a structured log line, and `\x00` could truncate output in shells that
@@ -47,7 +60,10 @@ function sanitizeErrorBody(input: string): string {
   return out;
 }
 
-export type NetworkErrorFactory<E> = new (args: { readonly message: string }) => E;
+export type NetworkErrorFactory<E> = new (args: {
+  readonly message: string;
+  readonly decode?: boolean;
+}) => E;
 
 export type StatusErrorFactory<E> = new (args: {
   readonly status: number;
@@ -69,9 +85,17 @@ export function mapLegacyHttpError<N, S>(opts: {
   readonly statusError: StatusErrorFactory<S>;
   readonly networkMessage: (cause: string) => string;
   readonly statusMessage: (status: number, body: string) => string;
-}): (cause: SupabaseApiError) => Effect.Effect<never, N | S> {
+}): (
+  cause: SupabaseApiError,
+) => Effect.Effect<never, N | S | SupabaseApiInputError | HttpBody.HttpBodyError> {
   return (cause) =>
     Effect.gen(function* () {
+      if (cause instanceof SupabaseApiInputError || cause instanceof HttpBody.HttpBodyError) {
+        // These failures occur while the generated client validates or builds
+        // the request. Keep their identity because this generic mapper cannot
+        // safely infer user provenance or reclassify them as response errors.
+        return yield* Effect.fail(cause);
+      }
       if (HttpClientError.isHttpClientError(cause)) {
         if (RESPONSE_ERROR_TAGS.has(cause.reason._tag) && cause.response !== undefined) {
           const status = cause.response.status;
@@ -92,9 +116,12 @@ export function mapLegacyHttpError<N, S>(opts: {
           new opts.networkError({ message: opts.networkMessage(description) }),
         );
       }
-      // SchemaError or HttpBodyError — treat as transport-level network error.
+      // SchemaError — the server returned a response whose body failed schema
+      // decoding (a 200 the generated client could not parse). This is not a
+      // transport failure, so flag `decode` to classify it as an API-response
+      // problem rather than a network problem.
       return yield* Effect.fail(
-        new opts.networkError({ message: opts.networkMessage(String(cause)) }),
+        new opts.networkError({ message: opts.networkMessage(String(cause)), decode: true }),
       );
     });
 }

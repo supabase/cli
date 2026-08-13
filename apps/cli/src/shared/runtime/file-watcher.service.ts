@@ -1,6 +1,12 @@
 import type { Stream } from "effect";
 import { Data, Context } from "effect";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../telemetry/error-actionability.ts";
+
 type FileWatchEventType = "create" | "update" | "delete";
 
 export interface FileWatchEvent {
@@ -15,7 +21,11 @@ export interface FileWatchOptions {
 export class FileWatcherError extends Data.TaggedError("FileWatcherError")<{
   readonly path: string;
   readonly cause: unknown;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.permission;
+  }
+}
 
 interface FileWatcherShape {
   readonly watch: (

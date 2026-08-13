@@ -1,9 +1,12 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerStudioOptions {
   readonly image: string;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly port: number;
   readonly apiUrl: string;
   readonly publicApiUrl: string;
@@ -17,7 +20,7 @@ interface DockerStudioOptions {
   readonly analyticsBackend: "postgres" | "bigquery";
   readonly analyticsUrl: string;
   readonly analyticsApiKey: string;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -29,17 +32,15 @@ const studioHealthCheck = (port: number): ServiceDef["healthCheck"] => ({
     path: "/api/platform/profile",
     scheme: "http",
   },
-  initialDelaySeconds: 2,
-  periodSeconds: 1,
-  failureThreshold: 60,
+  ...stackHealthBudgets.studio,
 });
 
 export const makeStudioServiceDocker = (opts: DockerStudioOptions): ServiceDef =>
   dockerRunService({
     name: "studio",
-    containerName: `supabase-studio-${opts.apiPort}`,
+    identity: opts.identity,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     env: {
       PORT: String(opts.port),
       CURRENT_CLI_VERSION: "local",
@@ -65,6 +66,6 @@ export const makeStudioServiceDocker = (opts: DockerStudioOptions): ServiceDef =
       PGRST_DB_EXTRA_SEARCH_PATH: "public,extensions",
       PGRST_DB_MAX_ROWS: "1000",
     },
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: studioHealthCheck(opts.port),
   });

@@ -11,14 +11,18 @@
  *
  * `excludeKey` matches `utils.ShortContainerImageName(image)` for each of
  * `config.Images.Services()` (`apps/cli-go/pkg/config/constants.go:60-76`) — the
- * value Go's `--exclude` flag and `ExcludableContainers()`
- * (`apps/cli-go/internal/start/start.go:1297-1303`) match against. Postgres has
- * no `excludeKey` — it is never excludable in Go.
+ * value Go's `--exclude` flag matches against. Go's own `ExcludableContainers()`
+ * (formerly `apps/cli-go/internal/start/start.go:1297-1303`) was deleted along
+ * with the rest of `internal/start` as unreachable (CLI-1966; last present at
+ * commit a253ccba2) — the equivalent logic now lives inline in
+ * `apps/cli-go/cmd/start.go`'s `excludableContainers()`. Postgres has no
+ * `excludeKey` — it is never excludable in Go.
  *
- * Array order matches Go's actual container start sequence
- * (`apps/cli-go/internal/start/start.go`'s "Start <service>" comments,
- * lines 293-1267): Postgres, then each service's `if` block in file order.
- * `startOrder` (1-14) mirrors that same order as an explicit field.
+ * Array order matches Go's actual container start sequence (formerly
+ * `apps/cli-go/internal/start/start.go`'s "Start <service>" comments, lines
+ * 293-1267, deleted in CLI-1966; last present at commit a253ccba2): Postgres,
+ * then each service's `if` block in file order. `startOrder` (1-14) mirrors
+ * that same order as an explicit field.
  */
 export interface LegacyServiceCatalogEntry {
   /** Stable service key, independent of both the container suffix and the exclude key. */
@@ -27,7 +31,7 @@ export interface LegacyServiceCatalogEntry {
   readonly containerSuffix: string;
   /** `--exclude` key (`utils.ShortContainerImageName`). Absent for Postgres — never excludable. */
   readonly excludeKey?: string;
-  /** 1-14, matching Go's real container start sequence in `internal/start/start.go`. */
+  /** 1-14, matching Go's real container start sequence in the now-deleted `internal/start/start.go` (CLI-1966; last present at commit a253ccba2). */
   readonly startOrder: number;
 }
 

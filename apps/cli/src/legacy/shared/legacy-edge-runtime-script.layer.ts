@@ -80,18 +80,29 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // config read happens here, not at layer acquisition, so merely composing
           // the db diff/pull runtime never validates the base config before the
           // linked ref is known (Go validates the `[remotes.<ref>]`-merged config,
-          // and even `db diff --use-pgadmin --linked` must not fail at layer build).
-          // Every pg-delta/migra caller passes `opts.denoVersion`, so the base read
-          // is a defensive fallback that does not run for them.
+          // and even `db diff --use-pgadmin --linked` — a native path since CLI-1968,
+          // reading config directly rather than exec'ing a Go child, and never calling
+          // this layer's `run` at all — must not fail at layer build). Every pg-delta/
+          // migra caller passes `opts.denoVersion`, so the base read is a defensive
+          // fallback that does not run for them.
+          //
+          // Same per-run override for `workdir`: `cliConfig.workdir` is fixed at
+          // layer-build time, before a command's own `process.chdir` (bootstrap's
+          // real target directory only exists once its handler runs — see
+          // `bootstrap.handler.ts`), so every pg-delta/migra caller passes its own
+          // `ctx.cwd` here too, keeping the image-pin lookup and the base-config
+          // fallback read consistent with the workdir the rest of the run actually
+          // targets.
+          const workdir = opts.workdir ?? cliConfig.workdir;
           const denoVersion =
             opts.denoVersion ??
-            (yield* legacyReadDbToml(fs, path, cliConfig.workdir).pipe(
+            (yield* legacyReadDbToml(fs, path, workdir).pipe(
               Effect.mapError(
                 (error) => new LegacyEdgeRuntimeScriptError({ message: error.message }),
               ),
             )).denoVersion;
           const registryImage = legacyGetRegistryImageUrl(
-            yield* legacyResolveEdgeRuntimeImage(fs, path, cliConfig.workdir, denoVersion),
+            yield* legacyResolveEdgeRuntimeImage(fs, path, workdir, denoVersion),
           );
           const port = yield* allocateFreeHostPort;
           const startCmd = legacyBuildEdgeRuntimeStartCmd({ port, debug }).join(" ");
@@ -120,11 +131,19 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
             })
             // A spawn failure (e.g. Docker not installed) carries no container
             // stderr; wrap it with the caller's prefix like Go's `%s: %w`.
+            // Thread the docker discriminant so a daemon-down / registry-pull
+            // failure at the docker boundary is not misclassified as user SQL.
             .pipe(
               Effect.mapError(
                 (cause) =>
                   new LegacyEdgeRuntimeScriptError({
                     message: `${opts.errPrefix}: ${cause.message}`,
+                    docker:
+                      cause.reason === "spawn" || cause.daemonDown
+                        ? "daemon"
+                        : cause.reason === "pull"
+                          ? "pull"
+                          : "inspect",
                   }),
               ),
             );

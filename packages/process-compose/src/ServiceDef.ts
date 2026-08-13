@@ -30,6 +30,8 @@ export interface HealthCheckConfig {
   readonly periodSeconds?: number;
   readonly timeoutSeconds?: number;
   readonly successThreshold?: number;
+  /** Consecutive failures allowed before the process has ever become healthy. */
+  readonly startupFailureThreshold?: number;
   readonly failureThreshold?: number;
 }
 
@@ -53,8 +55,10 @@ export interface LifecycleHook {
 
 export type ExternalCleanupAction =
   | {
-      readonly _tag: "DockerRemove";
-      readonly containerName: string;
+      readonly _tag: "RunCommand";
+      readonly executable: string;
+      readonly args: ReadonlyArray<string>;
+      readonly timeoutMs?: number;
     }
   | {
       readonly _tag: "RemovePath";
@@ -87,6 +91,13 @@ export interface ServiceDef {
 
 export interface OrchestratorConfig {
   readonly shutdownTimeoutSeconds?: number;
+}
+
+export interface ServiceStartOptions {
+  /** Runs when a service lifecycle starts and again after each process exit before backoff. */
+  readonly beforeStart?: (name: string) => Effect.Effect<void, unknown>;
+  /** Runs after dependencies are satisfied and immediately before each spawn. */
+  readonly beforeSpawn?: (name: string) => Effect.Effect<void>;
 }
 
 export const defaults = {

@@ -1,12 +1,21 @@
 import { Data, Effect } from "effect";
 
 import { Output } from "../../shared/output/output.service.ts";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 
 /** Reading or updating `vault.secrets` failed (Go's `UpsertVaultSecrets` errors). */
 export class LegacyMigrationVaultError extends Data.TaggedError("LegacyMigrationVaultError")<{
   readonly message: string;
-}> {}
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.dbFinding;
+  }
+}
 
 /** A resolved `[db.vault]` secret. `resolved` mirrors Go's `len(SHA256) > 0` gate. */
 export interface LegacyVaultSecret {

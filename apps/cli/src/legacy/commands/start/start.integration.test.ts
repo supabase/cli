@@ -1,5 +1,5 @@
 import { generateKeyPairSync } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
@@ -24,8 +24,10 @@ import {
   useLegacyTempWorkdir,
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { classifyCliCauseActionability } from "../../../shared/telemetry/error-actionability.ts";
 import {
   LegacyDebugFlag,
+  LegacyExperimentalFlag,
   LegacyNetworkIdFlag,
   LegacyYesFlag,
 } from "../../../shared/legacy/global-flags.ts";
@@ -39,6 +41,12 @@ import {
   type LegacyDbSession,
 } from "../../shared/legacy-db-connection.service.ts";
 import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
+import { LegacyEdgeRuntimeScriptError } from "../../shared/legacy-edge-runtime-script.errors.ts";
+import {
+  LegacyEdgeRuntimeScript,
+  type LegacyEdgeRuntimeRunOpts,
+} from "../../shared/legacy-edge-runtime-script.service.ts";
+import { LegacyPgDeltaSslProbe } from "../../shared/legacy-pgdelta-ssl-probe.service.ts";
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import type { LegacyStartFlags } from "./start.command.ts";
 import { legacyStart } from "./start.handler.ts";
@@ -200,6 +208,29 @@ function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArr
     .map((s) => containerNameFromCreateArgs(s.args));
 }
 
+/**
+ * Wraps `base` to also intercept every `docker cp <hostPath> <containerId>:<containerPath>` call
+ * `legacyCreateContainer`'s `secretFiles` delivery issues (`legacyCopyStartSecretFileIntoContainer`,
+ * `container-lifecycle.ts` — supabase/cli#6022): synchronously reads the host-side temp file's
+ * content while it's still on disk (its own cleanup only runs once THIS spawn's effect resolves)
+ * and records it against the destination `containerPath`, so a test can assert on delivered secret
+ * content without any host-persisted staging directory left behind to inspect afterward.
+ */
+function capturingSecretCopyRoute(
+  base: (args: ReadonlyArray<string>) => RouteResult,
+  onCopy: (containerPath: string, content: string) => void,
+): (args: ReadonlyArray<string>) => RouteResult {
+  return (args) => {
+    if (args[0] === "cp") {
+      const hostPath = args[1] ?? "";
+      const dest = args[2] ?? "";
+      const containerPath = dest.slice(dest.indexOf(":") + 1);
+      onCopy(containerPath, readFileSync(hostPath, "utf8"));
+    }
+    return base(args);
+  };
+}
+
 function rollbackWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
   return spawned.some((s) => s.args[0] === "container" && s.args[1] === "prune");
 }
@@ -212,6 +243,7 @@ function defaultRoute(opts: { readonly neverHealthy?: ReadonlySet<string> } = {}
   const created = new Set<string>();
   return (args: ReadonlyArray<string>): RouteResult => {
     if (args[0] === "image" && args[1] === "inspect") return { exitCode: 0 };
+    if (args[0] === "network" && args[1] === "inspect") return { exitCode: 1 };
     if (args[0] === "network" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "volume" && args[1] === "create") return { exitCode: 0 };
     if (args[0] === "context" && args[1] === "inspect") return { exitCode: 1 };
@@ -254,7 +286,7 @@ function freshVolumeRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
 ): (args: ReadonlyArray<string>) => RouteResult {
   return (args) => {
-    // `legacyStartVolumeExists` now distinguishes a confirmed "not found" from
+    // `legacyVolumeExists` now distinguishes a confirmed "not found" from
     // any other inspect error (matching Go's `errdefs.IsNotFound` gate) — the
     // stderr text is what makes this simulate a genuinely fresh/non-existent
     // volume rather than an ambiguous inspect failure.
@@ -355,6 +387,12 @@ interface SetupOpts {
   readonly workdir?: string;
   /** `--network-id` override. Defaults to unset (the generated `supabase_network_<project>` name applies). */
   readonly networkId?: Option.Option<string>;
+  /** `--experimental`/`SUPABASE_EXPERIMENTAL`. Defaults to `false`. */
+  readonly experimental?: boolean;
+  /** `LegacyEdgeRuntimeScript`'s mocked stdout for the pg-delta catalog-export call (`db-setup.ts`'s `legacyTryCacheMigrationsCatalog`). Only ever reached on a fresh volume with pg-delta enabled. */
+  readonly catalogStdout?: string;
+  /** Fails the mocked catalog-export call with this message instead of succeeding. */
+  readonly catalogExportFailWith?: string;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -373,6 +411,22 @@ function setup(opts: SetupOpts = {}) {
     failSpawn: opts.failSpawn,
   });
   const dbSession = fakeDbSession();
+  const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
+  const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
+    run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
+      edgeRunCalls.push(runOpts);
+      if (opts.catalogExportFailWith !== undefined) {
+        return Effect.fail(
+          new LegacyEdgeRuntimeScriptError({ message: opts.catalogExportFailWith }),
+        );
+      }
+      return Effect.succeed({ stdout: opts.catalogStdout ?? '{"version":1}', stderr: "" });
+    },
+  });
+  const sslProbe = Layer.succeed(LegacyPgDeltaSslProbe, {
+    requireSsl: () => Effect.succeed(false),
+    requireSslForHost: () => Effect.succeed(false),
+  });
 
   const layer = Layer.mergeAll(
     BunServices.layer,
@@ -405,12 +459,15 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: ["start"] }),
     Layer.succeed(LegacyDebugFlag, false),
     Layer.succeed(LegacyYesFlag, false),
+    Layer.succeed(LegacyExperimentalFlag, opts.experimental ?? false),
     Layer.succeed(LegacyNetworkIdFlag, opts.networkId ?? Option.none()),
     mockTty({ stdinIsTty: false }),
     mockStdin(false),
+    edgeRuntime,
+    sslProbe,
   );
 
-  return { workdir, out, telemetry, analytics, child, dbSession, layer };
+  return { workdir, out, telemetry, analytics, child, dbSession, edgeRunCalls, layer };
 }
 
 /**
@@ -1234,6 +1291,11 @@ describe("legacy start integration", () => {
             const serialized = JSON.stringify(exit.cause);
             expect(serialized).toContain("LegacyDockerLifecycleInspectError");
             expect(serialized).toContain("docker: command not found (podman also not found)");
+            expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
+              error_kind: "user_actionable",
+              error_category: "docker_not_running",
+              error_fingerprint: "tag:LegacyDockerLifecycleInspectError:docker_not_running",
+            });
           }
         }).pipe(Effect.provide(layer));
       },
@@ -1341,6 +1403,26 @@ describe("legacy start integration", () => {
           (c) => c.event === "cli_stack_started",
         );
         expect(stackStartedEvents).toEqual([{ event: "cli_stack_started", properties: {} }]);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("brings the stack up when podman rejects re-creating preserved volumes (#6020)", () => {
+      const route = defaultRoute();
+      const { layer, analytics } = setup({
+        route: (args) => {
+          if (args[0] === "volume" && args[1] === "create") {
+            const name = args[args.length - 1] ?? "";
+            return {
+              exitCode: 125,
+              stderr: [`Error: volume with name ${name} already exists: volume already exists`],
+            };
+          }
+          return route(args);
+        },
+      });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(true);
       }).pipe(Effect.provide(layer));
     });
 
@@ -1482,7 +1564,7 @@ describe("legacy start integration", () => {
       "brings up the stack with every optional config.toml section populated (bigquery analytics, session pool mode, passkey/webauthn, external provider, SMTP, email templates)",
       () => {
         // Exercises the config-document-shape branches `start.handler.ts` itself owns
-        // (`resolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
+        // (`legacyResolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
         // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass, none of
         // which interact with each other. A malformed `db.health_timeout` is exercised
         // separately below (it now hard-fails the whole command, matching Go, so it can't
@@ -1522,19 +1604,17 @@ pass = "smtp-pass"
 admin_email = "admin@example.com"
 
 [auth.email.template.confirmation]
-content_path = "./templates/confirmation.html"
+content_path = "./supabase/templates/confirmation.html"
 
 [auth.email.notification.custom_notice]
 enabled = true
-content_path = "./templates/custom_notice.html"
+content_path = "./supabase/templates/custom_notice.html"
 `,
         });
         // `Config.Validate` (step 2, before this handler's own `buildKongEmailTemplateMounts`
-        // ever runs) reads both content_path files for real — template paths resolve against
-        // the workdir itself, notification paths against `<workdir>/supabase`.
-        mkdirSync(join(workdir, "templates"), { recursive: true });
-        writeFileSync(join(workdir, "templates", "confirmation.html"), "<html></html>");
+        // ever runs) reads both content_path files from the project-root base.
         mkdirSync(join(workdir, "supabase", "templates"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", "templates", "confirmation.html"), "<html></html>");
         writeFileSync(
           join(workdir, "supabase", "templates", "custom_notice.html"),
           "<html></html>",
@@ -1544,9 +1624,8 @@ content_path = "./templates/custom_notice.html"
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_pooler_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_auth_"))).toBe(true);
-          // Go's `baseConfig.resolve` rebases a relative notification content_path against
-          // `<workdir>/supabase`, not the template base (`workdir`) — the Kong mount must read
-          // from the same file `Config.Validate` already confirmed exists.
+          // The Kong mount must read from the same project-root-relative file config validation
+          // already confirmed exists.
           const kongCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
           );
@@ -1961,12 +2040,45 @@ content_path = "./templates/custom_notice.html"
     );
 
     it.live(
+      "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled, matching Go's Config.Load",
+      () => {
+        // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally in Go's
+        // Config.Load (pkg/config/auth.go:210-240), same override-only-throw reasoning as the
+        // web3/oauth_server tests above (review: PRRT_kwDOErm0O86WXFqj).
+        const previous = process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
+        process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[auth]\nenabled = false\n',
+        });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags()));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const serialized = JSON.stringify(exit.cause);
+            expect(serialized).toContain("LegacyStartInvalidConfigError");
+            expect(serialized).toContain("invalid config for auth.third_party");
+          }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+        }).pipe(
+          Effect.provide(layer),
+          Effect.ensuring(
+            Effect.sync(() => {
+              if (previous === undefined)
+                delete process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
+              else process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = previous;
+            }),
+          ),
+        );
+      },
+    );
+
+    it.live(
       "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
       () => {
         // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
         // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
-        // `resolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw reasoning as
-        // the web3/oauth_server tests above, except the malformed value lives directly in
+        // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw
+        // reasoning as the web3/oauth_server tests above, except the malformed value lives directly in
         // config.toml here since `@supabase/config` never sees (or rejects) this unmodeled field —
         // there's no schema-level bool coercion to catch it first.
         const { layer, child } = setup({
@@ -2269,6 +2381,61 @@ content_path = "./templates/custom_notice.html"
           expect(out.stderrText).toContain("Initialising schema...");
           // Default config: realtime, storage, and auth are all enabled.
           expect(dbSetupJobCalls(child.spawned)).toHaveLength(3);
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "caches the migrations catalog after a fresh-volume setup when pg-delta is enabled",
+      () => {
+        const { layer, out, workdir, edgeRunCalls } = setup({
+          configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
+          route: freshVolumeRoute(defaultRoute()),
+          catalogStdout: '{"snapshot":"ok"}',
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
+          // Runs once, AFTER the fresh-volume migrate+seed pipeline — matching Go's
+          // `SetupLocalDatabase` calling `pgcache.TryCacheMigrationsCatalog` immediately
+          // after `apply.MigrateAndSeed` (`start.go:368-379`).
+          expect(edgeRunCalls).toHaveLength(1);
+          const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
+          const catalogFiles = readdirSync(tempDir).filter((name) =>
+            name.startsWith("catalog-local-migrations-"),
+          );
+          expect(catalogFiles).toHaveLength(1);
+          expect(readFileSync(join(tempDir, catalogFiles[0]!), "utf8")).toBe('{"snapshot":"ok"}');
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "warns without failing supabase start when the migrations-catalog export fails on a fresh volume",
+      () => {
+        const { layer, out } = setup({
+          configContents: 'project_id = "demo"\n[experimental.pgdelta]\nenabled = true\n',
+          route: freshVolumeRoute(defaultRoute()),
+          catalogExportFailWith: "edge-runtime script produced no output",
+        });
+        return Effect.gen(function* () {
+          const exit = yield* legacyStart(flags({ exclude: ["edge-runtime"] })).pipe(Effect.exit);
+          expect(Exit.isSuccess(exit)).toBe(true);
+          expect(out.stderrText).toContain(
+            "Warning: failed to cache migrations catalog: edge-runtime script produced no output",
+          );
+        }).pipe(Effect.provide(layer));
+      },
+    );
+
+    it.live(
+      "does not attempt to cache the migrations catalog on a fresh volume when pg-delta is disabled",
+      () => {
+        const { layer, out, edgeRunCalls } = setup({ route: freshVolumeRoute(defaultRoute()) });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
+          expect(edgeRunCalls).toHaveLength(0);
+          expect(out.stderrText).not.toContain("failed to cache migrations catalog");
         }).pipe(Effect.provide(layer));
       },
     );
@@ -2702,8 +2869,16 @@ content_path = "./templates/custom_notice.html"
         const pullAttempts = new Map<string, number>();
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
-          // Force every image through the pull path instead of the "already cached" shortcut.
-          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+          // Force every image through the pull path instead of the "already cached" shortcut —
+          // a confirmed "no such image" (not merely a non-zero exit) is what tells
+          // `hasLocalImage` this is a genuine cache miss rather than some other inspect
+          // failure, which now fails fast instead of falling through to a pull.
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: [`Error response from daemon: No such image: ${args[2]}`],
+            };
+          }
           if (args[0] === "pull") {
             const image = args[1] ?? "";
             if (image.includes("kong")) {
@@ -2741,7 +2916,12 @@ content_path = "./templates/custom_notice.html"
         // unlike a failure inside `bringUp` itself (see the "rollback" describe block below).
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
-          if (args[0] === "image" && args[1] === "inspect") return { exitCode: 1 };
+          if (args[0] === "image" && args[1] === "inspect") {
+            return {
+              exitCode: 1,
+              stderr: [`Error response from daemon: No such image: ${args[2]}`],
+            };
+          }
           if (args[0] === "pull") {
             const image = args[1] ?? "";
             if (image.includes("kong")) {
@@ -2758,6 +2938,58 @@ content_path = "./templates/custom_notice.html"
           if (Exit.isFailure(exit)) {
             expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
           }
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
+          expect(rollbackWasAttempted(child.spawned)).toBe(false);
+        }).pipe(Effect.provide(layer));
+      },
+      45_000,
+    );
+
+    it.live(
+      "still fails when the daemon dies mid-pre-pull under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
+      () => {
+        // Go's `IsUnhealthyError` (`internal/db/start/start.go:227-231`) matches any
+        // `errors.Join`-shaped error, which accidentally includes `ensureImagesCached`'s
+        // joined pull errors — so Go with `--ignore-health-check` swallows a total pre-pull
+        // failure, prints "Started supabase local development setup." + the status table,
+        // and exits 0 with no container running. Ruled an unintended quirk (CLI-1987):
+        // this port keeps the failure fatal regardless of the flag — no success banner,
+        // no status table on stdout, and no rollback (nothing was created yet). This
+        // scenario models the daemon-becoming-unreachable trigger: `hasLocalImage`
+        // (`legacy-docker-image-resolve.ts`) fails IMMEDIATELY on a daemon-unreachable
+        // `image inspect` stderr — no registry-candidate retries, no real 4s/8s backoff
+        // sleeps (review r3689619133) — while the flagless test above already pins the
+        // other trigger, pull-retry exhaustion. Both funnel into the same joined
+        // `LegacyImagePrepullError` (`lib/image-prepull.ts`). See
+        // `legacyIsUnhealthyStartError`'s doc comment (`start.rollback.ts`) and
+        // `SIDE_EFFECTS.md`'s "Notes" before "fixing" this toward Go.
+        const base = defaultRoute();
+        const route = (args: ReadonlyArray<string>): RouteResult => {
+          if (args[0] === "image" && args[1] === "inspect") {
+            const image = args[2] ?? "";
+            if (image.includes("kong")) {
+              return {
+                exitCode: 1,
+                stderr: [
+                  "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?",
+                ],
+              };
+            }
+            return { exitCode: 1 };
+          }
+          if (args[0] === "pull") return { exitCode: 0 };
+          return base(args);
+        };
+        const { layer, out, child } = setup({ route });
+        return Effect.gen(function* () {
+          const exit = yield* Effect.exit(legacyStart(flags({ ignoreHealthCheck: true })));
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            expect(JSON.stringify(exit.cause)).toContain("LegacyImagePrepullError");
+          }
+          expect(out.stderrText).not.toContain("Started");
+          expect(out.stderrText).not.toContain("Local dev security notice");
+          expect(out.stdoutText).toBe("");
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
         }).pipe(Effect.provide(layer));
@@ -2907,7 +3139,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartNetworkCreateError");
+          expect(serialized).toContain("LegacyNetworkCreateError");
           expect(serialized).toContain("failed to create docker network");
         }
         expect(child.spawned.some((s) => s.args[0] === "create")).toBe(false);
@@ -2932,7 +3164,7 @@ content_path = "./templates/custom_notice.html"
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const serialized = JSON.stringify(exit.cause);
-          expect(serialized).toContain("LegacyStartContainerCreateError");
+          expect(serialized).toContain("LegacyContainerCreateError");
           expect(serialized).toContain("failed to create docker container");
         }
         expect(rollbackWasAttempted(child.spawned)).toBe(true);
@@ -2958,7 +3190,7 @@ content_path = "./templates/custom_notice.html"
           expect(Exit.isFailure(exit)).toBe(true);
           if (Exit.isFailure(exit)) {
             const serialized = JSON.stringify(exit.cause);
-            expect(serialized).toContain("LegacyStartContainerStartError");
+            expect(serialized).toContain("LegacyContainerStartError");
             expect(serialized).toContain("port is already allocated");
             expect(serialized).toContain(
               "Try stopping the project or container already using 0.0.0.0:54322",
@@ -3134,7 +3366,7 @@ content_path = "./templates/custom_notice.html"
           expect(rollbackWasAttempted(child.spawned)).toBe(false);
           // Reported by container name, with the recovery advice naming the image
           // Postgres's own health wait resolved for it.
-          expect(out.stderrText).toContain("supabase_db_demo: container is not ready");
+          expect(out.stderrText).toContain("supabase_db_demo container is not ready");
           expect(out.stderrText).toContain("supabase_db_demo's image");
           expect(out.stderrText).toContain("image rm -f public.ecr.aws/supabase/postgres:");
           // `--ignore-health-check` leaves the stack up, so a bare restart would be a
@@ -3201,7 +3433,7 @@ content_path = "./templates/custom_notice.html"
   // Node event-loop turns to settle — under a virtualized `TestClock` those
   // never resolve, so the forked fiber never even reaches the health-check
   // phase. This exercises the real 30s `serviceTimeout` bulk health-check
-  // wait (`lib/health-check.ts`'s default), hence the generous timeout.
+  // wait (`../../shared/db-bootstrap/health-check.ts`'s default), hence the generous timeout.
   it.live(
     "exits 0 on --ignore-health-check when a non-Postgres container never turns healthy, without rolling back",
     () => {
@@ -3240,7 +3472,7 @@ content_path = "./templates/custom_notice.html"
         expect(rollbackWasAttempted(child.spawned)).toBe(false);
         // Reported by container name, not `docker create`'s opaque id, and the
         // advice names the image actually resolved for that container.
-        expect(out.stderrText).toContain("supabase_auth_demo: container is not ready");
+        expect(out.stderrText).toContain("supabase_auth_demo container is not ready");
         expect(out.stderrText).toContain("docker image rm -f public.ecr.aws/supabase/gotrue:");
         // Go never fires `cli_stack_started` on the ignored-unhealthy
         // fallthrough (`start.go:1287` sits after the `if err != nil` block) —
@@ -3403,6 +3635,55 @@ content_path = "./templates/custom_notice.html"
         expect(kongCreate?.args[networkFlagIndex + 1]).toBe("custom-net");
       }).pipe(Effect.provide(layer));
     });
+
+    it.live("never spawns a create for a pre-created --network-id network", () => {
+      const base = defaultRoute();
+      const route = (args: ReadonlyArray<string>): RouteResult => {
+        if (args[0] === "network" && args[1] === "inspect") return { exitCode: 0 };
+        if (args[0] === "network" && args[1] === "create") {
+          return { exitCode: 1, stderr: ["error during connect: write: broken pipe"] };
+        }
+        return base(args);
+      };
+      const { layer, child } = setup({ networkId: Option.some("custom-net"), route });
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        expect(child.spawned.some((s) => s.args[0] === "network" && s.args[1] === "create")).toBe(
+          false,
+        );
+        expect(
+          child.spawned.some(
+            (s) => s.args[0] === "network" && s.args[1] === "inspect" && s.args[2] === "custom-net",
+          ),
+        ).toBe(true);
+      }).pipe(Effect.provide(layer));
+    });
+
+    it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () => {
+      // Go's `network-id` is a persistent flag bound to viper under `SetEnvPrefix("SUPABASE")`
+      // + `AutomaticEnv()` (`apps/cli-go/cmd/root.go:318-334`), and `DockerStart` reads
+      // `viper.GetString("network-id")` fresh at its own call site — well after `Config.Load`'s
+      // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is effective when the flag
+      // itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
+      const previous = process.env["SUPABASE_NETWORK_ID"];
+      process.env["SUPABASE_NETWORK_ID"] = "env-net";
+      const { layer, child } = setup();
+      return Effect.gen(function* () {
+        yield* legacyStart(flags());
+        const networkCreate = child.spawned.find(
+          (s) => s.args[0] === "network" && s.args[1] === "create",
+        );
+        expect(networkCreate?.args.at(-1)).toBe("env-net");
+      }).pipe(
+        Effect.provide(layer),
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (previous === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+            else process.env["SUPABASE_NETWORK_ID"] = previous;
+          }),
+        ),
+      );
+    });
   });
 
   describe("SUPABASE_API_PORT override", () => {
@@ -3482,19 +3763,38 @@ content_path = "./templates/custom_notice.html"
   });
 
   describe("db.root_key", () => {
-    it.live("stages a configured db.root_key as the Postgres container's pgsodium root key", () => {
-      const { layer, workdir, child } = setup({
-        configContents: 'project_id = "demo"\n[db]\nroot_key = "custom-root-key-value"\n',
-      });
-      return Effect.gen(function* () {
-        yield* legacyStart(flags());
-        const containerName = legacyServiceContainerName("db", "demo");
-        const secretDir = join(workdir, "supabase", ".temp", "start-secrets", containerName);
-        const staged = readFileSync(join(secretDir, "secret-0"), "utf8");
-        expect(staged).toBe("custom-root-key-value");
-        expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
-      }).pipe(Effect.provide(layer));
-    });
+    it.live(
+      "delivers a configured db.root_key into the Postgres container's pgsodium root key via `docker cp`, never leaving it on host disk",
+      () => {
+        const copied = new Map<string, string>();
+        const { layer, child } = setup({
+          configContents: 'project_id = "demo"\n[db]\nroot_key = "custom-root-key-value"\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
+        });
+        return Effect.gen(function* () {
+          yield* legacyStart(flags());
+          const containerName = legacyServiceContainerName("db", "demo");
+          expect(copied.get("/etc/postgresql-custom/pgsodium_root.key")).toBe(
+            "custom-root-key-value",
+          );
+          const dbCp = child.spawned.find(
+            (s) =>
+              s.args[0] === "cp" &&
+              s.args[2] ===
+                `${fakeContainerId(containerName)}:/etc/postgresql-custom/pgsodium_root.key`,
+          );
+          expect(dbCp).toBeDefined();
+          // Delivered straight into the container — the host-side temp file is removed
+          // immediately after the copy, so nothing persists on host disk afterward.
+          const dbCpHostPath = dbCp?.args[1] ?? "";
+          expect(dbCpHostPath.length > 0).toBe(true);
+          expect(existsSync(dbCpHostPath)).toBe(false);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+        }).pipe(Effect.provide(layer));
+      },
+    );
   });
 
   describe("container-not-found stderr shapes", () => {
@@ -3502,9 +3802,9 @@ content_path = "./templates/custom_notice.html"
       "brings up the stack when the DB container's inspect reports 'No such object' instead of 'No such container'",
       () => {
         // Docker/Podman report a missing container as either "No such container" or "No such
-        // object" depending on daemon version/CLI path — `isContainerNotFoundMessage` must
-        // recognize both, or `legacyStart`'s "not running, bring up the stack" branch never
-        // fires and the inspect failure propagates instead.
+        // object" depending on daemon version/CLI path — `legacyIsContainerNotFoundMessage`
+        // must recognize both, or `legacyStart`'s "not running, bring up the stack" branch
+        // never fires and the inspect failure propagates instead.
         const created = new Set<string>();
         const route = (args: ReadonlyArray<string>): RouteResult => {
           if (args[0] === "container" && args[1] === "inspect") {
@@ -4250,19 +4550,17 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "writes the embedded default cert/key when TLS is unconfigured, never empty files",
       () => {
-        const { layer, child, workdir } = setup();
+        const copied = new Map<string, string>();
+        const { layer, child } = setup({
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
+        });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-          );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          // secretFiles order in kong.service.ts: [kong.yml, localhost.crt, localhost.key].
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -4272,21 +4570,19 @@ content_path = "./templates/custom_notice.html"
     it.live(
       "falls back to the embedded default cert/key when cert_path/key_path are present but empty",
       () => {
-        const { layer, child, workdir } = setup({
+        const copied = new Map<string, string>();
+        const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = ""\nkey_path = ""\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-          );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
         }).pipe(Effect.provide(layer));
       },
     );
@@ -4298,8 +4594,12 @@ content_path = "./templates/custom_notice.html"
       () => {
         const previousCert = process.env["SUPABASE_API_TLS_CERT_PATH"];
         const previousKey = process.env["SUPABASE_API_TLS_KEY_PATH"];
+        const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
         });
         mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
         writeFileSync(
@@ -4314,15 +4614,11 @@ content_path = "./templates/custom_notice.html"
         process.env["SUPABASE_API_TLS_KEY_PATH"] = "certs/env-server.key";
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(
+            "-----BEGIN CERTIFICATE-----env-cert",
           );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe("-----BEGIN CERTIFICATE-----env-cert");
-          expect(keyContent).toBe("-----BEGIN PRIVATE KEY-----env-key");
+          expect(copied.get("/home/kong/localhost.key")).toBe("-----BEGIN PRIVATE KEY-----env-key");
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
@@ -4347,8 +4643,12 @@ content_path = "./templates/custom_notice.html"
       () => {
         const previous = process.env["SUPABASE_API_ENABLED"];
         process.env["SUPABASE_API_ENABLED"] = "false";
+        const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
+          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+            copied.set(containerPath, content);
+          }),
         });
         mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
         writeFileSync(
@@ -4361,15 +4661,9 @@ content_path = "./templates/custom_notice.html"
         );
         return Effect.gen(function* () {
           yield* legacyStart(flags());
-          const kongCreate = child.spawned.find(
-            (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
-          );
-          const kongContainerName = containerNameFromCreateArgs(kongCreate?.args ?? []);
-          const secretsDir = join(workdir, "supabase", ".temp", "start-secrets", kongContainerName);
-          const crtContent = readFileSync(join(secretsDir, "secret-1"), "utf-8");
-          const keyContent = readFileSync(join(secretsDir, "secret-2"), "utf-8");
-          expect(crtContent).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
-          expect(keyContent).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
+          expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
+          expect(copied.get("/home/kong/localhost.crt")).toBe(LEGACY_KONG_LOCAL_TLS_CERT);
+          expect(copied.get("/home/kong/localhost.key")).toBe(LEGACY_KONG_LOCAL_TLS_KEY);
         }).pipe(
           Effect.provide(layer),
           Effect.ensuring(
@@ -4515,7 +4809,7 @@ content_path = "./templates/custom_notice.html"
       () => {
         const { layer, child } = setup({
           configContents:
-            'project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "shh-do-not-tell"\n',
+            'project_id = "demo"\n[edge_runtime.secrets]\nMY_SECRET = "shh-do-not-tell"\nmy_lower_secret = "keep-me"\nEMPTY_SECRET = ""\n',
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -4528,6 +4822,14 @@ content_path = "./templates/custom_notice.html"
           expect(envFilePath).toBeDefined();
           const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
           expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
+          // Names reach the container UPPERCASED — Go's config loader applies
+          // `strings.ToUpper` to every secret key (`pkg/config/config.go:766-771`)
+          // — and empty values are skipped — Go's `set.ListSecrets` SHA256>0
+          // gate (`internal/secrets/set/set.go:48-52`), shared with
+          // `functions serve` via `toPlainEdgeRuntimeConfig`.
+          expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
+          expect(envFileContent).not.toContain("my_lower_secret=");
+          expect(envFileContent).not.toContain("EMPTY_SECRET=");
         }).pipe(Effect.provide(layer));
       },
     );

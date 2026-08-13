@@ -13,10 +13,17 @@ import { testLive } from "./live-context.ts";
 // destructive remote reset below is safe against the throwaway per-run project.
 
 // --- Local leg: db start + db reset --local against the real Docker socket -----
-// Exercises the hidden `db __db-bootstrap` Go seam end-to-end — the boundary the
-// in-process integration suites mock. The start → already-running → reset cycle
-// runs in one test so it shares a single booted stack, and `finally` stops it
-// (legacy proxies `stop` to Go) so the run never leaves containers behind.
+// Exercises `db start`'s native container-bootstrap sequence (network/volume/container
+// bring-up, health wait, the fresh-volume SetupLocalDatabase-equivalent pipeline, and
+// `_current_branch`) and `db reset --local`'s container-recreate flow end-to-end — the
+// real-Docker boundary the in-process integration suites mock. Both are fully native TS
+// now: `db reset --local`'s hidden Go `db __db-bootstrap` seam (`--mode recreate`/
+// `--mode await-storage`) was removed in CLI-1955 (see
+// `commands/db/reset/reset.handler.ts` / `shared/db-bootstrap/recreate-local-database.ts`),
+// the same way `db start`'s own seam usage was removed in CLI-1954 (see
+// `commands/db/start/start.handler.ts`). The start → already-running → reset cycle runs
+// in one test so it shares a single booted stack, and `finally` stops it (legacy proxies
+// `stop` to Go) so the run never leaves containers behind.
 describe.skipIf(TARGET === "ts-next")("db start / db reset --local (live, local Docker)", () => {
   testLive(
     "db start boots, is idempotent, and db reset --local recreates",
@@ -25,7 +32,7 @@ describe.skipIf(TARGET === "ts-next")("db start / db reset --local (live, local 
       try {
         const start = await run(["db", "start"]);
         expect(start.exitCode, start.stderr).toBe(0);
-        // Go tees bootstrap progress to stderr (mode-independent).
+        // Bootstrap progress goes to stderr on every target (Go, and native TS since CLI-1954).
         expect(`${start.stdout}${start.stderr}`).toMatch(/Starting database|Initialising schema/i);
 
         // Second start is a no-op: the db is already running, exit 0.

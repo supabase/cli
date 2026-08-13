@@ -4,8 +4,10 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 
 import {
   containerCliExitCode,
+  legacyContainerRuntimeNotFoundMessage,
   legacyDescribeContainerCliFailure,
   legacyDockerSupportsVolumePruneAllFlag,
+  legacyIsContainerNotFoundMessage,
   spawnContainerCli,
 } from "./legacy-container-cli.ts";
 
@@ -120,7 +122,7 @@ describe("containerCliExitCode", () => {
       Effect.flip,
       Effect.map((error) => {
         expect(legacyDescribeContainerCliFailure(error)).toBe(
-          "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH",
+          legacyContainerRuntimeNotFoundMessage,
         );
       }),
     );
@@ -204,7 +206,9 @@ describe("legacyDescribeContainerCliFailure", () => {
     return containerCliExitCode(mock.spawner, ["ps"]).pipe(
       Effect.flip,
       Effect.map((error) => {
-        expect(legacyDescribeContainerCliFailure(error)).toContain("docker: command not found");
+        expect(legacyDescribeContainerCliFailure(error)).toContain(
+          legacyContainerRuntimeNotFoundMessage,
+        );
       }),
     );
   });
@@ -216,5 +220,30 @@ describe("legacyDescribeContainerCliFailure", () => {
   it("stringifies a non-Error cause", () => {
     expect(legacyDescribeContainerCliFailure("boom")).toBe("boom");
     expect(legacyDescribeContainerCliFailure(42)).toBe("42");
+  });
+});
+
+describe("legacyIsContainerNotFoundMessage", () => {
+  it("recognizes Docker's uppercase shapes", () => {
+    expect(legacyIsContainerNotFoundMessage("Error: No such container: db")).toBe(true);
+    expect(legacyIsContainerNotFoundMessage("Error: No such object: db")).toBe(true);
+  });
+
+  it("recognizes Podman's lowercase shapes, case-insensitively", () => {
+    expect(legacyIsContainerNotFoundMessage("error: no such container db")).toBe(true);
+    expect(legacyIsContainerNotFoundMessage("Error: no such object: db")).toBe(true);
+  });
+
+  it("recognizes Podman's 'no container with name or ID' shape", () => {
+    expect(
+      legacyIsContainerNotFoundMessage(
+        'no container with name or ID "db" found: no such container',
+      ),
+    ).toBe(true);
+    expect(legacyIsContainerNotFoundMessage("No container with name or ID db found")).toBe(true);
+  });
+
+  it("rejects unrelated failures", () => {
+    expect(legacyIsContainerNotFoundMessage("Cannot connect to the Docker daemon")).toBe(false);
   });
 });

@@ -1,26 +1,6 @@
 [
   {
     "op": "test",
-    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/required",
-    "value": ["id", "entity_id"]
-  },
-  {
-    "op": "replace",
-    "path": "/components/schemas/ListProvidersResponse/properties/items/items/properties/saml/required",
-    "value": ["entity_id"]
-  },
-  {
-    "op": "test",
-    "path": "/components/schemas/GetProviderResponse/properties/saml/required",
-    "value": ["id", "entity_id"]
-  },
-  {
-    "op": "replace",
-    "path": "/components/schemas/GetProviderResponse/properties/saml/required",
-    "value": ["entity_id"]
-  },
-  {
-    "op": "test",
     "path": "/components/schemas/CreateProviderResponse/properties/saml/properties/attribute_mapping/required",
     "value": ["keys"]
   },
@@ -632,5 +612,80 @@
     "op": "replace",
     "path": "/components/schemas/StorageConfigResponse/required",
     "value": ["fileSizeLimit", "features", "capabilities", "external", "migrationVersion"]
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateAuthConfigBody/properties/sessions_tags/pattern",
+    "value": "^(?:\\s*|\\s*[a-zA-Z0-9_-]+(?:\\s*,+\\s*[a-zA-Z0-9_-]+)*(?:\\s*,+)?\\s*)$"
+  },
+  {
+    "op": "replace",
+    "path": "/components/schemas/UpdateAuthConfigBody/properties/sms_test_otp/pattern",
+    "value": "^(?:[0-9]{1,15}=(?:[0-9]+,[0-9]{1,15}=|[0-9]{2,}=)*[0-9]+,?)?$"
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints",
+    "$comment": "CLI-2157: the platform's v2 spec gives all 10 project-webhook operations the shared operationId \"allV2ProjectsByRefWebhooks\" (and all 10 org-webhook operations share \"allV2OrganizationsBySlugWebhooks\") — duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}",
+    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}~1deliveries",
+    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1endpoints~1{id}~1test",
+    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1deliveries~1{id}",
+    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1projects~1{ref}~1webhooks~1deliveries~1{id}~1retry",
+    "$comment": "CLI-2157: part of the project-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints",
+    "$comment": "CLI-2157: the platform's v2 spec gives all 10 org-webhook operations the shared operationId \"allV2OrganizationsBySlugWebhooks\" (and all 10 project-webhook operations share \"allV2ProjectsByRefWebhooks\") — duplicated and not version-prefixed, which breaks codegen. Remove-if-present because staging's v2-json is currently served by two backend variants that disagree on whether these paths exist."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}",
+    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}~1deliveries",
+    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1endpoints~1{id}~1test",
+    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1deliveries~1{id}",
+    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/paths/~1v2~1organizations~1{slug}~1webhooks~1deliveries~1{id}~1retry",
+    "$comment": "CLI-2157: part of the org-webhook operationId collision; see the endpoints path comment above."
+  },
+  {
+    "op": "remove",
+    "path": "/components/schemas/APIErrorObject",
+    "$comment": "CLI-2157: referenced only by the removed webhook paths (verified in prod and staging); removing it also makes the staging document deterministic."
   }
 ]

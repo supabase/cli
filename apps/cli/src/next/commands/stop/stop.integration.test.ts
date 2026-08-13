@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Effect, Exit, Layer } from "effect";
 import { BunServices } from "@effect/platform-bun";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { stop } from "./stop.handler.ts";
 import { mockOutput, withEnv } from "../../../../tests/helpers/mocks.ts";
 import {

@@ -7,7 +7,7 @@ import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { LegacyIdentityStitch } from "../shared/legacy-identity-stitch.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import { GroupOrganization, GroupProject } from "../../shared/telemetry/event-catalog.ts";
-import { legacyTempPaths } from "../shared/legacy-temp-paths.ts";
+import { legacyReadProjectRefFile, legacyTempPaths } from "../shared/legacy-temp-paths.ts";
 import { LegacyLinkedProjectCache } from "./legacy-linked-project-cache.service.ts";
 
 function readString(obj: unknown, key: string): string {
@@ -33,6 +33,17 @@ function readString(obj: unknown, key: string): string {
  * schema enforces a 20-char project-ref length that the cli-e2e replay
  * fixtures (which store `__PROJECT_REF__` placeholders) cannot satisfy.
  * The cache only needs four string fields and doesn't validate them.
+ *
+ * DELIBERATE TS DIVERGENCE FROM GO (PR #6168 review): unlike
+ * `ensureProjectGroupsCached`, which unconditionally caches whatever `ref`
+ * it's given, this additionally skips the write when `<workdir>/supabase/.temp/project-ref`
+ * exists, is non-empty, and names a DIFFERENT ref than `ref` — see the inline
+ * comment at the check itself for the exact failure mode this closes. This
+ * cache now feeds `legacyResolveLinkedParentRef`'s parent chain (CLI-2167
+ * follow-up), so correctness there is prioritized over exact
+ * telemetry-cache parity with Go (Go-authority scoping, ADR 0016) — Go never
+ * reads this file back for anything, so this file has no comparable
+ * behavior to preserve there.
  */
 export const legacyLinkedProjectCacheLayer = Layer.effect(
   LegacyLinkedProjectCache,
@@ -54,20 +65,59 @@ export const legacyLinkedProjectCacheLayer = Layer.effect(
     const { stitch } = yield* LegacyIdentityStitch;
 
     return LegacyLinkedProjectCache.of({
-      cache: (ref: string, workdir?: string) =>
+      cache: (
+        ref: string,
+        workdir?: string,
+        apiUrl?: string,
+        accessToken?: Option.Option<Redacted.Redacted<string>>,
+      ) =>
         Effect.gen(function* () {
-          const cachePath = legacyTempPaths(path, workdir ?? cliConfig.workdir).linkedProjectCache;
+          const resolvedWorkdir = workdir ?? cliConfig.workdir;
+          const cachePath = legacyTempPaths(path, resolvedWorkdir).linkedProjectCache;
           const exists = yield* fs.exists(cachePath).pipe(Effect.orElseSucceed(() => false));
           if (exists) return;
 
-          // Resolve token: env wins over keyring/file lookup (Go-parity).
-          const tokenOpt = Option.isSome(cliConfig.accessToken)
-            ? cliConfig.accessToken
-            : yield* credentials.getAccessToken;
+          // The cache must describe the LINKED WORKDIR's own state, not
+          // whatever ref the calling command happens to have resolved (PR
+          // #6168 review): a mid-flight `link --project-ref B` failure still
+          // reaches this fill via `Effect.ensuring`, and if `getProject(B)`
+          // returns 200 (e.g. B is merely paused, not gone/forbidden), this
+          // would otherwise cache B as the linked project even though
+          // `project-ref` itself was never updated to B — `link`'s own
+          // mandatory write happens BEFORE this fill can ever fire, so a
+          // `project-ref` naming something else here means the workdir is
+          // still actually linked to that something else. Skip the write
+          // entirely when the file names a DIFFERENT ref: a deliberate TS
+          // divergence from Go's `ensureProjectGroupsCached`, which caches
+          // whatever ref it's given unconditionally — this cache now feeds
+          // `legacyResolveLinkedParentRef`'s parent chain, so correctness
+          // there outweighs 1:1 telemetry-cache parity (Go-authority
+          // scoping, ADR 0016). A file that's absent entirely keeps today's
+          // behavior (falls through to the write below) — the read side
+          // (`legacyResolveLinkedParentRef`) already refuses to trust a
+          // cache with no `project-ref` file at all, so there is nothing to
+          // protect there yet.
+          const fileRef = yield* legacyReadProjectRefFile(fs, path, resolvedWorkdir).pipe(
+            Effect.orElseSucceed(() => Option.none<string>()),
+          );
+          if (Option.isSome(fileRef) && fileRef.value !== ref) return;
+
+          // Resolve token: an explicit reconciled-profile token wins outright
+          // (Some → use, None → the reconciled profile HAS no token, so skip
+          // like Go's failed lookup — never fall back to the stale profile's
+          // token, review r3684524241); otherwise env wins over keyring/file
+          // lookup (Go-parity).
+          const tokenOpt =
+            accessToken ??
+            (Option.isSome(cliConfig.accessToken)
+              ? cliConfig.accessToken
+              : yield* credentials.getAccessToken);
           if (Option.isNone(tokenOpt)) return;
           const token = Redacted.value(tokenOpt.value);
 
-          const request = HttpClientRequest.get(`${cliConfig.apiUrl}/v1/projects/${ref}`).pipe(
+          const request = HttpClientRequest.get(
+            `${apiUrl ?? cliConfig.apiUrl}/v1/projects/${ref}`,
+          ).pipe(
             HttpClientRequest.setHeader("Authorization", `Bearer ${token}`),
             HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
           );

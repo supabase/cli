@@ -1,16 +1,17 @@
 import { describe, expect, test } from "vitest";
+import { StackServiceState, type StackServiceStatus } from "@supabase/stack/effect";
 import { ConnectionInfo } from "./ConnectionInfo.tsx";
 
-function state(name: string, status: string) {
-  return {
+function state(name: string, status: StackServiceStatus, error: string | null = null) {
+  return new StackServiceState({
     name,
     status,
     pid: null,
     exitCode: null,
     restartCount: 0,
     startedAt: null,
-    error: null,
-  } as any;
+    error,
+  });
 }
 
 function collectNodes(node: unknown): Array<unknown> {
@@ -60,7 +61,7 @@ describe("StartDashboardView", () => {
     if (!("StartDashboardView" in dashboardModule)) return;
 
     const element = dashboardModule.StartDashboardView({
-      states: [state("postgres", "Failed")],
+      states: [state("postgres", "Failed", "Health check failed and restart budget was exhausted")],
       info: {
         url: "http://127.0.0.1:54321",
         dbUrl: "postgresql://postgres:postgres@127.0.0.1:54322/postgres",

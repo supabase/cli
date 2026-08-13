@@ -1,10 +1,13 @@
 import type { ServiceDef } from "@supabase/process-compose";
+import { dockerNetworkArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
+import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerRealtimeOptions {
   readonly image: string;
   readonly port: number;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly dbHost: string;
   readonly dbPort: number;
   readonly jwtSecret: string;
@@ -13,7 +16,7 @@ interface DockerRealtimeOptions {
   readonly encryptionKey: string;
   readonly secretKeyBase: string;
   readonly maxHeaderLength: number;
-  readonly networkArgs: ReadonlyArray<string>;
+  readonly platformOs: string;
   readonly dependencies: ReadonlyArray<ServiceDependency>;
 }
 
@@ -31,17 +34,15 @@ const realtimeHealthCheck = (port: number, tenantId: string): ServiceDef["health
       `http://127.0.0.1:${port}/api/ping`,
     ],
   },
-  initialDelaySeconds: 1,
-  periodSeconds: 0.5,
-  failureThreshold: 30,
+  ...stackHealthBudgets.realtime,
 });
 
 export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceDef =>
   dockerRunService({
     name: "realtime",
-    containerName: `supabase-realtime-${opts.apiPort}`,
+    identity: opts.identity,
     image: opts.image,
-    networkArgs: opts.networkArgs,
+    networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     env: {
       PORT: String(opts.port),
       DB_HOST: opts.dbHost,
@@ -63,6 +64,6 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
       RUN_JANITOR: "true",
       MAX_HEADER_LENGTH: String(opts.maxHeaderLength),
     },
-    dependsOn: opts.dependencies,
+    dependencies: opts.dependencies,
     healthCheck: realtimeHealthCheck(opts.port, opts.tenantId),
   });

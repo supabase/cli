@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Layer, Option } from "effect";
+import { CliArgs } from "../cli/cli-args.service.ts";
 import {
   LEGACY_GLOBAL_FLAGS,
   LegacyAgentFlag,
@@ -13,6 +14,7 @@ import {
   LegacyWorkdirFlag,
   LegacyYesFlag,
   legacyGlobalFlagValues,
+  legacyResolveDebugWithProjectEnv,
 } from "./global-flags.ts";
 
 describe("legacyGlobalFlagValues", () => {
@@ -80,4 +82,51 @@ describe("legacyGlobalFlagValues", () => {
       ),
     );
   });
+});
+
+describe("legacyResolveDebugWithProjectEnv", () => {
+  it.live(
+    "ignores a --debug=false-style token after the -- operand terminator (not an explicit false)",
+    () => {
+      // `LegacyDebugFlag: true` stands in for a REAL `--debug` occurrence before the `--`
+      // terminator; the trailing `--debug=false` is a positional operand (e.g. a migration
+      // name that happens to look like a flag) — `legacyDebugFlagExplicitlyFalse`'s
+      // `argsBeforeOperandTerminator` guard must never see it, so the resolved value stays
+      // the flag's own `true` rather than being flipped to `false`.
+      const layer = Layer.mergeAll(
+        Layer.succeed(LegacyDebugFlag, true),
+        Layer.succeed(CliArgs, { args: ["db", "pull", "--", "--debug=false"] }),
+      );
+      return legacyResolveDebugWithProjectEnv({}).pipe(
+        Effect.provide(layer),
+        Effect.tap((resolved) =>
+          Effect.sync(() => {
+            expect(resolved).toBe(true);
+          }),
+        ),
+      );
+    },
+  );
+
+  it.live(
+    "ignores a --debug=false token consumed as another flag's value (e.g. --password)",
+    () => {
+      // `--password` is a `VALUE_CONSUMING_LONG_FLAGS` entry, so real pflag semantics parse
+      // `--password --debug=false` as `--password`'s space-separated value being the literal
+      // string `"--debug=false"`, not a changed `--debug` — `nonValueConsumedTokens` must skip
+      // it, so the resolved value stays the flag's own `true`.
+      const layer = Layer.mergeAll(
+        Layer.succeed(LegacyDebugFlag, true),
+        Layer.succeed(CliArgs, { args: ["db", "pull", "--password", "--debug=false"] }),
+      );
+      return legacyResolveDebugWithProjectEnv({}).pipe(
+        Effect.provide(layer),
+        Effect.tap((resolved) =>
+          Effect.sync(() => {
+            expect(resolved).toBe(true);
+          }),
+        ),
+      );
+    },
+  );
 });

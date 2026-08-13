@@ -1,11 +1,13 @@
 import { execSync, spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, test } from "vitest";
 
+import { LEGACY_START_KONG_YML_TEMPLATE } from "../../legacy/commands/start/templates/kong.yml.ts";
 import { LEGACY_EDGE_RUNTIME_IMAGE } from "../../legacy/shared/legacy-edge-runtime-image.ts";
+import { ensureImage, resolveDeadline } from "../../../tests/helpers/docker-image.ts";
 import { dockerfileServiceImage } from "../services/dockerfile-images.ts";
 import { bundleServeMainTemplate } from "./serve-main-bundler.ts";
 
@@ -33,8 +35,10 @@ function hasDocker(): boolean {
 
 const dockerAvailable = hasDocker();
 const SERVE_OFFLINE_STARTUP_TIMEOUT_MS = 60_000;
-const SERVE_OFFLINE_TEST_TIMEOUT_MS = 120_000;
-const LEGACY_KONG_IMAGE = `public.ecr.aws/supabase/${dockerfileServiceImage("kong").replace(/^.*\//, "")}`;
+// Cold-cache image resolution (up to one shared 90s resolveDeadline budget)
+// runs inside the test body, ahead of the 60s startup wait — the test budget
+// must cover both stacked, or a healthy near-cap pull trips vitest first.
+const SERVE_OFFLINE_TEST_TIMEOUT_MS = 180_000;
 const AUTH_FUNCTIONS_CONFIG = JSON.stringify({
   test: {
     entrypointPath: "/tmp/test/index.ts",
@@ -114,12 +118,14 @@ function containerLogs(container: string): string {
 }
 
 async function writeKongConfig(dir: string, edgeRuntimeContainer: string) {
-  const template = await readFile(
-    new URL("../../../../cli-go/internal/start/templates/kong.yml", import.meta.url),
-    "utf8",
-  );
-  const config = template
-    .replaceAll("{{ .EdgeRuntimeId }}", edgeRuntimeContainer)
+  // Was: read straight from apps/cli-go/internal/start/templates/kong.yml. That
+  // package was deleted outright (CLI-1966; unreachable from the TS CLI, directly
+  // or indirectly), so this now uses the TS transcription of the same template
+  // that legacy `start`'s Kong service already ports byte-for-byte.
+  const config = LEGACY_START_KONG_YML_TEMPLATE.replaceAll(
+    "{{ .EdgeRuntimeId }}",
+    edgeRuntimeContainer,
+  )
     .replaceAll("{{ .BearerToken }}", "$((headers.authorization or headers.apikey))")
     .replaceAll("{{ .QueryToken }}", "$((query_params.apikey))")
     .replace(/{{ \.[A-Za-z]+ }}/g, "unused");
@@ -131,6 +137,7 @@ describe("functions serve runtime template (offline)", () => {
     "boots under edge-runtime with networking disabled and fetches nothing remote",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
+      const runtimeImage = await ensureImage(LEGACY_EDGE_RUNTIME_IMAGE);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-offline-e2e-"));
       const container = `supabase-serve-offline-e2e-${process.pid.toString()}`;
       try {
@@ -159,7 +166,7 @@ describe("functions serve runtime template (offline)", () => {
             `${dir}:/app:ro`,
             "--entrypoint",
             "edge-runtime",
-            LEGACY_EDGE_RUNTIME_IMAGE,
+            runtimeImage,
             "start",
             "--main-service=/app",
             "--port=8081",
@@ -194,6 +201,7 @@ describe("functions serve runtime template (offline)", () => {
     "returns canonical JWT auth failures",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
+      const runtimeImage = await ensureImage(LEGACY_EDGE_RUNTIME_IMAGE);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-auth-e2e-"));
       const container = `supabase-serve-auth-e2e-${process.pid.toString()}`;
       try {
@@ -224,7 +232,7 @@ describe("functions serve runtime template (offline)", () => {
             `${dir}:/app:ro`,
             "--entrypoint",
             "edge-runtime",
-            LEGACY_EDGE_RUNTIME_IMAGE,
+            runtimeImage,
             "start",
             "--main-service=/app",
             "--port=8081",
@@ -275,6 +283,11 @@ describe("functions serve runtime template (offline)", () => {
     "preserves function CORS headers and exposes JWT errors through Kong",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
+      const imageDeadline = resolveDeadline();
+      const [runtimeImage, kongImage] = await Promise.all([
+        ensureImage(LEGACY_EDGE_RUNTIME_IMAGE, imageDeadline),
+        ensureImage(dockerfileServiceImage("kong"), imageDeadline),
+      ]);
       const dir = await mkdtemp(join(tmpdir(), "supabase-serve-kong-e2e-"));
       const network = `supabase-serve-kong-e2e-${process.pid.toString()}`;
       const runtimeContainer = `${network}-runtime`;
@@ -315,7 +328,7 @@ describe("functions serve runtime template (offline)", () => {
             `${dir}:/app:ro`,
             "--entrypoint",
             "edge-runtime",
-            LEGACY_EDGE_RUNTIME_IMAGE,
+            runtimeImage,
             "start",
             "--main-service=/app",
             "--port=8081",
@@ -345,7 +358,7 @@ describe("functions serve runtime template (offline)", () => {
             "KONG_NGINX_WORKER_PROCESSES=1",
             "-v",
             `${join(dir, "kong.yml")}:/home/kong/kong.yml:ro`,
-            LEGACY_KONG_IMAGE,
+            kongImage,
             "kong",
             "docker-start",
           ],

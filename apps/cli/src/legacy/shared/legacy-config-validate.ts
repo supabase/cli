@@ -1,5 +1,12 @@
+import { statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityFingerprintId,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
 import { legacyGoUrlParse } from "./legacy-storage-url.ts";
 
 /**
@@ -161,7 +168,12 @@ export function legacyParseGoBool(value: string): boolean | undefined {
  * `.toThrow("substring")`), so swapping their inline `throw new Error(...)` calls for this class
  * is a byte-identical, purely internal refactor.
  */
-export class LegacyConfigValidateError extends Error {}
+export class LegacyConfigValidateError extends Error {
+  static readonly [ErrorActionabilityFingerprintId] = "LegacyConfigValidateError";
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidConfig;
+  }
+}
 
 /** One `[api.tls]` section, post-env-override. See {@link LegacyConfigValidationInput}. */
 export interface LegacyApiInput {
@@ -727,9 +739,7 @@ export function legacySigningKeysDecodeErrorMessage(cause: unknown): string {
  * when `content` is ALSO set) always wins — Go does not reject "both set", `content_path`
  * silently wins/overwrites.
  *
- * `base` is caller-resolved: TEMPLATE section → workdir; NOTIFICATION section →
- * join(workdir, "supabase") (this asymmetry is real, intentional Go behavior — config.go's own
- * FIXME comment flags it, do not "fix" it).
+ * `base` is the caller-resolved project root for both templates and notifications.
  */
 export function legacyResolveEmailTemplateContentPath(args: {
   readonly section: "template" | "notification";
@@ -748,7 +758,35 @@ export function legacyResolveEmailTemplateContentPath(args: {
     }
     return undefined;
   }
+  if (args.section === "notification") {
+    return legacyResolveNotificationContentPath(args.base, args.contentPath);
+  }
   return isAbsolute(args.contentPath) ? args.contentPath : join(args.base, args.contentPath);
+}
+
+/**
+ * Notification `content_path` resolution with the legacy fallback. Older
+ * scaffolds documented these paths relative to `supabase/` (the file lives at
+ * `<root>/supabase/templates/...` while config says `./templates/...`).
+ * Project-root resolution is canonical; when the root-resolved file is
+ * missing but the supabase-relative one exists, that path wins so existing
+ * configs keep working. Shared by config validation, `config push` content
+ * loading, and the Kong template mount builder so every consumer sees the
+ * SAME file.
+ */
+export function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
+  if (isAbsolute(contentPath)) return contentPath;
+  const resolved = join(base, contentPath);
+  if (!legacyIsExistingFile(resolved)) {
+    const legacyResolved = join(base, "supabase", contentPath);
+    if (legacyIsExistingFile(legacyResolved)) return legacyResolved;
+  }
+  return resolved;
+}
+
+/** A directory at the root-resolved path must not suppress the legacy-file fallback. */
+function legacyIsExistingFile(path: string): boolean {
+  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
 }
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */

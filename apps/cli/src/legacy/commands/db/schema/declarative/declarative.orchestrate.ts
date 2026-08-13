@@ -1,10 +1,15 @@
-import { Effect, FileSystem } from "effect";
+import { Effect, FileSystem, Path } from "effect";
 
 import {
   type LegacyPgDeltaContext,
   legacyDeclarativeExportPgDelta,
   legacyDiffPgDelta,
-} from "../../shared/legacy-pgdelta.ts";
+} from "../../../../shared/legacy-pgdelta.ts";
+import {
+  type LegacySetupInputs,
+  legacyGetMigrationsCatalogRef,
+} from "../../../../shared/legacy-pgdelta.cache.ts";
+import type { LegacyDbTomlValues } from "../../../../shared/legacy-db-config.toml-read.ts";
 import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
 import { LegacyDeclarativeSeam } from "../../shared/legacy-pgdelta.seam.service.ts";
 import { legacyFindDropStatements } from "../../../../shared/legacy-sql-split.ts";
@@ -39,14 +44,30 @@ export interface LegacyDeclarativeSyncResult {
 /**
  * Computes the diff between local migrations state and the declarative schema.
  * Mirrors Go's `DiffDeclarativeToMigrations` (`declarative.go:170`): the
- * migrations catalog (source) and declarative catalog (target) are provisioned
- * via the Go seam (shadow DB + `SetupDatabase` + migrate / apply), then diffed
- * natively with pg-delta.
+ * declarative catalog (target) is still provisioned via the Go seam (shadow DB +
+ * `SetupDatabase` + declarative apply); the migrations catalog (source) resolves
+ * natively (CLI-1959 cache mechanics) via `legacyGetMigrationsCatalogRef`, which
+ * mirrors Go's `getMigrationsCatalogRef` (`declarative.go:368-430`) exactly —
+ * including its own shadow provisioning, which is now ALSO native (CLI-1956: the
+ * same `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`/
+ * `legacyRemoveShadowDatabase` primitives `db diff`/`db pull` use for their own
+ * shadow, not the retired `db __shadow` seam — see
+ * `legacy-pgdelta.cache.ts`'s `exportViaShadowCatalog` doc comment). Both catalogs
+ * are then diffed natively with pg-delta, as before.
+ *
+ * `toml` is the caller's own already-loaded `config.toml` read
+ * (`legacyReadDbToml`'s result), threaded through to
+ * `legacyGetMigrationsCatalogRef` for the migrations-catalog shadow's own
+ * container spec — distinct from `setupInputs`, the cache-key/baseline-setup
+ * subset of the same config.
  */
 export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
   run: LegacyDeclarativeRunContext,
+  toml: LegacyDbTomlValues,
+  setupInputs: LegacySetupInputs,
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const seam = yield* LegacyDeclarativeSeam;
 
   const exists = yield* fs.exists(run.declarativeDir).pipe(Effect.orElseSucceed(() => false));
@@ -59,7 +80,10 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
     );
   }
 
-  const sourceRef = yield* seam.exportCatalog({ mode: "migrations", noCache: run.noCache });
+  const sourceRef = yield* legacyGetMigrationsCatalogRef(fs, path, run.pgDelta, toml, setupInputs, {
+    noCache: run.noCache,
+    ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
+  });
   const targetRef = yield* seam.exportCatalog({ mode: "declarative", noCache: run.noCache });
   const diff = yield* legacyDiffPgDelta(run.pgDelta, {
     sourceRef,

@@ -21,7 +21,7 @@ import { legacySnippetsList } from "./list.handler.ts";
 
 type SnippetsResponse = typeof V1ListAllSnippetsOutput.Type;
 
-const SNIPPET_ID = "00000000-0000-0000-0000-000000000001";
+const SNIPPET_ID = "00000000-0000-4000-8000-000000000001";
 
 const SNIPPET_BASE = {
   id: SNIPPET_ID,
@@ -76,7 +76,10 @@ const EMPTY_RESPONSE: SnippetsResponse = {
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
   goOutput?: "env" | "pretty" | "json" | "toml" | "yaml";
-  response?: SnippetsResponse;
+  // The handler consumes the raw JSON body (schema-bypass, see the handler's
+  // tolerant accessors), so tests may pass shapes the generated schema would
+  // reject — e.g. snippets without the `description` key.
+  response?: SnippetsResponse | { readonly data: ReadonlyArray<Record<string, unknown>> };
   status?: number;
   network?: "fail";
 }
@@ -196,12 +199,56 @@ describe("legacy snippets list integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml emits the response", () => {
-    const { layer, out } = setup({ goOutput: "toml" });
+  it.live("Go --output=toml fails like Go when a snippet carries a description", () => {
+    // Go's BurntSushi encoder refuses the `nullable.Nullable[string]`
+    // description field (`map[bool]string`) — `snippets list -o toml` fails
+    // with this exact message whenever any snippet has a `description` key
+    // (present-with-value or explicit null), verified against apps/cli-go.
+    const { layer } = setup({ goOutput: "toml" });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacySnippetsList({ projectRef: Option.none() }));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const dump = JSON.stringify(exit.cause);
+        expect(dump).toContain("LegacySnippetsTomlEncodeError");
+        expect(dump).toContain(
+          "failed to output toml: toml: cannot encode a map with non-string key type",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("Go --output=toml emits Go-shaped bytes when no snippet has a description", () => {
+    // In practice the Management API always includes `description` (the
+    // schema marks it required, value-or-null), so this success branch is
+    // realistically unreachable in production — Go fails there too. It is
+    // kept to pin the encoder bytes for the shape where the key is absent.
+    const { description: _omitted, ...withoutDescription } = SNIPPET_BASE;
+    const { layer, out } = setup({
+      goOutput: "toml",
+      response: { data: [withoutDescription] },
+    });
     return Effect.gen(function* () {
       yield* legacySnippetsList({ projectRef: Option.none() });
-      expect(out.stdoutText.length).toBeGreaterThan(0);
-      expect(out.stdoutText).toContain(SNIPPET_ID);
+      // PascalCase Go field names, sub-tables after primitives, 2-space indent.
+      expect(out.stdoutText).toBe(`[[Data]]
+  Favorite = false
+  Id = "${SNIPPET_ID}"
+  InsertedAt = "2023-10-13T17:48:58.491Z"
+  Name = "Create table"
+  Type = "sql"
+  UpdatedAt = "2023-10-13T17:48:58.491Z"
+  Visibility = "user"
+  [Data.Owner]
+    Id = 7.0
+    Username = "supaseed"
+  [Data.Project]
+    Id = 1.0
+    Name = "Proj"
+  [Data.UpdatedBy]
+    Id = 7.0
+    Username = "supaseed"
+`);
     }).pipe(Effect.provide(layer));
   });
 

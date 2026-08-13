@@ -19,12 +19,11 @@ const VALID_PROVIDER_ID = "b5ae62f9-ef1d-4f11-a02b-731c8bbb11e8";
 const PROVIDER = {
   id: VALID_PROVIDER_ID,
   saml: {
-    id: "8682fcf4-4056-455c-bd93-f33295604929",
     entity_id: "https://example.com",
     metadata_url: "https://example.com",
     metadata_xml: '<?xml version="2.0"?>',
   },
-  domains: [{ id: "d1", domain: "example.com" }],
+  domains: [{ domain: "example.com" }],
   created_at: "2023-03-28T13:50:14.464Z",
   updated_at: "2023-03-28T13:50:14.464Z",
 };
@@ -174,7 +173,7 @@ describe("legacy sso show integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=json encodes response", () => {
+  it.live("Go --output=json encodes response with Go's HTML escaping", () => {
     const { layer, out } = setup({ goOutput: "json" });
     return Effect.gen(function* () {
       yield* legacySsoShow({
@@ -184,10 +183,14 @@ describe("legacy sso show integration", () => {
       });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      // Go's json.Encoder escapes `<` / `>` / `&` by default (CLI-1975), so
+      // metadata_xml must carry \u003c-style escapes byte-for-byte.
+      expect(out.stdoutText).toContain('"metadata_xml": "\\u003c?xml version=\\"2.0\\"?\\u003e"');
+      expect(out.stdoutText).not.toContain('"metadata_xml": "<?xml');
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=yaml encodes response", () => {
+  it.live("Go --output=yaml encodes the provider with yaml.v3's byte shape", () => {
     const { layer, out } = setup({ goOutput: "yaml" });
     return Effect.gen(function* () {
       yield* legacySsoShow({
@@ -195,11 +198,26 @@ describe("legacy sso show integration", () => {
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      // Byte-exact Go parity (CLI-1975): lowercased Go field names, explicit
+      // nulls for nil pointers, 4-column nesting, quoted string timestamps.
+      expect(out.stdoutText).toBe(`createdat: "2023-03-28T13:50:14.464Z"
+domains:
+    - createdat: null
+      domain: example.com
+      updatedat: null
+id: ${VALID_PROVIDER_ID}
+saml:
+    attributemapping: null
+    entityid: https://example.com
+    metadataurl: https://example.com
+    metadataxml: <?xml version="2.0"?>
+    nameidformat: null
+updatedat: "2023-03-28T13:50:14.464Z"
+`);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("Go --output=toml encodes response", () => {
+  it.live("Go --output=toml encodes the provider with BurntSushi's byte shape", () => {
     const { layer, out } = setup({ goOutput: "toml" });
     return Effect.gen(function* () {
       yield* legacySsoShow({
@@ -207,7 +225,20 @@ describe("legacy sso show integration", () => {
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
+      // Byte-exact Go parity (CLI-1975): PascalCase Go field names, nil
+      // pointers omitted, sub-tables after primitives.
+      expect(out.stdoutText).toBe(`CreatedAt = "2023-03-28T13:50:14.464Z"
+Id = "${VALID_PROVIDER_ID}"
+UpdatedAt = "2023-03-28T13:50:14.464Z"
+
+[[Domains]]
+  Domain = "example.com"
+
+[Saml]
+  EntityId = "https://example.com"
+  MetadataUrl = "https://example.com"
+  MetadataXml = "<?xml version=\\"2.0\\"?>"
+`);
     }).pipe(Effect.provide(layer));
   });
 

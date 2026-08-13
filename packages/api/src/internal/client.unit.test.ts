@@ -1,5 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { Effect, Exit, Layer, Option, Redacted } from "effect";
+import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
@@ -8,7 +9,11 @@ import * as UrlParams from "effect/unstable/http/UrlParams";
 import * as Schema from "effect/Schema";
 
 import { operationDefinitions } from "../generated/contracts.ts";
-import { makeSupabaseApiClient } from "./client.ts";
+import {
+  makeSupabaseApiClient,
+  markSupabaseApiInputErrorAsUserInput,
+  SupabaseApiInputError,
+} from "./client.ts";
 
 const textDecoder = new TextDecoder();
 
@@ -155,6 +160,83 @@ const config = {
 } as const;
 
 describe("makeSupabaseApiClient", () => {
+  test("defaults request-schema failures to generated-client provenance", async () => {
+    let requests = 0;
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
+            return Effect.succeed(jsonResponse(request, 200, {}));
+          }),
+        ),
+      ),
+    );
+
+    const executeError = await Effect.runPromise(
+      client
+        .execute(operationDefinitions.v1DeleteAFunction, {
+          ref: "invalid-ref",
+          function_slug: "hello-world",
+        })
+        .pipe(Effect.flip),
+    );
+    const executeRawError = await Effect.runPromise(
+      client
+        .executeRaw(operationDefinitions.v1DeleteAFunction, {
+          ref: "invalid-ref",
+          function_slug: "hello-world",
+        })
+        .pipe(Effect.flip),
+    );
+
+    for (const error of [executeError, executeRawError]) {
+      expect(error).toBeInstanceOf(SupabaseApiInputError);
+      if (!(error instanceof SupabaseApiInputError)) {
+        throw new Error("expected SupabaseApiInputError");
+      }
+      expect(error.source).toBe("generated_client");
+    }
+
+    if (!(executeRawError instanceof SupabaseApiInputError)) {
+      throw new Error("expected SupabaseApiInputError");
+    }
+    expect(markSupabaseApiInputErrorAsUserInput(executeRawError)).toBe(executeRawError);
+    expect(executeRawError.source).toBe("user_input");
+    expect(requests).toBe(0);
+  });
+
+  test("fails request-body construction before sending a request", async () => {
+    class BrokenBlob extends Blob {
+      override arrayBuffer(): Promise<ArrayBuffer> {
+        return Promise.reject(new Error("body read failed"));
+      }
+    }
+
+    let requests = 0;
+    const error = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.executeRaw(operationDefinitions.v1CreateAFunction, {
+            ref: "abcdefghijklmnopqrst",
+            slug: "demo",
+            body: new BrokenBlob([]),
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) => {
+            requests += 1;
+            return Effect.succeed(functionResponse(request, 201));
+          }),
+        ),
+        Effect.flip,
+      ),
+    );
+
+    expect(error).toBeInstanceOf(HttpBody.HttpBodyError);
+    expect(requests).toBe(0);
+  });
+
   test("retries transport errors for POST requests", async () => {
     let attempts = 0;
 
@@ -384,6 +466,71 @@ describe("makeSupabaseApiClient", () => {
         secret_jwt_template: { role: "service_role" },
       },
     ]);
+  });
+
+  // Both payloads are the shapes reported against 2.112.0, where the spec's
+  // Z-anchored pattern rejected them and broke `link` and `branches list`
+  // outright (supabase/cli#6115).
+  test("decodes timestamps with a numeric UTC offset", async () => {
+    const apiKeys = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1GetProjectApiKeys">(operationDefinitions.v1GetProjectApiKeys, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, [
+                {
+                  name: "anon",
+                  type: "legacy",
+                  api_key: "anon-key",
+                  inserted_at: "2026-05-01T08:00:00+00:00",
+                  updated_at: "2026-05-01T08:00:00.123456+02:00",
+                },
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(apiKeys[0]?.inserted_at).toBe("2026-05-01T08:00:00+00:00");
+    expect(apiKeys[0]?.updated_at).toBe("2026-05-01T08:00:00.123456+02:00");
+
+    const branches = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v1ListAllBranches">(operationDefinitions.v1ListAllBranches, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, [
+                {
+                  id: "6f8f9d2c-1f43-4b8a-9d0e-3a2b1c4d5e6f",
+                  name: "preview",
+                  project_ref: "abcdefghijklmnopqrst",
+                  parent_project_ref: "tsrqponmlkjihgfedcba",
+                  is_default: false,
+                  persistent: false,
+                  status: "MIGRATIONS_PASSED",
+                  with_data: false,
+                  created_at: "2026-08-06T19:27:30.261795+00:00",
+                  updated_at: "2026-08-06T19:27:30.261795+00:00",
+                },
+              ]),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(branches[0]?.created_at).toBe("2026-08-06T19:27:30.261795+00:00");
   });
 
   test("accepts missing custom-hostname SSL validation records", async () => {
@@ -642,7 +789,7 @@ describe("makeSupabaseApiClient", () => {
           client.execute<"v1ExchangeOauthToken">(operationDefinitions.v1ExchangeOauthToken, {
             body: {
               grant_type: "authorization_code",
-              client_id: "11111111-1111-1111-1111-111111111111",
+              client_id: "11111111-1111-4111-8111-111111111111",
               client_secret: "client-secret",
               code: "auth-code",
               code_verifier: "code-verifier",
@@ -670,7 +817,7 @@ describe("makeSupabaseApiClient", () => {
 
     const body = new URLSearchParams(requestBodyText(seenRequest!));
     expect(body.get("grant_type")).toBe("authorization_code");
-    expect(body.get("client_id")).toBe("11111111-1111-1111-1111-111111111111");
+    expect(body.get("client_id")).toBe("11111111-1111-4111-8111-111111111111");
     expect(body.get("client_secret")).toBe("client-secret");
     expect(body.get("code")).toBe("auth-code");
     expect(body.get("code_verifier")).toBe("code-verifier");
@@ -868,5 +1015,132 @@ describe("makeSupabaseApiClient", () => {
         },
       }),
     ).toThrow();
+  });
+
+  test("surfaces a 404 on a v2 operation as a distinguishable status error and wires the request identically to v1", async () => {
+    let seenRequest: HttpClientRequest.HttpClientRequest | undefined;
+
+    const client = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.provide(
+          httpClientLayer((request) => {
+            seenRequest = request;
+            return Effect.succeed(
+              jsonResponse(request, 404, { message: "Organization not found" }),
+            );
+          }),
+        ),
+      ),
+    );
+
+    const error = await Effect.runPromise(
+      client
+        .execute(operationDefinitions.v2ListOrganizationMembers, { slug: "my-org" })
+        .pipe(Effect.flip),
+    );
+
+    expect(HttpClientError.isHttpClientError(error)).toBe(true);
+    if (!HttpClientError.isHttpClientError(error)) {
+      throw new Error("expected HttpClientError");
+    }
+    expect(error.reason._tag).toBe("StatusCodeError");
+    if (error.reason._tag !== "StatusCodeError") {
+      throw new Error("expected StatusCodeError");
+    }
+    expect(error.reason.response.status).toBe(404);
+
+    expect(seenRequest).toBeDefined();
+    expect(seenRequest?.url).toBe("https://api.supabase.com/v2/organizations/my-org/members");
+    expect(seenRequest?.headers.authorization).toBe("Bearer test-token");
+  });
+
+  test("decodes a nested v2GetProjectConfig payload through the unified execute path", async () => {
+    const result = await Effect.runPromise(
+      makeSupabaseApiClient(config).pipe(
+        Effect.flatMap((client) =>
+          client.execute<"v2GetProjectConfig">(operationDefinitions.v2GetProjectConfig, {
+            ref: "abcdefghijklmnopqrst",
+          }),
+        ),
+        Effect.provide(
+          httpClientLayer((request) =>
+            Effect.succeed(
+              jsonResponse(request, 200, {
+                data: {
+                  type: "project_config",
+                  id: "abcdefghijklmnopqrst",
+                  attributes: {
+                    database: {
+                      ssl_enforced: true,
+                      network_restrictions: {
+                        entitlement: "disallowed",
+                        status: "stored",
+                        allowed_cidrs: [],
+                      },
+                      postgres_settings: {},
+                    },
+                    pooler: {
+                      pool_mode: "transaction",
+                      ignore_startup_parameters: "",
+                      server_idle_timeout: 0,
+                      server_lifetime: 0,
+                      query_wait_timeout: 0,
+                      reserve_pool_size: 0,
+                      default_pool_size: 0,
+                      max_client_conn: 0,
+                    },
+                    auth: {},
+                    api: {
+                      db_schema: "public",
+                      db_extra_search_path: "",
+                      max_rows: 1000,
+                      db_pool_acquisition_timeout: 0,
+                      db_pool: null,
+                    },
+                    realtime: {
+                      private_only: false,
+                      max_concurrent_users: 0,
+                      max_events_per_second: 0,
+                      max_bytes_per_second: 0,
+                      max_channels_per_client: 0,
+                      max_joins_per_second: 0,
+                      max_presence_events_per_second: 0,
+                      max_payload_size_in_kb: 0,
+                      presence_enabled: true,
+                      suspend: false,
+                      connection_pool: 0,
+                      postgres_changes_pool: null,
+                    },
+                    storage: {
+                      file_size_limit: 0,
+                      features: {
+                        image_transformation: { enabled: true },
+                        s3_protocol: { enabled: true },
+                        purge_cache: { enabled: true },
+                        iceberg_catalog: {
+                          enabled: false,
+                          max_namespaces: 0,
+                          max_tables: 0,
+                          max_catalogs: 0,
+                        },
+                        vector_buckets: { enabled: false, max_buckets: 0, max_indexes: 0 },
+                      },
+                      capabilities: { list_v2: true, iceberg_catalog: true },
+                      upstream_target: "main",
+                      migration_version: "1",
+                      database_pool_mode: "transaction",
+                    },
+                  },
+                },
+              }),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    expect(result.data.attributes.database.network_restrictions.entitlement).toBe("disallowed");
+    expect(result.data.attributes.storage.upstream_target).toBe("main");
+    expect(result.data.attributes.api.db_pool).toBeNull();
   });
 });

@@ -66,11 +66,18 @@ Indented JSON (`json.MarshalIndent(resp, "", "  ")` equivalent) of the full back
 
 ### `--output yaml`
 
-YAML document (`yaml@2` equivalent of Go's `yaml.v3`) of the full backup response.
+YAML document matching Go's `yaml.v3` output byte-for-byte (CLI-1975): keys are
+the lowercased Go struct field names (`walgenabled`, `physicalbackupdata`), nil
+pointers render as explicit `null`, and nested mappings use yaml.v3's 4-column
+indentation.
 
 ### `--output toml`
 
-TOML document (`smol-toml` equivalent of Go's `BurntSushi/toml`) of the full backup response. JSON shape is preserved; leaf order may differ from Go.
+TOML document matching Go's `BurntSushi/toml` output byte-for-byte (CLI-1975):
+keys are the PascalCase Go struct field names (`WalgEnabled`,
+`[PhysicalBackupData]`), nil pointer fields are omitted, and sub-tables follow
+the primitive keys with 2-space indentation. An empty `backups` array is
+treated as Go's nil slice (omitted).
 
 ### `--output env`
 

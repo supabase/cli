@@ -200,12 +200,17 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         return { status: response.status, body: text };
       }).pipe(
         Effect.mapError(
-          (cause) => new LegacyDbQueryExecError({ message: `failed to execute query: ${cause}` }),
+          (cause) =>
+            new LegacyDbQueryExecError({
+              message: `failed to execute query: ${cause}`,
+              transport: true,
+            }),
         ),
       );
       if (status !== 201) {
         return yield* Effect.fail(
           new LegacyDbQueryUnexpectedStatusError({
+            status,
             message: `unexpected status ${status}: ${body}`,
           }),
         );
@@ -255,6 +260,18 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       );
     }
 
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
+      return yield* Effect.fail(
+        new LegacyDbQueryMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
     // PreRun parity: for --linked, Go checks the access token and loads the project
     // ref BEFORE RunE's ResolveSQL (`cmd/db.go`), so a missing `--file` or a blocking
     // stdin pipe must not mask the expected login / not-linked error. Run that
@@ -275,7 +292,7 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       //    surfaces `failed to load project ref` on a real (non-not-exist) ref-file
       //    read error rather than masking it as not-linked (the soft `resolveOptional`
       //    swallows that to None; `cmd/utils/flags/project_ref.go:70-75`).
-      const ref = yield* projectRef.loadProjectRef(Option.none());
+      const ref = yield* projectRef.loadProjectRef(flags.projectRef);
       // Record the ref now (Go's `LoadProjectRef` sets `flags.ProjectRef` here),
       // so the linked-project cache finalizer fires even if the DB resolution or
       // token check below fails.
@@ -286,7 +303,12 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       //    login role must be minted (matching Go), so this stays before the token-only
       //    check. The linked query itself uses the Management API, so the resolved
       //    connection is discarded — this runs purely for Go's pre-run failures.
-      yield* resolver.resolve({ dbUrl: Option.none(), connType: "linked", dnsResolver });
+      yield* resolver.resolve({
+        dbUrl: Option.none(),
+        connType: "linked",
+        dnsResolver,
+        linkedProjectRef: flags.projectRef,
+      });
       // 3. Command `PreRunE` token check (`cmd/db.go:303`): Go still requires a token
       //    for the Management API query even when config resolved without minting a
       //    login role (e.g. a direct `DB_PASSWORD` was set), so keep this — but after

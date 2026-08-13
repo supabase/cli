@@ -69,17 +69,6 @@ describe("LogBuffer", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("truncate clears buffer", () =>
-    Effect.gen(function* () {
-      const log = yield* LogBuffer;
-      yield* log.append("svc", "stdout", "line1");
-      yield* log.append("svc", "stdout", "line2");
-      yield* log.truncate("svc");
-      const entries = yield* log.history("svc");
-      expect(entries).toHaveLength(0);
-    }).pipe(Effect.provide(layer)),
-  );
-
   it.live("subscribeAll receives entries from all services", () =>
     Effect.gen(function* () {
       const log = yield* LogBuffer;

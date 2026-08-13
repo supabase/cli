@@ -1,11 +1,13 @@
 import { Layer } from "effect";
 
+import { legacyHttpClientLayer } from "../../auth/legacy-http-debug.layer.ts";
 import { commandRuntimeLayer } from "../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../shared/runtime/stdin.layer.ts";
 import { legacyCliConfigLayer } from "../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../shared/legacy-db-connection.layer.ts";
 import { legacyDebugLoggerLayer } from "../../shared/legacy-debug-logger.layer.ts";
+import { legacyDockerRunLayer } from "../../shared/legacy-docker-run.layer.ts";
 import { legacyIdentityStitchLayer } from "../../shared/legacy-identity-stitch.ts";
 import { legacyLinkedDbResolverRuntimeLayer } from "../../shared/legacy-management-api-runtime.layer.ts";
 import { legacyTelemetryStateLayer } from "../../telemetry/legacy-telemetry-state.layer.ts";
@@ -58,3 +60,20 @@ export const legacyMigrationDbRuntimeLayer = (commandPath: ReadonlyArray<string>
     legacyLinkedDbResolverRuntimeLayer(commandPath).pipe(Layer.provide(legacyIdentityStitchLayer)),
     commandRuntimeLayer(commandPath),
   );
+
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+
+/**
+ * Runtime layer for `supabase migration squash` — `legacyMigrationDbRuntimeLayer`'s bundle
+ * plus the three services only squash needs: `LegacyDockerRun` (the `pg_dump` one-shot
+ * container + the shadow's PG15+ one-shot setup jobs), `HttpClient` (the native shadow's
+ * health-check wait), and `LegacyDebugLogger` (Go's `GetDebugLogger()` on the
+ * `LoadLocalVersions` fallback). `ChildProcessSpawner`/`RuntimeInfo`/`Tty`/`FileSystem`/
+ * `Path` come from the root layer, same as `db diff`.
+ */
+export const legacyMigrationSquashRuntimeLayer = Layer.mergeAll(
+  legacyMigrationDbRuntimeLayer(["migration", "squash"]),
+  legacyDockerRunLayer,
+  httpClient,
+  legacyDebugLoggerLayer,
+);

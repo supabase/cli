@@ -10,7 +10,7 @@ import { DaemonServer } from "./DaemonServer.ts";
 import { RemoteStack } from "./RemoteStack.ts";
 import { Stack, type StackInfo } from "./Stack.ts";
 import { StackServiceState } from "./StackServiceState.ts";
-import { unixHttpClientLayer } from "./bun.ts";
+import { unixHttpClientLayer } from "./platform-bun.ts";
 
 const REFERENCE_IDLE_TIMEOUT_SECONDS = 1;
 // Keep the idle gap just past a short reference timeout so the suite stays fast.

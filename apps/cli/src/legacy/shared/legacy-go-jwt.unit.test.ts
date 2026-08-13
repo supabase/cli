@@ -3,8 +3,10 @@ import { importJWK, jwtVerify } from "jose";
 import { describe, expect, it } from "vitest";
 
 import {
+  legacyAssertDecodableJwkAlgorithm,
   legacyGenerateAsymmetricGoJwt,
   legacyGenerateGoJwt,
+  legacySignJwtWithJwk,
   type LegacyJwk,
 } from "./legacy-go-jwt.ts";
 
@@ -153,27 +155,125 @@ describe("legacyGenerateAsymmetricGoJwt", () => {
     );
   });
 
+  // Go has NO explicit kty<->alg cross-check (verified against the real binary,
+  // CLI-1961): `jwkToPrivateKey` only validates kty/curve, and the algorithm
+  // switch only validates `jwk.Algorithm` — a mismatched pair reaches
+  // `token.SignedString(privateKey)` and fails INSIDE golang-jwt's own signing
+  // method with "key is of invalid type: ...", wrapped as "failed to sign
+  // JWT: %w" (`apikeys.go:113`). These two tests previously asserted an
+  // "unsupported key type" message that Go never actually produces for this
+  // input — corrected here.
   it("rejects an EC key forged with alg: RS256 instead of signing garbage", () => {
     const jwk = { ...generateEcJwk(), alg: "RS256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported key type: EC");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to sign JWT: key is of invalid type: RSA sign expects *rsa.PrivateKey",
+    );
   });
 
   it("rejects an RSA key forged with alg: ES256 instead of signing garbage", () => {
     const jwk = { ...generateRsaJwk(), alg: "ES256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported key type: RSA");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to sign JWT: key is of invalid type: ECDSA sign expects *ecdsa.PrivateKey",
+    );
   });
 
-  it("rejects an ES256 EC key whose curve is not P-256", () => {
+  it("rejects an ES256 EC key whose curve is not P-256, wrapped like Go's GenerateAsymmetricJWT", () => {
     const { privateKey } = generateKeyPairSync("ec", { namedCurve: "P-384" });
     const jwk = { ...privateKey.export({ format: "jwk" }), kty: "EC", alg: "ES256" };
-    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow("unsupported curve: P-384");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to convert JWK to private key: unsupported curve: P-384",
+    );
+  });
+
+  it("rejects a JWK with no kty at all, wrapped like Go's GenerateAsymmetricJWT", () => {
+    // `bearerjwt_test.go`'s "throws error on unsupported kty" fixture uses exactly
+    // this shape (`{"kty": "oct"}`, no `alg`) — kty is checked before alg regardless.
+    const jwk = { kty: "oct" } as LegacyJwk;
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).toThrow(
+      "failed to convert JWK to private key: unsupported key type: oct",
+    );
   });
 
   it("rejects an ES256 EC key with no curve at all", () => {
     const jwk = generateEcJwk();
     const { crv: _crv, ...jwkWithoutCurve } = jwk;
     expect(() => legacyGenerateAsymmetricGoJwt(jwkWithoutCurve, "anon")).toThrow(
-      "unsupported curve: ",
+      "failed to convert JWK to private key: unsupported curve: ",
+    );
+  });
+
+  it("rejects a padded EC coordinate instead of signing a token Go would refuse to produce (CLI-1961 Codex review finding)", () => {
+    // Go's `jwkToECDSAPrivateKey` decodes x/y/d with `base64.RawURLEncoding.DecodeString`,
+    // which genuinely rejects `=` padding — verified directly against the real binary:
+    // the exact same padded x coordinate produces
+    // "failed to convert JWK to private key: failed to decode x coordinate: illegal base64
+    // data at input byte 43". Node's own `createPrivateKey({format:"jwk"})` accepts the
+    // padding and would otherwise sign successfully, minting a token Go could never produce.
+    const jwk = generateEcJwk("ec-kid");
+    const padded = { ...jwk, x: `${jwk.x}=` };
+    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon")).toThrow(
+      /^failed to convert JWK to private key: failed to decode x coordinate: illegal base64 data at input byte \d+$/,
+    );
+  });
+
+  it("rejects a padded RSA modulus the same way", () => {
+    const jwk = generateRsaJwk("rsa-kid");
+    const padded = { ...jwk, n: `${jwk.n}=` };
+    expect(() => legacyGenerateAsymmetricGoJwt(padded, "anon")).toThrow(
+      /^failed to convert JWK to private key: failed to decode modulus: illegal base64 data at input byte \d+$/,
+    );
+  });
+
+  it("still signs successfully for unpadded (correctly-encoded) coordinates", () => {
+    const jwk = generateEcJwk("ec-kid");
+    expect(() => legacyGenerateAsymmetricGoJwt(jwk, "anon")).not.toThrow();
+  });
+});
+
+describe("legacySignJwtWithJwk", () => {
+  it("signs the caller's exact pre-encoded payload string verbatim (no re-serialization)", async () => {
+    const jwk = generateEcJwk("ec-kid");
+    // Deliberately NOT alphabetically sorted and containing characters Go's
+    // `encoding/json` would HTML-escape (`&`) — this function must sign exactly
+    // the bytes it's given, leaving ordering/escaping decisions to the caller.
+    const payloadJson = '{"role":"postgres","sb-role":"mgmt-api & co"}';
+    const token = legacySignJwtWithJwk(jwk, payloadJson);
+    const [, payload] = token.split(".");
+    expect(decodeSegment(payload ?? "")).toBe(payloadJson);
+
+    const publicKey = await importJWK(publicJwkOf(jwk), "ES256");
+    const { payload: verified } = await jwtVerify(token, publicKey);
+    expect(verified).toEqual({ role: "postgres", "sb-role": "mgmt-api & co" });
+  });
+
+  it("HTML-escapes the kid in the header like Go's json.Marshal, unlike JSON.stringify (CLI-1961 Codex review finding)", () => {
+    // Go's `token.SignedString` marshals the protected header via `encoding/json`'s
+    // default `json.Marshal`, which HTML-escapes `<`/`>`/`&` — verified directly against
+    // the Go standard library. A plain `JSON.stringify` leaves those characters literal,
+    // which would sign different header bytes (and thus a different signature) than Go
+    // for an otherwise-identical kid.
+    const jwk = generateEcJwk("a<b>c&d");
+    const token = legacySignJwtWithJwk(jwk, '{"role":"anon"}');
+    const [header] = token.split(".");
+    expect(decodeSegment(header ?? "")).toBe(
+      '{"alg":"ES256","kid":"a\\u003cb\\u003ec\\u0026d","typ":"JWT"}',
+    );
+  });
+});
+
+describe("legacyAssertDecodableJwkAlgorithm", () => {
+  it("accepts RS256 and ES256", () => {
+    expect(() => legacyAssertDecodableJwkAlgorithm("RS256")).not.toThrow();
+    expect(() => legacyAssertDecodableJwkAlgorithm("ES256")).not.toThrow();
+  });
+
+  it("accepts an absent alg (validated later, at sign time, not at decode time)", () => {
+    expect(() => legacyAssertDecodableJwkAlgorithm(undefined)).not.toThrow();
+  });
+
+  it("rejects an unsupported algorithm with Go's exact UnmarshalText message", () => {
+    expect(() => legacyAssertDecodableJwkAlgorithm("HS256")).toThrow(
+      "must be one of [RS256 ES256]",
     );
   });
 });

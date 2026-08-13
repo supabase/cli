@@ -1,9 +1,12 @@
-import {
-  inferFunctionsManifest,
-  resolveProjectSubtree,
-  type ProjectConfig,
-} from "@supabase/config";
-import { join } from "node:path";
+/**
+ * Native TS port of Go's `internal/start` (`start.go`) + the Postgres-container
+ * half of `internal/db/start` (`start.go`) -- see `SIDE_EFFECTS.md`. Below, a
+ * bare `start.go:NNN` citation means the FORMER `apps/cli-go/internal/start/start.go`
+ * (deleted outright as unreachable, CLI-1966; last present at commit
+ * a253ccba25c21356ccd33044c4474aecb77d1ae4) unless explicitly prefixed
+ * `internal/db/start/`, which is still present and unaffected.
+ */
+import { inferFunctionsManifest, resolveProjectSubtree } from "@supabase/config";
 import { Effect, FileSystem, Option, Path, Result } from "effect";
 import { FetchHttpClient } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
@@ -16,7 +19,11 @@ import {
   toPlainFunctionRecord,
   type StartedRuntime,
 } from "../../../shared/functions/serve.ts";
-import { LegacyDebugFlag, LegacyNetworkIdFlag } from "../../../shared/legacy/global-flags.ts";
+import {
+  LegacyDebugFlag,
+  LegacyNetworkIdFlag,
+  legacyResolveExperimentalWithProjectEnv,
+} from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../shared/runtime/runtime-info.service.ts";
 import { Analytics } from "../../../shared/telemetry/analytics.service.ts";
@@ -30,33 +37,28 @@ import {
   legacyApiTlsCertReadErrorMessage,
   legacyApiTlsKeyReadErrorMessage,
   legacyResolveApiTlsPath,
-  legacyResolveEmailTemplateContentPath,
 } from "../../shared/legacy-config-validate.ts";
+import { legacyIsContainerNotFoundMessage } from "../../shared/legacy-container-cli.ts";
 import { legacyCheckDbToml } from "../../shared/legacy-db-config.toml-read.ts";
-import { LegacyDbConnection } from "../../shared/legacy-db-connection.service.ts";
 import { legacyResolveEdgeRuntimeImage } from "../../shared/legacy-edge-runtime-image.ts";
-import { legacyResolveDbImage } from "../../shared/legacy-db-image.ts";
 import {
   legacyResolveStorageCredentials,
   legacyStorageGatewayFetch,
 } from "../../shared/legacy-storage-credentials.ts";
-import { legacyReadServiceVersionOverrides } from "../../shared/legacy-service-version-overrides.ts";
 import {
   legacyCollectDotenvPrivateKeys,
   legacyDecryptSecret,
   legacyIsEncryptedSecret,
 } from "../../shared/legacy-vault-decrypt.ts";
-import { ramInBytes } from "../../shared/legacy-size-units.ts";
-import { legacyTempPaths } from "../../shared/legacy-temp-paths.ts";
 import { legacyParseGoDuration } from "../../shared/legacy-go-duration.ts";
 import {
-  LEGACY_CLI_PROJECT_LABEL,
   legacyCliProjectFilterValue,
   legacyServiceContainerIds,
   legacyServiceContainerName,
   localDbContainerId,
-  localNetworkId,
 } from "../../shared/legacy-docker-ids.ts";
+import { resolveDockerNetworkMode } from "../../../shared/functions/functions-docker.ts";
+import { legacyViperEnvStringWithProjectFallback } from "../../../shared/legacy/legacy-viper-env.ts";
 import {
   legacyInspectContainerState,
   legacyListContainersByLabel,
@@ -70,14 +72,10 @@ import {
   legacyEnvOverrideDefaultPoolSize,
   legacyEnvOverrideDenoVersion,
   legacyEnvOverrideEdgeRuntimePolicy,
-  legacyEnvOverrideMajorVersion,
   legacyEnvOverrideMaxClientConn,
   legacyEnvOverridePoolMode,
   legacyEnvOverridePort,
-  legacyEnvOverrideRealtimeIpVersion,
-  legacyEnvOverrideRealtimeMaxHeaderLength,
   legacyEnvOverrideUint,
-  legacyRawUnmodeledBool,
   legacyResolveAuthCaptcha,
   legacyResolveAuthEmail,
   legacyResolveAuthEmailSmtp,
@@ -86,10 +84,16 @@ import {
   legacyResolveAuthMfa,
   legacyResolveAuthSms,
   legacyResolveConfiguredSigningKeys,
+  legacyResolveAuthExternalUrl,
   legacyResolveDbSettingsEnvOverrides,
+  legacyResolveGotrueOAuthServer,
+  legacyResolveGotruePasskeyWebauthn,
+  legacyResolveGotrueRateLimit as resolveGotrueRateLimit,
+  legacyResolveGotrueSessions as resolveGotrueSessions,
+  legacyResolveGotrueWeb3,
   legacyResolveLocalConfigValues,
   legacyResolveLocalJwks,
-  legacyStrToArr,
+  legacyResolveThirdPartyProviders,
   type LegacyLocalConfigValues,
   type LegacyResolvedAuthEmail,
 } from "../../shared/legacy-local-config-values.ts";
@@ -126,40 +130,31 @@ import {
   legacyStartCompletedMessage,
   legacyStartSecurityNotice,
   LEGACY_START_STARTING_CONTAINERS_MESSAGE,
-  LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
-  LEGACY_START_STARTING_DATABASE_MESSAGE,
   LEGACY_START_WAITING_FOR_HEALTH_CHECKS_MESSAGE,
 } from "./start.format.ts";
+import { legacyResolveStartGates, legacyResolveStartImagePlan } from "./start.gates.ts";
 import {
-  legacyResolvePinnedImage,
-  legacyResolveStartGates,
-  legacyResolveStartImagePlan,
-} from "./start.gates.ts";
-import { legacyIsUnhealthyStartError, legacyRollbackStart } from "./start.rollback.ts";
+  legacyIsUnhealthyStartError,
+  legacyRollbackStart,
+} from "../../shared/db-bootstrap/rollback.ts";
+import { legacyResolveDbBootstrapConfig } from "../../shared/db-bootstrap/bootstrap-config.ts";
+import { legacyStartDatabase } from "../../shared/db-bootstrap/start-database.ts";
 import { LEGACY_START_SERVICES } from "./start.services.ts";
 import {
-  legacyEnsureStartNetwork,
-  legacyStartContainer,
-  legacyStartVolumeExists,
-  LEGACY_COMPOSE_PROJECT_LABEL,
-  type LegacyStartContainerOpts,
-} from "./lib/container-lifecycle.ts";
-import {
-  legacyStartInitCurrentBranch,
-  legacyStartSetupLocalDatabase,
-  type LegacyStartDbSetupImages,
-} from "./lib/db-setup.ts";
-import { legacyEnsureImagesCached } from "./lib/image-prepull.ts";
+  legacyCreateContainer,
+  type LegacyContainerOpts,
+} from "../../shared/db-bootstrap/container-lifecycle.ts";
+import { legacyEnsureImagesCached } from "../../shared/db-bootstrap/image-prepull.ts";
 import {
   legacyWaitForHealthyServices,
   type LegacyHealthCheckPostgrestGateway,
   type LegacyHealthCheckTimeoutError,
-} from "./lib/health-check.ts";
+} from "../../shared/db-bootstrap/health-check.ts";
 import {
   legacyStartInternalDbPassword,
   LEGACY_START_INTERNAL_DB_NAME,
   LEGACY_START_INTERNAL_DB_PORT,
-} from "./lib/internal-db-connection.ts";
+} from "../../shared/db-bootstrap/internal-db-connection.ts";
 import {
   LEGACY_KONG_LOCAL_TLS_CERT,
   LEGACY_KONG_LOCAL_TLS_KEY,
@@ -184,14 +179,11 @@ import {
   type LegacyBuildGotrueEnvInput,
 } from "./services/gotrue.service.ts";
 import { legacyBuildMailpitContainerSpec } from "./services/mailpit.service.ts";
-import {
-  legacyBuildRealtimeContainerSpec,
-  LEGACY_REALTIME_TENANT_ID,
-} from "./services/realtime.service.ts";
+import { legacyBuildRealtimeContainerSpec } from "./services/realtime.service.ts";
+import { LEGACY_REALTIME_TENANT_ID } from "../../shared/db-bootstrap/realtime-env.ts";
 import { legacyBuildPostgrestContainerSpec } from "./services/postgrest.service.ts";
 import { legacyBuildStorageContainerSpec } from "./services/storage.service.ts";
 import { legacyBuildImgproxyContainerSpec } from "./services/imgproxy.service.ts";
-import { legacyBuildPostgresStartContainerSpec } from "./services/postgres.service.ts";
 import { legacyBuildPgMetaContainerSpec } from "./services/pg-meta.service.ts";
 import { legacyBuildStudioContainerSpec } from "./services/studio.service.ts";
 import { legacyBuildSupavisorContainerSpec } from "./services/supavisor.service.ts";
@@ -209,20 +201,6 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
   return typeof value === "object" && value !== null && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : undefined;
-}
-
-/**
- * Docker's/Podman's "container doesn't exist" stderr shapes for `container inspect`: "No such
- * container" or "No such object" depending on daemon version/CLI path — the same pair already
- * handled in `shared/functions/serve.ts`/`legacy-db-bootstrap.seam.layer.ts`/`legacy-pgdelta.seam.
- * layer.ts`.
- */
-function isContainerNotFoundMessage(message: string): boolean {
-  return (
-    /no such container/iu.test(message) ||
-    /no such object/iu.test(message) ||
-    /no container with name or id/iu.test(message)
-  );
 }
 
 /**
@@ -247,260 +225,6 @@ function wrapConfigOverride<T>(
 }
 
 /**
- * Go's `Db.HealthTimeout` (`internal/db/start/start.go:180`) — a duration
- * STRING (`"2m"` default, `packages/config/src/db.ts`), unlike every other
- * `start` health wait, which uses the fixed 30s `serviceTimeout` global
- * (`apps/cli-go/internal/start/start.go:161,1271`). Go decodes this field via
- * `mapstructure.StringToTimeDurationHookFunc()` inside the same
- * `v.UnmarshalExact` call every `SUPABASE_*` override goes through
- * (`pkg/config/config.go:749-756,775-784`) — a malformed value hard-fails
- * `Config.Load` (`"failed to parse config: %w"`) before `start` ever runs; it
- * is never silently replaced with a default. A valid-but-degenerate value
- * (e.g. `"0s"`) isn't special-cased either: Go's backoff policy computes
- * `uint64(timeout.Seconds())` as the retry count
- * (`internal/db/start/start.go:192-198`), and the backoff library returns
- * `Stop` immediately when that count is `0` — i.e. exactly one immediate
- * health probe with no wait, not a 30s fallback. Throws on a malformed
- * value; the caller wraps that into `LegacyStartInvalidConfigError` so
- * rollback still fires (a plain throw here would surface as an
- * Effect defect instead of a typed failure).
- */
-function resolveDbHealthTimeoutSeconds(healthTimeout: string): number {
-  return Math.trunc(legacyParseGoDuration(healthTimeout) / 1_000_000_000);
-}
-
-/**
- * Go's `appendGotruePasskeyEnv`/`Auth.Passkey`/`Auth.Webauthn` presence gate
- * (`start.go:1427-1440`, `pkg/config/config.go:1117-1134`): `@supabase/config`
- * has no `auth.passkey`/`auth.webauthn` schema fields at all, so presence and
- * every field must come from the raw, pre-schema TOML document instead — same
- * document-based approach `legacy-local-config-values.ts` already uses for
- * these two sections.
- */
-/**
- * `auth.passkey.enabled`/`auth.webauthn.*` are Viper-bound like every other
- * nested field once `[auth.passkey]`/`[auth.webauthn]` are present in
- * config.toml (`ExperimentalBindStruct`/`AutomaticEnv`, `config.go:581-586`),
- * so `SUPABASE_AUTH_PASSKEY_ENABLED`/`SUPABASE_AUTH_WEBAUTHN_{RP_ID,
- * RP_DISPLAY_NAME,RP_ORIGINS}` overrides apply before `appendGotruePasskeyEnv`
- * (`start.go:1427-1436`) builds GoTrue's env — same reasoning, and same
- * presence-gating (an absent section is never synthesized from an env
- * override alone), as `legacy-local-config-values.ts`'s identical
- * `Config.Validate`-parity resolution for this raw-document pair.
- * `rp_display_name` has no validation-path precedent (Go's `Config.Validate`
- * never checks it), but GoTrue's env does consume it, so it gets the same
- * treatment here.
- */
-function resolveGotruePasskeyWebauthn(
-  document: Readonly<Record<string, unknown>> | undefined,
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): {
-  readonly passkeyEnabled: boolean | undefined;
-  readonly webauthn:
-    | {
-        readonly rpId: string;
-        readonly rpDisplayName: string;
-        readonly rpOrigins: ReadonlyArray<string>;
-      }
-    | undefined;
-} {
-  const authDoc = asRecord(document?.["auth"]);
-  const passkeyDoc = asRecord(authDoc?.["passkey"]);
-  const webauthnDoc = asRecord(authDoc?.["webauthn"]);
-  const passkeyEnabled =
-    passkeyDoc !== undefined
-      ? legacyEnvOverrideBool(
-          "SUPABASE_AUTH_PASSKEY_ENABLED",
-          legacyRawUnmodeledBool(passkeyDoc["enabled"], "auth.passkey.enabled"),
-          "auth.passkey.enabled",
-          projectEnvValues,
-        )
-      : undefined;
-  const rpOriginsOverride =
-    webauthnDoc !== undefined
-      ? legacyEnvOverride("SUPABASE_AUTH_WEBAUTHN_RP_ORIGINS", undefined, projectEnvValues)
-      : undefined;
-  const webauthn =
-    webauthnDoc !== undefined
-      ? {
-          rpId:
-            legacyEnvOverride(
-              "SUPABASE_AUTH_WEBAUTHN_RP_ID",
-              typeof webauthnDoc["rp_id"] === "string" ? webauthnDoc["rp_id"] : "",
-              projectEnvValues,
-            ) ?? "",
-          rpDisplayName:
-            legacyEnvOverride(
-              "SUPABASE_AUTH_WEBAUTHN_RP_DISPLAY_NAME",
-              typeof webauthnDoc["rp_display_name"] === "string"
-                ? webauthnDoc["rp_display_name"]
-                : "",
-              projectEnvValues,
-            ) ?? "",
-          // Go's mapstructure decode chain applies `StringToSliceHookFunc(",")`
-          // unconditionally to every `[]string`-typed field (`config.go:775-784`) — a raw or
-          // `env(...)`-resolved `rp_origins` string (this section has no `@supabase/config`
-          // schema at all) is comma-split, not silently dropped to `[]`.
-          rpOrigins: (() => {
-            if (rpOriginsOverride !== undefined) return legacyStrToArr(rpOriginsOverride);
-            const raw = webauthnDoc["rp_origins"];
-            if (Array.isArray(raw)) {
-              return raw.filter((item): item is string => typeof item === "string");
-            }
-            return typeof raw === "string" ? legacyStrToArr(raw) : [];
-          })(),
-        }
-      : undefined;
-  return { passkeyEnabled, webauthn };
-}
-
-/**
- * Go's `Auth.Sessions` (`pkg/config/auth.go:330-333`) is a value-typed struct,
- * always merged with a Viper default (empty durations) regardless of
- * `[auth.sessions]` presence in config.toml — so
- * `SUPABASE_AUTH_SESSIONS_{TIMEBOX,INACTIVITY_TIMEOUT}` overrides always apply
- * before `start.go` builds `GOTRUE_SESSIONS_*`, no raw-document presence gate
- * needed (same reasoning as {@link resolveGotrueRateLimit}/mfa below).
- * `@supabase/config`'s `sessions` schema is `Schema.optionalKey` at the
- * `auth` level though (`config.auth.sessions` can be `undefined`), unlike
- * Go's always-present struct — an env override must still be able to
- * introduce a value even when the section was never in config.toml at all,
- * matching Go's real behavior.
- */
-function resolveGotrueSessions(
-  sessions: ProjectConfig["auth"]["sessions"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["sessions"] {
-  const timebox = legacyEnvOverride(
-    "SUPABASE_AUTH_SESSIONS_TIMEBOX",
-    sessions?.timebox,
-    projectEnvValues,
-  );
-  const inactivityTimeout = legacyEnvOverride(
-    "SUPABASE_AUTH_SESSIONS_INACTIVITY_TIMEOUT",
-    sessions?.inactivity_timeout,
-    projectEnvValues,
-  );
-  if (timebox === undefined && inactivityTimeout === undefined) return sessions;
-  return { timebox, inactivity_timeout: inactivityTimeout };
-}
-
-/**
- * Go's `Auth.RateLimit` (`pkg/config/auth.go:200-208`) is a value-typed
- * struct of plain `uint`s, always Viper-bound regardless of `[auth.rate_
- * limit]` presence, so every `SUPABASE_AUTH_RATE_LIMIT_*` override applies
- * before `start.go` builds `GOTRUE_RATE_LIMIT_*` — no raw-document presence
- * gate needed, matching the existing `db.pooler`/SMS numeric-field precedent.
- */
-function resolveGotrueRateLimit(
-  rateLimit: ProjectConfig["auth"]["rate_limit"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["rate_limit"] {
-  return {
-    anonymous_users: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS",
-      "auth.rate_limit.anonymous_users",
-      rateLimit.anonymous_users,
-      projectEnvValues,
-    ),
-    token_refresh: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_REFRESH",
-      "auth.rate_limit.token_refresh",
-      rateLimit.token_refresh,
-      projectEnvValues,
-    ),
-    sign_in_sign_ups: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_SIGN_IN_SIGN_UPS",
-      "auth.rate_limit.sign_in_sign_ups",
-      rateLimit.sign_in_sign_ups,
-      projectEnvValues,
-    ),
-    token_verifications: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_TOKEN_VERIFICATIONS",
-      "auth.rate_limit.token_verifications",
-      rateLimit.token_verifications,
-      projectEnvValues,
-    ),
-    email_sent: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_EMAIL_SENT",
-      "auth.rate_limit.email_sent",
-      rateLimit.email_sent,
-      projectEnvValues,
-    ),
-    sms_sent: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_SMS_SENT",
-      "auth.rate_limit.sms_sent",
-      rateLimit.sms_sent,
-      projectEnvValues,
-    ),
-    web3: legacyEnvOverrideUint(
-      "SUPABASE_AUTH_RATE_LIMIT_WEB3",
-      "auth.rate_limit.web3",
-      rateLimit.web3,
-      projectEnvValues,
-    ),
-  };
-}
-
-/**
- * Go's `Auth.Web3` (`pkg/config/auth.go:379-382`) is a value-typed struct —
- * same no-presence-gate reasoning as {@link resolveGotrueRateLimit}.
- */
-function resolveGotrueWeb3(
-  web3: ProjectConfig["auth"]["web3"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["web3"] {
-  return {
-    solana: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_WEB3_SOLANA_ENABLED",
-        web3.solana.enabled,
-        "auth.web3.solana.enabled",
-        projectEnvValues,
-      ),
-    },
-    ethereum: {
-      enabled: legacyEnvOverrideBool(
-        "SUPABASE_AUTH_WEB3_ETHEREUM_ENABLED",
-        web3.ethereum.enabled,
-        "auth.web3.ethereum.enabled",
-        projectEnvValues,
-      ),
-    },
-  };
-}
-
-/**
- * Go's `Auth.OAuthServer` (`pkg/config/auth.go:394-398`) is a value-typed
- * struct — same no-presence-gate reasoning as {@link resolveGotrueRateLimit}.
- */
-function resolveGotrueOAuthServer(
-  oauthServer: ProjectConfig["auth"]["oauth_server"],
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): ProjectConfig["auth"]["oauth_server"] {
-  return {
-    enabled: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_OAUTH_SERVER_ENABLED",
-      oauthServer.enabled,
-      "auth.oauth_server.enabled",
-      projectEnvValues,
-    ),
-    authorization_url_path:
-      legacyEnvOverride(
-        "SUPABASE_AUTH_OAUTH_SERVER_AUTHORIZATION_URL_PATH",
-        oauthServer.authorization_url_path,
-        projectEnvValues,
-      ) ?? oauthServer.authorization_url_path,
-    allow_dynamic_registration: legacyEnvOverrideBool(
-      "SUPABASE_AUTH_OAUTH_SERVER_ALLOW_DYNAMIC_REGISTRATION",
-      oauthServer.allow_dynamic_registration,
-      "auth.oauth_server.allow_dynamic_registration",
-      projectEnvValues,
-    ),
-  };
-}
-
-/**
  * Every value {@link legacyBuildGotrueContainerSpec} needs from `config`/
  * `values`, minus `dbHost`/`dbPassword` (which that builder derives itself
  * from `projectId`/`dbUrl`). See this module's header for the `@supabase/
@@ -519,30 +243,6 @@ function resolveGotrueOAuthServer(
  * `gotrue.service.ts`'s hardcoded `LEGACY_GOTRUE_DEFAULT_SIGNING_KEY`) only
  * when no `signing_keys_path` is configured or auth is disabled.
  */
-
-/**
- * `auth.external_url` isn't modeled in `@supabase/config`'s schema, so it's
- * read off the raw document — same presence-based pattern as passkey/
- * webauthn/external. Go's `auth.GetExternalURL` (`pkg/config/auth.go:401-405`)
- * prefers this explicit value over deriving from `apiUrl`, and feeds it into
- * `API_EXTERNAL_URL`, the mailer verify URL, the default JWT issuer, and
- * OAuth redirect-URI fallbacks (`start.go:1354,1357,1374,1446`) for the
- * long-running GoTrue container — AND into the identical `API_EXTERNAL_URL`
- * Go's one-shot fresh-DB auth migration job builds (`db/start/start.go:323`).
- * Both callers must resolve the SAME value, hence this standalone helper
- * instead of two independent derivations.
- */
-function resolveAuthExternalUrl(
-  document: Readonly<Record<string, unknown>> | undefined,
-  projectEnvValues: Readonly<Record<string, string>> | undefined,
-): string | undefined {
-  const rawAuthExternalUrl = asRecord(document?.["auth"])?.["external_url"];
-  return legacyEnvOverride(
-    "SUPABASE_AUTH_EXTERNAL_URL",
-    typeof rawAuthExternalUrl === "string" ? rawAuthExternalUrl : undefined,
-    projectEnvValues,
-  );
-}
 
 function resolveGotrueEnvInput(params: {
   readonly context: LegacyLocalProjectContext;
@@ -605,13 +305,16 @@ function resolveGotrueEnvInput(params: {
         }
       : undefined;
 
-  const { passkeyEnabled, webauthn } = resolveGotruePasskeyWebauthn(document, projectEnvValues);
+  const { passkeyEnabled, webauthn } = legacyResolveGotruePasskeyWebauthn(
+    document,
+    projectEnvValues,
+  );
   const externalProviders = legacyResolveAuthExternalProviders(
     asRecord(document?.["auth"]),
     config.auth.external,
     projectEnvValues,
   );
-  const authExternalUrl = resolveAuthExternalUrl(document, projectEnvValues);
+  const authExternalUrl = legacyResolveAuthExternalUrl(document, projectEnvValues);
 
   return {
     apiUrl: values.apiUrl,
@@ -636,8 +339,8 @@ function resolveGotrueEnvInput(params: {
     sessions: resolveGotrueSessions(config.auth.sessions, projectEnvValues),
     mfa: legacyResolveAuthMfa(config.auth.mfa, projectEnvValues),
     rateLimit: resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
-    web3: resolveGotrueWeb3(config.auth.web3, projectEnvValues),
-    oauthServer: resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+    web3: legacyResolveGotrueWeb3(config.auth.web3, projectEnvValues),
+    oauthServer: legacyResolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     hooks: legacyResolveAuthHooks(asRecord(document?.["auth"]), config.auth.hook, projectEnvValues),
     captcha: legacyResolveAuthCaptcha(
       asRecord(document?.["auth"]),
@@ -655,17 +358,11 @@ function resolveGotrueEnvInput(params: {
  * Go's `mountEmailTemplates` call sites for Kong (`start.go:544-558`): every configured template,
  * then every ENABLED notification, suffixed `_notification`.
  *
- * Go's `baseConfig.resolve` (`config.go:901-916`) rebases `ContentPath` once at config-load time,
- * BEFORE `mountEmailTemplates` ever runs: templates against `workdir`, notifications against
- * `join(workdir, "supabase")` — the same asymmetric base `legacyResolveEmailTemplateContentPath`
- * already applies for the file-existence check in `readAuthEmailTemplateContent`. Notification
- * `content_path` here must go through that same rebase before reaching Kong's mount builder, or a
- * relative notification path gets validated against `<workdir>/supabase/...` but mounted from
- * `<workdir>/...`. Template entries need no rebase — `workdir` is already their correct base.
+ * Path resolution happens in the bind builder — see
+ * `LegacyKongEmailTemplateMount.notification`.
  */
 function buildKongEmailTemplateMounts(
   email: LegacyResolvedAuthEmail,
-  workdir: string,
 ): ReadonlyArray<LegacyKongEmailTemplateMount> {
   return [
     ...Object.entries(email.template).map(([id, template]) => ({
@@ -676,21 +373,15 @@ function buildKongEmailTemplateMounts(
       .filter(([, notification]) => notification.enabled)
       .map(([id, notification]) => ({
         id: `${id}_notification`,
-        contentPath:
-          legacyResolveEmailTemplateContentPath({
-            section: "notification",
-            name: id,
-            contentPath: notification.content_path,
-            contentPresent: false,
-            base: join(workdir, "supabase"),
-          }) ?? "",
+        contentPath: notification.content_path,
+        notification: true,
       })),
   ];
 }
 
 /**
  * What `--ignore-health-check` prints when it downgrades a health-check timeout
- * to a warning. That decision belongs to this caller, not `lib/health-check.ts`
+ * to a warning. That decision belongs to this caller, not `../../shared/db-bootstrap/health-check.ts`
  * (which only implements the polling contract), and it writes straight to
  * stderr — bypassing the `Output.fail` renderer that would otherwise append the
  * error's `suggestion` for it.
@@ -707,8 +398,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const dbConnection = yield* LegacyDbConnection;
   const runtimeInfo = yield* RuntimeInfo;
+  // Threaded into every `legacyDockerRemoveAll` teardown below — Go's
+  // `--debug` gates that function's `Pruned …:` stderr reports
+  // (`docker.go:123-143`, `viper.GetBool("DEBUG")`).
+  const debug = yield* LegacyDebugFlag;
 
   yield* Effect.gen(function* () {
     // 0. Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) —
@@ -751,6 +445,11 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }),
     });
     const { config, projectId, projectEnvValues } = context;
+    // Go's `viper.GetBool("EXPERIMENTAL")` (`internal/migration/apply/apply.go:19`), read deep
+    // inside `legacyStartDatabase`'s fresh-volume setup pipeline — resolved here (project
+    // `.env` aware, like `db reset`'s identical gate) so it can be threaded straight through
+    // to `legacyStartDatabase`'s own `setup.experimental` below.
+    const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnvValues);
     // Single source resolved once, fed to both Kong's template mounts and GoTrue's env builder —
     // see {@link legacyResolveAuthEmail}'s doc comment.
     const resolvedEmail = yield* Effect.try({
@@ -840,7 +539,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // `auth.web3.*.enabled`/`auth.oauth_server.{enabled,allow_dynamic_registration}` (plain
     // `bool`s) are all decoded unconditionally in Go's single `Config.Load` pass
     // (`pkg/config/auth.go:200-208,371-382,394-398`), regardless of `auth.enabled`/`--exclude
-    // gotrue`. `resolveGotrueRateLimit`/`resolveGotrueWeb3`/`resolveGotrueOAuthServer` already
+    // gotrue`. `resolveGotrueRateLimit`/`legacyResolveGotrueWeb3`/`legacyResolveGotrueOAuthServer` already
     // throw internally on a bad override, so — unlike the duration fields above — calling each
     // whole (pure) function once here is simpler than re-deriving every field individually;
     // `resolveGotrueEnvInput` below re-resolves them a second time for the real container build,
@@ -850,10 +549,10 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       resolveGotrueRateLimit(config.auth.rate_limit, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.web3", () =>
-      resolveGotrueWeb3(config.auth.web3, projectEnvValues),
+      legacyResolveGotrueWeb3(config.auth.web3, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.oauth_server", () =>
-      resolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
+      legacyResolveGotrueOAuthServer(config.auth.oauth_server, projectEnvValues),
     );
     // Same gap for `auth.passkey.enabled`/`auth.webauthn.*` and per-provider `auth.external.
     // <name>.{enabled,skip_nonce_check,email_optional}` — Go decodes these raw (unmodeled by
@@ -864,7 +563,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // itself gated on auth being enabled and gotrue not excluded — so calling each here, once,
     // eagerly and discarding the result, closes the same "validates but doesn't reach it" gap.
     yield* wrapConfigOverride("auth.passkey", () =>
-      resolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
+      legacyResolveGotruePasskeyWebauthn(context.loaded?.document, projectEnvValues),
     );
     yield* wrapConfigOverride("auth.external", () =>
       legacyResolveAuthExternalProviders(
@@ -872,6 +571,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         config.auth.external,
         projectEnvValues,
       ),
+    );
+    // Same gap for `auth.third_party.<provider>.{enabled,...}` — Go's `Auth.ThirdParty`
+    // (`pkg/config/auth.go:187-198`) is value-typed exactly like `auth.web3`/`auth.oauth_server`
+    // above, decoded in the SAME unconditional `Config.Load` pass regardless of `auth.enabled`,
+    // even though `(tpa *thirdParty) validate()` itself only runs `if c.Auth.Enabled`
+    // (`config.go:1151-1153`). `legacyResolveThirdPartyProviders` is otherwise never called by
+    // this handler at all (GoTrue's own container build never wires third-party JWT settings —
+    // Go's `internal/start/start.go` never references `Auth.ThirdParty` either, matching
+    // `db start`'s identical decode-only, discard-the-result battery) — so a malformed override
+    // (e.g. `SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED=bogus`) would otherwise never fail this
+    // command at all, unlike Go (review: PRRT_kwDOErm0O86WXFqj).
+    yield* wrapConfigOverride("auth.third_party", () =>
+      legacyResolveThirdPartyProviders(config.auth.third_party, projectEnvValues),
     );
     // Go's `function` struct (`pkg/config/config.go:290-296`) has no `env` field — `Config.Load`'s
     // `v.UnmarshalExact` (`ErrorUnused: true`, `config.go:749,1041`) rejects any unknown key
@@ -898,7 +610,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // whenever `start` reused an existing volume. Called here purely for its validation side
     // effect and discarded — `legacyStartSetupLocalDatabase`'s own internal call (an already-
     // accepted duplicate config-load pass, matching `db start`'s own independent resolution — see
-    // `lib/db-setup.ts`'s header) still resolves the real value for its own use when it runs.
+    // `../../shared/db-bootstrap/db-setup.ts`'s header) still resolves the real value for its own use when it runs.
     yield* legacyCheckDbToml(fs, path, cliConfig.workdir).pipe(Effect.asVoid);
 
     const dbContainerId = localDbContainerId(projectId);
@@ -952,7 +664,9 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // makes removing the Postgres container destructive.
     const inspectDbState = legacyInspectContainerState(spawner, dbContainerId).pipe(
       Effect.catch((error) =>
-        isContainerNotFoundMessage(error.message) ? Effect.succeed(undefined) : Effect.fail(error),
+        legacyIsContainerNotFoundMessage(error.message)
+          ? Effect.succeed(undefined)
+          : Effect.fail(error),
       ),
     );
     const dbState = yield* inspectDbState;
@@ -1072,112 +786,52 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }),
     });
 
-    // Go's `Config.Load` folds `SUPABASE_DB_MAJOR_VERSION` into
-    // `c.Db.MajorVersion` before the image-selection switch runs
-    // (`pkg/config/config.go:585-586,819-827`), and every later Go read of
-    // `utils.Config.Db.MajorVersion` — image, version-pin gating, the
-    // PG14/PG15+ branch, migration-job selection — sees that SAME
-    // already-overridden value. `legacyResolveLocalConfigValues` already
-    // computed/validated this exact value above; recomputing it here (rather
-    // than threading it out of `values`) matches this file's own precedent
-    // for the realtime/storage/auth `enabled` overrides a few dozen lines
-    // below.
-    const majorVersion = legacyEnvOverrideMajorVersion(config.db.major_version, projectEnvValues);
-    // Same treatment as `majorVersion` above, for the sibling
+    // Same treatment as `majorVersion` below, for the sibling
     // `edge_runtime.deno_version` -> `Config.EdgeRuntime.Image` switch
     // (`pkg/config/config.go:1164-1173`), applied before `Validate` at the
-    // end of `Config.Load` (`config.go:882`).
+    // end of `Config.Load` (`config.go:882`). Start-only (Edge Runtime has no
+    // `db start` equivalent), so it stays outside the shared bootstrap-config
+    // derivation below.
     const denoVersion = legacyEnvOverrideDenoVersion(
       config.edge_runtime.deno_version,
       projectEnvValues,
     );
-    // Same generic-Viper-override gap as `majorVersion`/`denoVersion` above,
-    // for `experimental.orioledb_version` -> `Config.Db.Image` rewrite
-    // (`pkg/config/config.go:1041-1046`), applied at the end of `Config.Load`
-    // (`config.go:882`) before `start` reads it. Also threaded into the
-    // Postgres container spec below, since `postgres.service.ts`'s
-    // `legacyPostgresExtraEnv` reads this same field to decide whether to add
-    // the S3/`POSTGRES_INITDB_ARGS` env vars — both consumers must agree.
-    const orioledbVersion = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION",
-      config.experimental.orioledb_version,
-      projectEnvValues,
-    );
-    // Same generic-Viper-override gap as `orioledbVersion` above, for its four
-    // sibling S3 fields Go reads into the Postgres container's `S3_*` env
-    // alongside `orioledb_version` (`apps/cli-go/internal/db/start/
-    // start.go:70-77`) — also threaded into the Postgres container spec
-    // below, since `legacyPostgresExtraEnv` reads these same fields raw.
-    const s3Host = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_HOST",
-      config.experimental.s3_host,
-      projectEnvValues,
-    );
-    // Go's one-shot fresh-DB setup jobs (`initSchema15`) read `utils.Config.
-    // {Realtime,Storage,Auth}.Enabled` — the EFFECTIVE, env-overridden value — and run
-    // regardless of `--exclude` (`internal/db/start/start.go:270,299,321`) WHENEVER they
-    // actually execute (see the `isFreshVolume`/`majorVersion >= 15` gate further down,
-    // where these booleans also gate that conditional image resolve). Hoisted here
-    // (rather than recomputed only inside the `isFreshVolume` block below) since
-    // `legacyStartSetupLocalDatabase`'s own config object a few hundred lines down also
-    // needs them, and computing them once keeps both consumers in agreement.
-    const realtimeEnabledForSetup = legacyEnvOverrideBool(
-      "SUPABASE_REALTIME_ENABLED",
-      config.realtime.enabled,
-      "realtime.enabled",
-      projectEnvValues,
-    );
-    const storageEnabledForSetup = legacyEnvOverrideBool(
-      "SUPABASE_STORAGE_ENABLED",
-      config.storage.enabled,
-      "storage.enabled",
-      projectEnvValues,
-    );
-    const authEnabledForSetup = legacyEnvOverrideBool(
-      "SUPABASE_AUTH_ENABLED",
-      config.auth.enabled,
-      "auth.enabled",
-      projectEnvValues,
-    );
-    const s3Region = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_REGION",
-      config.experimental.s3_region,
-      projectEnvValues,
-    );
-    const s3AccessKey = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_ACCESS_KEY",
-      config.experimental.s3_access_key,
-      projectEnvValues,
-    );
-    const s3SecretKey = legacyEnvOverride(
-      "SUPABASE_EXPERIMENTAL_S3_SECRET_KEY",
-      config.experimental.s3_secret_key,
-      projectEnvValues,
+
+    // Every field Go's `StartDatabase` (`internal/db/start/start.go:133-190`) needs
+    // already resolved on `utils.Config` — major version, orioledb/S3 overrides, the
+    // fresh-DB setup jobs' own `enabled`/`ip_version`/`max_header_length`/
+    // `file_size_limit` overrides, the Postgres image + linked-service version pins,
+    // `db.health_timeout`, and the Storage migration pin. Shared with `db start`'s own
+    // native container bootstrap (`legacyStartDatabase`, `legacy/shared/db-bootstrap/
+    // start-database.ts`) — see `bootstrap-config.ts`'s own header for exactly why this
+    // is a single TS home instead of two independently-drifting copies.
+    const {
+      majorVersion,
+      orioledbVersion,
+      s3Host,
+      s3Region,
+      s3AccessKey,
+      s3SecretKey,
+      realtimeEnabledForSetup,
+      storageEnabledForSetup,
+      authEnabledForSetup,
+      realtimeIpVersion,
+      realtimeMaxHeaderLength,
+      storageFileSizeLimit,
+      postgresImage,
+      serviceVersionOverrides,
+      dbHealthTimeoutSeconds,
+      storageTargetMigration,
+    } = yield* legacyResolveDbBootstrapConfig(
+      fs,
+      path,
+      { config, projectEnvValues, workdir: cliConfig.workdir },
+      (message) => new LegacyStartInvalidConfigError({ message }),
     );
 
     // 7. Resolve every image that will actually be pulled (Go's
     // `ensureImagesCached`, `start.go:225-262,289`) BEFORE any container is
     // created.
-    const postgresImage = yield* legacyResolveDbImage(
-      fs,
-      path,
-      cliConfig.workdir,
-      majorVersion,
-      orioledbVersion,
-    );
-    // Go's `Config.Load` rewrites `c.Auth.Image`/`c.Api.Image`/etc. from
-    // `supabase/.temp/{gotrue,rest,storage,realtime,studio,pgmeta,logflare,
-    // pooler}-version` (linked-project pins written by `supabase link`)
-    // BEFORE `start` ever reads them (`pkg/config/config.go:827-863`) — read
-    // once, reused by both the image plan below and the fresh-DB one-shot
-    // setup jobs' images, which Go resolves from the same already-rewritten
-    // `utils.Config.*.Image` fields regardless of `--exclude`.
-    const serviceVersionOverrides = yield* legacyReadServiceVersionOverrides(
-      fs,
-      path,
-      cliConfig.workdir,
-      majorVersion,
-    );
     const imagePlan = legacyResolveStartImagePlan(gates, serviceVersionOverrides);
     // Edge Runtime doesn't go through `legacyResolveStartImagePlan` (see
     // `start.gates.ts`'s header) — its default image is resolved independently,
@@ -1250,27 +904,20 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         )
       : new Set<string>();
 
-    // Go's `config.Load` reads `supabase/.temp/storage-migration` (written by
-    // `supabase link`) into `Config.Storage.TargetMigration` whenever present
-    // (`pkg/config/config.go:844-846`), and that value feeds
-    // `DB_MIGRATIONS_FREEZE_AT` for both the Storage container and the
-    // fresh-DB one-shot Storage migrate job. Any read error (including
-    // not-exist) or blank content resolves to "", matching Go's `err == nil
-    // && len(version) > 0` gate.
-    const storageTargetMigration = yield* fs
-      .readFileString(legacyTempPaths(path, cliConfig.workdir).storageMigration)
-      .pipe(
-        Effect.map((content) => content.trim()),
-        Effect.orElseSucceed(() => ""),
-      );
-
     // Go's `DockerStart` forces every container's network mode (and the
     // network it creates) to `--network-id` when set, ahead of the generated
-    // `supabase_network_<project>` fallback (`docker.go:379-383`).
+    // `supabase_network_<project>` fallback (`docker.go:379-383`) — and `--network-id` falls
+    // back to the `SUPABASE_NETWORK_ID` shell/project-dotenv env var ONLY when the flag was
+    // never passed, via the same `viper`/`AutomaticEnv` mechanism as `SUPABASE_YES`/
+    // `SUPABASE_EXPERIMENTAL` (review: PRRT_kwDOErm0O86VlqIL). See
+    // {@link resolveDockerNetworkMode}'s doc comment for the full 3-way flag/env
+    // precedence (shared with `db start` and the `functions` Docker paths).
     const networkIdFlag = yield* LegacyNetworkIdFlag;
-    const networkId = Option.isSome(networkIdFlag)
-      ? networkIdFlag.value
-      : localNetworkId(projectId);
+    const networkId = resolveDockerNetworkMode({
+      explicit: Option.getOrUndefined(networkIdFlag),
+      envOverride: legacyViperEnvStringWithProjectFallback("SUPABASE_NETWORK_ID", projectEnvValues),
+      projectId,
+    });
     // Go's `DockerStart` unconditionally appends the Linux-only
     // `host.docker.internal:host-gateway` extra host for every container it
     // starts (`docker_linux.go`; empty on darwin/windows, where Docker
@@ -1279,7 +926,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // (`legacy-edge-runtime-script.layer.ts`).
     const extraHosts =
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-    const startOpts: LegacyStartContainerOpts = {
+    const startOpts: LegacyContainerOpts = {
       projectId,
       isBitbucketPipeline,
       workdir: cliConfig.workdir,
@@ -1383,41 +1030,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         );
     }
 
-    // Same generic-Viper-override gap as `apiTlsEnabled` above, for Realtime's
-    // two `SUPABASE_REALTIME_*` fields — both the Realtime container spec
-    // below AND the PG15+ Realtime setup job (`legacyStartSetupLocalDatabase`,
-    // via the `realtime` splice further down) must see the SAME
-    // already-overridden values, matching Go's single `utils.Config.Realtime`
-    // source of truth (`internal/start/start.go:922,928`,
-    // `internal/db/start/start.go:283,290`).
-    const realtimeIpVersion = yield* wrapConfigOverride("realtime.ip_version", () =>
-      legacyEnvOverrideRealtimeIpVersion(config.realtime.ip_version, projectEnvValues),
-    );
-    const realtimeMaxHeaderLength = yield* wrapConfigOverride("realtime.max_header_length", () =>
-      legacyEnvOverrideRealtimeMaxHeaderLength(config.realtime.max_header_length, projectEnvValues),
-    );
-
-    // Same gap for Storage's file-size limit — both the long-running
-    // container below AND the one-shot storage migrate job
-    // (`legacyStartSetupLocalDatabase`, via the `storage` splice further
-    // down) must see the same already-overridden value (Go's
-    // `internal/start/start.go:1004`, `internal/db/start/start.go:307`, both
-    // reading the single `utils.Config.Storage.FileSizeLimit`).
-    const storageFileSizeLimit =
-      legacyEnvOverride(
-        "SUPABASE_STORAGE_FILE_SIZE_LIMIT",
-        config.storage.file_size_limit,
-        projectEnvValues,
-      ) ?? config.storage.file_size_limit;
-    // `@supabase/config`'s schema accepts `file_size_limit` as a plain string — it does not parse
-    // the size grammar itself, so a malformed value (e.g. "foobar") would otherwise only surface
-    // when `storage.service.ts`'s `ramInBytes` call builds the container env, well after
-    // network/image/Postgres work, and never at all when Storage is excluded/disabled. Go's
-    // `sizeInBytes.UnmarshalText` (`pkg/config/config.go:39-49`) decodes this unconditionally in
-    // the same `Config.Load` pass as everything else (`config.go:749-756,775-784`), before `start`
-    // touches Docker or looks at `--exclude` — validate eagerly here to match, discarding the
-    // parsed byte count since every consumer re-parses `storageFileSizeLimit` itself.
-    yield* wrapConfigOverride("storage.file_size_limit", () => ramInBytes(storageFileSizeLimit));
     // Same gap for `storage.vector.enabled` — both the long-running Storage
     // container AND `legacySeedBucketsRun`'s `effectiveLocalStorageConfig`
     // splice further down must see the same already-overridden value (Go's
@@ -1623,30 +1235,8 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       legacyEnvOverrideMaxClientConn(config.db.pooler.max_client_conn, projectEnvValues),
     );
 
-    // Overridden by SUPABASE_DB_HEALTH_TIMEOUT — Go's Config.Load binds this
-    // generically before StartDatabase's health wait reads it
-    // (pkg/config/config.go:580-586, internal/db/start/start.go:180). Resolved
-    // here, before any Docker work, rather than inside `bringUp` right before the
-    // health wait: Go's `mapstructure.StringToTimeDurationHookFunc()` decodes this
-    // in the same unconditional `Config.Load` pass as every other field
-    // (`pkg/config/config.go:749-756,777`), which runs before `start.Run` touches
-    // Docker at all (`internal/start/start.go:51,73`) — a malformed value must
-    // fail before network/image/Postgres work, not after Postgres's own container
-    // has already been created and started.
-    const dbHealthTimeout = legacyEnvOverride(
-      "SUPABASE_DB_HEALTH_TIMEOUT",
-      config.db.health_timeout,
-      projectEnvValues,
-    );
-    const dbHealthTimeoutSeconds = yield* Effect.try({
-      try: () => resolveDbHealthTimeoutSeconds(dbHealthTimeout ?? config.db.health_timeout),
-      catch: (cause) =>
-        new LegacyStartInvalidConfigError({
-          message: `failed to parse config: ${cause instanceof Error ? cause.message : String(cause)}`,
-        }),
-    });
-
-    // Same bug class as `dbHealthTimeoutSeconds` above: Go decodes `edge_runtime.policy`
+    // Same bug class as `dbHealthTimeoutSeconds` (now resolved by the shared
+    // `legacyResolveDbBootstrapConfig` call above): Go decodes `edge_runtime.policy`
     // (an enum via `UnmarshalText`) and `edge_runtime.inspector_port` (a plain `uint`) during
     // the same unconditional `Config.Load` pass (`pkg/config/config.go:749-756,777`), before
     // `start.Run` touches Docker — regardless of `--exclude edge-runtime`. The Edge Runtime
@@ -1755,7 +1345,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
               poolerId: poolerContainerName,
               nginxWorkerProcesses: legacyResolveKongNginxWorkerProcesses(projectEnvValues),
               workdir: cliConfig.workdir,
-              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail, cliConfig.workdir),
+              emailTemplateMounts: buildKongEmailTemplateMounts(resolvedEmail),
             }),
           };
         }
@@ -1962,77 +1552,128 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
     // falls through to that SAME unconditional tail (`start.go:74-87`) rather
     // than returning early from the whole command.
     const bringUp = Effect.gen(function* () {
-      yield* legacyEnsureStartNetwork(spawner, networkId, {
-        [LEGACY_CLI_PROJECT_LABEL]: projectId,
-        [LEGACY_COMPOSE_PROJECT_LABEL]: projectId,
-      });
+      // `--debug` — threaded into `setup.debug` below so a failed fresh-volume
+      // Realtime/Storage/Auth migrate job (see `db-setup.ts`'s `legacyRunStartMigrateJob`
+      // doc comment) tees its own stderr, matching Go's `initSchema15` passing
+      // `utils.GetDebugLogger()` as that job's stderr writer (`start.go:349-353`).
+      const bringUpDebug = yield* LegacyDebugFlag;
 
-      // Go's pre-create volume-existence check (`internal/db/start/start.go:
-      // 165-167`) — MUST run before Postgres's own volume gets created by
-      // `legacyStartContainer` below: `docker volume create` is idempotent, so
-      // creating first would make "did this volume already exist" unobservable.
-      isFreshVolume = !(yield* legacyStartVolumeExists(spawner, dbContainerId));
-      if (output.format === "text") {
-        yield* output.raw(
-          isFreshVolume
-            ? LEGACY_START_STARTING_DATABASE_MESSAGE
-            : LEGACY_START_STARTING_DATABASE_FROM_BACKUP_MESSAGE,
-          "stderr",
-        );
-      }
-
-      const postgresSpec = legacyBuildPostgresStartContainerSpec({
-        // `port` overridden by SUPABASE_DB_PORT (Go's NewHostConfig binds the
-        // published port straight from the already-overridden
-        // utils.Config.Db.Port, apps/cli-go/internal/db/start/start.go:119-121).
-        // `settings` overridden by any `SUPABASE_DB_SETTINGS_*` field (Go's
-        // `(a *settings) ToPostgresConfig()` serializes the same
-        // already-overridden global `Config.Db.Settings`, `pkg/config/db.go:181-190`).
-        db: {
-          ...config.db,
-          port: values.dbPort,
-          major_version: majorVersion,
-          settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
-        },
-        // `orioledb_version` overridden by SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION,
-        // matching the value already used to select `postgresImage` above —
-        // `legacyPostgresExtraEnv` reads this same field, and its four sibling
-        // S3 fields, for its S3/`POSTGRES_INITDB_ARGS` branch.
-        experimental: {
-          ...config.experimental,
-          orioledb_version: orioledbVersion,
-          s3_host: s3Host,
-          s3_region: s3Region,
-          s3_access_key: s3AccessKey,
-          s3_secret_key: s3SecretKey,
-        },
-        jwtSecret: values.jwtSecret,
-        // Overridden by SUPABASE_AUTH_JWT_EXPIRY — Postgres's JWT_EXP (seeding
-        // app.settings.jwt_exp) and GoTrue's GOTRUE_JWT_EXP both read the same
-        // already-overridden utils.Config.Auth.JwtExpiry in Go
-        // (internal/db/start/start.go:68, internal/start/start.go:1372); using
-        // the raw config value here would let Postgres and GoTrue disagree.
-        jwtExpiry: values.authJwtExpiry,
+      // Runs the exact Go `StartDatabase` sequence (network -> volume probe -> container
+      // create+start -> health wait -> fresh-volume setup -> `_current_branch`) — shared
+      // with `db start`'s own native container bootstrap, see `legacyStartDatabase`'s own
+      // header (`legacy/shared/db-bootstrap/start-database.ts`) for the full call order and
+      // for why this function has zero knowledge of `--ignore-health-check`: that decision
+      // belongs entirely to THIS caller, immediately below, matching Go's real function
+      // boundary (`internal/start/start.go`'s `Run()` vs `internal/db/start/start.go`'s
+      // `StartDatabase`).
+      const dbBootstrapResult = yield* legacyStartDatabase(spawner, {
+        fs,
+        path,
+        workdir: cliConfig.workdir,
         projectId,
         networkId,
-        image: resolveImage(postgresImage),
-        configImage: postgresImage,
-        rootKey: values.rootKey,
-      });
-      yield* legacyStartContainer(spawner, postgresSpec, startOpts);
-      // `dbHealthTimeoutSeconds` is resolved eagerly, before any Docker work — see its
-      // definition above, alongside the other eagerly-validated config-override fields.
-      // Watched by container name, matching Go's `utils.DbId`.
-      const postgresHealthResult = yield* legacyWaitForHealthyServices(
-        spawner,
-        [postgresSpec.containerName],
-        {
-          timeoutSeconds: dbHealthTimeoutSeconds,
-          images: new Map([[postgresSpec.containerName, postgresSpec.image]]),
+        hostname: context.hostname,
+        dbContainerId,
+        dbPort: values.dbPort,
+        containerOpts: startOpts,
+        postgresSpec: {
+          // `port` overridden by SUPABASE_DB_PORT (Go's NewHostConfig binds the
+          // published port straight from the already-overridden
+          // utils.Config.Db.Port, apps/cli-go/internal/db/start/start.go:119-121).
+          // `settings` overridden by any `SUPABASE_DB_SETTINGS_*` field (Go's
+          // `(a *settings) ToPostgresConfig()` serializes the same
+          // already-overridden global `Config.Db.Settings`, `pkg/config/db.go:181-190`).
+          db: {
+            ...config.db,
+            port: values.dbPort,
+            major_version: majorVersion,
+            settings: legacyResolveDbSettingsEnvOverrides(config.db.settings, projectEnvValues),
+          },
+          // `orioledb_version` overridden by SUPABASE_EXPERIMENTAL_ORIOLEDB_VERSION,
+          // matching the value already used to select `postgresImage` above —
+          // `legacyPostgresExtraEnv` reads this same field, and its four sibling
+          // S3 fields, for its S3/`POSTGRES_INITDB_ARGS` branch.
+          experimental: {
+            ...config.experimental,
+            orioledb_version: orioledbVersion,
+            s3_host: s3Host,
+            s3_region: s3Region,
+            s3_access_key: s3AccessKey,
+            s3_secret_key: s3SecretKey,
+          },
+          jwtSecret: values.jwtSecret,
+          // Overridden by SUPABASE_AUTH_JWT_EXPIRY — Postgres's JWT_EXP (seeding
+          // app.settings.jwt_exp) and GoTrue's GOTRUE_JWT_EXP both read the same
+          // already-overridden utils.Config.Auth.JwtExpiry in Go
+          // (internal/db/start/start.go:68, internal/start/start.go:1372); using
+          // the raw config value here would let Postgres and GoTrue disagree.
+          jwtExpiry: values.authJwtExpiry,
+          projectId,
+          networkId,
+          configImage: postgresImage,
+          rootKey: values.rootKey,
+          // `fromBackup` stays unset: `supabase start` always calls `StartDatabase` with an
+          // empty `fromBackup` (`apps/cli-go/internal/start/start.go:295`) — only `db start`
+          // ever sets it.
         },
-      ).pipe(Effect.result);
-      if (Result.isFailure(postgresHealthResult)) {
-        const error = postgresHealthResult.failure;
+        // Already resolved as part of THIS run's own batched pre-pull (`resolvedImages`,
+        // above) — `supabase start` has no per-container lazy resolve of its own, unlike
+        // `db start` (see `legacyStartDatabase`'s header for why this is caller-supplied).
+        resolvePostgresImage: Effect.succeed(resolveImage(postgresImage)),
+        dbHealthTimeoutSeconds,
+        setup: {
+          majorVersion,
+          experimental,
+          // Go's `initSchema15`'s per-job gates read `utils.Config.{Realtime,Storage,Auth}.
+          // Enabled` — the EFFECTIVE, env-overridden value (Viper's `AutomaticEnv` already
+          // folds any `SUPABASE_*_ENABLED` override into the single global `Config`), NOT
+          // additionally filtered by `--exclude` the way `gates.*` is (Go's one-shot
+          // migration jobs run regardless of `--exclude` — they're part of `StartDatabase`,
+          // which finishes before `run()`'s own excluded-services filtering even begins).
+          config: {
+            ...config,
+            realtime: {
+              ...config.realtime,
+              enabled: realtimeEnabledForSetup,
+              ip_version: realtimeIpVersion,
+              max_header_length: realtimeMaxHeaderLength,
+            },
+            storage: {
+              ...config.storage,
+              enabled: storageEnabledForSetup,
+              file_size_limit: storageFileSizeLimit,
+            },
+            auth: {
+              ...config.auth,
+              enabled: authEnabledForSetup,
+            },
+          },
+          dbUrl: values.dbUrl,
+          jwtSecret: values.jwtSecret,
+          // Already resolved, unconditionally, near the top of THIS handler's own prelude
+          // (feeding the long-running Realtime/GoTrue/PostgREST containers too) — reused
+          // here rather than re-resolved, see `legacyStartDatabase`'s header for why.
+          jwks: Effect.succeed(jwks),
+          apiUrl: values.apiUrl,
+          authExternalUrl: legacyResolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
+          siteUrl: values.authSiteUrl,
+          anonKey: values.anonKey,
+          serviceRoleKey: values.serviceRoleKey,
+          storageTargetMigration,
+          realtimeEnabledForSetup,
+          storageEnabledForSetup,
+          authEnabledForSetup,
+          serviceVersionOverrides,
+          projectEnvValues,
+          debug: bringUpDebug,
+        },
+        onFreshVolumeResolved: (resolved) => {
+          isFreshVolume = resolved;
+        },
+      }).pipe(Effect.result);
+
+      if (Result.isFailure(dbBootstrapResult)) {
+        const error = dbBootstrapResult.failure;
         if (flags.ignoreHealthCheck && legacyIsUnhealthyStartError(error)) {
           // Go's outer `Run()` check (`ignoreHealthCheck &&
           // IsUnhealthyError(err)`, `start.go:74-75`) applies uniformly to
@@ -2051,128 +1692,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
         return yield* Effect.fail(error);
       }
-
-      // Go's `if utils.NoBackupVolume { SetupLocalDatabase(...) }` (`db/start/
-      // start.go:184-188`) — runs immediately after Postgres's OWN health wait,
-      // BEFORE "Starting containers..." prints and before any other service
-      // starts: `internal/start/start.go:293-298` calls `StartDatabase` (which
-      // performs this whole sequence internally) before any other service's own
-      // `if` block even runs.
-      if (isFreshVolume) {
-        yield* Effect.scoped(
-          Effect.gen(function* () {
-            const session = yield* dbConnection.connect(
-              {
-                host: context.hostname,
-                port: values.dbPort,
-                user: "postgres",
-                password: dbPassword,
-                database: "postgres",
-              },
-              { isLocal: true, dnsResolver: "native" },
-            );
-            // Go's one-shot fresh-DB setup jobs (`initSchema15`) use the SAME
-            // already-pin-rewritten `utils.Config.{Realtime,Storage,Auth}.Image`
-            // fields the long-running containers use (`internal/db/start/
-            // start.go:270,299,321`), regardless of `--exclude` — resolve through
-            // `legacyResolvePinnedImage` (not the raw Dockerfile default) so a
-            // linked project's version pins apply here too. Resolved HERE, inside
-            // this `isFreshVolume` block and additionally gated on `majorVersion
-            // >= 15` (this schema-init path is PG15+-only, `db-setup.ts`'s own
-            // `majorVersion <= 14` branch never reads `images`) — NOT pre-pulled
-            // unconditionally up front, matching Go's own `ensureImagesCached`
-            // (`start.go:237-262`), which only pre-pulls non-excluded services;
-            // these images are resolved lazily inside `initSchema15` itself
-            // (`DockerStart` -> `DockerResolveImageIfNotCached`,
-            // `internal/utils/docker.go:363-365`), only when the job genuinely
-            // runs. Still resolved through the SAME `projectEnvValues`-aware
-            // `legacyEnsureImagesCached` used above (not the raw image string) so
-            // a project-dotenv-only `SUPABASE_INTERNAL_IMAGE_REGISTRY` override
-            // still applies whenever the job WILL run.
-            const rawSetupJobImages = {
-              realtime: legacyResolvePinnedImage("realtime", "realtime", serviceVersionOverrides),
-              storage: legacyResolvePinnedImage("storage", "storage", serviceVersionOverrides),
-              auth: legacyResolvePinnedImage("gotrue", "auth", serviceVersionOverrides),
-            };
-            const setupJobImagesToResolve =
-              majorVersion >= 15
-                ? [
-                    ...(realtimeEnabledForSetup ? [rawSetupJobImages.realtime] : []),
-                    ...(storageEnabledForSetup ? [rawSetupJobImages.storage] : []),
-                    ...(authEnabledForSetup ? [rawSetupJobImages.auth] : []),
-                  ]
-                : [];
-            const resolvedSetupJobImages =
-              setupJobImagesToResolve.length > 0
-                ? yield* legacyEnsureImagesCached(
-                    spawner,
-                    setupJobImagesToResolve,
-                    projectEnvValues,
-                  )
-                : new Map<string, string>();
-            const resolveSetupJobImage = (image: string) =>
-              resolvedSetupJobImages.get(image) ?? image;
-            const dbSetupImages: LegacyStartDbSetupImages = {
-              realtime: resolveSetupJobImage(rawSetupJobImages.realtime),
-              storage: resolveSetupJobImage(rawSetupJobImages.storage),
-              auth: resolveSetupJobImage(rawSetupJobImages.auth),
-            };
-            yield* legacyStartSetupLocalDatabase({
-              session,
-              fs,
-              path,
-              workdir: cliConfig.workdir,
-              // Go's `initSchema15`'s per-job gates read `utils.Config.
-              // {Realtime,Storage,Auth}.Enabled` — the EFFECTIVE, env-overridden
-              // value (Viper's `AutomaticEnv` already folds any `SUPABASE_*_
-              // ENABLED` override into the single global `Config`), NOT
-              // additionally filtered by `--exclude` the way `gates.*` is (Go's
-              // one-shot migration jobs run regardless of `--exclude` — they're
-              // part of `StartDatabase`, which finishes before `run()`'s own
-              // excluded-services filtering even begins). Reuses
-              // `{realtime,storage,auth}EnabledForSetup`, hoisted above (also
-              // needed by `setupJobImages`) instead of recomputing them here.
-              config: {
-                ...config,
-                realtime: {
-                  ...config.realtime,
-                  enabled: realtimeEnabledForSetup,
-                  ip_version: realtimeIpVersion,
-                  max_header_length: realtimeMaxHeaderLength,
-                },
-                storage: {
-                  ...config.storage,
-                  enabled: storageEnabledForSetup,
-                  file_size_limit: storageFileSizeLimit,
-                },
-                auth: {
-                  ...config.auth,
-                  enabled: authEnabledForSetup,
-                },
-              },
-              majorVersion,
-              projectId,
-              networkId,
-              dbUrl: values.dbUrl,
-              jwtSecret: values.jwtSecret,
-              jwks,
-              apiUrl: values.apiUrl,
-              authExternalUrl: resolveAuthExternalUrl(context.loaded?.document, projectEnvValues),
-              siteUrl: values.authSiteUrl,
-              anonKey: values.anonKey,
-              serviceRoleKey: values.serviceRoleKey,
-              storageTargetMigration,
-              images: dbSetupImages,
-            });
-          }),
-        );
-      }
-
-      // Go's `initCurrentBranch` (`db/start/start.go:189`) runs on every start
-      // regardless of `isFreshVolume` — unlike `SetupLocalDatabase`, which only
-      // runs on a fresh volume. Moved out of `legacyStartSetupLocalDatabase` (see
-      // that module's own comment) so it isn't accidentally skipped on a restart.
-      yield* legacyStartInitCurrentBranch(fs, path, cliConfig.workdir);
 
       if (output.format === "text") {
         yield* output.raw(LEGACY_START_STARTING_CONTAINERS_MESSAGE, "stderr");
@@ -2197,7 +1716,6 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         // real relative position (between ImgProxy and pg-meta).
         if (entry.service === "edgeRuntime") {
           if (!gates.edgeRuntime || edgeRuntimeDefaultImage === undefined) continue;
-          const debug = yield* LegacyDebugFlag;
           // `config.edge_runtime.secrets` is still schema-decoded plain
           // strings here — `toPlainEdgeRuntimeConfig` only emits entries
           // whose values are `Redacted` (`shared/functions/serve.ts`), and a
@@ -2273,7 +1791,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
           const runtime: StartedRuntime = yield* legacyStartEdgeRuntimeContainer(edgeRuntimeInput);
           // Deliberately NOT calling `runtime.cleanup` here — see
           // `edge-runtime.service.ts`'s header for why. Unlike every other
-          // service built here (`legacyStartContainer`'s `restartPolicy:
+          // service built here (`legacyCreateContainer`'s `restartPolicy:
           // "unless-stopped"`), Go's own Edge Runtime bring-up sets no Docker
           // restart policy at all, so this container's `docker run` matches
           // that — but its bind-mounted host temp files must still exist for
@@ -2317,7 +1835,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
             ),
           ),
         );
-        yield* legacyStartContainer(spawner, spec, startOpts);
+        yield* legacyCreateContainer(spawner, spec, startOpts);
         if (excludeFromHealthWatch !== true) {
           started.set(spec.containerName, spec.image);
         }
@@ -2355,7 +1873,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
       // `onError` fires on any failure outcome (including interruption) and its
       // cleanup effect runs uninterruptibly, matching Go's unconditional check.
       Effect.onError(() =>
-        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+        legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
       ),
     );
 
@@ -2374,12 +1892,19 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         );
       }
       let removedContainers: ReadonlyArray<LegacyContainerIdName> = [];
-      yield* legacyDockerRemoveAll(spawner, filterValue, false, (containers) => {
-        // Recovery only trusts its own workdir; empty labels use the existing fallback.
-        removedContainers = containers.filter(
-          (container) => container.workdir.length === 0 || container.workdir === cliConfig.workdir,
-        );
-      }).pipe(
+      yield* legacyDockerRemoveAll(
+        spawner,
+        filterValue,
+        false,
+        (containers) => {
+          // Recovery only trusts its own workdir; empty labels use the existing fallback.
+          removedContainers = containers.filter(
+            (container) =>
+              container.workdir.length === 0 || container.workdir === cliConfig.workdir,
+          );
+        },
+        debug,
+      ).pipe(
         Effect.ensuring(
           Effect.suspend(() => legacyCleanupStartSecrets(removedContainers, cliConfig.workdir)),
         ),
@@ -2604,7 +2129,7 @@ export const legacyStart = Effect.fn("legacy.start")(function* (flags: LegacySta
         }
       }).pipe(
         Effect.onError(() =>
-          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir),
+          legacyRollbackStart(spawner, filterValue, isFreshVolume, cliConfig.workdir, debug),
         ),
       );
     }

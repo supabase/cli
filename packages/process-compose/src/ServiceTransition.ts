@@ -8,6 +8,7 @@ import { ServiceState, type ServiceStatus } from "./ServiceState.ts";
 export type ServiceEvent =
   | { readonly _tag: "DependenciesSatisfied" }
   | { readonly _tag: "DependencyFailed"; readonly error: string }
+  | { readonly _tag: "SpawnFailed"; readonly error: string }
   | {
       readonly _tag: "ProcessSpawned";
       readonly pid: number;
@@ -15,6 +16,8 @@ export type ServiceEvent =
     }
   | { readonly _tag: "HealthCheckPassed" }
   | { readonly _tag: "HealthCheckFailed" }
+  | { readonly _tag: "ProcessTerminated" }
+  | { readonly _tag: "UnhealthyRestartExhausted"; readonly error: string }
   | { readonly _tag: "ProcessExited"; readonly exitCode: number }
   | { readonly _tag: "StopRequested" }
   | {
@@ -25,51 +28,55 @@ export type ServiceEvent =
   | { readonly _tag: "HookFailed"; readonly error: string };
 
 // ---------------------------------------------------------------------------
-// Transition table — set of (fromStatus, eventTag) pairs that are legal
+// Transition table — every event must classify its legal source statuses
 // ---------------------------------------------------------------------------
 
-const allowed = new Set<`${ServiceStatus}:${ServiceEvent["_tag"]}`>([
-  "Pending:DependenciesSatisfied",
-  "Pending:DependencyFailed",
-  "Pending:StopRequested",
-  "Starting:ProcessSpawned",
-  "Starting:StopRequested",
-  "Running:HealthCheckPassed",
-  "Running:ProcessExited",
-  "Running:StopRequested",
-  "Healthy:HealthCheckPassed",
-  "Healthy:HealthCheckFailed",
-  "Healthy:ProcessExited",
-  "Healthy:StopRequested",
-  "Unhealthy:HealthCheckPassed",
-  "Unhealthy:ProcessExited",
-  "Unhealthy:StopRequested",
-  "Stopping:ProcessExited",
-  "Stopped:RestartTriggered",
-  "Failed:RestartTriggered",
-  "Unhealthy:RestartTriggered",
-  "Restarting:StopRequested",
-  "Restarting:BackoffElapsed",
-  "Running:HookFailed",
-  "Healthy:HookFailed",
-]);
+type TransitionTable = {
+  readonly [Tag in ServiceEvent["_tag"]]: ReadonlySet<ServiceStatus>;
+};
+
+const transitions: TransitionTable = {
+  DependenciesSatisfied: new Set(["Pending"]),
+  DependencyFailed: new Set(["Pending"]),
+  SpawnFailed: new Set(["Pending", "Starting", "Restarting"]),
+  ProcessSpawned: new Set(["Starting"]),
+  HealthCheckPassed: new Set(["Running", "Healthy", "Unhealthy"]),
+  HealthCheckFailed: new Set(["Running", "Healthy"]),
+  ProcessTerminated: new Set(["Unhealthy"]),
+  UnhealthyRestartExhausted: new Set(["Unhealthy"]),
+  ProcessExited: new Set(["Running", "Healthy", "Unhealthy", "Stopping", "Failed"]),
+  StopRequested: new Set([
+    "Pending",
+    "Starting",
+    "Running",
+    "Healthy",
+    "Unhealthy",
+    "Restarting",
+    "Failed",
+  ]),
+  RestartTriggered: new Set(["Stopped", "Failed", "Unhealthy"]),
+  BackoffElapsed: new Set(["Restarting"]),
+  HookFailed: new Set(["Starting", "Running", "Healthy", "Unhealthy"]),
+};
 
 // ---------------------------------------------------------------------------
 // applyEvent — pure function, returns new ServiceState or null if invalid
 // ---------------------------------------------------------------------------
 
 export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceState | null => {
-  const key = `${state.status}:${event._tag}` as const;
-  if (!allowed.has(key)) return null;
+  if (!transitions[event._tag].has(state.status)) return null;
 
   switch (event._tag) {
     case "DependenciesSatisfied":
       return new ServiceState({ ...state, status: "Starting" });
 
     case "DependencyFailed":
+    case "SpawnFailed":
       return new ServiceState({
         ...state,
         status: "Failed",
+        pid: null,
+        exitCode: null,
         error: event.error,
       });
 
@@ -87,12 +94,25 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
     case "HealthCheckFailed":
       return new ServiceState({ ...state, status: "Unhealthy" });
 
+    case "UnhealthyRestartExhausted":
+      return new ServiceState({
+        ...state,
+        status: "Failed",
+        pid: null,
+        exitCode: null,
+        error: event.error,
+      });
+
+    case "ProcessTerminated":
+      return new ServiceState({ ...state, pid: null });
+
     case "ProcessExited": {
       const status: ServiceStatus =
         state.status === "Stopping" ? "Stopped" : event.exitCode === 0 ? "Stopped" : "Failed";
       return new ServiceState({
         ...state,
         status,
+        pid: null,
         exitCode: event.exitCode,
       });
     }
@@ -108,6 +128,7 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
       return new ServiceState({
         ...state,
         status: "Restarting",
+        pid: null,
         restartCount: event.restartCount,
       });
 
@@ -125,6 +146,7 @@ export const applyEvent = (state: ServiceState, event: ServiceEvent): ServiceSta
       return new ServiceState({
         ...state,
         status: "Failed",
+        pid: null,
         error: event.error,
       });
   }

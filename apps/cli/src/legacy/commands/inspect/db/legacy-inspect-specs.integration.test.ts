@@ -75,7 +75,12 @@ function setup(rows: ReadonlyArray<Record<string, unknown>>) {
   };
 }
 
-const localFlags = { dbUrl: Option.none<string>(), linked: false, local: true };
+const localFlags = {
+  dbUrl: Option.none<string>(),
+  linked: false,
+  local: true,
+  projectRef: Option.none<string>(),
+};
 
 type ParamKind = "none" | "schemas1" | "schemas2";
 
@@ -291,4 +296,25 @@ describe("legacy inspect db specs (per-subcommand correctness)", () => {
       }).pipe(Effect.provide(ctx.layer));
     });
   }
+
+  // Cell-level truth for `blocking.go:56`'s per-column backtick-wrapping: col 2
+  // (`blocking_statement`) is backtick-wrapped, so a null/empty value renders as
+  // the two literal backticks (glamour's empty-code-span rule), while col 5
+  // (`blocked_statement`) stays bare, so an empty value renders as "".
+  it("projects a null blocking_statement to the two-backtick empty code span, keeping blocked_statement bare", () => {
+    const row: Record<string, unknown> = {
+      blocked_pid: 1,
+      blocking_statement: null,
+      blocking_duration: "00:02",
+      blocking_pid: 2,
+      blocked_statement: "",
+      blocked_duration: "00:03",
+    };
+    const cells = legacyBlockingSpec.project(row, {
+      conn: LOCAL_CONN,
+      isLocal: true,
+    } satisfies LegacyResolvedDbConfig);
+    expect(cells[1]).toBe("``");
+    expect(cells[4]).toBe("");
+  });
 });

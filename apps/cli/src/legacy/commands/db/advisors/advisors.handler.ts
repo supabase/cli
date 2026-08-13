@@ -7,6 +7,7 @@ import { ProcessControl } from "../../../../shared/runtime/process-control.servi
 import { LegacyCredentials } from "../../../auth/legacy-credentials.service.ts";
 import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { legacyAqua } from "../../../shared/legacy-colors.ts";
+import { legacyMissingAccessTokenMessage } from "../../../auth/legacy-access-token.ts";
 import { legacyFailsOn } from "../../../shared/legacy-fail-on.ts";
 import { LegacyIdentityStitch } from "../../../shared/legacy-identity-stitch.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
@@ -35,10 +36,6 @@ import {
 } from "./advisors.format.ts";
 import { legacyFetchPerformanceAdvisors, legacyFetchSecurityAdvisors } from "./advisors.linked.ts";
 import { splitLegacyLintsSql } from "./advisors.lints-sql.ts";
-
-/** Go's `utils.ErrMissingToken` (`internal/utils/access_token.go:18`). */
-const missingTokenMessage = (): string =>
-  `Access token not provided. Supply an access token by running ${legacyAqua("supabase login")} or setting the SUPABASE_ACCESS_TOKEN environment variable.`;
 
 /** Go's advisors PreRunE `utils.CmdSuggestion` (`cmd/db.go`). */
 const loginSuggestion = (): string => `Run ${legacyAqua("supabase login")} first.`;
@@ -114,6 +111,7 @@ const runLocal = Effect.fnUntraced(function* (
 /** Go's root `PersistentPreRunE` (`cmd/root.go:118`) + advisors `PreRunE` +
  *  `RunLinked` (`cmd/db.go:355-371`, `advisors.go:79-100`). */
 const runLinked = Effect.fnUntraced(function* (
+  flags: LegacyDbAdvisorsFlags,
   dnsResolver: "native" | "https",
   advisorType: string,
   level: string,
@@ -136,7 +134,7 @@ const runLinked = Effect.fnUntraced(function* (
   // when the DB-config resolve below fails (e.g. the IPv6 error). Load the ref
   // first (non-prompting `LoadProjectRef`; ErrNotLinked → empty ref → nothing to
   // cache, matching Go) and wrap everything after it in the cache finalizer.
-  const ref = yield* projectRefResolver.loadProjectRef(Option.none());
+  const ref = yield* projectRefResolver.loadProjectRef(flags.projectRef);
 
   return yield* Effect.gen(function* () {
     // Root PersistentPreRunE's `ParseDatabaseConfig` host probe / login-role mint
@@ -144,7 +142,12 @@ const runLinked = Effect.fnUntraced(function* (
     // the resolved config (`advisors.go:79-100`), so resolve-and-discard — purely
     // for the side effects and early-failure ordering (before the token gate,
     // matching root PersistentPreRunE → advisors PreRunE).
-    yield* resolver.resolve({ dbUrl: Option.none(), connType: "linked", dnsResolver });
+    yield* resolver.resolve({
+      dbUrl: Option.none(),
+      connType: "linked",
+      dnsResolver,
+      linkedProjectRef: flags.projectRef,
+    });
 
     // PreRunE: Go calls `utils.LoadAccessTokenFS` (`cmd/db.go:358`), which VALIDATES
     // the token (env/keyring/file) against the `sbp_` pattern and fails with
@@ -157,6 +160,9 @@ const runLinked = Effect.fnUntraced(function* (
           new LegacyDbAdvisorsInvalidTokenError({
             message: cause.message,
             suggestion: loginSuggestion(),
+            // Preserve the token source so an env-provided malformed token keeps
+            // its `set_env_var` remediation instead of degrading to `supabase login`.
+            source: cause.source,
           }),
         ),
       ),
@@ -164,7 +170,7 @@ const runLinked = Effect.fnUntraced(function* (
     if (Option.isNone(tokenOpt)) {
       return yield* Effect.fail(
         new LegacyDbAdvisorsNotLoggedInError({
-          message: missingTokenMessage(),
+          message: legacyMissingAccessTokenMessage(),
           suggestion: loginSuggestion(),
         }),
       );
@@ -233,6 +239,19 @@ const runAdvisors = Effect.fnUntraced(function* (
     );
   }
 
+  // `--project-ref` never implies `--linked` and must not be silently
+  // discarded on a non-linked target — see push.handler.ts's identical guard
+  // for the full TS-only rationale. advisors defaults to the local/db-url path
+  // (`runLocal`) whenever `--linked` isn't the resolved target selector.
+  if (Option.isSome(flags.projectRef) && target.connType !== "linked") {
+    return yield* Effect.fail(
+      new LegacyDbAdvisorsMutuallyExclusiveFlagsError({
+        message:
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      }),
+    );
+  }
+
   const advisorType = Option.getOrElse(flags.type, () => "all");
   const level = Option.getOrElse(flags.level, () => "warn");
   const failOn = Option.getOrElse(flags.failOn, () => "none");
@@ -241,7 +260,7 @@ const runAdvisors = Effect.fnUntraced(function* (
   // linked → Management API; otherwise local / `--db-url`.
   const filtered =
     target.connType === "linked"
-      ? yield* runLinked(dnsResolver, advisorType, level)
+      ? yield* runLinked(flags, dnsResolver, advisorType, level)
       : yield* runLocal(flags, dnsResolver, advisorType, level, target);
 
   yield* outputAndCheck(filtered, failOn);

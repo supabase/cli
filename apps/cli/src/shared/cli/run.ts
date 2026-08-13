@@ -1,6 +1,6 @@
 import { BunServices } from "@effect/platform-bun";
 import { ProjectConfigStore } from "@supabase/config";
-import { unixHttpClientLayer } from "@supabase/stack";
+import { unixHttpClientLayer } from "@supabase/stack/effect";
 import { Cause, Console, Effect, Exit, Fiber, Layer, Runtime, Stdio } from "effect";
 import { CliError, CliOutput, Command } from "effect/unstable/cli";
 import { CLI_VERSION } from "./version.ts";
@@ -55,23 +55,39 @@ const globalFlagsWithValues = new Set([
 // Go binary, which managed SIGINT/SIGTERM itself, but the native TypeScript `legacyStart`
 // installs no signal handling of its own — excluding it left Ctrl-C mid-bring-up as a raw,
 // unhandled OS signal that hard-kills the process, skipping every Effect finalizer
-// including `legacyRollbackStart`. Go's own `start` DOES roll back on SIGINT
+// including `legacyRollbackStart`. Go's own `start` DID roll back on SIGINT
 // (`cmd/root.go:99,155` wraps every command's context with `signal.NotifyContext`;
-// `internal/start/start.go:73-82` rolls back on any non-nil `run()` error, including the
-// `context.Canceled` a SIGINT produces), so native `start` must participate in the global
+// formerly `internal/start/start.go:73-82`, which rolled back on any non-nil `run()`
+// error, including the `context.Canceled` a SIGINT produces — internal/start was
+// deleted as unreachable in CLI-1966, last present at commit a253ccba2), so native
+// `start` must participate in the global
 // wrapper to match. This list is matched purely against argv command-path segments — it has
 // no notion of which shell (legacy vs next) registered the matching command, so `next start`
 // (a completely different command tree that happens to share the literal path `["start"]`)
 // needs its OWN exemption, passed via `RunCliOptions.additionalSelfManagedSignalCommands` from
 // `next/cli/main.ts` — see that call site's comment for why.
-const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [
-  ["db", "start"],
-  // `db reset` (local path) drives the bootstrap seam, which holds SIGINT/SIGTERM/SIGHUP with
-  // no-op listeners while the Go child recreates the container; the global handler would
-  // otherwise race that and cut off the child's Docker cleanup / status propagation.
-  ["db", "reset"],
-  ["functions", "serve"],
-];
+//
+// `["db", "start"]` (top-level `db start`) is ALSO deliberately not listed here, for the exact
+// same reason as `start` above: it used to proxy container bootstrap to the hidden Go
+// `db __db-bootstrap --mode start` seam, which held SIGINT/SIGTERM itself, but CLI-1954's
+// native port (`legacy/commands/db/start/start.handler.ts` -> `legacyStartDatabase`) installs
+// no signal handling of its own — it relies on the SAME `Effect.onError(() =>
+// legacyRollbackStart(...))` wrapper `supabase start` uses, which only ever fires when this
+// process's own fiber is interrupted (by `Fiber.interrupt` below, or by an ordinary typed
+// failure) — a raw, unhandled OS signal skips it entirely, exactly like the `start` case above.
+//
+// `["db", "reset"]` was ALSO listed here once, for the same reason `db start` used to be:
+// its local path drove the hidden `db __db-bootstrap --mode recreate`/`--mode await-storage`
+// seam via a bespoke DIRECT `ChildProcess.make` spawn (not through `LegacyGoProxy`), which
+// held SIGINT/SIGTERM/SIGHUP itself while the Go child recreated the container — the global
+// handler's own `Fiber.interrupt` would otherwise race that child's Docker cleanup and lose
+// its real exit status. CLI-1955 removed that seam entirely: `db reset --local` is now fully
+// native TS (`legacy/shared/db-bootstrap/recreate-local-database.ts`), installing no signal
+// handling of its own. Its only remaining Go child is the niche `--experimental` remote
+// delegate, via the SAME `LegacyGoProxy.exec`/`execCapture` every other unlisted legacy
+// command already uses safely alongside this global handler — so `db reset` was removed from
+// this list too, matching `db start`'s own precedent exactly.
+const selfManagedSignalCommands: ReadonlyArray<ReadonlyArray<string>> = [["functions", "serve"]];
 
 /** Positional command-path tokens from argv, skipping global flags and their values. */
 export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<string> {

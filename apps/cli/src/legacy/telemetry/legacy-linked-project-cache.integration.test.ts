@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
@@ -143,4 +143,44 @@ describe("legacyLinkedProjectCacheLayer", () => {
       rmSync(workdir, { recursive: true, force: true });
     }).pipe(Effect.provide(layer));
   });
+
+  it.live(
+    "skips the fill when project-ref names a DIFFERENT ref: the cache must describe the linked workdir, not the resolved ref (PR #6168 review)",
+    () => {
+      // A mid-flight `link --project-ref B` failure still reaches the fill via
+      // Effect.ensuring while `project-ref` holds the OLD link — caching B
+      // would make the parent chain prefer a never-linked project. The guard
+      // runs before any token/network work, so the GET must never fire.
+      const OTHER_REF = "otherprojectrefabcde";
+      const workdir = mkdtempSync(join(tmpdir(), "legacy-linked-cache-diverge-"));
+      mkdirSync(join(workdir, "supabase", ".temp"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", ".temp", "project-ref"), LEGACY_VALID_REF);
+      const analytics = mockAnalytics();
+      const api = mockLegacyPlatformApi({
+        handler: () => Effect.die("cache GET must not run when project-ref diverges"),
+      });
+      const identityStitch = legacyIdentityStitchLayer.pipe(
+        Layer.provide(analytics.layer),
+        Layer.provide(
+          mockTelemetryRuntime({ configDir: join(workdir, ".supabase"), consent: "granted" }),
+        ),
+        Layer.provide(BunServices.layer),
+      );
+      const layer = legacyLinkedProjectCacheLayer.pipe(
+        Layer.provide(api.httpClientLayer),
+        Layer.provide(mockLegacyCliConfig({ workdir })),
+        Layer.provide(mockLegacyCredentialsLayer),
+        Layer.provide(identityStitch),
+        Layer.provide(analytics.layer),
+        Layer.provide(BunServices.layer),
+      );
+      return Effect.gen(function* () {
+        const cache = yield* LegacyLinkedProjectCache;
+        yield* cache.cache(OTHER_REF, workdir);
+        expect(existsSync(join(workdir, "supabase", ".temp", "linked-project.json"))).toBe(false);
+        expect(analytics.groupIdentified).toEqual([]);
+        rmSync(workdir, { recursive: true, force: true });
+      }).pipe(Effect.provide(layer));
+    },
+  );
 });

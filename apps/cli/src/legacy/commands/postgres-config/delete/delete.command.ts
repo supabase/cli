@@ -6,20 +6,20 @@ import { withJsonErrorHandling } from "../../../../shared/output/json-error-hand
 import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
 import { LEGACY_RESOURCE_OUTPUT_FORMATS } from "../../../shared/legacy-go-output-flag.ts";
 import { legacyManagementApiRuntimeLayer } from "../../../shared/legacy-management-api-runtime.layer.ts";
-import { legacyParseStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
+import { legacyStringSliceFlag } from "../../../shared/legacy-string-slice-flag.ts";
 import {
   legacyValidateOutputFormat,
   withLegacyCommandInstrumentation,
 } from "../../../telemetry/legacy-command-instrumentation.ts";
 import { legacyPostgresConfigDelete } from "./delete.handler.ts";
 
-export const legacyPostgresConfigDeleteConfigFlag = Flag.string("config").pipe(
-  Flag.withDescription("Config keys to delete (comma-separated)"),
-  Flag.atLeast(0),
-  Flag.mapTryCatch(
-    (rawValues) => legacyParseStringSliceFlag(rawValues),
-    (err) => (err instanceof Error ? err.message : String(err)),
-  ),
+// Go declares `--config` with pflag's `StringSliceVar` (`cmd/postgres.go:64`);
+// malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
+// see `legacyStringSliceFlag`) — before the `--experimental` gate, matching
+// cobra's ParseFlags-before-PersistentPreRunE ordering.
+export const legacyPostgresConfigDeleteConfigFlag = legacyStringSliceFlag(
+  "config",
+  "Config keys to delete (comma-separated)",
 );
 
 const config = {
