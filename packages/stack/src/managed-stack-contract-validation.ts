@@ -215,8 +215,6 @@ export const validateManagedStackContractFixtures = (
     }
 
     const declaredIds = new Set<string>();
-    const declaredPaths = new Set<string>();
-    const declaredBranches = new Set<string>();
     const factsByPrimaryId = new Map<string, ManagedStackContractFact>();
     const declareId = (id: string): void => {
       if (id.trim().length === 0) {
@@ -239,31 +237,19 @@ export const validateManagedStackContractFixtures = (
 
       switch (fact.kind) {
         case "workspace":
-          declaredPaths.add(fact.path);
-          if (fact.previousPath !== undefined) {
-            declaredPaths.add(fact.previousPath);
-          }
           break;
         case "workspace-history":
-          declaredPaths.add(fact.path);
           break;
         case "git-state":
-          declaredPaths.add(fact.workspacePath);
-          if (fact.branch !== undefined) {
-            declaredBranches.add(fact.branch);
-          }
           break;
         case "branch-ref":
-          declaredBranches.add(fact.name);
           break;
         case "branch":
           declareId(fact.contextId);
-          declaredBranches.add(fact.name);
           break;
         case "checkout":
           declareId(fact.projectId);
           declareId(fact.checkoutId);
-          declaredPaths.add(fact.path);
           break;
         case "credential-state":
           declareId(fact.valuesId);
@@ -279,9 +265,6 @@ export const validateManagedStackContractFixtures = (
           break;
         case "identity-claim":
           declareId(fact.id);
-          if (fact.path !== undefined) {
-            declaredPaths.add(fact.path);
-          }
           break;
         case "identity-marker":
           declareId(fact.markerId);
@@ -397,48 +380,7 @@ export const validateManagedStackContractFixtures = (
           );
         }
       };
-      const declareRecoveryPath = (path: unknown): void => {
-        if (path === undefined || path === null) {
-          errors.push(`${scenario.id}: recovery operation ${operationName} path is required`);
-        } else if (typeof path !== "string") {
-          errors.push(`${scenario.id}: recovery operation ${operationName} path must be a string`);
-        } else if (path.trim().length === 0) {
-          errors.push(`${scenario.id}: recovery operation ${operationName} path is required`);
-        } else if (!declaredPaths.has(path)) {
-          errors.push(
-            `${scenario.id}: recovery operation ${operationName} references undeclared path ${path}`,
-          );
-        }
-      };
-      const declareRecoveryBranch = (branch: unknown): void => {
-        if (branch === undefined || branch === null) {
-          errors.push(`${scenario.id}: recovery operation ${operationName} branch is required`);
-        } else if (typeof branch !== "string") {
-          errors.push(
-            `${scenario.id}: recovery operation ${operationName} branch must be a string`,
-          );
-        } else if (branch.trim().length === 0) {
-          errors.push(`${scenario.id}: recovery operation ${operationName} branch is required`);
-        } else if (!declaredBranches.has(branch)) {
-          errors.push(
-            `${scenario.id}: recovery operation ${operationName} references undeclared branch ${branch}`,
-          );
-        }
-      };
-
       switch (operationName) {
-        case "newCheckout":
-          declareRecoveryPath(recovery.path);
-          break;
-        case "rebindCheckout":
-        case "adoptCheckout":
-          declareRecoveryId(recovery.checkoutId, "checkout ID");
-          declareRecoveryPath(recovery.path);
-          break;
-        case "adoptContext":
-          declareRecoveryId(recovery.contextId, "context ID");
-          declareRecoveryBranch(recovery.branch);
-          break;
         case "prune":
           if (!Array.isArray(recovery.recordIds)) {
             errors.push(`${scenario.id}: recovery operation prune record IDs must be an array`);
