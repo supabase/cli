@@ -47,7 +47,12 @@ import { LEGACY_START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-sc
 import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
-import type { LegacyVaultSecret } from "../legacy-vault.ts";
+import {
+  LEGACY_CREATE_VAULT_KV,
+  LEGACY_READ_VAULT_KV,
+  LEGACY_UPDATE_VAULT_KV,
+  type LegacyVaultSecret,
+} from "../legacy-vault.ts";
 import { legacyWaitForShadowReady } from "./health-check.ts";
 import { legacyExportPgDataTar, legacyPgDataRestoreArchive } from "./pgdata-snapshot.ts";
 import type { LegacyPgDataSnapshotUnavailable } from "./pgdata-snapshot.ts";
@@ -221,6 +226,11 @@ const LEGACY_SHADOW_BASELINE_SQL_DIGEST = createHash("sha256")
       LEGACY_START_DB_INITIAL_SCHEMA_13_SQL,
       LEGACY_START_DB_INITIAL_SCHEMA_14_SQL,
       LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
+      // The vault upsert's own SQL (`legacyUpsertVaultSecrets`, `legacy-vault.ts`) runs into the
+      // baseline right after the privilege pass — same digest rationale as every line above.
+      LEGACY_READ_VAULT_KV,
+      LEGACY_UPDATE_VAULT_KV,
+      LEGACY_CREATE_VAULT_KV,
     ].join("\n--8<--\n"),
     "utf8",
   )
