@@ -4,11 +4,13 @@
  *
  * `config push` reads HTML from `content_path` before building the auth push
  * subset. Both templates and notifications resolve relative paths from the
- * project root (parent of `supabase/`).
+ * project root (parent of `supabase/`); notifications additionally fall back
+ * to the legacy `supabase/`-relative location when the root-resolved file is
+ * missing, so configs written for older scaffolds keep working.
  */
 
 import type { ProjectConfig } from "@supabase/config";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, dirname, join } from "node:path";
 
 type AuthEmail = ProjectConfig["auth"]["email"];
@@ -113,7 +115,13 @@ export function loadAuthEmailContent(cwd: string, email: AuthEmail): AuthEmailCo
     if (contentPath.length === 0) {
       continue;
     }
-    const resolved = resolveContentPath(contentPath, cwd);
+    let resolved = resolveContentPath(contentPath, cwd);
+    // Older scaffolds documented notification content_path relative to
+    // `supabase/`; fall back when the root-resolved file is missing.
+    if (!isAbsolute(contentPath) && !existsSync(resolved)) {
+      const legacyResolved = resolveContentPath(contentPath, join(cwd, "supabase"));
+      if (existsSync(legacyResolved)) resolved = legacyResolved;
+    }
     notification[name] = readTemplateContent("notification", name, resolved);
   }
 

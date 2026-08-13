@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import {
@@ -757,7 +758,18 @@ export function legacyResolveEmailTemplateContentPath(args: {
     }
     return undefined;
   }
-  return isAbsolute(args.contentPath) ? args.contentPath : join(args.base, args.contentPath);
+  if (isAbsolute(args.contentPath)) return args.contentPath;
+  const resolved = join(args.base, args.contentPath);
+  // Older scaffolds documented notification content_path relative to
+  // `supabase/` (the file lives at `<root>/supabase/templates/...` while
+  // config says `./templates/...`). Project-root resolution is canonical;
+  // when the root-resolved file is missing but the supabase-relative one
+  // exists, keep those configs working.
+  if (args.section === "notification" && !existsSync(resolved)) {
+    const legacyResolved = join(args.base, "supabase", args.contentPath);
+    if (existsSync(legacyResolved)) return legacyResolved;
+  }
+  return resolved;
 }
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */

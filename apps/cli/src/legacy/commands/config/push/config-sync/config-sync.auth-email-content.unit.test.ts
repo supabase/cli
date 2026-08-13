@@ -78,6 +78,47 @@ describe("loadAuthEmailContent", () => {
     expect(content.notification["password_changed"]).toBe("<p>Changed</p>");
   });
 
+  it("falls back to the legacy supabase-relative notification path", () => {
+    const { cwd, supabaseDir } = setup();
+    const templateDir = join(supabaseDir, "templates");
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, "password_changed.html"), "<p>Legacy location</p>");
+
+    const content = loadAuthEmailContent(cwd, {
+      ...emptyEmail,
+      notification: {
+        password_changed: {
+          enabled: true,
+          subject: "Password changed",
+          content_path: "./templates/password_changed.html",
+        },
+      },
+    });
+
+    expect(content.notification["password_changed"]).toBe("<p>Legacy location</p>");
+  });
+
+  it("prefers the project-root notification path over the legacy fallback", () => {
+    const { cwd, supabaseDir } = setup();
+    mkdirSync(join(cwd, "templates"), { recursive: true });
+    mkdirSync(join(supabaseDir, "templates"), { recursive: true });
+    writeFileSync(join(cwd, "templates", "n.html"), "<p>Root</p>");
+    writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy</p>");
+
+    const content = loadAuthEmailContent(cwd, {
+      ...emptyEmail,
+      notification: {
+        password_changed: {
+          enabled: true,
+          subject: "s",
+          content_path: "./templates/n.html",
+        },
+      },
+    });
+
+    expect(content.notification["password_changed"]).toBe("<p>Root</p>");
+  });
+
   it("skips notification templates when disabled", () => {
     const { cwd } = setup();
 
