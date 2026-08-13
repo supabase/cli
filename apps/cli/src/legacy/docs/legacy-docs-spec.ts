@@ -299,7 +299,17 @@ function legacyDocsExperimentalFlag(rootFlags: ReadonlyArray<LegacyDocsFlag>): L
       "legacy-docs-spec.ts: the root command tree declares no --experimental global flag; the experimental-leaf injection cannot be built.",
     );
   }
-  return { ...experimental, required: true };
+  // `required` before `default_value`, matching every other required flag.
+  return {
+    id: experimental.id,
+    name: experimental.name,
+    description: experimental.description,
+    required: true,
+    default_value: experimental.default_value,
+    ...(experimental.accepted_values === undefined
+      ? {}
+      : { accepted_values: experimental.accepted_values }),
+  };
 }
 
 export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec {
@@ -322,6 +332,8 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
   const seenFlagKeys = new Set<string>(rootFlags.map((flag) => `supabase ${flag.id}`));
   const consumedExcludedFlagKeys = new Set<string>();
   const consumedArgOverrideIds = new Set<string>();
+  const consumedExtraFlagIds = new Set<string>();
+  const consumedExperimentalIds = new Set<string>();
   const consumedOverlayPaths = new Set<string>();
   const allowedOrphanOverlayPaths = new Set<string>();
 
@@ -373,14 +385,29 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
     if (isLeaf) {
       const declared = flagDocsFor(commandPath, internals.config.flags);
       const declaredIds = new Set(declared.map((flag) => flag.id));
-      const own = [
-        ...declared,
-        ...(LEGACY_DOCS_EXTRA_FLAGS[docId] ?? []).filter((flag) => !declaredIds.has(flag.id)),
-      ].toSorted((a, b) => legacyDocsCompare(a.id, b.id));
+      const extraFlags = LEGACY_DOCS_EXTRA_FLAGS[docId];
+      if (extraFlags !== undefined) {
+        consumedExtraFlagIds.add(docId);
+        const shadowed = extraFlags.filter((flag) => declaredIds.has(flag.id));
+        if (shadowed.length > 0) {
+          throw new Error(
+            `legacy-docs-spec.ts: LEGACY_DOCS_EXTRA_FLAGS entry "${docId}" is shadowed by declared flag(s) ${shadowed.map((flag) => `--${flag.id}`).join(", ")} — the command now declares the flag itself; remove the stale table entry.`,
+          );
+        }
+      }
+      const own = [...declared, ...(extraFlags ?? [])].toSorted((a, b) =>
+        legacyDocsCompare(a.id, b.id),
+      );
       own.forEach((flag) => seenFlagKeys.add(`${docId} ${flag.id}`));
       flags.push(...own);
-      if (LEGACY_DOCS_EXPERIMENTAL.has(docId)) flags.push(experimentalFlag);
-      if (LEGACY_DOCS_EXPERIMENTAL_OPTIONAL.has(docId)) flags.push(experimentalOptionalFlag);
+      if (LEGACY_DOCS_EXPERIMENTAL.has(docId)) {
+        consumedExperimentalIds.add(docId);
+        flags.push(experimentalFlag);
+      }
+      if (LEGACY_DOCS_EXPERIMENTAL_OPTIONAL.has(docId)) {
+        consumedExperimentalIds.add(docId);
+        flags.push(experimentalOptionalFlag);
+      }
       const ownIds = new Set(own.map((flag) => flag.id));
       const inherited = flagDocsFor(commandPath, inheritedParams).filter(
         (flag) => !ownIds.has(flag.id) && !rootFlagIds.has(flag.id),
@@ -474,6 +501,8 @@ export function legacyBuildDocsSpec(input: LegacyDocsSpecInput): LegacyDocsSpec 
     seenFlagKeys,
     consumedExcludedFlagKeys,
     consumedArgOverrideIds,
+    consumedExtraFlagIds,
+    consumedExperimentalIds,
   });
   legacyValidateDocsContent(input, {
     emittedIds,
@@ -529,6 +558,8 @@ function legacyValidateDocsTables(seen: {
   readonly seenFlagKeys: ReadonlySet<string>;
   readonly consumedExcludedFlagKeys: ReadonlySet<string>;
   readonly consumedArgOverrideIds: ReadonlySet<string>;
+  readonly consumedExtraFlagIds: ReadonlySet<string>;
+  readonly consumedExperimentalIds: ReadonlySet<string>;
 }): void {
   const stale: Array<string> = [];
   for (const key of Object.keys(LEGACY_DOCS_DEFAULT_OVERRIDES)) {
@@ -538,16 +569,18 @@ function legacyValidateDocsTables(seen: {
     if (!seen.emittedIds.has(id)) stale.push(`LEGACY_DOCS_TAGS: "${id}"`);
   }
   for (const id of LEGACY_DOCS_EXPERIMENTAL) {
-    if (!seen.emittedIds.has(id)) stale.push(`LEGACY_DOCS_EXPERIMENTAL: "${id}"`);
+    if (!seen.consumedExperimentalIds.has(id)) stale.push(`LEGACY_DOCS_EXPERIMENTAL: "${id}"`);
   }
   for (const id of LEGACY_DOCS_EXPERIMENTAL_OPTIONAL) {
-    if (!seen.emittedIds.has(id)) stale.push(`LEGACY_DOCS_EXPERIMENTAL_OPTIONAL: "${id}"`);
+    if (!seen.consumedExperimentalIds.has(id)) {
+      stale.push(`LEGACY_DOCS_EXPERIMENTAL_OPTIONAL: "${id}"`);
+    }
   }
   for (const key of Object.keys(LEGACY_DOCS_CHOICE_OVERRIDES)) {
     if (!seen.seenFlagKeys.has(key)) stale.push(`LEGACY_DOCS_CHOICE_OVERRIDES: "${key}"`);
   }
   for (const id of Object.keys(LEGACY_DOCS_EXTRA_FLAGS)) {
-    if (!seen.emittedIds.has(id)) stale.push(`LEGACY_DOCS_EXTRA_FLAGS: "${id}"`);
+    if (!seen.consumedExtraFlagIds.has(id)) stale.push(`LEGACY_DOCS_EXTRA_FLAGS: "${id}"`);
   }
   for (const id of LEGACY_DOCS_EXCLUDED) {
     if (!seen.skippedExcludedIds.has(id)) stale.push(`LEGACY_DOCS_EXCLUDED: "${id}"`);

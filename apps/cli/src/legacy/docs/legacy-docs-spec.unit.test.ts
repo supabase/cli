@@ -1,7 +1,7 @@
 import { mkdtempSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { Command } from "effect/unstable/cli";
+import { Command, Flag } from "effect/unstable/cli";
 import { describe, expect, it } from "vitest";
 
 import { LegacyExperimentalFlag } from "../../shared/legacy/global-flags.ts";
@@ -129,7 +129,7 @@ describe("legacyBuildDocsSpec", () => {
     const link = byId.get("supabase-link");
     expect(link).toBeDefined();
     expect(link?.tags).toEqual(["local-dev"]);
-    expect(link?.usage).toBe("supabase link [flags]");
+    expect(link?.usage).toBe("supabase link [ref-or-branch] [flags]");
     expect(link?.flags.map((flag) => flag.id)).toEqual(["password", "project-ref", "skip-pooler"]);
     expect(link?.flags.find((flag) => flag.id === "password")?.name).toBe(
       "-p, --password <string>",
@@ -144,6 +144,13 @@ describe("legacyBuildDocsSpec", () => {
     const storageLs = byId.get("supabase-storage-ls");
     const experimental = storageLs?.flags.find((flag) => flag.id === "experimental");
     expect(experimental).toMatchObject({ required: true, default_value: "false" });
+    expect(Object.keys(experimental ?? {})).toEqual([
+      "id",
+      "name",
+      "description",
+      "required",
+      "default_value",
+    ]);
     expect(byId.get("supabase-db-push")?.flags.some((flag) => flag.id === "experimental")).toBe(
       false,
     );
@@ -303,7 +310,21 @@ describe("build guards fail loudly", () => {
       Command.withGlobalFlags([LegacyExperimentalFlag]),
     );
     expect(() => legacyBuildDocsSpec({ root, ...emptyInput })).toThrow(
-      /stale static-table entries[^]*LEGACY_DOCS_EXPERIMENTAL/,
+      /stale static-table entries[^]*LEGACY_DOCS_EXPERIMENTAL[^]*LEGACY_DOCS_EXTRA_FLAGS/,
+    );
+  });
+
+  it("throws when a declared flag shadows an extra-flags table entry", () => {
+    const root = Command.make("supabase").pipe(
+      Command.withSubcommands([
+        Command.make("db").pipe(
+          Command.withSubcommands([Command.make("query", { output: Flag.string("output") })]),
+        ),
+      ]),
+      Command.withGlobalFlags([LegacyExperimentalFlag]),
+    );
+    expect(() => legacyBuildDocsSpec({ root, ...emptyInput })).toThrow(
+      /LEGACY_DOCS_EXTRA_FLAGS entry "supabase-db-query" is shadowed by declared flag\(s\) --output/,
     );
   });
 
