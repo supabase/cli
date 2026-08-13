@@ -35,6 +35,7 @@ import {
 } from "../legacy-container-cli.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
+import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
 import { legacyPgDeltaTempPath } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import type { LegacyVaultSecret } from "../legacy-vault.ts";
@@ -92,7 +93,15 @@ export function legacyShadowCacheEnabled(
 /** One of the three PG15+ one-shot migrate jobs, as the cache key sees it. */
 export interface LegacyShadowCacheServiceInput {
   readonly enabled: boolean;
-  /** `legacyResolvePinnedImage`'s resolved image — hashed ONLY when {@link enabled}, since a disabled service's job never ran into the baseline. */
+  /**
+   * `legacyResolvePinnedImage`'s pinned image passed through `legacyGetRegistryImageUrl` — the
+   * REGISTRY-RESOLVED ref, not the bare `supabase/<name>:<tag>` pin, because that is the identity
+   * `legacyRunStartMigrateJob`'s own `legacyEnsureImagesCached` resolve actually runs: a changed
+   * `SUPABASE_INTERNAL_IMAGE_REGISTRY` (ambient or project-`.env`) can serve a different image
+   * under the same tag, and the postgres image field above is already the registry-resolved form
+   * (review: Codex on #6184). Hashed ONLY when {@link enabled}, since a disabled service's job
+   * never ran into the baseline.
+   */
   readonly image: string;
 }
 
@@ -257,6 +266,11 @@ const legacyResolveShadowCacheKeyInputs = <E>(
     if (rolesSql === undefined) return Option.none();
 
     const overrides = input.setup.serviceVersionOverrides;
+    // The same registry rewrite `legacyRunStartMigrateJob`'s `legacyEnsureImagesCached` applies
+    // when the job actually runs (same `projectEnvValues`-then-ambient precedence) — see
+    // {@link LegacyShadowCacheServiceInput.image}.
+    const resolveJobImage = (image: string): string =>
+      legacyGetRegistryImageUrl(image, input.setup.projectEnvValues);
     // The exact compound gate {@link legacyResolveDbSetupPrelude} uses to decide whether the
     // realtime one-shot job's JWKS effect is reached (and therefore run) at all during a real
     // setup — see `db-setup.ts`. Gating on anything looser here would resolve (and risk failing
@@ -282,15 +296,15 @@ const legacyResolveShadowCacheKeyInputs = <E>(
       services: {
         realtime: {
           enabled: input.setup.config.realtime.enabled,
-          image: legacyResolvePinnedImage("realtime", "realtime", overrides),
+          image: resolveJobImage(legacyResolvePinnedImage("realtime", "realtime", overrides)),
         },
         storage: {
           enabled: input.setup.config.storage.enabled,
-          image: legacyResolvePinnedImage("storage", "storage", overrides),
+          image: resolveJobImage(legacyResolvePinnedImage("storage", "storage", overrides)),
         },
         auth: {
           enabled: input.setup.config.auth.enabled,
-          image: legacyResolvePinnedImage("gotrue", "auth", overrides),
+          image: resolveJobImage(legacyResolvePinnedImage("gotrue", "auth", overrides)),
         },
       },
     } satisfies LegacyShadowCacheKeyInputs);
@@ -622,7 +636,12 @@ export const legacyAcquireShadowDatabase = <E>(
   Effect.gen(function* () {
     if (!legacyShadowCacheEnabled()) return yield* legacyUncachedShadow(spawner, input);
 
-    const keyInputs = yield* legacyResolveShadowCacheKeyInputs(input);
+    // Interruptible: this runs inside `acquireUseRelease`'s uninterruptible `acquire`, but
+    // nothing has been acquired yet — and the JWKS effect inside can be a real third-party
+    // discovery request, which must not pin a Ctrl-C for its whole duration (review: Codex on
+    // #6184). Interruption here simply means no container was ever created, so there is nothing
+    // for a finalizer to release.
+    const keyInputs = yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input));
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
     const key = legacyShadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(

@@ -523,6 +523,36 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
+  it.live("a changed internal image registry is a different key, not a warm hit", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheEnv(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+        yield* coldRun(docker, input);
+        const defaultRegistryTar = yield* soleTarName(fs, path);
+        expect(defaultRegistryTar).toHaveLength(1);
+
+        // The one-shot migrate jobs resolve their images through
+        // `SUPABASE_INTERNAL_IMAGE_REGISTRY`, so a different registry can bake different
+        // realtime/storage/auth schema under identical tags — the snapshot must not be shared.
+        const mirrored = yield* withEnv(
+          "SUPABASE_INTERNAL_IMAGE_REGISTRY",
+          "mirror.internal.example",
+          coldRun(docker, input),
+        );
+        expect(mirrored.baselinePresent).toBe(false);
+        const mirroredTar = yield* soleTarName(fs, path);
+        expect(mirroredTar).toHaveLength(1);
+        expect(mirroredTar[0]).not.toBe(defaultRegistryTar[0]);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
   it.live("a failed export warns, leaves no tar, and still brings the container back up", () => {
     const docker = fakeDockerDaemon({ failCopyOut: true });
     const cluster = fakeCluster();
