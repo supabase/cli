@@ -267,7 +267,10 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
   for (const secret of [...inputs.vault].sort((left, right) =>
     left.name < right.name ? -1 : left.name > right.name ? 1 : 0,
   )) {
-    lines.push(`vault=${secret.name}=${secret.value}`);
+    // JSON-encoded tuple, not `name=value`: both halves are unrestricted strings, so a bare
+    // `=` join would let (`a=b`, `c`) and (`a`, `b=c`) collide — and a value containing a
+    // newline could forge a whole extra payload line (review: Codex on #6184).
+    lines.push(`vault=${JSON.stringify([secret.name, secret.value])}`);
   }
   // Last, raw (it can contain anything, including newlines) — mirroring `setupInputsToken`,
   // which also appends `roles.sql` verbatim at the end of its own payload.
@@ -281,8 +284,9 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
  * `setup.config` (NOT the `*EnabledForSetup` fields, which only gate JWKS resolution) because
  * `legacySetupDatabase`'s own one-shot job gates read exactly those config fields.
  *
- * Returns `Option.none` (never a failure) for the one condition that makes the key
- * uncomputable — an unreadable `roles.sql` — so this function's OWN error channel carries
+ * Returns `Option.none` (never a failure) for the two conditions that make caching
+ * unavailable — an OrioleDB cluster (whose state is partly external, see the body's own
+ * comment) and an unreadable `roles.sql` — so this function's OWN error channel carries
  * nothing but `E`: the `input.setup.jwks` effect below is `yield*`ed unguarded (only when the
  * consuming realtime job is actually reachable — see the field's own doc comment), and a real
  * JWKS failure must fail this whole acquire exactly as it would have failed a real setup, never
@@ -296,6 +300,15 @@ const legacyResolveShadowCacheKeyInputs = <E>(
   input: LegacyShadowSetupInput<E>,
 ): Effect.Effect<Option.Option<LegacyShadowCacheKeyInputs>, E> =>
   Effect.gen(function* () {
+    // OrioleDB (`experimental.orioledb_version`) makes the WHOLE cache ineligible, not just a
+    // key input: that branch runs the shadow with an external S3 storage backend
+    // (`S3_ENABLED=true` — `legacyPostgresExtraEnv`, `postgres.service.ts`), so part of the
+    // cluster's state lives outside PGDATA and a disk-level tar is not a coherent snapshot to
+    // begin with (review: Codex on #6184). Same `Option.none` degradation as an unreadable
+    // `roles.sql` below: the run proceeds uncached.
+    const orioledbVersion = input.experimental.orioledb_version;
+    if (orioledbVersion !== undefined && orioledbVersion.length > 0) return Option.none();
+
     const rolesPath = input.path.join(input.workdir, "supabase", "roles.sql");
     const rolesSql = yield* input.fs
       .readFileString(rolesPath)

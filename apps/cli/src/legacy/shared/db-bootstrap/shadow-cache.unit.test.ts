@@ -238,6 +238,21 @@ describe("legacyShadowCacheKey", () => {
     expect(legacyShadowCacheKey(withPinA)).toBe(legacyShadowCacheKey(withPinB));
   });
 
+  it("cannot collide vault name/value pairs across the tuple boundary", () => {
+    const base = baseKeyInputs();
+    // `name=a=b, value=c` vs `name=a, value=b=c` — a bare `=`-joined encoding serializes both
+    // as `vault=a=b=c`.
+    const left = legacyShadowCacheKey({
+      ...base,
+      vault: [{ name: "a=b", value: "c", resolved: true }],
+    });
+    const right = legacyShadowCacheKey({
+      ...base,
+      vault: [{ name: "a", value: "b=c", resolved: true }],
+    });
+    expect(left).not.toBe(right);
+  });
+
   it("hashes vault secrets in a name-stable order", () => {
     const base = baseKeyInputs();
     const ascending = legacyShadowCacheKey({

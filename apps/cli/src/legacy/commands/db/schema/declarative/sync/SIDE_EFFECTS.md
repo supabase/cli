@@ -25,6 +25,7 @@ disabling safe compaction.
 | `<workdir>/supabase/roles.sql`                                  | SQL        | legacy migrations-catalog cache key (empty when absent)                                    |
 | `<workdir>/supabase/schemas/.pgdelta-export.json`               | JSON       | bundled export metadata, when present                                                      |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                       | JSON       | legacy opt-out's migrations/declarative catalog cache                                      |
+| `<workdir>/supabase/.temp/pgdelta/shadow-baseline-<key>.tar`    | tar        | warm shadow-cache hit on a migrations-catalog miss — snapshot streamed into the fresh shadow container before it starts                     |
 
 ## Files Written
 
@@ -54,6 +55,7 @@ disabling safe compaction.
 | `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry                                                                                                                                                        | no        |
 | `SUPABASE_SHADOW_CACHE`      | shadow baseline cache; ON by default, set to `false`/`0` to opt out — the shadow's post-baseline PGDATA is snapshotted to a tar and restored into the next run's fresh container (see Notes) | no        |
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                                                                                                                                                               | no        |
+| `SUPABASE_SHADOW_DEBUG`      | opt-in (default off) shadow phase-timing diagnostics on stderr (`shadow-debug:` lines); never touches stdout/exit codes                                                                      | no        |
 | `SUPABASE_SERVICES_HOSTNAME` | local DB host for the bootstrap generate                                                                                                                                                     | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback                                                                                                                                           | no        |
 
