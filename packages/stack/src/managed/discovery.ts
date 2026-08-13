@@ -455,7 +455,9 @@ export const discoverWorkspace = (
       ownerEvidence?.authoritativeOwnerBranch !== undefined &&
       metadata.context.kind === "branch" &&
       metadata.context.branch !== ownerEvidence.authoritativeOwnerBranch &&
-      !authoritativeOwnerLive
+      !authoritativeOwnerLive &&
+      liveOwnerClaims.length === 1 &&
+      liveOwnerClaims[0]?.branch === metadata.context.branch
     ) {
       state = "adoptable";
       warnings.push("Authoritative branch owner is absent; branch adoption is required");
@@ -466,6 +468,15 @@ export const discoverWorkspace = (
           branch: metadata.context.branch,
         });
       }
+    } else if (
+      ownerEvidence?.authoritativeOwnerBranch !== undefined &&
+      metadata.context.kind === "branch" &&
+      metadata.context.branch !== ownerEvidence.authoritativeOwnerBranch &&
+      !authoritativeOwnerLive &&
+      liveOwnerClaims.length > 1
+    ) {
+      state = "ambiguous";
+      conflicts.push(`Context ${identity.contextId} has multiple plausible live owners`);
     } else if (
       metadata.context.kind === "branch" &&
       currentBranch !== undefined &&

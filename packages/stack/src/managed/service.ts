@@ -13,6 +13,7 @@ import {
 import {
   DEFAULT_MANAGED_STACK_NAME,
   DuplicateManagedIdentityError,
+  ManagedCopiedBranchConflictError,
   InvalidManagedIdentityError,
   ManagedCheckoutConflictError,
   ManagedIdentityTransitionOwnershipError,
@@ -48,6 +49,8 @@ import {
   ensureGitCheckoutIdentity,
   GitConfigStore,
   inspectWorkspace,
+  replaceBranchContextId,
+  readBranchContextId,
   type GitCheckoutInspection,
 } from "./git.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
@@ -115,6 +118,9 @@ export interface ManagedCheckoutRecoveryRequest {
   readonly path?: string;
   /** Expected checkout identity; omitted to use the discovered marker. */
   readonly checkoutId?: string;
+  /** Expected branch/context for explicit context adoption or branch repair. */
+  readonly branch?: string;
+  readonly contextId?: string;
   /** A discovery report obtained immediately before requesting recovery. */
   readonly observation?: ManagedWorkspaceDiscovery;
 }
@@ -265,6 +271,7 @@ export type UpdateManagedStackConfigurationFailure =
 
 export type ResolveManagedStackFailure =
   | InvalidManagedIdentityError
+  | DuplicateManagedIdentityError
   | ManagedIdentityRecoveryError
   | InvalidManagedStackNameError
   | ManagedAbandonedOperationError
@@ -317,6 +324,12 @@ export interface ManagedStackServiceShape {
     | UnsupportedGitWorkspaceError
     | ManagedIdentityRecoveryError
     | ManagedInaccessiblePathError
+  >;
+  readonly adoptContext: (
+    options: ManagedCheckoutRecoveryRequest,
+  ) => Effect.Effect<
+    ManagedWorkspaceDiscovery,
+    InvalidManagedIdentityError | UnsupportedGitWorkspaceError | ManagedIdentityRecoveryError
   >;
   /**
    * The one path from a workspace path to a stack, for every workspace shape and
@@ -1080,10 +1093,17 @@ export class ManagedStackService extends Context.Service<
               transition.path === path &&
               transition.kind !== "new-checkout" &&
               transition.checkoutId === checkoutId &&
+              (transition.branch === undefined ||
+                (report.context.kind === "branch" &&
+                  report.context.branch === transition.branch)) &&
               (transition.projectId === undefined ||
                 transition.projectId === report.identity.projectId) &&
               (transition.contextId === undefined ||
-                transition.contextId === report.identity.contextId);
+                transition.contextId === report.identity.contextId) &&
+              (transition.expectedGitValue === undefined ||
+                transition.expectedGitValue === report.identity.contextId) &&
+              (transition.targetGitValue === undefined ||
+                transition.targetGitValue === report.identity.contextId);
             if (!transitionTargetMatches) {
               return yield* Effect.fail(
                 new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
@@ -1413,6 +1433,305 @@ export class ManagedStackService extends Context.Service<
 
         const adoptCheckout = (options: ManagedCheckoutRecoveryRequest) =>
           recoverCheckout("adopt-checkout", options);
+
+        const branchCopyIsUnambiguous = (report: ManagedWorkspaceDiscovery): boolean => {
+          if (
+            report.context.kind !== "branch" ||
+            report.context.branch === undefined ||
+            report.identity.projectId === undefined ||
+            report.identity.checkoutId === undefined ||
+            report.identity.contextId === undefined
+          ) {
+            return false;
+          }
+          const evidence = report.ownerEvidence;
+          const owner = evidence?.authoritativeOwnerBranch;
+          if (owner === undefined || owner === report.context.branch) return false;
+          const liveClaims = evidence?.claims.filter((claim) => claim.live) ?? [];
+          return (
+            liveClaims.length === 2 &&
+            liveClaims.some((claim) => claim.branch === owner) &&
+            liveClaims.some((claim) => claim.branch === report.context.branch)
+          );
+        };
+
+        /**
+         * A branch copied with `git branch -c` retains the old context key.
+         * Repair it only after reserving the context/branch transition, then
+         * reread the key before publishing the new registry context.
+         */
+        const repairCopiedBranch = (
+          report: ManagedWorkspaceDiscovery,
+        ): Effect.Effect<
+          ManagedWorkspaceDiscovery,
+          | InvalidManagedIdentityError
+          | DuplicateManagedIdentityError
+          | UnsupportedGitWorkspaceError
+          | ManagedIdentityRecoveryError
+        > =>
+          Effect.gen(function* () {
+            const existing = report.activeTransition;
+            const resuming = existing?.kind === "branch-copy";
+            if (!resuming && !branchCopyIsUnambiguous(report)) {
+              return yield* Effect.fail(
+                new ManagedCopiedBranchConflictError({
+                  branch: report.context.branch ?? "unknown",
+                  existingContextId: report.identity.contextId,
+                  requestedContextId: report.identity.contextId,
+                }),
+              );
+            }
+            const branch =
+              existing?.branch ??
+              (report.context.kind === "branch" ? report.context.branch : undefined);
+            const projectId = report.identity.projectId;
+            const checkoutId = report.identity.checkoutId;
+            const contextId = existing?.contextId ?? report.identity.contextId;
+            if (
+              branch === undefined ||
+              projectId === undefined ||
+              checkoutId === undefined ||
+              contextId === undefined
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Copied branch context repair requires a complete identity",
+                }),
+              );
+            }
+            const path = report.workspace.workspaceRoot;
+            const existingTargetValid = (value: string | undefined): value is string => {
+              if (value === undefined || value === contextId) return false;
+              try {
+                assertManagedUuid(value, "branch-copy target contextId");
+                return true;
+              } catch {
+                return false;
+              }
+            };
+            const existingCopyMatches =
+              existing?.kind === "branch-copy" &&
+              existing.projectId === projectId &&
+              existing.checkoutId === checkoutId &&
+              existing.contextId === contextId &&
+              existing.branch === branch &&
+              existing.path === path &&
+              existing.expectedGitValue === contextId &&
+              existingTargetValid(existing.targetGitValue);
+            const transition = existingCopyMatches
+              ? existing
+              : yield* repository.reserveIdentityTransition({
+                  id: yield* managedUuid("identity transition"),
+                  kind: "branch-copy",
+                  projectId,
+                  checkoutId,
+                  contextId,
+                  branch,
+                  path,
+                  expectedGitValue: contextId,
+                  targetGitValue: yield* managedUuid("contextId"),
+                  now: now(),
+                });
+            const target = transition.targetGitValue;
+            if (target === undefined) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            if (transition.phase === "reserved") {
+              const current = yield* discover(path);
+              if (
+                current.identity.projectId !== projectId ||
+                current.identity.checkoutId !== checkoutId ||
+                current.identity.contextId !== contextId ||
+                current.context.kind !== "branch" ||
+                current.context.branch !== branch
+              ) {
+                return yield* Effect.fail(
+                  new InvalidManagedIdentityError({
+                    message: "Copied branch changed before context repair",
+                  }),
+                );
+              }
+              const inspection = yield* withWorkspaceServices(inspectWorkspace(path));
+              if (inspection.kind !== "git-checkout" || inspection.head.kind === "detached") {
+                return yield* Effect.fail(
+                  new InvalidManagedIdentityError({
+                    message: "Copied branch context repair requires a live branch checkout",
+                  }),
+                );
+              }
+              const observed = yield* withWorkspaceServices(
+                readBranchContextId(inspection, branch),
+              );
+              if (observed !== contextId) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+              yield* withWorkspaceServices(
+                replaceBranchContextId(inspection, branch, contextId, target),
+              );
+              const winner = yield* withWorkspaceServices(readBranchContextId(inspection, branch));
+              if (winner !== target) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+              yield* repository.advanceIdentityTransition({
+                id: transition.id,
+                expectedPhase: "reserved",
+                phase: "git-written",
+                now: now(),
+              });
+            }
+            const current = yield* discover(path);
+            if (
+              current.context.kind !== "branch" ||
+              current.context.branch !== branch ||
+              current.identity.projectId !== projectId ||
+              current.identity.checkoutId !== checkoutId ||
+              current.identity.contextId !== target
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Copied branch context repair did not settle on the winner",
+                }),
+              );
+            }
+            if (transition.phase === "git-written" || transition.phase === "reserved") {
+              yield* repository.registerCheckoutIdentity({
+                identity: { projectId, checkoutId, contextId: target },
+                checkoutKind: current.workspace.checkoutKind,
+                checkoutRootPath: current.workspace.workspaceRoot,
+                locationId: yield* managedUuid("checkout location"),
+                context: current.contextDescriptor,
+                now: now(),
+              });
+              const latest =
+                (yield* repository.listIdentityClaims()).transitions.find(
+                  (candidate) => candidate.id === transition.id,
+                ) ?? transition;
+              if (latest.phase === "git-written") {
+                yield* repository.finalizeIdentityTransition({
+                  id: latest.id,
+                  expectedPhase: "git-written",
+                  now: now(),
+                });
+              }
+            }
+            return yield* discover(path);
+          });
+
+        const adoptContext = (
+          options: ManagedCheckoutRecoveryRequest,
+        ): Effect.Effect<
+          ManagedWorkspaceDiscovery,
+          InvalidManagedIdentityError | UnsupportedGitWorkspaceError | ManagedIdentityRecoveryError
+        > =>
+          Effect.gen(function* () {
+            const report = yield* recoveryReport(options);
+            if (
+              report.context.kind !== "branch" ||
+              report.context.branch === undefined ||
+              report.identity.contextId === undefined ||
+              report.identity.projectId === undefined ||
+              report.identity.checkoutId === undefined
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed context adoption requires a complete branch identity",
+                }),
+              );
+            }
+            const branch = options.branch ?? report.context.branch;
+            const contextId = options.contextId ?? report.identity.contextId;
+            const operation = report.recoveryOperations.find(
+              (candidate) =>
+                candidate.operation === "adoptContext" &&
+                candidate.branch === branch &&
+                candidate.contextId === contextId,
+            );
+            const transition = report.activeTransition;
+            const resuming =
+              transition?.kind === "adopt-context" &&
+              transition.projectId === report.identity.projectId &&
+              transition.checkoutId === report.identity.checkoutId &&
+              transition.contextId === contextId &&
+              transition.branch === branch &&
+              transition.path === report.workspace.workspaceRoot &&
+              transition.expectedGitValue === contextId &&
+              transition.targetGitValue === contextId;
+            if (operation === undefined && !resuming) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed context adoption is not an advertised recovery operation",
+                }),
+              );
+            }
+            const path = report.workspace.workspaceRoot;
+            const reserved =
+              resuming && transition !== undefined
+                ? transition
+                : yield* repository.reserveIdentityTransition({
+                    id: yield* managedUuid("identity transition"),
+                    kind: "adopt-context",
+                    projectId: report.identity.projectId,
+                    checkoutId: report.identity.checkoutId,
+                    contextId,
+                    branch,
+                    path,
+                    expectedGitValue: contextId,
+                    targetGitValue: contextId,
+                    now: now(),
+                  });
+            if (reserved.phase === "reserved") {
+              const current = yield* discover(path);
+              if (
+                current.identity.contextId !== contextId ||
+                current.context.kind !== "branch" ||
+                current.context.branch !== branch
+              ) {
+                return yield* Effect.fail(
+                  new InvalidManagedIdentityError({
+                    message: "Managed context changed before adoption",
+                  }),
+                );
+              }
+              yield* repository.refreshContextOwner({
+                contextId,
+                ownerBranch: branch,
+                locator: branch,
+                now: now(),
+              });
+              yield* repository.advanceIdentityTransition({
+                id: reserved.id,
+                expectedPhase: "reserved",
+                phase: "git-written",
+                now: now(),
+              });
+            }
+            const context = (yield* repository.listIdentityClaims(
+              report.identity.projectId,
+            )).contexts.find((candidate) => candidate.id === contextId);
+            if (context?.ownerBranch !== branch) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: reserved.id }),
+              );
+            }
+            const latest =
+              (yield* repository.listIdentityClaims()).transitions.find(
+                (candidate) => candidate.id === reserved.id,
+              ) ?? reserved;
+            if (latest.phase === "git-written") {
+              yield* repository.finalizeIdentityTransition({
+                id: latest.id,
+                expectedPhase: "git-written",
+                now: now(),
+              });
+            }
+            return yield* discover(path);
+          });
 
         /**
          * The identity a mutating resolve must have ended up with. Every claim
@@ -1808,6 +2127,29 @@ export class ManagedStackService extends Context.Service<
                 observation: settledReport,
               });
             }
+            if (
+              resolveOptions.operation === "start" &&
+              (((settledReport.state === "adoptable" || settledReport.state === "orphaned") &&
+                settledReport.recoveryOperations.some(
+                  (operation) => operation.operation === "adoptContext",
+                )) ||
+                (settledReport.state === "transitioning" &&
+                  settledReport.activeTransition?.kind === "adopt-context"))
+            ) {
+              recoveryReportForStart = yield* adoptContext({
+                workspacePath: resolveOptions.workspacePath,
+                observation: settledReport,
+              });
+            }
+            if (
+              resolveOptions.operation === "start" &&
+              ((recoveryReportForStart.state === "duplicate" &&
+                branchCopyIsUnambiguous(recoveryReportForStart)) ||
+                (recoveryReportForStart.state === "transitioning" &&
+                  recoveryReportForStart.activeTransition?.kind === "branch-copy"))
+            ) {
+              recoveryReportForStart = yield* repairCopiedBranch(recoveryReportForStart);
+            }
             const plan: ResolvedWorkspace = {
               workspace: recoveryReportForStart.workspace,
               context: recoveryReportForStart.context,
@@ -1852,16 +2194,11 @@ export class ManagedStackService extends Context.Service<
                 ? yield* claimUnregisteredWorkspace(recoveryReportForStart)
                 : recoveryReportForStart.state === "healthy"
                   ? plan
-                  : recoveryReportForStart.state === "adoptable" &&
-                      recoveryReportForStart.recoveryOperations.some(
-                        (operation) => operation.operation === "adoptContext",
-                      )
-                    ? plan
-                    : yield* Effect.fail(
-                        new InvalidManagedIdentityError({
-                          message: `Managed workspace ${recoveryReportForStart.workspace.canonicalPath} is ${recoveryReportForStart.state}`,
-                        }),
-                      );
+                  : yield* Effect.fail(
+                      new InvalidManagedIdentityError({
+                        message: `Managed workspace ${recoveryReportForStart.workspace.canonicalPath} is ${recoveryReportForStart.state}`,
+                      }),
+                    );
             return yield* registerStack(
               resolveOptions,
               stackName,
@@ -2105,6 +2442,7 @@ export class ManagedStackService extends Context.Service<
           newCheckout,
           rebindCheckout,
           adoptCheckout,
+          adoptContext,
           resolveStack,
           inspectStack: (stackId) => repository.getStackProjection(stackId),
           listStacks: (listOptions) => repository.listStackProjections(listOptions),

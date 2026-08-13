@@ -822,9 +822,18 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     git(repository, "checkout", "-q", "copy");
     const report = await inspect(service.repository, repository);
     expect(report.state).toBe("duplicate");
-    await expect(
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+    const copied = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(copied.outcome).toBe("create");
+    expect(copied.identity.contextId).not.toBe(main.identity.contextId);
+    expect(copied.stack.id).not.toBe(main.stack.id);
+    git(repository, "checkout", "-q", "main");
+    const ownerAgain = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+    });
+    expect(ownerAgain.outcome).toBe("reuse");
+    expect(ownerAgain.identity.contextId).toBe(main.identity.contextId);
+    expect(ownerAgain.stack.id).toBe(main.stack.id);
   });
 
   it("requires adoption when a branch context has no authoritative owner", async () => {
@@ -876,5 +885,27 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.state).toBe("adoptable");
     expect(report.warnings.length).toBeGreaterThan(0);
     expect(report.recoveryOperations.length).toBeGreaterThan(0);
+  });
+
+  it("refuses adoption for a branch not advertised by discovery without reserving a transition", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-m", "renamed");
+    const report = await service.discoverWorkspace(repository);
+    expect(report.state).toBe("adoptable");
+    const before = await Effect.runPromise(service.repository.listIdentityClaims());
+    await expect(
+      service.adoptContext({
+        workspacePath: repository,
+        branch: "not-the-current-branch",
+        observation: report,
+      }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+    const after = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(after).toEqual(before);
+    expect(main.identity.contextId).toBe(report.identity.contextId);
   });
 });

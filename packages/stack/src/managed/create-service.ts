@@ -84,6 +84,7 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   readonly stateRoot: string;
   readonly repository: ManagedStackRepositoryShape;
   /** A `start` always settles on a stack, which the narrower overload reports. */
+  discoverWorkspace(workspacePath: string): Promise<ManagedWorkspaceDiscovery>;
   resolveStack(
     options: ResolveManagedStackRequest & { readonly operation: "start" },
   ): Promise<StartedManagedStackResolution>;
@@ -91,6 +92,7 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   newCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   rebindCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   adoptCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
+  adoptContext(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   inspectStack(stackId: string): Promise<ManagedStackProjection | undefined>;
   listStacks(options?: {
     readonly includeTombstoned?: boolean;
@@ -191,10 +193,12 @@ const managedStackServiceHandle = async <ER>(
   return {
     stateRoot: service.stateRoot,
     repository,
+    discoverWorkspace: (workspacePath) => run(service.discoverWorkspace(workspacePath)),
     resolveStack,
     newCheckout: (options) => run(service.newCheckout(options)),
     rebindCheckout: (options) => run(service.rebindCheckout(options)),
     adoptCheckout: (options) => run(service.adoptCheckout(options)),
+    adoptContext: (options) => run(service.adoptContext(options)),
     inspectStack: (stackId) => run(service.inspectStack(stackId)),
     listStacks: (options) => run(service.listStacks(options)),
     updateStack: (stackId, configuration) => run(service.updateStack(stackId, configuration)),

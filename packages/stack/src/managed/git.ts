@@ -528,6 +528,13 @@ export interface GitConfigStoreShape {
     key: string,
     value: string,
   ) => Effect.Effect<void, UnsupportedGitWorkspaceError>;
+  /** Replaces exactly one settled value, refusing when the expected value changed. */
+  readonly replaceExpected: (
+    file: string,
+    key: string,
+    expected: string,
+    value: string,
+  ) => Effect.Effect<void, UnsupportedGitWorkspaceError | InvalidManagedIdentityError>;
 }
 
 /**
@@ -670,6 +677,19 @@ export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(Gi
   add: (file, key, value) => gitConfigWrite(["--file", file, "--add", key, value], file),
   replace: (file, key, value) =>
     gitConfigWrite(["--file", file, "--replace-all", key, value], file),
+  replaceExpected: (file, key, expected, value) =>
+    Effect.gen(function* () {
+      const current = yield* gitConfig(["--file", file, "--get-all", key], true, file);
+      const settled = current ?? "";
+      if (settled.trim() !== expected) {
+        return yield* Effect.fail(
+          new InvalidManagedIdentityError({
+            message: `${key} changed before conditional replacement`,
+          }),
+        );
+      }
+      yield* gitConfigWrite(["--file", file, "--replace-all", key, value], file);
+    }),
 });
 
 const requireUuid = (
@@ -1075,4 +1095,35 @@ export const readBranchContextId = (
         "contextId",
       ),
     ),
+  );
+
+/**
+ * Replaces the context claim for one branch after its identity transition has
+ * been reserved.  The transition owns the expected value and callers reread
+ * the key immediately after this write; this helper deliberately does not
+ * mint or otherwise merge values.
+ */
+export const replaceBranchContextId = (
+  inspection: GitCheckoutInspection,
+  branch: string,
+  expectedContextId: string,
+  contextId: string,
+): Effect.Effect<
+  void,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore
+> =>
+  failsWithIdentity(
+    Effect.gen(function* () {
+      const name = yield* requireBranch(branch);
+      const id = yield* requireUuid(contextId, "contextId");
+      const expected = yield* requireUuid(expectedContextId, "expected contextId");
+      const store = yield* GitConfigStore;
+      yield* store.replaceExpected(
+        gitConfigPath(inspection.commonDirectory),
+        gitBranchContextIdKey(name),
+        expected,
+        id,
+      );
+    }),
   );
