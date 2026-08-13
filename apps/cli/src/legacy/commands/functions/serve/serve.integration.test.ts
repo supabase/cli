@@ -2883,10 +2883,18 @@ describe("legacy functions serve integration", () => {
         expect(error.message).not.toContain("ENOTDIR");
         expect(error.message).not.toContain("An error occurred in Effect.tryPromise");
       }
-      expect(out.stderrText).toContain("Warning: failed to clean up Edge Runtime artifacts:");
-      expect(out.stderrText).toContain("ENOTDIR");
-      expect(out.stderrText).toContain(join("supabase", ".temp", "start-secrets"));
-      expect(out.stderrText).not.toContain("An error occurred in Effect.tryPromise");
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message: expect.stringContaining("Failed to clean up Edge Runtime artifacts: ENOTDIR"),
+      });
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message: expect.stringContaining(join("supabase", ".temp", "start-secrets")),
+      });
+      expect(out.messages).not.toContainEqual({
+        type: "warn",
+        message: expect.stringContaining("An error occurred in Effect.tryPromise"),
+      });
       expect(deployMockState.runCalls.filter((call) => call.args[0] === "run")).toHaveLength(0);
     });
   });
