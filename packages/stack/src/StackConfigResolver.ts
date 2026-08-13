@@ -28,7 +28,7 @@ import {
   type PortSelectionOptions,
 } from "./PortAllocator.ts";
 import { StackMetadataSchema } from "./StackMetadata.ts";
-import { resolveReadinessPolicy } from "./StackConfig.ts";
+import { INSTANCE_ID_PATTERN, InstanceIdSchema, resolveReadinessPolicy } from "./StackConfig.ts";
 import type {
   AnalyticsConfig,
   AuthConfig,
@@ -315,6 +315,21 @@ async function resolveFunctionsConfig(config: StackConfig, projectDir: string) {
   }
 }
 
+function resolveInstanceId(instanceId: string | undefined): string | undefined {
+  if (instanceId === undefined) {
+    return undefined;
+  }
+  try {
+    return Schema.decodeUnknownSync(InstanceIdSchema)(instanceId);
+  } catch (cause) {
+    throw new StackBuildError({
+      detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
+      cause,
+      reason: "invalid_config",
+    });
+  }
+}
+
 function resolveStorageConfig(
   input: StorageConfig | undefined,
   raw: StorageConfig | false | undefined,
@@ -443,6 +458,7 @@ export async function resolveConfig(
 ): Promise<ResolvedStackConfig> {
   const config = input ?? {};
   const projectDir = config.projectDir ?? process.cwd();
+  const instanceId = resolveInstanceId(config.instanceId);
   const functions = await resolveFunctionsConfig(config, projectDir);
   const resolvedMode = config.mode ?? "auto";
   const roots = resolveRoots(config, opts);
@@ -511,6 +527,7 @@ export async function resolveConfig(
   const serviceRoleJwt = generateJwt(jwtSecret, "service_role");
 
   return {
+    instanceId,
     cacheRoot: roots.cacheRoot,
     stackRoot: roots.stackRoot,
     runtimeRoot: roots.runtimeRoot,

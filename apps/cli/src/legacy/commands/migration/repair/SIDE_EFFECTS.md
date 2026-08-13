@@ -2,9 +2,10 @@
 
 ## Files Read
 
-| Path                       | Format     | When                                              |
-| -------------------------- | ---------- | ------------------------------------------------- |
-| `~/.supabase/access-token` | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
+| Path                                   | Format     | When                                                                                                      |
+| -------------------------------------- | ---------- | --------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`             | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                                                         |
+| `<workdir>/supabase/.temp/project-ref` | plain text | `--linked` (default), to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 
 ## Files Written
 
@@ -27,15 +28,16 @@
 
 ## Exit Codes
 
-| Code | Condition                          |
-| ---- | ---------------------------------- |
-| `0`  | success                            |
-| `1`  | database connection failure        |
-| `1`  | invalid or missing `--status` flag |
+| Code | Condition                                                                |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | success                                                                  |
+| `1`  | database connection failure                                              |
+| `1`  | invalid or missing `--status` flag                                       |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 When repairing specific versions, prints `Repaired migration history: [<versions>]
 => <status>` to stderr, then `Finished supabase migration repair.` to stdout and
@@ -44,13 +46,13 @@ to stderr. The DB mutation is one transaction: create the history table, then (f
 repair-all) `TRUNCATE`, plus `applied` → per-version `UPSERT` from the local file,
 `reverted` → `DELETE ... WHERE version = ANY($1)`.
 
-> **Atomicity note:** Go runs the TRUNCATE/UPSERT/DELETE via `pgx.Batch` (a
-> pipeline, not an explicit transaction), so a partial failure mid-batch (e.g.
-> TRUNCATE commits but a later UPSERT fails) can leave the history table in a
+> **Atomicity note:** the old Go CLI ran the TRUNCATE/UPSERT/DELETE via a batched
+> pipeline (not an explicit transaction), so a partial failure mid-batch (e.g.
+> TRUNCATE commits but a later UPSERT fails) could leave the history table in a
 > half-updated state. The TS port wraps the same statements in an explicit
 > `BEGIN`/`COMMIT` with `ROLLBACK` on error, so a partial failure leaves the table
 > unchanged. This is a deliberate, safer divergence (`LegacyDbSession` has no batch
-> primitive); the success path is byte-identical to Go.
+> primitive); the success path produces the same output as before.
 
 ### `--output-format json`
 
@@ -77,3 +79,10 @@ migration history table to match local migration files?` (default **NO**).
   for the name + statements; a missing file exits non-zero.
 - `--linked` (default true), `--local`, and `--db-url` are mutually exclusive, as
   are `--db-url` and `--password`/`-p`.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution used for the connection (flag >
+  `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
+  passing it with a resolved `--local`/`--db-url` target is a hard error rather
+  than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  a non-linked target).

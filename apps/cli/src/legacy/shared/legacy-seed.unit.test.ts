@@ -39,7 +39,7 @@ const run = (
 
 describe("legacyApplySeedFiles seed glob", () => {
   it.effect("treats a backslash escape as a glob metacharacter (matches the real file)", () => {
-    // Go's `io/fs.hasMeta` counts `\` (escape), so `seed\.sql` globs via path.Match
+    // `io/fs.hasMeta` counts `\` (escape), so `seed\.sql` globs via path.Match
     // and matches the literal `seed.sql` — not a file named `seed\.sql`.
     const dir = mkdtempSync(join(tmpdir(), "legacy-seed-"));
     writeFileSync(join(dir, "seed.sql"), "insert into t values (1);");
@@ -82,7 +82,7 @@ describe("legacyApplySeedFiles seed glob", () => {
   it.effect(
     "expands a matched directory to its sorted, regular .sql files (Go's Glob.SQLFiles)",
     () => {
-      // Go's `GetPendingSeeds` calls `locals.SQLFiles(fsys)` — the SAME `Glob.SQLFiles` method
+      // `GetPendingSeeds` calls `locals.SQLFiles(fsys)` — the SAME `Glob.SQLFiles` method
       // `db.migrations.schema_paths` resolves through — which expands a directory match to its
       // recursively-walked, sorted `.sql` files rather than treating the directory itself as a
       // seed file.

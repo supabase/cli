@@ -13,7 +13,7 @@ import {
  * accepts csvq's dialect, so the report's rule queries are evaluated here.
  *
  * Supported grammar (anything outside it throws `LegacyInspectCsvqError`, which
- * the rule evaluator turns into the rule's STATUS cell, matching Go — a per-rule
+ * the rule evaluator turns into the rule's STATUS cell — a per-rule
  * csvq error becomes the cell rather than failing the command):
  *
  *   SELECT <agg|expr> [AS <ident>]
@@ -43,7 +43,7 @@ import {
  *   only NULL values are *computed* (an aggregate over zero rows, or arithmetic on
  *   a non-numeric operand).
  * - A comparison numerically compares its operands only when **both** convert to a
- *   number under Go's `strconv` rules (no surrounding whitespace, no digit
+ *   number under strict numeric rules (no surrounding whitespace, no digit
  *   grouping); otherwise it compares them as strings. This mirrors csvq's type
  *   promotion, including the quirk that a thousands-grouped `to_char` value such as
  *   `" 2,000"` falls back to a string comparison.
@@ -61,10 +61,8 @@ export class LegacyInspectCsvqError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
 // CSV parsing (RFC 4180, the shape Postgres `COPY ... WITH CSV HEADER` emits).
 // Every field is a string; quoting only affects escaping, not value identity.
-// ---------------------------------------------------------------------------
 
 /** A parsed CSV table: header → column index, plus the data rows as strings. */
 export interface LegacyCsvTable {
@@ -143,9 +141,7 @@ export function legacyParseReportCsv(input: Uint8Array | string): LegacyCsvTable
   return { columns, rows: records.slice(1) };
 }
 
-// ---------------------------------------------------------------------------
 // Tokenizer
-// ---------------------------------------------------------------------------
 
 type Token =
   | { readonly t: "ident"; readonly v: string }
@@ -257,9 +253,7 @@ function tokenize(sql: string): Array<Token> {
   return tokens;
 }
 
-// ---------------------------------------------------------------------------
 // AST
-// ---------------------------------------------------------------------------
 
 type ValNode =
   | { readonly k: "num"; readonly n: number }
@@ -297,9 +291,7 @@ interface SelectStmt {
 
 const AGG_FNS = new Set(["LISTAGG", "COUNT", "SUM", "MIN", "MAX", "AVG"]);
 
-// ---------------------------------------------------------------------------
 // Parser (recursive descent)
-// ---------------------------------------------------------------------------
 
 class Parser {
   private pos = 0;
@@ -539,9 +531,7 @@ class Parser {
   }
 }
 
-// ---------------------------------------------------------------------------
 // Evaluation
-// ---------------------------------------------------------------------------
 
 type EvalValue =
   | { readonly kind: "null" }
@@ -550,8 +540,8 @@ type EvalValue =
 
 const NULL_VALUE: EvalValue = { kind: "null" };
 
-// Go's strconv accepts no surrounding whitespace and no digit grouping. Mirror
-// that strictly so a `to_char`-formatted value (e.g. `" 2,000"`) does NOT convert
+// Strict numeric parsing accepts no surrounding whitespace and no digit grouping,
+// so a `to_char`-formatted value (e.g. `" 2,000"`) does NOT convert
 // to a number and falls back to a string comparison, exactly as csvq does.
 const STRICT_NUMERIC = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
@@ -744,15 +734,15 @@ export type LegacyCsvTableProvider = (name: string) => LegacyCsvTable | undefine
 /**
  * Evaluate a csvq rule query to its scalar first-column result.
  *
- * Returns `Option.none()` for the two cases Go maps to a passing rule with a `-`
+ * Returns `Option.none()` for the two cases that map to a passing rule with a `-`
  * matches cell: an aggregate over zero matched rows (csvq NULL) and a
- * non-aggregate select that matches no rows (`sql.ErrNoRows`). Returns
+ * non-aggregate select that matches no rows. Returns
  * `Option.some(value)` otherwise — including `Option.some("")` for a valid empty
- * string, which Go also treats as a pass but renders as an empty matches cell.
+ * string, which is also treated as a pass but renders as an empty matches cell.
  *
  * Throws `LegacyInspectCsvqError` for unsupported grammar, an unknown table, or an
  * unknown column; the rule evaluator catches it and uses the message as the STATUS
- * cell (Go does the same with csvq's own error text).
+ * cell, using csvq's own error text.
  */
 export function legacyEvalCsvqScalar(
   query: string,

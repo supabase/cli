@@ -81,9 +81,9 @@ const mapBranchDatabaseConfigError = mapLegacyHttpError({
 
 // A 404 from `GET /v1/projects/{ref}` means the ref is a preview branch rather
 // than a project, so fall back to the branch config endpoint. Mirror the link
-// handler, which treats *any* 404 as the branch case
-// (`link.handler.ts:46-50` / Go's `checkRemoteProjectStatus`); do not narrow on
-// the response body, since the Management API's 404 wording is not guaranteed.
+// handler, which treats *any* 404 as the branch case (`link.handler.ts:46-50`);
+// do not narrow on the response body, since the Management API's 404 wording
+// is not guaranteed.
 function isProjectNotFound(cause: unknown) {
   return cause instanceof LegacyGenTypesUnexpectedStatusError && cause.status === 404;
 }
@@ -99,12 +99,11 @@ type LegacyGenTypesMutexFlag =
   | "swift-access-control"
   | "query-timeout";
 
-// Go registers four mutually-exclusive flag groups (apps/cli-go/cmd/gen.go:153-162).
-// Cobra validates them in lexicographically sorted group-key order and reports only
-// the first violated group (spf13/cobra flag_groups.go `validateExclusiveFlagGroups`
-// iterating `sortedKeys`), so they are listed here in that sorted order — e.g.
-// `--db-url X --postgrest-v9-compat --project-id Y` reports the postgrest group,
-// not the local/linked/project-id/db-url group.
+// Four mutually-exclusive flag groups. Validation runs in lexicographically
+// sorted group-key order and reports only the first violated group, so they
+// are listed here in that sorted order — e.g. `--db-url X
+// --postgrest-v9-compat --project-id Y` reports the postgrest group, not the
+// local/linked/project-id/db-url group.
 const GEN_TYPES_MUTEX_GROUPS: ReadonlyArray<ReadonlyArray<LegacyGenTypesMutexFlag>> = [
   ["linked", "project-id", "postgrest-v9-compat"],
   ["linked", "project-id", "query-timeout"],
@@ -243,16 +242,14 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
   // rather than with whatever the TS parser produced — e.g. a bare
   // `-s --linked --local` is pflag's `-s` consuming `--linked` as its
   // (oddly named, but valid) schema value, leaving only `--local` changed,
-  // while the Effect parser reads `--linked` as its own boolean flag
-  // (CLI-1982).
+  // while the Effect parser reads `--linked` as its own boolean flag.
   const scan = pflagArgvScan(rawArgs, GEN_TYPES_COMMAND_PATH, GEN_TYPES_SCAN_SPEC);
   const occurrences = scan.occurrences;
 
-  // Go parses `--query-timeout` at flag-parse time (pflag's `DurationVar`),
-  // before the root's `PersistentPreRunE` installs the telemetry context
-  // (apps/cli-go/cmd/root.go:93-163) — so an invalid duration wins over every
-  // guard below, and unlike them, its rejection is never followed by a
-  // telemetry flush.
+  // `--query-timeout` is parsed at flag-parse time (pflag's `DurationVar`),
+  // before the telemetry context is installed — so an invalid duration wins
+  // over every guard below, and unlike them, its rejection is never
+  // followed by a telemetry flush.
   const queryTimeoutSeconds = yield* parseQueryTimeoutSeconds(flags.queryTimeout);
 
   // flags.schema is already CSV-parsed and validated by `Flag.mapTryCatch(legacyParseSchemaFlags)`
@@ -409,11 +406,12 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
           Effect.gen(function* () {
             yield* output.raw(`Connecting to ${target.host} ${target.port}\n`, "stderr");
 
-            // Mirrors Go's container.Config.Env ([]string of "KEY=VALUE"). We pass each
-            // entry as a `--env KEY=VALUE` argument rather than a `--env-file`: env-files
-            // split on newlines, so they cannot carry the multi-line PEM CA bundle, and a
-            // value containing a newline could inject an extra variable. Passing argv
-            // elements keeps each entry as exactly one variable regardless of its contents.
+            // Each entry is a "KEY=VALUE" string, passed as a `--env
+            // KEY=VALUE` argument rather than a `--env-file`: env-files
+            // split on newlines, so they cannot carry the multi-line PEM CA
+            // bundle, and a value containing a newline could inject an extra
+            // variable. Passing argv elements keeps each entry as exactly
+            // one variable regardless of its contents.
             const env = [
               `PG_META_DB_URL=${target.url}`,
               `PG_CONN_TIMEOUT_SECS=${queryTimeoutSeconds}`,
@@ -424,9 +422,9 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               `PG_META_GENERATE_TYPES_DETECT_ONE_TO_ONE_RELATIONSHIPS=${String(!input.postgrestV9Compat)}`,
             ];
 
-            // Go's isRequireSSL emits this warning to stderr when the probe runs with
-            // certificate verification disabled. Our wire-level SSLRequest probe never
-            // verifies certificates, so honour the same env var for stderr parity.
+            // Emitted to stderr when the probe runs with certificate
+            // verification disabled. Our wire-level SSLRequest probe never
+            // verifies certificates, so honour the same env var here too.
             if (process.env["SUPABASE_CA_SKIP_VERIFY"] === "true") {
               yield* output.raw(
                 "WARNING: TLS certificate verification disabled for SSL probe (SUPABASE_CA_SKIP_VERIFY=true)\n",
@@ -439,7 +437,7 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
               env.push(`PG_META_DB_SSL_ROOT_CERT=${legacyRootCaBundle()}`);
             }
 
-            // Go's DockerStart applies `--network-id` over any base network mode (even the
+            // `--network-id` overrides any base network mode (even the
             // "host" mode used for --db-url), so honour the override here too.
             const networkMode = Option.isSome(networkId) ? networkId.value : input.networkMode;
             const args = [
@@ -539,17 +537,15 @@ export const legacyGenTypes = Effect.fn("legacy.gen.types")(function* (flags: Le
     );
 
   yield* Effect.gen(function* () {
-    // Guard order matches Go exactly: the command's PreRunE runs first
-    // (apps/cli-go/cmd/gen.go:79-88), then cobra validates the
-    // mutually-exclusive flag groups (spf13/cobra command.go:1000-1010) — so
-    // a PreRunE error wins when both apply (e.g. `--local --linked
-    // --postgrest-v9-compat`). Both run AFTER the root's `PersistentPreRunE`
-    // has already installed the telemetry context (`cmd/root.go:93-163`),
-    // unlike the query-timeout parse failure above, so every return in this
-    // block must stay inside the `Effect.ensuring(telemetryState.flush)`
-    // below.
+    // The command's own guard runs first, then flag-group validation — so
+    // this guard's error wins when both apply (e.g. `--local --linked
+    // --postgrest-v9-compat`). Both run AFTER the telemetry context is
+    // already installed, unlike the query-timeout parse failure above, so
+    // every return in this block must stay inside the
+    // `Effect.ensuring(telemetryState.flush)` below.
     if (flags.postgrestV9Compat && Option.isNone(flags.dbUrl)) {
-      // Byte-match of Go's error, including the "must used" typo (cmd/gen.go:81).
+      // Established error text, including the "must used" typo — do not
+      // "fix" the grammar.
       return yield* Effect.fail(
         new Error("--postgrest-v9-compat must used together with --db-url"),
       );

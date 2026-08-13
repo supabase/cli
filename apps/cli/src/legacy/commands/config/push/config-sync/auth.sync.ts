@@ -19,9 +19,7 @@ import { durationString, parseDuration, secondsToDurationString } from "./config
 import type { AuthEmailContent } from "./config-sync.auth-email-content.ts";
 import { secretHash, secretPlaintext } from "./config-sync.secret.ts";
 
-// ---------------------------------------------------------------------------
 // Sub-types
-// ---------------------------------------------------------------------------
 
 interface ProviderSubset {
   readonly enabled: boolean;
@@ -59,7 +57,6 @@ interface SmtpSubset {
   readonly host: string;
   readonly port: number;
   readonly user: string;
-  /** Pre-serialised. */
   readonly pass: string;
   readonly admin_email: string;
   readonly sender_name: string;
@@ -99,9 +96,7 @@ interface TpaWorkOsSubset {
   readonly issuer_url: string;
 }
 
-// ---------------------------------------------------------------------------
 // Public AuthSubset
-// ---------------------------------------------------------------------------
 
 export interface AuthSubset {
   readonly enabled: boolean;
@@ -142,7 +137,6 @@ export interface AuthSubset {
     | {
         readonly enabled: boolean;
         readonly provider: string;
-        /** Pre-serialised. */
         readonly secret: string;
       }
     | undefined;
@@ -161,7 +155,6 @@ export interface AuthSubset {
       readonly verify_enabled: boolean;
       readonly otp_length: number;
       readonly template: string;
-      /** Pre-serialised. */
       readonly max_frequency: string;
     };
     readonly web_authn: { readonly enroll_enabled: boolean; readonly verify_enabled: boolean };
@@ -173,7 +166,6 @@ export interface AuthSubset {
     readonly double_confirm_changes: boolean;
     readonly enable_confirmations: boolean;
     readonly secure_password_change: boolean;
-    /** Pre-serialised. */
     readonly max_frequency: string;
     readonly otp_length: number;
     readonly otp_expiry: number;
@@ -185,39 +177,33 @@ export interface AuthSubset {
     readonly enable_signup: boolean;
     readonly enable_confirmations: boolean;
     readonly template: string;
-    /** Pre-serialised. */
     readonly max_frequency: string;
     readonly twilio: {
       readonly enabled: boolean;
       readonly account_sid: string;
       readonly message_service_sid: string;
-      /** Pre-serialised. */
       readonly auth_token: string;
     };
     readonly twilio_verify: {
       readonly enabled: boolean;
       readonly account_sid: string;
       readonly message_service_sid: string;
-      /** Pre-serialised. */
       readonly auth_token: string;
     };
     readonly messagebird: {
       readonly enabled: boolean;
       readonly originator: string;
-      /** Pre-serialised. */
       readonly access_key: string;
     };
     readonly textlocal: {
       readonly enabled: boolean;
       readonly sender: string;
-      /** Pre-serialised. */
       readonly api_key: string;
     };
     readonly vonage: {
       readonly enabled: boolean;
       readonly from: string;
       readonly api_key: string;
-      /** Pre-serialised. */
       readonly api_secret: string;
     };
     readonly test_otp: Readonly<Record<string, string>>;
@@ -233,15 +219,10 @@ export interface AuthSubset {
     readonly allow_dynamic_registration: boolean;
     readonly authorization_url_path: string;
   };
-  /** Pre-serialised. */
   readonly publishable_key: string;
-  /** Pre-serialised. */
   readonly secret_key: string;
-  /** Pre-serialised. */
   readonly jwt_secret: string;
-  /** Pre-serialised. */
   readonly anon_key: string;
-  /** Pre-serialised. */
   readonly service_role_key: string;
   readonly third_party: {
     readonly firebase: TpaFirebaseSubset;
@@ -257,7 +238,7 @@ export interface AuthSubset {
    * fields hold the hashed form for the diff; this bag holds the plaintext so
    * `authToUpdateBody` can send the value the API actually expects. Not part of
    * `AUTH_FIELDS`, so it never appears in the diff. Gated by the hashed field's
-   * presence (mirrors Go's `if len(Secret.SHA256) > 0`).
+   * presence (non-empty hash).
    */
   readonly rawSecrets: AuthRawSecrets;
 }
@@ -276,9 +257,7 @@ interface AuthRawSecrets {
   readonly providers: Readonly<Record<string, string>>;
 }
 
-// ---------------------------------------------------------------------------
 // RemoteAuthConfig — subset of AuthConfigResponse fields Go reads
-// ---------------------------------------------------------------------------
 
 export interface RemoteAuthConfig {
   readonly site_url?: string | null;
@@ -505,9 +484,7 @@ export interface RemoteAuthConfig {
 /** Body type for the V1 update auth config API call. */
 export type RemoteAuthUpdateBody = Record<string, unknown>;
 
-// ---------------------------------------------------------------------------
 // TOML field descriptors — mirrors Go struct declaration order (lines 147-188)
-// ---------------------------------------------------------------------------
 
 const HOOK_CONFIG_FIELDS: ReadonlyArray<TomlField> = [
   { key: "enabled", node: { kind: "bool" } },
@@ -835,9 +812,7 @@ const AUTH_FIELDS: ReadonlyArray<TomlField> = [
   { key: "third_party", node: { kind: "struct", fields: THIRD_PARTY_FIELDS } },
 ];
 
-// ---------------------------------------------------------------------------
 // Helpers
-// ---------------------------------------------------------------------------
 
 /** Go `cast.IntToUint`: clamp negatives to 0. */
 function valOrDefault<T>(v: T | null | undefined, def: T): T {
@@ -873,21 +848,20 @@ function fromRemoteSecret(sha256: string | null | undefined): string {
   return v.length === 0 ? "" : "hash:" + v;
 }
 
-// ---------------------------------------------------------------------------
 // authSubsetFromConfig — projects local config into AuthSubset
-// ---------------------------------------------------------------------------
 
 /**
- * Raw-config presence of the optional `[auth]` sub-sections that Go models as
- * `*pointer`/map fields (nil when absent in `config.toml`). `@supabase/config`
- * decodes them as present-with-defaults, so their true presence can't be
- * recovered from the decoded config; we read it from the raw TOML instead
- * (see `push.raw-presence.ts`) to reproduce Go's "skip when nil" semantics in
- * `ToUpdateAuthConfigBody` (`apps/cli-go/pkg/config/auth.go`).
+ * Raw-config presence of the optional `[auth]` sub-sections, which are
+ * modelled as optional (absent when not declared in `config.toml`).
+ * `@supabase/config` decodes them as present-with-defaults, so their true
+ * presence can't be recovered from the decoded config; we read it from the
+ * raw TOML instead (see `push.raw-presence.ts`) to reproduce "skip when
+ * absent" semantics in the update body.
  *
- * `externalProviders` is the set of `[auth.external.<name>]` blocks declared in
- * the raw config; Go additionally always carries the `apple` default from its
- * embedded template, which {@link authSubsetFromConfig} folds in.
+ * `externalProviders` is the set of `[auth.external.<name>]` blocks declared
+ * in the raw config; the update body additionally always carries the
+ * `apple` default from the embedded template, which
+ * {@link authSubsetFromConfig} folds in.
  */
 export interface AuthPresence {
   readonly captcha: boolean;
@@ -904,13 +878,13 @@ export interface AuthPresence {
 }
 
 /**
- * Port of the local half of `(*auth).DiffWithRemote`.
  * Projects `config.auth` into the push subset, pre-computing all duration and
  * secret fields.  `projectId` is the HMAC key for secret hashing. `presence`
- * carries raw-config presence for the optional sub-sections Go skips when nil.
- * `dotenvPrivateKeys` (Go's `DOTENV_PRIVATE_KEY`/`DOTENV_PRIVATE_KEY_*` values)
- * decrypt any `encrypted:` (dotenvx) secret before it's hashed or copied into
- * {@link AuthSubset.rawSecrets} — see `config-sync.secret.ts`.
+ * carries raw-config presence for the optional sub-sections that are skipped
+ * when absent. `dotenvPrivateKeys` (the `DOTENV_PRIVATE_KEY`/
+ * `DOTENV_PRIVATE_KEY_*` values) decrypt any `encrypted:` (dotenvx) secret
+ * before it's hashed or copied into {@link AuthSubset.rawSecrets} — see
+ * `config-sync.secret.ts`.
  *
  * @throws When an `encrypted:` secret cannot be decrypted with any key. The
  *   handler's document-wide pre-check (`legacyAssertDecryptableSecrets`) runs
@@ -945,7 +919,6 @@ export function authSubsetFromConfig(
   const passkey: AuthSubset["passkey"] = undefined;
   const webauthn: AuthSubset["webauthn"] = undefined;
 
-  // Rate limit
   const rl = a.rate_limit;
 
   // Captcha — Go gates on `a.Captcha != nil`; absent in raw config → skip.
@@ -987,7 +960,6 @@ export function authSubsetFromConfig(
     before_user_created: projectHook(h.before_user_created, presence.hooks.before_user_created),
   };
 
-  // MFA
   const m = a.mfa;
   const mfa: AuthSubset["mfa"] = {
     totp: {
@@ -1015,8 +987,8 @@ export function authSubsetFromConfig(
     inactivity_timeout: normalizeDurationStr(sessConfig?.inactivity_timeout),
   };
 
-  // Email templates: `content` is loaded from `content_path` by `loadAuthEmailContent`
-  // before this call (Go's `email.validate`).
+  // Email templates: `content` is loaded from `content_path` by
+  // `loadAuthEmailContent` before this call.
   const emailTmplMap = a.email.template;
   const templateEntries: Record<string, EmailTemplateSubset> = {};
   for (const [k, t] of Object.entries(emailTmplMap)) {
@@ -1030,7 +1002,6 @@ export function authSubsetFromConfig(
   // Nil map (no templates configured) → undefined, mirrors Go nil map behaviour.
   const template = Object.keys(templateEntries).length > 0 ? templateEntries : undefined;
 
-  // Email notifications
   const emailNotifMap = a.email.notification;
   const notificationEntries: Record<string, NotificationSubset> = {};
   for (const [k, n] of Object.entries(emailNotifMap)) {
@@ -1061,7 +1032,6 @@ export function authSubsetFromConfig(
           sender_name: smtpConfig.sender_name ?? "",
         };
 
-  // SMS
   const s = a.sms;
   function projectTwilio(tc: {
     enabled: boolean;
@@ -1102,10 +1072,10 @@ export function authSubsetFromConfig(
     test_otp: s.test_otp ?? {},
   };
 
-  // External providers — Go emits only providers present in its `external` map
-  // (`if p, ok := e[name]; ok`). That map is the `apple` default from Go's
-  // embedded template plus any `[auth.external.<name>]` blocks in config.toml.
-  // @supabase/config defaults *all* providers present, so restrict to Go's set.
+  // External providers: only providers present in the established `apple`
+  // default plus any `[auth.external.<name>]` blocks in config.toml are
+  // emitted. @supabase/config defaults *all* providers present, so restrict
+  // to that set.
   const ext = a.external;
   const providerNames = new Set<string>(["apple", ...presence.externalProviders]);
   const external: Record<string, ProviderSubset> = {};
@@ -1122,7 +1092,6 @@ export function authSubsetFromConfig(
     };
   }
 
-  // Third-party
   const tp = a.third_party;
   const third_party: AuthSubset["third_party"] = {
     firebase: {
@@ -1257,9 +1226,7 @@ export function authEnabled(config: ProjectConfig): boolean {
   return config.auth.enabled;
 }
 
-// ---------------------------------------------------------------------------
 // applyRemoteAuthConfig — port of Go `(*auth).FromRemoteAuthConfig`
-// ---------------------------------------------------------------------------
 
 /**
  * Maps the local config `password_requirements` enum to the API
@@ -1308,7 +1275,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
   const prc = valOrDefault(remote.password_required_characters, "");
   const passwordRequirements = remoteToPasswordRequirements(prc);
 
-  // Passkey / Webauthn (only update if local has them set)
   let passkey = local.passkey;
   if (passkey !== undefined) {
     passkey = { enabled: remote.passkey_enabled ?? false };
@@ -1322,7 +1288,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     };
   }
 
-  // Rate limit
   const rl = local.rate_limit;
   const hasSmtp = local.email.smtp !== undefined && local.email.smtp.enabled;
   const rateLimit = {
@@ -1335,7 +1300,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     web3: intToUint(valOrDefault(remote.rate_limit_web3, 0)),
   };
 
-  // Captcha — only update when local captcha is defined
   let captcha = local.captcha;
   if (captcha !== undefined) {
     // fromAuthConfig: if captcha.Enabled, update provider + secret.SHA256; then set Enabled last
@@ -1352,7 +1316,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     captcha = { enabled, provider, secret };
   }
 
-  // Hooks — only update when local hook is defined
   function applyRemoteHook(
     localHook: HookConfigSubset | undefined,
     enabled: boolean | null | undefined,
@@ -1415,7 +1378,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     ),
   };
 
-  // MFA
   const mfa: AuthSubset["mfa"] = {
     max_enrolled_factors: intToUint(valOrDefault(remote.mfa_max_enrolled_factors, 0)),
     totp: {
@@ -1445,7 +1407,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     ),
   };
 
-  // SMTP
   let smtp = local.email.smtp;
   if (smtp !== undefined) {
     if (smtp.enabled) {
@@ -1473,7 +1434,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     smtp = { ...smtp, enabled: remoteSmtpEnabled };
   }
 
-  // Email templates — only overwrite if local field was set (non-nil ptr in Go)
   const templateEntries: Record<string, EmailTemplateSubset> = {};
   const localTemplate = local.email.template ?? {};
   const tmplNames = [
@@ -1512,13 +1472,11 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     const t = localTemplate[name];
     if (t === undefined) continue;
     const key = name as TmplKey;
-    // subject: only update if local subject was set (not undefined)
     let subject = t.subject;
     if (subject !== undefined) {
       const remoteSubject = tmplSubjectMap[key];
       subject = remoteSubject != null ? remoteSubject : undefined;
     }
-    // content: only update if local content was set (not undefined)
     let content = t.content;
     if (content !== undefined) {
       const remoteContent = tmplContentMap[key];
@@ -1528,7 +1486,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
   }
   const template = Object.keys(templateEntries).length > 0 ? templateEntries : undefined;
 
-  // Email notifications
   const notificationEntries: Record<string, NotificationSubset> = {};
   const localNotification = local.email.notification ?? {};
   type NotifKey =
@@ -1588,7 +1545,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
   const notification =
     Object.keys(notificationEntries).length > 0 ? notificationEntries : undefined;
 
-  // Email
   const email: AuthSubset["email"] = {
     enable_signup: valOrDefault(remote.external_email_enabled, false),
     double_confirm_changes: valOrDefault(remote.mailer_secure_email_change_enabled, false),
@@ -1605,15 +1561,14 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     notification,
   };
 
-  // SMS
   const localSms = local.sms;
   let twilio = localSms.twilio;
   let twilioVerify = localSms.twilio_verify;
   let messagebird = localSms.messagebird;
   let textlocal = localSms.textlocal;
   let vonage = localSms.vonage;
-  // Mirrors Go's `case !s.EnableSignup: return` — when remote phone is disabled
-  // and no local provider is enabled, provider reconciliation is skipped.
+  // When remote phone is disabled and no local provider is enabled, provider
+  // reconciliation is skipped.
   let skipSmsProviderReconciliation = false;
 
   switch (true) {
@@ -1729,7 +1684,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     vonage: smsNewVonage,
   };
 
-  // External providers
   const external: Record<string, ProviderSubset> = {};
   const localExt = local.external;
   for (const name of Object.keys(localExt)) {
@@ -1738,7 +1692,6 @@ export function applyRemoteAuthConfig(local: AuthSubset, remote: RemoteAuthConfi
     external[name] = applyRemoteProvider(name, p, remote);
   }
 
-  // Web3
   const web3Solana = remote.external_web3_solana_enabled;
   const web3Ethereum = remote.external_web3_ethereum_enabled;
   const web3: AuthSubset["web3"] = {
@@ -1793,7 +1746,6 @@ function envToMap(input: string): Record<string, string> {
   return result;
 }
 
-/** Apply remote config to a single external provider. */
 function applyRemoteProvider(
   name: string,
   p: ProviderSubset,
@@ -2047,9 +1999,7 @@ function getProviderEmailOptional(name: string, r: RemoteAuthConfig, fallback: b
   }
 }
 
-// ---------------------------------------------------------------------------
 // mfaPhoneNewlyEnabled / mfaWebauthnNewlyEnabled / disable helpers
-// ---------------------------------------------------------------------------
 
 /**
  * Returns true when MFA phone verify is enabled locally but was disabled on
@@ -2067,7 +2017,6 @@ export function mfaWebauthnNewlyEnabled(local: AuthSubset, copy: AuthSubset): bo
   return local.mfa.web_authn.verify_enabled && !copy.mfa.web_authn.verify_enabled;
 }
 
-/** Disables MFA phone enroll and verify. */
 export function disableMfaPhone(local: AuthSubset): AuthSubset {
   return {
     ...local,
@@ -2078,7 +2027,6 @@ export function disableMfaPhone(local: AuthSubset): AuthSubset {
   };
 }
 
-/** Disables MFA WebAuthn enroll and verify. */
 export function disableMfaWebauthn(local: AuthSubset): AuthSubset {
   return {
     ...local,
@@ -2089,9 +2037,7 @@ export function disableMfaWebauthn(local: AuthSubset): AuthSubset {
   };
 }
 
-// ---------------------------------------------------------------------------
 // encodeAuthToml — TOML serialisation
-// ---------------------------------------------------------------------------
 
 function authToTomlValue(s: AuthSubset): { readonly [k: string]: TomlValue | undefined } {
   return {
@@ -2328,18 +2274,14 @@ function encodeAuthToml(s: AuthSubset): string {
   return encodeToml(AUTH_FIELDS, authToTomlValue(s));
 }
 
-// ---------------------------------------------------------------------------
 // diffAuth
-// ---------------------------------------------------------------------------
 
 /** Port of Go `(*auth).DiffWithRemote`. */
 export function diffAuth(remoteCompare: AuthSubset, local: AuthSubset): string {
   return diff("remote[auth]", encodeAuthToml(remoteCompare), "local[auth]", encodeAuthToml(local));
 }
 
-// ---------------------------------------------------------------------------
 // authToUpdateBody
-// ---------------------------------------------------------------------------
 
 /**
  * Port of Go `(*auth).ToUpdateAuthConfigBody`.
@@ -2359,7 +2301,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
   body["password_min_length"] = local.minimum_password_length;
   body["password_required_characters"] = passwordRequirementsToChar(local.password_requirements);
 
-  // Rate limits
   body["rate_limit_anonymous_users"] = local.rate_limit.anonymous_users;
   body["rate_limit_token_refresh"] = local.rate_limit.token_refresh;
   body["rate_limit_otp"] = local.rate_limit.sign_in_sign_ups;
@@ -2371,7 +2312,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     body["rate_limit_email_sent"] = local.rate_limit.email_sent;
   }
 
-  // Captcha
   if (local.captcha !== undefined) {
     body["security_captcha_enabled"] = local.captcha.enabled;
     if (local.captcha.enabled) {
@@ -2384,7 +2324,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     }
   }
 
-  // Passkey / Webauthn
   if (local.passkey !== undefined) {
     body["passkey_enabled"] = local.passkey.enabled;
   }
@@ -2394,7 +2333,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     body["webauthn_rp_origins"] = local.webauthn.rp_origins.join(",");
   }
 
-  // Hooks
   addHookToBody(
     body,
     "before_user_created",
@@ -2422,7 +2360,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     local.rawSecrets.hooks,
   );
 
-  // MFA
   body["mfa_max_enrolled_factors"] = local.mfa.max_enrolled_factors;
   body["mfa_totp_enroll_enabled"] = local.mfa.totp.enroll_enabled;
   body["mfa_totp_verify_enabled"] = local.mfa.totp.verify_enabled;
@@ -2434,11 +2371,9 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
   body["mfa_web_authn_enroll_enabled"] = local.mfa.web_authn.enroll_enabled;
   body["mfa_web_authn_verify_enabled"] = local.mfa.web_authn.verify_enabled;
 
-  // Sessions
   body["sessions_timebox"] = durationToHours(local.sessions.timebox);
   body["sessions_inactivity_timeout"] = durationToHours(local.sessions.inactivity_timeout);
 
-  // Email
   body["external_email_enabled"] = local.email.enable_signup;
   body["mailer_secure_email_change_enabled"] = local.email.double_confirm_changes;
   body["mailer_autoconfirm"] = !local.email.enable_confirmations;
@@ -2462,7 +2397,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     }
   }
 
-  // Email templates
   const templates = local.email.template;
   if (templates !== undefined && Object.keys(templates).length > 0) {
     const tmpl = (k: string) => templates[k];
@@ -2486,7 +2420,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     if (re?.content !== undefined) body["mailer_templates_reauthentication_content"] = re.content;
   }
 
-  // Notifications
   const notifications = local.email.notification;
   if (notifications !== undefined && Object.keys(notifications).length > 0) {
     const n = (k: string) => notifications[k];
@@ -2547,7 +2480,6 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
     }
   }
 
-  // SMS
   body["external_phone_enabled"] = local.sms.enable_signup;
   body["sms_max_frequency"] = durationToSeconds(local.sms.max_frequency);
   body["sms_autoconfirm"] = local.sms.enable_confirmations;
@@ -2555,9 +2487,9 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
   const otpString = mapToEnv(local.sms.test_otp);
   if (otpString.length > 0) {
     body["sms_test_otp"] = otpString;
-    // 10-year validity, matching Go's time.Now().UTC().AddDate(10, 0, 0):
-    // calendar-exact, so leap days are counted (a flat 3650-day offset would be
-    // 2-3 days short). setUTCFullYear keeps the UTC semantics of Go's .UTC().
+    // 10-year validity: calendar-exact, so leap days are counted (a flat
+    // 3650-day offset would be 2-3 days short). setUTCFullYear keeps UTC
+    // semantics.
     const validUntil = new Date();
     validUntil.setUTCFullYear(validUntil.getUTCFullYear() + 10);
     body["sms_test_otp_valid_until"] = validUntil.toISOString();
@@ -2606,12 +2538,10 @@ export function authToUpdateBody(local: AuthSubset): RemoteAuthUpdateBody {
       break;
   }
 
-  // External providers
   for (const [name, p] of Object.entries(local.external)) {
     addProviderToBody(body, name, p, local.rawSecrets.providers[name] ?? "");
   }
 
-  // Web3
   body["external_web3_solana_enabled"] = local.web3.solana.enabled;
   body["external_web3_ethereum_enabled"] = local.web3.ethereum.enabled;
 
@@ -2669,7 +2599,7 @@ function parseUint16(s: string): number | undefined {
   return n > 65535 ? undefined : n;
 }
 
-/** `mapToEnv`: mirrors Go's `mapToEnv`. Keys in iteration order. */
+/** Flattens a record to `KEY=value` lines, keys in iteration order. */
 function mapToEnv(input: Readonly<Record<string, string>>): string {
   const parts: string[] = [];
   for (const [k, v] of Object.entries(input)) {

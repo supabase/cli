@@ -27,9 +27,9 @@ import {
 import { printNetworkRestrictionsStatus } from "../network-restrictions.format.ts";
 import type { LegacyNetworkRestrictionsUpdateFlags } from "./update.command.ts";
 
-// Templates lifted verbatim from `apps/cli-go/internal/restrictions/update/update.go:42,45,68,71`.
-// Both POST `/apply` and PATCH `/network-restrictions` use the same Go message strings;
-// we route through one mapper and discriminate downstream by the tagged error class.
+// Both POST `/apply` and PATCH `/network-restrictions` use the same message
+// strings; we route through one mapper and discriminate downstream by the
+// tagged error class.
 const mapUpdateError = mapLegacyHttpError({
   networkError: LegacyNetworkRestrictionsUpdateNetworkError,
   statusError: LegacyNetworkRestrictionsUpdateUnexpectedStatusError,
@@ -106,7 +106,7 @@ export const legacyNetworkRestrictionsUpdate = Effect.fn("legacy.network-restric
             );
           yield* updating?.clear() ?? Effect.void;
           // POST `/apply` prints the response field directly; if the API omits
-          // either array it renders as `<nil>` (matches Go's `*[]string(nil)`).
+          // either array it renders as `<nil>` (matches `*[]string(nil)`).
           v4Out = response.config.dbAllowedCidrs;
           v6Out = response.config.dbAllowedCidrsV6;
           applied = response.status === "applied";

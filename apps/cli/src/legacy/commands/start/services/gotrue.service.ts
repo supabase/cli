@@ -1,26 +1,18 @@
 /**
- * GoTrue/Auth env + container spec builder — port of Go's "Start GoTrue"
- * block (formerly `apps/cli-go/internal/start/start.go:629-851`) and its
- * `buildGotrueEnv`/`appendGotruePasskeyEnv`/`appendGotrueExternalProviderEnv`/
- * `formatMapForEnvConfig` helpers (`start.go:1305-1462`). Gated in Go by
- * `config.auth.enabled` and `!isContainerExcluded(config.auth.image,
- * excluded)` — see `legacy-service-catalog.ts`'s `gotrue` entry (`excludeKey:
- * "gotrue"`, gated on `auth.enabled`). Gating and image resolution/pre-pull
- * are the caller's job (a future `start.handler.ts`); this module only
- * assembles the env/container spec once the caller has already decided to
- * start it.
+ * GoTrue/Auth env + container spec builder, gated on `config.auth.enabled`
+ * and `!isContainerExcluded(config.auth.image, excluded)` — see
+ * `legacy-service-catalog.ts`'s `gotrue` entry (`excludeKey: "gotrue"`, gated
+ * on `auth.enabled`). Gating and image resolution/pre-pull are the caller's
+ * job (a future `start.handler.ts`); this module only assembles the
+ * env/container spec once the caller has already decided to start it.
  *
  * {@link legacyBuildGotrueEnv} deliberately reproduces the FULL env surface
- * Go's container actually receives — not just Go's narrowly-named
- * `buildGotrueEnv()` return value, but every conditional env var the
- * surrounding "Start GoTrue" block in `run()` appends on top of it (JWT
- * signing keys, SMTP/Mailpit fallback, mailer template/notification URLs, the
- * fixed-priority SMS provider switch, CAPTCHA, the six auth hooks, MFA phone
- * extras, passkey/WebAuthn, external OAuth providers, Web3, OAuth server).
- * Ported test: former `apps/cli-go/internal/start/start_test.go:440 TestBuildGotrueEnv`
- * (+`:566 TestFormatMapForEnvConfig`), see `gotrue.service.unit.test.ts`.
- * `internal/start` (source and tests) was deleted outright as unreachable in
- * CLI-1966; last present at commit a253ccba25c21356ccd33044c4474aecb77d1ae4.
+ * GoTrue's container actually receives, including every conditional env var
+ * on top of the base set: JWT signing keys, SMTP/Mailpit fallback, mailer
+ * template/notification URLs, the fixed-priority SMS provider switch,
+ * CAPTCHA, the six auth hooks, MFA phone extras, passkey/WebAuthn, external
+ * OAuth providers, Web3, OAuth server. See `gotrue.service.unit.test.ts` for
+ * coverage.
  *
  * `@supabase/config` schema gaps this module works around (all pre-existing,
  * not introduced here — see each input field's own doc comment):
@@ -29,27 +21,26 @@
  *     the resolved value in as {@link LegacyBuildGotrueEnvInput.authExternalUrl}
  *     — when set, it wins over the `apiUrl`-derived fallback for
  *     `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s default/the mailer verify URL/
- *     OAuth redirect-URI fallbacks, matching `auth.GetExternalURL`
- *     (`pkg/config/auth.go:401-405`). `config/push/config-sync/auth.sync.ts`
+ *     OAuth redirect-URI fallbacks. `config/push/config-sync/auth.sync.ts`
  *     has the identical gap, unresolved — a separate command, not this PR's
  *     scope.
  *   - `auth.captcha`/`auth.passkey`/`auth.webauthn`/`auth.email.smtp`'s
- *     presence-and-default quirks (Go's `Config.Validate`/`Config.Load`
- *     treat an explicitly-omitted `enabled` differently depending on whether
- *     the surrounding TOML table is present at all) can't be recovered from
- *     the decoded `ProjectConfig` alone — the caller resolves these the same
- *     way `legacy-local-config-values.ts` already does (reading the raw
- *     TOML document) and passes the final, presence-resolved values in.
+ *     presence-and-default quirks (an explicitly-omitted `enabled` is
+ *     treated differently depending on whether the surrounding TOML table is
+ *     present at all) can't be recovered from the decoded `ProjectConfig`
+ *     alone — the caller resolves these the same way
+ *     `legacy-local-config-values.ts` already does (reading the raw TOML
+ *     document) and passes the final, presence-resolved values in.
  *   - `auth.external` decodes as a FIXED struct of ~19 known providers, each
- *     always present with `enabled: false` when unconfigured — but Go's own
- *     `Auth.External` is a genuine `map[string]provider{}` that only ever
- *     contains the providers a user's `config.toml` actually mentions, and
- *     `appendGotrueExternalProviderEnv` iterates that real map unconditionally
- *     (emitting `_ENABLED=false` etc. for a configured-but-disabled provider,
- *     never for an unconfigured one). {@link LegacyBuildGotrueEnvInput.externalProviders}
- *     must therefore already be presence-filtered by the caller (only the
- *     providers whose `[auth.external.<name>]` section actually exists in
- *     the TOML document), the same way `legacy-local-config-values.ts`'s
+ *     always present with `enabled: false` when unconfigured — but the real
+ *     provider set is whatever a user's `config.toml` actually mentions, and
+ *     `legacyAppendGotrueExternalProviderEnv` iterates that real map
+ *     unconditionally (emitting `_ENABLED=false` etc. for a
+ *     configured-but-disabled provider, never for an unconfigured one).
+ *     {@link LegacyBuildGotrueEnvInput.externalProviders} must therefore
+ *     already be presence-filtered by the caller (only the providers whose
+ *     `[auth.external.<name>]` section actually exists in the TOML
+ *     document), the same way `legacy-local-config-values.ts`'s
  *     `validateAuthExternalProviders` already filters for its own purposes.
  */
 
@@ -68,28 +59,27 @@ import {
   legacyStartInternalDbUrl,
 } from "../../../shared/db-bootstrap/internal-db-connection.ts";
 
-/** `utils.GotrueAliases[0]` (`apps/cli-go/internal/utils/config.go:38`) — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
+/** The GoTrue network alias — also this service's `containerSuffix` in `LEGACY_SERVICE_CATALOG`. */
 const LEGACY_GOTRUE_CONTAINER_SUFFIX = "auth";
 
-/** GoTrue's fixed listen port (`start.go:825`, `ExposedPorts: nat.PortSet{"9999/tcp": {}}`) — never published to the host. */
+/** GoTrue's fixed listen port — never published to the host. */
 const LEGACY_GOTRUE_PORT = "9999";
 
-/** `nginxTemplateServerPort` (`start.go:115`) — Kong's nginx template server, used for mailer template/subject URLs. */
+/** Kong's nginx template server port, used for mailer template/subject URLs. */
 const LEGACY_GOTRUE_NGINX_TEMPLATE_SERVER_PORT = 8088;
 
-/** Go's `Config.Inbucket.AdminEmail`/`SenderName` defaults (`pkg/config/config.go:518-520`, `NewConfig()`). */
+/** The default Inbucket admin email/sender name. */
 const LEGACY_GOTRUE_DEFAULT_INBUCKET_ADMIN_EMAIL = "admin@email.com";
 const LEGACY_GOTRUE_DEFAULT_INBUCKET_SENDER_NAME = "Admin";
 
-/** `supabase_auth_admin` — the fixed Postgres role GoTrue's `GOTRUE_DB_DATABASE_URL` authenticates as (`start.go:1363`). */
+/** `supabase_auth_admin` — the fixed Postgres role GoTrue's `GOTRUE_DB_DATABASE_URL` authenticates as. */
 const LEGACY_GOTRUE_DB_ROLE = "supabase_auth_admin";
 
 /**
- * RFC 7517 JWK fields Go's `JWK` struct round-trips
- * (`apps/cli-go/pkg/config/auth.go:88-108`), in the exact `json:"..."` field
- * declaration order — needed so {@link legacyBuildGotrueEnv}'s
- * `JSON.stringify` reproduces Go's `encoding/json.Marshal` byte-for-byte
- * (both languages serialize object/struct keys in declaration order).
+ * RFC 7517 JWK fields, in the exact field declaration order — needed so
+ * {@link legacyBuildGotrueEnv}'s `JSON.stringify` reproduces a stable,
+ * canonical serialization byte-for-byte (`JSON.stringify` serializes object
+ * keys in insertion order).
  * Structurally near-identical to `legacy/shared/legacy-go-jwt.ts`'s `LegacyJwk`
  * (the only difference is `key_ops`'s mutable `string[]` there, needed for
  * assignability into Node's `createPrivateKey`/`JsonWebKey` input — see that
@@ -119,19 +109,18 @@ export interface LegacyGotrueSigningKey {
 }
 
 /**
- * `Config.Auth.SigningKeys`' default single entry (`pkg/config/config.go:504-515`,
- * `NewConfig()`) — used whenever `auth.signing_keys_path` is unset. Hoisted to
- * `legacy-go-jwt.ts` (as `LEGACY_DEFAULT_SIGNING_KEY`) so `legacyResolveLocalJwks`
- * publishes the exact same key's public form in the JWKS this default signs
- * with — the two must never disagree on which key is "the" default.
+ * The default single signing key — used whenever `auth.signing_keys_path`
+ * is unset. Hoisted to `legacy-go-jwt.ts` (as `LEGACY_DEFAULT_SIGNING_KEY`)
+ * so `legacyResolveLocalJwks` publishes the exact same key's public form in
+ * the JWKS this default signs with — the two must never disagree on which
+ * key is "the" default.
  */
 const LEGACY_GOTRUE_DEFAULT_SIGNING_KEY: LegacyGotrueSigningKey = LEGACY_DEFAULT_SIGNING_KEY;
 
 /**
- * Go `PasswordRequirements.ToChar()` (`apps/cli-go/pkg/config/auth.go:34-44`).
- * Values are the real Management API `password_required_characters` literals
- * (the `:`-separated character classes are significant), matching the
- * identical, currently un-hoisted mapping in
+ * Values are the real Management API `password_required_characters`
+ * literals (the `:`-separated character classes are significant), matching
+ * the identical, currently un-hoisted mapping in
  * `config/push/config-sync/auth.sync.ts`'s `PASSWORD_REQUIREMENTS_TO_CHAR`.
  */
 const LEGACY_GOTRUE_PASSWORD_REQUIREMENTS_TO_CHAR: Record<string, string> = {
@@ -148,13 +137,10 @@ function legacyGotruePasswordRequirementsToChar(
 }
 
 /**
- * Go's `formatMapForEnvConfig(input map[string]string, output *bytes.Buffer)`
- * (`start.go:1305-1317`) — the `auth.sms.test_otp` map's `GOTRUE_SMS_TEST_OTP`
- * wire format: `key:value` pairs, comma-joined, no trailing comma. Go iterates
- * a `map[string]string` (unordered); this iterates `Object.entries` (insertion
- * order) instead — order is not part of Go's own contract here (map iteration
- * order is intentionally randomized in Go), so this doesn't need to match any
- * particular Go run's order, only the `key:value,...` shape.
+ * The `auth.sms.test_otp` map's `GOTRUE_SMS_TEST_OTP` wire format:
+ * `key:value` pairs, comma-joined, no trailing comma. Iterates
+ * `Object.entries` (insertion order); order is not part of the contract
+ * here, only the `key:value,...` shape.
  */
 export function legacyFormatMapForEnvConfig(input: Readonly<Record<string, string>>): string {
   return Object.entries(input)
@@ -169,7 +155,7 @@ export interface LegacyGotrueHookInput {
   readonly secrets?: string;
 }
 
-/** `[auth.webauthn]`, present iff the caller's raw TOML document has that section (`Auth.Webauthn != nil` in Go). */
+/** `[auth.webauthn]`, present iff the caller's raw TOML document has that section. */
 export interface LegacyGotrueWebauthnInput {
   readonly rpId: string;
   readonly rpDisplayName: string;
@@ -192,29 +178,28 @@ export interface LegacyGotrueExternalProviderInput {
 }
 
 export interface LegacyBuildGotrueEnvInput {
-  /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`) — Go's `dbConfig.Host`. */
+  /** The `db` container's own Docker name (`legacyServiceContainerName("db", projectId)`). */
   readonly dbHost: string;
-  /** Go's `dbConfig.Password` (`Config.Db.Password`) — see {@link legacyStartInternalDbPassword}. */
+  /** `config.db.password` — see {@link legacyStartInternalDbPassword}. */
   readonly dbPassword: string;
 
   /**
-   * `LegacyLocalConfigValues.apiUrl` (Go's resolved `Config.Api.ExternalUrl`)
-   * — reused, not recomputed, so `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s
-   * derived fallback (used when {@link authExternalUrl} is unset) never
-   * drifts from what `status` reports.
+   * `LegacyLocalConfigValues.apiUrl` — reused, not recomputed, so
+   * `API_EXTERNAL_URL`/`GOTRUE_JWT_ISSUER`'s derived fallback (used when
+   * {@link authExternalUrl} is unset) never drifts from what `status`
+   * reports.
    */
   readonly apiUrl: string;
   /**
    * Raw `auth.external_url` (already `SUPABASE_AUTH_EXTERNAL_URL`-overridden
-   * by the caller) — Go's `Config.Auth.ExternalUrl`/`AuthExternalURL()`
-   * (`pkg/config/config.go:543-545`, `auth.go:401-405`): an explicit value
-   * wins outright, otherwise Go derives `TrimRight(apiUrl, "/") + "/auth/v1"`.
-   * `undefined`/empty means unset — fall back to the `apiUrl` derivation.
+   * by the caller): an explicit value wins outright, otherwise it's derived
+   * as `TrimRight(apiUrl, "/") + "/auth/v1"`. `undefined`/empty means unset
+   * — fall back to the `apiUrl` derivation.
    */
   readonly authExternalUrl?: string;
   /** `LegacyLocalConfigValues.jwtSecret` — reused, not recomputed. */
   readonly jwtSecret: string;
-  /** `config.auth.jwt_issuer`, raw (`undefined` when unset — falls back to the derived auth-external URL, matching `Config.Load`'s `if len(c.Auth.JwtIssuer) == 0`). */
+  /** `config.auth.jwt_issuer`, raw (`undefined` when unset — falls back to the derived auth-external URL). */
   readonly jwtIssuer: string | undefined;
   readonly jwtExpiry: ProjectConfig["auth"]["jwt_expiry"];
   readonly siteUrl: ProjectConfig["auth"]["site_url"];
@@ -228,26 +213,24 @@ export interface LegacyBuildGotrueEnvInput {
   readonly passwordRequirements: ProjectConfig["auth"]["password_requirements"];
 
   /**
-   * `Config.Auth.SigningKeys`, already resolved (the `auth.signing_keys_path`
-   * file's contents via `legacy-local-config-values.ts`'s `loadSigningKeys`,
-   * when configured). Defaults to Go's hardcoded single ES256 key
-   * ({@link LEGACY_GOTRUE_DEFAULT_SIGNING_KEY}) when omitted, matching
-   * `NewConfig()`'s default when `signing_keys_path` is unset.
+   * `config.auth.signing_keys_path`'s resolved contents (the file's
+   * contents via `legacy-local-config-values.ts`'s `loadSigningKeys`, when
+   * configured). Defaults to the hardcoded single ES256 key
+   * ({@link LEGACY_GOTRUE_DEFAULT_SIGNING_KEY}) when omitted.
    */
   readonly signingKeys?: ReadonlyArray<LegacyGotrueSigningKey>;
 
   /** `config.auth.email`, everything except `smtp` (kept separate — see {@link smtp}). */
   readonly email: Omit<LegacyResolvedAuthEmail, "smtp">;
-  /** Kong's own container name (Go's `utils.KongId`) — mailer template/subject URLs route through it. */
+  /** Kong's own container name — mailer template/subject URLs route through it. */
   readonly kongContainerName: string;
 
   /**
    * `config.auth.email.smtp`, already presence-and-default resolved by the
-   * caller (Go's `Auth.Email.Smtp != nil && Auth.Email.Smtp.Enabled` —
-   * `@supabase/config` can't reproduce Go's "TOML table present, `enabled`
-   * key absent → true" default on its own, see this module's header).
-   * `undefined` means Go's `Smtp == nil || !Smtp.Enabled` — the mailpit
-   * fallback below applies instead.
+   * caller (`@supabase/config` can't reproduce the "TOML table present,
+   * `enabled` key absent → true" default on its own, see this module's
+   * header). `undefined` means the SMTP section is absent or disabled — the
+   * mailpit fallback below applies instead.
    */
   readonly smtp?: {
     readonly host: string;
@@ -258,12 +241,10 @@ export interface LegacyBuildGotrueEnvInput {
     readonly senderName?: string;
   };
   /**
-   * `config.local_smtp` (Go's `Inbucket`), present iff `local_smtp.enabled`
-   * AND {@link smtp} is unset (Go's `else if utils.Config.Inbucket.Enabled`).
-   * `adminEmail`/`senderName` default to Go's `NewConfig()` literals when
-   * unset, matching `@supabase/config`'s `inbucket.ts` schema having no
-   * default for either (unlike Go, which always has a literal default even
-   * when the key is absent from `config.toml`).
+   * `config.local_smtp`, present iff `local_smtp.enabled` AND {@link smtp}
+   * is unset. `adminEmail`/`senderName` default to the literals below when
+   * unset, since `@supabase/config`'s `inbucket.ts` schema has no default
+   * for either.
    */
   readonly mailpit?: {
     readonly containerName: string;
@@ -297,7 +278,7 @@ export interface LegacyBuildGotrueEnvInput {
    * `_PROVIDER`/`_SECRET`, `secret` decrypted like every other `Secret`-typed
    * field). `@supabase/config`'s `withDecodingDefaultKey` fills in `{enabled:
    * false}` even when `[auth.captcha]` is absent — see this module's header.
-   * `undefined` means `Auth.Captcha == nil` in Go.
+   * `undefined` means the section itself is absent.
    */
   readonly captcha?: {
     readonly enabled: boolean;
@@ -307,7 +288,7 @@ export interface LegacyBuildGotrueEnvInput {
 
   /** `[auth.passkey].enabled`, `undefined` iff the section is absent — see this module's header (not in `@supabase/config`'s schema at all). */
   readonly passkeyEnabled?: boolean;
-  /** `[auth.webauthn]`, `undefined` iff the section is absent — independent of {@link passkeyEnabled} (Go checks both pointers separately). */
+  /** `[auth.webauthn]`, `undefined` iff the section is absent — independent of {@link passkeyEnabled} (each section's presence is checked separately). */
   readonly webauthn?: LegacyGotrueWebauthnInput;
 
   /** Already presence-filtered by the caller — see this module's header. */
@@ -319,11 +300,9 @@ function legacyTrimTrailingSlashes(value: string): string {
 }
 
 /**
- * Port of Go's `appendGotruePasskeyEnv` (`start.go:1427-1440`). Two
- * INDEPENDENT presence gates (`Auth.Passkey != nil`, `Auth.Webauthn != nil`)
- * — Go's `Config.Validate` requires `Auth.Webauthn` whenever
- * `Auth.Passkey.Enabled`, but this function doesn't assume that invariant,
- * matching Go's own un-assuming implementation.
+ * Two INDEPENDENT presence gates for passkey/WebAuthn env vars — config
+ * validation requires `Auth.Webauthn` whenever `Auth.Passkey.Enabled`, but
+ * this function doesn't assume that invariant.
  */
 function legacyAppendGotruePasskeyEnv(
   env: Record<string, string>,
@@ -341,11 +320,10 @@ function legacyAppendGotruePasskeyEnv(
 }
 
 /**
- * Port of Go's `appendGotrueExternalProviderEnv` (`start.go:1442-1462`).
- * Iterates `providers` unconditionally (every entry, enabled or not) — Go's
- * loop has no `if config.Enabled` gate at all, only the trailing `URL` field
- * is conditional. See this module's header for why `providers` must already
- * be presence-filtered by the caller.
+ * Iterates `providers` unconditionally (every entry, enabled or not) — there
+ * is no `enabled` gate at all, only the trailing `URL` field is conditional.
+ * See this module's header for why `providers` must already be
+ * presence-filtered by the caller.
  */
 function legacyAppendGotrueExternalProviderEnv(
   env: Record<string, string>,
@@ -371,13 +349,11 @@ function legacyAppendGotrueExternalProviderEnv(
 }
 
 /**
- * `json.Marshal`-equivalent for one signing key: builds a plain object with
- * keys in Go's `JWK` struct declaration order, omitting every field Go's
- * `omitempty` would drop (an absent/`undefined` field, or an empty string —
- * `Extractable`/`KeyOps` are pointer/slice-typed in Go, so only `undefined`,
- * not a falsy value, is dropped for those two). `JSON.stringify` then
- * serializes in that same insertion order, matching `encoding/json.Marshal`
- * byte-for-byte.
+ * Builds a plain object with keys in the canonical JWK field declaration
+ * order, omitting every empty field (an absent/`undefined` field, or an
+ * empty string — `ext`/`key_ops` are only dropped when `undefined`, not for
+ * any other falsy value). `JSON.stringify` then serializes in that same
+ * insertion order, producing a stable, canonical byte representation.
  */
 function legacyOrderGotrueSigningKey(key: LegacyGotrueSigningKey): Record<string, unknown> {
   const ordered: Record<string, unknown> = { kty: key.kty };
@@ -400,7 +376,7 @@ function legacyOrderGotrueSigningKey(key: LegacyGotrueSigningKey): Record<string
   return ordered;
 }
 
-/** `filepath.Ext` (Go stdlib) — the last `.`-prefixed suffix of the final path segment, or `""` if there is none. */
+/** The last `.`-prefixed suffix of the final path segment, or `""` if there is none. */
 function legacyFileExt(path: string): string {
   const base = path.slice(Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\")) + 1);
   const dot = base.lastIndexOf(".");
@@ -408,11 +384,10 @@ function legacyFileExt(path: string): string {
 }
 
 /**
- * Pure GoTrue container env builder — port of Go's `buildGotrueEnv` PLUS
- * every conditional env var the surrounding "Start GoTrue" block in `run()`
- * appends on top of it (`start.go:629-819`). See this module's header for the
- * full rationale and the `@supabase/config` schema gaps this input type works
- * around. No Effect, no I/O — every field is a plain, already-resolved value.
+ * Pure GoTrue container env builder — assembles the FULL env surface
+ * described in this module's header. See there for the full rationale and
+ * the `@supabase/config` schema gaps this input type works around. No
+ * Effect, no I/O — every field is a plain, already-resolved value.
  */
 export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<string, string> {
   const authExternalUrl =
@@ -504,8 +479,7 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     GOTRUE_RATE_LIMIT_WEB3: String(input.rateLimit.web3),
   };
 
-  // JWT signing keys (start.go:634-640) — `json.Marshal` never fails for this
-  // shape, so Go's `if err == nil` guard is effectively unconditional here.
+  // JWT signing keys — `JSON.stringify` never fails for this shape.
   const signingKeys = input.signingKeys ?? [LEGACY_GOTRUE_DEFAULT_SIGNING_KEY];
   env["GOTRUE_JWT_KEYS"] = JSON.stringify(signingKeys.map(legacyOrderGotrueSigningKey));
   // TODO: deprecate HS256 when it's no longer supported.
@@ -513,7 +487,7 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
   env["GOTRUE_JWT_VALIDMETHODS"] = "HS256,RS256,ES256";
   env["GOTRUE_JWT_VALID_METHODS"] = "HS256,RS256,ES256";
 
-  // SMTP, else Mailpit fallback (start.go:642-659).
+  // SMTP, else Mailpit fallback.
   if (input.smtp !== undefined) {
     env["GOTRUE_RATE_LIMIT_EMAIL_SENT"] = String(input.rateLimit.email_sent);
     env["GOTRUE_SMTP_HOST"] = input.smtp.host;
@@ -531,8 +505,7 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
       input.mailpit.senderName ?? LEGACY_GOTRUE_DEFAULT_INBUCKET_SENDER_NAME;
   }
 
-  // Sessions (start.go:661-666) — only emitted when the parsed duration is
-  // strictly positive, matching Go's `> 0` guard on the zero `time.Duration`.
+  // Sessions — only emitted when the parsed duration is strictly positive.
   if (input.sessions?.timebox !== undefined) {
     const nanoseconds = legacyParseGoDuration(input.sessions.timebox);
     if (nanoseconds > 0) {
@@ -546,11 +519,11 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     }
   }
 
-  // Mailer template/notification URLs and subjects (start.go:668-694).
-  // `subject !== undefined` matches Go's `subject *string; if subject != nil` exactly: the
-  // caller (`legacyResolveAuthEmail`) has already recovered the "explicit empty string" vs
-  // "absent" distinction from the raw document, so `undefined` here means Go's nil (omit the
-  // env var entirely) and `""` means an explicit blank subject (still emit it).
+  // Mailer template/notification URLs and subjects. `subject !== undefined`
+  // is the "explicit empty string" vs "absent" distinction: the caller
+  // (`legacyResolveAuthEmail`) has already recovered it from the raw
+  // document, so `undefined` here means omit the env var entirely and `""`
+  // means an explicit blank subject (still emit it).
   const addMailerEnvVars = (id: string, contentPath: string, subject: string | undefined): void => {
     if (contentPath.length > 0) {
       env[`GOTRUE_MAILER_TEMPLATES_${id.toUpperCase()}`] =
@@ -570,9 +543,8 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     }
   }
 
-  // SMS provider switch (start.go:696-735) — first enabled provider wins, in
-  // Go's fixed priority order; a later enabled-but-lower-priority provider is
-  // never inspected.
+  // SMS provider switch — first enabled provider wins, in a fixed priority
+  // order; a later enabled-but-lower-priority provider is never inspected.
   if (input.sms.twilio.enabled) {
     env["GOTRUE_SMS_PROVIDER"] = "twilio";
     env["GOTRUE_SMS_TWILIO_ACCOUNT_SID"] = input.sms.twilio.account_sid;
@@ -599,14 +571,14 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     env["GOTRUE_SMS_VONAGE_FROM"] = input.sms.vonage.from ?? "";
   }
 
-  // CAPTCHA (start.go:737-744).
+  // CAPTCHA.
   if (input.captcha !== undefined) {
     env["GOTRUE_SECURITY_CAPTCHA_ENABLED"] = String(input.captcha.enabled);
     env["GOTRUE_SECURITY_CAPTCHA_PROVIDER"] = input.captcha.provider ?? "";
     env["GOTRUE_SECURITY_CAPTCHA_SECRET"] = input.captcha.secret ?? "";
   }
 
-  // Auth hooks (start.go:746-793) — each independently gated on its own `enabled`.
+  // Auth hooks — each independently gated on its own `enabled`.
   const appendHookEnv = (envPrefix: string, hook: LegacyGotrueHookInput): void => {
     if (!hook.enabled) return;
     env[`GOTRUE_HOOK_${envPrefix}_ENABLED`] = "true";
@@ -620,7 +592,7 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
   appendHookEnv("SEND_EMAIL", input.hooks.sendEmail);
   appendHookEnv("BEFORE_USER_CREATED", input.hooks.beforeUserCreated);
 
-  // MFA phone extras (start.go:795-802) — only when phone MFA is reachable at all.
+  // MFA phone extras — only when phone MFA is reachable at all.
   if (input.mfa.phone.enroll_enabled || input.mfa.phone.verify_enabled) {
     env["GOTRUE_MFA_PHONE_TEMPLATE"] = input.mfa.phone.template;
     env["GOTRUE_MFA_PHONE_OTP_LENGTH"] = String(input.mfa.phone.otp_length);
@@ -629,15 +601,15 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     );
   }
 
-  // Passkey/WebAuthn, then external OAuth providers (start.go:804-805).
+  // Passkey/WebAuthn, then external OAuth providers.
   legacyAppendGotruePasskeyEnv(env, input.passkeyEnabled, input.webauthn);
   legacyAppendGotrueExternalProviderEnv(env, input.externalProviders, jwtIssuer);
 
-  // Web3 (start.go:806-809) — always emitted, unconditionally.
+  // Web3 — always emitted, unconditionally.
   env["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] = String(input.web3.solana.enabled);
   env["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] = String(input.web3.ethereum.enabled);
 
-  // OAuth server configuration (start.go:811-818).
+  // OAuth server configuration.
   if (input.oauthServer.enabled) {
     env["GOTRUE_OAUTH_SERVER_ENABLED"] = String(input.oauthServer.enabled);
     env["GOTRUE_OAUTH_SERVER_AUTHORIZATION_PATH"] = input.oauthServer.authorization_url_path;
@@ -650,9 +622,9 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
 }
 
 export interface LegacyGotrueContainerSpecInput {
-  /** `container.Config.Image` — the already-resolved `config.auth.image`. Not part of the decoded `@supabase/config` schema (Go's own `Auth.Image` field is `toml:"-"`); resolution is the caller's responsibility. */
+  /** The already-resolved `config.auth.image`. Not part of the decoded `@supabase/config` schema; resolution is the caller's responsibility. */
   readonly image: string;
-  /** Go's `Config.ProjectId`, used to derive `utils.GotrueId`/the `db` container's own name via {@link legacyServiceContainerName}. */
+  /** The sanitized project id, used to derive this container's own name/the `db` container's own name via {@link legacyServiceContainerName}. */
   readonly projectId: string;
   /** `container.HostConfig.NetworkMode`'s target — resolved once per `start` run, not per-container. */
   readonly networkId: string;
@@ -663,9 +635,9 @@ export interface LegacyGotrueContainerSpecInput {
 }
 
 /**
- * Builds the `docker create` spec for the GoTrue/Auth container
- * (`start.go:820-850`). No `ports` (host-published) entry — GoTrue, like
- * Realtime, only ever `ExposedPorts` its port on the Docker network.
+ * Builds the `docker create` spec for the GoTrue/Auth container. No `ports`
+ * (host-published) entry — GoTrue, like Realtime, only ever exposes its
+ * port on the Docker network.
  */
 export function legacyBuildGotrueContainerSpec(
   input: LegacyGotrueContainerSpecInput,

@@ -44,6 +44,10 @@ export class LegacyDeclarativeShadowDbError extends Data.TaggedError(
 )<{
   readonly message: string;
   readonly docker?: "daemon";
+  /** Recovery hint carried over from the underlying failure (e.g. a health-check
+   *  timeout's exact image-removal command), so the seam surfaces the same
+   *  actionable suggestion `db start` itself would render. */
+  readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return this.docker === "daemon"

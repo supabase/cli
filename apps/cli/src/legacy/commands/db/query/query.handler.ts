@@ -46,10 +46,10 @@ import {
   legacyToCsv,
 } from "./query.format.ts";
 
-/** The output formats `db query` selects, mirroring Go's `json|table|csv` enum. */
+/** The output formats `db query` selects: `json|table|csv`. */
 type LegacyResolvedFormat = "json" | "table" | "csv";
 
-// Go's `utils.ErrMissingToken` (`apps/cli-go/internal/utils/access_token.go:18`).
+// Established output contract for a missing access token.
 const MISSING_TOKEN_MESSAGE =
   "Access token not provided. Supply an access token by running `supabase login` or setting the SUPABASE_ACCESS_TOKEN environment variable.";
 
@@ -60,15 +60,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
   const telemetryState = yield* LegacyTelemetryState;
   const telemetryOutputFormat = yield* LegacyTelemetryOutputFormat;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
-  // Go records `flags.ProjectRef` during the linked pre-run (`LoadProjectRef`),
-  // before `NewDbConfigWithPassword`'s DB resolution and before `RunE`'s
-  // `ResolveSQL` (`flags/db_url.go:88`). `Execute()` then calls
-  // `ensureProjectGroupsCached` after the command returns on success AND failure
-  // (`cmd/root.go:176`, ahead of the error panic at `:185`), gated on
-  // `flags.ProjectRef != ""`. So the linked-project cache must refresh even when a
-  // later step (DB resolution, missing `--file`, no-stdin SQL) fails. Captured in the
-  // linked preflight; the finalizer on the whole handler body reads it. Declared at
-  // handler scope so it is visible to both the preflight and the `.pipe` finalizer.
+  // The project ref is resolved during the linked pre-run, before DB
+  // resolution and before SQL resolution. The linked-project cache is
+  // refreshed unconditionally afterward, so it must refresh even when a
+  // later step (DB resolution, missing `--file`, no-stdin SQL) fails.
+  // Captured in the linked preflight; the finalizer on the whole handler
+  // body reads it. Declared at handler scope so it is visible to both the
+  // preflight and the `.pipe` finalizer.
   let linkedRefForCache: string | undefined;
   const stdin = yield* Stdin;
   const fs = yield* FileSystem.FileSystem;
@@ -82,23 +80,24 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
   const dbConn = yield* LegacyDbConnection;
   const dnsResolver = yield* LegacyDnsResolverFlag;
 
-  // Emit the resolved payload (json/table/csv) to stdout in every output format —
-  // Go has no `--output-format` for `db query`, so there is no machine envelope.
-  // Mirrors Go's `formatOutput` (`internal/db/query/query.go:161-170`): the CSV
-  // and table writers ignore agent mode / the advisory; only JSON carries the
-  // agent envelope.
+  // Emit the resolved payload (json/table/csv) to stdout in every output
+  // format — there is no `--output-format` for `db query`, so there is no
+  // machine envelope. The CSV and table writers ignore agent mode / the
+  // advisory; only JSON carries the agent envelope.
   const emit = (
     format: LegacyResolvedFormat,
     cols: ReadonlyArray<string>,
     data: ReadonlyArray<ReadonlyArray<unknown>>,
     agentMode: boolean,
     advisory: Option.Option<LegacyAdvisory>,
-    // The linked path passes `legacyFormatLinkedValue` (JSON-decoded `float64` cells
-    // → Go's `%v`/`%g`); the local path passes an OID-aware formatter (`float4`/`float8`
-    // → `%g`, ints plain). JSON output re-marshals the raw values either way.
+    // The linked path passes `legacyFormatLinkedValue` (JSON-decoded float
+    // cells → `%v`/`%g`-style formatting); the local path passes an OID-aware
+    // formatter (`float4`/`float8` → `%g`, ints plain). JSON output re-marshals
+    // the raw values either way.
     formatCell?: (value: unknown, columnIndex: number) => string,
-    // Local-path column OIDs: lets JSON output coerce int8/bigint string cells to
-    // bare numbers (Go's pgx int64 scan). Omitted on the linked path (raw JSON values).
+    // Local-path column OIDs: lets JSON output coerce int8/bigint string cells
+    // to bare numbers (established int64 scan). Omitted on the linked path
+    // (raw JSON values).
     fieldTypeIds?: ReadonlyArray<number>,
   ) =>
     Effect.gen(function* () {
@@ -108,8 +107,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       if (format === "csv") {
         return yield* output.raw(legacyToCsv(cols, data, formatCell));
       }
-      // Go's `json.Encoder` fails on NaN/±Inf (empty stdout, exit 1); mirror that
-      // instead of letting `JSON.stringify` emit `null`. Checked before any output.
+      // The established JSON encoding fails on NaN/±Inf (empty stdout, exit
+      // 1); mirror that instead of letting `JSON.stringify` emit `null`.
+      // Checked before any output.
       const nonFinite = legacyFindNonFiniteJsonValue(data);
       if (nonFinite !== undefined) {
         return yield* Effect.fail(
@@ -216,9 +216,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
         );
       }
 
-      // The API returns a JSON array of row objects for SELECT, or a plain command
-      // tag for DDL/DML. Anything that is not a JSON array of objects is printed
-      // verbatim (Go's `json.Unmarshal` into `[]map` fails → raw body).
+      // The API returns a JSON array of row objects for SELECT, or a plain
+      // command tag for DDL/DML. Anything that is not a JSON array of objects
+      // is printed verbatim (the array-of-maps decode fails → raw body).
       let parsed: unknown;
       try {
         parsed = JSON.parse(body);
@@ -244,10 +244,9 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     });
 
   yield* Effect.gen(function* () {
-    // 0. cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
-    //    (`apps/cli-go/cmd/db.go:526`) runs before RunE, so reject conflicting
-    //    targets before resolving any SQL. "Set" follows cobra's `Changed`: an
-    //    Option is set when `Some`, a boolean when explicitly `true`.
+    // 0. Mutually-exclusive db-url/linked/local group, checked before
+    //    resolving any SQL. "Set" means explicitly set: an Option is set
+    //    when `Some`, a boolean when explicitly `true`.
     const exclusive: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) exclusive.push("db-url");
     if (Option.isSome(flags.linked)) exclusive.push("linked");
@@ -260,48 +259,64 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       );
     }
 
-    // PreRun parity: for --linked, Go checks the access token and loads the project
-    // ref BEFORE RunE's ResolveSQL (`cmd/db.go`), so a missing `--file` or a blocking
-    // stdin pipe must not mask the expected login / not-linked error. Run that
-    // preflight here, before resolving SQL.
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && Option.isNone(flags.linked)) {
+      return yield* Effect.fail(
+        new LegacyDbQueryMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
+    // PreRun parity: for --linked, the access token is checked and the
+    // project ref is loaded BEFORE SQL is resolved, so a missing `--file` or
+    // a blocking stdin pipe must not mask the expected login / not-linked
+    // error. Run that preflight here, before resolving SQL.
     let linkedAuth: { readonly token: Redacted.Redacted<string>; readonly ref: string } | undefined;
     if (Option.isSome(flags.linked)) {
       const credentials = yield* LegacyCredentials;
       const projectRef = yield* LegacyProjectRefResolver;
-      // Order mirrors cobra: the root `PersistentPreRunE` runs `ParseDatabaseConfig`
-      // (`cmd/root.go:118`) BEFORE the query command's own `PreRunE` token check
-      // (`cmd/db.go:300-308`). So resolve the ref + DB config FIRST, and only then
-      // check the token — otherwise an unlinked-project / invalid-config / IPv6 /
-      // pooler / login-role failure is masked behind a generic "supabase login" error.
+      // The DB config is resolved FIRST, and only then is the token checked —
+      // otherwise an unlinked-project / invalid-config / IPv6 / pooler /
+      // login-role failure is masked behind a generic "supabase login" error.
       //
-      // 1. `LoadProjectRef` (flag → env → ref file): the HARD, non-prompting loader
-      //    Go's `db query --linked` PreRun uses (`cmd/db.go:307`). It validates the
-      //    ref format and fails with `ErrNotLinked` when absent — and, crucially,
-      //    surfaces `failed to load project ref` on a real (non-not-exist) ref-file
-      //    read error rather than masking it as not-linked (the soft `resolveOptional`
-      //    swallows that to None; `cmd/utils/flags/project_ref.go:70-75`).
-      const ref = yield* projectRef.loadProjectRef(Option.none());
-      // Record the ref now (Go's `LoadProjectRef` sets `flags.ProjectRef` here),
-      // so the linked-project cache finalizer fires even if the DB resolution or
-      // token check below fails.
+      // 1. `loadProjectRef` (flag → env → ref file): the HARD, non-prompting
+      //    loader `db query --linked`'s preflight uses. It validates the ref
+      //    format and fails when absent — and, crucially, surfaces
+      //    `failed to load project ref` on a real (non-not-exist) ref-file
+      //    read error rather than masking it as not-linked (the soft
+      //    `resolveOptional` swallows that to None).
+      const ref = yield* projectRef.loadProjectRef(flags.projectRef);
+      // Record the ref now, so the linked-project cache finalizer fires even
+      // if the DB resolution or token check below fails.
       linkedRefForCache = ref;
-      // 2. `NewDbConfigWithPassword`: loads + validates the remote-merged config and
-      //    resolves the live DB connection (TCP probe, pooler fallback, temp login-role
-      //    mint), any of which can fail early. The token is read lazily here only when a
-      //    login role must be minted (matching Go), so this stays before the token-only
-      //    check. The linked query itself uses the Management API, so the resolved
-      //    connection is discarded — this runs purely for Go's pre-run failures.
-      yield* resolver.resolve({ dbUrl: Option.none(), connType: "linked", dnsResolver });
-      // 3. Command `PreRunE` token check (`cmd/db.go:303`): Go still requires a token
-      //    for the Management API query even when config resolved without minting a
-      //    login role (e.g. a direct `DB_PASSWORD` was set), so keep this — but after
-      //    the config/ref resolution above. Go's `LoadAccessTokenFS` validates the
-      //    RESOLVED token (env → keyring → file alike) against `sbp_...` and fails with
-      //    `ErrInvalidToken` before any API request (`internal/utils/access_token.go:
-      //    24-33`). `credentials.getAccessToken` already applies that env-precedence +
-      //    `sbp_` validation on every source, so route through it rather than accepting
-      //    the env `SUPABASE_ACCESS_TOKEN` on presence alone — an invalid env token must
-      //    fail here, not surface an `unexpected status` from `/database/query`.
+      // 2. Loads + validates the remote-merged config and resolves the live
+      //    DB connection (TCP probe, pooler fallback, temp login-role mint),
+      //    any of which can fail early. The token is read lazily here only
+      //    when a login role must be minted, so this stays before the
+      //    token-only check. The linked query itself uses the Management
+      //    API, so the resolved connection is discarded — this runs purely
+      //    for pre-run failures.
+      yield* resolver.resolve({
+        dbUrl: Option.none(),
+        connType: "linked",
+        dnsResolver,
+        linkedProjectRef: flags.projectRef,
+      });
+      // 3. Token check: a token is still required for the Management API
+      //    query even when config resolved without minting a login role
+      //    (e.g. a direct `DB_PASSWORD` was set), so keep this — but after
+      //    the config/ref resolution above. The RESOLVED token (env →
+      //    keyring → file alike) is validated against `sbp_...` and fails
+      //    before any API request. `credentials.getAccessToken` already
+      //    applies that env-precedence + `sbp_` validation on every source,
+      //    so route through it rather than accepting the env
+      //    `SUPABASE_ACCESS_TOKEN` on presence alone — an invalid env token
+      //    must fail here, not surface an `unexpected status` from
+      //    `/database/query`.
       const tokenOpt = yield* credentials.getAccessToken;
       if (Option.isNone(tokenOpt)) {
         return yield* Effect.fail(
@@ -314,12 +329,12 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       linkedAuth = { token: tokenOpt.value, ref };
     }
 
-    // PreRun parity (non-linked): Go's root `ParseDatabaseConfig` parses the `--db-url`
-    // connection string and loads local config (`cmd/root.go:118`, `flags/db_url.go`)
-    // BEFORE the query `RunE` calls `ResolveSQL`. So resolve the direct connection
-    // target here — before reading `--file`/stdin — so a bad `--db-url` or config error
-    // surfaces ahead of a missing-file error or a blocking stdin read. The actual socket
-    // connect still happens later in `runLocal` (Go connects in `RunLocal`).
+    // PreRun parity (non-linked): the `--db-url` connection string and local
+    // config are resolved BEFORE SQL is resolved. So resolve the direct
+    // connection target here — before reading `--file`/stdin — so a bad
+    // `--db-url` or config error surfaces ahead of a missing-file error or a
+    // blocking stdin read. The actual socket connect still happens later in
+    // `runLocal`.
     const localTarget =
       linkedAuth === undefined
         ? yield* resolver.resolve({
@@ -334,9 +349,8 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     // 1. Resolve SQL: --file > positional arg > piped stdin.
     const sql = yield* Effect.gen(function* () {
       if (Option.isSome(flags.file)) {
-        // Go chdir's into the workdir before ResolveSQL reads --file
-        // (`cmd/root.go:104`), so a relative path resolves against the workdir, not
-        // the original cwd. `path.resolve` leaves absolute paths unchanged.
+        // A relative `--file` path resolves against the workdir, not the
+        // original cwd. `path.resolve` leaves absolute paths unchanged.
         const filePath = path.resolve(cliConfig.workdir, flags.file.value);
         return yield* fs.readFileString(filePath).pipe(
           Effect.mapError(
@@ -366,13 +380,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
       );
     });
 
-    // 2. Agent mode + the resolved payload format, mirroring Go's resolution
-    //    (`cmd/db.go:316-325`): an explicit `-o json|table|csv` always wins;
-    //    otherwise default to JSON for agents and a table for humans. The global
-    //    `-o` choice is a union (see `query.command.ts`), while TS
-    //    `--output-format json|stream-json` must also resolve to JSON here, so
-    //    values outside Go's `json|table|csv` enum (`pretty|yaml|toml|env`)
-    //    fall through to the agent/machine default rather than erroring.
+    // 2. Agent mode + the resolved payload format: an explicit `-o
+    //    json|table|csv` always wins; otherwise default to JSON for agents
+    //    and a table for humans. The global `-o` choice is a union (see
+    //    `query.command.ts`), while TS `--output-format json|stream-json`
+    //    must also resolve to JSON here, so values outside `db query`'s own
+    //    `json|table|csv` enum (`pretty|yaml|toml|env`) fall through to the
+    //    agent/machine default rather than erroring.
     const agentMode = legacyResolveAgentMode(agentFlag, aiTool.name);
     const explicit = Option.getOrUndefined(outputFlag);
     const format: LegacyResolvedFormat =
@@ -386,13 +400,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
               ? "json"
               : "table";
 
-    // Mirror Go's `db query`, which mirrors the resolved local `-o` (json|table|csv)
-    // onto the global the telemetry event reads (`cmd/db.go:316-328`). Without this
-    // the instrumentation reports `table`/human-default as `text`.
+    // Mirrors the resolved local `-o` (json|table|csv) onto the global the
+    // telemetry event reads. Without this the instrumentation reports
+    // `table`/human-default as `text`.
     yield* telemetryOutputFormat.set(format);
 
     // 3. Linked → Management API (raw HTTP); local / --db-url → direct connection.
-    // The --linked token/ref preflight already ran above (Go's PreRun order).
+    // The --linked token/ref preflight already ran above.
     if (linkedAuth !== undefined) {
       return yield* runLinked(sql, format, agentMode, linkedAuth.ref, linkedAuth.token);
     }
@@ -402,14 +416,13 @@ export const legacyDbQuery = Effect.fn("legacy.db.query")(function* (flags: Lega
     }
     return yield* runLocal(localTarget, sql, format, agentMode);
   }).pipe(
-    // Mirror Go's `ensureProjectGroupsCached` PersistentPostRun
-    // (`apps/cli-go/cmd/root.go:176,214-234`): once a project ref is resolved, write
-    // the linked-project cache (`GET /v1/projects/{ref}` →
-    // `supabase/.temp/linked-project.json`) whether the query succeeds or fails — and
-    // even when it fails before `runLinked` (DB resolution, missing `--file`, no-stdin
-    // SQL). The cache layer no-ops when the file already exists, the token is missing,
-    // or the GET is non-200. Only the linked path sets `linkedRefForCache`, so
-    // `--local` / `--db-url` never trigger this (Go gates on `flags.ProjectRef != ""`).
+    // Once a project ref is resolved, write the linked-project cache
+    // (`GET /v1/projects/{ref}` → `supabase/.temp/linked-project.json`)
+    // whether the query succeeds or fails — and even when it fails before
+    // `runLinked` (DB resolution, missing `--file`, no-stdin SQL). The cache
+    // layer no-ops when the file already exists, the token is missing, or
+    // the GET is non-200. Only the linked path sets `linkedRefForCache`, so
+    // `--local` / `--db-url` never trigger this.
     Effect.ensuring(
       Effect.suspend(() =>
         linkedRefForCache !== undefined ? linkedProjectCache.cache(linkedRefForCache) : Effect.void,

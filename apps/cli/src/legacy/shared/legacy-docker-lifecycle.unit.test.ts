@@ -261,7 +261,7 @@ describe("legacyInspectContainerState", () => {
   it.live(
     "treats a paused/restarting container as running, matching Go's boolean-based gate",
     () => {
-      // Go's `assertContainerHealthy` (`status.go:150`) checks `resp.State.Running`,
+      // `assertContainerHealthy` checks `resp.State.Running`,
       // not `resp.State.Status` — a paused or restarting container reports
       // `Running: true` alongside a non-"running" status string, and Go
       // continues past the not-running branch in that case.
@@ -277,8 +277,8 @@ describe("legacyInspectContainerState", () => {
   it.live(
     "fails with LegacyDockerLifecycleInspectError, preserving the real stderr, when the container does not exist",
     () => {
-      // Go's `assertContainerHealthy` never special-cases "not found" — it
-      // wraps whatever `ContainerInspect` returns (`status.go:148-149`), so a
+      // `assertContainerHealthy` never special-cases "not found" — it
+      // wraps whatever `ContainerInspect` returns, so a
       // missing container is just another non-zero exit here too.
       const mock = mockSpawner({
         exitCode: 1,

@@ -2,8 +2,8 @@ import { readFileSync } from "node:fs";
 
 /**
  * PostgreSQL service file (`pg_service.conf`) support, a 1:1 port of
- * `jackc/pgservicefile` as used by `pgconn.ParseConfig`
- * (`apps/cli-go/pkg/mod/.../pgconn/config.go:250-256`): when a connection's
+ * `jackc/pgservicefile` as used by `pgconn.ParseConfig`:
+ * when a connection's
  * `service` is set (via `service=` or `PGSERVICE`), pgconn reads the service file
  * and merges the named section's settings between the env and connection-string
  * layers. A `dbname` key is remapped to `database` to match pgconn's `nameMap`.

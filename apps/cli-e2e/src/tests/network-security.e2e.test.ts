@@ -1,6 +1,6 @@
 import { describe, expect } from "vitest";
 import { PROJECT_REF } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 describe("network-bans", () => {
   describe("network-bans:get", () => {
@@ -125,11 +125,6 @@ describe("network-bans", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["network-bans", "get", "--experimental", "--project-ref", PROJECT_REF]);
-    testParity(["network-bans", "get", "--experimental", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
-    });
   });
 
   describe("network-bans:remove", () => {
@@ -212,28 +207,6 @@ describe("network-bans", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Project not found");
     });
-
-    testParity([
-      "network-bans",
-      "remove",
-      "--experimental",
-      "--db-unban-ip",
-      "1.2.3.4",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      [
-        "network-bans",
-        "remove",
-        "--experimental",
-        "--db-unban-ip",
-        "1.2.3.4",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 });
 
@@ -346,11 +319,6 @@ describe("network-restrictions", () => {
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["network-restrictions", "get", "--experimental", "--project-ref", PROJECT_REF]);
-    testParity(["network-restrictions", "get", "--experimental", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 
@@ -485,28 +453,6 @@ describe("network-restrictions", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity([
-      "network-restrictions",
-      "update",
-      "--experimental",
-      "--db-allow-cidr",
-      "0.0.0.0/0",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      [
-        "network-restrictions",
-        "update",
-        "--experimental",
-        "--db-allow-cidr",
-        "0.0.0.0/0",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 });
 
@@ -619,11 +565,6 @@ describe("ssl-enforcement", () => {
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["ssl-enforcement", "get", "--experimental", "--project-ref", PROJECT_REF]);
-    testParity(["ssl-enforcement", "get", "--experimental", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 
@@ -765,25 +706,5 @@ describe("ssl-enforcement", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity([
-      "ssl-enforcement",
-      "update",
-      "--experimental",
-      "--enable-db-ssl-enforcement",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      [
-        "ssl-enforcement",
-        "update",
-        "--experimental",
-        "--enable-db-ssl-enforcement",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 });

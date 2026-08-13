@@ -137,7 +137,7 @@ describe("legacyBuildStorageEnv", () => {
       });
       expect(env["VECTOR_ENABLED"]).toBe("false");
       expect(env["VECTOR_BUCKET_PROVIDER"]).toBe("custom");
-      // Unoverridden keys still fall back to Go's defaults.
+      // Unoverridden keys still fall back to the defaults.
       expect(env["VECTOR_STORE_MIGRATIONS_ENABLED"]).toBe("true");
     });
 

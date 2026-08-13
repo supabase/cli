@@ -23,9 +23,8 @@ import { LegacyDbPushTargetFlagsError } from "./push.errors.ts";
  * `supabase db push` — apply pending local migrations (and optionally seed data
  * and custom roles) to the local or linked/remote database.
  *
- * Resolves the `--db-url`/`--linked`/`--local` target and `config.toml` (Go's
- * root `PersistentPreRunE` → `ParseDatabaseConfig`), then delegates the actual
- * push to `legacyDbPushCore` (Go's `push.Run`), shared with `bootstrap`.
+ * Resolves the `--db-url`/`--linked`/`--local` target and `config.toml`, then
+ * delegates the actual push to `legacyDbPushCore`, shared with `bootstrap`.
  */
 export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: LegacyDbPushFlags) {
   const output = yield* Output;
@@ -39,9 +38,9 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   const dnsResolver = yield* LegacyDnsResolverFlag;
 
   const workdir = cliConfig.workdir;
-  // Go's `ParseDatabaseConfig` runs `loadNestedEnv` (which `os.Setenv`s each project-`.env`
-  // key) before `PromptYesNo` reads `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in
-  // `supabase/.env` auto-confirms. Resolve `yes` with that project env, as `db pull` does.
+  // The project `.env` is applied before the history prompt, so a
+  // `SUPABASE_YES` set only in `supabase/.env` auto-confirms. Resolve `yes`
+  // with that project env, as `db pull` does.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
@@ -49,8 +48,8 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
   const body = Effect.gen(function* () {
     yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
-    // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local"), keyed off the
-    // explicitly-set flags (cobra's `Changed`), not the `--linked` default value.
+    // Mutually-exclusive db-url/linked/local group, keyed off the
+    // explicitly-set flags, not the `--linked` default value.
     if (target.setFlags.length > 1) {
       return yield* Effect.fail(
         new LegacyDbPushTargetFlagsError({
@@ -58,29 +57,44 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
         }),
       );
     }
-    // Go's push defaults `--linked` to true, so no target flag → linked.
+    // push defaults `--linked` to true, so no target flag → linked.
     const connType = target.connType ?? "linked";
 
-    // The linked path resolves the project ref before loading config so a matching
-    // `[remotes.<ref>]` block merges (Go's ParseDatabaseConfig → LoadConfig). For
-    // `--local` / `--db-url`, Go leaves `flags.ProjectRef` empty.
+    // TS-only guard: `--project-ref` never implies `--linked` and must not be
+    // silently discarded on a non-linked target. Deliberately STRICTER than the
+    // `SUPABASE_PROJECT_ID` env var, which is read unconditionally but simply
+    // goes unused (no error) on a `--local`/`--db-url` target — an explicitly
+    // typed `--project-ref` flag silently doing nothing on e.g. `db push
+    // --local` is a footgun the env var doesn't share, so this errors instead.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyDbPushTargetFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
+    // The linked path resolves the project ref before loading config so a
+    // matching `[remotes.<ref>]` block merges. For `--local` / `--db-url`,
+    // the ref stays empty.
     let projectRef = "";
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
-      projectRef = yield* refResolver.loadProjectRef(Option.none());
+      projectRef = yield* refResolver.loadProjectRef(flags.projectRef);
       linkedRefForCache = projectRef;
     }
 
-    // Single Go-parity config load (`flags.LoadConfig` → `config.Load` + `Validate`),
-    // except that `--skip-vault` omits only `[db.vault]` secret resolution:
-    // decodes the whole config with Go's env-expansion + `strconv.ParseBool` weak typing
-    // (so `enabled = "env(SEED_ENABLED)"` etc. load like Go), applies `SUPABASE_*`
-    // AutomaticEnv overrides, merges a matching `[remotes.<ref>]` block, and decrypts selected
-    // `encrypted:` secrets with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys —
-    // aborting here (before connecting or writing) on any undecryptable/invalid config.
-    // This must resolve BEFORE `resolver.resolve()`'s network activity (temp-role minting,
-    // pooler fallback) so a matching `[remotes.<ref>]` override prints before it, matching
-    // Go's root `PersistentPreRunE` resolving config before `push.Run` even starts.
+    // Single config load, except that `--skip-vault` omits only `[db.vault]`
+    // secret resolution: decodes the whole config with env-expansion +
+    // weak-typed boolean parsing (so `enabled = "env(SEED_ENABLED)"` etc.
+    // load), applies `SUPABASE_*` env overrides, merges a matching
+    // `[remotes.<ref>]` block, and decrypts selected `encrypted:` secrets
+    // with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys — aborting
+    // here (before connecting or writing) on any undecryptable/invalid
+    // config. This must resolve BEFORE `resolver.resolve()`'s network
+    // activity (temp-role minting, pooler fallback) so a matching
+    // `[remotes.<ref>]` override prints before it.
     const toml = yield* legacyCheckDbToml(
       fs,
       path,
@@ -98,6 +112,7 @@ export const legacyDbPush = Effect.fn("legacy.db.push")(function* (flags: Legacy
       dnsResolver,
       password: flags.password,
       resolveVaultSecrets: !flags.skipVault,
+      linkedProjectRef: flags.projectRef,
     });
 
     yield* legacyDbPushCore({

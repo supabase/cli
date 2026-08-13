@@ -35,9 +35,8 @@ import type { LegacyServicesFlags } from "./services.command.ts";
 import { LegacyServicesEnvNotSupportedError } from "./services.errors.ts";
 
 /**
- * Mirror of Go's hand-written `imageVersion`
- * (`apps/cli-go/internal/services/services.go`) — declaration order is
- * Name, Local, Remote (not alphabetical), and `Remote` is always emitted
+ * Type shape for the hand-written `imageVersion` struct — declaration order
+ * is Name, Local, Remote (not alphabetical), and `Remote` is always emitted
  * even when empty (CLI-1975).
  */
 const LEGACY_GO_IMAGE_VERSION = legacyGoStruct([
@@ -74,14 +73,14 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
       return Option.none<string>();
     }
 
-    // Go's `Run` warns on a ref-file READ error (as opposed to the file simply
-    // not existing) and keeps going as unlinked (`internal/services/
-    // services.go:18-20`: `fmt.Fprintln(os.Stderr, err)` with `LoadProjectRef`'s
-    // `failed to load project ref: %w`, `project_ref.go:71-72`). A NotFound
-    // between the exists() check above and this read (TOCTOU) maps to Go's
-    // `os.ErrNotExist` → `ErrNotLinked` branch: silent, no warning. The
-    // warning's error suffix is Effect's description, not Go's `*PathError`
-    // text — the prefix is the parity-bearing part.
+    // Warns on a ref-file READ error (as opposed to the file simply
+    // not existing) and keeps going as unlinked (`fmt.Fprintln(os.Stderr, err)`
+    // with `LoadProjectRef`'s `failed to load project ref: %w`,
+    // `project_ref.go:71-72`). A NotFound between the exists() check above and
+    // this read (TOCTOU) maps to the `os.ErrNotExist` → `ErrNotLinked` branch:
+    // silent, no warning. The warning's error suffix is Effect's description,
+    // not the reference implementation's `*PathError` text — the prefix is
+    // the compatibility-bearing part.
     const content = yield* fs
       .readFileString(projectRefPath)
       .pipe(
@@ -97,9 +96,9 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     return trimmed.length === 0 ? Option.none<string>() : Option.some(trimmed);
   });
 
-  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): when a project
-  // ref is resolved, refresh the linked-project cache on success and failure so
-  // PostHog org/project groups stay attached. Persist the telemetry state too.
+  // When a project ref is resolved, refresh the linked-project cache on
+  // success and failure so PostHog org/project groups stay attached. Persist
+  // the telemetry state too.
   const cacheLinkedProject = Option.match(linkedProjectRef, {
     onNone: () => Effect.void,
     onSome: (ref) => linkedProjectCache.cache(ref),
@@ -111,15 +110,15 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
 
     const validLinkedRef = Option.filter(linkedProjectRef, (ref) => PROJECT_REF_PATTERN.test(ref));
     if (Option.isSome(linkedProjectRef) && Option.isNone(validLinkedRef)) {
-      // Go's `flags.LoadProjectRef` (project_ref.go:54-76) validates the ref but
-      // `cmd/services.go`'s Run only warns on the error and keeps going, so Go
-      // still calls `listRemoteImages` with the malformed ref (services.go:61-62).
+      // `flags.LoadProjectRef` (project_ref.go:54-76) validates the ref but
+      // the reference `Run` only warns on the error and keeps going, still
+      // calling `listRemoteImages` with the malformed ref (services.go:61-62).
       // TS matches the warning but deliberately skips the remote call instead of
       // reproducing it: the ref is embedded unescaped into the tenant gateway
       // hostname in `fetchLinkedServiceVersions`, so proceeding would let a
       // malformed ref redirect the service-role key to an attacker-controlled host.
-      // Emitted before the config-load warning below to match the order Go's
-      // `Run` prints them in (services.go:18-24).
+      // Emitted before the config-load warning below to match the order these
+      // are printed in (services.go:18-24).
       yield* output.raw(`${INVALID_PROJECT_REF_MESSAGE}\n`, "stderr");
     }
 
@@ -212,7 +211,7 @@ export const legacyServices = Effect.fn("legacy.services")(function* (_flags: Le
     }
 
     // goOutput is undefined or "pretty" — defer to the TS --output-format flag for
-    // machine output, otherwise render the Go `--output pretty` table. Guarding the
+    // machine output, otherwise render the `--output pretty` table. Guarding the
     // table behind this (rather than treating "pretty" as force-table) keeps
     // `--output pretty --output-format json` emitting JSON, per CLI-1546.
     if (output.format === "json" || output.format === "stream-json") {

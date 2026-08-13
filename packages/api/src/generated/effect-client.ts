@@ -2340,6 +2340,260 @@ export const versionedEffectOperations = {
         );
       }),
   },
+  v2: {
+    assignOrganizationMemberRole: (
+      input: typeof operationDefinitions.v2AssignOrganizationMemberRole.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2AssignOrganizationMemberRole.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2AssignOrganizationMemberRole">(
+          operationDefinitions.v2AssignOrganizationMemberRole,
+          input,
+        );
+      }),
+    createLogDrain: (
+      input: typeof operationDefinitions.v2CreateLogDrain.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateLogDrain.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateLogDrain">(
+          operationDefinitions.v2CreateLogDrain,
+          input,
+        );
+      }),
+    createOrganizationInvitations: (
+      input: typeof operationDefinitions.v2CreateOrganizationInvitations.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreateOrganizationInvitations.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreateOrganizationInvitations">(
+          operationDefinitions.v2CreateOrganizationInvitations,
+          input,
+        );
+      }),
+    createPrivateLinkAssociation: (
+      input: typeof operationDefinitions.v2CreatePrivateLinkAssociation.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2CreatePrivateLinkAssociation.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2CreatePrivateLinkAssociation">(
+          operationDefinitions.v2CreatePrivateLinkAssociation,
+          input,
+        );
+      }),
+    deleteLogDrain: (
+      input: typeof operationDefinitions.v2DeleteLogDrain.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeleteLogDrain.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeleteLogDrain">(
+          operationDefinitions.v2DeleteLogDrain,
+          input,
+        );
+      }),
+    deleteOrganizationInvitations: (
+      input: typeof operationDefinitions.v2DeleteOrganizationInvitations.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeleteOrganizationInvitations.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeleteOrganizationInvitations">(
+          operationDefinitions.v2DeleteOrganizationInvitations,
+          input,
+        );
+      }),
+    deletePrivateLinkAssociation: (
+      input: typeof operationDefinitions.v2DeletePrivateLinkAssociation.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeletePrivateLinkAssociation.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeletePrivateLinkAssociation">(
+          operationDefinitions.v2DeletePrivateLinkAssociation,
+          input,
+        );
+      }),
+    deletePrivateLinkAssociationForDatabase: (
+      input: typeof operationDefinitions.v2DeletePrivateLinkAssociationForDatabase.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2DeletePrivateLinkAssociationForDatabase.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2DeletePrivateLinkAssociationForDatabase">(
+          operationDefinitions.v2DeletePrivateLinkAssociationForDatabase,
+          input,
+        );
+      }),
+    getProjectConfig: (
+      input: typeof operationDefinitions.v2GetProjectConfig.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2GetProjectConfig.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2GetProjectConfig">(
+          operationDefinitions.v2GetProjectConfig,
+          input,
+        );
+      }),
+    listLogDrains: (
+      input: typeof operationDefinitions.v2ListLogDrains.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListLogDrains.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListLogDrains">(
+          operationDefinitions.v2ListLogDrains,
+          input,
+        );
+      }),
+    listOrganizationGithubConnections: (
+      input: typeof operationDefinitions.v2ListOrganizationGithubConnections.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListOrganizationGithubConnections.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListOrganizationGithubConnections">(
+          operationDefinitions.v2ListOrganizationGithubConnections,
+          input,
+        );
+      }),
+    listOrganizationMembers: (
+      input: typeof operationDefinitions.v2ListOrganizationMembers.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListOrganizationMembers.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListOrganizationMembers">(
+          operationDefinitions.v2ListOrganizationMembers,
+          input,
+        );
+      }),
+    listOrganizationProjects: (
+      input: typeof operationDefinitions.v2ListOrganizationProjects.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListOrganizationProjects.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListOrganizationProjects">(
+          operationDefinitions.v2ListOrganizationProjects,
+          input,
+        );
+      }),
+    listOrganizationRoles: (
+      input: typeof operationDefinitions.v2ListOrganizationRoles.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListOrganizationRoles.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListOrganizationRoles">(
+          operationDefinitions.v2ListOrganizationRoles,
+          input,
+        );
+      }),
+    listPrivateLinkAssociations: (
+      input: typeof operationDefinitions.v2ListPrivateLinkAssociations.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2ListPrivateLinkAssociations.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2ListPrivateLinkAssociations">(
+          operationDefinitions.v2ListPrivateLinkAssociations,
+          input,
+        );
+      }),
+    previewAProjectTransfer: (
+      input: typeof operationDefinitions.v2PreviewAProjectTransfer.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2PreviewAProjectTransfer.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2PreviewAProjectTransfer">(
+          operationDefinitions.v2PreviewAProjectTransfer,
+          input,
+        );
+      }),
+    transferAProject: (
+      input: typeof operationDefinitions.v2TransferAProject.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2TransferAProject.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2TransferAProject">(
+          operationDefinitions.v2TransferAProject,
+          input,
+        );
+      }),
+    updateLogDrain: (
+      input: typeof operationDefinitions.v2UpdateLogDrain.inputSchema.Type,
+    ): Effect.Effect<
+      typeof operationDefinitions.v2UpdateLogDrain.outputSchema.Type,
+      SupabaseApiError,
+      SupabaseApiClient
+    > =>
+      Effect.gen(function* () {
+        const client = yield* SupabaseApiClient;
+        return yield* client.execute<"v2UpdateLogDrain">(
+          operationDefinitions.v2UpdateLogDrain,
+          input,
+        );
+      }),
+  },
 } as const;
 
 export type GeneratedEffectOperations = typeof versionedEffectOperations;
@@ -3031,5 +3285,79 @@ export function executeApiClientOperation(
       return Schema.decodeUnknownEffect(operationDefinitions.v1VerifyDnsConfig.inputSchema)(
         input,
       ).pipe(Effect.flatMap((decoded) => api.v1.verifyDnsConfig(decoded)));
+    case "v2AssignOrganizationMemberRole":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2AssignOrganizationMemberRole.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.assignOrganizationMemberRole(decoded)));
+    case "v2CreateLogDrain":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2CreateLogDrain.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.createLogDrain(decoded)));
+    case "v2CreateOrganizationInvitations":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2CreateOrganizationInvitations.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.createOrganizationInvitations(decoded)));
+    case "v2CreatePrivateLinkAssociation":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2CreatePrivateLinkAssociation.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.createPrivateLinkAssociation(decoded)));
+    case "v2DeleteLogDrain":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2DeleteLogDrain.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.deleteLogDrain(decoded)));
+    case "v2DeleteOrganizationInvitations":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2DeleteOrganizationInvitations.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.deleteOrganizationInvitations(decoded)));
+    case "v2DeletePrivateLinkAssociation":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2DeletePrivateLinkAssociation.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.deletePrivateLinkAssociation(decoded)));
+    case "v2DeletePrivateLinkAssociationForDatabase":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2DeletePrivateLinkAssociationForDatabase.inputSchema,
+      )(input).pipe(
+        Effect.flatMap((decoded) => api.v2.deletePrivateLinkAssociationForDatabase(decoded)),
+      );
+    case "v2GetProjectConfig":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2GetProjectConfig.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.getProjectConfig(decoded)));
+    case "v2ListLogDrains":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2ListLogDrains.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.listLogDrains(decoded)));
+    case "v2ListOrganizationGithubConnections":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2ListOrganizationGithubConnections.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.listOrganizationGithubConnections(decoded)));
+    case "v2ListOrganizationMembers":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2ListOrganizationMembers.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.listOrganizationMembers(decoded)));
+    case "v2ListOrganizationProjects":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2ListOrganizationProjects.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.listOrganizationProjects(decoded)));
+    case "v2ListOrganizationRoles":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2ListOrganizationRoles.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.listOrganizationRoles(decoded)));
+    case "v2ListPrivateLinkAssociations":
+      return Schema.decodeUnknownEffect(
+        operationDefinitions.v2ListPrivateLinkAssociations.inputSchema,
+      )(input).pipe(Effect.flatMap((decoded) => api.v2.listPrivateLinkAssociations(decoded)));
+    case "v2PreviewAProjectTransfer":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2PreviewAProjectTransfer.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.previewAProjectTransfer(decoded)));
+    case "v2TransferAProject":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2TransferAProject.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.transferAProject(decoded)));
+    case "v2UpdateLogDrain":
+      return Schema.decodeUnknownEffect(operationDefinitions.v2UpdateLogDrain.inputSchema)(
+        input,
+      ).pipe(Effect.flatMap((decoded) => api.v2.updateLogDrain(decoded)));
   }
 }

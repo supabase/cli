@@ -73,14 +73,11 @@ One `result` event with the full response object.
 
 - The legacy `--output` flag wins over TS `--output-format` when both are provided.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
-  even when the API call fails. A closed gate writes nothing (Go's `PersistentPreRunE` fails
-  before `PersistentPostRun` runs).
+  even when the API call fails. A closed gate writes nothing.
 - On gated 4xx responses this command prints an upgrade suggestion and fires `cli_upgrade_suggested`.
-- `--desired-subdomain` is required in Go (`cmd/vanitySubdomains.go:67`) but cobra validates
-  required flags only after `PersistentPreRunE` (gate → login → ref resolution), so the TS flag
-  is optional at parse time and enforced in the handler with cobra's exact wording
-  (`required flag(s) "desired-subdomain" not set`). The gate/login/ref errors win over the
-  missing flag, matching Go's ordering, and — as in Go, where `PersistentPostRun` still runs —
-  telemetry and `linked-project.json` are written on this failure. An explicit empty value
-  (`--desired-subdomain ""`) passes the check and reaches the API, as cobra only requires the
-  flag to be set.
+- `--desired-subdomain` is required, but only enforced in the handler (after gate → login → ref
+  resolution) rather than at parse time, using the fixed wording
+  `required flag(s) "desired-subdomain" not set`. The gate/login/ref errors win over the missing
+  flag, and telemetry and `linked-project.json` are still written on this failure. An explicit
+  empty value (`--desired-subdomain ""`) passes the check and reaches the API — only presence is
+  required, not a non-empty value.

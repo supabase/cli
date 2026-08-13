@@ -1,6 +1,5 @@
 /**
- * Pure Postgres connection-string helpers, ported from Go's `utils.ToPostgresURL`
- * (`apps/cli-go/internal/utils/connect.go`). Used only to build the `.env` file's
+ * Pure Postgres connection-string helpers. Used only to build the `.env` file's
  * `POSTGRES_URL`/derived keys (`bootstrap.dotenv.ts`) — no live DB connection here.
  * The push step's actual connection is resolved separately, by
  * `legacyResolveLinkedConn` (`legacy-db-config.layer.ts`), which reproduces the
@@ -16,14 +15,14 @@ export interface LegacyDbConfig {
   readonly database: string;
 }
 
-// Go's `url.UserPassword` escapes userinfo with the `encodeUserPassword` mode:
+// `url.UserPassword` escapes userinfo with the `encodeUserPassword` mode:
 // unreserved chars + the sub-delims `$ & + , ; =` pass through; the reserved
 // `@ / ? :` and everything else are percent-encoded (`net/url.shouldEscape`).
 const USERINFO_UNESCAPED = new Set(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~$&+,;=".split(""),
 );
 
-// Go's `url.PathEscape` uses `encodePathSegment`: escape `/ ; , ?` and anything
+// `url.PathEscape` uses `encodePathSegment`: escape `/ ; , ?` and anything
 // outside unreserved + the remaining reserved sub-delims `$ & + : = @`.
 const PATH_SEGMENT_UNESCAPED = new Set(
   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.~$&+:=@".split(""),
@@ -44,7 +43,7 @@ function percentEscape(value: string, allowed: ReadonlySet<string>): string {
 }
 
 /**
- * Reproduces Go's `ToPostgresURL`:
+ * Reproduces `ToPostgresURL`:
  * `postgresql://<user>:<pass>@<host>:<port>/<db>?connect_timeout=10`, with
  * percent-encoded userinfo, a path-escaped database, and IPv6 hosts wrapped in
  * square brackets. Bootstrap passes no `RuntimeParams`, so the only query
@@ -67,9 +66,9 @@ export function toPostgresUrl(config: LegacyDbConfig): string {
  * `flags.NewDbConfigWithPassword`, this never probes reachability or falls back
  * to the IPv4 pooler, so on an IPv6-only project the `.env`'s `POSTGRES_URL`
  * (and derived keys) point at a host the user's own machine may not be able to
- * reach directly — a pre-existing, narrow divergence from Go tracked as
- * out-of-scope for CLI-1953 (which fixed this same gap for the actual push
- * connection; see `legacyResolveLinkedConn`).
+ * reach directly — a pre-existing, narrow divergence tracked as out-of-scope
+ * for CLI-1953 (which fixed this same gap for the actual push connection;
+ * see `legacyResolveLinkedConn`).
  */
 export function deriveDbConfig(ref: string, password: string, projectHost: string): LegacyDbConfig {
   return {

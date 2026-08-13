@@ -1,7 +1,7 @@
 # `supabase unlink`
 
-Native TypeScript port of Go's `internal/unlink`. Operates entirely on local state under
-`<workdir>/supabase/.temp/` and the OS keyring — no API calls.
+Operates entirely on local state under `<workdir>/supabase/.temp/` and the OS
+keyring — no API calls.
 
 ## Files Read
 
@@ -41,7 +41,7 @@ None beyond `--workdir` / `SUPABASE_WORKDIR` resolution.
 
 ## Output
 
-### `--output-format text` (Go-compatible)
+### `--output-format text`
 
 - stderr: `Unlinking project: <ref>`
 - stdout: `Finished supabase unlink.`
@@ -52,6 +52,6 @@ Emits a structured success (`{ project_ref }`) and suppresses the human `Finishe
 
 ## Known divergence
 
-The `Finished supabase unlink.` line is emitted as **plain text**; Go renders `supabase unlink` in
-ANSI cyan via `utils.Aqua`. This matches the established legacy-port convention (color helpers are
-rendered plain); ANSI-stripping scripts are unaffected.
+The `Finished supabase unlink.` line is emitted as **plain text**; the old Go CLI rendered
+`supabase unlink` in ANSI cyan. This matches the established legacy-port convention (color
+helpers are rendered plain); ANSI-stripping scripts are unaffected.

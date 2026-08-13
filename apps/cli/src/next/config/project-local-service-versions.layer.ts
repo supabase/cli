@@ -18,7 +18,9 @@ const makeProjectLocalServiceVersions = Effect.gen(function* () {
 
   const loadFromPath = (filePath: string) =>
     Effect.gen(function* () {
-      const exists = yield* fs.exists(filePath).pipe(Effect.orDie);
+      // A FILE named `.supabase` reads as "no saved local versions" rather
+      // than a defect (same bug family as the boot fix; reachable via `supabase services`).
+      const exists = yield* fs.exists(filePath).pipe(Effect.orElseSucceed(() => false));
       if (!exists) {
         return Option.none<LocalServiceVersionsState>();
       }

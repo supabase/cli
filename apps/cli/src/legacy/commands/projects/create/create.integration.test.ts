@@ -335,7 +335,7 @@ describe("legacy projects create integration", () => {
         dbPassword: Option.some("s3cret-pass"),
         region: Option.some("us-east-1"),
       });
-      // Go field names (PascalCase) at the top level — no table header (CLI-1975).
+      // PascalCase field names at the top level — no table header.
       expect(out.stdoutText).toContain('Name = "alpha"');
     }).pipe(Effect.provide(layer));
   });
@@ -391,9 +391,9 @@ describe("legacy projects create integration", () => {
         region: Option.some("us-east-1"),
         size: Option.some("micro"),
       });
-      // Go's `json.Marshal` serializes struct fields alphabetically; the
-      // cli-e2e replay server byte-compares the request body. JSON.parse →
-      // stringify round-trips key order, so this asserts the on-the-wire order.
+      // Struct fields serialize in alphabetical order; the cli-e2e replay
+      // server byte-compares the request body. JSON.parse → stringify
+      // round-trips key order, so this asserts the on-the-wire order.
       const body = api.requests.find((r) => r.method === "POST")?.body;
       expect(JSON.stringify(body)).toBe(
         '{"db_pass":"s3cret-pass","desired_instance_size":"micro","name":"alpha","organization_slug":"acme","region":"us-east-1"}',
@@ -455,10 +455,10 @@ describe("legacy projects create integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // Go parity (`apps/cli-go/cmd/projects.go:34-55`): Go's --size EnumFlag is an
-  // 18-value list that does not include "nano" (or "pico") and rejects any other
-  // value at flag-parse time. TS previously listed "nano" as a valid choice,
-  // silently succeeding where Go errors.
+  // The established --size enum is an 18-value list that does not include
+  // "nano" (or "pico") and rejects any other value at flag-parse time. TS
+  // previously listed "nano" as a valid choice, silently succeeding where
+  // it should error.
   it.live("rejects --size nano at flag-parse time, matching Go's 18-value enum", () => {
     const root = Command.make("supabase").pipe(
       Command.withSubcommands([legacyProjectsCreateCommand]),

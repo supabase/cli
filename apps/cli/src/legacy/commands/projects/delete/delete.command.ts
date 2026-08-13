@@ -31,7 +31,7 @@ export const legacyProjectsDeleteCommand = Command.make("delete", config).pipe(
     ),
   ),
   // `stdinLayer`: the delete confirmation reads piped stdin via `legacyPromptYesNo`
-  // (Go's `Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
+  // on a non-TTY stdin.
   Command.provide(
     Layer.mergeAll(legacyManagementApiRuntimeLayer(["projects", "delete"]), stdinLayer),
   ),

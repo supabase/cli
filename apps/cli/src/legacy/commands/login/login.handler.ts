@@ -36,7 +36,7 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
 
   const claudeHint = legacySuggestClaudePlugin({ stdoutIsTty: tty.stdoutIsTty });
 
-  // Mirrors Go's login `PostRunE` (`cmd/login.go:42-48`): persist the chosen
+  // Mirrors login's `PostRunE` (`cmd/login.go:42-48`): persist the chosen
   // profile to `<SUPABASE_HOME or ~/.supabase>/profile` on success. The raw
   // token is written so a YAML-path profile round-trips; a write failure is
   // fatal. An explicitly passed flag counts even at its default value, and the
@@ -94,9 +94,9 @@ export const legacyLogin = Effect.fn("legacy.login")(function* (flags: LegacyLog
     return yield* legacyBrowserLogin({ openBrowser: !flags.noBrowser, tokenName: flags.name });
   });
 
-  // `Effect.tap` runs the profile save only on success (Go's `PostRunE`);
+  // `Effect.tap` runs the profile save only on success (`PostRunE`);
   // `Effect.ensuring` persists telemetry state on success and failure alike
-  // (PersistentPostRun parity, `cmd/root.go:176`).
+  // (`PersistentPostRun`, `cmd/root.go:176`).
   return yield* body.pipe(
     Effect.tap(() => saveProfileName),
     Effect.ensuring(telemetryState.flush),

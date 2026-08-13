@@ -14,7 +14,7 @@ import {
   mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
-import { toDockerPath } from "../../../../shared/functions/deploy.ts";
+import { toDockerPath } from "../../../../shared/functions/functions-docker.ts";
 import {
   mockOutput,
   mockProcessControl,
@@ -74,11 +74,12 @@ const deployMockState = vi.hoisted(() => ({
   },
 }));
 
-vi.mock("../../../../shared/functions/deploy.ts", async () => {
-  const actual = await vi.importActual<typeof import("../../../../shared/functions/deploy.ts")>(
-    "../../../../shared/functions/deploy.ts",
-  );
+vi.mock("../../../../shared/functions/functions-docker.ts", async () => {
+  const actual = await vi.importActual<
+    typeof import("../../../../shared/functions/functions-docker.ts")
+  >("../../../../shared/functions/functions-docker.ts");
   const { Effect } = await import("effect");
+  const { legacyGetRegistryImageUrl } = await import("../../../shared/legacy-docker-registry.ts");
 
   return {
     ...actual,
@@ -90,6 +91,18 @@ vi.mock("../../../../shared/functions/deploy.ts", async () => {
       Effect.sync(() => {
         deployMockState.volumeCalls.push({ volumeName, projectId });
       }),
+    // Stubbed to the pure registry-mapping step only, skipping the actual
+    // cache-check/pull: the real implementation
+    // (`legacyMakeDockerImageResolver`) does `docker image inspect`/`docker
+    // pull` via the real `ChildProcessSpawner` directly (not through this
+    // file's mocked `runChildProcess` below), so leaving it real here would
+    // insert un-mocked spawns — and real 4s/8s retry backoffs on a miss —
+    // into every test that reaches container start. Registry
+    // resolution/retry has its own coverage in `functions-docker.unit.test.ts`.
+    resolveFunctionsDockerImage: (
+      image: string,
+      projectEnvValues?: Readonly<Record<string, string>>,
+    ) => Effect.sync(() => legacyGetRegistryImageUrl(image, projectEnvValues)),
     runChildProcess: (command: string, args: ReadonlyArray<string>, options?: unknown) =>
       Effect.suspend(() => {
         const envFile = args.flatMap((value, index) =>
@@ -386,6 +399,208 @@ beforeEach(() => {
 });
 
 describe("legacy functions serve integration", () => {
+  it.live("overlays each Function's env file on the shared fallback", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("world", "index.ts", 'Deno.serve(() => new Response("world"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          join("supabase", "functions", ".env"),
+          ["SHARED=shared", "GLOBAL_ONLY=global", ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile(
+          "hello",
+          ".env",
+          ["SHARED=hello", "FUNCTION_ONLY=hello", "SUPABASE_SKIP=ignored", ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("world", ".env", ["SHARED=world", "FUNCTION_ONLY=world", ""].join("\n")),
+      );
+
+      const { layer, out } = setupServe({ childSpawner });
+      yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+      expect(envs).toContain("SHARED=shared");
+      expect(envs).toContain("GLOBAL_ONLY=global");
+      const functionsConfig = envs.find((entry) =>
+        entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
+      );
+      expect(functionsConfig).toBeDefined();
+      if (functionsConfig === undefined) {
+        throw new Error("missing functions config env");
+      }
+
+      expect(
+        JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
+      ).toEqual({
+        hello: expect.objectContaining({
+          env: { SHARED: "hello", FUNCTION_ONLY: "hello" },
+        }),
+        world: expect.objectContaining({
+          env: { SHARED: "world", FUNCTION_ONLY: "world" },
+        }),
+      });
+      expect(out.stderrText).toContain(
+        "Env name cannot start with SUPABASE_, skipping: SUPABASE_SKIP\n",
+      );
+    });
+  });
+
+  it.live("uses an explicit env file instead of automatic Function env files", () => {
+    deployMockState.runHandler = (command, args) => {
+      if (command !== "docker") {
+        throw new Error(`unexpected process: ${command}`);
+      }
+      if (args[0] === "container" && args[1] === "inspect") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "container" && args[1] === "rm") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      if (args[0] === "run") {
+        return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+      }
+      if (args[0] === "exec") {
+        return { exitCode: 0, stdout: "", stderr: "" };
+      }
+      throw new Error(`unexpected docker args: ${args.join(" ")}`);
+    };
+
+    const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          join("supabase", "functions", ".env"),
+          ["SOURCE=shared", "GLOBAL_ONLY=global", ""].join("\n"),
+        ),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", ".env", "INVALID-KEY=must-not-be-read\n"),
+      );
+      yield* Effect.promise(() =>
+        writeProjectFile(
+          "custom.env",
+          ["SOURCE=explicit", "EXPLICIT_ONLY=explicit", ""].join("\n"),
+        ),
+      );
+
+      const { layer } = setupServe({ childSpawner });
+      yield* legacyFunctionsServe(baseFlags({ envFile: Option.some("custom.env") })).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      const dockerRun = deployMockState.runCalls.find(
+        (call) => call.command === "docker" && call.args[0] === "run",
+      );
+      expect(dockerRun).toBeDefined();
+      if (dockerRun === undefined) {
+        throw new Error("expected docker run call");
+      }
+
+      const envs = yield* Effect.promise(() => extractDockerEnvEntries(dockerRun));
+      expect(envs).toContain("SOURCE=explicit");
+      expect(envs).toContain("EXPLICIT_ONLY=explicit");
+      expect(envs).not.toContain("GLOBAL_ONLY=global");
+      const functionsConfig = envs.find((entry) =>
+        entry.startsWith("SUPABASE_INTERNAL_FUNCTIONS_CONFIG="),
+      );
+      expect(functionsConfig).toBeDefined();
+      if (functionsConfig === undefined) {
+        throw new Error("missing functions config env");
+      }
+      expect(
+        JSON.parse(functionsConfig.slice("SUPABASE_INTERNAL_FUNCTIONS_CONFIG=".length)),
+      ).toEqual({
+        hello: {
+          verifyJWT: true,
+          entrypointPath: "supabase/functions/hello/index.ts",
+        },
+      });
+    });
+  });
+
+  it.live("fails before starting the runtime when a Function env file is malformed", () => {
+    return Effect.gen(function* () {
+      yield* Effect.promise(() =>
+        writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+      );
+      yield* Effect.promise(() =>
+        writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+      );
+      const functionEnvPath = join(tempRoot.current, "supabase", "functions", "hello", ".env");
+      yield* Effect.promise(() => writeFunctionFile("hello", ".env", "API-KEY=secret-value\n"));
+
+      const { layer } = setupServe();
+      const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+        Effect.provide(layer),
+        Effect.flip,
+      );
+
+      expect(error).toBeInstanceOf(Error);
+      if (error instanceof Error) {
+        expect(error.message).toContain(`failed to parse environment file: ${functionEnvPath}`);
+        expect(error.message).toContain("unexpected character '-' in variable name");
+        expect(error.message).not.toContain("secret-value");
+        expect(error.message).not.toContain('near "API-KEY=secret-value"');
+      }
+      expect(
+        deployMockState.runCalls.filter(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        ),
+      ).toHaveLength(0);
+      expect(deployMockState.networkCalls).toHaveLength(0);
+      expect(deployMockState.volumeCalls).toHaveLength(0);
+    });
+  });
+
   it.live(
     "starts the runtime from config-defined functions and wires env, binds, and telemetry",
     () => {
@@ -488,7 +703,10 @@ describe("legacy functions serve integration", () => {
         expect(dockerRun.args).toContain("supabase_network_test-project");
         expect(dockerRun.args).toContain("--add-host");
         expect(dockerRun.args).toContain("host.docker.internal:host-gateway");
-        expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.73.13");
+        // The pin's content is applied VERBATIM as the tag (Go's
+        // `replaceImageTag`, `pkg/config/utils.go:81-84`) — a bare pin stays
+        // bare, no `v` synthesized.
+        expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:1.73.13");
         expect(
           extractFlagValues(dockerRun.args, "-v").some((value) =>
             value.endsWith(":/root/index.ts:ro,Z"),
@@ -1228,11 +1446,11 @@ describe("legacy functions serve integration", () => {
   it.live("does not remove the existing runtime when interrupted before startup owns it", () => {
     const processControl = mockQueuedProcessControl();
     // Block startup at the DB assertion (`container inspect`) — the last
-    // pre-ownership step under Go's ordering (`serve.go:110-120`: config load
-    // → assert DB → only THEN remove the existing container). The remote-JWKS
-    // fetch is post-assertion (`serve.go:141`), so if the ordering ever
-    // regresses to fetch-first, this test hangs at the pending fetch instead
-    // of reaching the inspect and fails on the waitFor timeout.
+    // pre-ownership step under the established ordering (config load →
+    // assert DB → only THEN remove the existing container). The remote-JWKS
+    // fetch is post-assertion, so if the ordering ever regresses to
+    // fetch-first, this test hangs at the pending fetch instead of reaching
+    // the inspect and fails on the waitFor timeout.
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
@@ -1766,7 +1984,7 @@ describe("legacy functions serve integration", () => {
   it.live(
     "does not fail startup on a malformed third-party provider config when auth is disabled",
     () => {
-      // Go's `Auth.ThirdParty.validate()` (the "required field" check) only runs inside
+      // `Auth.ThirdParty.validate()` (the "required field" check) only runs inside
       // `Config.Validate`'s `if Auth.Enabled` block — `functions serve`'s own JWKS resolution
       // discards `ResolveJWKS`'s error unconditionally, regardless of `auth.enabled`. So a
       // workos provider enabled without an `issuer_url` must not block startup here.
@@ -1923,12 +2141,11 @@ describe("legacy functions serve integration", () => {
   });
 
   it.live("uppercases config secret names, skipping empty and unresolved values", () => {
-    // Go's config loader uppercases every `[edge_runtime.secrets]` key with
-    // `strings.ToUpper` (`pkg/config/config.go:766-771`, viper #1014
-    // workaround) before `set.ListSecrets` (`internal/secrets/set/set.go:48-52`)
-    // reads the map, and ListSecrets keeps only entries with a non-empty
-    // SHA256, i.e. it skips empty values and still-unresolved `env(VAR)`
-    // literals (`pkg/config/secret.go:94-107`).
+    // The established config loader uppercases every `[edge_runtime.secrets]`
+    // key with `strings.ToUpper` (viper #1014 workaround) before
+    // `set.ListSecrets` reads the map, and ListSecrets keeps only entries
+    // with a non-empty SHA256, i.e. it skips empty values and
+    // still-unresolved `env(VAR)` literals.
     deployMockState.runHandler = (command, args) => {
       if (command !== "docker") {
         throw new Error(`unexpected process: ${command}`);
@@ -2318,11 +2535,11 @@ describe("legacy functions serve integration", () => {
 
   it.live("keeps the install hint when no container runtime is installed at all", () => {
     // With no `docker` or `podman` binary on PATH the inspect never spawns —
-    // the shell-out equivalent of Go's missing daemon socket, which
+    // the shell-out equivalent of a missing daemon socket, which
     // `client.IsErrConnectionFailed` classifies as a connection failure and so
-    // gets the Docker Desktop install hint (`internal/utils/misc.go:155-166`,
-    // `docker.go:350`). The spawn-failure cause must survive into the
-    // `failed to inspect service: …` message instead of being blanked.
+    // gets the Docker Desktop install hint. The spawn-failure cause must
+    // survive into the `failed to inspect service: …` message instead of
+    // being blanked.
     const runtimeNotFoundMessage =
       "docker: command not found (podman also not found) — install Docker Desktop or Podman and ensure it is on PATH";
     deployMockState.runHandler = (command, args) => {
@@ -2364,9 +2581,9 @@ describe("legacy functions serve integration", () => {
   });
 
   it.live("fails with the config error, not a docker error, when both are broken", () => {
-    // Go's `restartEdgeRuntime` sanity-checks in order: `flags.LoadConfig`
-    // first, `AssertSupabaseDbIsRunning` second (`serve.go:107-113`) — a
-    // malformed config wins over a down docker daemon.
+    // Established ordering: `restartEdgeRuntime` sanity-checks config load
+    // first, `AssertSupabaseDbIsRunning` second — a malformed config wins
+    // over a down docker daemon.
     deployMockState.runHandler = () => ({
       exitCode: 1,
       stdout: "",
@@ -2452,11 +2669,10 @@ describe("legacy functions serve integration", () => {
   });
 
   it.live("fails with the auth config error, not a docker error, when both are broken", () => {
-    // Go's `jwt_secret` ≥16-chars check runs during config load
-    // (`pkg/config/apikeys.go:43-47` via `config.go:1156`), BEFORE
-    // `AssertSupabaseDbIsRunning` — invalid auth config wins over a down
-    // docker daemon, so the local half of auth resolution must stay ahead of
-    // the DB assertion.
+    // Established ordering: the `jwt_secret` ≥16-chars check runs during
+    // config load, BEFORE `AssertSupabaseDbIsRunning` — invalid auth config
+    // wins over a down docker daemon, so the local half of auth resolution
+    // must stay ahead of the DB assertion.
     deployMockState.runHandler = () => ({
       exitCode: 1,
       stdout: "",
@@ -2749,6 +2965,242 @@ describe("legacy functions serve integration", () => {
           (call) => call.command === "docker" && call.args[0] === "run",
         ),
       ).toHaveLength(0);
+    });
+  });
+
+  describe("Config.Validate / dotenv / env-override parity (CLI-1963)", () => {
+    it.live(
+      "fails before any Docker work when config.toml has an explicit empty project_id",
+      () => {
+        return Effect.gen(function* () {
+          yield* Effect.promise(() => writeProjectConfig('project_id = ""\n'));
+          yield* Effect.promise(() =>
+            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+          );
+
+          const { layer } = setupServe();
+          const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(Error);
+          if (error instanceof Error) {
+            expect(error.message).toBe("Missing required field in config: project_id");
+          }
+          expect(deployMockState.runCalls).toHaveLength(0);
+          expect(deployMockState.networkCalls).toHaveLength(0);
+          expect(deployMockState.volumeCalls).toHaveLength(0);
+        });
+      },
+    );
+
+    it.live(
+      "fails before any Docker work on an unrelated Config.Validate branch (unsupported Postgres major version)",
+      () => {
+        // Proves the WHOLE resolved config is validated, not just `project_id`
+        // — `db.major_version = 12` is a genuinely unrelated Go `Config.Validate`
+        // branch (`config.go:1034-1062`).
+        return Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            writeProjectConfig(
+              ['project_id = "test-project"', "", "[db]", "major_version = 12", ""].join("\n"),
+            ),
+          );
+          yield* Effect.promise(() =>
+            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+          );
+
+          const { layer } = setupServe();
+          const error = yield* legacyFunctionsServe(baseFlags()).pipe(
+            Effect.provide(layer),
+            Effect.flip,
+          );
+
+          expect(error).toBeInstanceOf(Error);
+          if (error instanceof Error) {
+            expect(error.message).toBe(
+              "Postgres version 12.x is unsupported. To use the CLI, either start a new project or follow project migration steps here: https://supabase.com/docs/guides/database#migrating-between-projects.",
+            );
+          }
+          expect(deployMockState.runCalls).toHaveLength(0);
+          expect(deployMockState.networkCalls).toHaveLength(0);
+          expect(deployMockState.volumeCalls).toHaveLength(0);
+        });
+      },
+    );
+
+    it.live(
+      "resolves the deno v1 edge-runtime image tag when SUPABASE_EDGE_RUNTIME_DENO_VERSION=1 overrides an unset config value",
+      () => {
+        deployMockState.runHandler = (command, args) => {
+          if (command !== "docker") {
+            throw new Error(`unexpected process: ${command}`);
+          }
+          if (args[0] === "container" && args[1] === "inspect") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "container" && args[1] === "rm") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "run") {
+            return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+          }
+          if (args[0] === "exec") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          throw new Error(`unexpected docker args: ${args.join(" ")}`);
+        };
+        const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+
+        return Effect.gen(function* () {
+          const previous = process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+          process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = "1";
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"];
+              } else {
+                process.env["SUPABASE_EDGE_RUNTIME_DENO_VERSION"] = previous;
+              }
+            }),
+          );
+
+          yield* Effect.promise(() =>
+            writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+          );
+          yield* Effect.promise(() =>
+            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+          );
+          yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+          const { layer } = setupServe({ childSpawner });
+          yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+          const dockerRun = deployMockState.runCalls.find(
+            (call) => call.command === "docker" && call.args[0] === "run",
+          );
+          expect(dockerRun).toBeDefined();
+          if (dockerRun === undefined) {
+            throw new Error("expected docker run call");
+          }
+          expect(dockerRun.args).toContain("public.ecr.aws/supabase/edge-runtime:v1.68.4");
+        });
+      },
+    );
+
+    it.live(
+      "uses SUPABASE_NETWORK_ID as the docker network when no --network-id flag is passed",
+      () => {
+        deployMockState.runHandler = (command, args) => {
+          if (command !== "docker") {
+            throw new Error(`unexpected process: ${command}`);
+          }
+          if (args[0] === "container" && args[1] === "inspect") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "container" && args[1] === "rm") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          if (args[0] === "run") {
+            return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+          }
+          if (args[0] === "exec") {
+            return { exitCode: 0, stdout: "", stderr: "" };
+          }
+          throw new Error(`unexpected docker args: ${args.join(" ")}`);
+        };
+        const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+
+        return Effect.gen(function* () {
+          const previous = process.env["SUPABASE_NETWORK_ID"];
+          process.env["SUPABASE_NETWORK_ID"] = "env-network";
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              if (previous === undefined) {
+                delete process.env["SUPABASE_NETWORK_ID"];
+              } else {
+                process.env["SUPABASE_NETWORK_ID"] = previous;
+              }
+            }),
+          );
+
+          yield* Effect.promise(() =>
+            writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+          );
+          yield* Effect.promise(() =>
+            writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+          );
+          yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+          const { layer } = setupServe({ childSpawner });
+          yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+          expect(deployMockState.networkCalls).toEqual([
+            { networkMode: "env-network", projectId: "test-project" },
+          ]);
+          const dockerRun = deployMockState.runCalls.find(
+            (call) => call.command === "docker" && call.args[0] === "run",
+          );
+          expect(dockerRun?.args).toContain("env-network");
+        });
+      },
+    );
+
+    it.live("prefers an explicit --network-id flag over SUPABASE_NETWORK_ID", () => {
+      deployMockState.runHandler = (command, args) => {
+        if (command !== "docker") {
+          throw new Error(`unexpected process: ${command}`);
+        }
+        if (args[0] === "container" && args[1] === "inspect") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "container" && args[1] === "rm") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        if (args[0] === "run") {
+          return { exitCode: 0, stdout: "edge-runtime-id\n", stderr: "" };
+        }
+        if (args[0] === "exec") {
+          return { exitCode: 0, stdout: "", stderr: "" };
+        }
+        throw new Error(`unexpected docker args: ${args.join(" ")}`);
+      };
+      const childSpawner = mockDockerLogSpawner([{ exitCode: 1, stderr: "serve logs failed" }]);
+
+      return Effect.gen(function* () {
+        const previous = process.env["SUPABASE_NETWORK_ID"];
+        process.env["SUPABASE_NETWORK_ID"] = "env-network";
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            if (previous === undefined) {
+              delete process.env["SUPABASE_NETWORK_ID"];
+            } else {
+              process.env["SUPABASE_NETWORK_ID"] = previous;
+            }
+          }),
+        );
+
+        yield* Effect.promise(() =>
+          writeProjectConfig(['project_id = "test-project"', ""].join("\n")),
+        );
+        yield* Effect.promise(() =>
+          writeFunctionFile("hello", "index.ts", 'Deno.serve(() => new Response("hello"))\n'),
+        );
+        yield* Effect.promise(() => writeFunctionFile("hello", "deno.json", '{"imports":{}}\n'));
+
+        const { layer } = setupServe({ childSpawner, networkId: Option.some("flag-network") });
+        yield* legacyFunctionsServe(baseFlags()).pipe(Effect.provide(layer), Effect.flip);
+
+        expect(deployMockState.networkCalls).toEqual([
+          { networkMode: "flag-network", projectId: "test-project" },
+        ]);
+        const dockerRun = deployMockState.runCalls.find(
+          (call) => call.command === "docker" && call.args[0] === "run",
+        );
+        expect(dockerRun?.args).toContain("flag-network");
+        expect(dockerRun?.args).not.toContain("env-network");
+      });
     });
   });
 

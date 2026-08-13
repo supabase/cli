@@ -13,14 +13,13 @@ import {
   legacyExportCatalogPgDelta,
 } from "../../../shared/legacy-pgdelta.ts";
 
-// Go's `errInSync` (`internal/db/pull/pull.go:33`).
+// Established output contract.
 const ERR_IN_SYNC = "No schema changes found";
 
 const byteLength = (value: string): number => new TextEncoder().encode(value).length;
 
 /**
- * Port of Go's `redactPostgresURL` (`internal/db/pull/pgdelta_pull_debug.go`):
- * replace the password (keeping the username) with `xxxxx`; an empty username
+ * Replaces the password (keeping the username) with `xxxxx`; an empty username
  * becomes `redacted`; a URL with no userinfo is unchanged; a parse failure
  * returns the literal `<invalid-url>`.
  */
@@ -38,7 +37,7 @@ export function legacyRedactPostgresURL(raw: string): string {
   return parsed.toString();
 }
 
-/** Port of Go's `formatConnectionInfo`: a single-line, password-redacted summary. */
+/** A single-line, password-redacted connection summary. */
 export function legacyFormatConnectionInfo(
   conn: {
     readonly host: string;
@@ -51,17 +50,16 @@ export function legacyFormatConnectionInfo(
   return `host=${conn.host} port=${conn.port} user=${conn.user} database=${conn.database} url=${legacyRedactPostgresURL(url)}`;
 }
 
-/** Object counts extracted from a pg-delta catalog JSON blob (Go's `CatalogSummary`). */
+/** Object counts extracted from a pg-delta catalog JSON blob. */
 export interface LegacyCatalogSummary {
   readonly totalObjects: number;
   readonly bySchema: Record<string, number>;
 }
 
 /**
- * Best-effort counts catalog objects grouped by schema name. Port of Go's
- * `SummarizeCatalogJSON` / `walkCatalogObjects` (`internal/db/diff/pgdelta_debug.go`):
- * a node counts when it has a `schema` string or a `schema.name`, and children are
- * always recursed (so nested catalogs can contribute multiple counts, as in Go).
+ * Best-effort counts catalog objects grouped by schema name: a node counts when
+ * it has a `schema` string or a `schema.name`, and children are always recursed
+ * (so nested catalogs can contribute multiple counts).
  */
 export function legacySummarizeCatalogJson(catalogJson: string): LegacyCatalogSummary {
   const bySchema: Record<string, number> = {};
@@ -101,14 +99,14 @@ export function legacySummarizeCatalogJson(catalogJson: string): LegacyCatalogSu
   return { totalObjects: total, bySchema };
 }
 
-/** Port of Go's `formatCatalogSummary`. */
+/** Formats a catalog summary line. */
 export function legacyFormatCatalogSummary(label: string, summary: LegacyCatalogSummary): string {
   if (summary.totalObjects === 0) return `${label} catalog: no objects detected`;
   const parts = Object.entries(summary.bySchema).map(([schema, count]) => `${schema}=${count}`);
   return `${label} catalog: ${summary.totalObjects} objects (${parts.join(", ")})`;
 }
 
-/** Port of Go's `formatByteSize` (`%.1f MB` / `%.1f KB` / `%d B`). */
+/** Formats a byte size as `%.1f MB` / `%.1f KB` / `%d B`. */
 export function legacyFormatByteSize(size: number): string {
   if (size >= 1 << 20) return `${(size / (1 << 20)).toFixed(1)} MB`;
   if (size >= 1 << 10) return `${(size / (1 << 10)).toFixed(1)} KB`;
@@ -116,8 +114,7 @@ export function legacyFormatByteSize(size: number): string {
 }
 
 /**
- * Builds the stderr summary block printed before the issue-report message. Port
- * of Go's `printEmptyPgDeltaPullSummary` (`internal/db/pull/pgdelta_pull_debug.go`).
+ * Builds the stderr summary block printed before the issue-report message.
  */
 export function legacyFormatEmptyPgDeltaPullSummary(
   debugDir: string,
@@ -146,11 +143,10 @@ export function legacyFormatEmptyPgDeltaPullSummary(
 }
 
 /**
- * Saves the pg-delta empty-diff debug bundle and returns its directory. Port of
- * Go's `saveEmptyPgDeltaPullDebug` (`internal/db/pull/pgdelta_pull_debug.go`):
- * export the remote/target catalog (warn and continue on failure), write the
- * bundle (source/target catalog, stderr, connection.txt, error.txt), then print
- * the summary + issue-report message. The shadow source catalog and pg-delta
+ * Saves the pg-delta empty-diff debug bundle and returns its directory: export
+ * the remote/target catalog (warn and continue on failure), write the bundle
+ * (source/target catalog, stderr, connection.txt, error.txt), then print the
+ * summary + issue-report message. The shadow source catalog and pg-delta
  * stderr are captured during the diff run and passed in.
  */
 export const legacySaveEmptyPgDeltaPullDebug = Effect.fnUntraced(function* (params: {
@@ -170,9 +166,9 @@ export const legacySaveEmptyPgDeltaPullDebug = Effect.fnUntraced(function* (para
   readonly workdir: string;
 }) {
   const output = yield* Output;
-  // Export the remote catalog at debug time (Go connects to the remote `config`
-  // directly here, not the shadow); a failure only warns — the bundle is still
-  // written with the catalogs/stderr captured during the diff.
+  // Export the remote catalog at debug time (connects to the remote directly
+  // here, not the shadow); a failure only warns — the bundle is still written
+  // with the catalogs/stderr captured during the diff.
   const targetCatalog = yield* legacyExportCatalogPgDelta(params.ctx, {
     targetRef: params.targetUrl,
     role: "postgres",

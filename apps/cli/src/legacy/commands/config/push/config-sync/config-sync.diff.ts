@@ -1,14 +1,12 @@
 /**
- * Direct port of Go's `pkg/diff/diff.go` (the BSD-licensed anchored / "patience"
- * unified diff used by `supabase config push`).
+ * Anchored / "patience" unified diff algorithm (BSD-licensed), used by
+ * `supabase config push`.
  *
- * Byte-exact parity with the Go implementation is the contract: the diff bytes
- * are printed to stderr (`Updating <X> service with config: <diff>`) and locked
- * by golden fixtures generated from the Go binary. We deliberately do NOT use
- * the npm `diff` package — its Myers algorithm picks different hunk boundaries
- * on repeated TOML lines (e.g. `enabled = false`), which drifts the output.
- *
- * @see apps/cli-go/pkg/diff/diff.go
+ * Byte-exact output is the established contract: the diff bytes are printed
+ * to stderr (`Updating <X> service with config: <diff>`) and locked by
+ * golden fixtures. We deliberately do NOT use the npm `diff` package — its
+ * Myers algorithm picks different hunk boundaries on repeated TOML lines
+ * (e.g. `enabled = false`), which drifts the output.
  */
 
 interface Pair {
@@ -45,7 +43,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       continue;
     }
 
-    // Expand matching lines as far as possible.
     const start: Pair = { x: m.x, y: m.y };
     while (start.x > done.x && start.y > done.y && x[start.x - 1] === y[start.y - 1]) {
       start.x--;
@@ -57,7 +54,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       end.y++;
     }
 
-    // Emit the mismatched lines before start into this chunk.
     for (const s of x.slice(done.x, start.x)) {
       ctext.push("-" + s);
       count.x++;
@@ -67,8 +63,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       count.y++;
     }
 
-    // If we're not at EOF and have too few common lines, the chunk includes all
-    // the common lines and continues.
     if (
       (end.x < x.length || end.y < y.length) &&
       (end.x - start.x < C || (ctext.length > 0 && end.x - start.x < 2 * C))
@@ -82,7 +76,6 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       continue;
     }
 
-    // End chunk with common lines for context.
     if (ctext.length > 0) {
       const n = Math.min(end.x - start.x, C);
       for (const s of x.slice(start.x, start.x + n)) {
@@ -109,12 +102,10 @@ export function diff(oldName: string, oldText: string, newName: string, newText:
       ctext = [];
     }
 
-    // If we reached EOF, we're done.
     if (end.x >= x.length && end.y >= y.length) {
       break;
     }
 
-    // Otherwise start a new chunk.
     chunk = { x: end.x - C, y: end.y - C };
     for (const s of x.slice(chunk.x, end.x)) {
       ctext.push(" " + s);
@@ -143,9 +134,8 @@ function lines(text: string): Array<string> {
 }
 
 /**
- * Port of Go's `strings.SplitAfter(s, "\n")` — splits after each separator,
- * keeping the separator attached to the preceding substring. A trailing
- * separator yields a final empty element.
+ * Splits after each separator, keeping the separator attached to the
+ * preceding substring. A trailing separator yields a final empty element.
  */
 function splitAfter(s: string, sep: string): Array<string> {
   const result: Array<string> = [];
@@ -230,12 +220,12 @@ function tgs(x: Array<string>, y: Array<string>): Array<Pair> {
       k = v;
     }
   }
-  // Go `make([]pair, 2+k)` zero-initialises every entry to {0,0}; match that so
-  // any index not overwritten below behaves identically.
+  // Every entry starts as {0,0} so any index not overwritten below behaves
+  // identically.
   const seq: Array<Pair> = Array.from({ length: 2 + k }, () => ({ x: 0, y: 0 }));
   seq[1 + k] = { x: x.length, y: y.length }; // sentinel at end
-  // NB: Go's `internal/diff` never reassigns `lastj` inside this loop; we match
-  // it exactly to preserve byte-for-byte parity.
+  // NB: `lastj` is intentionally never reassigned inside this loop — this is
+  // the established behavior, not a bug; do not "fix" it.
   const lastj = n;
   for (let i = n - 1; i >= 0; i--) {
     if (L[i] === k && (J[i] as number) < lastj) {

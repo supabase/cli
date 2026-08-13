@@ -1,12 +1,12 @@
 /**
- * Faithful 1:1 port of Go's `net/http` content sniffer (`net/http/sniff.go`'s
+ * Faithful 1:1 port of `net/http` content sniffer (`net/http/sniff.go`'s
  * `DetectContentType` + `sniffSignatures`), reproduced from the Go 1.x stdlib.
  *
- * Go's `seed buckets` upload path runs `http.DetectContentType` on the first 512
- * bytes of each object (`apps/cli-go/pkg/storage/objects.go:78-83`), so the
+ * `seed buckets` upload path runs `http.DetectContentType` on the first 512
+ * bytes of each object, so the
  * stored Storage `Content-Type` metadata is byte-driven, not extension-driven.
  * Porting this verbatim is the only way to store the same Content-Type the Go CLI
- * would. The signature table and its ORDER are 1:1 with Go's `sniffSignatures`
+ * would. The signature table and its ORDER are 1:1 with `sniffSignatures`
  * (first match wins); kept dependency-free and pure for a Go-parity test corpus.
  */
 
@@ -133,7 +133,7 @@ const textSig: SniffSig = (data, firstNonWS) => {
   return "text/plain; charset=utf-8";
 };
 
-// 1:1 with Go's `sniffSignatures`, including order (first match wins).
+// 1:1 with `sniffSignatures`, including order (first match wins).
 const SNIFF_SIGNATURES: ReadonlyArray<SniffSig> = [
   htmlSig("<!DOCTYPE HTML"),
   htmlSig("<HTML"),
@@ -214,7 +214,7 @@ const SNIFF_SIGNATURES: ReadonlyArray<SniffSig> = [
 ];
 
 /**
- * Reproduces Go's `http.DetectContentType`: considers at most the first 512
+ * Reproduces `http.DetectContentType`: considers at most the first 512
  * bytes and always returns a valid MIME type, falling back to
  * `application/octet-stream` when no signature matches.
  */

@@ -162,6 +162,7 @@ const flags = (over: Partial<LegacyInspectReportFlags> = {}): LegacyInspectRepor
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none<string>(),
   outputDir: over.outputDir ?? ".",
 });
 
@@ -212,8 +213,7 @@ describe("legacy inspect report", () => {
           (s) => s.startsWith("COPY (") && s.endsWith("TO STDOUT WITH CSV HEADER"),
         ),
       ).toBe(true);
-      // Go pins the date folder to 0755 and each CSV to 0644 (report.handler.ts
-      // mirrors `internal/utils/misc.go:273,281-284`).
+      // The date folder is pinned to 0755 and each CSV to 0644.
       expect(statSync(dir).mode & 0o777).toBe(0o755);
       expect(statSync(join(dir, "db_stats.csv")).mode & 0o777).toBe(0o644);
     }).pipe(Effect.provide(layer), Effect.ensuring(Effect.sync(() => process.umask(prevUmask))));
@@ -243,7 +243,7 @@ describe("legacy inspect report", () => {
       expect(Option.isSome((resolver.resolveInput as { dbUrl: Option.Option<string> }).dbUrl)).toBe(
         true,
       );
-      // The connect diagnostic reflects a non-local target (Go parity).
+      // The connect diagnostic reflects a non-local target.
       expect(out.stderrText).toContain("Connecting to remote database...");
     }).pipe(Effect.provide(layer));
   });
@@ -303,6 +303,43 @@ describe("legacy inspect report", () => {
     return Effect.gen(function* () {
       yield* legacyInspectReport(flags({ outputDir: base, linked: true }));
       expect((resolver.resolveInput as { connType: string }).connType).toBe("linked");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("reports on the project given via --project-ref on the default linked path", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const base = tempDir("supabase-report-out-");
+    const { layer, resolver } = setupLegacyReport({ csvs: DEFAULT_RULE_CSVS });
+    return Effect.gen(function* () {
+      yield* legacyInspectReport(flags({ outputDir: base, projectRef: Option.some(FLAG_REF) }));
+      // `inspect report` never caches the ref — the resolver call it threads the
+      // flag into is the strongest observable this harness offers.
+      const resolveInput = resolver.resolveInput as {
+        connType: string;
+        linkedProjectRef: Option.Option<string>;
+      };
+      expect(resolveInput.connType).toBe("linked");
+      expect(resolveInput.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver } = setupLegacyReport({
+      csvs: DEFAULT_RULE_CSVS,
+      cliArgs: ["--local"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyInspectReport(flags({ local: true, projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      expect(resolver.resolveInput).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
@@ -400,8 +437,8 @@ describe("legacy inspect report", () => {
     const base = tempDir("supabase-report-out-");
     const workdir = tempDir("supabase-report-workdir-");
     mkdirSync(join(workdir, "supabase"), { recursive: true });
-    // An invalid rule config (unknown key) — Go loads config in PersistentPreRun, so
-    // it must abort before the DB connection and before any CSV files are written.
+    // An invalid rule config (unknown key) must abort before the DB connection
+    // and before any CSV files are written.
     writeFileSync(
       join(workdir, "supabase", "config.toml"),
       [
@@ -444,9 +481,7 @@ describe("legacy inspect report", () => {
       expect(data?.files?.length).toBe(14);
       expect(typeof data?.outputDir).toBe("string");
       expect(data?.rules?.length).toBe(13);
-      // CSVs are still written.
       expect(dateFolderContents(base).files.length).toBe(14);
-      // No progress lines in machine mode.
       expect(out.stderrText).toBe("");
     }).pipe(Effect.provide(layer));
   });

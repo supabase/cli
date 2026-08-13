@@ -7,9 +7,8 @@ import {
 
 /**
  * An explicit `--workdir`/`SUPABASE_WORKDIR` path doesn't exist or isn't a
- * directory. Mirrors Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:
- * 231-250`), which unconditionally `os.Chdir(workdir)`s in `PersistentPreRunE`
- * (`apps/cli-go/cmd/root.go:93-105`) — before `status`'s own `PreRunE`
+ * directory. Mirrors `ChangeWorkDir`, which unconditionally `os.Chdir(workdir)`s in `PersistentPreRunE` —
+ * before `status`'s own `PreRunE`
  * (override-name parsing) or `RunE`, so a bad explicit workdir must fail here
  * first, before config load or any Docker access.
  */
@@ -43,7 +42,7 @@ export class LegacyStatusOverrideParseError extends Data.TaggedError(
 
 /**
  * Inspecting the db container failed for a reason other than "not found" —
- * except Go's `assertContainerHealthy` never special-cases a missing
+ * except `assertContainerHealthy` never special-cases a missing
  * container (see `status.handler.ts`'s step-5 comment): an absent container
  * is just another non-zero inspect exit, so the dominant real trigger of this
  * error is "the local stack was never started", same fix as
@@ -88,8 +87,7 @@ export class LegacyStatusListError extends Data.TaggedError("LegacyStatusListErr
 
 /**
  * `config.toml` resolved to a value `Config.Validate` would reject before status
- * ever renders — e.g. an `auth.jwt_secret` shorter than 16 characters
- * (`pkg/config/apikeys.go:45-47`).
+ * ever renders — e.g. an `auth.jwt_secret` shorter than 16 characters.
  */
 export class LegacyStatusInvalidConfigError extends Data.TaggedError(
   "LegacyStatusInvalidConfigError",

@@ -44,10 +44,26 @@ const REMOTE_CONN: LegacyPgConnInput = {
 };
 
 function mockResolver(opts: { conn?: LegacyPgConnInput; isLocal?: boolean } = {}) {
-  return Layer.succeed(LegacyDbConfigResolver, {
-    resolve: () => Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true }),
+  const calls: Array<{
+    readonly connType: string;
+    readonly linkedProjectRef: Option.Option<string>;
+  }> = [];
+  const layer = Layer.succeed(LegacyDbConfigResolver, {
+    resolve: (flags) => {
+      calls.push({
+        connType: flags.connType ?? "",
+        linkedProjectRef: flags.linkedProjectRef ?? Option.none(),
+      });
+      return Effect.succeed({ conn: opts.conn ?? LOCAL_CONN, isLocal: opts.isLocal ?? true });
+    },
     resolvePoolerFallback: () => Effect.succeed(Option.none()),
   });
+  return {
+    layer,
+    get calls() {
+      return calls;
+    },
+  };
 }
 
 function mockDbConnection(opts: {
@@ -184,7 +200,7 @@ function setup(opts: SetupOpts = {}) {
   const docker = mockDockerRun(opts);
   const layer = Layer.mergeAll(
     out.layer,
-    resolver,
+    resolver.layer,
     connection.layer,
     docker.layer,
     mockLegacyCliConfig({ workdir: opts.workdir ?? "/work/project", projectId: Option.none() }),
@@ -199,7 +215,7 @@ function setup(opts: SetupOpts = {}) {
     Layer.succeed(CliArgs, { args: opts.args ?? [] }),
     BunServices.layer,
   );
-  return { layer, out, telemetry, connection, docker };
+  return { layer, out, telemetry, connection, docker, resolver };
 }
 
 const flags = (over: Partial<Parameters<typeof legacyTestDb>[0]> = {}) => ({
@@ -207,6 +223,7 @@ const flags = (over: Partial<Parameters<typeof legacyTestDb>[0]> = {}) => ({
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? true,
+  projectRef: over.projectRef ?? Option.none<string>(),
 });
 
 describe("legacy test db integration", () => {
@@ -456,6 +473,37 @@ describe("legacy test db integration", () => {
       // The resolver mock doesn't validate — success means routing reached resolver.resolve
       // with connType "linked" (no mutual-exclusion error, no local fallback error).
       yield* legacyTestDb(flags());
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("tests the project given via --project-ref --linked", () => {
+    // test db defaults to local; only with --linked does the flag reach the
+    // resolver as `linkedProjectRef`.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false, args: ["--linked"] });
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags({ linked: true, local: false, projectRef: Option.some(FLAG_REF) }));
+      expect(resolver.calls[0]?.connType).toBe("linked");
+      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects --project-ref on the default local target", () => {
+    // test db defaults to local when no target flag is set — the guard must
+    // fire from the flag alone, with no explicit --local/--db-url needed.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, connection, docker, resolver } = setup();
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags({ projectRef: Option.some(FLAG_REF) })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      expect(resolver.calls).toEqual([]);
+      expect(connection.execCalls).toEqual([]);
+      expect(docker.lastOpts).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 

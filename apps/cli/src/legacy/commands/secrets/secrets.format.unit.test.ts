@@ -22,9 +22,9 @@ describe("renderSecretsListTable", () => {
   });
 
   it("passes literal `|` characters in names through without escaping", () => {
-    // Go writes `\|` in its markdown source; Glamour decodes it back to a
-    // literal pipe in the rendered cell. Going direct to the row renderer
-    // produces the same byte output (verified against the Go binary).
+    // `\|` in the markdown source is decoded back to a literal pipe by
+    // glamour. Going direct to the row renderer produces the same byte
+    // output.
     const out = renderSecretsListTable([{ name: "with|pipe", value: "digest456" }]);
     expect(out).toBe(
       "\n  \n   NAME      | DIGEST    \n" +

@@ -3,8 +3,6 @@ import { describe, expect, it } from "vitest";
 import { renderGlamourTable } from "./legacy-glamour-table.ts";
 
 describe("renderGlamourTable", () => {
-  // Byte-for-byte parity with the Go fixture in
-  // apps/cli-go/internal/backups/list/list_test.go (TestListBackup/lists PITR backup).
   it("matches the Go PITR-backup table fixture", () => {
     const out = renderGlamourTable(
       ["REGION", "WALG", "PITR", "EARLIEST TIMESTAMP", "LATEST TIMESTAMP"],
@@ -22,8 +20,6 @@ describe("renderGlamourTable", () => {
     expect(out).toBe(expected);
   });
 
-  // Byte-for-byte parity with the Go fixture in
-  // apps/cli-go/internal/backups/list/list_test.go (TestListBackup/lists WALG backup).
   it("matches the Go logical-backup table fixture", () => {
     const out = renderGlamourTable(
       ["REGION", "BACKUP TYPE", "STATUS", "CREATED AT (UTC)"],

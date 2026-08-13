@@ -1,12 +1,11 @@
 # `supabase db reset`
 
-Native TypeScript port of `apps/cli-go/internal/db/reset/reset.go`. Reinitialises a
-database from local migrations (plus seed). Both targets are fully native — no
-remaining Go delegation. The **remote** path (`--linked`, or a remote `--db-url`)
+Reinitialises a database from local migrations (plus seed). Both targets are
+fully native. The **remote** path (`--linked`, or a remote `--db-url`)
 drops all user schemas, upserts vault secrets, then either re-applies migrations
 (the default) or, on a versionless `--experimental`/`SUPABASE_EXPERIMENTAL` reset
 with pg-delta not enabled, applies the declarative `[db.migrations].schema_paths`
-files instead (Go's `apply.MigrateAndSeed` EXPERIMENTAL branch, CLI-1958), then
+files instead (the `MigrateAndSeed` EXPERIMENTAL branch, CLI-1958), then
 seeds. The **local** path (`--local`/default, or a `--db-url` pointing at the local
 stack) is ALSO fully native (CLI-1955 removed the hidden Go `db __db-bootstrap` seam
 this used to delegate to): the running check, the PG14/PG15 container-recreate
@@ -37,7 +36,7 @@ removed `LegacyDeclarativeSeam.execInherit` seam — see those commands' own
 | `<workdir>/supabase/config.toml`                                                          | TOML       | always, parsed up front before any destructive work (embedded defaults when absent); re-read for local bucket seeding |
 | `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file | dotenv     | always, resolved before the local prelude (config values, bootstrap config)                                           |
 | `<workdir>/.git/HEAD` (walked upward)                                                     | plain text | local path, for the `Finished … on branch <branch>.` line                                                             |
-| `~/.supabase/<hash>/project-ref`                                                          | plain text | `--linked`, to resolve the ref                                                                                        |
+| `~/.supabase/<hash>/project-ref`                                                          | plain text | `--linked`, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                       |
 | `~/.supabase/access-token`                                                                | plain text | `--linked`, when `SUPABASE_ACCESS_TOKEN` unset and a temp role is minted                                              |
 | seed files from `--sql-paths` or `[db.seed].sql_paths`                                    | SQL        | when seeding is enabled (not `--no-seed`); `--sql-paths` overrides config                                             |
 | schema files from `[db.migrations].schema_paths`                                          | SQL        | when the `--experimental` schema-files branch is taken, either target (see Notes)                                     |
@@ -47,11 +46,11 @@ removed `LegacyDeclarativeSeam.execInherit` seam — see those commands' own
 
 ## Files Written
 
-| Path                                                                            | Format | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| ------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | `--linked` (post-run cache)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
-| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after migrations/seeding succeed, when no `--version`/`--last` resolved a version AND pg-delta is enabled (`[experimental.pgdelta].enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the reset — see Notes. Native TS on both targets: **remote path** (`<prefix>` = the project ref/URL hash) after either apply branch (schema-files or migrations) (Go's `down.ResetAll` → `pgcache.TryCacheMigrationsCatalog`, `down.go:58-59`); **local path** (`<prefix>` = `"local"`) PG15 only, via the reused `legacyStartSetupLocalDatabase` pipeline (`db-setup.ts`) after `MigrateAndSeed` — the PG≤14 branch never calls this at all, so a PG≤14 local project never writes this file regardless of pg-delta config |
+| Path                                                                            | Format | When                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| ------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/<workdir-hash>/linked-project.json`                                | JSON   | `--linked` (post-run cache)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `~/.supabase/telemetry.json`                                                    | JSON   | always (post-run telemetry flush)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json` | JSON   | best-effort, after migrations/seeding succeed, when no `--version`/`--last` resolved a version AND pg-delta is enabled (`[experimental.pgdelta].enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails the reset — see Notes. Native TS on both targets: **remote path** (`<prefix>` = the project ref/URL hash) after either apply branch (schema-files or migrations); **local path** (`<prefix>` = `"local"`) PG15 only, via the reused `legacyStartSetupLocalDatabase` pipeline (`db-setup.ts`) after `MigrateAndSeed` — the PG≤14 branch never calls this at all, so a PG≤14 local project never writes this file regardless of pg-delta config |
 
 On the local path, the native recreate additionally recreates the
 `supabase_db_<project>` container/volume (PG15) or the `postgres`/`_supabase`
@@ -136,7 +135,7 @@ the whole reset** (not just "skip buckets").
 | `SUPABASE_EXPERIMENTAL`                                                                                    | selects the schema-files apply branch on either target                                                                                                                                                                                                                    | no (also `--experimental`)                              |
 | `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED`                                                                    | overrides `[experimental.pgdelta].enabled`; a truthy value flips the reset gate (`experimental && resolvedVersion === "" && !toml.pgDelta.enabled`) back to timestamped migrations even with `--experimental` set — switches between two different destructive code paths | no                                                      |
 | `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS`                                                                      | overrides `[db.migrations].schema_paths` (viper `AutomaticEnv`, beats the config-file value) for the schema-files apply branch — genuinely effective on both targets now                                                                                                  | no (no dedicated flag — config-file-only otherwise)     |
-| `SUPABASE_PROJECT_ID`                                                                                      | overrides the local container id (`utils.DbId`)                                                                                                                                                                                                                           | no                                                      |
+| `SUPABASE_PROJECT_ID`                                                                                      | overrides the local container id; ALSO the linked-ref resolution fallback `--project-ref` supersedes — see Notes for the narrower scope of the flag                                                                                                                       | no                                                      |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                                           | enables the post-reset migrations-catalog cache (see Files Written) when `[experimental.pgdelta].enabled` is unset — distinct from `SUPABASE_EXPERIMENTAL_PGDELTA_ENABLED` above, which switches the reset's own apply branch instead                                     | no (project `.env` or shell)                            |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                                         | overrides the pg-delta edge-runtime image registry for the migrations-catalog cache export (scoped for the whole run via `legacyApplyProjectEnv`, matching `db push`)                                                                                                     | no (project `.env` or shell)                            |
 | `PGDELTA_NPM_REGISTRY`                                                                                     | overrides the pg-delta edge-runtime npm registry (`.npmrc` + `NPM_CONFIG_REGISTRY` forward) for the migrations-catalog cache export (scoped for the whole run via `legacyApplyProjectEnv`, matching `db push`)                                                            | no (project `.env` or shell)                            |
@@ -158,6 +157,7 @@ the whole reset** (not just "skip buckets").
 | `1`  | drop / migrate / seed / vault apply failure, or connection error                                                                           |
 | `1`  | no `[db.migrations].schema_paths` pattern matched anything on the `--experimental` branch, either target                                   |
 | `1`  | local: container/volume remove, network/volume/container create, health-check timeout, PG14 SQL, satellite-restart, or Kong-reload failure |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                                                                   |
 
 There is no remaining Go child on either target (CLI-1955 removed it for local,
 CLI-1958 for remote) — every failure is a native, typed TS error surfaced as `1`.
@@ -165,19 +165,18 @@ CLI-1958 for remote) — every failure is a native, typed TS error surfaced as `
 ## Output
 
 The remote path prints `Resetting remote database…` to **stderr**, then either the
-schema-files branch's apply (no per-file progress — Go's `applySchemaFiles` prints
-nothing, CLI-1958) or the migrate/seed progress (`Applying migration …`, `Seeding
-data from …`). Go connects with `io.Discard`, so there is **no** `Connecting to …
-database…` line and **no** `Finished …` line on the remote path.
+schema-files branch's apply (no per-file progress, CLI-1958) or the migrate/seed
+progress (`Applying migration …`, `Seeding data from …`). There is **no**
+`Connecting to … database…` line and **no** `Finished …` line on the remote path.
 
 The local path prints `Resetting local database…` to **stderr**, then
 `Recreating database...` (PG15) or nothing extra (PG14, until the restart step) /
 `Restarting containers...` progress, and finally `Finished supabase db reset on
 branch <branch>.` (`supabase db reset` and `<branch>` in Aqua).
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-Byte-matches Go's stderr progress for both the remote and local paths, including the
+Stderr progress for both the remote and local paths, including the
 silent (no-progress-line) `--experimental` schema-files apply.
 
 ### `--output-format json` / `stream-json`
@@ -194,13 +193,22 @@ path has no confirmation prompt.
 
 ## Notes
 
-- **Target/local split** follows Go's `IsLocalDatabase(resolved config)`, not the
-  flag name: a `--db-url` pointing at the local stack is treated as a local reset.
+- **Target/local split** follows whether the resolved config points at the local
+  stack, not the flag name: a `--db-url` pointing at the local stack is treated
+  as a local reset.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
+  command) overrides ONLY the linked-ref resolution `LegacyProjectRefResolver`
+  performs (flag > `SUPABASE_PROJECT_ID` > `~/.supabase/<hash>/project-ref`) —
+  unlike `SUPABASE_PROJECT_ID`, it does not affect the local container id. It
+  never implies `--linked`: passing it with a resolved `--local`/`--db-url`
+  target is a hard error rather than a silently discarded flag (deliberately
+  stricter than `SUPABASE_PROJECT_ID`, which simply goes unused on a
+  non-linked target).
 - **Pipeline-incompatible statements** (`CREATE INDEX CONCURRENTLY`, `VACUUM`, …) run
   standalone outside the per-file transaction batch, with the same non-atomic flush
   behaviour as `db push` — see `db push`'s SIDE_EFFECTS Notes (supabase/cli#5139,
-  closed Go PR supabase/cli#5156, CLI-1989 parity ruling).
-- `--no-seed` forces seeding off (Go sets `Config.Db.Seed.Enabled = false`); on the
+  adopted into TS in PR supabase/cli#5671).
+- `--no-seed` forces seeding off; on the
   local path it feeds `legacyResolveResetSeedConfig`, applied on top of the loaded
   `[db.seed]` config inside the recreate's own `MigrateAndSeed` step (same override
   logic on both PG14 and PG15).
@@ -208,29 +216,31 @@ path has no confirmation prompt.
   even when `[db.seed].enabled = false`; repeat it to seed multiple files or glob
   patterns (supabase-relative). Mutually exclusive with `--no-seed`. On the local path
   it is applied the same way as `--no-seed` above; on the remote path it seeds the
-  selected database after migrations (Go warns when paired with `--linked` / `--db-url`).
+  selected database after migrations (a warning is printed when paired with
+  `--linked` / `--db-url`).
 - `--last n` reverts the most recent `n` migrations; if `n ≥ total`, the reset target
   version becomes `-` (revert everything). Mutually exclusive with `--version`.
 - `--db-url`, `--linked`, and `--local` (default true) are mutually exclusive.
-- **`--experimental` schema-files apply** (Go's `apply.MigrateAndSeed` EXPERIMENTAL
-  branch, `apps/cli-go/internal/migration/apply/apply.go:19,51-68`) is taken on
+- **`--experimental` schema-files apply** (the `MigrateAndSeed` EXPERIMENTAL
+  branch) is taken on
   EITHER target when `--experimental`/`SUPABASE_EXPERIMENTAL` is set, no
   `--version`/`--last` resolved a version, AND `[experimental.pgdelta].enabled` is
-  NOT set. A hard `if`/`else if` in Go — taking this branch means timestamped
+  NOT set. Taking this branch means timestamped
   migrations never run at all, even when `[db.migrations].schema_paths` matches
-  nothing. Faithfully reproduces two undocumented Go quirks: (1) the `schema_paths`
+  nothing. Faithfully reproduces two undocumented quirks inherited from the old
+  Go CLI: (1) the `schema_paths`
   default is `[]`, so a stock project running an experimental reset silently applies
   NOTHING (drops schemas, seeds, but replays no SQL) rather than falling back to
   migrations; (2) a partial glob failure (some patterns match, others don't) is
   silently dropped — only a TOTAL failure (no pattern matches anything) aborts the
-  reset, with Go's joined `no files matched pattern: …` text and no `CmdSuggestion`.
-  A per-file apply failure attaches Go's `See schema file: <file>` suggestion. No
-  progress line is printed per file (Go's `applySchemaFiles` has no output), no
+  reset, with the joined `no files matched pattern: …` text and no suggestion.
+  A per-file apply failure attaches a `See schema file: <file>` suggestion. No
+  progress line is printed per file, no
   migration-history row is inserted, and no `RESET ALL` runs between files. Seeding
   still runs afterward, unconditionally, exactly as on the migrations branch. The
   local target's branch was already native before this port (`legacyMigrateAndSeed`,
   reused by both the PG14 and PG15 recreate branches, already implements this exact
-  Go branch); CLI-1958 ports the remote target's copy of the same branch
+  branch); CLI-1958 ports the remote target's copy of the same branch
   (`legacyApplySchemaFiles`), removing the last Go delegation on this command.
   `encrypted:` vault secrets are NOT skipped on the remote path — `legacyCheckDbToml`
   decrypts them into `toml.vault`, and `legacyUpsertVaultSecrets` upserts the
@@ -239,13 +249,11 @@ path has no confirmation prompt.
 - **Migrations catalog cache**: gated on BOTH no `--version`/`--last` having resolved
   a version AND pg-delta being enabled (`[experimental.pgdelta].enabled` or
   `SUPABASE_EXPERIMENTAL_PG_DELTA` — see Environment Variables); a versioned reset
-  never refreshes the cache, matching Go's own `len(version) > 0` no-op inside
-  `TryCacheMigrationsCatalog` itself. A failure only warns on stderr and never fails
-  the reset, matching Go exactly. Writes under `supabase/.temp/pgdelta/` (see Files
+  never refreshes the cache. A failure only warns on stderr and never fails
+  the reset. Writes under `supabase/.temp/pgdelta/` (see Files
   Written), pruning older snapshots for the same prefix (retains 2). Native TS on
   BOTH paths now, on different call chains:
-  - **Remote path** (ported CLI-1958): Go's best-effort `down.ResetAll` →
-    `pgcache.TryCacheMigrationsCatalog` (`down.go:48-61`), after either apply branch
+  - **Remote path** (ported CLI-1958): after either apply branch
     (schema-files or migrations) and seeding complete. Exports the target's pg-delta
     catalog via the edge-runtime stack. Reuses `legacyExportCatalogPgDelta` and
     `legacyTryCacheMigrationsCatalog` — the same helpers `db push` uses for its own
@@ -266,6 +274,5 @@ path has no confirmation prompt.
   (those two commands shelling out to a second `supabase-go` child via the now-removed
   `LegacyDeclarativeSeam.execInherit`) is closed. That in-process call collapses to a
   single telemetry/linked-project-cache finalizer cycle (the outer `db schema
-declarative`/`sync` command's own), matching Go's single-process `reset.Run` call —
-  the removed subprocess design used to fire a second, independent one from the child
-  process's own `Execute()`.
+declarative`/`sync` command's own) — the removed subprocess design used to fire a
+  second, independent one from the child process's own execution.

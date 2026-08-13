@@ -5,13 +5,14 @@ script run inside the local Postgres image to stdout or `--file`.
 
 ## Files Read
 
-| Path                              | Format     | When                                                        |
-| --------------------------------- | ---------- | ----------------------------------------------------------- |
-| `supabase/config.toml`            | TOML       | always (db port/password/major_version, project_id)         |
-| `supabase/.temp/postgres-version` | plain text | always (best-effort) — pins the pg image tag when present   |
-| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable (pooler URL) |
-| `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset               |
-| `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)  |
+| Path                              | Format     | When                                                                                                                                         |
+| --------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `supabase/config.toml`            | TOML       | always (db port/password/major_version, project_id)                                                                                          |
+| `supabase/.temp/postgres-version` | plain text | always (best-effort) — pins the pg image tag when present                                                                                    |
+| `supabase/.temp/pooler-url`       | plain text | `--linked` when the direct host is unreachable (pooler URL)                                                                                  |
+| `~/.supabase/access-token`        | plain text | `--linked` when `SUPABASE_ACCESS_TOKEN` unset                                                                                                |
+| `supabase/.temp/project-ref`      | plain text | `--linked` (and the default target) ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`/config.toml `project_id`) is set |
+| `supabase/.env*`                  | dotenv     | always (project env, feeds `SUPABASE_DB_PASSWORD` / `PG*`)                                                                                   |
 
 ## Files Written
 
@@ -44,41 +45,47 @@ script run inside the local Postgres image to stdout or `--file`.
 | ---- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `0`  | success                                                                                                                             |
 | `1`  | `--use-copy`/`--exclude` without `--data-only`; mutually-exclusive flags; bad `--file` path; connection failure; container exit ≠ 0 |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes / Divergences)                                              |
 
 ## Output
 
-SQL goes to **stdout** (or `--file`) in **all** `--output-format` modes — Go has
-no `--output-format` for `db dump`, so there is no machine envelope (same
-rationale as `test db`). Diagnostics go to **stderr**: `Dumping {schemas|data|
-roles} from {local|remote} database...`, the `--dry-run` notice, and the
-`Dumped schema to <abs>.` confirmation when `--file` is used. `--dry-run` prints
-the env-expanded script to stdout without running a container; with `--file` it
-still prints the `Dumped schema to <abs>.` confirmation (Go's PostRun fires on the
-successful dry-run) but does **not** create or truncate the file.
+SQL goes to **stdout** (or `--file`) in **all** `--output-format` modes — there is
+no machine envelope for `db dump` (same rationale as `test db`). Diagnostics go
+to **stderr**: `Dumping {schemas|data| roles} from {local|remote} database...`,
+the `--dry-run` notice, and the `Dumped schema to <abs>.` confirmation when
+`--file` is used. `--dry-run` prints the env-expanded script to stdout without
+running a container; with `--file` it still prints the `Dumped schema to <abs>.`
+confirmation on a successful dry-run but does **not** create or truncate the file.
 
 On a linked dump whose container fails with an IPv6 connectivity error (no IPv4
 pooler retry available, or the retry also fails), the error is followed on stderr by
-the IPv4 transaction-pooler suggestion (Go's `SetConnectSuggestion`/`ipv6Suggestion`).
+the IPv4 transaction-pooler suggestion.
 
 > **Credential warning:** `--dry-run` expands the pg_dump script with live env
 > values, so the resolved `PGPASSWORD` (for a remote/linked project, the database
-> password) is printed **in cleartext** to stdout. This matches Go's `noExec`
-> (`internal/db/dump/dump.go`), but operators piping `--dry-run` output to logs or
-> CI artifacts should treat that output as a secret.
+> password) is printed **in cleartext** to stdout. Operators piping `--dry-run`
+> output to logs or CI artifacts should treat that output as a secret.
 
 ## Notes / Divergences
 
 - `--data-only` XOR `--role-only`; `--keep-comments` XOR `--data-only`;
   `--schema` XOR `--role-only`; `--db-url` XOR `--linked` XOR `--local`.
   `--use-copy` / `--exclude` require `--data-only`. `--linked` defaults to true.
-- **Container-level pooler fallback is ported** (`RunWithPoolerFallback`,
-  `internal/db/dump/pooler_fallback.go`). When a linked dump reaches the direct host
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
+  command) overrides ONLY the linked-ref resolution used for the connection and
+  the linked-project cache (flag > `SUPABASE_PROJECT_ID`/config.toml
+  `project_id` > `.temp/project-ref`) — it does not affect any local container
+  id. It never implies `--linked`: passing it with a resolved
+  `--local`/`--db-url` target is a hard error rather than a silently discarded
+  flag (deliberately stricter than `SUPABASE_PROJECT_ID`, which Go's equivalent
+  env var simply leaves unused on a non-linked target).
+- **Container-level pooler fallback.** When a linked dump reaches the direct host
   from the host process but the `pg_dump` container fails over IPv6, the captured
   container stderr is classified (`legacyIsIPv6ConnectivityError`) and the dump is
   retried once through the project's IPv4 transaction pooler
   (`resolver.resolvePoolerFallback`). This is in addition to the resolver's
   connect-time pooler fallback for an unreachable direct host.
-  - Remaining divergence: on the no-fallback / failed-retry path, the IPv6
-    suggestion uses the generic `ipv6Suggestion()` text rather than Go's
-    `SuggestIPv6Pooler`, which prefills the project's specific pooler connection
-    string. Surfacing that exact URL needs the pooler string exposed at this seam.
+  - Remaining limitation: on the no-fallback / failed-retry path, the IPv6
+    suggestion uses the generic `ipv6Suggestion()` text rather than one that
+    prefills the project's specific pooler connection string. Surfacing that
+    exact URL needs the pooler string exposed at this seam.

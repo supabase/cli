@@ -18,7 +18,7 @@ export interface LegacyStartServiceMeta {
    */
   readonly imageConfigField: string;
   /**
-   * The condition under which Go starts this service, expressed as a
+   * The condition under which `start` brings up this service, expressed as a
    * `config.toml` dotted-path boolean expression, or one of the sentinels
    * `"always"` (Postgres, unconditional) / `"none"` (gated only by
    * `!excluded`, e.g. Kong).
@@ -37,10 +37,8 @@ export interface LegacyStartServiceEntry
   extends LegacyServiceCatalogEntry, LegacyStartServiceMeta {}
 
 /**
- * Source: the approved start-port plan's per-service table, cross-referenced
- * against `apps/cli-go/internal/start/start.go`'s per-service `if` blocks
- * (lines 293-1267) and `pkg/config/config.go`'s image field resolution.
- * Keyed by `LEGACY_SERVICE_CATALOG`'s `service` field.
+ * Per-service enabled-gate expression and image config field, keyed by
+ * `LEGACY_SERVICE_CATALOG`'s `service` field.
  */
 const START_SERVICE_META_BY_SERVICE: ReadonlyMap<string, LegacyStartServiceMeta> = new Map([
   ["postgres", { imageConfigField: "db.image", enabledGate: "always" }],
@@ -88,7 +86,8 @@ export function legacyStartServiceMeta(service: string): LegacyStartServiceMeta 
 /**
  * `LEGACY_SERVICE_CATALOG`, augmented with this file's orchestration metadata.
  * Preserves the catalog's `startOrder` ordering — `start.handler.ts` can
- * iterate this array directly to bring services up in Go's real sequence.
+ * iterate this array directly to bring services up in the real
+ * container-start sequence.
  */
 export const LEGACY_START_SERVICES: ReadonlyArray<LegacyStartServiceEntry> =
   LEGACY_SERVICE_CATALOG.map((entry) => {

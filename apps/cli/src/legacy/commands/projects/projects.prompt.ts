@@ -19,9 +19,8 @@ const mapOrgsListError = mapLegacyHttpError({
   statusMessage: (status, body) => `Unexpected error retrieving organizations: ${body} (${status})`,
 });
 
-// Region codes offered in the interactive prompt. Mirrors the `supabase`
-// profile's `ProjectRegions` (`apps/cli-go/internal/utils/profile.go:37-56`),
-// in the same order, which also matches the `--region` enum.
+// Region codes offered in the interactive prompt, in the established order,
+// which also matches the `--region` enum.
 const REGION_CODES = [
   "ap-east-1",
   "ap-northeast-1",
@@ -44,9 +43,8 @@ const REGION_CODES = [
 ] as const;
 
 /**
- * Reproduces Go's `promptProjectName` (`create.go:87-95`): read a line; a
- * non-empty value is the project name, otherwise fail with "project name
- * cannot be empty".
+ * Reads a line; a non-empty value is the project name, otherwise fail with
+ * "project name cannot be empty".
  */
 export const legacyPromptProjectName = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -60,10 +58,8 @@ export const legacyPromptProjectName = Effect.fnUntraced(function* () {
 });
 
 /**
- * Reproduces Go's `promptOrgId` (`create.go:97-115`): list the user's
- * organizations and prompt for one. Go's `PromptItem` uses `Summary: org.Name`,
- * `Details: org.Id` and returns `Details` (the org id), which is then sent as
- * `organization_slug`.
+ * Lists the user's organizations and prompts for one. The prompt shows the
+ * org name and returns the org id, which is then sent as `organization_slug`.
  */
 export const legacyPromptOrgId = Effect.fnUntraced(function* () {
   const output = yield* Output;
@@ -81,15 +77,13 @@ export const legacyPromptOrgId = Effect.fnUntraced(function* () {
 });
 
 /**
- * Reproduces Go's `promptProjectRegion` (`create.go:117-131`): prompt for a
- * region; the selection value is the region code, the display detail is the
- * human-readable name.
+ * Prompts for a region; the selection value is the region code, the display
+ * detail is the human-readable name.
  */
 export const legacyPromptProjectRegion = Effect.fnUntraced(function* () {
   const output = yield* Output;
-  // Go's `PromptItem{Summary: code, Details: human-name}` renders the region
-  // code as the primary label and the friendly name as the description
-  // (`create.go:117-131`). Mirror that ordering.
+  // Established prompt layout: the region code renders as the primary label
+  // and the friendly name as the description.
   const options = REGION_CODES.map((code) => ({
     value: code,
     label: code,
@@ -107,14 +101,11 @@ export const legacyPromptProjectRegion = Effect.fnUntraced(function* () {
 });
 
 const PASSWORD_LENGTH = 16;
-// Go's `config.LowerUpperLettersDigits.ToChar()` is
-// "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"; `db_url.go`
-// strips the `:` separators, leaving lower + upper + digits (62 chars).
+// Established charset: lower + upper + digits (62 chars), no separators.
 const PASSWORD_CHARSET = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
 
 /**
- * Reproduces Go's blank-password fallback in `flags.PromptPassword`
- * (`db_url.go:238-257`): generate a 16-character password from the
+ * Blank-password fallback: generates a 16-character password from the
  * lower+upper+digits charset using a CSPRNG.
  */
 export function generateDbPassword(): string {
@@ -126,8 +117,7 @@ export function generateDbPassword(): string {
 }
 
 /**
- * Reproduces Go's `flags.PromptPassword` (`db_url.go:238-257`): prompt for a
- * masked database password; a blank entry generates one.
+ * Prompts for a masked database password; a blank entry generates one.
  */
 export const legacyPromptDbPassword = Effect.fnUntraced(function* () {
   const output = yield* Output;

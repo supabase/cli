@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { candidateCleanupTargets } from "./cleanup.ts";
-import { dockerContainerName } from "./CleanupTargets.ts";
+import { basename, dirname, join } from "node:path";
+import { candidateCleanupTargets, cleanupAutoManagedPaths } from "./cleanup.ts";
+import { dockerContainerName } from "./StackIdentity.ts";
 import { runForegroundOperation, type StackHandle } from "./createStack.ts";
 import { StackReadinessError } from "./errors.ts";
 import type { AllocatedPorts } from "./PortAllocator.ts";
-import { DEFAULT_MANAGED_STACK_NAME, projectKeyForProjectDir } from "./paths.ts";
+import {
+  DEFAULT_MANAGED_STACK_NAME,
+  projectKeyForProjectDir,
+  shortTempPrefixRoot,
+} from "./paths.ts";
 import { stackMetadata } from "./StackMetadata.ts";
 import type {
   AuthConfig,
@@ -335,10 +339,42 @@ describe("candidateCleanupTargets", () => {
 
     expect(candidateCleanupTargets(config)).toEqual({
       dockerContainerNames: [
-        dockerContainerName("postgres", config.apiPort),
-        dockerContainerName("postgrest", config.apiPort),
+        dockerContainerName("postgres", String(config.apiPort)),
+        dockerContainerName("postgrest", String(config.apiPort)),
       ],
     });
+  });
+
+  it("keys fallback Docker identities by the stack's own identity when it has one", async () => {
+    const instanceId = "0f9d2b3c-4a5e-4c7d-8e9f-1a2b3c4d5e6f";
+    const config = await resolveConfig({ mode: "docker", instanceId });
+
+    expect(config.instanceId).toBe(instanceId);
+    const { dockerContainerNames } = candidateCleanupTargets(config);
+    expect(dockerContainerNames).toContain(dockerContainerName("postgres", `id-${instanceId}`));
+    for (const name of dockerContainerNames) {
+      expect(name).not.toContain(String(config.apiPort));
+    }
+  });
+});
+
+describe("resolveConfig instanceId validation", () => {
+  it("rejects an instanceId that is not Docker-name-safe", async () => {
+    await expect(resolveConfig({ instanceId: "../bad:id" })).rejects.toMatchObject({
+      _tag: "StackBuildError",
+      reason: "invalid_config",
+    });
+  });
+
+  it("accepts a managed stack's UUID instanceId", async () => {
+    const instanceId = "0f9d2b3c-4a5e-4c7d-8e9f-1a2b3c4d5e6f";
+    const config = await resolveConfig({ instanceId });
+    expect(config.instanceId).toBe(instanceId);
+  });
+
+  it("leaves instanceId undefined when omitted", async () => {
+    const config = await resolveConfig();
+    expect(config.instanceId).toBeUndefined();
   });
 });
 
@@ -351,6 +387,27 @@ describe("resolveConfig startup mode", () => {
   it("preserves an explicit lazy startup mode", async () => {
     const config = await resolveConfig({ startupMode: "lazy" });
     expect(config.startupMode).toBe("lazy");
+  });
+});
+
+describe("resolveConfig state roots", () => {
+  it("uses disposable temporary roots when direct callers omit them", async () => {
+    const config = await resolveConfig({ startupMode: "lazy" });
+
+    try {
+      expect(config.autoManagedPaths).toEqual([config.stackRoot, config.runtimeRoot]);
+      expect(dirname(config.stackRoot)).toBe(shortTempPrefixRoot());
+      expect(dirname(config.runtimeRoot)).toBe(shortTempPrefixRoot());
+      expect(basename(config.stackRoot)).toMatch(/^sb-stack-/);
+      expect(basename(config.runtimeRoot)).toMatch(/^sb-run-/);
+      expect(existsSync(config.stackRoot)).toBe(true);
+      expect(existsSync(config.runtimeRoot)).toBe(true);
+    } finally {
+      cleanupAutoManagedPaths(config);
+    }
+
+    expect(existsSync(config.stackRoot)).toBe(false);
+    expect(existsSync(config.runtimeRoot)).toBe(false);
   });
 });
 

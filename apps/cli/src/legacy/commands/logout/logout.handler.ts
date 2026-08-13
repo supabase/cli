@@ -14,8 +14,8 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
   const output = yield* Output;
   const credentials = yield* LegacyCredentials;
   const telemetryState = yield* LegacyTelemetryState;
-  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320): Go
-  // reads it before scanning stdin, so the env var auto-confirms logout too.
+  // `--yes` OR `SUPABASE_YES` (`viper.GetBool("YES")`, root.go:318-320): this is
+  // read before scanning stdin, so the env var auto-confirms logout too.
   const yes = yield* legacyResolveYes;
 
   const confirmLabel =
@@ -30,10 +30,10 @@ export const legacyLogout = Effect.fn("legacy.logout")(function* () {
       if (!yes && output.format !== "text") {
         return yield* output.promptConfirm(confirmLabel, { defaultValue: false });
       }
-      // Mirrors Go's `PromptYesNo(..., false)` (`logout.go:16`): `--yes`/
+      // Mirrors `PromptYesNo(..., false)` (`logout.go:16`): `--yes`/
       // `SUPABASE_YES` auto-confirms WITH the `<label> [y/N] y` stderr echo
-      // (`console.go:70-72`) — do not short-circuit before the helper, or the
-      // echo line Go always prints goes missing (CLI-1974). Without `--yes` it
+      // (`console.go:70-72`) — do not short-circuit before the helper, or that
+      // echo line goes missing (CLI-1974). Without `--yes` it
       // scans piped stdin before falling back to the default (`console.go:64-82`),
       // so `printf 'y\n' | supabase logout` deletes the token.
       return yield* legacyPromptYesNo(output, yes, confirmLabel, false);

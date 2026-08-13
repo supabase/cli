@@ -70,7 +70,7 @@ const HEALTHY = [{ name: "db", healthy: true, status: "ACTIVE_HEALTHY" }];
 // the case the rest of the suite never covers: when the workdir comes from the prompt,
 // `cliConfig.workdir` (the cwd-walk result) diverges from the bootstrap workdir, and the
 // cache must follow the bootstrap workdir so `linked-project.json` lands beside
-// `project-ref` (matching Go's `flags.LoadConfig` after `ChangeWorkDir`).
+// `project-ref` (matching the established config-load-after-chdir ordering).
 describe("legacy bootstrap linked-project cache location", () => {
   it.live(
     "writes linked-project.json into the prompted bootstrap workdir, not cliConfig.workdir",
@@ -88,8 +88,8 @@ describe("legacy bootstrap linked-project cache location", () => {
       mkdirSync(migrationsDir, { recursive: true });
       writeFileSync(join(migrationsDir, "20240101000000_test.sql"), "create table t ();");
       // Also pre-seed `supabase/roles.sql` so the push step's `includeRoles: true`
-      // (bootstrap always passes it, matching Go's `push.Run(..., true, true, ...)`)
-      // is actually pinned under test — without a roles.sql file present, the
+      // (bootstrap always passes it) is actually pinned under test — without a
+      // roles.sql file present, the
       // custom-roles branch is a no-op and `includeRoles`'s value is unasserted.
       writeFileSync(join(bootstrapWorkdir, "supabase", "roles.sql"), "create role app;");
 
@@ -210,8 +210,8 @@ describe("legacy bootstrap linked-project cache location", () => {
         Layer.provide(configLayer),
         Layer.provide(credentials.layer),
         Layer.provide(api.httpClientLayer),
-        // The cache GET stitches identity from X-Gotrue-Id (Go's identityTransport)
-        // via the single `LegacyIdentityStitch` service. Consent "denied" makes the
+        // The cache GET stitches identity from X-Gotrue-Id (the established
+        // identityTransport) via the single `LegacyIdentityStitch` service. Consent "denied" makes the
         // stitch a no-op so this workdir-caching test's assertions are unchanged.
         Layer.provide(
           legacyIdentityStitchLayer.pipe(
@@ -220,7 +220,7 @@ describe("legacy bootstrap linked-project cache location", () => {
             Layer.provide(BunServices.layer),
           ),
         ),
-        // The cache also fires org/project groupIdentify (Go parity), reading
+        // The cache also fires org/project groupIdentify, reading
         // Analytics directly.
         Layer.provide(mockAnalytics().layer),
         Layer.provide(BunServices.layer),

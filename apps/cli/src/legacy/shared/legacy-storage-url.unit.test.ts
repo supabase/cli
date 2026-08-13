@@ -10,7 +10,6 @@ import {
   legacyStorageIsDir,
 } from "./legacy-storage-url.ts";
 
-// Oracle: apps/cli-go/internal/storage/client/scheme_test.go
 describe("legacyParseStorageUrl", () => {
   it("parses a valid url to its path", () => {
     expect(legacyParseStorageUrl("ss:///bucket/folder/name.png")).toBe("/bucket/folder/name.png");

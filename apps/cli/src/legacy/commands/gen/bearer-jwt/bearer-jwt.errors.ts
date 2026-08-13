@@ -20,15 +20,12 @@ export function legacyBearerJwtErrorMessage(cause: unknown): string {
 }
 
 /**
- * Go marks `--role` required (`cmd/gen.go:175`), but cobra's `ValidateRequiredFlags`
- * runs only AFTER `PersistentPreRunE` — which is where telemetry gets set up and later
- * flushed (`cobra@v1.10.2/command.go:985,1007`). Enforced in the handler (after the
- * telemetry-flushing wrapper is already active) rather than at parse time, so this
- * failure still flushes `telemetry.json` like Go does. Byte-matches cobra's exact
- * `required flag(s) "role" not set` wording, with no usage block (`SilenceUsage` is
- * already set by the time `ValidateRequiredFlags` runs) and no `"Error: "` prefix
- * (`cmd/root.go`'s `SilenceErrors: true` means cobra never prints its own prefix;
- * `recoverAndExit` prints the bare message) — verified against the real binary.
+ * `--role` is required, but required-flag validation runs only AFTER the
+ * telemetry context is set up and later flushed. Enforced in the handler
+ * (after the telemetry-flushing wrapper is already active) rather than at
+ * parse time, so this failure still flushes `telemetry.json`. Established
+ * message text `required flag(s) "role" not set`, with no usage block and
+ * no `"Error: "` prefix.
  */
 export class LegacyGenBearerJwtRoleRequiredError extends Data.TaggedError(
   "LegacyGenBearerJwtRoleRequiredError",
@@ -72,8 +69,8 @@ export class LegacyGenBearerJwtDecodeError extends Data.TaggedError(
 }
 
 /**
- * Go's `getSigningKey` Branch A (`bearerjwt.go:46-50`): the pasted stdin JWK is not
- * valid JSON. Byte-matches `"failed to parse JWK: %w"`.
+ * Branch A: the pasted stdin JWK is not valid JSON. Established message
+ * `"failed to parse JWK: %w"`.
  */
 export class LegacyGenBearerJwtKeyParseError extends Data.TaggedError(
   "LegacyGenBearerJwtKeyParseError",
@@ -86,8 +83,8 @@ export class LegacyGenBearerJwtKeyParseError extends Data.TaggedError(
 }
 
 /**
- * Go's `getSigningKey` Branch B (`bearerjwt.go:67`): the entered kid matched no
- * configured signing key. Byte-matches `"signing key not found: %s"`.
+ * Branch B: the entered kid matched no configured signing key. Established
+ * message `"signing key not found: %s"`.
  */
 export class LegacyGenBearerJwtKeyNotFoundError extends Data.TaggedError(
   "LegacyGenBearerJwtKeyNotFoundError",
@@ -100,11 +97,9 @@ export class LegacyGenBearerJwtKeyNotFoundError extends Data.TaggedError(
 }
 
 /**
- * Go's `getSigningKey` Branch C (`bearerjwt.go:70-79`): the TTY key picker
- * (`utils.PromptChoice`, `internal/utils/prompt.go:120-140`) given ZERO available
- * keys quits immediately without ever letting the user select anything. Byte-matches
- * Go's bare, unwrapped `"user aborted"` — `getSigningKey` returns `PromptChoice`'s
- * error as-is, with no additional wrapping.
+ * Branch C: the TTY key picker given ZERO available keys quits immediately
+ * without ever letting the user select anything. Established bare,
+ * unwrapped message `"user aborted"`.
  */
 export class LegacyGenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
   "LegacyGenBearerJwtKeyPickerAbortedError",
@@ -117,8 +112,7 @@ export class LegacyGenBearerJwtKeyPickerAbortedError extends Data.TaggedError(
 }
 
 /**
- * Go's `parseClaims` payload merge (`cmd/gen.go:209-211`). Byte-matches
- * `"failed to parse payload: %w"`.
+ * `--payload` merge failure. Established message `"failed to parse payload: %w"`.
  */
 export class LegacyGenBearerJwtPayloadError extends Data.TaggedError(
   "LegacyGenBearerJwtPayloadError",
@@ -131,10 +125,9 @@ export class LegacyGenBearerJwtPayloadError extends Data.TaggedError(
 }
 
 /**
- * Go's `config.GenerateAsymmetricJWT` (`pkg/config/apikeys.go:88-113`) — unsupported
- * key type/curve/algorithm, or a kty-vs-alg mismatch caught at sign time. The message
- * is `legacySignJwtWithJwk`'s own text, surfaced verbatim (Go's `bearerjwt.Run`
- * returns this error bare, with no additional wrapping — `bearerjwt.go:27-30`).
+ * Unsupported key type/curve/algorithm, or a kty-vs-alg mismatch caught at
+ * sign time. The message is `legacySignJwtWithJwk`'s own text, surfaced
+ * verbatim, with no additional wrapping.
  */
 export class LegacyGenBearerJwtSignError extends Data.TaggedError("LegacyGenBearerJwtSignError")<{
   readonly message: string;

@@ -8,7 +8,8 @@ import {
 
 /**
  * `create extension if not exists pgtap` failed. Byte-matches Go's
- * `"failed to enable pgTAP: " + err` (`apps/cli-go/internal/db/test/test.go:70`).
+ * `"failed to enable pgTAP: " + err` (`apps/cli-go/internal/db/test/test.go:70`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  */
 export class LegacyTestDbEnablePgtapError extends Data.TaggedError("LegacyTestDbEnablePgtapError")<{
   readonly message: string;

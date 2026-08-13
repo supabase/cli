@@ -84,6 +84,7 @@ const flags: LegacyInspectConnectionFlags = {
   dbUrl: Option.none<string>(),
   linked: false,
   local: true,
+  projectRef: Option.none<string>(),
 };
 
 // All deprecated-alias handlers share the same factory-produced type.
@@ -96,9 +97,9 @@ interface AliasCase {
   readonly target: string;
 }
 
-// One row per deprecated alias: the cobra deprecation target text and the active
-// query it actually runs. `table-record-counts` is the Go inconsistency — it warns
-// "table-stats" but runs the index-stats query.
+// One row per deprecated alias: the deprecation target text and the active
+// query it actually runs. `table-record-counts` is the established inconsistency —
+// it warns "table-stats" but runs the index-stats query.
 const cases: ReadonlyArray<AliasCase> = [
   {
     alias: "cache-hit",

@@ -2,14 +2,14 @@
 
 ## Files Read
 
-Same auth and project-ref resolution chain as every Management-API legacy command.
+Same auth fallback chain as every Management-API legacy command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
-| Path                                           | Format | When                                                                     |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------------ |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                           | Format | When                                                         |
+| ---------------------------------------------- | ------ | ------------------------------------------------------------ |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                   | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -23,7 +23,7 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Environment Variables
 
-`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list`.
+`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list` (including the CLI-2167 PARENT-scoped resolution chain).
 
 ## Exit Codes
 
@@ -43,12 +43,12 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Output
 
-Honors both `--output {pretty,json,yaml,toml,env}` (Go) and `--output-format {text,json,stream-json}` (TS).
+Honors both `--output {pretty,json,yaml,toml,env}` and `--output-format {text,json,stream-json}`.
 
-In **text mode**, the header `Updated preview branch:` writes to **stderr** (Go `fmt.Fprintln(os.Stderr, …)`) followed by the single-row Glamour list-table on stdout.
+In **text mode**, the header `Updated preview branch:` writes to **stderr** followed by the single-row Glamour list-table on stdout.
 
-In Go encoder modes, the header goes to stderr followed by the encoded payload on stdout. In `--output-format json` / `stream-json`, a `success` event carries the payload.
+For `--output {json,yaml,toml,env}`, the header goes to stderr followed by the encoded payload on stdout. In `--output-format json` / `stream-json`, a `success` event carries the payload.
 
 ## Notes
 
-The upgrade-suggest call uses the branch's own resolved project ref (`legacyResolveBranchProjectRef`), matching Go's `update.go:26` (`pause.GetBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.
+The upgrade-suggest call uses the branch's own resolved project ref (`legacyResolveBranchProjectRef`) — not the parent `--project-ref` value — so the entitlements check is scoped to the branch's org.

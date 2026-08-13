@@ -1,17 +1,10 @@
 /**
- * Transcribed verbatim from the former
- * `apps/cli-go/internal/start/templates/custom_nginx.template` (Go
- * `//go:embed templates/custom_nginx.template`,
- * `apps/cli-go/internal/start/start.go:111-115`). `internal/start` (including
- * this template) was deleted outright as unreachable from the TS CLI
- * (CLI-1966); the last commit with it intact is a253ccba25c21356ccd33044c4474aecb77d1ae4
- * (https://github.com/supabase/cli/blob/a253ccba25c21356ccd33044c4474aecb77d1ae4/apps/cli-go/internal/start/templates/custom_nginx.template).
- * Unlike `kong.yml`, this file
- * is NOT parsed as a Go `text/template` — it's passed through unmodified into
- * the Kong container, where Kong's own openresty templating substitutes the
+ * The canonical custom_nginx.template body — this is the sole source of
+ * truth; do not hand-edit it. Unlike `kong.yml`, this file is NOT parsed as
+ * a `text/template` — it's passed through unmodified into the Kong
+ * container, where Kong's own openresty templating substitutes the
  * `${{VAR}}` placeholders (`LOG_LEVEL`, `NGINX_DAEMON`,
- * `NGINX_WORKER_PROCESSES`) from its own container env at boot. Do not
- * hand-edit the body — this is now the sole source of truth.
+ * `NGINX_WORKER_PROCESSES`) from its own container env at boot.
  *
  * The `\${{...}}` sequences below are literal Kong template syntax, not a JS
  * template-literal interpolation — the backslash escapes are required so this

@@ -598,6 +598,192 @@ describe("classifyCliErrorActionability", () => {
     expect(classifyCliErrorActionability(other).error_kind).toBe("unknown");
   });
 
+  // Managed registry errors are tagged errors that also declare a stable
+  // `code`: the tag routes them to an adapter generated from the package's
+  // tag/code map, and the code keys the verdict that adapter resolves.
+  // `managed-model.unit.test.ts` in `@supabase/stack` pins the real classes to
+  // the (tag, code) pairs reproduced here.
+  it.each([
+    [
+      "InvalidManagedIdentityError",
+      "INVALID_MANAGED_IDENTITY",
+      "managed_identity",
+      "invalid_input",
+    ],
+    ["InvalidManagedPortError", "MANAGED_INVALID_PORT", "managed_port", "invalid_config"],
+    [
+      "UnsafeManagedStackPathError",
+      "UNSAFE_MANAGED_STACK_PATH",
+      "bad_argument",
+      "impossible_state",
+    ],
+    // The operation pid and the pending-update guard are both internal
+    // invariants: the CLI supplies the pid, and only repository misuse can
+    // update an unpublished row.
+    [
+      "InvalidManagedOwnerPidError",
+      "MANAGED_INVALID_OWNER_PID",
+      "managed_owner_pid",
+      "impossible_state",
+    ],
+    [
+      "ManagedPendingStackUpdateError",
+      "MANAGED_PENDING_STACK_UPDATE",
+      "managed_pending_update",
+      "impossible_state",
+    ],
+    // Each of these five used to share a suffix with an unrelated failure, so
+    // distinct defects grouped together as repeats (CLI-2106).
+    [
+      "ManagedOperationInProgressError",
+      "MANAGED_OPERATION_IN_PROGRESS",
+      "managed_operation_in_progress",
+      "invalid_config",
+    ],
+    [
+      "ManagedOperationOwnershipError",
+      "MANAGED_OPERATION_OWNERSHIP_MISMATCH",
+      "managed_operation_ownership",
+      "invalid_config",
+    ],
+    [
+      "ManagedStackPublicationTimeoutError",
+      "MANAGED_STACK_PUBLICATION_TIMEOUT",
+      "managed_publication_timeout",
+      "invalid_config",
+    ],
+    [
+      "ManagedStackNotStoppedError",
+      "MANAGED_STACK_NOT_STOPPED",
+      "managed_stack_not_stopped",
+      "invalid_config",
+    ],
+    [
+      "ManagedRunningStackPortChangeError",
+      "MANAGED_RUNNING_STACK_PORT_CHANGE",
+      "managed_port_change",
+      "invalid_config",
+    ],
+  ])("classifies %s through its generated tag adapter", (tag, code, suffix, category) => {
+    const error = new Error("managed registry failure");
+    error.name = tag;
+    Object.defineProperty(error, "_tag", { value: tag });
+    Object.defineProperty(error, "code", { value: code });
+    const result = classifyCliErrorActionability(error);
+    expect(result.error_category).toBe(category);
+    expect(result.error_fingerprint).toBe(`tag:${tag}:${suffix}`);
+  });
+
+  // UNSUPPORTED_GIT_WORKSPACE is raised for at least three materially
+  // different causes (CLI-2107): running inside git metadata, malformed git
+  // metadata, and a reftable repository. Collapsing them into one fingerprint
+  // would group unrelated defects as repeats, so the adapter branches on the
+  // error's own typed `workspaceCause` field.
+  it("splits managed git workspace refusals by their structured cause", () => {
+    const insideGitDirectory = classifyCliErrorActionability({
+      _tag: "UnsupportedGitWorkspaceError",
+      path: "/private/project/.git",
+      reason: "Refusing to inspect a git directory as a workspace",
+      workspaceCause: "inside-git-directory",
+    });
+    expect(insideGitDirectory.error_category).toBe("invalid_input");
+    expect(insideGitDirectory.error_fingerprint).toBe(
+      "tag:UnsupportedGitWorkspaceError:managed_git_workspace_inside_git_directory",
+    );
+
+    const malformedMetadata = classifyCliErrorActionability({
+      _tag: "UnsupportedGitWorkspaceError",
+      path: "/private/project/.git",
+      reason: "The checkout has no readable HEAD",
+      workspaceCause: "malformed-metadata",
+    });
+    expect(malformedMetadata.error_fingerprint).toBe(
+      "tag:UnsupportedGitWorkspaceError:managed_git_workspace_malformed_metadata",
+    );
+
+    const reftable = classifyCliErrorActionability({
+      _tag: "UnsupportedGitWorkspaceError",
+      path: "/private/project/.git",
+      reason:
+        "Refusing a repository whose refs are stored in a reftable, which is not supported yet",
+      workspaceCause: "reftable",
+    });
+    expect(reftable.error_fingerprint).toBe(
+      "tag:UnsupportedGitWorkspaceError:managed_git_workspace_reftable",
+    );
+
+    expect(JSON.stringify(insideGitDirectory)).not.toContain("/private/project");
+  });
+
+  it("fingerprints workspaceCause without populating native Error.cause", () => {
+    const error = new (class extends Error {
+      readonly _tag = "UnsupportedGitWorkspaceError";
+      readonly code = "UNSUPPORTED_GIT_WORKSPACE";
+      readonly path = "/private/project/.git";
+      readonly reason = "metadata is inaccessible";
+      readonly workspaceCause = "metadata-inaccessible" as const;
+    })();
+    expect(error.cause).toBeUndefined();
+    expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
+      "tag:UnsupportedGitWorkspaceError:managed_git_workspace_metadata_inaccessible",
+    );
+  });
+
+  it("leaves an unregistered managed-shaped failure unclassified", () => {
+    const unrecognized = new Error("managed failure");
+    unrecognized.name = "ManagedFutureError";
+    Object.defineProperty(unrecognized, "_tag", { value: "ManagedFutureError" });
+    Object.defineProperty(unrecognized, "code", { value: "MANAGED_FUTURE_FAILURE" });
+    expect(classifyCliErrorActionability(unrecognized).error_kind).toBe("unknown");
+  });
+
+  // ManagedStackInitializationError wraps the real provisioning failure in
+  // `cause`; reporting the generic initialization verdict would lose it.
+  it("classifies the provisioning cause of a managed initialization failure", () => {
+    const wrapped = new Error("managed stack initialization failed");
+    wrapped.name = "ManagedStackInitializationError";
+    Object.defineProperty(wrapped, "_tag", { value: "ManagedStackInitializationError" });
+    Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
+    Object.defineProperty(wrapped, "cause", {
+      value: { _tag: "DockerPullError", image: "postgres", daemonDown: true },
+    });
+    expect(classifyCliErrorActionability(wrapped)).toEqual(
+      classifyCliErrorActionability({
+        _tag: "DockerPullError",
+        image: "postgres",
+        daemonDown: true,
+      }),
+    );
+  });
+
+  it("falls back to the managed initialization verdict for an opaque cause", () => {
+    const wrapped = new Error("managed stack initialization failed");
+    wrapped.name = "ManagedStackInitializationError";
+    Object.defineProperty(wrapped, "_tag", { value: "ManagedStackInitializationError" });
+    Object.defineProperty(wrapped, "code", { value: "MANAGED_STACK_INITIALIZATION_FAILED" });
+    Object.defineProperty(wrapped, "cause", { value: { detail: "opaque" } });
+    const result = classifyCliErrorActionability(wrapped);
+    expect(result.error_kind).toBe("user_actionable");
+    expect(result.suggested_command).toBe("supabase start");
+    expect(result.error_fingerprint).toBe(
+      "tag:ManagedStackInitializationError:managed_initialization",
+    );
+  });
+
+  it("classifies a managed cause nested inside a stack wrapper", () => {
+    const managed = new Error("port already reserved");
+    managed.name = "ManagedPortReservationError";
+    Object.defineProperty(managed, "_tag", { value: "ManagedPortReservationError" });
+    Object.defineProperty(managed, "code", { value: "MANAGED_PORT_ALREADY_RESERVED" });
+    const result = classifyCliErrorActionability({
+      _tag: "StackBuildError",
+      detail: "x",
+      cause: managed,
+    });
+    expect(result.error_category).toBe("invalid_config");
+    expect(result.error_fingerprint).toBe("tag:ManagedPortReservationError:port_conflict");
+  });
+
   it("classifies the preserved tagged cause of a StackError wrapper", () => {
     const wrapped = new Error("stack failure");
     wrapped.name = "StackError";

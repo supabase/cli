@@ -9,15 +9,13 @@ import {
 import { legacyGoPathSplit, legacySplitBucketPrefix } from "../../shared/legacy-storage-url.ts";
 
 /**
- * Pagination + BFS traversal shared by `storage ls/cp/mv/rm`, ported 1:1 from
- * `internal/storage/ls/ls.go`. The `callback` receives each entry name (or full
- * path, for the recursive variant); a directory entry has a trailing `/`. Errors
- * from the gateway or the callback short-circuit, exactly as Go's loop returns
- * the first error.
+ * Pagination + BFS traversal shared by `storage ls/cp/mv/rm`. The `callback`
+ * receives each entry name (or full path, for the recursive variant); a
+ * directory entry has a trailing `/`. Errors from the gateway or the
+ * callback short-circuit the loop, returning the first error.
  *
- * The `Loading page:` notice (Go `fmt.Fprintln(os.Stderr, "Loading page:", N)`)
- * is emitted only in text mode — json/stream-json consumers don't want the
- * pagination noise on stderr.
+ * The `Loading page:` notice is emitted only in text mode — json/stream-json
+ * consumers don't want the pagination noise on stderr.
  */
 
 /**

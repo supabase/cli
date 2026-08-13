@@ -9,8 +9,8 @@ import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
  * service.
  *
  * Returns `None` if no token is available. Callers that POST/PUT via the raw
- * `HttpClient.HttpClient` use this to build an `Authorization: Bearer` header
- * — typed-API-client callers don't need this because the API layer reads the
+ * `HttpClient.HttpClient` use this to build an `Authorization: Bearer` header —
+ * typed-API-client callers don't need this because the API layer reads the
  * token at layer-construction time. Shared between `sso add`, `sso update`,
  * and any future raw-HTTP handlers that need the same fallback order.
  *

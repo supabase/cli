@@ -1,7 +1,7 @@
 import * as nodePath from "node:path";
 
 /**
- * Pure path helper for `seed buckets` object upload, ported from Go's
+ * Pure path helper for `seed buckets` object upload, ported from
  * `UpsertObjects` (`apps/cli-go/pkg/storage/batch.go`). Content-type resolution
  * and the sniff read live in `legacy/shared/legacy-storage-content-type.ts`
  * (shared with `storage cp`); size parsing in
@@ -10,9 +10,9 @@ import * as nodePath from "node:path";
 
 /**
  * Destination object key for a local file, ported from `UpsertObjects`
- * (`batch.go:101-118`). Mirrors Go's `filepath.Rel(localPath, filePath)` +
+ * (`batch.go:101-118`). Mirrors `filepath.Rel(localPath, filePath)` +
  * `path.Join(name, …)`:
- *   - single-file `objects_path` (the file is the path itself, Go's `relPath == "."`)
+ *   - single-file `objects_path` (the file is the path itself, `relPath == "."`)
  *     → `<bucket>/<basename>`
  *   - otherwise → `<bucket>/<relative-posix-path>`
  *

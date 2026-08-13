@@ -24,9 +24,9 @@ import {
 
 /**
  * Every golden byte string in this file was captured from a scratch Go
- * program calling the Go CLI's own `utils.EncodeOutput`
- * (`apps/cli-go/internal/utils/output.go`) with BurntSushi toml v1.6.0 and
- * yaml.v3 v3.0.1 — the exact library versions pinned in `apps/cli-go/go.mod`.
+ * program calling the established `utils.EncodeOutput`
+ * with BurntSushi toml v1.6.0 and
+ * yaml.v3 v3.0.1 — the exact library versions pinned in the reference `go.mod`.
  */
 
 // Mirror of `api.BranchResponse` (apps/cli-go/pkg/api/types.gen.go).

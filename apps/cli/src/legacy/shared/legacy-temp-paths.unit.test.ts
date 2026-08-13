@@ -96,8 +96,8 @@ describe("legacyReadProjectRefFile", () => {
   });
 
   it.effect("fails with LegacyProjectRefReadError when the ref path is unreadable", () => {
-    // Go's LoadProjectRef returns `failed to load project ref` for a non-not-exist
-    // read error (project_ref.go:71-72). Seeding project-ref as a DIRECTORY makes the
+    // Returns `failed to load project ref` for a non-not-exist
+    // read error. Seeding project-ref as a DIRECTORY makes the
     // read fail with EISDIR (a non-NotFound PlatformError), so it must surface, not
     // collapse to "unlinked".
     const dir = mkdtempSync(join(tmpdir(), "legacy-ref-"));

@@ -28,10 +28,10 @@ export const legacyDomainsCreate = Effect.fn("legacy.domains.create")(function* 
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): write the
-  // linked-project cache and persist the telemetry state file on success and failure.
+  // Write the linked-project cache and persist the telemetry state file on
+  // success and failure.
   yield* Effect.gen(function* () {
-    // 1. Verify the CNAME first (Go step 1) — short-circuits before any POST.
+    // 1. Verify the CNAME first — short-circuits before any POST.
     yield* verifyLegacyCname({
       httpClient,
       projectHost: cliConfig.projectHost,

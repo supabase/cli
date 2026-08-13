@@ -1,6 +1,5 @@
 /**
- * Kong container spec builder — port of Go's "Start Kong" block
- * (`apps/cli-go/internal/start/start.go:486-627`), gated on
+ * Kong container spec builder, gated on
  * `!isContainerExcluded(config.api.kong_image, excluded)` (Kong has no
  * `enabled` flag of its own — it is the stack's mandatory gateway) — see
  * `legacy-service-catalog.ts`'s `kong` entry (`excludeKey: "kong"`). Gating and
@@ -9,65 +8,63 @@
  * decided to start it, matching `docker-create-args.ts`'s "image already
  * resolved/pulled" contract.
  *
- * How Go injects `kong.yml`/`custom_nginx.template`/the TLS cert+key into the
- * container (`start.go:588-601`): a single `sh -c` entrypoint script with
- * FOUR chained `cat <<'EOF' > <path> && \` heredocs (joined by shell
- * line-continuation into one logical command line), all four bodies —
- * including `kong.yml`'s embedded service-role-key-derived bearer/query
- * tokens and the TLS private key — landing directly in the container's own
- * `Cmd`. Safe for Go: it builds `container.Config` structs and calls
- * `Docker.ContainerCreate` over the Engine API directly, so that `Cmd` string
- * never becomes a subprocess's own argv. THIS PORT SHELLS OUT to a real
- * `docker create`, so it deliberately diverges here (CWE-214/522, `ps aux`/
- * `/proc/<pid>/cmdline`): `kong.yml` (the service-role key) and the TLS
- * cert/key (the highest-value secret — a private key) travel via
- * {@link LegacyStartContainerSpec.secretFiles} instead — a short-lived HOST
- * temp file, mode `0644` (world-readable — Kong's image runs its process as
- * uid 100 `kong`, a non-root user, and `docker cp`'s tar transfer preserves
- * the host file's mode verbatim, so `0600` would make it unreadable
- * in-container; see `legacyCopyStartSecretFileIntoContainer`'s doc comment),
- * `docker cp`'d straight into the container at the exact fixed paths
+ * How `kong.yml`/`custom_nginx.template`/the TLS cert+key get injected into
+ * the container: a single `sh -c` entrypoint script could chain FOUR
+ * `cat <<'EOF' > <path> && \` heredocs (joined by shell line-continuation
+ * into one logical command line), landing all four bodies — including
+ * `kong.yml`'s embedded service-role-key-derived bearer/query tokens and the
+ * TLS private key — directly in the container's own `Cmd`. THIS PORT SHELLS
+ * OUT to a real `docker create`, where that `Cmd` string would become a
+ * subprocess's own argv and leak via `ps aux`/`/proc/<pid>/cmdline`
+ * (CWE-214/522), so it deliberately diverges here: `kong.yml` (the
+ * service-role key) and the TLS cert/key (the highest-value secret — a
+ * private key) travel via {@link LegacyStartContainerSpec.secretFiles}
+ * instead — a short-lived HOST temp file, mode `0644` (world-readable —
+ * Kong's image runs its process as uid 100 `kong`, a non-root user, and
+ * `docker cp`'s tar transfer preserves the host file's mode verbatim, so
+ * `0600` would make it unreadable in-container; see
+ * `legacyCopyStartSecretFileIntoContainer`'s doc comment), `docker cp`'d
+ * straight into the container at the exact fixed paths
  * `KONG_DECLARATIVE_CONFIG`/`KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` already
  * reference — and never appear in this process's own argv. Only
- * `custom_nginx.template`, which carries no secret content, still travels via
- * the heredoc entrypoint script, matching Go exactly.
+ * `custom_nginx.template`, which carries no secret content, still travels
+ * via the heredoc entrypoint script.
  *
  * The TLS cert/key `secretFiles` entries are still ALWAYS present — never a
- * conditional bind — for the same reason Go always wrote them:
- * `KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` reference fixed in-container paths
- * unconditionally. Their content is never empty either: Go's `NewConfig`
- * seeds `Api.Tls.{CertContent,KeyContent}` with the embedded default
- * localhost cert/key (`pkg/config/config.go:452-455`), and only overwrites
- * them from disk when TLS is enabled AND both `cert_path`/`key_path` are
- * configured — see {@link LegacyKongContainerSpecInput.tlsCertContent}'s doc
- * comment. {@link legacyBuildKongEntrypointScript}
- * reproduces the remaining `custom_nginx.template` heredoc + exec line
- * byte-for-byte; see its doc comment for the exact shell mechanics.
+ * conditional bind — because `KONG_SSL_CERT`/`KONG_SSL_CERT_KEY` reference
+ * fixed in-container paths unconditionally. Their content is never empty
+ * either: the default config seeds `Api.Tls.{CertContent,KeyContent}` with
+ * the embedded default localhost cert/key, and only overwrites them from
+ * disk when TLS is enabled AND both `cert_path`/`key_path` are configured —
+ * see {@link LegacyKongContainerSpecInput.tlsCertContent}'s doc comment.
+ * {@link legacyBuildKongEntrypointScript} reproduces the remaining
+ * `custom_nginx.template` heredoc + exec line byte-for-byte; see its doc
+ * comment for the exact shell mechanics.
  *
- * Kong mints no JWTs of its own: `BearerToken`/`QueryToken` (`start.go:501-521`)
- * are Kong `request-transformer`/lua expression STRINGS built by
- * `fmt.Sprintf` from the four already-generated API keys
- * (`utils.Config.Auth.{SecretKey,ServiceRoleKey,PublishableKey,AnonKey}.Value`
- * — see `legacy-local-config-values.ts`'s `LegacyLocalConfigValues`, which
- * already resolves all four). {@link legacyBuildKongBearerToken}/
- * {@link legacyBuildKongQueryToken} reproduce those two `fmt.Sprintf` calls
- * exactly; nothing in this module calls `legacyGenerateGoJwt` itself.
+ * Kong mints no JWTs of its own: `BearerToken`/`QueryToken` are Kong
+ * `request-transformer`/lua expression STRINGS built from the four
+ * already-generated API keys (`secretKey`/`serviceRoleKey`/`publishableKey`/
+ * `anonKey` — see `legacy-local-config-values.ts`'s `LegacyLocalConfigValues`,
+ * which already resolves all four). {@link legacyBuildKongBearerToken}/
+ * {@link legacyBuildKongQueryToken} build those two strings; nothing in this
+ * module calls `legacyGenerateGoJwt` itself.
  */
 
 import * as nodePath from "node:path";
+import { legacyResolveNotificationContentPath } from "../../../shared/legacy-config-validate.ts";
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
 import { legacyRenderStartKongYml } from "../lib/template-render.ts";
 import { LEGACY_START_CUSTOM_NGINX_TEMPLATE } from "../templates/custom_nginx.template.ts";
 
-/** `utils.KongAliases` (`apps/cli-go/internal/utils/config.go:37`) — a fixed, non-configurable constant. */
+/** The Kong network aliases — a fixed, non-configurable constant. */
 const LEGACY_KONG_NETWORK_ALIASES = ["kong", "api.supabase.internal"];
 
-/** `nginxEmailTemplateDir` (`start.go:114`) — the fixed in-container directory email template mounts land in. */
+/** The fixed in-container directory email template mounts land in. */
 const LEGACY_KONG_NGINX_EMAIL_TEMPLATE_DIR = "/home/kong/templates/email";
 
-/** `nginxTemplateServerPort` (`start.go:115`) — the fixed port `custom_nginx.template`'s `email_templates` server listens on. */
+/** The fixed port `custom_nginx.template`'s `email_templates` server listens on. */
 const LEGACY_KONG_NGINX_TEMPLATE_SERVER_PORT = 8088;
 
 export interface LegacyKongApiKeys {
@@ -82,12 +79,10 @@ export interface LegacyKongApiKeys {
 }
 
 /**
- * Go's `BearerToken` (`start.go:501-514`): a Kong `request-transformer` lua
- * expression, NOT a JWT — forwards a caller's own `Bearer sb_...` Authorization
- * header verbatim, otherwise maps a matching `apikey` header to the
- * corresponding `Bearer <key>` value, falling back to echoing `apikey` as-is.
- * Reproduces the `fmt.Sprintf` call exactly, including argument order
- * (secretKey, serviceRoleKey, publishableKey, anonKey).
+ * The Kong bearer token: a Kong `request-transformer` lua expression, NOT a
+ * JWT — forwards a caller's own `Bearer sb_...` Authorization header
+ * verbatim, otherwise maps a matching `apikey` header to the corresponding
+ * `Bearer <key>` value, falling back to echoing `apikey` as-is.
  */
 export function legacyBuildKongBearerToken(apiKeys: LegacyKongApiKeys): string {
   return (
@@ -99,10 +94,10 @@ export function legacyBuildKongBearerToken(apiKeys: LegacyKongApiKeys): string {
 }
 
 /**
- * Go's `QueryToken` (`start.go:515-521`): the same mapping as
- * {@link legacyBuildKongBearerToken}, applied to the `apikey` query parameter
- * instead of a header, and without the `Bearer sb_...` passthrough branch
- * (there is no equivalent "already a query-string bearer" case).
+ * The Kong query token: the same mapping as {@link legacyBuildKongBearerToken},
+ * applied to the `apikey` query parameter instead of a header, and without
+ * the `Bearer sb_...` passthrough branch (there is no equivalent "already a
+ * query-string bearer" case).
  */
 export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
   return (
@@ -113,17 +108,14 @@ export function legacyBuildKongQueryToken(apiKeys: LegacyKongApiKeys): string {
 }
 
 /**
- * Go's `envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1")` (`start.go:583`,
- * helper at `start.go:1464-1471`): the operator's own shell value wins when
- * set (e.g. `KONG_NGINX_WORKER_PROCESSES=auto` for one worker per CPU core),
- * otherwise Go's default of a single worker to minimize local-stack memory
- * usage (Ref: supabase/cli#1271). By the time Go's `os.LookupEnv` runs here,
- * `Config.Load` has already merged any project dotenv file into the real
- * process env (`loadEnvIfExists`/`godotenv.Load`) — `projectEnvValues` is
- * this port's equivalent merged (dotenv + ambient shell, ambient-wins) view,
- * so a `KONG_NGINX_WORKER_PROCESSES` set only in a project dotenv file (not
- * the ambient shell) is honored too, matching Storage's identical
- * `VECTOR_*`-env handling (`storage.service.ts`). Kept separate from
+ * `KONG_NGINX_WORKER_PROCESSES`, env-or-default: the operator's own shell
+ * value wins when set (e.g. `KONG_NGINX_WORKER_PROCESSES=auto` for one
+ * worker per CPU core), otherwise a default of a single worker to minimize
+ * local-stack memory usage (Ref: supabase/cli#1271). `projectEnvValues` is
+ * the merged (dotenv + ambient shell, ambient-wins) view, so a
+ * `KONG_NGINX_WORKER_PROCESSES` set only in a project dotenv file (not the
+ * ambient shell) is honored too, matching Storage's identical `VECTOR_*`-env
+ * handling (`storage.service.ts`). Kept separate from
  * {@link legacyBuildKongContainerSpec} (which stays a pure function of
  * already-resolved values, matching every other `start`-service builder) so
  * this one ambient-env read is independently testable and the builder itself
@@ -137,39 +129,43 @@ export function legacyResolveKongNginxWorkerProcesses(
 
 export interface LegacyKongEmailTemplateMount {
   /**
-   * Go's `mountEmailTemplates(id, contentPath string)` `id` parameter
-   * (`start.go:527-542`): the raw `config.auth.email.template` key for a
-   * template mount, or `<key>_notification` for an enabled
-   * `config.auth.email.notification` entry (`start.go:551-557`) — the caller
-   * is responsible for that suffixing and for filtering notifications down to
-   * `enabled` ones; this module only reproduces the per-mount path derivation.
+   * The raw `config.auth.email.template` key for a template mount, or
+   * `<key>_notification` for an enabled `config.auth.email.notification`
+   * entry — the caller is responsible for that suffixing and for filtering
+   * notifications down to `enabled` ones; this module only derives the
+   * per-mount path.
    */
   readonly id: string;
-  /** `tmpl.ContentPath` — empty means "not configured", matching Go's `len(contentPath) == 0` early return (no bind emitted). */
+  /** `tmpl.ContentPath` — empty means "not configured" (no bind emitted). */
   readonly contentPath: string;
+  /**
+   * Notification mounts resolve through
+   * `legacyResolveNotificationContentPath` so the bind targets the same file
+   * config validation accepted (including the legacy `supabase/`-relative
+   * fallback); template mounts keep plain workdir resolution.
+   */
+  readonly notification?: boolean;
 }
 
 /**
- * Go's `mountEmailTemplates` closure (`start.go:527-542`): resolves
- * `contentPath` to an absolute HOST path via `filepath.Abs` (relative to the
- * process's own working directory — NOT `<workdir>/supabase`, unlike
- * `legacyResolveEmailTemplateContentPath`'s existence-check base in
- * `legacy-config-validate.ts`, a genuinely different Go call site with a
- * different base), joins it onto the fixed in-container email-template
- * directory as `<id><ext-of-hostPath>` (`path.Join`, POSIX — the container is
- * always Linux regardless of the host OS, hence `nodePath.posix.join`, not the
+ * Resolves `contentPath` to an absolute HOST path (relative to the process's
+ * own working directory, the same project-root base used while validating
+ * `content_path`), joins it onto the fixed in-container email-template
+ * directory as `<id><ext-of-hostPath>` (POSIX — the container is always
+ * Linux regardless of the host OS, hence `nodePath.posix.join`, not the
  * platform-dependent `nodePath.join`), and formats the `rw` bind. Returns
- * `undefined` for an empty `contentPath`, matching Go's no-op early return
- * (no bind appended).
+ * `undefined` for an empty `contentPath` (no bind appended).
  */
 export function legacyBuildKongEmailTemplateBind(
   mount: LegacyKongEmailTemplateMount,
   workdir: string,
 ): string | undefined {
   if (mount.contentPath.length === 0) return undefined;
-  const hostPath = nodePath.isAbsolute(mount.contentPath)
-    ? mount.contentPath
-    : nodePath.resolve(workdir, mount.contentPath);
+  const hostPath = mount.notification
+    ? legacyResolveNotificationContentPath(workdir, mount.contentPath)
+    : nodePath.isAbsolute(mount.contentPath)
+      ? mount.contentPath
+      : nodePath.resolve(workdir, mount.contentPath);
   const dockerPath = nodePath.posix.join(
     LEGACY_KONG_NGINX_EMAIL_TEMPLATE_DIR,
     `${mount.id}${nodePath.extname(hostPath)}`,
@@ -182,13 +178,13 @@ const LEGACY_KONG_ENTRYPOINT_HEAD =
   "./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
 
 /**
- * Reproduces the surviving (non-secret) half of Go's exact string
- * concatenation for the Kong entrypoint (`start.go:588-601`): only the
+ * Builds the surviving (non-secret) half of the Kong entrypoint: only the
  * `custom_nginx.template` heredoc and the final `docker-entrypoint.sh` exec
- * line — `LEGACY_KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n"`. The other
- * three heredocs Go's version chains ahead of this one (`kong.yml`, the TLS
- * cert, the TLS key) no longer travel through this script at all — see this
- * module's header comment for why (`secretFiles`, CWE-214/522).
+ * line — `LEGACY_KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n"`. The
+ * other three heredocs that could otherwise chain ahead of this one
+ * (`kong.yml`, the TLS cert, the TLS key) don't travel through this script
+ * at all — see this module's header comment for why (`secretFiles`,
+ * CWE-214/522).
  */
 export function legacyBuildKongEntrypointScript(nginxTemplate: string): string {
   return LEGACY_KONG_ENTRYPOINT_HEAD + nginxTemplate + "\nEOF\n";
@@ -197,11 +193,11 @@ export function legacyBuildKongEntrypointScript(nginxTemplate: string): string {
 export interface LegacyKongContainerSpecInput {
   /** `config.api.kong_image`, already resolved/pulled by the caller. */
   readonly image: string;
-  /** `legacyServiceContainerName("kong", projectId)` — Go's `utils.KongId`. */
+  /** `legacyServiceContainerName("kong", projectId)`. */
   readonly containerName: string;
-  /** Go's `utils.NetId` — the shared Docker network every `start` container joins. */
+  /** The shared Docker network every `start` container joins. */
   readonly networkId: string;
-  /** `config.hostname`, post-override — the `kongConfig.ApiHost` template field (currently unreferenced by `kong.yml`'s body, but still required to match Go's struct exactly). */
+  /** `config.hostname`, post-override — the `kongConfig.ApiHost` template field (currently unreferenced by `kong.yml`'s body, but still a required template field). */
   readonly apiHost: string;
   /**
    * `config.api.port`, post-`SUPABASE_API_PORT`-override — used for the
@@ -209,46 +205,44 @@ export interface LegacyKongContainerSpecInput {
    * {@link apiTlsEnabled}) the published host port.
    */
   readonly apiPort: number;
-  /** `config.api.tls.enabled`, post-override — selects the published container port (`8443` vs `8000`, `start.go:560-563`). */
+  /** `config.api.tls.enabled`, post-override — selects the published container port (`8443` vs `8000`). */
   readonly apiTlsEnabled: boolean;
   /**
-   * `Config.Api.Tls.CertContent` as a string. NOT empty-by-default: Go's
-   * `NewConfig` seeds this with the embedded default cert
-   * (`pkg/config/config.go:452-455`, `LEGACY_KONG_LOCAL_TLS_CERT`) and only
-   * `Validate` overwrites it from `api.tls.cert_path` when TLS is enabled AND
-   * both `cert_path`/`key_path` are configured — the caller must pass the
-   * embedded default here otherwise, matching Kong's own unconditional write
-   * of this field to `/home/kong/localhost.crt` (`start.go:585-601`).
+   * The resolved TLS cert content. NOT empty-by-default: the default config
+   * seeds this with the embedded default cert (`LEGACY_KONG_LOCAL_TLS_CERT`)
+   * and only config validation overwrites it from `api.tls.cert_path` when
+   * TLS is enabled AND both `cert_path`/`key_path` are configured — the
+   * caller must pass the embedded default here otherwise, since this field
+   * is always written to `/home/kong/localhost.crt` unconditionally.
    */
   readonly tlsCertContent: string;
-  /** `Config.Api.Tls.KeyContent` as a string — see {@link tlsCertContent} for the same embedded-default requirement. */
+  /** The resolved TLS key content — see {@link tlsCertContent} for the same embedded-default requirement. */
   readonly tlsKeyContent: string;
   /** The four already-generated API keys `BearerToken`/`QueryToken` are built from — see {@link legacyBuildKongBearerToken}/{@link legacyBuildKongQueryToken}. */
   readonly apiKeys: LegacyKongApiKeys;
-  /** Go's `utils.GotrueId` — GoTrue's own container name. */
+  /** GoTrue's own container name. */
   readonly gotrueId: string;
-  /** Go's `utils.RestId` — PostgREST's own container name. */
+  /** PostgREST's own container name. */
   readonly restId: string;
   /**
-   * Go's `Config.Realtime.TenantId` (`start.go:492`) — NOT Realtime's
-   * container name/id. Realtime is reachable under this same value because
-   * it is ALSO Realtime's own network alias (`utils.RealtimeAliases =
-   * ["realtime", Config.Realtime.TenantId]`), so `kong.yml`'s `url:
-   * http://{{ .RealtimeId }}:4000/...` resolves via that alias, not via
-   * `legacyServiceContainerName("realtime", projectId)`.
+   * `config.realtime.tenant_id` — NOT Realtime's container name/id.
+   * Realtime is reachable under this same value because it is ALSO
+   * Realtime's own network alias (`["realtime", tenantId]`), so
+   * `kong.yml`'s `url: http://{{ .RealtimeId }}:4000/...` resolves via that
+   * alias, not via `legacyServiceContainerName("realtime", projectId)`.
    */
   readonly realtimeTenantId: string;
-  /** Go's `utils.StorageId` — Storage's own container name. */
+  /** Storage's own container name. */
   readonly storageId: string;
-  /** Go's `utils.StudioId` — Studio's own container name. */
+  /** Studio's own container name. */
   readonly studioId: string;
-  /** Go's `utils.PgmetaId` — pg-meta's own container name. */
+  /** pg-meta's own container name. */
   readonly pgmetaId: string;
-  /** Go's `utils.EdgeRuntimeId` — Edge Runtime's own container name. */
+  /** Edge Runtime's own container name. */
   readonly edgeRuntimeId: string;
-  /** Go's `utils.LogflareId` — Logflare's own container name. */
+  /** Logflare's own container name. */
   readonly logflareId: string;
-  /** Go's `utils.PoolerId` — Supavisor's own container name. */
+  /** Supavisor's own container name. */
   readonly poolerId: string;
   /**
    * `envOrDefault("KONG_NGINX_WORKER_PROCESSES", "1")` — already resolved by
@@ -257,17 +251,16 @@ export interface LegacyKongContainerSpecInput {
    */
   readonly nginxWorkerProcesses: string;
   /**
-   * Go's `workdir` (`os.Getwd()` in `run()`, `start.go:308`) — used to
-   * resolve any relative {@link emailTemplateMounts} `contentPath` to an
-   * absolute host path (`filepath.Abs`, `start.go:531-538`).
+   * `LegacyCliConfig.workdir` — used to resolve any relative
+   * {@link emailTemplateMounts} `contentPath` to an absolute host path.
    */
   readonly workdir: string;
   /**
-   * Every `config.auth.email.template.*`/enabled `config.auth.email.notification.*`
-   * entry the caller has already gathered (`start.go:544-558`) — see
-   * {@link LegacyKongEmailTemplateMount}'s doc comment for the notification
-   * `id` suffixing/filtering the caller owns. Defaults to `[]` (no email
-   * template mounts).
+   * Every `config.auth.email.template.*`/enabled
+   * `config.auth.email.notification.*` entry the caller has already
+   * gathered — see {@link LegacyKongEmailTemplateMount}'s doc comment for
+   * the notification `id` suffixing/filtering the caller owns. Defaults to
+   * `[]` (no email template mounts).
    */
   readonly emailTemplateMounts?: ReadonlyArray<LegacyKongEmailTemplateMount>;
 }

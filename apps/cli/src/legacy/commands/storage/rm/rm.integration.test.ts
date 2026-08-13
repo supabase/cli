@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Exit } from "effect";
+import { Effect, Exit, Option } from "effect";
 import { afterEach } from "vitest";
 
 import { setupLegacyStorage } from "../../../../../tests/helpers/legacy-storage.ts";
@@ -48,6 +48,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const del = requests.find(
@@ -70,6 +71,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Confirm deleting files in bucket");
@@ -93,6 +95,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("[y/N] y");
@@ -101,10 +104,10 @@ describe("legacy storage rm", () => {
   });
 
   it.live("auto-confirms from SUPABASE_YES in the project .env (Go loadNestedEnv)", () => {
-    // SUPABASE_YES lives only in supabase/.env, not the shell — both the `--local` and
-    // (default) `--linked` branches of Go's `ParseDatabaseConfig` load the project `.env`
-    // files before `rm.Run`'s confirmation prompt (root.go:118), so the deletion
-    // auto-confirms with no --yes flag and no env var set in the shell (CLI-1878).
+    // SUPABASE_YES lives only in supabase/.env, not the shell — both the
+    // `--local` and (default) `--linked` branches load the project `.env`
+    // files before the confirmation prompt, so the deletion auto-confirms
+    // with no --yes flag and no env var set in the shell.
     const { layer, out, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -117,6 +120,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("[y/N] y");
@@ -127,10 +131,10 @@ describe("legacy storage rm", () => {
   it.live(
     "surfaces not-linked guidance before a malformed project .env (Go LoadProjectRef-before-LoadConfig)",
     () => {
-      // Go's `ParseDatabaseConfig` `case linked:` (db_url.go:87-93) calls `LoadProjectRef`
-      // strictly before `LoadConfig` (which reads the project `.env` files), so an unlinked
-      // workdir must fail with the not-linked guidance even when `supabase/.env` is malformed
-      // — the malformed file must never be reached (CLI-1878).
+      // The linked-project ref is resolved strictly before the config load
+      // that reads the project `.env` files, so an unlinked workdir must
+      // fail with the not-linked guidance even when `supabase/.env` is
+      // malformed — the malformed file must never be reached.
       const { layer, requests } = setupLegacyStorage(tmp.current, {
         toml: 'project_id = "test"\n',
         linkedFails: true,
@@ -142,6 +146,7 @@ describe("legacy storage rm", () => {
           recursive: false,
           linked: true,
           local: false,
+          projectRef: Option.none(),
         }).pipe(Effect.provide(layer), Effect.exit);
         expect(Exit.isFailure(exit)).toBe(true);
         expect(JSON.stringify(exit)).toContain("Cannot find project ref");
@@ -164,6 +169,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
@@ -186,17 +192,18 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(true);
-      // The consumed answer is echoed after the label (Go's non-TTY `PromptText`).
+      // The consumed answer is echoed after the label on non-TTY stdin.
       expect(out.stderrText).toContain("[y/N] y");
     });
   });
 
   it.live("falls back to the default (no) on an unparseable piped answer", () => {
-    // Go's `parseYesNo` returns nil for unrecognized input (`console.go:84-93`), so
-    // `PromptYesNo` keeps the `n` default and the deletion is skipped.
+    // Unrecognized input is treated as unanswered, so the confirmation
+    // prompt keeps the `n` default and the deletion is skipped.
     const { layer, requests } = setupLegacyStorage(tmp.current, {
       toml: 'project_id = "test"\n',
       local: true,
@@ -210,6 +217,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
@@ -229,6 +237,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
@@ -262,6 +271,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const deletes = requests.filter(
@@ -284,6 +294,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("You must specify a bucket to delete.");
@@ -302,6 +313,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("You must specify -r flag to delete directories.");
@@ -320,6 +332,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("You must specify -r flag to delete directories.");
@@ -344,6 +357,7 @@ describe("legacy storage rm", () => {
         recursive: true,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Deleting bucket: b1");
@@ -378,6 +392,7 @@ describe("legacy storage rm", () => {
         recursive: true,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Bucket not found: test");
@@ -435,6 +450,7 @@ describe("legacy storage rm", () => {
         recursive: true,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(
@@ -468,6 +484,7 @@ describe("legacy storage rm", () => {
         recursive: true,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(out.stderrText).toContain("Deleting bucket: test");
@@ -491,6 +508,7 @@ describe("legacy storage rm", () => {
         recursive: true,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("Object not found: private/dir/");
@@ -511,6 +529,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");
@@ -540,6 +559,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("Error status 500");
@@ -559,10 +579,10 @@ describe("legacy storage rm", () => {
         recursive: true,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("Error status 503");
-      // The command fails before any delete is attempted.
       expect(requests.some((r) => r.method === "DELETE")).toBe(false);
     });
   });
@@ -579,6 +599,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: false,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       expect(
@@ -587,6 +608,54 @@ describe("legacy storage rm", () => {
       expect(telemetry.flushed).toBe(true);
       expect(linkedCache.cached).toBe(true);
       expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+    });
+  });
+
+  it.live("deletes from the project given via --project-ref, overriding LEGACY_VALID_REF", () => {
+    // `opts.projectRef` (the fake's own fallback) is left at its default
+    // (LEGACY_VALID_REF) — the flag must win over it and drive the gateway host.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+      yes: true,
+      routes: [{ method: "DELETE", match: DELETE_OBJECT("private"), body: [{ name: "a.pdf" }] }],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: true,
+        local: false,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(true);
+      expect(requests.some((r) => r.url.includes(LEGACY_VALID_REF))).toBe(false);
+      expect(linkedCache.cached).toBe(true);
+      expect(linkedCache.cachedRef).toBe(FLAG_REF);
+    });
+  });
+
+  it.live("rejects --project-ref combined with --local", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, requests, linkedCache } = setupLegacyStorage(tmp.current, {
+      toml: 'project_id = "test"\n',
+      local: true,
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyStorageRm({
+        files: ["ss:///private/a.pdf"],
+        recursive: false,
+        linked: false,
+        local: true,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(JSON.stringify(exit)).toContain(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+      );
+      expect(requests).toHaveLength(0);
+      expect(linkedCache.cached).toBe(false);
     });
   });
 
@@ -604,6 +673,7 @@ describe("legacy storage rm", () => {
         recursive: false,
         linked: true,
         local: true,
+        projectRef: Option.none(),
       }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       const success = out.messages.find((m) => m.type === "success");

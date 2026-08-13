@@ -10,25 +10,25 @@ import {
 } from "@supabase/api/effect";
 import {
   inferFunctionsManifest,
-  loadProjectConfig,
   type ResolvedFunctionConfig as ManifestFunctionConfig,
 } from "@supabase/config";
-import { Duration, Effect, Option, Schema, Stream } from "effect";
+import { Duration, Effect, Option, Schema } from "effect";
 import * as HttpBody from "effect/unstable/http/HttpBody";
 import * as HttpClientError from "effect/unstable/http/HttpClientError";
-import { ChildProcessSpawner } from "effect/unstable/process";
 import { legacyPromptYesNo } from "../legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../output/errors.ts";
 import { Output } from "../output/output.service.ts";
-import { spawnContainerCli } from "../../legacy/shared/legacy-container-cli.ts";
 import { legacyBold } from "../../legacy/shared/legacy-colors.ts";
-import { legacyGetRegistryImageUrl } from "../../legacy/shared/legacy-docker-registry.ts";
+import { legacyViperEnvStringWithProjectFallback } from "../legacy/legacy-viper-env.ts";
 import { findGitRootPath } from "../git/git-root.ts";
 import {
   cobraMutuallyExclusiveErrorMessage,
+  explicitBooleanLongFlag,
   hasExplicitLongFlag,
+  lastExplicitLongFlagValue,
 } from "../cli/cobra-flag-groups.ts";
 import {
+  edgeRuntimeImage,
   FUNCTIONS_BUNDLER_MUTEX_GROUP,
   invalidFunctionSlugDetail,
   validateFunctionSlugMessage,
@@ -36,18 +36,30 @@ import {
 import {
   ConflictingFunctionDeployFlagsError,
   FunctionDeployCancelledError,
+  FunctionImportNotDirectoryError,
   InvalidFunctionDeploySlugError,
   NoFunctionsToDeployError,
 } from "./deploy.errors.ts";
+import {
+  buildFunctionsDockerRunArgs,
+  ensureDockerNamedVolume,
+  ensureDockerNetwork,
+  isDockerRunning,
+  localDockerId,
+  resolveDockerNetworkMode,
+  resolveEdgeRuntimeVersion,
+  resolveFunctionsDockerImage,
+  runChildProcess,
+  toDockerPath,
+  toSlash,
+} from "./functions-docker.ts";
+import { loadFunctionsProjectConfig, type FunctionsGoConfigCompat } from "./functions-config.ts";
 import { FunctionsApiStatusError, FunctionsApiTransportError } from "./functions-api.errors.ts";
 
 const COMPRESSED_ESZIP_MAGIC = "EZBR";
-const DENO1_EDGE_RUNTIME_VERSION = "1.68.4";
 const DEPLOY_RATE_LIMIT_MAX_RETRIES = 8;
 const SUPABASE_FUNCTIONS_DIR = "supabase/functions";
 const IMPORT_MAP_GUIDE_URL = "https://supabase.com/docs/guides/functions/import-maps";
-const INVALID_PROJECT_ID = /[^a-zA-Z0-9_.-]+/g;
-const MAX_PROJECT_ID_LENGTH = 40;
 const WINDOWS_ABSOLUTE_PATH = /^[A-Za-z]:\//;
 const importPathPattern =
   /(?:import|export)\s+(?:type\s+)?(?:{[^{}]+}|.*?)\s*(?:from)?\s*['"](.*?)['"]|import\(\s*['"](.*?)['"]\)/gi;
@@ -75,7 +87,12 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
   readonly projectRoot: string;
   readonly supabaseDir: string;
   readonly dashboardUrl: string;
-  readonly goViperCompat: boolean;
+  /**
+   * `undefined` in `next`; the legacy shell injects
+   * `legacyFunctionsGoConfigCompat` so this file never imports `legacy/`
+   * directly — see {@link FunctionsGoConfigCompat}.
+   */
+  readonly goConfigCompat: FunctionsGoConfigCompat | undefined;
   readonly yes?: boolean;
   readonly rawArgs: ReadonlyArray<string>;
   readonly edgeRuntimeVersion: string;
@@ -89,9 +106,12 @@ interface DeployFunctionsDependencies<ResolveError, ResolveRequirements> {
    * - `styleIdentifier`: the project ref in the stdout success line.
    * - `styleEmphasis`: the slug in the stderr `Bundling Function:` line and
    *   the functions dir in the no-functions error.
+   * - `styleWarning`: the `WARNING:` token on the "Docker is not running"
+   *   fallback line. Go: `utils.Yellow("WARNING:")` (`deploy.go:60`).
    */
   readonly styleIdentifier?: (text: string) => string;
   readonly styleEmphasis?: (text: string) => string;
+  readonly styleWarning?: (text: string) => string;
 }
 
 export interface ResolvedDeployFunctionConfig {
@@ -246,6 +266,18 @@ function validateDeploySlug(slug: string): Effect.Effect<void, InvalidFunctionDe
   return Effect.fail(new InvalidFunctionDeploySlugError({ message: invalidFunctionSlugDetail }));
 }
 
+function isDenoConfigFile(pathname: string) {
+  const name = basename(pathname).toLowerCase();
+  return name === "deno.json" || name === "deno.jsonc";
+}
+
+/**
+ * Presence-based `Option.some(value)` when `--<flagName>` was passed
+ * explicitly after `commandPath`, matching cobra's `Changed()`;
+ * `Option.none()` otherwise. Used only by `deployFunctions`'s
+ * `--no-verify-jwt` override below — kept private per this file's own
+ * "used by one command only -> keep it in the command's own directory" rule.
+ */
 function explicitBooleanFlag(
   rawArgs: ReadonlyArray<string>,
   commandPath: ReadonlyArray<string>,
@@ -255,45 +287,6 @@ function explicitBooleanFlag(
   return hasExplicitLongFlag(rawArgs, commandPath, flagName) ? Option.some(value) : Option.none();
 }
 
-function explicitStringFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const token = rawArgs[index];
-    if (token === `--${flagName}`) {
-      return rawArgs[index + 1];
-    }
-    if (token?.startsWith(`--${flagName}=`)) {
-      return token.slice(flagName.length + 3);
-    }
-  }
-  return undefined;
-}
-
-function hasGlobalLongFlag(rawArgs: ReadonlyArray<string>, flagName: string) {
-  return rawArgs.some((token) => token === `--${flagName}` || token.startsWith(`--${flagName}=`));
-}
-
-function isDenoConfigFile(pathname: string) {
-  const name = basename(pathname).toLowerCase();
-  return name === "deno.json" || name === "deno.jsonc";
-}
-
-function toSlash(pathname: string) {
-  return pathname.replaceAll("\\", "/");
-}
-
-export function normalizeProjectId(source: string) {
-  const sanitized = source.replaceAll(INVALID_PROJECT_ID, "_").replace(/^[_.-]+/, "");
-  return sanitized.length > MAX_PROJECT_ID_LENGTH
-    ? sanitized.slice(0, MAX_PROJECT_ID_LENGTH)
-    : sanitized;
-}
-
-export function localDockerId(name: string, projectId: string) {
-  return `supabase_${name}_${normalizeProjectId(projectId)}`;
-}
-
-const dockerCliProjectLabel = "com.supabase.cli.project";
-const dockerComposeProjectLabel = "com.docker.compose.project";
 /**
  * Must stay in sync with `LEGACY_CLI_WORKDIR_LABEL`
  * (`legacy/shared/legacy-docker-ids.ts:95`) — same string literal, kept as a
@@ -305,25 +298,14 @@ const dockerComposeProjectLabel = "com.docker.compose.project";
  */
 export const dockerWorkdirLabel = "com.supabase.cli.workdir";
 /**
- * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`): the eszip
+ * Go parity (`apps/cli-go/internal/functions/deploy/bundle.go:68-70`, deleted
+ * in CLI-1970; last present at commit 7b469f5b3): the eszip
  * bundler container receives only `NPM_CONFIG_REGISTRY` from the host
  * environment. `NPM_AUTH_TOKEN` is deliberately NOT forwarded — the Go-side PR
  * proposing it (supabase/cli#4933) was closed unmerged, and CLI-1985 ruled
  * strict parity over the TS-only forwarding that #5645 had added.
  */
 const dockerNpmEnvNames = ["NPM_CONFIG_REGISTRY"] as const;
-
-export function dockerProjectLabels(projectId: string) {
-  return {
-    [dockerCliProjectLabel]: projectId,
-    [dockerComposeProjectLabel]: projectId,
-  };
-}
-
-export function toDockerPath(hostPath: string) {
-  const normalized = toSlash(resolve(hostPath));
-  return normalized.replace(/^[A-Za-z]:/, "");
-}
 
 function toBundledFileUrl(hostPath: string) {
   const url = new URL("file:///");
@@ -394,7 +376,12 @@ async function realpathIfExists(pathname: string) {
   try {
     return await realpath(resolve(pathname));
   } catch (error) {
-    if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+    // ENOTDIR (a path routed through a file) is as nonexistent as ENOENT here.
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    ) {
       return resolve(pathname);
     }
     throw error;
@@ -656,8 +643,22 @@ function substituteImportMapValue(
 ): string | undefined {
   let match: [string, string] | undefined;
   for (const entry of Object.entries(mappings)) {
-    const [prefix] = entry;
-    if (!specifier.startsWith(prefix)) {
+    const [prefix, value] = entry;
+    if (prefix.length === 0) {
+      continue;
+    }
+    // Import-maps spec (implemented by Deno): a key matches exactly, or as a
+    // prefix only when it ends with "/". Go's walker prefix-matches every key
+    // (pkg/function/deno.go:150-155) — intentional divergence, see
+    // go-cli-divergences.md: the lax match fabricates paths the runtime
+    // can never resolve (the ENOTDIR family this PR fixes).
+    if (prefix.endsWith("/")) {
+      // Spec normalization: a `/`-suffixed key whose address lacks a trailing
+      // `/` is an invalid mapping — dropped, not concatenated.
+      if (!value.endsWith("/") || !specifier.startsWith(prefix)) {
+        continue;
+      }
+    } else if (specifier !== prefix) {
       continue;
     }
     if (match === undefined || prefix.length > match[0].length) {
@@ -681,7 +682,11 @@ function resolveImportSpecifier(
   let scopedMappings: Readonly<Record<string, string>> | undefined;
   let scopedPrefixLength = -1;
   for (const [scopeName, scopeValue] of Object.entries(importMap.scopes)) {
-    if (!currentPath.startsWith(scopeName) || scopeName.length <= scopedPrefixLength) {
+    // Same import-maps spec rule as key matching: a scope matches exactly, or
+    // as a prefix only when it ends with "/".
+    const scopeMatches =
+      scopeName === currentPath || (scopeName.endsWith("/") && currentPath.startsWith(scopeName));
+    if (!scopeMatches || scopeName.length <= scopedPrefixLength) {
       continue;
     }
     scopedMappings = scopeValue;
@@ -734,11 +739,20 @@ async function walkImportPaths(
       }
       contents = await readFile(resolvedCurrent);
     } catch (error) {
-      if (error instanceof Error) {
-        if ("code" in error && error.code === "ENOENT") {
+      if (error instanceof Error && "code" in error) {
+        if (error.code === "ENOENT") {
           const message = `failed to read file: open ${toApiRelativePath(displayRoot, current)}: no such file or directory`;
           await onWarning(`WARN: ${message}\n`);
           continue;
+        }
+        // Go aborts on any other read error (pkg/function/deno.go:131-136); an
+        // ENOTDIR (import path routed through a file) gets Go's message instead
+        // of an unhandled raw Node error, via a classified error so telemetry
+        // books it as user-fixable config instead of a panic.
+        if (error.code === "ENOTDIR") {
+          throw new FunctionImportNotDirectoryError({
+            message: `failed to read file: open ${toApiRelativePath(displayRoot, current)}: not a directory`,
+          });
         }
       }
       throw error;
@@ -761,7 +775,12 @@ async function walkImportPaths(
       );
       modulePath = toSlash(modulePath);
 
-      if (!modulePath.includes(".")) {
+      // A module file needs a dot in the FINAL path segment (Go's path.Ext
+      // semantics): a dot earlier in the path (`dist/index.mjs/core`) is a
+      // directory-shaped path, not a module file. Not basename(): a
+      // trailing-slash directory import must yield an empty final segment here.
+      const finalSegment = modulePath.slice(modulePath.lastIndexOf("/") + 1);
+      if (!finalSegment.includes(".")) {
         continue;
       }
       if (
@@ -1023,14 +1042,26 @@ async function writeSourceDeployForm(
   };
 
   const uploadScopeTarget = async (pathname: string) => {
-    const resolvedPath = await realpath(pathname);
+    let resolvedPath: string;
+    let pathInfo: Awaited<ReturnType<typeof stat>>;
+    try {
+      resolvedPath = await realpath(pathname);
+      pathInfo = await stat(pathname);
+    } catch (error) {
+      if (error instanceof Error && "code" in error && error.code === "ENOTDIR") {
+        await Effect.runPromise(
+          outputRaw(`WARN: Skipping import map target that is not a directory: ${pathname}\n`),
+        );
+        return;
+      }
+      throw error;
+    }
     if (!isContainedInAnyPath(importMapAllowedRoots, resolvedPath)) {
       await Effect.runPromise(
         outputRaw(`WARN: Skipping import path outside source root: ${pathname}\n`),
       );
       return;
     }
-    const pathInfo = await stat(pathname);
     if (!pathInfo.isDirectory()) {
       await uploadImportMapTargetAsset(pathname, await readFile(pathname));
       await walkLocalImportMapTargetImports(
@@ -1138,15 +1169,6 @@ function createBundledMetadata(
       ? { static_patterns: config.staticFiles.map(toBundledFileUrl) }
       : {}),
   };
-}
-
-function collectByteStream(stream: Stream.Stream<Uint8Array, unknown>) {
-  const decoder = new TextDecoder();
-  return Stream.runFold(
-    stream,
-    () => "",
-    (text, chunk) => text + decoder.decode(chunk, { stream: true }),
-  ).pipe(Effect.map((text) => text + decoder.decode()));
 }
 
 function sanitizeDockerBinds(
@@ -1258,16 +1280,23 @@ export async function buildDockerBinds(
         async () => {},
       );
     } catch (error) {
-      if (
-        options.skipMissingImportMapTargets === true &&
-        error instanceof Error &&
-        "code" in error &&
-        error.code === "ENOENT"
-      ) {
-        await (options.onWarning ?? (async () => {}))(
-          `WARN: Skipping missing import map target: ${target}\n`,
-        );
-        return;
+      if (error instanceof Error && "code" in error) {
+        // ENOTDIR (a trailing-slash value routed through a file) is never a
+        // walkable target regardless of caller: an import that actually
+        // reaches through that file still fails via the walker's
+        // FunctionImportNotDirectoryError.
+        if (error.code === "ENOTDIR") {
+          await (options.onWarning ?? (async () => {}))(
+            `WARN: Skipping import map target that is not a directory: ${target}\n`,
+          );
+          return;
+        }
+        if (options.skipMissingImportMapTargets === true && error.code === "ENOENT") {
+          await (options.onWarning ?? (async () => {}))(
+            `WARN: Skipping missing import map target: ${target}\n`,
+          );
+          return;
+        }
       }
       throw error;
     }
@@ -1294,84 +1323,6 @@ function shouldUseDenoJsonDiscovery(entrypoint: string, importMap: string) {
   return isDenoConfigFile(importMap) && dirname(importMap) === dirname(entrypoint);
 }
 
-export function isUserDefinedDockerNetwork(networkMode: string) {
-  return (
-    networkMode.length > 0 &&
-    networkMode !== "default" &&
-    networkMode !== "bridge" &&
-    networkMode !== "host" &&
-    networkMode !== "none"
-  );
-}
-
-export const ensureDockerNetwork = Effect.fnUntraced(function* (
-  networkMode: string,
-  projectId: string,
-) {
-  if (!isUserDefinedDockerNetwork(networkMode)) {
-    return;
-  }
-
-  const inspect = yield* runChildProcess("docker", ["network", "inspect", networkMode], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-  if (inspect.exitCode === 0) {
-    return;
-  }
-
-  const labels = dockerProjectLabels(projectId);
-  const create = yield* runChildProcess(
-    "docker",
-    [
-      "network",
-      "create",
-      "--label",
-      `${dockerCliProjectLabel}=${labels[dockerCliProjectLabel]}`,
-      "--label",
-      `${dockerComposeProjectLabel}=${labels[dockerComposeProjectLabel]}`,
-      networkMode,
-    ],
-    {
-      stdout: "ignore",
-      stderr: "pipe",
-    },
-  );
-  if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker network: ${networkMode}`));
-  }
-});
-
-export const ensureDockerNamedVolume = Effect.fnUntraced(function* (
-  volumeName: string,
-  projectId: string,
-) {
-  if (process.env["BITBUCKET_CLONE_DIR"] !== undefined) {
-    return;
-  }
-
-  const labels = dockerProjectLabels(projectId);
-  const create = yield* runChildProcess(
-    "docker",
-    [
-      "volume",
-      "create",
-      "--label",
-      `${dockerCliProjectLabel}=${labels[dockerCliProjectLabel]}`,
-      "--label",
-      `${dockerComposeProjectLabel}=${labels[dockerComposeProjectLabel]}`,
-      volumeName,
-    ],
-    {
-      stdout: "ignore",
-      stderr: "pipe",
-    },
-  );
-  if (create.exitCode !== 0 && !create.stderr.includes("already exists")) {
-    return yield* Effect.fail(new Error(`failed to create docker volume: ${volumeName}`));
-  }
-});
-
 async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: string) {
   if (importMap.length > 0) {
     return false;
@@ -1384,57 +1335,31 @@ async function shouldUsePackageJsonDiscovery(entrypoint: string, importMap: stri
   }
 }
 
-// Runs a container CLI command and collects its output. Every caller runs
-// `docker`, so the spawn goes through `spawnContainerCli` to fall back to
-// `podman` on Docker-less hosts. `command` is retained for the extendEnv
-// default and the `functions serve` dependency-injection seam.
-export const runChildProcess = Effect.fnUntraced(function* (
-  command: string,
-  args: ReadonlyArray<string>,
-  opts: {
-    readonly stdout?: "pipe" | "ignore";
-    readonly stderr?: "pipe" | "ignore";
-    readonly env?: Readonly<Record<string, string>>;
-    readonly extendEnv?: boolean;
-  } = {},
-) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const child = yield* spawnContainerCli(spawner, [...args], {
-    stdin: "ignore",
-    stdout: opts.stdout ?? "pipe",
-    stderr: opts.stderr ?? "pipe",
-    env: opts.env,
-    extendEnv: opts.extendEnv ?? command === "docker",
-  });
-
-  const [stdout, stderr, exitCode] = yield* Effect.all(
-    [
-      opts.stdout === "ignore" ? Effect.succeed("") : collectByteStream(child.stdout),
-      opts.stderr === "ignore" ? Effect.succeed("") : collectByteStream(child.stderr),
-      child.exitCode.pipe(Effect.map(Number)),
-    ],
-    { concurrency: "unbounded" },
-  );
-  return { exitCode, stdout, stderr };
-});
-
-const isDockerRunning = Effect.fnUntraced(function* () {
-  const result = yield* runChildProcess("docker", ["info"], {
-    stdout: "ignore",
-    stderr: "ignore",
-  }).pipe(Effect.catch(() => Effect.succeed({ exitCode: 1, stdout: "", stderr: "" })));
-  return result.exitCode === 0;
-});
+interface BundleFunctionWithDockerOptions {
+  readonly projectId: string;
+  readonly edgeRuntimeVersion: string;
+  readonly functionsDir: string;
+  readonly config: ResolvedDeployFunctionConfig;
+  /** Already resolved (explicit flag > `SUPABASE_NETWORK_ID` > generated) — see the caller. */
+  readonly networkMode: string;
+  readonly verbose?: boolean;
+  readonly styleEmphasis?: (text: string) => string;
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
+}
 
 const bundleFunctionWithDocker = Effect.fnUntraced(function* (
-  projectId: string,
-  edgeRuntimeVersion: string,
-  functionsDir: string,
-  config: ResolvedDeployFunctionConfig,
-  dockerNetworkId?: string,
-  verbose = false,
-  styleEmphasis: (text: string) => string = (text) => text,
+  options: BundleFunctionWithDockerOptions,
 ) {
+  const {
+    projectId,
+    edgeRuntimeVersion,
+    functionsDir,
+    config,
+    networkMode,
+    verbose = false,
+    styleEmphasis = (text: string) => text,
+    projectEnvValues,
+  } = options;
   const output = yield* Output;
   // Go: `fmt.Fprintln(os.Stderr, "Bundling Function:", utils.Bold(slug))`
   // (`internal/functions/deploy/bundle.go:30`) — the legacy handler injects
@@ -1457,56 +1382,80 @@ const bundleFunctionWithDocker = Effect.fnUntraced(function* (
     }
     const outputPath = join(outputDir, "output.eszip");
     const binds = yield* Effect.promise(() =>
-      buildDockerBinds(projectId, functionsDir, outputDir, config),
+      buildDockerBinds(projectId, functionsDir, outputDir, config, {
+        onWarning: (message) => Effect.runPromise(output.raw(message, "stderr")),
+      }),
     );
-    const networkMode = dockerNetworkId ?? localDockerId("network", projectId);
+    // Go: `DockerStart` -> `DockerResolveImageIfNotCached` (`internal/utils/docker.go:326-386`)
+    // — resolves ECR->GHCR->Docker-Hub candidates and pulls with retry, per
+    // container, before ever touching the network/volume. Deliberately NOT
+    // hoisted out of the per-function loop the way `download.ts`'s
+    // `PulledEdgeRuntimeImage` is: per-slug matches Go's per-container
+    // `DockerStart` exactly, and the first resolve failure aborts the loop,
+    // so the only cost is one cached `docker image inspect` per function.
+    const image = yield* resolveFunctionsDockerImage(
+      // `edgeRuntimeImage` applies the tag VERBATIM (Go's `replaceImageTag`)
+      // — a `.temp/edge-runtime-version` pin flows through unmodified, `v`
+      // prefix or not (see the helper's doc in `functions.shared.ts`).
+      edgeRuntimeImage(edgeRuntimeVersion),
+      projectEnvValues,
+    );
     yield* ensureDockerNetwork(networkMode, projectId);
     yield* ensureDockerNamedVolume(localDockerId("edge_runtime", projectId), projectId);
-    const command = ["run", "--rm", ...binds.flatMap((bind) => ["-v", bind])];
-    command.push("--network", networkMode);
-    if (process.platform === "linux") {
-      command.push("--add-host", "host.docker.internal:host-gateway");
-    }
 
+    const env: Array<string> = [];
     if (
       !(yield* Effect.promise(() =>
         shouldUsePackageJsonDiscovery(config.entrypoint, config.importMap),
       ))
     ) {
-      command.push("-e", "DENO_NO_PACKAGE_JSON=1");
+      env.push("DENO_NO_PACKAGE_JSON=1");
     }
-    for (const env of dockerNpmEnv()) {
-      command.push("-e", env);
-    }
+    env.push(...dockerNpmEnv());
 
-    command.push(
-      legacyGetRegistryImageUrl(`supabase/edge-runtime:v${edgeRuntimeVersion}`),
+    const containerArgs = [
       "bundle",
       "--entrypoint",
       toDockerPath(config.entrypoint),
       "--output",
       toDockerPath(outputPath),
-    );
+    ];
     if (
       config.importMap.length > 0 &&
       !shouldUseDenoJsonDiscovery(config.entrypoint, config.importMap)
     ) {
-      command.push("--import-map", toDockerPath(config.importMap));
+      containerArgs.push("--import-map", toDockerPath(config.importMap));
     }
     for (const staticFile of config.staticFiles) {
-      command.push("--static", toDockerPath(staticFile));
+      containerArgs.push("--static", toDockerPath(staticFile));
     }
     if (verbose || process.env["DEBUG"] === "true") {
-      command.push("--verbose");
+      containerArgs.push("--verbose");
     }
 
-    const result = yield* runChildProcess("docker", command, { stdout: "pipe", stderr: "pipe" });
-    if (result.stdout.length > 0) {
-      yield* output.raw(result.stdout, output.format === "text" ? "stdout" : "stderr");
-    }
-    if (result.stderr.length > 0) {
-      yield* output.raw(result.stderr, "stderr");
-    }
+    const command = buildFunctionsDockerRunArgs({
+      image,
+      projectId,
+      networkMode,
+      binds,
+      env,
+      // Go: `WorkingDir: utils.ToDockerPath(cwd)` (`bundle.go:79`), where
+      // `cwd` is the post-`ChangeWorkDir` workdir — `functionsDir` is
+      // `<workdir>/supabase/functions`, same derivation as `deployViaApi`'s
+      // own `projectRoot`.
+      workingDir: toDockerPath(resolve(functionsDir, "..", "..")),
+      containerArgs,
+    });
+
+    // Live-tees each chunk to `output.raw` as it arrives (Go's
+    // `DockerRunOnceWithConfig` copies the container's log stream live)
+    // rather than buffering the whole run until exit.
+    const result = yield* runChildProcess("docker", command, {
+      stdout: "pipe",
+      stderr: "pipe",
+      onStdout: (chunk) => output.raw(chunk, output.format === "text" ? "stdout" : "stderr"),
+      onStderr: (chunk) => output.raw(chunk, "stderr"),
+    });
     if (result.exitCode !== 0) {
       return yield* Effect.fail(new Error(`failed to bundle function: exit ${result.exitCode}`));
     }
@@ -2179,17 +2128,33 @@ const deployViaApi = Effect.fnUntraced(function* (
   }
 });
 
-const deployViaDocker = Effect.fnUntraced(function* (
-  projectId: string,
-  projectRef: string,
-  edgeRuntimeVersion: string,
-  functionsDir: string,
-  configs: ReadonlyArray<ResolvedDeployFunctionConfig>,
-  api: ApiClient,
-  dockerNetworkId?: string,
-  verbose = false,
-  styleEmphasis: (text: string) => string = (text) => text,
-) {
+interface DeployViaDockerOptions {
+  readonly projectId: string;
+  readonly projectRef: string;
+  readonly edgeRuntimeVersion: string;
+  readonly functionsDir: string;
+  readonly configs: ReadonlyArray<ResolvedDeployFunctionConfig>;
+  readonly api: ApiClient;
+  /** Already resolved (explicit flag > `SUPABASE_NETWORK_ID` > generated) — see the caller. */
+  readonly networkMode: string;
+  readonly verbose?: boolean;
+  readonly styleEmphasis?: (text: string) => string;
+  readonly projectEnvValues?: Readonly<Record<string, string>>;
+}
+
+const deployViaDocker = Effect.fnUntraced(function* (options: DeployViaDockerOptions) {
+  const {
+    projectId,
+    projectRef,
+    edgeRuntimeVersion,
+    functionsDir,
+    configs,
+    api,
+    networkMode,
+    verbose = false,
+    styleEmphasis = (text: string) => text,
+    projectEnvValues,
+  } = options;
   const output = yield* Output;
   const remoteFunctions = yield* listRemoteFunctions(api, projectRef);
   const remoteBySlug = new Map(remoteFunctions.map((fn) => [fn.slug, fn]));
@@ -2201,15 +2166,16 @@ const deployViaDocker = Effect.fnUntraced(function* (
       continue;
     }
 
-    const bundled = yield* bundleFunctionWithDocker(
+    const bundled = yield* bundleFunctionWithDocker({
       projectId,
       edgeRuntimeVersion,
       functionsDir,
       config,
-      dockerNetworkId,
+      networkMode,
       verbose,
       styleEmphasis,
-    );
+      projectEnvValues,
+    });
     const current = remoteBySlug.get(config.slug);
     if (
       current?.ezbr_sha256 === bundled.metadata.sha256 &&
@@ -2235,21 +2201,6 @@ const deployViaDocker = Effect.fnUntraced(function* (
     yield* bulkUpdateRemoteFunctions(api, projectRef, changed);
   }
 });
-
-export function resolveEdgeRuntimeVersion(
-  denoVersion: number | undefined,
-  defaultVersion: string,
-): Effect.Effect<string, Error> {
-  if (denoVersion === undefined || denoVersion === 2) {
-    return Effect.succeed(defaultVersion);
-  }
-  if (denoVersion === 1) {
-    return Effect.succeed(DENO1_EDGE_RUNTIME_VERSION);
-  }
-  return Effect.fail(
-    new Error(`Failed reading config: Invalid edge_runtime.deno_version: ${denoVersion}.`),
-  );
-}
 
 const pruneFunctions = Effect.fnUntraced(function* (
   projectRef: string,
@@ -2340,10 +2291,21 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       return yield* Effect.fail(new Error("--jobs must be used together with --use-api"));
     }
 
-    const preResolvedProjectRef =
-      flags.functionNames.length > 0
-        ? yield* dependencies.resolveProjectRef(flags.projectRef)
-        : undefined;
+    const projectRef = yield* dependencies.resolveProjectRef(flags.projectRef);
+    // `@supabase/config` merges the matching `[remotes.*]` block over the base
+    // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
+    // config already reflects any remote function/edge_runtime overrides.
+    // In the legacy shell this also runs the same `Config.Validate`/dotenv/
+    // env-override pipeline `start`/`stop`/`status` already go through — see
+    // `functions-config.ts`. Go: `flags.LoadConfig` runs before validating any
+    // slug (`deploy.go:22-28`), so this must precede the loop below too — an
+    // invalid `config.toml` is reported ahead of a malformed slug when both
+    // are wrong (review round on CLI-1963).
+    const context = yield* loadFunctionsProjectConfig({
+      projectRoot: dependencies.projectRoot,
+      projectRef,
+      goConfigCompat: dependencies.goConfigCompat,
+    });
 
     if (flags.functionNames.length > 0) {
       for (const slug of flags.functionNames) {
@@ -2357,19 +2319,15 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       "no-verify-jwt",
       flags.noVerifyJwt,
     );
-    const debugEnabled = hasGlobalLongFlag(dependencies.rawArgs, "debug");
-    const projectRef =
-      preResolvedProjectRef ?? (yield* dependencies.resolveProjectRef(flags.projectRef));
-    // `@supabase/config` merges the matching `[remotes.*]` block over the base
-    // config (Go's `loadFromFile` with `Config.ProjectId` set), so the resolved
-    // config already reflects any remote function/edge_runtime overrides.
-    const loadedConfig = yield* loadProjectConfig(dependencies.projectRoot, {
-      projectRef,
-      goViperCompat: dependencies.goViperCompat,
-    });
-    const deployConfig = loadedConfig?.config;
+    // Go gates the bundler's `--verbose` on `viper.GetBool("DEBUG")`
+    // (`bundle.go:59`), so `--debug=false` must resolve to `false` — a plain
+    // presence check would get that backwards (same rule as `download.ts`'s
+    // own `--debug` read; the `SUPABASE_DEBUG` env fallback is deferred
+    // there too).
+    const debugEnabled = explicitBooleanLongFlag(dependencies.rawArgs, "debug") ?? false;
+    const deployConfig = context.loaded?.config;
     const edgeRuntimeVersion = yield* resolveEdgeRuntimeVersion(
-      deployConfig?.edge_runtime.deno_version,
+      context.denoVersion,
       dependencies.edgeRuntimeVersion,
     );
     const configFunctions = yield* inferFunctionsManifest({
@@ -2377,7 +2335,7 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       config: deployConfig,
     });
     const configDeclaredFunctions = deployConfig?.functions ?? {};
-    const rawConfigFunctions = rawFunctionConfigRecord(loadedConfig?.document);
+    const rawConfigFunctions = rawFunctionConfigRecord(context.loaded?.document);
     yield* validateConfigFunctionSlugs(configDeclaredFunctions);
     const slugs =
       flags.functionNames.length > 0
@@ -2437,25 +2395,43 @@ export function deployFunctions<ResolveError, ResolveRequirements>(
       ),
     );
 
+    const styleWarning = dependencies.styleWarning ?? ((text: string) => text);
     const deployed = useLocalBundler
       ? yield* Effect.gen(function* () {
           if (!(yield* isDockerRunning())) {
-            yield* output.raw("WARNING: Docker is not running\n", "stderr");
+            yield* output.raw(`${styleWarning("WARNING:")} Docker is not running\n`, "stderr");
             return yield* deployWithApi;
           }
 
-          const projectId = deployConfig?.project_id ?? projectRef;
-          yield* deployViaDocker(
-            projectId,
+          // `lastExplicitLongFlagValue` preserves the "explicitly cleared" vs
+          // "never touched" distinction `resolveDockerNetworkMode` needs to
+          // decide whether `SUPABASE_NETWORK_ID` applies — see that
+          // function's own doc comment. `SUPABASE_NETWORK_ID` (env or
+          // project dotenv) is legacy-shell-only — same Go-viper-parity gate
+          // as `context.projectEnvValues` itself (`undefined` in `next`).
+          const networkMode = resolveDockerNetworkMode({
+            explicit: lastExplicitLongFlagValue(dependencies.rawArgs, [], "network-id"),
+            envOverride:
+              context.projectEnvValues === undefined
+                ? undefined
+                : legacyViperEnvStringWithProjectFallback(
+                    "SUPABASE_NETWORK_ID",
+                    context.projectEnvValues,
+                  ),
+            projectId: context.projectId,
+          });
+          yield* deployViaDocker({
+            projectId: context.projectId,
             projectRef,
             edgeRuntimeVersion,
-            join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
+            functionsDir: join(dependencies.projectRoot, SUPABASE_FUNCTIONS_DIR),
             configs,
-            dependencies.api,
-            explicitStringFlag(dependencies.rawArgs, "network-id"),
-            debugEnabled,
+            api: dependencies.api,
+            networkMode,
+            verbose: debugEnabled,
             styleEmphasis,
-          );
+            projectEnvValues: context.projectEnvValues,
+          });
           return true;
         })
       : yield* deployWithApi;

@@ -1,4 +1,4 @@
-import { Effect, Exit } from "effect";
+import { Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
 import { describe, expect, it } from "vitest";
 
 import { stripAnsi } from "../../../tests/helpers/ansi.ts";
@@ -8,6 +8,7 @@ import {
   legacyFindPendingMigrations,
   legacyListRemoteMigrations,
   legacyReconcileMigrations,
+  legacyResolveMigrationFile,
   legacySuggestMigrationRepair,
   legacySuggestRevertHistory,
 } from "./legacy-migration-history.ts";
@@ -186,5 +187,43 @@ describe("legacySuggestRevertHistory", () => {
     );
     expect(legacySuggestRevertHistory(["0002"])).toMatch(/\n$/u);
     expect(legacySuggestRevertHistory(["0002"])).toContain("supabase db pull");
+  });
+});
+
+describe("legacyResolveMigrationFile (byte-ordered match, Go's sort.Strings via afero match.go:91)", () => {
+  it("picks the UTF-8-byte-first match, not JS's default UTF-16 code-unit order", async () => {
+    // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
+    // private-use character (U+E000): JS's default `.sort()` (no comparator) ranks the
+    // surrogate pair FIRST — its leading high-surrogate code unit (0xD83D) is less than
+    // the private-use code unit (0xE000). `sort.Strings` (UTF-8 byte order) ranks the
+    // private-use character first instead (0xEE... < 0xF0... in its UTF-8 encoding).
+    const surrogatePair = "20240101000000_a\u{1f600}.sql";
+    const privateUse = "20240101000000_a\u{e000}.sql";
+    expect([surrogatePair, privateUse].sort()[0]).toBe(surrogatePair);
+
+    const layer = Layer.mergeAll(
+      Layer.succeed(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          readDirectory: () => Effect.succeed([surrogatePair, privateUse]),
+        }),
+      ),
+      Path.layer,
+    );
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        return yield* legacyResolveMigrationFile(
+          fs,
+          path,
+          "/supabase/migrations",
+          "20240101000000",
+        );
+      }).pipe(Effect.provide(layer)),
+    );
+    expect(Option.isSome(result) ? result.value : undefined).toBe(
+      `/supabase/migrations/${privateUse}`,
+    );
   });
 });

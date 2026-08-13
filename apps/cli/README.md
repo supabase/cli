@@ -15,7 +15,8 @@ This workspace currently contains the next/V3 CLI shell and the scaffolding for 
 
 For current migration/parity status, see:
 
-- [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md)
+- [`docs/go-cli-porting-status.md`](./docs/go-cli-porting-status.md) — the residual Go delegation surface
+- [`docs/go-cli-divergences.md`](./docs/go-cli-divergences.md) — TS-only flags and behavioral divergences from the old Go CLI
 
 For the generated command/reference docs, see:
 

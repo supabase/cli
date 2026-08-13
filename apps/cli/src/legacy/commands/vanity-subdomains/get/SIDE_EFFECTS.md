@@ -75,5 +75,4 @@ One `result` event with the full response object.
 
 - The legacy `--output` flag wins over TS `--output-format` when both are provided.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
-  even when the API call fails. A closed gate writes nothing (Go's `PersistentPreRunE` fails
-  before `PersistentPostRun` runs).
+  even when the API call fails. A closed gate writes nothing.

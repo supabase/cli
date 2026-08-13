@@ -2,8 +2,8 @@ import { Effect, type FileSystem, type Path } from "effect";
 import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.ts";
 
 /**
- * Resolves the local Postgres Docker image the way Go's `config.Load` does
- * (`apps/cli-go/pkg/config/config.go:653-668`), for commands that run a
+ * Resolves the local Postgres Docker image the way `config.Load` does,
+ * for commands that run a
  * pg_dump / shadow-DB container (`db dump`, declarative). Promote/extend this if
  * the full service-image resolution is ever needed.
  *
@@ -12,18 +12,17 @@ import { dockerfileServiceImage } from "../../shared/services/dockerfile-images.
  */
 
 const LEGACY_PG_IMAGE = dockerfileServiceImage("pg");
-// `pkg/config/constants.go:12-14`.
 const LEGACY_PG14 = "supabase/postgres:14.1.0.89";
 const LEGACY_PG15 = "supabase/postgres:15.8.1.085";
 
-/** `pkg/config/utils.go:81` — replace everything after the first `:` with `tag`. */
+/** Replace everything after the first `:` with `tag`. */
 function replaceImageTag(image: string, tag: string): string {
   const index = image.indexOf(":");
   return image.slice(0, index + 1) + tag.trim();
 }
 
 /**
- * Go's `VersionCompare` (`pkg/config/config.go`): compares semver, treating a
+ * `VersionCompare`: compares semver, treating a
  * 4th+ dotted component as a build suffix. Returns <0, 0, or >0.
  */
 function versionCompare(a: string, b: string): number {
@@ -66,7 +65,7 @@ export const legacyResolveDbImage = Effect.fnUntraced(function* (
   majorVersion: number,
   orioledbVersion?: string,
 ) {
-  // OrioleDB override (Go's `config.Validate`, `pkg/config/config.go:876-880`): on a
+  // OrioleDB override (`config.Validate`): on a
   // 15/17 project with `experimental.orioledb_version` set, the Postgres image is
   // replaced with the OrioleDB tag, taking precedence over the default/pinned image.
   if (

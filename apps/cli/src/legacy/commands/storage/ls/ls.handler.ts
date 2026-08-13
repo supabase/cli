@@ -12,14 +12,14 @@ import {
   legacyParseStorageUrlEffect,
 } from "../storage.frame.ts";
 import type { LegacyStorageLsFlags } from "./ls.command.ts";
+import { LegacyStorageMutuallyExclusiveFlagsError } from "../storage.errors.ts";
 
 /**
  * `supabase storage ls [path]` — list objects by path prefix.
  *
- * Port of `apps/cli-go/internal/storage/ls/ls.go`. The default path is `ss:///`
- * (all buckets); `--recursive` walks the tree with BFS. Text mode prints one
- * entry per line to **stdout** (Go `fmt.Println`); json/stream-json emit a single
- * `{ paths }` result.
+ * The default path is `ss:///` (all buckets); `--recursive` walks the tree
+ * with BFS. Text mode prints one entry per line to **stdout**;
+ * json/stream-json emit a single `{ paths }` result.
  */
 export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
   flags: LegacyStorageLsFlags,
@@ -33,14 +33,26 @@ export const legacyStorageLs = Effect.fn("legacy.storage.ls")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && flags.local) {
+      return yield* Effect.fail(
+        new LegacyStorageMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
     // Routing reads the `--local` value (Go `storage.go:21-32`): local clears the
     // ref, otherwise the linked path resolves it. No network — safe before the
     // url parse below.
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
+    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
 
-    // Config is always loaded (Go's `utils.Config`); a `[remotes.*]` match prints
-    // the override line.
+    // Config is always loaded; a `[remotes.*]` match prints the override
+    // line.
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");

@@ -1,6 +1,6 @@
 // godotenv.Parse-compatible parser: `KEY=VALUE` / `KEY="VALUE"` lines, `#`
 // comments, blank lines, and an optional `export ` prefix. A line with an empty
-// or invalid variable name throws (Go's `godotenv.Parse` surfaces
+// or invalid variable name throws (`godotenv.Parse` surfaces
 // `unexpected character ... in variable name`).
 const EXPORT_PREFIX = /^\s*export\s+/;
 
@@ -17,7 +17,7 @@ export function parseDotEnv(contents: string): Record<string, string> {
   const result: Record<string, string> = {};
   // godotenv normalizes CRLF→LF and scans the **whole buffer** with a cursor rather
   // than line-by-line, so a quoted value may span newlines (a PEM block / private
-  // key). `parseBytes` (`joho/godotenv@v1.5.1/parser.go:20-45`).
+  // key). `parseBytes`.
   let src = contents.replaceAll("\r\n", "\n");
   for (;;) {
     src = skipToStatementStart(src);
@@ -61,7 +61,7 @@ function firstLine(src: string): string {
 
 /**
  * Advance past blank lines and whole `#` comment lines to the next statement start,
- * mirroring godotenv's `getStatementStart` (`parser.go:50-68`). Comments are skipped
+ * mirroring godotenv's `getStatementStart`. Comments are skipped
  * here (before value scanning), so an apostrophe inside a comment never opens a quote.
  */
 function skipToStatementStart(src: string): string {
@@ -83,14 +83,14 @@ function skipToStatementStart(src: string): string {
   return src.slice(i);
 }
 
-// godotenv's `expandVarRegex` (`joho/godotenv/parser.go:253`): an optional
+// godotenv's `expandVarRegex`: an optional
 // leading backslash, `$`, an optional `(`, an optional `{`, an optional
 // `[A-Z0-9_]+` name, and an optional `}`.
 const EXPAND_VAR_REGEX = /(\\)?(\$)(\()?\{?([A-Z0-9_]+)?\}?/g;
 
 /**
- * Expand `$VAR`/`${VAR}` references, a 1:1 port of godotenv's `expandVariables`
- * (`parser.go:257`): a leading backslash (`\$VAR`) or a `$(`-form is returned
+ * Expand `$VAR`/`${VAR}` references, a 1:1 port of godotenv's `expandVariables`:
+ * a leading backslash (`\$VAR`) or a `$(`-form is returned
  * with its first character dropped (no expansion / no command substitution); a
  * matched `[A-Z0-9_]+` name expands to `vars[name]` (an undefined reference
  * becomes the empty string); a bare `$` with no name is left unchanged. Only
@@ -110,7 +110,7 @@ function expandVariables(value: string, vars: Record<string, string>): string {
 
 /**
  * Extract a single dotenv value starting just after the `=`/`:`, matching godotenv's
- * `extractVarValue` (`joho/godotenv@v1.5.1/parser.go:120-190`). Returns the parsed
+ * `extractVarValue`. Returns the parsed
  * value and the remaining buffer (`rest`) so the caller can continue scanning.
  *
  * A quoted value (single or double) runs to its matching unescaped closing quote

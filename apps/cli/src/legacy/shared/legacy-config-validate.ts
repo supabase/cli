@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 import {
@@ -9,15 +10,15 @@ import {
 import { legacyGoUrlParse } from "./legacy-storage-url.ts";
 
 /**
- * Single home for Go's `Config.Validate` parity (`apps/cli-go/pkg/config/config.go:989-1192`),
- * consolidating the two independent TypeScript ports of that logic:
+ * Single home for config validation,
+ * consolidating the two independent TypeScript implementations of that logic:
  *
  * - **D** = `legacy-db-config.toml-read.ts` — raw smol-toml document + `EnvLookup`,
- *   Effect-based, fails with `LegacyDbConfigLoadError`. Feeds ~15 db/migration commands via
- *   `legacy-db-config.layer.ts`.
+ * Effect-based, fails with `LegacyDbConfigLoadError`. Feeds ~15 db/migration commands via
+ * `legacy-db-config.layer.ts`.
  * - **L** = `legacy-local-config-values.ts` — decoded `@supabase/config` `ProjectConfig`,
- *   synchronous `node:fs`, throws plain `Error`. Feeds `legacy-status-values.ts` and
- *   `stop/stop.handler.ts`.
+ * synchronous `node:fs`, throws plain `Error`. Feeds `legacy-status-values.ts` and
+ * `stop/stop.handler.ts`.
  *
  * **This file is the SINGLE home for `Config.Validate` parity going forward.
  * Per-command reimplementations of any branch below are forbidden** — hoist here instead,
@@ -30,52 +31,53 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  * (`legacy-db-config.toml-read.ts`'s `legacyReadDbToml`) each build a
  * {@link LegacyConfigValidationInput} from their own decoded config (a `ProjectConfig` + raw
  * `document` for L, a raw smol-toml document + `EnvLookup` for D) and call this function once,
- * at the correct Go position. Wiring D through this module also fixed D's `db.major_version
+ * at the correct position. Wiring D through this module also fixed D's `db.major_version
  * === 0` divergence (D used to fall through to the generic invalid-value message; it now
- * throws the same "Missing required field in config: db.major_version" as Go and as L already
+ * throws the same "Missing required field in config: db.major_version" as L already
  * did).
  *
- * ## Full eventual scope: every `Config.Validate` branch this module owns
+ * ## Full eventual scope: every validation branch this module owns
  *
- * In Go's exact `Validate()` order (`config.go:989-1192`), first-failure-wins:
+ * In order, first-failure-wins:
  *
- * | Go line(s)                    | Check |
- * |--------------------------------|-------|
- * | 990-991                        | `project_id` required |
- * | 1006-1027                      | `api.port` / `api.tls.{cert,key}_path` presence (the actual file reads stay per-caller I/O) |
- * | 1031-1062                      | `db.port`, `db.major_version` (0 / 12 / 13-17 switch) |
- * | 1064-1068, pattern @ 1549-1554 | `storage.buckets.*` names vs `LEGACY_BUCKET_NAME_PATTERN` |
- * | 1070-1079                      | `studio.port` / `studio.api_url` (L-only — D has no studio section) |
- * | 1081-1085                      | `local_smtp.port` (L-only) |
- * | 1087-1153                      | `auth.*` sub-sequence, in order: site_url (1088-1090); captcha enum + presence (1099-1109, enum itself decode-time per `auth.go:58-71`); signing_keys read (1110-1116, caller-side I/O); passkey/webauthn (1117-1134); hooks (1136-1138, checks @ 1453-1521, vs `LEGACY_HOOK_SECRET_PATTERN`); mfa (1139-1141, checks @ 1523-1534); email template/notification content-vs-content_path (1293-1323, caller-side I/O) + smtp (1325-1344); third_party (1151-1153, checks @ 1635-1683, vs `LEGACY_CLERK_DOMAIN_PATTERN`) |
- * | 1159-1163, pattern @ 1539-1544 | `functions.*` slugs vs `LEGACY_FUNCTION_SLUG_PATTERN` |
- * | 1164-1173                      | `edge_runtime.deno_version` (0 / 1 / 2 switch) |
- * | (decode-time enum)             | `analytics.backend` must be `postgres`/`bigquery` |
- * | 1175-1187                      | `analytics.gcp_*` fields, gated on `backend === "bigquery"` |
- * | 1846-1854                      | `experimental.webhooks` / `experimental.pgdelta.format_options` |
+ * - `project_id` required
+ * - `api.port` / `api.tls.{cert,key}_path` presence (the actual file reads stay per-caller I/O)
+ * - `db.port`, `db.major_version` (0 / 12 / 13-17 switch)
+ * - `storage.buckets.*` names vs `LEGACY_BUCKET_NAME_PATTERN`
+ * - `studio.port` / `studio.api_url` (L-only — D has no studio section)
+ * - `local_smtp.port` (L-only)
+ * - `auth.*` sub-sequence, in order: site_url; captcha enum + presence (enum itself decode-time);
+ * signing_keys read (caller-side I/O); passkey/webauthn; hooks (vs `LEGACY_HOOK_SECRET_PATTERN`);
+ * mfa; email template/notification content-vs-content_path (caller-side I/O) + smtp; third_party
+ * (vs `LEGACY_CLERK_DOMAIN_PATTERN`)
+ * - `functions.*` slugs vs `LEGACY_FUNCTION_SLUG_PATTERN`
+ * - `edge_runtime.deno_version` (0 / 1 / 2 switch)
+ * - `analytics.backend` must be `postgres`/`bigquery` (decode-time enum)
+ * - `analytics.gcp_*` fields, gated on `backend === "bigquery"`
+ * - `experimental.webhooks` / `experimental.pgdelta.format_options`
  *
  * ## Explicitly OUT of scope forever (D-only, NEVER part of this module)
  *
- * - `remotes[*].project_id` pattern (`config.go:997-1001`, vs `LEGACY_PROJECT_REF_PATTERN`) —
- *   D's own remote-merge-phase check (`findInvalidRemoteProjectId`), never shared with L.
- * - `auth.sms` (`config.go:1145-1147`/`1348-1417`) — stays 100% inline in D; L instead relies on
- *   `@supabase/config`'s `sms` schema enforcing the same provider-switch priority at decode time
- *   (`packages/config/src/auth/sms.ts`), since L decodes through that schema and D doesn't.
- * - `auth.external` (`config.go:1148-1150`/`1419-1451`) — inline in BOTH D
- *   (`legacy-db-config.toml-read.ts`'s "B5: external providers") and L
- *   ({@link legacyResolveLocalConfigValues}'s `validateAuthExternalProviders`, called after this
- *   module's shared check, same ordering tradeoff as sms below) — never routed through this
- *   shared module, since it needs the RAW pre-decode document to see provider names
- *   `@supabase/config`'s schema doesn't model.
- * - `auth.jwt_secret` length check (`apikeys.go:43-73`, `generateAPIKeys`) — each caller's own
- *   key-generation flow (D and L both already implement this separately), not part of
- *   `Config.Validate`'s pure-check set.
+ * - `remotes[*].project_id` pattern (vs `LEGACY_PROJECT_REF_PATTERN`) —
+ * D's own remote-merge-phase check (`findInvalidRemoteProjectId`), never shared with L.
+ * - `auth.sms` — stays 100% inline in D; L instead relies on
+ * `@supabase/config`'s `sms` schema enforcing the same provider-switch priority at decode time
+ * (`packages/config/src/auth/sms.ts`), since L decodes through that schema and D doesn't.
+ * - `auth.external` — inline in BOTH D
+ * (`legacy-db-config.toml-read.ts`'s "B5: external providers") and L
+ * ({@link legacyResolveLocalConfigValues}'s `validateAuthExternalProviders`, called after this
+ * module's shared check, same ordering tradeoff as sms below) — never routed through this
+ * shared module, since it needs the RAW pre-decode document to see provider names
+ * `@supabase/config`'s schema doesn't model.
+ * - `auth.jwt_secret` length check (`generateAPIKeys`) — each caller's own
+ * key-generation flow (D and L both already implement this separately), not part of
+ * this module's pure-check set.
  *
  * `legacyExpandEnv` also stays in D (env-substitution machinery, not a validation leaf).
  *
  * ## Known ordering tradeoff (accepted — do not "fix")
  *
- * Go's real auth-block order is site_url → captcha → signing_keys[IO] → passkey → hooks → mfa →
+ * The established auth-block order is site_url → captcha → signing_keys[IO] → passkey → hooks → mfa →
  * email[IO]+smtp → **sms → external** → third_party. Since sms/external are D-only and never
  * part of this module, but third_party IS shared, D cannot call
  * {@link legacyValidateResolvedConfig} in a way that preserves relative ordering across the
@@ -83,12 +85,12 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  * D is wired up in a follow-up commit): D calls {@link legacyValidateResolvedConfig} ONCE with
  * the full input (including third_party), positioned after D's own signing-keys and
  * email-template I/O reads; D's inline sms/external checks then run AFTER that single call
- * succeeds. This means: if third_party is broken, its error surfaces (matching Go); D's
+ * succeeds. This means: if third_party is broken, its error surfaces first; D's
  * sms/external checks never run in that case. The only real behavior change from today: for the
  * (untested, unrealistic) case where sms/external AND third_party are BOTH simultaneously
- * broken in the same config.toml, Go/today's-D would report the sms/external error first, but
+ * broken in the same config.toml, the original ordering would report the sms/external error first, but
  * the refactored D reports third_party's error first, since third_party is checked inside the
- * single earlier shared call. This is an accepted, narrow, documented parity gap.
+ * single earlier shared call. This is an accepted, narrow, documented gap.
  *
  * The same category of tradeoff now also applies to L: `legacyResolveLocalConfigValues` calls
  * {@link legacyValidateResolvedConfig} exactly ONCE, at the very end, after every value this
@@ -104,37 +106,37 @@ import { legacyGoUrlParse } from "./legacy-storage-url.ts";
  * this has zero effect on any real test.
  */
 
-// Go's project-ref pattern (`apps/cli-go/pkg/config/config.go:470`): exactly 20 lowercase
+// The project-ref pattern: exactly 20 lowercase
 // ASCII letters. Exported from this module (was private in D before this relocation) as the
 // canonical home; D's `findInvalidRemoteProjectId` is today the only consumer — the
 // `remotes[*].project_id` check itself stays D-only forever, see the module header above.
 export const LEGACY_PROJECT_REF_PATTERN = /^[a-z]{20}$/;
 
-// Go's storage bucket-name pattern (`apps/cli-go/pkg/config/config.go:1382`).
-// `config.Validate` runs `ValidateBucketName` over every `[storage.buckets.*]` key
-// during config load (`config.go:898-903`), aborting before any db command when a
+// The storage bucket-name pattern.
+// Validation runs this over every `[storage.buckets.*]` key
+// during config load, aborting before any db command when a
 // name does not match. The source string is reused verbatim in the error message via
-// `.source` so it byte-matches Go's `bucketNamePattern.String()`. Used by both D
+// `.source`. Used by both D
 // (`legacy-db-config.toml-read.ts`) and L (`legacy-local-config-values.ts`), and internally by
-// {@link legacyValidateResolvedConfig}'s storage-bucket-names step (`config.go:1064-1068`).
+// {@link legacyValidateResolvedConfig}'s storage-bucket-names step.
 export const LEGACY_BUCKET_NAME_PATTERN = /^(\w|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
 
-// Go's function-slug pattern (`apps/cli-go/pkg/config/config.go:1372`). `config.Validate`
-// runs `ValidateFunctionSlug` over every `[functions.*]` key during config load
-// (`config.go:993-998`), rejecting the config before any db command. `.source` is reused
-// in the message so it byte-matches Go's `funcSlugPattern.String()`. Used by both D and L
+// The function-slug pattern. Validation
+// runs this over every `[functions.*]` key during config load,
+// rejecting the config before any db command. `.source` is reused
+// in the message. Used by both D and L
 // (same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above), and internally by
-// {@link legacyValidateResolvedConfig}'s function-slugs step (`config.go:1159-1163`).
+// {@link legacyValidateResolvedConfig}'s function-slugs step.
 export const LEGACY_FUNCTION_SLUG_PATTERN = /^[A-Za-z][A-Za-z0-9_-]*$/;
 
-// Go's `hookSecretPattern` (`apps/cli-go/pkg/config/config.go:1436`). Used by both D and L
+// `hookSecretPattern`. Used by both D and L
 // (same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above), and internally by
-// {@link legacyValidateResolvedConfig}'s hooks step (`config.go:1453-1521`).
+// {@link legacyValidateResolvedConfig}'s hooks step.
 export const LEGACY_HOOK_SECRET_PATTERN = /^v1,whsec_[A-Za-z0-9+/=]{32,88}$/u;
 
-// Go's `clerkDomainPattern` (`apps/cli-go/pkg/config/config.go:1553`). Used by both D and L
+// `clerkDomainPattern`. Used by both D and L
 // (same reason as {@link LEGACY_BUCKET_NAME_PATTERN} above), and internally by
-// {@link legacyValidateResolvedConfig}'s third_party step (`config.go:1635-1683`).
+// {@link legacyValidateResolvedConfig}'s third_party step.
 export const LEGACY_CLERK_DOMAIN_PATTERN =
   /^(clerk([.][a-z0-9-]+){2,}|([a-z0-9-]+[.])+clerk[.]accounts[.]dev)$/u;
 
@@ -198,7 +200,7 @@ export interface LegacyStudioInput {
   readonly apiUrl: string;
 }
 
-/** `[local_smtp]` (Go's `Inbucket`), post-env-override. L-only. */
+/** `[local_smtp]` (`Inbucket`), post-env-override. L-only. */
 export interface LegacyLocalSmtpInput {
   readonly enabled: boolean;
   readonly port: number;
@@ -225,7 +227,7 @@ export interface LegacyPasskeyInput {
 }
 
 /** One enabled `[auth.hook.<type>]` entry. Caller pre-filters to enabled-only and pre-orders
- * per Go's fixed hook-type iteration order (`config.go:1453-1485`). */
+ * per Go's fixed hook-type iteration order. */
 export interface LegacyHookInput {
   readonly type:
     | "mfa_verification_attempt"
@@ -247,8 +249,8 @@ export interface LegacyMfaFactorInput {
   readonly verifyEnabled: boolean;
 }
 
-/** `[auth.email.smtp]`. Present iff the raw TOML table itself is present (Go's presence-based
- * `enabled` default, `config.go:743-748` — NOT the decoded, always-defaulted value). */
+/** `[auth.email.smtp]`. Present iff the raw TOML table itself is present (this section's
+ * presence-based `enabled` default — NOT the decoded, always-defaulted value). */
 export interface LegacySmtpInput {
   readonly enabled: boolean;
   readonly host: string;
@@ -259,7 +261,7 @@ export interface LegacySmtpInput {
 }
 
 /** One enabled `[auth.third_party.<provider>]` entry. Caller pre-filters to enabled-only and
- * pre-orders per Go's fixed provider order (firebase, auth0, cognito, clerk, workos). */
+ * pre-orders per the fixed provider order (firebase, auth0, cognito, clerk, workos). */
 export interface LegacyThirdPartyInput {
   readonly provider: "firebase" | "auth0" | "cognito" | "clerk" | "workos";
   /** `project_id` / `tenant` / `user_pool_id` / `domain` / `issuer_url`, per provider. */
@@ -268,8 +270,8 @@ export interface LegacyThirdPartyInput {
   readonly cognitoUserPoolRegion?: string;
 }
 
-/** `[auth]`. Present in {@link LegacyConfigValidationInput} iff auth is enabled — matches Go's
- * `if c.Auth.Enabled` gate wrapping this entire sub-sequence (`config.go:1087-1153`). */
+/** `[auth]`. Present in {@link LegacyConfigValidationInput} iff auth is enabled — this
+ * gate wraps this entire sub-sequence. */
 export interface LegacyAuthInput {
   readonly siteUrl: string;
   readonly captcha?: LegacyCaptchaInput;
@@ -293,7 +295,7 @@ export interface LegacyAnalyticsInput {
 
 /** `[experimental]`. Unconditional entry — internally gated. `webhooksPresent`/`webhooksEnabled`
  * hinge on TOML-section PRESENCE (not the decoded, always-defaulted `enabled` value) — see
- * `config.go:1846-1854` and the callers' own doc comments for why. */
+ * the callers' own doc comments for why. */
 export interface LegacyExperimentalInput {
   readonly webhooksPresent?: boolean;
   readonly webhooksEnabled?: boolean;
@@ -343,12 +345,12 @@ function messageOf(cause: unknown): string {
  * at the correct Go position themselves, using the pure helpers exported below.
  */
 export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput): void {
-  // config.go:990-991 — checked FIRST, before every other field.
+  // checked FIRST, before every other field.
   if (input.projectId !== undefined && input.projectId.length === 0) {
     throw new LegacyConfigValidateError("Missing required field in config: project_id");
   }
 
-  // config.go:1006-1027 — api.port / api.tls.{cert,key}_path, gated on api.enabled. The actual
+  // api.port / api.tls.{cert,key}_path, gated on api.enabled. The actual
   // cert/key file reads are caller-side I/O (see legacyResolveApiTlsPath below); this only
   // checks the "exactly one of cert/key set" presence rule.
   if (input.api?.enabled) {
@@ -367,11 +369,11 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     }
   }
 
-  // config.go:1031-1033 — db.port, unconditional, no `enabled` gate.
+  // db.port, unconditional, no `enabled` gate.
   if (input.db.port === 0) {
     throw new LegacyConfigValidateError("Missing required field in config: db.port");
   }
-  // config.go:1034-1062 — db.major_version switch: 0 / 12 have dedicated messages, 13/14/15/17
+  // db.major_version switch: 0 / 12 have dedicated messages, 13/14/15/17
   // are supported, anything else is the generic invalid-value message.
   if (input.db.majorVersion === 0) {
     throw new LegacyConfigValidateError("Missing required field in config: db.major_version");
@@ -387,7 +389,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     );
   }
 
-  // config.go:1064-1068, pattern @ 1549-1554 — every [storage.buckets.*] key, unconditional.
+  // every [storage.buckets.*] key, unconditional.
   for (const name of input.storageBucketNames) {
     if (!LEGACY_BUCKET_NAME_PATTERN.test(name)) {
       throw new LegacyConfigValidateError(
@@ -396,7 +398,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     }
   }
 
-  // config.go:1070-1079 — studio.port / studio.api_url, gated on studio.enabled. L-only.
+  // studio.port / studio.api_url, gated on studio.enabled. L-only.
   if (input.studio?.enabled) {
     if (input.studio.port === 0) {
       throw new LegacyConfigValidateError("Missing required field in config: studio.port");
@@ -408,21 +410,21 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     }
   }
 
-  // config.go:1081-1085 — local_smtp.port, gated on local_smtp.enabled. L-only.
+  // local_smtp.port, gated on local_smtp.enabled. L-only.
   if (input.localSmtp?.enabled && input.localSmtp.port === 0) {
     throw new LegacyConfigValidateError("Missing required field in config: local_smtp.port");
   }
 
-  // config.go:1087-1153 — the auth.* sub-sequence, all inside `if c.Auth.Enabled`.
+  // the auth.* sub-sequence, all inside `if c.Auth.Enabled`.
   if (input.auth !== undefined) {
     const auth = input.auth;
 
-    // config.go:1088-1090 — auth.site_url.
+    // auth.site_url.
     if (auth.siteUrl.length === 0) {
       throw new LegacyConfigValidateError("Missing required field in config: auth.site_url");
     }
 
-    // config.go:1099-1109 + auth.go:58-71 — auth.captcha. The provider enum check runs FIRST,
+    // auth.captcha. The provider enum check runs FIRST,
     // regardless of `enabled` (it's actually a decode-time check in Go, reproduced here so both
     // callers see it from one place); only then does the `enabled`-gated presence check run.
     if (auth.captcha !== undefined) {
@@ -451,9 +453,9 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
       }
     }
 
-    // config.go:1110-1116 — signing_keys read is caller-side I/O, not part of this function.
+    // signing_keys read is caller-side I/O, not part of this function.
 
-    // config.go:1117-1134 — auth.passkey / auth.webauthn. Caller only builds `passkey` when
+    // auth.passkey / auth.webauthn. Caller only builds `passkey` when
     // `[auth.passkey] enabled` is true.
     if (auth.passkey !== undefined) {
       if (!auth.passkey.webauthnPresent) {
@@ -473,18 +475,18 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
       }
     }
 
-    // config.go:1136-1138, checks @ 1453-1521 — auth.hook.*, caller pre-filtered to
-    // enabled-only and pre-ordered per Go's fixed hook-type iteration order.
+    // auth.hook.*, caller pre-filtered to
+    // enabled-only and pre-ordered per the fixed hook-type iteration order.
     for (const hook of auth.hooks) {
       if (hook.uri.length === 0) {
         throw new LegacyConfigValidateError(
           `Missing required field in config: auth.hook.${hook.type}.uri`,
         );
       }
-      // Go calls `url.Parse` before the scheme switch (`config.go:1497-1499`) and fails the
+      // Parse with `net/url.Parse` semantics before the scheme switch and fail the
       // whole load on a malformed URI (e.g. an unterminated IPv6 host like `http://[::1`) —
       // a bare scheme-prefix regex would accept that. Reuse `legacyGoUrlParse` (the same
-      // `net/url.Parse` port already used for `studio.api_url` above) instead of re-deriving
+      // port already used for `studio.api_url` above) instead of re-deriving
       // a scheme by hand.
       let scheme: string;
       try {
@@ -518,7 +520,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
       }
     }
 
-    // config.go:1139-1141, checks @ 1523-1534 — auth.mfa.*, caller pre-ordered totp/phone/web_authn.
+    // auth.mfa.*, caller pre-ordered totp/phone/web_authn.
     for (const factor of auth.mfa) {
       if (factor.enrollEnabled && !factor.verifyEnabled) {
         throw new LegacyConfigValidateError(
@@ -527,10 +529,10 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
       }
     }
 
-    // config.go:1293-1323 — email template/notification content read + exclusivity is
+    // email template/notification content read + exclusivity is
     // caller-side, via legacyResolveEmailTemplateContentPath below.
 
-    // config.go:1325-1344 — auth.email.smtp, gated on the raw table being present AND enabled.
+    // auth.email.smtp, gated on the raw table being present AND enabled.
     if (auth.smtp !== undefined && auth.smtp.enabled) {
       if (auth.smtp.host.length === 0) {
         throw new LegacyConfigValidateError(
@@ -559,7 +561,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
       }
     }
 
-    // config.go:1151-1153, checks @ 1635-1683 — auth.third_party.*, caller pre-filtered to
+    // auth.third_party.*, caller pre-filtered to
     // enabled-only and pre-ordered firebase, auth0, cognito, clerk, workos. Each provider's
     // required field(s) are checked as encountered; the "more than one enabled" check runs only
     // after every entry has individually validated.
@@ -627,7 +629,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     }
   }
 
-  // config.go:1159-1163, pattern @ 1539-1544 — every [functions.*] key, unconditional, not
+  // every [functions.*] key, unconditional, not
   // gated on auth.enabled.
   for (const slug of input.functionSlugs) {
     if (!LEGACY_FUNCTION_SLUG_PATTERN.test(slug)) {
@@ -637,7 +639,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     }
   }
 
-  // config.go:1164-1173 — edge_runtime.deno_version switch, unconditional, not gated on
+  // edge_runtime.deno_version switch, unconditional, not gated on
   // edge_runtime.enabled.
   if (input.edgeRuntimeDenoVersion === 0) {
     throw new LegacyConfigValidateError(
@@ -650,7 +652,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     );
   }
 
-  // Decode-time enum (`LogflareBackend.UnmarshalText`, config.go:60-65) — reproduced here so
+  // Decode-time enum — reproduced here so
   // both callers' env-override paths (which bypass their own decode-time schema guard) see it.
   const backend = input.analytics.backend;
   if (
@@ -663,7 +665,7 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
       "failed to parse config: decoding failed due to the following error(s):\n\n'analytics.backend' must be one of [postgres bigquery]",
     );
   }
-  // config.go:1175-1187 — analytics.gcp_*, gated on enabled && backend === "bigquery".
+  // analytics.gcp_*, gated on enabled && backend === "bigquery".
   if (input.analytics.enabled && backend === "bigquery") {
     if (input.analytics.gcpProjectId.length === 0) {
       throw new LegacyConfigValidateError(
@@ -682,14 +684,14 @@ export function legacyValidateResolvedConfig(input: LegacyConfigValidationInput)
     }
   }
 
-  // config.go:1847-1848 — experimental.webhooks, hinges on TOML-section PRESENCE, not the
+  // experimental.webhooks, hinges on TOML-section PRESENCE, not the
   // decoded (always-defaulted) `enabled` value.
   if (input.experimental.webhooksPresent === true && input.experimental.webhooksEnabled !== true) {
     throw new LegacyConfigValidateError(
       "Webhooks cannot be deactivated. [experimental.webhooks] enabled can either be true or left undefined",
     );
   }
-  // config.go:1850-1851 — experimental.pgdelta.format_options, must be valid JSON when set.
+  // experimental.pgdelta.format_options, must be valid JSON when set.
   if (
     input.experimental.pgdeltaFormatOptions !== "" &&
     !isValidJson(input.experimental.pgdeltaFormatOptions)
@@ -709,7 +711,7 @@ function isValidJson(value: string): boolean {
   }
 }
 
-// ── signing keys (config.go:1110-1116, path rule config.go:877-878 filepath.IsAbs guard) ──
+// ── signing keys (path rule: guarded by an isAbsolute check) ──
 
 /** Absolute → verbatim; relative → join(workdir, "supabase", p). */
 export function legacyResolveSigningKeysPath(workdir: string, signingKeysPath: string): string {
@@ -728,19 +730,17 @@ export function legacySigningKeysDecodeErrorMessage(cause: unknown): string {
 // D only asserts Array.isArray(JSON.parse(text)); L further decodes into LegacyJwk[] to sign
 // with the first key — that JWK-specific decode/signing logic stays in L, unrelated to parity.
 
-// ── email template / notification (config.go:1293-1323) ──
+// ── email template / notification ──
 
 /**
  * Pure exclusivity decision + path to read for one template/notification entry. Throws
  * {@link LegacyConfigValidateError} with the exclusivity message when `contentPath === ""` and
  * `contentPresent`. Returns the absolute path to read, or `undefined` when there's nothing to
  * read (both `contentPath` and `content` absent — skip, not an error). `contentPath` set (even
- * when `content` is ALSO set) always wins — Go does not reject "both set", `content_path`
+ * when `content` is ALSO set) always wins — "both set" is not rejected, `content_path`
  * silently wins/overwrites.
  *
- * `base` is caller-resolved: TEMPLATE section → workdir; NOTIFICATION section →
- * join(workdir, "supabase") (this asymmetry is real, intentional Go behavior — config.go's own
- * FIXME comment flags it, do not "fix" it).
+ * `base` is the caller-resolved project root for both templates and notifications.
  */
 export function legacyResolveEmailTemplateContentPath(args: {
   readonly section: "template" | "notification";
@@ -759,7 +759,35 @@ export function legacyResolveEmailTemplateContentPath(args: {
     }
     return undefined;
   }
+  if (args.section === "notification") {
+    return legacyResolveNotificationContentPath(args.base, args.contentPath);
+  }
   return isAbsolute(args.contentPath) ? args.contentPath : join(args.base, args.contentPath);
+}
+
+/**
+ * Notification `content_path` resolution with the legacy fallback. Older
+ * scaffolds documented these paths relative to `supabase/` (the file lives at
+ * `<root>/supabase/templates/...` while config says `./templates/...`).
+ * Project-root resolution is canonical; when the root-resolved file is
+ * missing but the supabase-relative one exists, that path wins so existing
+ * configs keep working. Shared by config validation, `config push` content
+ * loading, and the Kong template mount builder so every consumer sees the
+ * SAME file.
+ */
+export function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
+  if (isAbsolute(contentPath)) return contentPath;
+  const resolved = join(base, contentPath);
+  if (!legacyIsExistingFile(resolved)) {
+    const legacyResolved = join(base, "supabase", contentPath);
+    if (legacyIsExistingFile(legacyResolved)) return legacyResolved;
+  }
+  return resolved;
+}
+
+/** A directory at the root-resolved path must not suppress the legacy-file fallback. */
+function legacyIsExistingFile(path: string): boolean {
+  return statSync(path, { throwIfNoEntry: false })?.isFile() ?? false;
 }
 
 /** `Invalid config for auth.email.${section}.${name}.content_path: ${msg(cause)}` */
@@ -771,9 +799,9 @@ export function legacyEmailContentPathReadErrorMessage(
   return `Invalid config for auth.email.${section}.${name}.content_path: ${messageOf(cause)}`;
 }
 
-// ── api.tls cert/key (config.go:1016-1026, path rule ~961-965, NO isAbsolute guard) ──
+// ── api.tls cert/key (path rule: NO isAbsolute guard) ──
 
-/** Unconditional join(workdir, "supabase", p) — Go's path.Join absorbs a leading "/" too. */
+/** Unconditional join(workdir, "supabase", p) — `path.Join` absorbs a leading "/" too. */
 export function legacyResolveApiTlsPath(workdir: string, p: string): string {
   return join(workdir, "supabase", p);
 }

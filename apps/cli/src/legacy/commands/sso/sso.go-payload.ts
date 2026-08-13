@@ -11,11 +11,8 @@ import {
 } from "../../shared/legacy-go-struct-output.encoders.ts";
 
 /**
- * Mirror of Go's `api.GetProviderResponse` / `CreateProviderResponse` /
- * `UpdateProviderResponse` / `DeleteProviderResponse` — all four share the
- * exact same anonymous shape in `apps/cli-go/pkg/api/types.gen.go`. Shared by
- * `sso show`, `sso add`, `sso update`, `sso remove`, and (as list items)
- * `sso list` for `-o yaml` / `-o toml` (CLI-1975).
+ * Struct spec shared by `sso show`, `sso add`, `sso update`, `sso remove`,
+ * and (as list items) `sso list`, driving `-o yaml` / `-o toml` key casing.
  */
 export const LEGACY_GO_SSO_PROVIDER_RESPONSE: LegacyGoType = legacyGoStruct([
   ["created_at", legacyGoPtr(legacyGoString)],

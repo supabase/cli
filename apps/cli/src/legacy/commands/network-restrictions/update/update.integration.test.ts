@@ -31,10 +31,6 @@ const parseDbAllowCidr = (rawValues: ReadonlyArray<string>) =>
       Effect.provide(BunServices.layer),
     );
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const POST_APPLIED: typeof V1UpdateNetworkRestrictionsOutput.Type = {
   entitlement: "allowed",
   config: {
@@ -67,10 +63,6 @@ const PATCH_APPLIED: typeof V1PatchNetworkRestrictionsOutput.Type = {
   },
   status: "applied",
 };
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -130,14 +122,8 @@ const baseFlags = {
   append: false,
 };
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("legacy network-restrictions update integration", () => {
-  // -------------------------------------------------------------------------
   // Replace mode (POST /apply)
-  // -------------------------------------------------------------------------
 
   it.live("POSTs /apply with partitioned v4/v6 lists and prints the Go-format block", () => {
     const { layer, out, api } = setup({ postResponse: POST_APPLIED });
@@ -268,9 +254,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Append mode (PATCH /network-restrictions)
-  // -------------------------------------------------------------------------
 
   it.live("PATCHes when --append=true with `add` payload and partitions the V2 response", () => {
     const { layer, out, api } = setup({ patchResponse: PATCH_APPLIED });
@@ -317,9 +301,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // CIDR validation
-  // -------------------------------------------------------------------------
 
   it.live("rejects an input missing the /mask suffix with Go's verbatim message", () => {
     const { layer } = setup();
@@ -360,8 +342,8 @@ describe("legacy network-restrictions update integration", () => {
   it.live("rejects an IPv4-mapped private IPv6 input (security regression guard)", () => {
     // Without IPv4-mapped detection, ::ffff:10.0.0.0/104 would slip past the
     // private check because the IPv6 first-byte is 0, not 0xfc. parseCidr now
-    // reclassifies these as v4 via Go's To4() semantics; the v4 path catches
-    // 10.0.0.0/8.
+    // reclassifies these as v4 via `net.IP.To4()` semantics; the v4 path
+    // catches 10.0.0.0/8.
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -413,9 +395,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // HTTP error mapping
-  // -------------------------------------------------------------------------
 
   it.live("reports a Go-compatible error message when the POST network is unreachable", () => {
     const { layer } = setup({ network: "fail" });
@@ -473,9 +453,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Output modes — POST
-  // -------------------------------------------------------------------------
 
   it.live("emits a structured JSON success payload via --output-format=json after POST", () => {
     const { layer, out } = setup({ format: "json", postResponse: POST_APPLIED });
@@ -558,9 +536,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Output modes — PATCH (cover encoders against V2 response shape)
-  // -------------------------------------------------------------------------
 
   it.live("emits a structured JSON success payload via --output-format=json after PATCH", () => {
     const { layer, out } = setup({ format: "json", patchResponse: PATCH_APPLIED });
@@ -629,9 +605,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Project ref resolution
-  // -------------------------------------------------------------------------
 
   it.live("uses --project-ref flag value over LegacyCliConfig.projectId", () => {
     const flagRef = "zzzzzzzzzzzzzzzzzzzz";
@@ -661,9 +635,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // withJsonErrorHandling
-  // -------------------------------------------------------------------------
 
   it.live("emits a fail event when withJsonErrorHandling wraps a JSON-mode error", () => {
     const { layer, out } = setup({
@@ -677,9 +649,7 @@ describe("legacy network-restrictions update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // PersistentPostRun parity (telemetry + linked-project cache)
-  // -------------------------------------------------------------------------
 
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const { layer, telemetry, cache } = setupTracked({ postResponse: POST_APPLIED });

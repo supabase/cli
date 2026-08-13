@@ -1,9 +1,8 @@
 import { Data, Effect, Layer, Schema, Context } from "effect";
 import { FileSystem, Path } from "effect";
 import { execFileSync } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import { link, unlink, writeFile } from "node:fs/promises";
+import { claimFileAtomically } from "./managed/atomic-claim.ts";
 import { AllocatedPortsSchema, type AllocatedPorts } from "./PortAllocator.ts";
 import {
   PartialVersionManifestSchema,
@@ -345,27 +344,24 @@ function makeClaim(deps: StateManagerDeps) {
       const dir = deps.stackDir(state.name);
       yield* deps.fs.makeDirectory(dir, { recursive: true });
       const statePath = deps.stateFile(state.name);
-      const temporaryPath = `${statePath}.claim-${process.pid}-${randomUUID()}`;
-      yield* Effect.tryPromise({
-        try: async () => {
-          await writeFile(temporaryPath, encodePrettyJson(encodeStackState(state)), { flag: "wx" });
-          try {
-            await link(temporaryPath, statePath);
-          } finally {
-            await unlink(temporaryPath).catch(() => undefined);
-          }
-        },
+      const outcome = yield* Effect.tryPromise({
+        try: () => claimFileAtomically(statePath, encodePrettyJson(encodeStackState(state))),
         catch: (cause) =>
           new StateClaimError({
             name: state.name,
             path: statePath,
-            reason:
-              cause instanceof Error && "code" in cause && cause.code === "EEXIST"
-                ? "already-claimed"
-                : "io-error",
+            reason: "io-error",
             cause,
           }),
       });
+      if (outcome === "already-exists") {
+        return yield* new StateClaimError({
+          name: state.name,
+          path: statePath,
+          reason: "already-claimed",
+          cause: undefined,
+        });
+      }
     }).pipe(
       Effect.catchTag("PlatformError", (cause) =>
         Effect.fail(

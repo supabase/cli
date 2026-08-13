@@ -7,8 +7,8 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
- * The target test file already exists. Byte-matches Go's
- * `errors.New(path + " already exists.")` (`apps/cli-go/internal/test/new/new.go:26`).
+ * The target test file already exists. Message format:
+ * `<path> already exists.`
  */
 export class LegacyTestNewFileExistsError extends Data.TaggedError("LegacyTestNewFileExistsError")<{
   readonly path: string;

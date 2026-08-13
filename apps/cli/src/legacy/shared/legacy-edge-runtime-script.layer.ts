@@ -17,7 +17,7 @@ import {
 } from "./legacy-edge-runtime-script.service.ts";
 
 /**
- * Asks the OS for an unused TCP port on 127.0.0.1, like Go's `getFreeHostPort`.
+ * Asks the OS for an unused TCP port on 127.0.0.1, like `getFreeHostPort`.
  * On failure the caller drops the `--port` flag (Go preserves prior behaviour),
  * so this resolves to `None` rather than failing the whole run.
  */
@@ -34,7 +34,7 @@ const allocateFreeHostPort = Effect.callback<Option.Option<number>>((resume) => 
 /**
  * Real `LegacyEdgeRuntimeScript`: runs the Deno program in the edge-runtime
  * container via `LegacyDockerRun.runCapture`, overriding the image entrypoint
- * with `sh -c <heredoc>` (Go's `RunEdgeRuntimeScript`). The image (from the
+ * with `sh -c <heredoc>` (`RunEdgeRuntimeScript`). The image (from the
  * caller's effective `deno_version`) and a fresh free port are resolved per run,
  * so layer construction reads no config (it would validate base config before a
  * linked command resolves its ref).
@@ -52,7 +52,7 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
     const debug = yield* LegacyDebugFlag;
     const networkIdFlag = yield* LegacyNetworkIdFlag;
     const runtimeInfo = yield* RuntimeInfo;
-    // Go's `DockerStart` appends `host.docker.internal:host-gateway` to every
+    // `DockerStart` appends `host.docker.internal:host-gateway` to every
     // container's ExtraHosts on Linux only (build-tag `extraHosts` in
     // `apps/cli-go/internal/utils/docker_linux.go:8`; the append at `docker.go:266`
     // is unconditional but the slice is empty on macOS/Windows). The pg-delta
@@ -62,8 +62,8 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
       runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
 
     // Go requests host networking for the edge-runtime container, but `DockerStart`
-    // overrides any network mode (host included) with `--network-id` when set
-    // (`apps/cli-go/internal/utils/docker.go:267-271`). Mirror the sibling pattern in
+    // overrides any network mode (host included) with `--network-id` when set.
+    // Mirror the sibling pattern in
     // `db dump` / `gen types` / `test db` so declarative pg-delta runs reach the
     // local stack on custom networks.
     const networkId = Option.getOrUndefined(networkIdFlag);
@@ -80,9 +80,11 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
           // config read happens here, not at layer acquisition, so merely composing
           // the db diff/pull runtime never validates the base config before the
           // linked ref is known (Go validates the `[remotes.<ref>]`-merged config,
-          // and even `db diff --use-pgadmin --linked` must not fail at layer build).
-          // Every pg-delta/migra caller passes `opts.denoVersion`, so the base read
-          // is a defensive fallback that does not run for them.
+          // and even `db diff --use-pgadmin --linked` — a native path since CLI-1968,
+          // reading config directly rather than exec'ing a Go child, and never calling
+          // this layer's `run` at all — must not fail at layer build). Every pg-delta/
+          // migra caller passes `opts.denoVersion`, so the base read is a defensive
+          // fallback that does not run for them.
           //
           // Same per-run override for `workdir`: `cliConfig.workdir` is fixed at
           // layer-build time, before a command's own `process.chdir` (bootstrap's
@@ -120,15 +122,14 @@ export const legacyEdgeRuntimeScriptLayer = Layer.effect(
               // container from reading CLI-generated files under the `/workspace`
               // bind, like the pg-delta CA bundle (supabase/cli#5989). Disable label
               // separation for this helper container instead of relabeling the
-              // user's project files — same as `db test`'s pg_prove run
-              // (`apps/cli-go/internal/db/test/test.go:81`); Bitbucket CI clears it
+              // user's project files — same as `db test`'s pg_prove run; Bitbucket CI clears it
               // via `legacyApplyBitbucketDockerFilter`.
               securityOpt: ["label:disable"],
               extraHosts,
               network,
             })
             // A spawn failure (e.g. Docker not installed) carries no container
-            // stderr; wrap it with the caller's prefix like Go's `%s: %w`.
+            // stderr; wrap it with the caller's prefix like `%s: %w`.
             // Thread the docker discriminant so a daemon-down / registry-pull
             // failure at the docker boundary is not misclassified as user SQL.
             .pipe(

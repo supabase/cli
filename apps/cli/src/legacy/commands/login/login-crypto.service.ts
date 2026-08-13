@@ -20,7 +20,7 @@ interface LegacyLoginCryptoShape {
     { readonly ecdh: ECDH; readonly publicKeyHex: string },
     LegacyLoginCryptoError
   >;
-  /** Fresh login session UUID (Go's `uuid.New().String()`, `login.go:187`). */
+  /** Fresh login session UUID (`uuid.New().String()`, `login.go:187`). */
   readonly generateSessionId: Effect.Effect<string>;
   /**
    * Default token name `cli_<user>@<host>_<unix>`, falling back to `cli_<unix>`
@@ -29,7 +29,7 @@ interface LegacyLoginCryptoShape {
   readonly defaultTokenName: Effect.Effect<string>;
   /**
    * Derives the ECDH shared secret and AES-256-GCM decrypts the access token.
-   * Mirrors Go's `decryptAccessToken` (`login.go:86-128`).
+   * Mirrors `decryptAccessToken` (`login.go:86-128`).
    */
   readonly decryptToken: (
     ecdh: ECDH,

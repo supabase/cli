@@ -30,74 +30,69 @@ import {
 } from "./stop.errors.ts";
 
 /**
- * Resolve the Docker label filter `stop` searches on. Go's flag precedence
- * (`stop.go:14-22`): `--all` bypasses config entirely with an empty filter;
- * `--project-id` overrides `Config.ProjectId` directly, also bypassing
- * config.toml; otherwise `flags.LoadConfig` reads config.toml and
- * `Config.ProjectId` (env → toml → workdir basename) is used.
+ * Resolve the Docker label filter `stop` searches on. Flag precedence:
+ * `--all` bypasses config entirely with an empty filter;
+ * `--project-id` overrides the resolved project id directly, also bypassing
+ * config.toml; otherwise config loads and the resolved project id
+ * (env → toml → workdir basename) is used.
  *
- * "env" is Go's post-`loadNestedEnv` value, not just the ambient shell
- * environment: `Config.Load` loads `supabase/.env`/`.env.local` *and*
- * project-root/`SUPABASE_ENV`-selected dotenv files into the process env via
- * `godotenv.Load` (`pkg/config/config.go:735-738,1169-1207`; godotenv never
- * overrides an already-set var) *before* Viper's `AutomaticEnv` reads
- * `SUPABASE_PROJECT_ID` (`config.go:534-535`) — so an env-file-only value
+ * "env" is the post-nested-env-load value, not just the ambient shell
+ * environment: config loading loads `supabase/.env`/`.env.local` *and*
+ * project-root/`SUPABASE_ENV`-selected dotenv files into the process env
+ * (never overriding an already-set var) *before* reading
+ * `SUPABASE_PROJECT_ID` — so an env-file-only value
  * overrides config.toml too, not only an ambient shell export.
  * `legacyResolveProjectEnvironmentValues` implements that full precedence
  * chain (see its doc comment) on top of `loadProjectEnvironment`'s
  * `supabase/`-dir-only result, so it's used here instead of reading
  * `process.env` directly. It still returns a usable map (falling back to
  * `<workdir>/supabase`/`workdir` and `process.env` itself) even when no
- * `supabase/` config file exists at `workdir`, matching Go's `loadNestedEnv`
- * running unconditionally before `config.toml` is ever opened
- * (`pkg/config/config.go:786-793`) — the `?? process.env[...]` fallback below
+ * `supabase/` config file exists at `workdir`, matching the nested-env-load
+ * running unconditionally before `config.toml` is ever opened —
+ * the `?? process.env[...]` fallback below
  * only still matters for keys neither source produced.
  *
  * The config/env-derived (default) branch is sanitized with
  * `legacySanitizeProjectId` before it's used as a filter value,
- * matching Go's `Config.Validate` sanitizing the `Config.ProjectId`
- * singleton once at config-load time (`pkg/config/config.go:938-944`) — every
- * later reader, including the Docker LABEL `start` writes
- * (`internal/utils/docker.go:375`), sees that same sanitized string. The
- * explicit `--project-id` bypass stays RAW to match: Go assigns the flag
- * value straight to `Config.ProjectId` without going through `Validate`
- * (`internal/stop/stop.go:19-20`).
+ * matching how config validation sanitizes the resolved project id
+ * singleton once at config-load time — every
+ * later reader, including the Docker LABEL `start` writes, sees that same
+ * sanitized string. The
+ * explicit `--project-id` bypass stays RAW to match: the flag
+ * value assigns straight to the resolved project id without going through
+ * validation.
  *
- * Go's check is `len(projectId) > 0` (`internal/stop/stop.go:18`), not merely
+ * The check is `len(projectId) > 0`, not merely
  * "was the flag set" — an explicit but empty `--project-id ""` falls through
  * to the config.toml branch exactly like an absent flag, so that's mirrored
  * here with a non-empty check rather than `Option.isSome` alone.
  */
 const resolveSearchProjectIdFilter = Effect.fn("legacy.stop.resolveSearchProjectIdFilter")(
   function* (flags: LegacyStopFlags, cliConfig: LegacyCliConfig["Service"]) {
-    // `internal/stop/stop.go:17`'s `if !all` reads the resolved value (not
+    // The `!all` check reads the resolved value (not
     // presence), so this branch stays value-based — `Option.getOrElse` mirrors
-    // Cobra's `BoolVar` default of `false` when `--all` was never passed.
+    // the boolean flag's default of `false` when `--all` was never passed.
     if (Option.getOrElse(flags.all, () => false)) return "";
     if (Option.isSome(flags.projectId) && flags.projectId.value.length > 0) {
       return flags.projectId.value;
     }
 
     // `legacyLoadLocalProjectContext` covers the config-load/env/project-id
-    // resolution sequence Go's `flags.LoadConfig` performs (config load +
-    // project-id resolution, `internal/utils/flags/config_path.go:10-14` ->
-    // `pkg/config/config.go:882`) — see its own doc comment for the full
-    // Go-parity rationale (including why workdir validation stays out of it
+    // resolution sequence — see its own doc comment for the full
+    // rationale (including why workdir validation stays out of it
     // and is instead handled by `legacyStop`'s own unconditional call above).
     const context = yield* legacyLoadLocalProjectContext(
       cliConfig.workdir,
       (message) => new LegacyStopConfigLoadError({ message }),
     );
 
-    // VALIDATE config before any Docker call, matching Go's `flags.LoadConfig`
-    // (config load + `Validate`, `internal/utils/flags/config_path.go:10-14` ->
-    // `pkg/config/config.go:882`), which the default `stop` path runs in full
-    // (`internal/stop/stop.go:15-25`) before ever touching Docker — unlike the
+    // VALIDATE config before any Docker call — the default `stop` path runs
+    // full config validation before ever touching Docker — unlike the
     // `--all`/`--project-id` branches above, which bypass config loading
     // entirely and so must NOT run this. `legacyResolveLocalConfigValues` is
     // reused purely for its throwing side effects (its resolved URLs/keys are
-    // discarded); it gives `stop` the same partial-but-growing `Config.Validate`
-    // parity `status` already has (`status.handler.ts`), rather than a one-off
+    // discarded); it gives `stop` the same partial-but-growing config validation
+    // coverage `status` already has (`status.handler.ts`), rather than a one-off
     // re-implementation.
     yield* Effect.try({
       try: () =>
@@ -124,31 +119,28 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
   const telemetryState = yield* LegacyTelemetryState;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
-  // Threaded into `legacyDockerRemoveAll` below — Go's `--debug` gates that
-  // function's `Pruned …:` stderr reports (`docker.go:123-143`).
+  // Threaded into `legacyDockerRemoveAll` below — `--debug` gates that
+  // function's `Pruned …:` stderr reports.
   const debug = yield* LegacyDebugFlag;
 
   yield* Effect.gen(function* () {
-    // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
-    // unconditionally `os.Chdir`s the resolved `--workdir`/`SUPABASE_WORKDIR`
-    // in `PersistentPreRunE` (`cmd/root.go:93-105`) — before any of `stop`'s
-    // own flag validation or `RunE`. A missing or non-directory path fails
+    // The resolved `--workdir`/`SUPABASE_WORKDIR` is `chdir`'d into
+    // unconditionally before any of `stop`'s
+    // own flag validation or handler body. A missing or non-directory path fails
     // immediately, so this must win over every later error, including the
     // `--project-id`/`--all` mutual-exclusivity check below.
     yield* legacyValidateWorkdirIsDirectory(cliConfig.workdir, fs).pipe(
       Effect.mapError((error) => new LegacyStopWorkdirError({ message: error.message })),
     );
 
-    // Presence-based, matching Cobra's `Changed` check (see the doc comment on
+    // Presence-based, matching the "explicitly set" check (see the doc comment on
     // `all`'s flag definition in `stop.command.ts`) — `--project-id x --all=false`
     // must reject too, not just `--all`/`--all=true`.
     if (Option.isSome(flags.projectId) && Option.isSome(flags.all)) {
       return yield* Effect.fail(
         new LegacyStopMutuallyExclusiveError({
-          // Cobra's `validateExclusiveFlagGroups` (spf13/cobra flag_groups.go):
-          // the group name keeps declaration order (`strings.Join(flagNames, " ")`),
-          // but the "were all set" list is `sort.Strings`-ed — verified against
-          // the vendored cobra@v1.10.2 source, not guessed.
+          // The group name keeps declaration order,
+          // but the "were all set" list is sorted.
           message:
             "if any flags in the group [project-id all] are set none of the others can be; [all project-id] were all set",
         }),
@@ -156,19 +148,16 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     }
 
     const searchProjectIdFilter = yield* resolveSearchProjectIdFilter(flags, cliConfig);
-    // Go's hidden `--backup` flag is declared via `flags.Bool("backup", true, ...)`
-    // (`cmd/stop.go:26`) but its return value is discarded — never bound to a
-    // variable, so `RunE` always passes `!noBackup` to `stop.Run` regardless of
-    // `--backup`'s value. `--backup=false` is a no-op in the real Go binary
-    // today; only `--no-backup` deletes volumes. Matching that exactly (not the
+    // The hidden `--backup` flag's return value is discarded — never bound to a
+    // variable, so the handler always uses `!noBackup` regardless of
+    // `--backup`'s value. `--backup=false` is a no-op;
+    // only `--no-backup` deletes volumes. Matching that exactly (not the
     // seemingly-intended-but-dead semantics of the flag's own description).
     const deleteVolumes = flags.noBackup;
     const filterValue = legacyCliProjectFilterValue(searchProjectIdFilter);
 
-    // Go prints this line unconditionally and immediately — `docker.go:97`'s
-    // `fmt.Fprintln(w, "Stopping containers...")`, where `w` is a
-    // `StatusWriter` that `fmt.Println`s straight to stdout in non-interactive
-    // mode (`tea.go:59-60,87-90`) before any Docker call runs. The debounced
+    // This line prints unconditionally and immediately, straight to stdout,
+    // before any Docker call runs. The debounced
     // `output.task` spinner used elsewhere in this codebase gates its message
     // behind a delay, which drops this line whenever the underlying calls
     // resolve faster than that threshold — exactly what happens against the
@@ -177,9 +166,9 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       yield* output.raw("Stopping containers...\n");
     }
 
-    // Go's `DockerRemoveAll` (`apps/cli-go/internal/utils/docker.go:96-146`): list -> stop
+    // `legacyDockerRemoveAll`: list -> stop
     // concurrently -> container prune -> conditional volume prune -> network prune. See
-    // `legacy-docker-remove-all.ts` for the full Go-parity rationale. Its 5 neutral, stage-tagged
+    // `legacy-docker-remove-all.ts` for the full rationale. Its 5 neutral, stage-tagged
     // failure variants are remapped here into `stop`'s own tagged errors.
     //
     // The containers its listing step finds are captured via `onContainersRemoved` — fired only
@@ -190,7 +179,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
     // prune` never ran and nothing was actually removed), and never a blanket delete of the whole
     // parent directory (see that function's doc comment for why that'd be unsafe) — and without a
     // second, separately `docker ps`'d listing call, which would cost an extra real Docker Engine
-    // API request Go never makes (see `legacyDockerRemoveAll`'s doc comment). Each container's own
+    // API request (see `legacyDockerRemoveAll`'s doc comment). Each container's own
     // `LEGACY_CLI_WORKDIR_LABEL` value is used to locate its directory — NOT `cliConfig.workdir`
     // unconditionally — since `stop --all`/`stop --project-id <other>` may be tearing down a
     // DIFFERENT project's containers than the one this invocation's own cwd/`--workdir` points at;
@@ -248,7 +237,7 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
       });
     }
 
-    // Post-run suggestion (stop.go:26-37): only meaningful in text mode — json/
+    // Post-run suggestion: only meaningful in text mode — json/
     // stream-json payloads have no equivalent field to carry this hint.
     if (output.format === "text") {
       const remainingVolumes = yield* legacyListVolumesByLabel(spawner, filterValue).pipe(

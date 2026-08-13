@@ -23,18 +23,18 @@ import {
 import { legacyDashboardUrl } from "./legacy-profile.ts";
 import { resolveLegacyAccessToken } from "./legacy-resolve-token.ts";
 
-// Go's `maxRetries` (`login.go:130`): the initial probe plus 2 retries (3 total).
+// `maxRetries`: the initial probe plus 2 retries (3 total).
 const MAX_LOGIN_RETRIES = 2;
 
 export const LEGACY_LOGGED_IN_MSG = "You are now logged in. Happy coding!\n";
 
 /**
- * Mirrors Go's `handleTelemetryAfterLogin` (`login.go:273-299`): fetch the gotrue
+ * Mirrors `handleTelemetryAfterLogin`: fetch the gotrue
  * id (best-effort), stitch or clear the telemetry identity, then always capture
  * `cli_login_completed`. The capture rides the just-stitched identity so PostHog
  * attributes it to the user.
  *
- * NOTE: Go's `StitchLogin` only *aliases* — it does NOT call `identify`. Do not add
+ * NOTE: `StitchLogin` only *aliases* — it does NOT call `identify`. Do not add
  * `analytics.identify` here; that is a `next/` behavior and would emit an event Go
  * never sends. Shared by the token path (`login`) and the browser flow.
  */
@@ -59,7 +59,7 @@ export const legacyPostLoginTelemetry = Effect.fnUntraced(function* (token: stri
 export interface LegacyBrowserLoginOptions {
   /** When true, prompt + open the browser; when false, just print the login link. */
   readonly openBrowser: boolean;
-  /** Token name (Go's `--name`); `None` falls back to the generated default. */
+  /** Token name (`--name`); `None` falls back to the generated default. */
   readonly tokenName: Option.Option<string>;
 }
 
@@ -89,7 +89,7 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
     ? opts.tokenName.value
     : yield* crypto.defaultTokenName;
 
-  // Go concatenates the query string without URL-encoding (`login.go:197-198`).
+  // Go concatenates the query string without URL-encoding.
   const loginUrl =
     `${legacyDashboardUrl(cliConfig.profile)}/cli/login` +
     `?session_id=${sessionId}&token_name=${tokenName}&public_key=${publicKeyHex}`;
@@ -117,8 +117,8 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
     yield* output.raw(`Here is your login link, open it in the browser ${loginUrl}\n\n`, "stdout");
   }
 
-  // Verify + retry, mirroring Go's `pollForAccessToken` backoff
-  // (`login.go:132-166`): the notifier prints `<err>\nRetry (n/2): ` after the
+  // Verify + retry, mirroring `pollForAccessToken` backoff:
+  // the notifier prints `<err>\nRetry (n/2): ` after the
   // first 2 failures; the 3rd failure gives up without a notice.
   const verifyWithRetries = (
     failuresSoFar: number,
@@ -159,7 +159,7 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
     publicKey: session.public_key,
     nonce: session.nonce,
   });
-  // Go returns the raw save error here (`login.go:222-224`) — not the
+  // Go returns the raw save error here — not the
   // "cannot save provided token" wrapper used on the token path.
   yield* credentials.saveAccessToken(token);
   yield* legacyPostLoginTelemetry(token);
@@ -174,8 +174,8 @@ export const legacyBrowserLogin = Effect.fnUntraced(function* (opts: LegacyBrows
 });
 
 /**
- * Ensures a Management API access token exists. Mirrors Go's `bootstrap` login
- * step (`bootstrap.go:67-77`): if a token is already resolvable (env / keyring /
+ * Ensures a Management API access token exists. Mirrors `bootstrap` login
+ * step: if a token is already resolvable (env / keyring /
  * file) it is a no-op; otherwise the browser login flow runs and fires
  * `cli_login_completed` once.
  */

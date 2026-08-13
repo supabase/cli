@@ -55,14 +55,7 @@ func promptLogin(fsys afero.Fs) error {
 }
 
 var experimental = []*cobra.Command{
-	bansCmd,
-	restrictionsCmd,
-	vanityCmd,
-	sslEnforcementCmd,
 	genKeysCmd,
-	postgresCmd,
-	storageCmd,
-	dbDeclarativeCmd,
 }
 
 func IsExperimental(cmd *cobra.Command) bool {

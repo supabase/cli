@@ -1,7 +1,6 @@
 # `supabase storage ls [path]`
 
-Native TypeScript port of `apps/cli-go/internal/storage/ls`. Lists objects/buckets
-by path prefix against the Storage gateway (local stack or linked project).
+Lists objects/buckets by path prefix against the Storage gateway (local stack or linked project).
 
 ## Files Read
 
@@ -31,16 +30,16 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 
 ## Environment Variables
 
-| Variable                         | Purpose                                              | Required?                          |
-| -------------------------------- | ---------------------------------------------------- | ---------------------------------- |
-| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | linked: bypass tenant key fetch; local: explicit key | no                                 |
-| `SUPABASE_AUTH_JWT_SECRET`       | local: derive service-role key                       | no (→ `auth.jwt_secret` → default) |
-| `SUPABASE_ACCESS_TOKEN`          | linked: Management API auth                          | no (→ `~/.supabase/access-token`)  |
-| `SUPABASE_PROJECT_ID`            | linked: project-ref resolution                       | no                                 |
-| `SUPABASE_SERVICES_HOSTNAME`     | local baseUrl host                                   | no (→ Docker host → `127.0.0.1`)   |
-| `SUPABASE_EXPERIMENTAL`          | experimental gate: `--experimental` equivalent       | yes, unless `--experimental` given |
+| Variable                         | Purpose                                                                | Required?                          |
+| -------------------------------- | ---------------------------------------------------------------------- | ---------------------------------- |
+| `SUPABASE_AUTH_SERVICE_ROLE_KEY` | linked: bypass tenant key fetch; local: explicit key                   | no                                 |
+| `SUPABASE_AUTH_JWT_SECRET`       | local: derive service-role key                                         | no (→ `auth.jwt_secret` → default) |
+| `SUPABASE_ACCESS_TOKEN`          | linked: Management API auth                                            | no (→ `~/.supabase/access-token`)  |
+| `SUPABASE_PROJECT_ID`            | linked: project-ref resolution, superseded by `--project-ref` when set | no                                 |
+| `SUPABASE_SERVICES_HOSTNAME`     | local baseUrl host                                                     | no (→ Docker host → `127.0.0.1`)   |
+| `SUPABASE_EXPERIMENTAL`          | experimental gate: `--experimental` equivalent                         | yes, unless `--experimental` given |
 
-`storage` is an experimental command (Go `root.go:63`): every subcommand requires
+`storage` is an experimental command: every subcommand requires
 `--experimental` (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
 `must set the --experimental flag to run this command` before any other work.
 
@@ -50,12 +49,13 @@ Auth: `apikey` header always; `Authorization: Bearer <key>` unless the key is `s
 | ---- | --------------------------------------------------------------------------- |
 | `0`  | success                                                                     |
 | `1`  | invalid URL / url-parse error / API non-2xx / network / auth / config parse |
+| `1`  | `--project-ref` set with `--local` (see Notes)                              |
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-One entry per line to **stdout** (`fmt.Println`); directory entries get a trailing `/`.
+One entry per line to **stdout**; directory entries get a trailing `/`.
 Pagination prints `Loading page: <N>` to **stderr**.
 
 ### `--output-format json`
@@ -76,16 +76,20 @@ Pagination prints `Loading page: <N>` to **stderr**.
 | ---------------------- | ------------------------------------------ | -------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `flags` (recursive/linked/local) |
 
-No custom storage telemetry events (verified against `internal/storage/ls`).
+No custom storage telemetry events.
 
 ## Notes
 
 - Default path is `ss:///` (all buckets root) → remotePath `/`; recursive file paths
   then carry a leading slash, while an empty bucket is reported bare as `<bucket>/`.
 - `--recursive`/`-r` walks the tree (BFS).
+- **`--project-ref`** (TS-only, no Go equivalent) overrides ONLY the linked-ref
+  resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
+  It never implies `--linked`: passing it with `--local` is a hard error
+  rather than a silently discarded flag.
 - `--local` / `--linked` are mutually exclusive; `--local` routes to the local stack,
   otherwise the linked project is used. They are declared **per-leaf** (not as
   `storage`-group scoped globals) because Effect CLI requires global-flag names to be
   unique tree-wide and `seed` already owns `linked`/`local`; the only behavioural cost
-  vs Go's persistent flags is that they must follow the subcommand token
+  is that they must follow the subcommand token
   (`storage ls --local`, not `storage --local ls`) — the same shape the `db` family uses.

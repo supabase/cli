@@ -12,6 +12,8 @@ import { LegacyEdgeRuntimeScript } from "./legacy-edge-runtime-script.service.ts
 import { LegacyPgDeltaSslProbe } from "./legacy-pgdelta-ssl-probe.service.ts";
 import { type LegacyPgDeltaContext } from "./legacy-pgdelta.ts";
 import {
+  LEGACY_NO_CACHE_BASELINE_CATALOG_NAME,
+  LEGACY_NO_CACHE_DECLARATIVE_CATALOG_NAME,
   type LegacySetupInputs,
   legacyBaselineCatalogFileName,
   legacyBaselineCatalogKey,
@@ -32,6 +34,7 @@ import {
   legacySanitizedCatalogPrefix,
   legacySetupInputsToken,
   legacyTryCacheMigrationsCatalog,
+  legacyWriteDeclarativeCatalogSnapshot,
   legacyWriteMigrationCatalogSnapshot,
 } from "./legacy-pgdelta.cache.ts";
 
@@ -373,6 +376,106 @@ describe("legacyHashDeclarativeSchemas", () => {
       ),
     );
   });
+
+  // A directory symlink pointing at an ancestor must not loop the walk, and symlinked
+  // entries are excluded from the hash entirely — matching the walker's no-follow
+  // semantics (codex review, PR #6162).
+  it.effect("skips symlinked entries instead of following them", () => {
+    const dir = withTemp();
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "public.sql"), "A");
+    symlinkSync(join(dir, "supabase"), join(declDir, "loop"));
+    const expected = createHash("sha256")
+      .update("public.sql", "utf8")
+      .update(Buffer.from("A"))
+      .digest("hex");
+    return withServices((fs, path) => legacyHashDeclarativeSchemas(fs, path, declDir)).pipe(
+      Effect.tap((hash) =>
+        Effect.sync(() => {
+          expect(hash).toBe(expected);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  // Retention removal failures must propagate — a silently-failing cleanup would let
+  // snapshots accumulate forever while every run reports success (codex review, PR #6162).
+  it.effect("cleanup fails when an old snapshot cannot be removed", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    mkdirSync(tempDir, { recursive: true });
+    for (const ts of [100, 200, 300]) {
+      writeFileSync(join(tempDir, `catalog-local-declarative-h-${ts}.json`), "{}");
+    }
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const err = yield* fs.readDirectory(join(dir, "does-not-exist")).pipe(Effect.flip);
+        const failing: FileSystem.FileSystem = { ...fs, remove: () => Effect.fail(err) };
+        return yield* legacyCleanupOldDeclarativeCatalogs(failing, path, tempDir, "local").pipe(
+          Effect.exit,
+        );
+      }),
+    ).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  // A root-level failure that isn't not-found (permissions, I/O) must propagate rather
+  // than be treated as an empty tree — an empty-tree hash could cache an empty catalog
+  // and let sync emit destructive drops (codex review, PR #6162).
+  it.effect("fails when the root existence check itself fails", () => {
+    const dir = withTemp();
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        const err = yield* fs.readDirectory(join(dir, "does-not-exist")).pipe(Effect.flip);
+        const failing: FileSystem.FileSystem = { ...fs, exists: () => Effect.fail(err) };
+        return yield* legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
+      }),
+    ).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  // A partial hash can collide with an existing cache key and serve a stale catalog,
+  // so a traversal failure must fail the hash, not shrink it (codex review, PR #6162).
+  it.effect("fails when part of the tree cannot be read instead of hashing a subset", () => {
+    const dir = withTemp();
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(join(declDir, "nested"), { recursive: true });
+    writeFileSync(join(declDir, "public.sql"), "A");
+    writeFileSync(join(declDir, "nested", "auth.sql"), "B");
+    return withServices((fs, path) => {
+      const failing: FileSystem.FileSystem = {
+        ...fs,
+        readDirectory: (p, opts) =>
+          p.endsWith("nested")
+            ? fs.readDirectory(join(dir, "does-not-exist"))
+            : fs.readDirectory(p, opts),
+      };
+      return legacyHashDeclarativeSchemas(failing, path, declDir).pipe(Effect.exit);
+    }).pipe(
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 });
 
 describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {
@@ -398,6 +501,60 @@ describe("legacyResolveDeclarativeCatalogPath + cleanup", () => {
           "catalog-local-declarative-h-200.json",
           "catalog-local-declarative-h-300.json",
         ]);
+      }),
+    ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+  });
+});
+
+describe("no-cache catalog file names", () => {
+  it("matches Go's noCacheBaselineCatalogPath/noCacheDeclarativeCatalogPath literals", () => {
+    expect(LEGACY_NO_CACHE_BASELINE_CATALOG_NAME).toBe("catalog-nocache-baseline.json");
+    expect(LEGACY_NO_CACHE_DECLARATIVE_CATALOG_NAME).toBe("catalog-nocache-declarative.json");
+  });
+});
+
+describe("legacyWriteDeclarativeCatalogSnapshot + cleanup", () => {
+  it.effect(
+    "writes the snapshot and prunes older declarative catalogs past the retention count",
+    () => {
+      const dir = withTemp();
+      const tempDir = join(dir, "pgdelta");
+      mkdirSync(tempDir, { recursive: true });
+      for (const ts of [100, 300, 200]) {
+        writeFileSync(join(tempDir, `catalog-local-declarative-h-${ts}.json`), "{}");
+      }
+      return withServices((fs, path) =>
+        Effect.gen(function* () {
+          const filePath = yield* legacyWriteDeclarativeCatalogSnapshot(
+            fs,
+            path,
+            tempDir,
+            "local",
+            "h",
+            '{"snapshot":true}',
+            400,
+          );
+          expect(filePath.endsWith("catalog-local-declarative-h-400.json")).toBe(true);
+          expect(yield* fs.readFileString(filePath)).toBe('{"snapshot":true}');
+          const remaining = (yield* fs.readDirectory(tempDir)).filter((n) =>
+            n.startsWith("catalog-local-declarative-"),
+          );
+          expect(remaining.sort()).toEqual([
+            "catalog-local-declarative-h-300.json",
+            "catalog-local-declarative-h-400.json",
+          ]);
+        }),
+      ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
+    },
+  );
+
+  it.effect("creates the temp dir when it doesn't exist yet", () => {
+    const dir = withTemp();
+    const tempDir = join(dir, "pgdelta");
+    return withServices((fs, path) =>
+      Effect.gen(function* () {
+        yield* legacyWriteDeclarativeCatalogSnapshot(fs, path, tempDir, "local", "h", "{}", 100);
+        expect(yield* fs.exists(join(tempDir, "catalog-local-declarative-h-100.json"))).toBe(true);
       }),
     ).pipe(Effect.tap(() => Effect.sync(() => rmSync(dir, { recursive: true, force: true }))));
   });

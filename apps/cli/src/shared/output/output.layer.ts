@@ -14,14 +14,22 @@ import {
   text,
 } from "@clack/prompts";
 import { styleText } from "node:util";
-import { Effect, Layer, Stdio, Stream } from "effect";
+import { Effect, Layer, Option, Stdio, Stream } from "effect";
 
 import { Tty } from "../runtime/tty.service.ts";
 import { CONTEXT_CANCELED_MESSAGE, NonInteractiveError } from "./errors.ts";
+import { MachineErrorContext } from "./machine-error-context.service.ts";
 import { Output } from "./output.service.ts";
 import type { OutputFormat, StreamEvent } from "./types.ts";
 
 const TASK_SPINNER_DELAY_MS = 200;
+
+// Reads the opt-in `MachineErrorContext` cell, if any command in this run
+// provided it — see that service's doc comment for the envelope contract.
+const readMachineErrorContext = Effect.fnUntraced(function* () {
+  const context = yield* Effect.serviceOption(MachineErrorContext);
+  return Option.isSome(context) ? yield* context.value.get : {};
+});
 
 function formatTaskMessage(message: string | undefined): string | undefined {
   if (message === undefined || !message.includes("\n")) {
@@ -453,7 +461,14 @@ export const jsonOutputLayer = Layer.effect(
       success: (message: string, data?: Record<string, unknown>) =>
         writeStdout(JSON.stringify({ ...data, message }) + "\n"),
       fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
-        writeStdout(JSON.stringify({ _tag: "Error", error: err }) + "\n"),
+        Effect.gen(function* () {
+          const extra = yield* readMachineErrorContext();
+          // `extra` spreads FIRST so the envelope's own `_tag`/`error` can
+          // never be clobbered by a context field of the same name (PR #6168
+          // review) — this is opt-in, command-contributed data; the envelope
+          // shape it's decorating always wins.
+          yield* writeStdout(JSON.stringify({ ...extra, _tag: "Error", error: err }) + "\n");
+        }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
         stream === "stderr" ? writeStderr(text) : writeStdout(text),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>
@@ -549,14 +564,19 @@ export const streamJsonOutputLayer = Layer.effect(
             timestamp: new Date().toISOString(),
           }) + "\n",
         ),
-      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) => {
-        const event: StreamEvent = {
-          type: "error",
-          error: err,
-          timestamp: new Date().toISOString(),
-        };
-        return writeStdout(JSON.stringify(event) + "\n");
-      },
+      fail: (err: { code: string; message: string; detail?: string; suggestion?: string }) =>
+        Effect.gen(function* () {
+          const extra = yield* readMachineErrorContext();
+          const event: StreamEvent = {
+            type: "error",
+            error: err,
+            timestamp: new Date().toISOString(),
+          };
+          // `extra` spreads FIRST — same reasoning as the json layer's `fail`
+          // above: the event's own `type`/`error`/`timestamp` must always win
+          // over an opt-in context field of the same name (PR #6168 review).
+          yield* writeStdout(JSON.stringify({ ...extra, ...event }) + "\n");
+        }),
       raw: (text: string, stream: "stdout" | "stderr" = "stdout") =>
         stream === "stderr" ? writeStderr(text) : writeStdout(text),
       rawBytes: (bytes: Uint8Array, stream: "stdout" | "stderr" = "stdout") =>

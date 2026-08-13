@@ -39,9 +39,9 @@ Telemetry Events Fired below.
 | ---------------------- | ------------------------------------------------------------------------- |
 | `cli_command_executed` | when telemetry was **already enabled** before this invocation (see below) |
 
-Go parity (`apps/cli-go/cmd/root.go:131-138,171-181`): the event is gated on
-the consent state read at process start, before this command's handler
-rewrites `telemetry.json` — not on the value the command just wrote. Running
+The event is gated on the consent state read at process start, before this
+command's handler rewrites `telemetry.json` — not on the value the command
+just wrote. Running
 `disable` while telemetry is enabled fires the event one last time (using
 the pre-toggle, still-enabled snapshot); running it while telemetry is
 already disabled stays silent. See `telemetry/enable/SIDE_EFFECTS.md` for
@@ -73,4 +73,4 @@ stdout line above.
 - Existing `device_id`, `session_id`, and `distinct_id` fields are preserved
   when the current state file is readable and valid enough to recover them.
 - Malformed JSON is treated as missing state and replaced with a fresh disabled
-  state, matching `apps/cli-go/internal/telemetry/state.go`.
+  state.

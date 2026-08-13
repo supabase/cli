@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import { legacyResolveUploadDstPath } from "./cp.upload.ts";
 
-// Oracle: apps/cli-go/internal/storage/cp/cp.go:135-148 + cp_test.go TestUploadAll.
 describe("legacyResolveUploadDstPath", () => {
   describe("single file (relPath === '.')", () => {
     it("appends the file name when the dst prefix is a bucket root", () => {

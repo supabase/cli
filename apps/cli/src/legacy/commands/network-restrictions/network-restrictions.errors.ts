@@ -63,7 +63,6 @@ export class LegacyNetworkRestrictionsInvalidCidrError extends Data.TaggedError(
   readonly message: string;
 }> {
   constructor(args: { readonly input: string }) {
-    // Verbatim Go string from `apps/cli-go/internal/restrictions/update/update.go:23`.
     super({ input: args.input, message: `failed to parse IP: ${args.input}` });
   }
 
@@ -79,7 +78,6 @@ export class LegacyNetworkRestrictionsPrivateIpError extends Data.TaggedError(
   readonly message: string;
 }> {
   constructor(args: { readonly input: string }) {
-    // Verbatim Go string from `apps/cli-go/internal/restrictions/update/update.go:26`.
     super({ input: args.input, message: `private IP provided: ${args.input}` });
   }
 

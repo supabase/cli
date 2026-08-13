@@ -69,7 +69,7 @@ interface SetupOpts {
   /**
    * Overrides the config layer's env-shaped access token. `Option.none()`
    * models a machine with no SUPABASE_ACCESS_TOKEN — with a reconciled
-   * profile and no keyring/file token, Go's `GetSupabase` gate aborts.
+   * profile and no keyring/file token, the token gate aborts.
    */
   accessToken?: Option.Option<Redacted.Redacted<string>>;
 }
@@ -162,7 +162,7 @@ function setup(opts: SetupOpts = {}) {
 
   // Tracked identity stitcher: the reconciled-profile raw GET must stitch
   // through the shared per-command guard exactly like the typed client's
-  // response transform (Go's identityTransport wraps every response).
+  // response transform.
   let stitchedResponses = 0;
   const stitchLayer = Layer.succeed(LegacyIdentityStitch, {
     stitch: () =>
@@ -449,10 +449,10 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("mutex check: a flag-group violation wins over an invalid provider ID", () => {
-    // Cobra runs `ValidateFlagGroups` before `RunE` (`command.go:1010,1014`);
-    // Go's provider-ID format check lives inside `RunE` (`cmd/sso.go:90-91`).
-    // So an invalid UUID combined with a mutex violation must surface the
-    // mutex error, not `LegacySsoInvalidUuidError`.
+    // Flag-group validation runs before the handler body, and the
+    // provider-ID format check lives inside the handler. So an invalid UUID
+    // combined with a mutex violation must surface the mutex error, not
+    // `LegacySsoInvalidUuidError`.
     const { layer } = setup({
       cliArgs: ["sso", "update", "not-a-uuid", "--domains", "a.com", "--add-domains", "b.com"],
     });
@@ -731,11 +731,10 @@ describe("legacy sso update integration", () => {
     () => {
       // `sso update <id> --project-ref <ref> --workdir --metadata-file`:
       // pflag binds `"--metadata-file"` to the persistent `--workdir` (the
-      // positional count stays 1) and Go's `ChangeWorkDir`
-      // (`cmd/root.go:104`, `misc.go:238-257`) exits before `RunE` with zero
-      // HTTP traffic. The Effect parser refused the flag-shaped value and
-      // left both flags unset — without the workdir emulation the handler
-      // proceeded to GET + PUT (binary-verified, PR #5974 review round 6).
+      // positional count stays 1) and the workdir change exits before the
+      // handler runs with zero HTTP traffic. The Effect parser refused the
+      // flag-shaped value and left both flags unset — without the workdir
+      // emulation the handler proceeded to GET + PUT.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -767,12 +766,10 @@ describe("legacy sso update integration", () => {
   it.live(
     "workdir emulation: the chdir failure loses to an arity violation but wins over a mutex violation",
     () => {
-      // Go's `ChangeWorkDir` runs from `PersistentPreRunE` (`command.go:986`)
-      // — after `ValidateArgs` (`command.go:968`), before
-      // `ValidateFlagGroups` (`command.go:1010`). Binary-verified: `sso
-      // update a b --workdir /missing` reports the arity error, while `sso
-      // update <id> --workdir /missing --domains a --add-domains b` reports
-      // the chdir failure (PR #5974 review round 6).
+      // The workdir change runs after arity validation, before flag-group
+      // validation: `sso update a b --workdir /missing` reports the arity
+      // error, while `sso update <id> --workdir /missing --domains a
+      // --add-domains b` reports the chdir failure.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -822,9 +819,8 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("arity emulation: the arity error wins over an invalid provider ID", () => {
-    // Go's provider-ID format check lives inside `RunE` (`cmd/sso.go:90-91`),
-    // long after `ValidateArgs` — a bad UUID must not mask the arg-count
-    // error.
+    // The provider-ID format check lives inside the handler, long after
+    // arity validation — a bad UUID must not mask the arg-count error.
     const { layer, api } = setup({
       cliArgs: ["sso", "update", "--domains", "--metadata-url", "u", "not-a-uuid"],
     });
@@ -1091,9 +1087,8 @@ describe("legacy sso update integration", () => {
   it.live(
     "invalid-value emulation: --skip-url-validation=yes fails with pflag's strconv.ParseBool error, no API calls",
     () => {
-      // The Effect parser accepts `yes`; Go's strconv.ParseBool does not —
-      // pflag fails ParseFlags (cobra `command.go:919`) before every hook
-      // and request (binary-verified, PR #5974 review round 4).
+      // The Effect parser accepts `yes`; pflag's strconv.ParseBool does not —
+      // pflag fails flag parsing before every hook and request.
       const { layer, api } = setup({
         cliArgs: [
           "sso",
@@ -1262,10 +1257,9 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("no domain flag set → PUT still sends the recomputed existing domain set", () => {
-    // Go's `--add-domains`/`--remove-domains` default to a non-nil `[]string{}`
-    // (`cmd/sso.go:171-172`), so `update.go:84`'s `!= nil` gate is always true
-    // from the CLI — every `sso update` enters the merge and sends `domains`,
-    // even when no domain flag was passed (CLI-1981). Live-captured Go PUT:
+    // `--add-domains`/`--remove-domains` default to a non-nil empty array,
+    // so every `sso update` enters the merge and sends `domains`, even when
+    // no domain flag was passed. Established PUT body:
     // `{"domains":["old1.com","old2.com"]}`.
     const { layer, api } = setup();
     return Effect.gen(function* () {
@@ -1280,9 +1274,8 @@ describe("legacy sso update integration", () => {
   it.live(
     "no domain flags + provider with no domains → PUT sends domains: [] (not omitted)",
     () => {
-      // Go sets `body.Domains` to a non-nil pointer to `make([]string, 0)`, and
-      // `json:"domains,omitempty"` never omits a non-nil pointer — live-captured
-      // Go PUT body is exactly `{"domains":[]}`.
+      // `domains` is always populated (never omitted) — established PUT
+      // body is exactly `{"domains":[]}`.
       const { layer, api } = setup({ getBody: { ...EXISTING_PROVIDER, domains: [] } });
       return Effect.gen(function* () {
         yield* legacySsoUpdate(defaultFlags);
@@ -1295,8 +1288,9 @@ describe("legacy sso update integration", () => {
   );
 
   it.live("no domain flags + GET response missing domains entirely → PUT sends domains: []", () => {
-    // Go's seed loop is skipped when `getResp.JSON200.Domains == nil`, leaving
-    // the merged set empty — same `{"domains":[]}` bytes as the empty-list case.
+    // The seed loop is skipped when the GET response has no domains,
+    // leaving the merged set empty — same `{"domains":[]}` bytes as the
+    // empty-list case.
     const { domains: _omitted, ...providerWithoutDomains } = EXISTING_PROVIDER;
     const { layer, api } = setup({ getBody: providerWithoutDomains });
     return Effect.gen(function* () {
@@ -1309,10 +1303,10 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("explicit empty --domains= falls into the merge and resends the existing set", () => {
-    // `--domains=` parses to an empty slice, so Go's `len(params.Domains) != 0`
-    // replace gate is false and the merge branch runs with no add/remove —
-    // live-captured Go PUT resends the existing domains, it does NOT replace
-    // them with an empty list.
+    // `--domains=` parses to an empty slice, so the replace gate is false
+    // and the merge branch runs with no add/remove — the established PUT
+    // resends the existing domains, it does NOT replace them with an empty
+    // list.
     const { layer, api } = setup({
       cliArgs: ["sso", "update", VALID_PROVIDER_ID, "--domains="],
     });
@@ -1325,9 +1319,9 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("merge keeps empty-string domains and skips entries without a domain field", () => {
-    // Go's seed check is nil-ness only (`domain.Domain != nil`,
-    // `update.go:89`): an empty-string domain from the GET response stays in
-    // the merged set, while an entry missing the field entirely is skipped.
+    // The seed check is nil-ness only: an empty-string domain from the GET
+    // response stays in the merged set, while an entry missing the field
+    // entirely is skipped.
     const { layer, api } = setup({
       getBody: {
         ...EXISTING_PROVIDER,
@@ -1377,7 +1371,7 @@ describe("legacy sso update integration", () => {
   });
 
   it.live("PUT 4xx + gated entitlement → unexpected error + cli_upgrade_suggested", () => {
-    // legacySuggestUpgrade fires only on 4xx (matches Go's `plan_gate.go:29`).
+    // legacySuggestUpgrade fires only on 4xx.
     const { layer, analytics } = setup({
       putStatus: 403,
       putBody: { error: "forbidden" },
@@ -1469,7 +1463,7 @@ describe("legacy sso update integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("LegacySsoUpdateMetadataFileError");
-        // Per Go's `update.go:69`: error tail is `… Use --skip-url-validation to suppress this error.`
+        // Error tail is `… Use --skip-url-validation to suppress this error.`
         // (trailing period).
         expect(dump).toContain("Use --skip-url-validation to suppress this error.");
         expect(classifyCliCauseActionability(exit.cause)).toMatchObject({
@@ -1508,12 +1502,10 @@ describe("legacy sso update integration", () => {
   });
 
   // -------------------------------------------------------------------------
-  // Profile emulation (PR #5974 review round 7): Go's `LoadProfile` runs from
-  // the root `PersistentPreRunE` (`cmd/root.go:98-102`) on the pflag/viper-
-  // effective `--profile`/`SUPABASE_PROFILE`, immediately before
-  // `ChangeWorkDir` — it decides which API host receives the GET *and* the
-  // PUT (Go targets the same host for both, `update.go:42`), and aborts the
-  // command when the profile cannot be loaded.
+  // Profile emulation: the effective `--profile`/`SUPABASE_PROFILE` is
+  // resolved immediately before the workdir change — it decides which API
+  // host receives the GET *and* the PUT (the same host targets both), and
+  // aborts the command when the profile cannot be loaded.
   // -------------------------------------------------------------------------
 
   const writeProfileYaml = (name: string, apiUrl: string): string => {
@@ -1580,11 +1572,11 @@ describe("legacy sso update integration", () => {
         const domains = (put?.body as { domains?: string[] })?.domains ?? [];
         expect([...domains].sort()).toEqual(["old1.com", "old2.com"]);
         expect(api.requests.some((r) => r.url.startsWith("http://first.example/"))).toBe(false);
-        // The raw GET stitches identity through the shared per-command guard,
-        // like Go's identityTransport on every Management API response.
+        // The raw GET stitches identity through the shared per-command
+        // guard, like every other Management API response.
         expect(testSetup.stitchedResponses).toBeGreaterThan(0);
-        // The linked-project cache fill targets the reconciled host too
-        // (Go's ensureProjectGroupsCached uses the process-wide profile).
+        // The linked-project cache fill targets the reconciled host too —
+        // it uses the process-wide profile.
         expect(cache.cachedApiUrl).toBe("http://second.example");
       }).pipe(Effect.ensuring(restoreEnv), Effect.provide(layer));
     },
@@ -1688,10 +1680,9 @@ describe("legacy sso update integration", () => {
   );
 
   it.live("profile emulation: a reconciled profile with no resolvable token aborts like Go", () => {
-    // Go's `GetSupabase` gate (`api.go:119-124`) `log.Fatalln`s ErrMissingToken
-    // at first client use when the RECONCILED profile's lookup finds nothing —
-    // the stale profile's token must never be substituted, and no request may
-    // be issued (PR #5974 review round 10, r3686720488).
+    // The token gate fires at first client use when the RECONCILED profile's
+    // lookup finds nothing — the stale profile's token must never be
+    // substituted, and no request may be issued.
     const first = writeProfileYaml("first-notoken.yml", "http://first.example");
     const second = writeProfileYaml("second-notoken.yml", "http://second.example");
     const restoreEnv = withProfileEnv(undefined);
@@ -1823,9 +1814,8 @@ describe("legacy sso update integration", () => {
   it.live(
     "profile emulation: an undecodable 200 body from the reconciled GET aborts before the PUT",
     () => {
-      // Go's generated `ParseV1GetASsoProviderResponse` unmarshals the 200
-      // JSON body; the unmarshal error exits `update.Run` with `failed to
-      // get sso provider: %w` before any PUT (`update.go:42-45`).
+      // The 200 JSON body is unmarshalled; a parse error exits with
+      // `failed to get sso provider: %w` before any PUT.
       const first = writeProfileYaml("first-badjson.yml", "http://first.example");
       const second = writeProfileYaml("second-badjson.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1854,9 +1844,8 @@ describe("legacy sso update integration", () => {
   it.live(
     "profile emulation: a 200 without a JSON content type maps to the unexpected-status branch, like Go's nil JSON200",
     () => {
-      // `update.go:47-55`: a 200 whose content type isn't JSON leaves
-      // `JSON200` nil, so Go runs the gate check and errors with the raw
-      // body — no PUT.
+      // A 200 whose content type isn't JSON runs the gate check and errors
+      // with the raw body — no PUT.
       const first = writeProfileYaml("first-nonjson.yml", "http://first.example");
       const second = writeProfileYaml("second-nonjson.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);
@@ -1881,9 +1870,9 @@ describe("legacy sso update integration", () => {
   it.live(
     "profile emulation: a gated 4xx on the reconciled GET sends the fallback gate requests to the reconciled host",
     () => {
-      // Go's `SuggestUpgradeOnError` goes through `GetSupabase()` and the
-      // process-wide reconciled `CurrentProfile`; the project + entitlement
-      // fallback GETs must hit the same host as the main call.
+      // The upgrade-suggestion path goes through the process-wide reconciled
+      // profile; the project + entitlement fallback GETs must hit the same
+      // host as the main call.
       const first = writeProfileYaml("first-gate.yml", "http://first.example");
       const second = writeProfileYaml("second-gate.yml", "http://second.example");
       const restoreEnv = withProfileEnv(undefined);

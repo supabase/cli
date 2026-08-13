@@ -21,6 +21,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { legacyGoQuote } from "../../../shared/legacy-go-quote.ts";
+import { legacyTrimGoSpace } from "./legacy-go-string.ts";
 import {
   legacyInterpolatePgDeltaScript,
   legacyPgDeltaDeclarativeApplyScript,
@@ -35,16 +36,6 @@ const errMessage = (e: unknown): string =>
   typeof e === "object" && e !== null && "message" in e && typeof e.message === "string"
     ? e.message
     : String(e);
-
-/**
- * Go's `strings.TrimSpace`/`bytes.TrimSpace` trim exactly the Unicode
- * `White_Space` set — which, unlike JS `String.prototype.trim`, does NOT
- * include U+FEFF (BOM/ZWNBSP). A BOM-prefixed pg-delta payload must therefore
- * fail to parse here exactly like it does in Go, and BOM-adjacent
- * detail/hint/path fields must render it, not eat it.
- */
-const legacyTrimGoSpace = (value: string): string =>
-  value.replace(/^\p{White_Space}+|\p{White_Space}+$/gu, "");
 
 /**
  * `pgdelta.ApplyDeclarative` failed — Go's own error messages at each step (see call sites

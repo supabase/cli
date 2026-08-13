@@ -43,7 +43,7 @@ interface MockRoute {
   readonly transportDescription?: string;
 }
 
-const DEFAULT_FLAGS: LegacyBucketsFlags = { linked: false, local: true };
+const DEFAULT_FLAGS: LegacyBucketsFlags = { linked: false, local: true, projectRef: Option.none() };
 
 function setupLegacySeedBuckets(
   workdir: string,
@@ -150,14 +150,19 @@ function setupLegacySeedBuckets(
           )
         : Effect.succeed(projectRefRef),
     resolveOptional: () => Effect.succeed(Option.some(projectRefRef)),
-    loadProjectRef: () =>
-      opts.linkedFails === true
-        ? Effect.fail(
-            new LegacyProjectNotLinkedError({
-              message: "Cannot find project ref. Have you run supabase link?",
-            }),
-          )
-        : Effect.succeed(projectRefRef),
+    // Gives an explicit `--project-ref` flag top precedence, same as Go's
+    // `flags.LoadProjectRef` — short-circuits BEFORE `linkedFails`, so a test
+    // can prove the flag resolves a ref even for an "unlinked" workdir.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
+      Option.isSome(flagValue) && flagValue.value.length > 0
+        ? Effect.succeed(flagValue.value)
+        : opts.linkedFails === true
+          ? Effect.fail(
+              new LegacyProjectNotLinkedError({
+                message: "Cannot find project ref. Have you run supabase link?",
+              }),
+            )
+          : Effect.succeed(projectRefRef),
     promptProjectRef: () => Effect.succeed(projectRefRef),
   });
 
@@ -235,8 +240,8 @@ describe("legacy seed buckets", () => {
   });
 
   // --local/--linked mutual exclusivity is enforced at the command level, before
-  // instrumentation (so it doesn't emit telemetry, matching Go's flag-validation
-  // rejection). It's covered by `legacyAssertSeedTargetsExclusive` in
+  // instrumentation (so it doesn't emit telemetry, matching the flag-validation
+  // rejection semantics). It's covered by `legacyAssertSeedTargetsExclusive` in
   // buckets.flags.unit.test.ts rather than here, since the handler no longer
   // performs the check.
 
@@ -263,7 +268,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("tolerates a null element in a bucket list (Go zero-value struct)", () => {
-    // Go's encoding/json decodes a null array element into the zero-value struct
+    // encoding/json decodes a null array element into the zero-value struct
     // (BucketResponse{Name:"", Id:""}) and the upsert loop continues
     // (pkg/storage/buckets.go:21-27). A null element must not abort the run; the
     // configured bucket is still created. A genuine type mismatch (string/number
@@ -335,10 +340,11 @@ describe("legacy seed buckets", () => {
         pipedAnswers: ["n"],
       });
       return Effect.gen(function* () {
-        // db reset seeds buckets with interactive=false (Go's `buckets.Run(ctx, "",
-        // false, fsys)` forces console.IsTTY=false). Go does NOT silently take the
-        // default: the prompt still prints its label, scans one line, and honors a
-        // parsed answer — so the piped "n" must skip the overwrite (default is yes).
+        // db reset seeds buckets with interactive=false (`buckets.Run(ctx, "",
+        // false, fsys)` forces console.IsTTY=false). This does NOT silently take
+        // the default: the prompt still prints its label, scans one line, and
+        // honors a parsed answer — so the piped "n" must skip the overwrite
+        // (default is yes).
         const exit = yield* legacySeedBucketsRun({
           projectRef: "",
           emitSummary: false,
@@ -654,7 +660,7 @@ describe("legacy seed buckets", () => {
     // with no config file Go still builds the remote client, fetches the
     // service-role key, and lists buckets — failures surface instead of a silent
     // success. With no configured buckets the remote LIST must still happen.
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       projectRef: LEGACY_VALID_REF,
       apiKeys: [
@@ -729,7 +735,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Go's withAuthToken sends only `apikey` for opaque `sb_...` keys.
+      // `withAuthToken` sends only `apikey` for opaque `sb_...` keys.
       expect(requests.every((r) => r.headers["apikey"] === "sb_secret_localkey")).toBe(true);
       expect(requests.every((r) => r.headers["authorization"] === undefined)).toBe(true);
     });
@@ -749,7 +755,7 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // An empty key is regenerated from the default secret (a signed JWT), not
-      // sent verbatim — Go's generateAPIKeys fills it on len == 0.
+      // sent verbatim — `generateAPIKeys` fills it on len == 0.
       expect(
         requests.every((r) => (r.headers["authorization"] ?? "").startsWith("Bearer ey")),
       ).toBe(true);
@@ -798,7 +804,7 @@ describe("legacy seed buckets", () => {
 
   it.live("rejects a malformed file_size_limit numeral (Go strconv.ParseFloat)", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
-      // JS parseFloat would parse "1.2.3" as 1.2; Go's strconv.ParseFloat rejects
+      // JS parseFloat would parse "1.2.3" as 1.2; `strconv.ParseFloat` rejects
       // the whole config before NewStorageAPI.
       toml: '[storage.buckets.media]\npublic = true\nfile_size_limit = "1.2.3MiB"\n',
       routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
@@ -922,7 +928,7 @@ describe("legacy seed buckets", () => {
 
   it.live("omits the port-conflict hint on a connection-refused local failure", () => {
     const { layer } = setupLegacySeedBuckets(tmp.current, {
-      // Stack simply stopped → ECONNREFUSED. Go's localGatewayHint does NOT fire
+      // Stack simply stopped → ECONNREFUSED. `localGatewayHint` does NOT fire
       // for connection-refused (only malformed/timeout), so neither do we.
       toml: "[api]\nport = 7654\n[storage.buckets.test]\npublic = true\n",
       routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
@@ -977,10 +983,11 @@ describe("legacy seed buckets", () => {
       routes: [{ method: "GET", match: "/storage/v1/bucket", transport: true }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).not.toContain("Another process may be listening");
     });
@@ -1075,7 +1082,7 @@ describe("legacy seed buckets", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.images]\npublic = true\n",
       routes: [
-        // A non-object element / wrong-typed field — Go's ParseJSON aborts here
+        // A non-object element / wrong-typed field — `ParseJSON` aborts here
         // (cannot unmarshal string into BucketResponse), before any create.
         {
           method: "GET",
@@ -1089,7 +1096,6 @@ describe("legacy seed buckets", () => {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       expect(JSON.stringify(exit)).toContain("failed to parse response body");
-      // No bucket was created from the bad response.
       expect(requests.some((r) => r.method === "POST")).toBe(false);
     });
   });
@@ -1114,7 +1120,7 @@ describe("legacy seed buckets", () => {
       toml: "[storage.buckets.images]\npublic = true\n",
       routes: [
         { method: "GET", match: "/storage/v1/bucket", body: [] },
-        // Go's gateway uses WithExpectedStatus(200); a 201 is an error.
+        // The gateway uses WithExpectedStatus(200); a 201 is an error.
         { method: "POST", match: "/storage/v1/bucket", status: 201, body: { name: "images" } },
       ],
     });
@@ -1190,7 +1196,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Go's net.JoinHostPort brackets IPv6: http://[::1]:54321, not http://::1:54321.
+      // `net.JoinHostPort` brackets IPv6: http://[::1]:54321, not http://::1:54321.
       expect(requests.every((r) => r.url.startsWith("http://[::1]:54321"))).toBe(true);
     }).pipe(
       Effect.ensuring(
@@ -1220,7 +1226,7 @@ describe("legacy seed buckets", () => {
     return Effect.gen(function* () {
       const exit = yield* legacySeedBuckets(DEFAULT_FLAGS).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
-      // Go's GetHostname dials the TCP daemon host, not loopback, when only
+      // `GetHostname` dials the TCP daemon host, not loopback, when only
       // DOCKER_HOST is set (misc.go:305-310).
       expect(requests.every((r) => r.url.startsWith("http://docker.internal:54321"))).toBe(true);
     }).pipe(
@@ -1380,13 +1386,13 @@ describe("legacy seed buckets", () => {
   it.live.skipIf(isRoot)(
     "skips a symlink to an unreadable regular file and keeps seeding siblings (Go opens, not stats)",
     () => {
-      // Go's isUploadableEntry OPENS the symlink target (batch.go:73), which needs
+      // `isUploadableEntry` OPENS the symlink target (batch.go:73), which needs
       // read permission; a stat-only check would queue this unreadable file and then
       // abort the whole run when uploadObject opens it to stream. Mode 000 makes
       // stat succeed (type File) but open fail — the entry must be skipped, not fatal.
       // The real unreadable file lives OUTSIDE the walked tree: a plain regular file
-      // inside assets/ would (per Go parity) be queued without an open-probe and would
-      // legitimately abort, so only the symlink may reach the unreadable target.
+      // inside assets/ would be queued without an open-probe and would legitimately
+      // abort, so only the symlink may reach the unreadable target.
       mkdirSync(join(tmp.current, "supabase", "assets"), { recursive: true });
       mkdirSync(join(tmp.current, "supabase", "private"), { recursive: true });
       writeFileSync(join(tmp.current, "supabase", "assets", "a.txt"), "hello");
@@ -1455,7 +1461,7 @@ describe("legacy seed buckets", () => {
   );
 
   it.live("follows a symlinked objects_path root and uploads its files (Go fs.WalkDir)", () => {
-    // Go's `io/fs.WalkDir` follows a symlinked ROOT ("if root itself is a
+    // `io/fs.WalkDir` follows a symlinked ROOT ("if root itself is a
     // symbolic link, its target will be walked"); only NESTED symlinks are
     // skipped. fs.stat on the root follows the link, so the target dir is walked.
     mkdirSync(join(tmp.current, "supabase", "real-assets"), { recursive: true });
@@ -1555,12 +1561,10 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
   // --linked remote path tests
-  // ---------------------------------------------------------------------------
 
   it.live("--linked seeds the remote storage project", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: LEGACY_VALID_REF,
@@ -1589,6 +1593,63 @@ describe("legacy seed buckets", () => {
     });
   });
 
+  it.live(
+    "--project-ref --linked seeds the project given by the flag, overriding LEGACY_VALID_REF",
+    () => {
+      // `opts.projectRef` (the fake's own fallback) is left at its default
+      // (LEGACY_VALID_REF) — the flag must win over it and drive the storage
+      // gateway host.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, out, requests, linkedCache } = setupLegacySeedBuckets(tmp.current, {
+        toml: "[storage.buckets.test]\npublic = true\n",
+        args: ["seed", "buckets", "--linked"],
+        routes: [
+          { method: "GET", match: "/storage/v1/bucket", body: [] },
+          { method: "POST", match: "/storage/v1/bucket", body: { name: "test" } },
+        ],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacySeedBuckets({
+          linked: true,
+          local: false,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isSuccess(exit)).toBe(true);
+        expect(out.stderrText).toContain("Creating Storage bucket: test");
+        expect(requests.some((r) => r.url.startsWith(`https://${FLAG_REF}.supabase.co`))).toBe(
+          true,
+        );
+        expect(requests.some((r) => r.url.includes(LEGACY_VALID_REF))).toBe(false);
+        expect(linkedCache.cached).toBe(true);
+        expect(linkedCache.cachedRef).toBe(FLAG_REF);
+      });
+    },
+  );
+
+  it.live("rejects --project-ref on the default local target", () => {
+    // seed buckets defaults to local when no target flag is set — the guard
+    // must fire from the flag alone, with no explicit --local needed.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, requests, linkedCache } = setupLegacySeedBuckets(tmp.current, {
+      toml: "[storage.buckets.test]\npublic = true\n",
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacySeedBuckets({
+        linked: false,
+        local: true,
+        projectRef: Option.some(FLAG_REF),
+      }).pipe(Effect.provide(layer), Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        );
+      }
+      expect(requests).toEqual([]);
+      expect(linkedCache.cached).toBe(false);
+    });
+  });
+
   it.live("--linked=false still takes the linked path (Go flag.Changed, not value)", () => {
     // Go selects the target from flag.Changed: `--linked=false` is still linked.
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
@@ -1601,10 +1662,11 @@ describe("legacy seed buckets", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: false, local: true }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: false,
+        local: true,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // Remote URL → the linked path ran despite the parsed value being false.
       expect(
@@ -1623,10 +1685,11 @@ describe("legacy seed buckets", () => {
       ],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: false, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: false,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isSuccess(exit)).toBe(true);
       // Local path (not the remote https host) — `--local` changed selects local.
       // Asserting "not remote" keeps this independent of the loopback host env.
@@ -1645,12 +1708,13 @@ describe("legacy seed buckets", () => {
       routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
-      // Go's tenant.GetApiKeys → errMissingKey, before NewStorageAPI.
+      // `tenant.GetApiKeys` → errMissingKey, before NewStorageAPI.
       expect(JSON.stringify(exit)).toContain("Anon key not found.");
       expect(requests.some((r) => r.url.includes("/storage/v1/"))).toBe(false);
     });
@@ -1669,10 +1733,11 @@ describe("legacy seed buckets", () => {
       routes: [{ method: "GET", match: "/storage/v1/bucket", body: [] }],
     });
     return Effect.gen(function* () {
-      const exit = yield* legacySeedBuckets({ linked: true, local: false }).pipe(
-        Effect.provide(layer),
-        Effect.exit,
-      );
+      const exit = yield* legacySeedBuckets({
+        linked: true,
+        local: false,
+        projectRef: Option.none(),
+      }).pipe(Effect.provide(layer), Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
       const json = JSON.stringify(exit);
       expect(json).toContain("LegacyStorageAuthTokenError");
@@ -1684,7 +1749,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("caches the linked project on --linked but not on local", () => {
-    // Mirrors Go's ensureProjectGroupsCached (cmd/root.go), gated on a non-empty
+    // Mirrors `ensureProjectGroupsCached` (cmd/root.go), gated on a non-empty
     // resolved ref: --linked writes the linked-project cache + group identify;
     // the local path must not.
     const linked = setupLegacySeedBuckets(tmp.current, {
@@ -1704,7 +1769,7 @@ describe("legacy seed buckets", () => {
       ],
     });
     return Effect.gen(function* () {
-      yield* legacySeedBuckets({ linked: true, local: false }).pipe(
+      yield* legacySeedBuckets({ linked: true, local: false, projectRef: Option.none() }).pipe(
         Effect.provide(linked.layer),
         Effect.exit,
       );
@@ -1719,7 +1784,7 @@ describe("legacy seed buckets", () => {
   it.live("--linked uses SUPABASE_AUTH_SERVICE_ROLE_KEY env var when set", () => {
     const prevKey = process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"];
     process.env["SUPABASE_AUTH_SERVICE_ROLE_KEY"] = "env-service-role-key";
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       projectRef: LEGACY_VALID_REF,
@@ -1747,7 +1812,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("upserts analytics buckets when analytics.enabled and --linked", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         "[storage.analytics]",
@@ -1798,7 +1863,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("prunes a stale analytics bucket when the prompt is accepted", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         "[storage.analytics]",
@@ -1837,7 +1902,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("--linked fails when the project is not linked", () => {
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer } = setupLegacySeedBuckets(tmp.current, {
       toml: "[storage.buckets.test]\npublic = true\n",
       linkedFails: true,
@@ -1940,17 +2005,15 @@ describe("legacy seed buckets", () => {
     },
   );
 
-  // ---------------------------------------------------------------------------
   // Fix 1 — --linked merges [remotes.*] config overrides
-  // ---------------------------------------------------------------------------
 
   it.live("--linked merges [remotes.*] storage config override before seeding", () => {
     // The base config has [storage.buckets.base] with public=true; the remote block
     // overrides it to public=false and adds [storage.buckets.remote]. Both buckets
-    // appear after the merge (Go's mergeRemoteConfig merges subtrees recursively;
+    // appear after the merge (`mergeRemoteConfig` merges subtrees recursively;
     // it does not wholesale replace [storage.buckets]).
     const remoteRef = LEGACY_VALID_REF; // "abcdefghijklmnopqrst"
-    const flags: LegacyBucketsFlags = { linked: true, local: false };
+    const flags: LegacyBucketsFlags = { linked: true, local: false, projectRef: Option.none() };
     const { layer, out, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         'project_id = "test"',
@@ -2015,13 +2078,11 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
   // Fix 2 — validate bucket names up front
-  // ---------------------------------------------------------------------------
 
   it.live("fails with exact error message on an invalid bucket name", () => {
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
-      // "good-name" is valid; "bad/name" contains "/" which is not in Go's allowed set.
+      // "good-name" is valid; "bad/name" contains "/" which is not in the allowed set.
       toml: [
         "[storage.buckets.good-name]",
         "public = true",
@@ -2047,7 +2108,7 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("accepts valid bucket names that use allowed special characters", () => {
-    // Bucket names with spaces, dots, underscores, etc. are valid per Go's regex.
+    // Bucket names with spaces, dots, underscores, etc. are valid per the regex.
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: [
         '[storage.buckets."my.bucket"]',
@@ -2069,9 +2130,7 @@ describe("legacy seed buckets", () => {
     });
   });
 
-  // ---------------------------------------------------------------------------
   // Fix 3 — SUPABASE_AUTH_JWT_SECRET / SUPABASE_AUTH_SERVICE_ROLE_KEY for local
-  // ---------------------------------------------------------------------------
 
   it.live("local run: SUPABASE_AUTH_JWT_SECRET overrides auth.jwt_secret", () => {
     const prevJwt = process.env["SUPABASE_AUTH_JWT_SECRET"];
@@ -2157,9 +2216,7 @@ describe("legacy seed buckets", () => {
     );
   });
 
-  // ---------------------------------------------------------------------------
   // Fix 5 — validate api.tls cert/key pairing before seeding
-  // ---------------------------------------------------------------------------
 
   it.live("fails when cert_path is set but key_path is missing", () => {
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -2231,10 +2288,10 @@ describe("legacy seed buckets", () => {
   });
 
   it.live("skips TLS validation when api.enabled is false (Go gates on c.Api.Enabled)", () => {
-    // Go resolves and validates cert/key only inside `if c.Api.Enabled` blocks
+    // Cert/key are resolved and validated only inside `if c.Api.Enabled` blocks
     // (config.go:795, 841), so a config with [api] enabled=false, [api.tls]
-    // enabled=true and only cert_path set is valid under the Go loader and must
-    // NOT fail here on the missing key_path — it seeds normally instead.
+    // enabled=true and only cert_path set is valid and must NOT fail here on
+    // the missing key_path — it seeds normally instead.
     const { layer, requests } = setupLegacySeedBuckets(tmp.current, {
       toml: '[api]\nenabled = false\n[api.tls]\nenabled = true\ncert_path = "custom-ca.crt"\n[storage.buckets.docs]\npublic = false\n',
       routes: [

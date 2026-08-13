@@ -2,10 +2,11 @@
 
 ## Files Read
 
-| Path                             | Format     | When                                              |
-| -------------------------------- | ---------- | ------------------------------------------------- |
-| `<workdir>/supabase/migrations/` | directory  | always, to read migration files                   |
-| `~/.supabase/access-token`       | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked` |
+| Path                                   | Format     | When                                                                                            |
+| -------------------------------------- | ---------- | ----------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/`       | directory  | always, to read migration files                                                                 |
+| `~/.supabase/access-token`             | plain text | when `SUPABASE_ACCESS_TOKEN` unset and `--linked`                                               |
+| `<workdir>/supabase/.temp/project-ref` | plain text | `--linked`, to resolve the ref — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set |
 
 ## Files Written
 
@@ -28,15 +29,16 @@
 
 ## Exit Codes
 
-| Code | Condition                     |
-| ---- | ----------------------------- |
-| `0`  | success                       |
-| `1`  | database connection failure   |
-| `1`  | migration SQL execution error |
+| Code | Condition                                                                |
+| ---- | ------------------------------------------------------------------------ |
+| `0`  | success                                                                  |
+| `1`  | database connection failure                                              |
+| `1`  | migration SQL execution error                                            |
+| `1`  | `--project-ref` set with a resolved target other than linked (see Notes) |
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints `Resetting database to version: <version>` to stderr, then drops every
 user schema/object (the bundled `drop.sql` DO-block), upserts `[db.vault]`
@@ -63,8 +65,16 @@ Same structured result delivered as an NDJSON `result` event.
 - `--last` (default 1) resets up to the last n migration versions; must be `> 0`
   and `<` the number of applied migrations.
 - `--local` (default true), `--linked`, and `--db-url` are mutually exclusive.
+- **`--project-ref`** (TS-only, no Go equivalent on any user-facing command)
+  overrides ONLY the linked-ref resolution used for the connection (flag >
+  `SUPABASE_PROJECT_ID` > `.temp/project-ref`). It never implies `--linked`:
+  passing it with a resolved `--local`/`--db-url` target is a hard error rather
+  than a silently discarded flag (deliberately stricter than
+  `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
+  a non-linked target).
 - Takes no positional arguments.
-- Skips Go's best-effort `pgcache.TryCacheMigrationsCatalog` (documented divergence).
+- Skips a best-effort migrations-catalog cache optimization present in the old
+  Go CLI (documented divergence).
 - Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are decrypted during config
   load using `DOTENV_PRIVATE_KEY[_*]`; an `encrypted:` value with no working key
-  aborts the command with `failed to parse config: …`, matching Go.
+  aborts the command with `failed to parse config: …`.

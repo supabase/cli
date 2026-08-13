@@ -301,8 +301,8 @@ describe("legacyCliConfigLayer", () => {
     return Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
       expect(config.projectHost).toBe("localhost");
-      // Go's Profile.PoolerHost is `omitempty`: an absent pooler_host disables the
-      // MITM domain assertion rather than falling back to supabase.com.
+      // An absent pooler_host disables the MITM domain assertion rather
+      // than falling back to supabase.com.
       expect(config.poolerHost).toBe("");
     }).pipe(Effect.provide(makeLayer({ env: { SUPABASE_PROFILE: profilePath }, cwd: tempRoot })));
   });
@@ -410,13 +410,12 @@ describe("legacyCliConfigLayer", () => {
     ),
   );
 
-  // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) always
-  // `os.Chdir`s the raw flag/env value, but every later reader — including the
-  // `Config.ProjectId` cwd-basename default (`Eject`, `pkg/config/config.go:
-  // 561-570`) — reads `os.Getwd()`, the real absolute directory, never the raw
-  // string. A relative `--workdir .`/`SUPABASE_WORKDIR=.` must therefore resolve
-  // to an absolute path here too, not stay `"."` (which would later basename to
-  // an empty project id).
+  // Every later reader of the resolved workdir — including the
+  // `Config.ProjectId` cwd-basename default — must see the real absolute
+  // directory, never the raw flag/env string. A relative `--workdir
+  // .`/`SUPABASE_WORKDIR=.` must therefore resolve to an absolute path
+  // here too, not stay `"."` (which would later basename to an empty
+  // project id).
   it.effect("resolves a relative --workdir flag against the real cwd", () =>
     Effect.gen(function* () {
       const config = yield* LegacyCliConfig;
