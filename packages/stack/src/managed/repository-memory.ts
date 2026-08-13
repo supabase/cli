@@ -9,10 +9,14 @@ import {
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
+  type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
+  type ManagedContextRecord,
+  type ManagedIdentityTriple,
   type ManagedOperationRecord,
   type ManagedRuntimeMetadata,
   type ManagedStackConfiguration,
+  type ManagedStackProjection,
   type ManagedStackRecord,
 } from "./model.ts";
 import { failsWith } from "./failure.ts";
@@ -20,6 +24,7 @@ import {
   assertManagedOwnerPid,
   assertManagedStackUpdatable,
   compareManagedText,
+  decideManagedContextRegistration,
   managedStackOccupiesPorts,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
@@ -28,9 +33,9 @@ import {
   type ClaimManagedOperationResult,
   type ManagedStackRepositoryShape,
   type OwnedManagedStackFailure,
-  type PrepareOrdinaryStackFailure,
-  type PrepareOrdinaryStackInput,
-  type PrepareOrdinaryStackResult,
+  type PrepareStackFailure,
+  type PrepareStackInput,
+  type PrepareStackResult,
   type ReconcileManagedOperationFailure,
   type ReconcileManagedOperationResult,
   type UpdateManagedStackFailure,
@@ -40,11 +45,7 @@ import {
 interface InMemoryCheckout {
   readonly id: string;
   readonly projectId: string;
-}
-
-interface InMemoryContext {
-  readonly id: string;
-  readonly checkoutId: string;
+  readonly kind: ManagedCheckoutKind;
 }
 
 const stackIdentityKey = (checkoutId: string, contextId: string, stackName: string): string =>
@@ -90,7 +91,7 @@ const emptyRuntimeMetadata = (): ManagedRuntimeMetadata => ({
 export const createInMemoryManagedStackRepository = (): ManagedStackRepositoryShape => {
   const projects = new Set<string>();
   const checkouts = new Map<string, InMemoryCheckout>();
-  const contexts = new Map<string, InMemoryContext>();
+  const contexts = new Map<string, ManagedContextRecord>();
   const locations = new Map<string, ManagedCheckoutLocation>();
   const stacks = new Map<string, ManagedStackRecord>();
   const stackIdentities = new Map<string, string>();
@@ -230,7 +231,41 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
     return { acquired: true, operation: copy(operation) };
   };
 
-  const prepareOrdinaryStack = (input: PrepareOrdinaryStackInput): PrepareOrdinaryStackResult => {
+  /** Applies the shared context-registration policy to this atomic map store. */
+  const registerContext = (input: PrepareStackInput): string => {
+    const contextRegistration = decideManagedContextRegistration({
+      requestedId: input.identity.contextId,
+      projectId: input.identity.projectId,
+      checkoutId: input.identity.checkoutId,
+      context: input.context,
+      now: input.now,
+      checkoutScopedExisting:
+        input.context.kind === "branch"
+          ? undefined
+          : [...contexts.values()].find(
+              (candidate) =>
+                candidate.checkoutId === input.identity.checkoutId &&
+                candidate.kind === input.context.kind,
+            ),
+      requestedExisting: contexts.get(input.identity.contextId),
+    });
+    const contextId =
+      contextRegistration.outcome === "create"
+        ? contextRegistration.context.id
+        : contextRegistration.contextId;
+    if (contextRegistration.outcome === "create") {
+      contexts.set(contextId, contextRegistration.context);
+    } else if (contextRegistration.refreshLocator !== undefined) {
+      const existing = contexts.get(contextId);
+      if (existing === undefined) {
+        throw new Error(`Managed context ${contextId} vanished during registration`);
+      }
+      contexts.set(contextId, { ...existing, locator: contextRegistration.refreshLocator });
+    }
+    return contextId;
+  };
+
+  const prepareStack = (input: PrepareStackInput): PrepareStackResult => {
     assertManagedOwnerPid(input.ownerPid);
     return atomic(() => {
       projects.add(input.identity.projectId);
@@ -245,40 +280,30 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       checkouts.set(input.identity.checkoutId, {
         id: input.identity.checkoutId,
         projectId: input.identity.projectId,
+        kind: input.checkoutKind,
       });
 
-      const context = contexts.get(input.identity.contextId);
-      if (context !== undefined && context.checkoutId !== input.identity.checkoutId) {
-        throw new DuplicateManagedIdentityError({
-          identityId: input.identity.contextId,
-          existingClaim: context.checkoutId,
-          requestedClaim: input.identity.checkoutId,
-        });
-      }
-      contexts.set(input.identity.contextId, {
-        id: input.identity.contextId,
-        checkoutId: input.identity.checkoutId,
-      });
+      const contextId = registerContext(input);
 
       const existingLocation = [...locations.values()].find(
         (location) => location.checkoutId === input.identity.checkoutId,
       );
       if (
         existingLocation !== undefined &&
-        existingLocation.canonicalPath !== input.canonicalPath
+        existingLocation.canonicalPath !== input.checkoutRootPath
       ) {
         throw new DuplicateManagedIdentityError({
           identityId: input.identity.checkoutId,
           existingClaim: existingLocation.canonicalPath,
-          requestedClaim: input.canonicalPath,
+          requestedClaim: input.checkoutRootPath,
         });
       }
       const pathOwner = [...locations.values()].find(
-        (location) => location.canonicalPath === input.canonicalPath,
+        (location) => location.canonicalPath === input.checkoutRootPath,
       );
       if (pathOwner !== undefined && pathOwner.checkoutId !== input.identity.checkoutId) {
         throw new DuplicateManagedIdentityError({
-          identityId: input.canonicalPath,
+          identityId: input.checkoutRootPath,
           existingClaim: pathOwner.checkoutId,
           requestedClaim: input.identity.checkoutId,
         });
@@ -286,15 +311,11 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       locations.set(existingLocation?.id ?? input.locationId, {
         id: existingLocation?.id ?? input.locationId,
         checkoutId: input.identity.checkoutId,
-        canonicalPath: input.canonicalPath,
+        canonicalPath: input.checkoutRootPath,
         lastSeenAt: input.now,
       });
 
-      const identityKey = stackIdentityKey(
-        input.identity.checkoutId,
-        input.identity.contextId,
-        input.stackName,
-      );
+      const identityKey = stackIdentityKey(input.identity.checkoutId, contextId, input.stackName);
       const existingStackId = stackIdentities.get(identityKey);
       if (existingStackId !== undefined) {
         const stack = requireStack(existingStackId);
@@ -311,7 +332,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         id: input.stackId,
         projectId: input.identity.projectId,
         checkoutId: input.identity.checkoutId,
-        contextId: input.identity.contextId,
+        contextId,
         name: input.stackName,
         status: "pending",
         lifecycle: "stopped",
@@ -469,11 +490,57 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
     return copy(next);
   };
 
+  /**
+   * The join the SQLite adapter does in SQL. A stack whose checkout or context
+   * row is missing is a broken store rather than a listable stack, so it is a
+   * defect here exactly as the adapter's inner join makes it unreachable there.
+   */
+  const projectStack = (stack: ManagedStackRecord): ManagedStackProjection => {
+    const checkout = checkouts.get(stack.checkoutId);
+    const context = contexts.get(stack.contextId);
+    if (checkout === undefined || context === undefined) {
+      throw new Error(`Managed stack ${stack.id} has no checkout or context row`);
+    }
+    return {
+      ...stack,
+      checkoutKind: checkout.kind,
+      canonicalPath: [...locations.values()].find(
+        (location) => location.checkoutId === stack.checkoutId,
+      )?.canonicalPath,
+      contextKind: context.kind,
+      contextLocator: context.locator,
+    };
+  };
+
+  const listStackRecords = (options?: {
+    readonly includeTombstoned?: boolean;
+  }): ReadonlyArray<ManagedStackRecord> =>
+    [...stacks.values()]
+      .filter((stack) => options?.includeTombstoned === true || stack.status !== "tombstoned")
+      .sort(
+        (left, right) =>
+          compareManagedText(left.createdAt, right.createdAt) ||
+          compareManagedText(left.id, right.id),
+      );
+
+  const listStackProjectionsByIdentity = (
+    identity: ManagedIdentityTriple,
+    options?: { readonly includeTombstoned?: boolean },
+  ): ReadonlyArray<ManagedStackProjection> =>
+    listStackRecords(options)
+      .filter(
+        (stack) =>
+          stack.projectId === identity.projectId &&
+          stack.checkoutId === identity.checkoutId &&
+          stack.contextId === identity.contextId,
+      )
+      .map(projectStack);
+
   return {
-    prepareOrdinaryStack: (input) =>
+    prepareStack: (input) =>
       Effect.try({
-        try: () => prepareOrdinaryStack(input),
-        catch: failsWith<PrepareOrdinaryStackFailure>(
+        try: () => prepareStack(input),
+        catch: failsWith<PrepareStackFailure>(
           DuplicateManagedIdentityError,
           DuplicateManagedPortKeyError,
           InvalidManagedOwnerPidError,
@@ -504,17 +571,25 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         const stack = stacks.get(stackId);
         return stack === undefined ? undefined : copy(stack);
       }),
-    listStacks: (options) =>
+    listStacks: (options) => Effect.sync(() => listStackRecords(options).map(copy)),
+    getStackProjection: (stackId) =>
+      Effect.sync(() => {
+        const stack = stacks.get(stackId);
+        return stack === undefined ? undefined : copy(projectStack(stack));
+      }),
+    listStackProjections: (options) =>
       Effect.sync(() =>
-        [...stacks.values()]
-          .filter((stack) => options?.includeTombstoned === true || stack.status !== "tombstoned")
-          .sort(
-            (left, right) =>
-              compareManagedText(left.createdAt, right.createdAt) ||
-              compareManagedText(left.id, right.id),
-          )
-          .map(copy),
+        options?.identity === undefined
+          ? listStackRecords(options).map((stack) => copy(projectStack(stack)))
+          : listStackProjectionsByIdentity(options.identity, options).map(copy),
       ),
+    findCheckoutContext: (checkoutId, kind) =>
+      Effect.sync(() => {
+        const context = [...contexts.values()].find(
+          (candidate) => candidate.checkoutId === checkoutId && candidate.kind === kind,
+        );
+        return context === undefined ? undefined : copy(context);
+      }),
     claimOperation: (input) =>
       Effect.try({
         try: () => claimOperation(input),

@@ -23,24 +23,39 @@ import {
   ManagedStackNotStoppedError,
   ManagedStackPublicationTimeoutError,
   UnsafeManagedStackPathError,
+  UnsupportedGitWorkspaceError,
+  type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
+  type ManagedContextDescriptor,
+  type ManagedContextKind,
+  type ManagedIdentityTriple,
   type ManagedOperationKind,
   type ManagedOperationRecord,
   type ManagedStackConfiguration,
   type ManagedStackLifecycle,
+  type ManagedStackProjection,
   type ManagedStackRecord,
   type ManagedStackSelection,
-  type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
 import {
-  canonicalizeOrdinaryWorkspacePath,
+  canonicalizeManagedWorkspacePath,
   ensureOrdinaryWorkspaceIdentity,
   readOrdinaryWorkspaceIdentity,
 } from "./identity.ts";
+import {
+  ensureBranchContextId,
+  ensureGitCheckoutIdentity,
+  GitConfigStore,
+  inspectWorkspace,
+  readBranchContextId,
+  readGitCheckoutIdentity,
+  type GitCheckoutInspection,
+} from "./git.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import {
   assertManagedStackRoot,
   managedStackPaths,
+  ordinaryWorkspaceIdentityPath,
   requireExplicitManagedStateRoot,
 } from "./paths.ts";
 import { fromCallback, isBooleanAnswer } from "./callback.ts";
@@ -52,7 +67,7 @@ import {
   ManagedStackRepository,
   type ClaimManagedOperationFailure,
   type OwnedManagedStackFailure,
-  type PrepareOrdinaryStackFailure,
+  type PrepareStackFailure,
   type UpdateManagedStackFailure,
 } from "./repository.ts";
 
@@ -66,8 +81,20 @@ export interface ManagedStackServiceOptions {
   readonly isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
 }
 
-export interface ProvisionOrdinaryStackOptions {
+/**
+ * What a resolve is allowed to do.
+ *
+ * `status` is strictly read-only — it claims no identity, creates no registry
+ * row, and writes no marker — so the same resolution a `start` would reach can be
+ * reported for a workspace that has never been registered. `start` is the
+ * mutating counterpart: it claims whatever identity is missing and registers the
+ * stack.
+ */
+export type ResolveManagedStackOperation = "start" | "status";
+
+export interface ResolveManagedStackOptions {
   readonly workspacePath: string;
+  readonly operation: ResolveManagedStackOperation;
   readonly stackName?: string;
   readonly configuration?: ManagedStackConfiguration;
   /**
@@ -80,17 +107,69 @@ export interface ProvisionOrdinaryStackOptions {
   readonly validate?: (stack: ManagedStackRecord) => Effect.Effect<void, unknown>;
 }
 
-export interface ProvisionOrdinaryStackResult {
-  readonly outcome: "create" | "reuse";
-  readonly selection: ManagedStackSelection;
-  readonly stack: ManagedStackRecord;
+/** What the workspace turned out to be, and where its identities are kept. */
+export interface ResolvedManagedWorkspace {
+  readonly checkoutKind: ManagedCheckoutKind;
+  readonly canonicalPath: string;
+  /** The checkout's top-level directory; the canonical path for a folder. */
+  readonly workspaceRoot: string;
+  /**
+   * Where the project identity lives: the common git directory of a repository,
+   * or the identity marker of an ordinary folder.
+   */
+  readonly projectIdentityLocation: string;
+  /** Where this checkout's own identity lives, under the same rule. */
+  readonly checkoutIdentityLocation: string;
+}
+
+export interface ResolvedManagedContext {
+  readonly kind: ManagedContextKind;
+  /** The branch a branch context was resolved under. */
+  readonly branch?: string;
+  /** The commit a detached `HEAD` is parked on; never part of the identity. */
+  readonly commit?: string;
+}
+
+/**
+ * The identity triple, with each part absent until something has claimed it. A
+ * `status` resolve of a workspace nothing has ever started reports all three as
+ * absent, because claiming one would be a write.
+ */
+export interface ResolvedManagedIdentity {
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+}
+
+/** Whether the named stack exists yet, and if it does, what it is doing. */
+export type ResolvedManagedStackState = "unregistered" | ManagedStackLifecycle;
+
+export interface ManagedStackResolution {
+  readonly operation: ResolveManagedStackOperation;
+  readonly outcome: "create" | "report" | "reuse";
+  readonly workspace: ResolvedManagedWorkspace;
+  readonly context: ResolvedManagedContext;
+  readonly identity: ResolvedManagedIdentity;
+  readonly stackName: string;
+  readonly state: ResolvedManagedStackState;
+  readonly selection?: ManagedStackSelection;
+  readonly stack?: ManagedStackProjection;
+  /** Every live stack already registered in the resolved project, checkout, and context, this one included. */
+  readonly stacks: ReadonlyArray<ManagedStackProjection>;
+  /** Whether this call published a checkout identity that did not exist yet. */
   readonly identityMarkerCreated: boolean;
 }
 
-export interface InspectOrdinaryWorkspaceResult {
-  readonly registered: boolean;
-  readonly identity?: OrdinaryWorkspaceIdentity;
-  readonly stacks: ReadonlyArray<ManagedStackRecord>;
+/**
+ * A resolve that was allowed to claim, so its identity and stack are settled
+ * facts rather than things that may not exist yet.
+ */
+export interface StartedManagedStackResolution extends ManagedStackResolution {
+  readonly operation: "start";
+  readonly outcome: "create" | "reuse";
+  readonly identity: ManagedIdentityTriple;
+  readonly selection: ManagedStackSelection;
+  readonly stack: ManagedStackProjection;
 }
 
 export interface DeleteManagedStackResult {
@@ -172,7 +251,7 @@ export type UpdateManagedStackConfigurationFailure =
   | RequireManagedOperationFailure
   | UpdateManagedStackFailure;
 
-export type ProvisionManagedStackFailure =
+export type ResolveManagedStackFailure =
   | InvalidManagedIdentityError
   | InvalidManagedStackNameError
   | ManagedAbandonedOperationError
@@ -180,7 +259,8 @@ export type ProvisionManagedStackFailure =
   | ManagedStackInitializationError
   | ManagedStackNotFoundError
   | ManagedStackPublicationTimeoutError
-  | PrepareOrdinaryStackFailure
+  | PrepareStackFailure
+  | UnsupportedGitWorkspaceError
   | UpdateManagedStackConfigurationFailure;
 
 export type DeleteManagedStackFailure =
@@ -192,16 +272,27 @@ export type DeleteManagedStackFailure =
 
 export interface ManagedStackServiceShape {
   readonly stateRoot: string;
-  readonly provisionOrdinaryStack: (
-    options: ProvisionOrdinaryStackOptions,
-  ) => Effect.Effect<ProvisionOrdinaryStackResult, ProvisionManagedStackFailure>;
-  readonly inspectOrdinaryWorkspace: (
-    workspacePath: string,
-  ) => Effect.Effect<InspectOrdinaryWorkspaceResult, InvalidManagedIdentityError>;
-  readonly inspectStack: (stackId: string) => Effect.Effect<ManagedStackRecord | undefined>;
+  /**
+   * The one path from a workspace path to a stack, for every workspace shape and
+   * both operations. Nothing else in the managed surface classifies a workspace
+   * or decides an identity, so a `status` and the `start` that follows it cannot
+   * disagree about which stack they are talking about.
+   *
+   * A `start` resolve always settles on a stack, which is what the narrower
+   * overload reports.
+   */
+  readonly resolveStack: {
+    (
+      options: ResolveManagedStackOptions & { readonly operation: "start" },
+    ): Effect.Effect<StartedManagedStackResolution, ResolveManagedStackFailure>;
+    (
+      options: ResolveManagedStackOptions,
+    ): Effect.Effect<ManagedStackResolution, ResolveManagedStackFailure>;
+  };
+  readonly inspectStack: (stackId: string) => Effect.Effect<ManagedStackProjection | undefined>;
   readonly listStacks: (options?: {
     readonly includeTombstoned?: boolean;
-  }) => Effect.Effect<ReadonlyArray<ManagedStackRecord>>;
+  }) => Effect.Effect<ReadonlyArray<ManagedStackProjection>>;
   readonly updateStack: (
     stackId: string,
     configuration: ManagedStackConfiguration,
@@ -236,17 +327,6 @@ const selectionForStack = (stack: ManagedStackRecord): ManagedStackSelection => 
   stackName: stack.name,
 });
 
-const provisionResult = (
-  outcome: ProvisionOrdinaryStackResult["outcome"],
-  stack: ManagedStackRecord,
-  identityMarkerCreated: boolean,
-): ProvisionOrdinaryStackResult => ({
-  outcome,
-  selection: selectionForStack(stack),
-  stack,
-  identityMarkerCreated,
-});
-
 const deletionResult = (
   outcome: DeleteManagedStackResult["outcome"],
   stack: ManagedStackRecord,
@@ -260,7 +340,26 @@ const dataRetained = (error: unknown): DeleteManagedStackResult["dataReclamation
   error,
 });
 
-const unregisteredWorkspace: InspectOrdinaryWorkspaceResult = { registered: false, stacks: [] };
+/**
+ * How a git checkout's own classification maps onto a registry checkout kind. The
+ * two vocabularies differ in one word — git's `primary` is the registry's `git` —
+ * because the registry also has to name a checkout that is no repository at all.
+ */
+const checkoutKindOf = (inspection: GitCheckoutInspection): ManagedCheckoutKind =>
+  inspection.checkoutKind === "primary" ? "git" : inspection.checkoutKind;
+
+/**
+ * What a workspace resolved to before any stack is looked up: where the
+ * identities live, which context the working tree is in, and whichever parts of
+ * the identity triple exist at this point.
+ */
+interface ResolvedWorkspace {
+  readonly workspace: ResolvedManagedWorkspace;
+  readonly context: ResolvedManagedContext;
+  readonly contextDescriptor: ManagedContextDescriptor;
+  readonly identity: ResolvedManagedIdentity;
+  readonly identityMarkerCreated: boolean;
+}
 
 /**
  * How recovery and best-effort cleanup absorb a step that refused.
@@ -278,6 +377,16 @@ const recordUnlessInterrupted =
     Effect.catchCause(self, (cause) =>
       Cause.hasInterruptsOnly(cause) ? Effect.interrupt : record(cause),
     );
+
+/**
+ * The error an absorbed step refused with, for a report entry to carry — or an
+ * interruption, re-raised before any entry is built. It is the rule
+ * {@link recordUnlessInterrupted} applies to a whole step, applied where the
+ * step's exit is inspected instead: an interrupted step has no outcome, so it
+ * must not become a report entry either way.
+ */
+const absorbedError = <E>(cause: Cause.Cause<E>): Effect.Effect<unknown> =>
+  Cause.hasInterruptsOnly(cause) ? Effect.interrupt : Effect.succeed(Cause.squash(cause));
 
 /** What one look at a stack awaiting publication can refuse to wait for. */
 type PublicationPollFailure = ManagedAbandonedOperationError | ManagedStackNotFoundError;
@@ -305,8 +414,14 @@ const processIsAlive = (pid: number): boolean => {
 };
 
 /**
- * The managed registry's policy layer: identity marker handling, provisioning
- * order, publication waiting, deletion, and recovery of abandoned operations.
+ * The managed registry's policy layer: workspace classification, identity
+ * ownership, provisioning order, publication waiting, deletion, and recovery of
+ * abandoned operations.
+ *
+ * Every isolation rule the managed surface has lives here rather than in the
+ * registry or in a caller: which checkout a path belongs to, which context a
+ * `HEAD` names, and what a stack name is scoped by. The registry stores those
+ * decisions and enforces their uniqueness; it never makes them.
  */
 export class ManagedStackService extends Context.Service<
   ManagedStackService,
@@ -317,13 +432,24 @@ export class ManagedStackService extends Context.Service<
   ): Layer.Layer<
     ManagedStackService,
     InvalidManagedOwnerPidError | UnsafeManagedStackPathError,
-    FileSystem.FileSystem | ManagedStackRepository
+    FileSystem.FileSystem | GitConfigStore | ManagedStackRepository
   > {
     return Layer.effect(
       this,
       Effect.gen(function* () {
         const repository = yield* ManagedStackRepository;
         const fs = yield* FileSystem.FileSystem;
+        // Captured while the layer is built, so every method this service returns
+        // is requirement-free: a caller holding the service never has to know
+        // that resolving a workspace reads git config and the filesystem.
+        const gitConfigStore = yield* GitConfigStore;
+        const withWorkspaceServices = <A, E>(
+          effect: Effect.Effect<A, E, FileSystem.FileSystem | GitConfigStore>,
+        ): Effect.Effect<A, E> =>
+          effect.pipe(
+            Effect.provideService(GitConfigStore, gitConfigStore),
+            Effect.provideService(FileSystem.FileSystem, fs),
+          );
         // Anchored and validated once, at the boundary, through the one resolver
         // that owns state-root policy: a relative root injected here would be
         // reinterpreted against the process' cwd at every later use, and a blank
@@ -396,6 +522,13 @@ export class ManagedStackService extends Context.Service<
             recordUnlessInterrupted((cause) => Effect.succeed(dataRetained(Cause.squash(cause)))),
           );
 
+        /**
+         * Marks an operation failed as part of a recovery report, answering
+         * whether the claim was actually released — a claim that could not be
+         * released is reported, not hidden. Interruption is re-raised, because
+         * this is a recording site: there is no report to put an interrupted
+         * step in.
+         */
         const finishOperationBestEffort = (
           stackId: string,
           operationToken: string,
@@ -406,6 +539,36 @@ export class ManagedStackService extends Context.Service<
             // Preserve the operation's original failure when ownership changed concurrently.
             recordUnlessInterrupted(() => Effect.succeed(false)),
           );
+
+        /**
+         * Releases this call's claim on the way out of a failed operation, then
+         * re-raises the cause that got here.
+         *
+         * The release absorbs everything it can raise, its own interruption
+         * included: the caller's outcome is the failure the operation suffered,
+         * and an embedder repository that reports interruption from
+         * `finishOperation` would otherwise replace that failure with an
+         * interruption the caller never asked for. That is the opposite of the
+         * recording sites above, where an interrupted step has no outcome and
+         * interruption is the only honest answer.
+         */
+        const releasingClaimOnFailure =
+          (stackId: string, operationToken: string) =>
+          <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+            Effect.catchCause(self, (cause) =>
+              repository
+                .finishOperation(
+                  stackId,
+                  operationToken,
+                  "failed",
+                  now(),
+                  String(Cause.squash(cause)),
+                )
+                .pipe(
+                  Effect.catchCause(() => Effect.void),
+                  Effect.flatMap(() => Effect.failCause(cause)),
+                ),
+            );
 
         /**
          * A concurrent forced recovery can resolve this same operation before
@@ -516,12 +679,9 @@ export class ManagedStackService extends Context.Service<
           | ManagedStackPublicationTimeoutError
         > =>
           pollPublication(pending).pipe(
-            // A refinement, so the answer the repeat stops on is narrowed to the
-            // published stack. The type argument is explicit because the
-            // narrowing is lost when the generic guard is inferred here.
             Effect.repeat({
               schedule: publicationPollSchedule,
-              while: Option.isNone<ManagedStackRecord>,
+              while: (answer: Option.Option<ManagedStackRecord>) => Option.isNone(answer),
             }),
             // The timeout is the caller's bound on the whole wait, so it
             // interrupts the poll rather than being checked between polls.
@@ -530,7 +690,21 @@ export class ManagedStackService extends Context.Service<
               orElse: () =>
                 Effect.fail(new ManagedStackPublicationTimeoutError({ stackId: pending.id })),
             }),
-            Effect.map((published) => published.value),
+            // Only an unbounded schedule guarantees the repeat stops on a
+            // published stack, and this one is unbounded. A recurrence bound
+            // added later would hand back the final `None` instead, so the
+            // answer is checked rather than asserted through a refinement: a
+            // schedule that gave up is a bug in this module, not an outcome a
+            // caller could act on.
+            Effect.flatMap((published) =>
+              Option.isNone(published)
+                ? Effect.die(
+                    new Error(
+                      `The publication poll for ${pending.id} stopped before the stack was published`,
+                    ),
+                  )
+                : Effect.succeed(published.value),
+            ),
           );
 
         const updateStackRecord = (
@@ -550,11 +724,7 @@ export class ManagedStackService extends Context.Service<
                 Effect.tap(() =>
                   repository.finishOperation(stackId, operation.token, "completed", now()),
                 ),
-                Effect.catchCause((cause) =>
-                  finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
-                    Effect.flatMap(() => Effect.failCause(cause)),
-                  ),
-                ),
+                releasingClaimOnFailure(stackId, operation.token),
               );
           });
 
@@ -571,18 +741,332 @@ export class ManagedStackService extends Context.Service<
             ? Effect.succeed(stack)
             : updateStackRecord(stack.id, configuration);
 
-        const provisionOrdinaryStack = (
-          provisionOptions: ProvisionOrdinaryStackOptions,
-        ): Effect.Effect<ProvisionOrdinaryStackResult, ProvisionManagedStackFailure> =>
+        /**
+         * The branch context of a checkout whose `HEAD` names one.
+         *
+         * Git owns this identity: it lives in the shared repository config, so
+         * every worktree on the branch resolves the same context, and `git branch
+         * -m` or a branch deletion takes it along. A read-only resolve reports the
+         * absence of one rather than claiming it.
+         */
+        const branchContextId = (
+          inspection: GitCheckoutInspection,
+          branch: string,
+          claim: boolean,
+        ): Effect.Effect<
+          string | undefined,
+          InvalidManagedIdentityError | UnsupportedGitWorkspaceError
+        > =>
+          withWorkspaceServices(
+            claim
+              ? ensureBranchContextId(inspection, branch, idFactory)
+              : readBranchContextId(inspection, branch),
+          );
+
+        /**
+         * The detached context of a checkout, which git records nowhere: a
+         * detached `HEAD` names no ref to hang a context off, and keying one per
+         * commit would strand a stack on every checkout. The registry owns it
+         * instead — one per checkout, reused for every commit that checkout is
+         * parked on — so a `start` only mints a candidate, and the registry
+         * decides whether a concurrent start's row already won.
+         */
+        const detachedContextId = (
+          checkoutId: string | undefined,
+          claim: boolean,
+        ): Effect.Effect<string | undefined, InvalidManagedIdentityError> =>
           Effect.gen(function* () {
-            const stackName = provisionOptions.stackName ?? DEFAULT_MANAGED_STACK_NAME;
-            if (!stackNamePattern.test(stackName)) {
-              return yield* Effect.fail(new InvalidManagedStackNameError({ stackName }));
+            const existing =
+              checkoutId === undefined
+                ? undefined
+                : yield* repository.findCheckoutContext(checkoutId, "detached");
+            if (existing !== undefined) {
+              return existing.id;
             }
-            const canonicalPath = yield* canonicalizeOrdinaryWorkspacePath(
-              provisionOptions.workspacePath,
+            return claim ? yield* managedUuid("contextId") : undefined;
+          });
+
+        /**
+         * Classifies the workspace and resolves the identity around it, claiming
+         * what is missing only when the operation is allowed to write.
+         *
+         * Both operations take this one path, which is what makes a `status` and
+         * the `start` after it agree: they read the same git topology, derive the
+         * same context from the same `HEAD`, and differ only in whether an absent
+         * identity is minted or reported.
+         */
+        const resolveWorkspace = (
+          workspacePath: string,
+          operation: ResolveManagedStackOperation,
+        ): Effect.Effect<
+          ResolvedWorkspace,
+          InvalidManagedIdentityError | UnsupportedGitWorkspaceError
+        > =>
+          Effect.gen(function* () {
+            const claim = operation === "start";
+            const canonicalPath = yield* canonicalizeManagedWorkspacePath(workspacePath);
+            const inspection = yield* withWorkspaceServices(inspectWorkspace(canonicalPath));
+
+            if (inspection.kind === "ordinary-folder") {
+              const markerPath = ordinaryWorkspaceIdentityPath(canonicalPath);
+              const marker = claim
+                ? yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory)
+                : undefined;
+              const identity =
+                marker === undefined
+                  ? yield* readOrdinaryWorkspaceIdentity(canonicalPath)
+                  : marker.identity;
+              const ownedContext =
+                identity?.checkoutId === undefined
+                  ? undefined
+                  : yield* repository.findCheckoutContext(identity.checkoutId, "workspace");
+              return {
+                // A folder keeps all three identities in one marker, so that
+                // marker is both identity locations.
+                workspace: {
+                  checkoutKind: "ordinary",
+                  canonicalPath,
+                  workspaceRoot: canonicalPath,
+                  projectIdentityLocation: markerPath,
+                  checkoutIdentityLocation: markerPath,
+                },
+                context: { kind: "workspace" },
+                contextDescriptor: { kind: "workspace" },
+                identity: {
+                  projectId: identity?.projectId,
+                  checkoutId: identity?.checkoutId,
+                  contextId: ownedContext?.id ?? identity?.contextId,
+                },
+                identityMarkerCreated: marker?.created ?? false,
+              };
+            }
+
+            const claimed = claim
+              ? yield* withWorkspaceServices(ensureGitCheckoutIdentity(inspection, idFactory))
+              : undefined;
+            // Read so a non-claiming `status` still has an identity to report;
+            // a claiming `start` uses the authoritative result of its ensure
+            // call, not a redundant read that racing claimants could both see
+            // as absent.
+            const stored = claim
+              ? undefined
+              : yield* withWorkspaceServices(readGitCheckoutIdentity(inspection));
+            const checkoutId = claimed?.checkoutId ?? stored?.checkoutId;
+            const head = inspection.head;
+            return {
+              workspace: {
+                checkoutKind: checkoutKindOf(inspection),
+                canonicalPath: inspection.canonicalPath,
+                workspaceRoot: inspection.workspaceRoot,
+                projectIdentityLocation: inspection.commonDirectory,
+                checkoutIdentityLocation: inspection.gitDirectory,
+              },
+              // An unborn branch names a context exactly as a born one does: it is
+              // the state a fresh repository starts in, and a first start there
+              // must not be treated as a detached `HEAD`.
+              context:
+                head.kind === "detached"
+                  ? { kind: "detached", commit: head.commit }
+                  : { kind: "branch", branch: head.branch },
+              contextDescriptor:
+                head.kind === "detached"
+                  ? { kind: "detached" }
+                  : { kind: "branch", locator: head.branch },
+              identity: {
+                projectId: claimed?.projectId ?? stored?.projectId,
+                checkoutId,
+                contextId:
+                  head.kind === "detached"
+                    ? yield* detachedContextId(checkoutId, claim)
+                    : yield* branchContextId(inspection, head.branch, claim),
+              },
+              identityMarkerCreated: claimed?.checkoutIdentityCreated ?? false,
+            };
+          });
+
+        /**
+         * The identity a mutating resolve must have ended up with. Every claim
+         * above either produces all three parts or fails, so a gap here is a bug
+         * in this module rather than a state a caller could be in — but it is
+         * reported rather than asserted, because inventing an identity is the one
+         * thing this layer must never do.
+         */
+        const requireResolvedIdentity = (
+          plan: ResolvedWorkspace,
+        ): Effect.Effect<ManagedIdentityTriple, InvalidManagedIdentityError> => {
+          const { projectId, checkoutId, contextId } = plan.identity;
+          return projectId === undefined || checkoutId === undefined || contextId === undefined
+            ? Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: `${plan.workspace.canonicalPath} was resolved without a complete identity`,
+                }),
+              )
+            : Effect.succeed({ projectId, checkoutId, contextId });
+        };
+
+        /**
+         * Every live stack of one resolved project, checkout, and context, as a
+         * reader sees them. The repository identity filter avoids enumerating and
+         * hydrating unrelated stacks; the retained filter protects this service
+         * contract for injected repositories that may not implement that scope.
+         */
+        const contextStacks = (
+          identity: ManagedIdentityTriple,
+        ): Effect.Effect<ReadonlyArray<ManagedStackProjection>> =>
+          Effect.map(repository.listStackProjections({ identity }), (stacks) =>
+            stacks.filter(
+              (stack) =>
+                stack.projectId === identity.projectId &&
+                stack.checkoutId === identity.checkoutId &&
+                stack.contextId === identity.contextId,
+            ),
+          );
+
+        const requireProjection = (
+          stack: ManagedStackRecord,
+        ): Effect.Effect<ManagedStackProjection> =>
+          Effect.flatMap(repository.getStackProjection(stack.id), (projection) =>
+            projection === undefined
+              ? Effect.die(
+                  new Error(`Managed stack ${stack.id} vanished while it was being resolved`),
+                )
+              : Effect.succeed(projection),
+          );
+
+        /**
+         * A settled mutating resolve. The identity is read back off the stack
+         * rather than off the plan: a checkout-scoped context the registry already
+         * had wins over the one this call minted, so the row is the only place the
+         * resolved context is certain.
+         */
+        const startedResolution = (
+          plan: ResolvedWorkspace,
+          outcome: "create" | "reuse",
+          stack: ManagedStackProjection,
+        ): Effect.Effect<StartedManagedStackResolution> =>
+          Effect.map(
+            contextStacks({
+              projectId: stack.projectId,
+              checkoutId: stack.checkoutId,
+              contextId: stack.contextId,
+            }),
+            (stacks) => ({
+              operation: "start",
+              outcome,
+              workspace: plan.workspace,
+              context: plan.context,
+              identity: {
+                projectId: stack.projectId,
+                checkoutId: stack.checkoutId,
+                contextId: stack.contextId,
+              },
+              stackName: stack.name,
+              state: stack.lifecycle,
+              selection: selectionForStack(stack),
+              stack,
+              stacks,
+              identityMarkerCreated: plan.identityMarkerCreated,
+            }),
+          );
+
+        /**
+         * The read-only answer: whatever identity and stacks already exist, and a
+         * verdict about the named stack. Nothing here writes, so a workspace that
+         * has never been started reports an absent identity rather than acquiring
+         * one.
+         */
+        const reportResolution = (
+          plan: ResolvedWorkspace,
+          stackName: string,
+        ): Effect.Effect<ManagedStackResolution> =>
+          Effect.gen(function* () {
+            const { projectId, checkoutId, contextId } = plan.identity;
+            const stacks =
+              projectId === undefined || checkoutId === undefined || contextId === undefined
+                ? []
+                : yield* contextStacks({ projectId, checkoutId, contextId });
+            const stack = stacks.find((candidate) => candidate.name === stackName);
+            return {
+              operation: "status",
+              outcome: "report",
+              workspace: plan.workspace,
+              context: plan.context,
+              identity: plan.identity,
+              stackName,
+              state: stack?.lifecycle ?? "unregistered",
+              selection: stack === undefined ? undefined : selectionForStack(stack),
+              stack,
+              stacks,
+              identityMarkerCreated: false,
+            };
+          });
+
+        /**
+         * The stack a registration found already registered: either published, or
+         * pending under a publisher this call has to wait for.
+         *
+         * Nothing here is owned by this call — the claim, if there is one, belongs
+         * to whoever is publishing — so this branch needs no compensation and stays
+         * interruptible for the whole of its wait.
+         */
+        const reuseRegisteredStack = (
+          resolveOptions: ResolveManagedStackOptions,
+          plan: ResolvedWorkspace,
+          existing: {
+            readonly stack: ManagedStackRecord;
+            readonly operation?: ManagedOperationRecord;
+          },
+        ): Effect.Effect<StartedManagedStackResolution, ResolveManagedStackFailure> =>
+          Effect.gen(function* () {
+            if (existing.stack.status === "active") {
+              if (existing.operation !== undefined) {
+                return yield* Effect.fail(
+                  new ManagedOperationInProgressError({
+                    stackId: existing.stack.id,
+                    operation: existing.operation,
+                  }),
+                );
+              }
+              const stack = yield* applyRequestedConfiguration(
+                existing.stack,
+                resolveOptions.configuration,
+              );
+              return yield* startedResolution(plan, "reuse", yield* requireProjection(stack));
+            }
+            if (existing.operation === undefined) {
+              return yield* Effect.fail(
+                new ManagedAbandonedOperationError({ stackId: existing.stack.id }),
+              );
+            }
+            // A stored pid that is not a usable pid means there is no owner to
+            // wait for, exactly as a missing one does: probing it could report
+            // a dead publisher as alive and make this caller wait out the whole
+            // publication timeout instead of reporting the abandoned claim.
+            // Provisioning has no report to put a refused probe in, so a seam
+            // that cannot answer is a defect here rather than an outcome.
+            if (
+              !isUsableManagedOwnerPid(existing.operation.ownerPid) ||
+              !(yield* Effect.orDie(probeProcessAlive(existing.operation.ownerPid)))
+            ) {
+              return yield* Effect.fail(
+                new ManagedAbandonedOperationError({ stackId: existing.stack.id }),
+              );
+            }
+            const awaited = yield* awaitPublication(existing.stack);
+            const published = yield* applyRequestedConfiguration(
+              awaited,
+              resolveOptions.configuration,
             );
-            const marker = yield* ensureOrdinaryWorkspaceIdentity(canonicalPath, idFactory);
+            return yield* startedResolution(plan, "reuse", yield* requireProjection(published));
+          });
+
+        const registerStack = (
+          resolveOptions: ResolveManagedStackOptions,
+          stackName: string,
+          plan: ResolvedWorkspace,
+          identity: ManagedIdentityTriple,
+        ): Effect.Effect<StartedManagedStackResolution, ResolveManagedStackFailure> =>
+          Effect.gen(function* () {
             const stackId = yield* managedUuid("stackId");
             const locationId = yield* managedUuid("checkout location id");
             const operationToken = yield* managedUuid("operation token");
@@ -590,140 +1074,136 @@ export class ManagedStackService extends Context.Service<
               try: () => managedStackPaths(stateRoot, stackId),
               catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
             });
-            const prepared = yield* repository.prepareOrdinaryStack({
-              identity: marker.identity,
-              canonicalPath,
-              locationId,
-              stackId,
-              stackName,
-              paths,
-              operationToken,
-              ownerPid,
-              now: now(),
-              configuration: provisionOptions.configuration ?? {},
-            });
-
-            if (prepared.outcome === "existing") {
-              if (prepared.stack.status === "active") {
-                if (prepared.operation !== undefined) {
-                  return yield* Effect.fail(
-                    new ManagedOperationInProgressError({
-                      stackId: prepared.stack.id,
-                      operation: prepared.operation,
-                    }),
-                  );
-                }
-                const stack = yield* applyRequestedConfiguration(
-                  prepared.stack,
-                  provisionOptions.configuration,
-                );
-                return provisionResult("reuse", stack, marker.created);
-              }
-              if (prepared.operation === undefined) {
-                return yield* Effect.fail(
-                  new ManagedAbandonedOperationError({ stackId: prepared.stack.id }),
-                );
-              }
-              // A stored pid that is not a usable pid means there is no owner to
-              // wait for, exactly as a missing one does: probing it could report
-              // a dead publisher as alive and make this caller wait out the whole
-              // publication timeout instead of reporting the abandoned claim.
-              // Provisioning has no report to put a refused probe in, so a seam
-              // that cannot answer is a defect here rather than an outcome.
-              if (
-                !isUsableManagedOwnerPid(prepared.operation.ownerPid) ||
-                !(yield* Effect.orDie(probeProcessAlive(prepared.operation.ownerPid)))
-              ) {
-                return yield* Effect.fail(
-                  new ManagedAbandonedOperationError({ stackId: prepared.stack.id }),
-                );
-              }
-              const awaited = yield* awaitPublication(prepared.stack);
-              const published = yield* applyRequestedConfiguration(
-                awaited,
-                provisionOptions.configuration,
-              );
-              return provisionResult("reuse", published, marker.created);
-            }
-
-            const pending = prepared.stack;
-            const operation = prepared.operation;
-            // Between preparing the pending row and publishing it, this call
-            // owns a registry row, an operation claim, and the directories it
-            // created, so the compensation has to run even when the fiber is
-            // interrupted: a caller that times out or closes the service must
-            // not leave a pending stack and a leaked directory behind. Only the
-            // provisioning steps are interruptible; the rollback is not.
+            // From the moment `prepareStack` returns, this call owns a registry
+            // row, an operation claim, and the directories it creates, so the
+            // compensation has to run even when the fiber is interrupted: a
+            // caller that times out or closes the service must not leave a
+            // pending stack and a leaked claim behind. The mask therefore has to
+            // start *before* the claim exists — an interruption delivered on the
+            // op boundary between creating it and installing the compensation
+            // would leave a pending row claimed by a live pid, which every later
+            // start reads as a publication in progress. Only the provisioning
+            // steps and the wait for somebody else's publication are
+            // interruptible. `deleteStack`'s claim has the same shape.
             return yield* Effect.uninterruptibleMask((restore) =>
-              restore(
-                Effect.gen(function* () {
-                  yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
-                  yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
-                  yield* fs.makeDirectory(pending.paths.runtime, { recursive: true, mode: 0o700 });
-                  if (provisionOptions.initialize !== undefined) {
-                    yield* provisionOptions.initialize(pending);
-                  }
-                  if (provisionOptions.validate !== undefined) {
-                    yield* provisionOptions.validate(pending);
-                  }
-                  const published = yield* repository.publishPendingStack(
-                    pending.id,
-                    operation.token,
-                    now(),
-                  );
-                  return provisionResult("create", published, marker.created);
-                }),
-              ).pipe(
-                Effect.catchCause((cause) =>
+              Effect.gen(function* () {
+                const prepared = yield* repository.prepareStack({
+                  identity,
+                  checkoutKind: plan.workspace.checkoutKind,
+                  // The checkout's root, not the directory this call was made
+                  // from: a checkout has exactly one location, so registering a
+                  // nested path would refuse every later start from elsewhere in
+                  // the same checkout.
+                  checkoutRootPath: plan.workspace.workspaceRoot,
+                  locationId,
+                  context: plan.contextDescriptor,
+                  stackId,
+                  stackName,
+                  paths,
+                  operationToken,
+                  ownerPid,
+                  now: now(),
+                  configuration: resolveOptions.configuration ?? {},
+                });
+                if (prepared.outcome === "existing") {
+                  return yield* restore(reuseRegisteredStack(resolveOptions, plan, prepared));
+                }
+
+                const pending = prepared.stack;
+                const operation = prepared.operation;
+                return yield* restore(
                   Effect.gen(function* () {
-                    const cleanupErrors: Array<unknown> = [];
-                    const aborted = yield* Effect.exit(
-                      repository.abortPendingStack(pending.id, operation.token),
-                    );
-                    if (Exit.isFailure(aborted)) {
-                      cleanupErrors.push(Cause.squash(aborted.cause));
-                    } else {
-                      const reclaimed = yield* Effect.exit(removeStackState(pending));
-                      if (Exit.isFailure(reclaimed)) {
-                        cleanupErrors.push(Cause.squash(reclaimed.cause));
-                      }
+                    yield* fs.makeDirectory(pending.paths.data, { recursive: true, mode: 0o700 });
+                    yield* fs.makeDirectory(pending.paths.logs, { recursive: true, mode: 0o700 });
+                    yield* fs.makeDirectory(pending.paths.runtime, {
+                      recursive: true,
+                      mode: 0o700,
+                    });
+                    if (resolveOptions.initialize !== undefined) {
+                      yield* resolveOptions.initialize(pending);
                     }
-                    // A provision the caller abandoned is not an initialization
-                    // that failed: the interruption is the outcome, and
-                    // reporting it as a failure would tell the caller its own
-                    // timeout was the stack's fault.
-                    return yield* Cause.hasInterruptsOnly(cause)
-                      ? Effect.interrupt
-                      : Effect.fail(
-                          new ManagedStackInitializationError({
-                            stackId: pending.id,
-                            cause: Cause.squash(cause),
-                            cleanupErrors,
-                          }),
-                        );
+                    if (resolveOptions.validate !== undefined) {
+                      yield* resolveOptions.validate(pending);
+                    }
+                    const published = yield* repository.publishPendingStack(
+                      pending.id,
+                      operation.token,
+                      now(),
+                    );
+                    return yield* startedResolution(
+                      plan,
+                      "create",
+                      yield* requireProjection(published),
+                    );
                   }),
-                ),
-              ),
+                ).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.gen(function* () {
+                      const cleanupErrors: Array<unknown> = [];
+                      const aborted = yield* Effect.exit(
+                        repository.abortPendingStack(pending.id, operation.token),
+                      );
+                      if (Exit.isFailure(aborted)) {
+                        cleanupErrors.push(Cause.squash(aborted.cause));
+                      } else {
+                        const reclaimed = yield* Effect.exit(removeStackState(pending));
+                        if (Exit.isFailure(reclaimed)) {
+                          cleanupErrors.push(Cause.squash(reclaimed.cause));
+                        }
+                      }
+                      // A provision the caller abandoned is not an initialization
+                      // that failed: the interruption is the outcome, and
+                      // reporting it as a failure would tell the caller its own
+                      // timeout was the stack's fault.
+                      return yield* Cause.hasInterruptsOnly(cause)
+                        ? Effect.interrupt
+                        : Effect.fail(
+                            new ManagedStackInitializationError({
+                              stackId: pending.id,
+                              cause: Cause.squash(cause),
+                              cleanupErrors,
+                            }),
+                          );
+                    }),
+                  ),
+                );
+              }),
             );
           });
 
-        const inspectOrdinaryWorkspace = (
-          workspacePath: string,
-        ): Effect.Effect<InspectOrdinaryWorkspaceResult, InvalidManagedIdentityError> =>
-          Effect.gen(function* () {
-            const canonicalPath = yield* canonicalizeOrdinaryWorkspacePath(workspacePath);
-            const identity = yield* readOrdinaryWorkspaceIdentity(canonicalPath);
-            if (identity === undefined) {
-              return unregisteredWorkspace;
+        /**
+         * The stack name is validated before anything else runs, so an invalid one
+         * refuses without having classified a workspace, claimed an identity, or
+         * created a directory.
+         */
+        function resolveStack(
+          resolveOptions: ResolveManagedStackOptions & { readonly operation: "start" },
+        ): Effect.Effect<StartedManagedStackResolution, ResolveManagedStackFailure>;
+        function resolveStack(
+          resolveOptions: ResolveManagedStackOptions,
+        ): Effect.Effect<ManagedStackResolution, ResolveManagedStackFailure>;
+        function resolveStack(
+          resolveOptions: ResolveManagedStackOptions,
+        ): Effect.Effect<ManagedStackResolution, ResolveManagedStackFailure> {
+          return Effect.gen(function* () {
+            const stackName = resolveOptions.stackName ?? DEFAULT_MANAGED_STACK_NAME;
+            if (!stackNamePattern.test(stackName)) {
+              return yield* Effect.fail(new InvalidManagedStackNameError({ stackName }));
             }
-            const stacks = (yield* repository.listStacks()).filter(
-              (stack) =>
-                stack.projectId === identity.projectId &&
-                stack.checkoutId === identity.checkoutId &&
-                stack.contextId === identity.contextId,
+            const plan = yield* resolveWorkspace(
+              resolveOptions.workspacePath,
+              resolveOptions.operation,
             );
-            return { registered: stacks.length > 0, identity, stacks };
+            return resolveOptions.operation === "status"
+              ? yield* reportResolution(plan, stackName)
+              : yield* registerStack(
+                  resolveOptions,
+                  stackName,
+                  plan,
+                  yield* requireResolvedIdentity(plan),
+                );
           });
+        }
 
         const deleteStack = <E = never>(
           stackId: string,
@@ -739,54 +1219,58 @@ export class ManagedStackService extends Context.Service<
             if (existing.status === "tombstoned") {
               return deletionResult("no-op", existing, yield* reclaimStackState(existing));
             }
-            const operation = yield* requireOperation(stackId, "delete");
             // The claim belongs to this call, so releasing it has to survive an
             // interruption too: a caller that gave up mid-delete must not leave
-            // the stack claimed by an operation nobody will ever finish. The
-            // original cause is re-raised either way, so an interrupted delete
-            // stays interrupted.
+            // the stack claimed by an operation nobody will ever finish. Taking
+            // the claim is inside the mask for the reason `registerStack` gives:
+            // an interruption on the op boundary between claiming and installing
+            // the release would strand the claim on a live pid. The original
+            // cause is re-raised either way, so an interrupted delete stays
+            // interrupted.
             return yield* Effect.uninterruptibleMask((restore) =>
-              restore(
-                Effect.gen(function* () {
-                  const current = yield* repository.getStack(stackId);
-                  if (current === undefined) {
-                    return yield* Effect.fail(new ManagedStackNotFoundError({ stackId }));
-                  }
-                  if (current.status === "tombstoned") {
-                    const dataReclamation = yield* reclaimStackState(current);
-                    yield* repository.finishOperation(stackId, operation.token, "completed", now());
-                    return deletionResult("no-op", current, dataReclamation);
-                  }
-                  if (current.lifecycle !== "stopped") {
-                    const stop = deleteOptions?.stop;
-                    if (stop === undefined) {
-                      return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId }));
+              Effect.gen(function* () {
+                const operation = yield* requireOperation(stackId, "delete");
+                return yield* restore(
+                  Effect.gen(function* () {
+                    const current = yield* repository.getStack(stackId);
+                    if (current === undefined) {
+                      return yield* Effect.fail(new ManagedStackNotFoundError({ stackId }));
                     }
-                    yield* stop(current);
-                    yield* repository.updateStack({
+                    if (current.status === "tombstoned") {
+                      const dataReclamation = yield* reclaimStackState(current);
+                      yield* repository.finishOperation(
+                        stackId,
+                        operation.token,
+                        "completed",
+                        now(),
+                      );
+                      return deletionResult("no-op", current, dataReclamation);
+                    }
+                    if (current.lifecycle !== "stopped") {
+                      const stop = deleteOptions?.stop;
+                      if (stop === undefined) {
+                        return yield* Effect.fail(new ManagedStackNotStoppedError({ stackId }));
+                      }
+                      yield* stop(current);
+                      yield* repository.updateStack({
+                        stackId,
+                        operationToken: operation.token,
+                        now: now(),
+                        lifecycle: "stopped",
+                        runtimeMetadata: { processIds: {}, containerIds: {} },
+                      });
+                    }
+                    const tombstoned = yield* repository.tombstoneStack(
                       stackId,
-                      operationToken: operation.token,
-                      now: now(),
-                      lifecycle: "stopped",
-                      runtimeMetadata: { processIds: {}, containerIds: {} },
-                    });
-                  }
-                  const tombstoned = yield* repository.tombstoneStack(
-                    stackId,
-                    operation.token,
-                    now(),
-                  );
-                  const dataReclamation = yield* reclaimStackState(tombstoned);
-                  yield* finishDeleteOperationTolerantly(stackId, operation.token);
-                  return deletionResult("delete", tombstoned, dataReclamation);
-                }),
-              ).pipe(
-                Effect.catchCause((cause) =>
-                  finishOperationBestEffort(stackId, operation.token, Cause.squash(cause)).pipe(
-                    Effect.flatMap(() => Effect.failCause(cause)),
-                  ),
-                ),
-              ),
+                      operation.token,
+                      now(),
+                    );
+                    const dataReclamation = yield* reclaimStackState(tombstoned);
+                    yield* finishDeleteOperationTolerantly(stackId, operation.token);
+                    return deletionResult("delete", tombstoned, dataReclamation);
+                  }),
+                ).pipe(releasingClaimOnFailure(stackId, operation.token));
+              }),
             );
           });
 
@@ -826,11 +1310,8 @@ export class ManagedStackService extends Context.Service<
                 if (forcedOperation === undefined && isUsableManagedOwnerPid(operation.ownerPid)) {
                   const alive = yield* Effect.exit(probeProcessAlive(operation.ownerPid));
                   if (Exit.isFailure(alive)) {
-                    retained.push({
-                      operation,
-                      reason: "owner-liveness-unknown",
-                      error: Cause.squash(alive.cause),
-                    });
+                    const error = yield* absorbedError(alive.cause);
+                    retained.push({ operation, reason: "owner-liveness-unknown", error });
                     return;
                   }
                   if (alive.value) {
@@ -858,11 +1339,8 @@ export class ManagedStackService extends Context.Service<
                       reconcileOptions.inspectRuntime(stack, operation),
                     );
                     if (Exit.isFailure(inspected)) {
-                      retained.push({
-                        operation,
-                        reason: "runtime-inspection-failed",
-                        error: Cause.squash(inspected.cause),
-                      });
+                      const error = yield* absorbedError(inspected.cause);
+                      retained.push({ operation, reason: "runtime-inspection-failed", error });
                       return;
                     }
                     if (inspected.value === "unknown") {
@@ -889,11 +1367,12 @@ export class ManagedStackService extends Context.Service<
                   // failure is the whole report.
                   const removal = yield* Effect.exit(removeStackState(stack));
                   if (Exit.isFailure(removal)) {
+                    const error = yield* absorbedError(removal.cause);
                     failures.push({
                       operation,
                       phase: "state-reclamation",
                       operationReleased: true,
-                      error: Cause.squash(removal.cause),
+                      error,
                     });
                     return;
                   }
@@ -956,10 +1435,9 @@ export class ManagedStackService extends Context.Service<
 
         return {
           stateRoot,
-          provisionOrdinaryStack,
-          inspectOrdinaryWorkspace,
-          inspectStack: (stackId) => repository.getStack(stackId),
-          listStacks: (listOptions) => repository.listStacks(listOptions),
+          resolveStack,
+          inspectStack: (stackId) => repository.getStackProjection(stackId),
+          listStacks: (listOptions) => repository.listStackProjections(listOptions),
           updateStack: updateStackRecord,
           deleteStack,
           reconcileAbandonedOperations,

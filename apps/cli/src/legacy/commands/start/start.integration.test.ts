@@ -1605,19 +1605,17 @@ pass = "smtp-pass"
 admin_email = "admin@example.com"
 
 [auth.email.template.confirmation]
-content_path = "./templates/confirmation.html"
+content_path = "./supabase/templates/confirmation.html"
 
 [auth.email.notification.custom_notice]
 enabled = true
-content_path = "./templates/custom_notice.html"
+content_path = "./supabase/templates/custom_notice.html"
 `,
         });
         // `Config.Validate` (step 2, before this handler's own `buildKongEmailTemplateMounts`
-        // ever runs) reads both content_path files for real — template paths resolve against
-        // the workdir itself, notification paths against `<workdir>/supabase`.
-        mkdirSync(join(workdir, "templates"), { recursive: true });
-        writeFileSync(join(workdir, "templates", "confirmation.html"), "<html></html>");
+        // ever runs) reads both content_path files from the project-root base.
         mkdirSync(join(workdir, "supabase", "templates"), { recursive: true });
+        writeFileSync(join(workdir, "supabase", "templates", "confirmation.html"), "<html></html>");
         writeFileSync(
           join(workdir, "supabase", "templates", "custom_notice.html"),
           "<html></html>",
@@ -1627,9 +1625,8 @@ content_path = "./templates/custom_notice.html"
           const createdNames = createdContainerNames(child.spawned);
           expect(createdNames.some((name) => name.includes("_pooler_"))).toBe(true);
           expect(createdNames.some((name) => name.includes("_auth_"))).toBe(true);
-          // Go's `baseConfig.resolve` rebases a relative notification content_path against
-          // `<workdir>/supabase`, not the template base (`workdir`) — the Kong mount must read
-          // from the same file `Config.Validate` already confirmed exists.
+          // The Kong mount must read from the same project-root-relative file config validation
+          // already confirmed exists.
           const kongCreate = child.spawned.find(
             (s) => s.args[0] === "create" && containerNameFromCreateArgs(s.args).includes("_kong_"),
           );

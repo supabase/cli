@@ -3513,8 +3513,8 @@ describe("legacyReadDbToml remoteOverrideKeys — auth.captcha.provider / auth.e
           "",
         ].join("\n"),
       );
-      // Notification `content_path` resolves relative to the `supabase/` dir.
-      writeFileSync(join(dir, "supabase", "remote-pw-changed.html"), "<html></html>");
+      // Notification `content_path` resolves relative to the project root, like a template.
+      writeFileSync(join(dir, "remote-pw-changed.html"), "<html></html>");
       return readRef(dir, ref).pipe(
         Effect.tap((v) =>
           Effect.sync(() => {

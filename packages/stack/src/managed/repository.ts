@@ -7,22 +7,110 @@ import {
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
+  DuplicateManagedIdentityError,
+  type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
+  type ManagedCheckoutScopedContextKind,
+  type ManagedContextDescriptor,
+  type ManagedContextRecord,
+  type ManagedIdentityTriple,
   type ManagedOperationKind,
   type ManagedOperationRecord,
   type ManagedPortAssignment,
   type ManagedStackConfiguration,
   type ManagedStackLifecycle,
   type ManagedStackPaths,
+  type ManagedStackProjection,
   type ManagedStackRecord,
-  type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
-import type { DuplicateManagedIdentityError, ManagedOperationOwnershipError } from "./model.ts";
+import type { ManagedOperationOwnershipError } from "./model.ts";
 
-export interface PrepareOrdinaryStackInput {
-  readonly identity: OrdinaryWorkspaceIdentity;
-  readonly canonicalPath: string;
+export interface ManagedContextRegistrationInput {
+  readonly requestedId: string;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly context: ManagedContextDescriptor;
+  readonly now: string;
+  readonly checkoutScopedExisting?: ManagedContextRecord;
+  readonly requestedExisting?: ManagedContextRecord;
+}
+
+export type ManagedContextRegistrationDecision =
+  | {
+      readonly outcome: "existing";
+      readonly contextId: string;
+      readonly refreshLocator?: string;
+    }
+  | { readonly outcome: "create"; readonly context: ManagedContextRecord };
+
+/**
+ * Pure policy for resolving the context a registration should use. Storage
+ * adapters supply the rows they observed and apply the returned decision inside
+ * their own atomic boundary.
+ */
+export const decideManagedContextRegistration = (
+  input: ManagedContextRegistrationInput,
+): ManagedContextRegistrationDecision => {
+  if (input.context.kind !== "branch" && input.checkoutScopedExisting !== undefined) {
+    return { outcome: "existing", contextId: input.checkoutScopedExisting.id };
+  }
+
+  const existing = input.requestedExisting;
+  if (existing !== undefined) {
+    const existingClaim = existing.checkoutId ?? existing.projectId;
+    const requestedClaim = input.context.kind === "branch" ? input.projectId : input.checkoutId;
+    if (existing.kind !== input.context.kind || existingClaim !== requestedClaim) {
+      throw new DuplicateManagedIdentityError({
+        identityId: input.requestedId,
+        existingClaim,
+        requestedClaim,
+      });
+    }
+    return {
+      outcome: "existing",
+      contextId: input.requestedId,
+      refreshLocator:
+        input.context.kind === "branch" && existing.locator !== input.context.locator
+          ? input.context.locator
+          : undefined,
+    };
+  }
+
+  return {
+    outcome: "create",
+    context: {
+      id: input.requestedId,
+      projectId: input.projectId,
+      checkoutId: input.context.kind === "branch" ? undefined : input.checkoutId,
+      kind: input.context.kind,
+      locator: input.context.kind === "branch" ? input.context.locator : undefined,
+      createdAt: input.now,
+    },
+  };
+};
+
+/**
+ * Everything one stack registration needs, with every identity already minted by
+ * the service: the registry stores the decision, it never makes it.
+ *
+ * The project, the checkout, its one location, and the context are upserted
+ * inside the very transaction that creates the pending stack, so a registration
+ * that refuses leaves none of them behind and the live-stack uniqueness of
+ * `(checkoutId, contextId, stackName)` is decided under the same lock.
+ */
+export interface PrepareStackInput {
+  readonly identity: ManagedIdentityTriple;
+  readonly checkoutKind: ManagedCheckoutKind;
+  /**
+   * The checkout's canonical top-level directory, which is the one location a
+   * checkout has — never the directory a caller happened to run in. A checkout
+   * holds exactly one location, so a nested path here would both record a
+   * subdirectory as the checkout's whole location and make the next start from
+   * anywhere else in the same checkout a duplicate-identity refusal.
+   */
+  readonly checkoutRootPath: string;
   readonly locationId: string;
+  readonly context: ManagedContextDescriptor;
   readonly stackId: string;
   readonly stackName: string;
   readonly paths: ManagedStackPaths;
@@ -32,7 +120,12 @@ export interface PrepareOrdinaryStackInput {
   readonly configuration: ManagedStackConfiguration;
 }
 
-export type PrepareOrdinaryStackResult =
+/**
+ * The registration's outcome. A checkout-scoped context the checkout already has
+ * wins over the one the caller minted, so the stack's own `contextId` is the
+ * authoritative answer to which context was used.
+ */
+export type PrepareStackResult =
   | {
       readonly outcome: "create";
       readonly stack: ManagedStackRecord;
@@ -75,8 +168,8 @@ export type ReconcileManagedOperationResult =
   | { readonly outcome: "discarded" }
   | { readonly outcome: "tombstoned"; readonly stack: ManagedStackRecord };
 
-/** Failures both adapters raise while registering an ordinary workspace stack. */
-export type PrepareOrdinaryStackFailure =
+/** Failures both adapters raise while registering a stack. */
+export type PrepareStackFailure =
   | DuplicateManagedIdentityError
   | DuplicateManagedPortKeyError
   | InvalidManagedOwnerPidError
@@ -125,9 +218,9 @@ export type OwnedManagedStackFailure = ManagedOperationOwnershipError | ManagedS
  * driver error — are defects instead: they are not outcomes a caller can act on.
  */
 export interface ManagedStackRepositoryShape {
-  readonly prepareOrdinaryStack: (
-    input: PrepareOrdinaryStackInput,
-  ) => Effect.Effect<PrepareOrdinaryStackResult, PrepareOrdinaryStackFailure>;
+  readonly prepareStack: (
+    input: PrepareStackInput,
+  ) => Effect.Effect<PrepareStackResult, PrepareStackFailure>;
   readonly publishPendingStack: (
     stackId: string,
     operationToken: string,
@@ -141,6 +234,32 @@ export interface ManagedStackRepositoryShape {
   readonly listStacks: (options?: {
     readonly includeTombstoned?: boolean;
   }) => Effect.Effect<ReadonlyArray<ManagedStackRecord>>;
+  /**
+   * The reader's view of a stack, joined to its checkout and context.
+   *
+   * Kept apart from {@link getStack} deliberately: every lifecycle decision in
+   * the policy layer needs the stack row and nothing else, so only the paths
+   * that actually report to a caller pay for the join.
+   */
+  readonly getStackProjection: (
+    stackId: string,
+  ) => Effect.Effect<ManagedStackProjection | undefined>;
+  readonly listStackProjections: (options?: {
+    readonly includeTombstoned?: boolean;
+    /** When present, filter before hydrating ports for a resolve. */
+    readonly identity?: ManagedIdentityTriple;
+  }) => Effect.Effect<ReadonlyArray<ManagedStackProjection>>;
+  /**
+   * The one context a checkout has of a checkout-scoped kind, if it has one.
+   *
+   * A read-only resolve of a detached `HEAD` has no other way to find the
+   * context it would use: unlike a branch, a detached `HEAD` stores nothing in
+   * git, so the registry is where that context lives.
+   */
+  readonly findCheckoutContext: (
+    checkoutId: string,
+    kind: ManagedCheckoutScopedContextKind,
+  ) => Effect.Effect<ManagedContextRecord | undefined>;
   readonly claimOperation: (
     input: ClaimManagedOperationInput,
   ) => Effect.Effect<ClaimManagedOperationResult, ClaimManagedOperationFailure>;

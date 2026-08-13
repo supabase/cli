@@ -1,6 +1,6 @@
 import type { ExternalCleanupAction, ServiceDef } from "@supabase/process-compose";
-import { dockerContainerName } from "../CleanupTargets.ts";
 import type { ServiceName } from "../ServiceName.ts";
+import { dockerContainerName, STACK_ID_LABEL, type StackIdentity } from "../StackIdentity.ts";
 import { dockerServiceCleanup, dockerServiceOrphanCleanup } from "./docker-cleanup.ts";
 
 export interface ServiceDependency {
@@ -10,7 +10,7 @@ export interface ServiceDependency {
 
 interface DockerRunServiceOptions {
   readonly name: ServiceName;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly image: string;
   readonly networkArgs?: ReadonlyArray<string>;
   readonly env?: Record<string, string>;
@@ -58,12 +58,17 @@ export const dockerExecHealthCheck = (
 });
 
 export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
-  const containerName = dockerContainerName(opts.name, opts.apiPort);
+  const containerName = dockerContainerName(opts.name, opts.identity.key);
   const dockerArgs = [
     "run",
     "--rm",
     "--name",
     containerName,
+    // Keep the identity available to a future label-keyed cleanup path when a
+    // caller supplies it; current cleanup removes the exact name below.
+    ...(opts.identity.stackId === undefined
+      ? []
+      : ["--label", `${STACK_ID_LABEL}=${opts.identity.stackId}`]),
     ...(opts.networkArgs ?? []),
     ...(opts.volumes ?? []).flatMap((volume) => ["-v", volume]),
     ...(opts.entrypoint === undefined ? [] : ["--entrypoint", opts.entrypoint]),

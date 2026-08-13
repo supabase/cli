@@ -4,6 +4,7 @@ import { Effect, FileSystem, Option } from "effect";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../shared/legacy/global-flags.ts";
+import { MachineErrorContext } from "../../../shared/output/machine-error-context.service.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { legacyAqua } from "../../shared/legacy-colors.ts";
 import {
@@ -21,6 +22,12 @@ import {
   encodeToml,
   encodeYaml,
 } from "../../shared/legacy-go-output.encoders.ts";
+import {
+  legacyFormatLinkedStateBlock,
+  legacyLinkedStateGoFields,
+  legacyLinkedStateJsonField,
+  legacyResolveLinkedState,
+} from "../../shared/legacy-linked-state.ts";
 import { legacyLoadLocalProjectContext } from "../../shared/legacy-local-project-context.ts";
 import {
   LegacyStatusConfigLoadError,
@@ -92,7 +99,44 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fs = yield* FileSystem.FileSystem;
 
+  // Go's `-o` (env|json|toml|yaml|pretty) is a complete format choice and
+  // takes priority over `--output-format` — hoisted so both the linked-state
+  // print gate below and the render branching at the end of this handler
+  // share one computation.
+  const goFmt = Option.getOrUndefined(goOutputFlag);
+
   yield* Effect.gen(function* () {
+    // TS-only QoL (CLI-2167 follow-up, no Go counterpart): resolve the current
+    // linked project/branch in EVERY output mode — never fails, and machine
+    // formats fold the result into their own payload below — so agents driving
+    // `status` machine-readable output can discover which project/branch
+    // they're on without a separate `link`/`branches` call. Resolved before any
+    // daemon/stack work begins so, in human text mode, the printed line below
+    // is visible even when status subsequently fails to connect to Docker.
+    // Lives INSIDE the telemetry-ensured scope: an interruption during the
+    // (bounded) lookup must still flush telemetry state (PR #6168 review).
+    const linkedState = yield* legacyResolveLinkedState();
+    if (output.format === "text" && (goFmt === undefined || goFmt === "pretty")) {
+      yield* output.raw(legacyFormatLinkedStateBlock(linkedState));
+    }
+    if (output.format === "json" || output.format === "stream-json") {
+      // TS-only QoL (CLI-2167 follow-up): the agent-discovery use case for this
+      // field matters MOST when status fails to reach the daemon/stack — a
+      // stopped stack is the common state an agent probes in — so mirror it
+      // onto the shared machine error envelope too (`MachineErrorContext`,
+      // read by `output.fail`), not just the success payload below. Harmless
+      // on the success path, since `output.success` never reads this cell.
+      // Read optionally (adds no R requirement) so this command's runtime
+      // choosing not to provide the cell just skips the mirroring, matching
+      // `output.fail`'s own optional read on the other end.
+      const machineErrorContext = yield* Effect.serviceOption(MachineErrorContext);
+      if (Option.isSome(machineErrorContext)) {
+        yield* machineErrorContext.value.set({
+          linked_project: legacyLinkedStateJsonField(linkedState),
+        });
+      }
+    }
+
     // 0. Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
     // unconditionally `os.Chdir`s the resolved `--workdir`/`SUPABASE_WORKDIR`
     // in `PersistentPreRunE` (`cmd/root.go:93-105`) — before `status`'s own
@@ -235,26 +279,39 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
       yield* output.raw(legacyRenderStatusPretty(pretty.values, pretty.names));
     });
 
-    // 9. Output branching: Go's -o (env|json|toml|yaml|pretty) is a complete
-    // format choice and takes priority over --output-format (root.ts:119-121,
-    // matching functions/list's list.handler.ts:115-118) — only an ABSENT -o
-    // defers to --output-format for json/stream-json.
-    const goFmt = Option.getOrUndefined(goOutputFlag);
+    // 9. Output branching (goFmt hoisted above): Go's -o (env|json|toml|yaml|pretty)
+    // is a complete format choice and takes priority over --output-format
+    // (root.ts:119-121, matching functions/list's list.handler.ts:115-118) —
+    // only an ABSENT -o defers to --output-format for json/stream-json.
+    //
+    // Every non-pretty branch below folds in the linked-state fields resolved
+    // above (TS-only QoL, CLI-2167 follow-up) — absent entirely when not linked
+    // (no `linked: false` noise in these machine formats). The pretty table
+    // never sees them; it reads its own separately-resolved `pretty.values` by
+    // known name only.
+    //
+    // `values` spreads LAST so its own keys always win a collision (PR #6168
+    // review): `--override-name` lets a user rename any of the 18 known
+    // fields to an arbitrary output key — `--override-name api.url=linked_project_ref`
+    // would otherwise silently overwrite our additive field with the API URL,
+    // or vice versa depending on spread order. The existing/overridden payload
+    // always takes priority over this extension, never the other way round.
+    const valuesWithLinkedState = { ...legacyLinkedStateGoFields(linkedState), ...values };
 
     if (goFmt === "env") {
-      yield* output.raw(encodeEnv(values) + "\n");
+      yield* output.raw(encodeEnv(valuesWithLinkedState) + "\n");
       return;
     }
     if (goFmt === "json") {
-      yield* output.raw(encodeGoJson(values));
+      yield* output.raw(encodeGoJson(valuesWithLinkedState));
       return;
     }
     if (goFmt === "toml") {
-      yield* output.raw(encodeToml(values) + "\n");
+      yield* output.raw(encodeToml(valuesWithLinkedState) + "\n");
       return;
     }
     if (goFmt === "yaml") {
-      yield* output.raw(encodeYaml(values));
+      yield* output.raw(encodeYaml(valuesWithLinkedState));
       return;
     }
     if (goFmt === "pretty") {
@@ -265,7 +322,14 @@ export const legacyStatus = Effect.fn("legacy.status")(function* (flags: LegacyS
     // goFmt is undefined — defer to TS --output-format for json/stream-json,
     // otherwise render the grouped rounded-table (Go's `-o pretty` default).
     if (output.format === "json" || output.format === "stream-json") {
-      yield* output.success("", values);
+      // `null` when not linked (TS-only QoL, CLI-2167 follow-up). `values`
+      // spreads LAST so an `--override-name`-renamed field named literally
+      // `linked_project` always wins over this extension (PR #6168 review) —
+      // same existing-payload-always-wins rule as `valuesWithLinkedState` above.
+      yield* output.success("", {
+        linked_project: legacyLinkedStateJsonField(linkedState),
+        ...values,
+      });
       return;
     }
 

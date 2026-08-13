@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { basename, join } from "node:path";
+import { basename } from "node:path";
 
 import { ENV_CAPTURE_REGEX, type ProjectConfig } from "@supabase/config";
 import { defaultJwtSecret, defaultPublishableKey, defaultSecretKey } from "@supabase/stack/effect";
@@ -1255,11 +1255,9 @@ export function legacyResolveAuthEmail(
  * `readFileSync`-based pattern as {@link readSigningKeysFile}/`readApiTlsFiles` in this file,
  * not an Effect `FileSystem` service.
  *
- * The `content`-vs-`content_path` exclusivity decision and path resolution (including the
- * TEMPLATE-vs-`workdir`/NOTIFICATION-vs-`<workdir>/supabase` base asymmetry, per Go's `(c
- * *baseConfig) resolve` (`config.go:900-916`) — this asymmetry is real, intentional Go behavior
- * to match, not a bug to fix) now live in `legacyResolveEmailTemplateContentPath`
- * (`legacy-config-validate.ts`); this function only feeds it each entry's already-resolved
+ * The `content`-vs-`content_path` exclusivity decision and project-root-relative path resolution
+ * live in `legacyResolveEmailTemplateContentPath` (`legacy-config-validate.ts`); this function
+ * only feeds it each entry's already-resolved
  * `content_present` (see {@link legacyResolveAuthEmail}, which folds both the raw TOML `content`
  * key AND a `${envPrefix}_CONTENT` env override into that flag) and performs the read when a path
  * comes back.
@@ -1293,7 +1291,7 @@ function readAuthEmailTemplateContent(email: LegacyResolvedAuthEmail, workdir: s
       name,
       contentPath: tmpl.content_path,
       contentPresent: tmpl.content_present,
-      base: join(workdir, "supabase"),
+      base: workdir,
     });
     if (path === undefined) continue;
     try {

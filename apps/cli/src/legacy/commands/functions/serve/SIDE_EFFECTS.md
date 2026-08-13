@@ -94,6 +94,9 @@ Long-running raw log / error events only; there is no terminal `result` event on
 
 ## Notes
 
+- Any legacy Function name positional arguments are accepted and ignored. The command always
+  serves every discovered Function, matching the current Go behavior while preserving invocations
+  such as `supabase functions serve <Function name>`.
 - The hidden `--all` flag is still parsed but ignored; the native port always serves every discovered function, matching the Go command.
 - Each restart re-reads config, rebuilds per-function bind mounts, recreates the `supabase_edge_runtime_<project>` container, and best-effort reloads Kong afterwards.
 - The command creates or reuses Docker resources derived from the resolved project id:
@@ -106,3 +109,4 @@ Long-running raw log / error events only; there is no terminal `result` event on
 - Runs the full `Config.Validate` pipeline (`legacyResolveLocalConfigValues`, same one `start`/`stop`/`status` use) on every startup/restart, before `assertLocalDbRunning` — an invalid config now fails `serve` up front even for fields this command never otherwise reads (e.g. a bad `db.major_version` or malformed auth hook), matching Go's `flags.LoadConfig` -> `Config.Validate`.
 - A container crash terminates the command with a non-zero exit; only a watched-file change restarts the container. The Go CLI never auto-restarts a crashed container.
 - The worker bootstrap template (`serve.main.ts`) is bundled into a single self-contained module with `jose` and the local path/status helpers inlined, so the edge-runtime worker boots without any network access (supabase/supabase#45570). The bundle is embedded at build time for shipped binaries and produced on demand (esbuild) when running from source.
+- **Intentional divergence from Go — spec-strict import-map key matching (CLI-2179, ruled 2026-08-12):** bind mounts are computed by the functions import scanner (`walkImportPaths`/`substituteImportMapValue`, shared with `functions deploy` and `start`'s Edge Runtime bring-up), which matches import-map keys per the import-maps spec Deno/edge-runtime implement — exact match, or prefix match only for a `/`-suffixed key — instead of Go's any-key `strings.HasPrefix` (`pkg/function/deno.go:150-155`). Bind mounts may shrink vs the Go CLI for maps that relied on bare-key prefix matching; an unwalkable target (`ENOTDIR` — a value routed through a file) is skipped with a `WARN`.

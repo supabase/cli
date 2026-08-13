@@ -30,6 +30,7 @@
     "build:legacy": "bun scripts/build-binary.ts legacy",
     "build:shim": "bun build src/shared/cli/bin.ts --outfile dist/supabase.js --target node",
     "generate:go-serve-template": "bun scripts/generate-go-serve-template.ts",
+    "docs:spec": "bun scripts/generate-docs-spec.ts",
     "dev:next": "pnpm exec bun src/next/main.ts",
     "dev:legacy": "pnpm exec bun src/legacy/main.ts",
     "test": "nx run-many -t test:core test:e2e --projects=$npm_package_name",
@@ -84,6 +85,7 @@
     "semantic-release": "^25.0.8",
     "smol-toml": "^1.7.1",
     "tldts": "catalog:",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
     "vitest": "catalog:",
     "yaml": "^2.9.0"
   },

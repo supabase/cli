@@ -6,10 +6,12 @@ import type {
   ManagedCheckoutLocation,
   ManagedOperationRecord,
   ManagedStackConfiguration,
+  ManagedStackProjection,
   ManagedStackRecord,
   UnsupportedManagedRegistryVersionError,
 } from "./model.ts";
 import { failsWith } from "./failure.ts";
+import { gitConfigStoreLayer } from "./git.ts";
 import {
   managedRegistryPath,
   requireExplicitManagedStateRoot,
@@ -20,10 +22,11 @@ import type { ManagedStackRepositoryShape } from "./repository.ts";
 import {
   ManagedStackService,
   type DeleteManagedStackResult,
-  type InspectOrdinaryWorkspaceResult,
+  type ManagedStackResolution,
   type ManagedStackServiceOptions,
-  type ProvisionOrdinaryStackResult,
   type ReconcileAbandonedOperationsResult,
+  type ResolveManagedStackOperation,
+  type StartedManagedStackResolution,
 } from "./service.ts";
 
 export interface MakeManagedStackServiceOptions extends ManagedStackServiceOptions {
@@ -44,8 +47,9 @@ export interface CreateManagedStackServiceOptions {
   readonly isProcessAlive?: (pid: number) => boolean | Promise<boolean>;
 }
 
-export interface ProvisionOrdinaryStackRequest {
+export interface ResolveManagedStackRequest {
   readonly workspacePath: string;
+  readonly operation: ResolveManagedStackOperation;
   readonly stackName?: string;
   readonly configuration?: ManagedStackConfiguration;
   readonly initialize?: (stack: ManagedStackRecord) => Promise<void>;
@@ -77,14 +81,15 @@ export type ReconcileAbandonedOperationsRequest = {
 export interface ManagedStackServiceHandle extends AsyncDisposable {
   readonly stateRoot: string;
   readonly repository: ManagedStackRepositoryShape;
-  provisionOrdinaryStack(
-    options: ProvisionOrdinaryStackRequest,
-  ): Promise<ProvisionOrdinaryStackResult>;
-  inspectOrdinaryWorkspace(workspacePath: string): Promise<InspectOrdinaryWorkspaceResult>;
-  inspectStack(stackId: string): Promise<ManagedStackRecord | undefined>;
+  /** A `start` always settles on a stack, which the narrower overload reports. */
+  resolveStack(
+    options: ResolveManagedStackRequest & { readonly operation: "start" },
+  ): Promise<StartedManagedStackResolution>;
+  resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution>;
+  inspectStack(stackId: string): Promise<ManagedStackProjection | undefined>;
   listStacks(options?: {
     readonly includeTombstoned?: boolean;
-  }): Promise<ReadonlyArray<ManagedStackRecord>>;
+  }): Promise<ReadonlyArray<ManagedStackProjection>>;
   updateStack(
     stackId: string,
     configuration: ManagedStackConfiguration,
@@ -122,43 +127,66 @@ const managedStackServiceHandle = async <ER>(
   const repository = Context.get(context, ManagedStackRepository);
 
   /**
-   * Every method's run, so a call that arrives after `close` is reported as one.
-   *
-   * A disposed `ManagedRuntime` answers by dying with a bare string, which would
-   * reach the caller as a rejection with no name, message, or stack. Anything
-   * else is the failure itself and passes through untouched.
+   * Whether this handle has been closed, tracked here rather than read back out
+   * of the rejection a closed run produces: a disposed `ManagedRuntime` answers
+   * by dying with a bare string, and deciding from that string's contents would
+   * misreport a caller's own callback rejecting with a string that happens to
+   * mention disposal.
+   */
+  let closed = false;
+  const dispose = (): Promise<void> => {
+    closed = true;
+    return runtime.dispose();
+  };
+
+  /**
+   * Every method's run, so a call that arrives after `close` is reported as one:
+   * the runtime's bare string reaches the caller as a rejection with no name,
+   * message, or stack. While the handle is open, every failure is the failure
+   * itself and passes through untouched.
    */
   const run = <A, E>(effect: Effect.Effect<A, E>): Promise<A> =>
     runtime.runPromise(effect).catch((error: unknown) => {
-      throw typeof error === "string" && error.includes("disposed")
-        ? new Error(`The managed stack service handle is closed (${error})`)
+      throw closed
+        ? new Error(`The managed stack service handle is closed (${String(error)})`)
         : error;
     });
+
+  /**
+   * A function declaration rather than a property initializer, so the handle's
+   * two `resolveStack` signatures are implemented by one body without a cast: the
+   * narrow `start` overload is the one a caller wants, and the implementation
+   * answers the general shape both share.
+   */
+  function resolveStack(
+    options: ResolveManagedStackRequest & { readonly operation: "start" },
+  ): Promise<StartedManagedStackResolution>;
+  function resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution>;
+  function resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution> {
+    const initialize = options.initialize;
+    const validate = options.validate;
+    return run(
+      service.resolveStack({
+        workspacePath: options.workspacePath,
+        operation: options.operation,
+        stackName: options.stackName,
+        configuration: options.configuration,
+        initialize:
+          initialize === undefined
+            ? undefined
+            : (stack) => fromCallback(() => initialize(stack), isFinished),
+        validate:
+          validate === undefined
+            ? undefined
+            : (stack) => fromCallback(() => validate(stack), isFinished),
+      }),
+    );
+  }
 
   return {
     stateRoot: service.stateRoot,
     repository,
-    provisionOrdinaryStack: (options) => {
-      const initialize = options.initialize;
-      const validate = options.validate;
-      return run(
-        service.provisionOrdinaryStack({
-          workspacePath: options.workspacePath,
-          stackName: options.stackName,
-          configuration: options.configuration,
-          initialize:
-            initialize === undefined
-              ? undefined
-              : (stack) => fromCallback(() => initialize(stack), isFinished),
-          validate:
-            validate === undefined
-              ? undefined
-              : (stack) => fromCallback(() => validate(stack), isFinished),
-        }),
-      );
-    },
-    inspectOrdinaryWorkspace: (workspacePath) =>
-      run(service.inspectOrdinaryWorkspace(workspacePath)),
+    resolveStack,
     inspectStack: (stackId) => run(service.inspectStack(stackId)),
     listStacks: (options) => run(service.listStacks(options)),
     updateStack: (stackId, configuration) => run(service.updateStack(stackId, configuration)),
@@ -188,8 +216,8 @@ const managedStackServiceHandle = async <ER>(
           fromCallback(() => shouldPrune(location), isBooleanAnswer),
         ),
       ),
-    close: () => runtime.dispose(),
-    [Symbol.asyncDispose]: () => runtime.dispose(),
+    close: dispose,
+    [Symbol.asyncDispose]: dispose,
   };
 };
 
@@ -217,7 +245,10 @@ const serviceLayer = (
     // service uses back to its caller, so an embedder can read the registry
     // without opening a second handle on it.
     Layer.provideMerge(repositoryLayer),
-    Layer.provide(fileSystemLayer),
+    // The git config store is an implementation detail of how the service resolves
+    // identity, not something a consumer composes: it is provided here so the
+    // service a caller holds needs nothing but this one layer.
+    Layer.provide(Layer.mergeAll(fileSystemLayer, gitConfigStoreLayer)),
   );
 
 /**

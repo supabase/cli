@@ -79,6 +79,24 @@ interface ParityScenario {
 
 const scenarios: ReadonlyArray<ParityScenario> = [
   {
+    name: "auth.email.notification content_path missing at both resolution bases",
+    toml: [
+      "[auth.email.notification.password_changed]",
+      "enabled = true",
+      'content_path = "./templates/missing.html"',
+    ],
+    overrides: {
+      auth: {
+        email: {
+          notification: {
+            password_changed: { enabled: true, content_path: "./templates/missing.html" },
+          },
+        },
+      },
+    },
+    message: "Invalid config for auth.email.notification.password_changed.content_path",
+  },
+  {
     name: "db.port = 0",
     toml: ["[db]", "port = 0"],
     overrides: { db: { port: 0 } },

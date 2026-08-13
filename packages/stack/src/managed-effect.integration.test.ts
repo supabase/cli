@@ -91,10 +91,12 @@ const stagePendingStack = (workspace: string, stateRoot: string) =>
     const repository = yield* ManagedStackRepository;
     const { identity } = yield* ensureOrdinaryWorkspaceIdentity(workspace);
     const stackId = crypto.randomUUID();
-    const prepared = yield* repository.prepareOrdinaryStack({
+    const prepared = yield* repository.prepareStack({
       identity,
-      canonicalPath: realpathSync(workspace),
+      checkoutKind: "ordinary",
+      checkoutRootPath: realpathSync(workspace),
       locationId: crypto.randomUUID(),
+      context: { kind: "workspace" },
       stackId,
       stackName: "default",
       paths: managedStackPaths(stateRoot, stackId),
@@ -115,8 +117,8 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const created = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
-      const reused = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      const created = yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
+      const reused = yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
 
       expect(created.outcome).toBe("create");
       expect(reused.outcome).toBe("reuse");
@@ -130,8 +132,9 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
-      const reused = yield* managed.provisionOrdinaryStack({
+      yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
+      const reused = yield* managed.resolveStack({
+        operation: "start",
         workspacePath: workspace,
         configuration: { runtimeRequest: "docker" },
       });
@@ -145,12 +148,18 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const before = yield* managed.inspectOrdinaryWorkspace(workspace);
-      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
-      const after = yield* managed.inspectOrdinaryWorkspace(workspace);
+      const before = yield* managed.resolveStack({ workspacePath: workspace, operation: "status" });
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
+      const after = yield* managed.resolveStack({ workspacePath: workspace, operation: "status" });
 
-      expect(before).toEqual({ registered: false, stacks: [] });
-      expect(after.registered).toBe(true);
+      expect(before.state).toBe("unregistered");
+      expect(before.identity).toEqual({});
+      expect(before.stacks).toEqual([]);
+      expect(after.state).toBe("stopped");
+      expect(after.selection?.stackId).toBe(stack.id);
       expect(after.stacks.map((candidate) => candidate.id)).toEqual([stack.id]);
     }).pipe(Effect.provide(layer));
   });
@@ -162,7 +171,7 @@ describe("managed stack Effect surface", () => {
       // The failure is in the effect's error channel, so the recovery is typed:
       // `catchTag` narrows to the one failure and its payload without a cast.
       const outcome = yield* managed
-        .provisionOrdinaryStack({ workspacePath: workspace, stackName: "Not A Name" })
+        .resolveStack({ operation: "start", workspacePath: workspace, stackName: "Not A Name" })
         .pipe(
           Effect.catchTag("InvalidManagedStackNameError", (error) =>
             Effect.succeed(`rejected ${error.stackName}`),
@@ -179,7 +188,10 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
       yield* managed.updateStack(stack.id, { lifecycle: "running" });
 
       const refused = yield* managed
@@ -198,7 +210,10 @@ describe("managed stack Effect surface", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
 
       const deleted = yield* managed.deleteStack(stack.id);
       const repeated = yield* managed.deleteStack(stack.id);
@@ -218,7 +233,10 @@ describe("managed stack Effect surface", () => {
     }
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
       yield* managed.updateStack(stack.id, { lifecycle: "running" });
 
       const exit = yield* managed
@@ -244,7 +262,10 @@ describe("managed stack Effect surface", () => {
       const provisioned = yield* Effect.gen(function* () {
         const managed = yield* ManagedStackService;
         const repository = yield* ManagedStackRepository;
-        const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+        const { stack } = yield* managed.resolveStack({
+          workspacePath: workspace,
+          operation: "start",
+        });
         expect(yield* repository.getStack(stack.id)).toMatchObject({ id: stack.id });
         return stack;
       }).pipe(Effect.provide(openRegistry()));
@@ -253,7 +274,7 @@ describe("managed stack Effect surface", () => {
 
       const reopened = yield* Effect.gen(function* () {
         const managed = yield* ManagedStackService;
-        return yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+        return yield* managed.resolveStack({ workspacePath: workspace, operation: "start" });
       }).pipe(Effect.provide(openRegistry()));
 
       expect(reopened.outcome).toBe("reuse");
@@ -274,7 +295,8 @@ describe("managed stack Effect surface", () => {
       const repository = yield* ManagedStackRepository;
 
       const exit = yield* managed
-        .provisionOrdinaryStack({
+        .resolveStack({
+          operation: "start",
           workspacePath: workspace,
           initialize: () => Effect.sleep(Duration.seconds(5)),
         })
@@ -290,12 +312,81 @@ describe("managed stack Effect surface", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("leaves no claim behind when a provision is interrupted while it is being taken", () => {
+    // An embedder repository may be asynchronous, so the pending row and its
+    // claim can be committed on the far side of a suspension point — and an
+    // interruption delivered there arrives after this call owns them and before
+    // it has anything installed to compensate them. What the caller must never
+    // be left with is a pending stack claimed by a live pid: every later start
+    // reads that as a publication in progress and waits the whole timeout out.
+    const root = makeRoot();
+    const stateRoot = join(root, "managed");
+    const workspace = makeWorkspace(root);
+    const repository = createInMemoryManagedStackRepository();
+    const slowToAnswer: ManagedStackRepositoryShape = {
+      ...repository,
+      prepareStack: (input) =>
+        Effect.flatMap(repository.prepareStack(input), (prepared) =>
+          Effect.as(Effect.sleep(Duration.millis(50)), prepared),
+        ),
+    };
+    const layer = managedLayer(stateRoot, { repository: slowToAnswer });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.flatMap(ManagedStackService, (managed) =>
+        managed.resolveStack({ operation: "start", workspacePath: workspace }),
+      ).pipe(Effect.timeout(Duration.millis(5)), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* repository.listStacks({ includeTombstoned: true })).toEqual([]);
+      expect(yield* repository.listActiveOperations()).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("leaves no claim behind when a delete is interrupted while it is being claimed", () => {
+    // `deleteStack`'s claim has the same shape as a provision's: taking it must
+    // be inside the region that releases it, or an interruption landing between
+    // the two leaves the stack claimed by an operation nobody will ever finish.
+    const root = makeRoot();
+    const stateRoot = join(root, "managed");
+    const workspace = makeWorkspace(root);
+    const repository = createInMemoryManagedStackRepository();
+    let claimIsSlow = false;
+    const slowToClaim: ManagedStackRepositoryShape = {
+      ...repository,
+      claimOperation: (input) =>
+        Effect.flatMap(repository.claimOperation(input), (claimed) =>
+          claimIsSlow
+            ? Effect.as(Effect.sleep(Duration.millis(50)), claimed)
+            : Effect.succeed(claimed),
+        ),
+    };
+    const layer = managedLayer(stateRoot, { repository: slowToClaim });
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
+      claimIsSlow = true;
+
+      const exit = yield* managed
+        .deleteStack(stack.id)
+        .pipe(Effect.timeout(Duration.millis(5)), Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(yield* repository.listActiveOperations()).toEqual([]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("releases the delete claim when the caller interrupts a stop that never returns", () => {
     const { workspace, layer } = setupInMemory();
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
       const repository = yield* ManagedStackRepository;
-      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
       yield* managed.updateStack(stack.id, { lifecycle: "running" });
 
       const exit = yield* managed
@@ -307,6 +398,84 @@ describe("managed stack Effect surface", () => {
       // being refused by an operation nobody will ever finish.
       expect(yield* repository.listActiveOperations()).toEqual([]);
       expect((yield* managed.inspectStack(stack.id))?.status).toBe("active");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("keeps a delete's own failure when releasing its claim reports interruption", () => {
+    // Releasing the claim on the way out is best effort in the strongest sense.
+    // An embedder repository whose `finishOperation` is cancelled must not turn
+    // the failure the caller actually suffered into an interruption the caller
+    // never asked for — the release has no outcome of its own to report.
+    const root = makeRoot();
+    const stateRoot = join(root, "managed");
+    const workspace = makeWorkspace(root);
+    const repository = createInMemoryManagedStackRepository();
+    let releaseIsCancelled = false;
+    const cancelling: ManagedStackRepositoryShape = {
+      ...repository,
+      finishOperation: (stackId, operationToken, outcome, at, error) =>
+        releaseIsCancelled
+          ? Effect.interrupt
+          : repository.finishOperation(stackId, operationToken, outcome, at, error),
+    };
+    const layer = managedLayer(stateRoot, { repository: cancelling });
+    class StopRefused {
+      readonly _tag = "StopRefused";
+    }
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
+      yield* managed.updateStack(stack.id, { lifecycle: "running" });
+      releaseIsCancelled = true;
+
+      const exit = yield* managed
+        .deleteStack(stack.id, { stop: () => Effect.fail(new StopRefused()) })
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(false);
+      expect(Exit.isFailure(exit) ? Cause.squash(exit.cause) : undefined).toBeInstanceOf(
+        StopRefused,
+      );
+      expect((yield* managed.inspectStack(stack.id))?.status).toBe("active");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("propagates an interrupted runtime inspection instead of retaining the operation", () => {
+    // The absorbed steps inside a recovery pass follow the same rule as the pass
+    // itself: an interrupted inspection has no answer about the runtime, so
+    // retaining the operation on its behalf would report a decision recovery
+    // never made.
+    const { workspace, layer } = setupInMemory();
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const repository = yield* ManagedStackRepository;
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
+      const claimed = yield* repository.claimOperation({
+        token: crypto.randomUUID(),
+        stackId: stack.id,
+        kind: "start",
+        now: "2026-08-11T00:00:00.000Z",
+      });
+      if (!claimed.acquired) {
+        return yield* Effect.die(new Error("Expected to stage an abandoned operation"));
+      }
+
+      const exit = yield* managed
+        .reconcileAbandonedOperations({ inspectRuntime: () => Effect.interrupt })
+        .pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit) && Cause.hasInterruptsOnly(exit.cause)).toBe(true);
+      // The claim survives for the next pass, exactly as it would had the pass
+      // never looked at it.
+      expect(
+        (yield* repository.listActiveOperations()).map((operation) => operation.token),
+      ).toEqual([claimed.operation.token]);
     }).pipe(Effect.provide(layer));
   });
 
@@ -328,7 +497,10 @@ describe("managed stack Effect surface", () => {
     const layer = managedLayer(stateRoot, { repository: cancelling });
     return Effect.gen(function* () {
       const managed = yield* ManagedStackService;
-      const { stack } = yield* managed.provisionOrdinaryStack({ workspacePath: workspace });
+      const { stack } = yield* managed.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      });
       // An abandoned claim with no owner to probe, so recovery goes straight to
       // reconciling it.
       const claimed = yield* repository.claimOperation({
@@ -370,7 +542,7 @@ describe("managed stack Effect surface", () => {
       const pending = yield* stagePendingStack(workspace, stateRoot);
 
       const timedOut = yield* managed
-        .provisionOrdinaryStack({ workspacePath: workspace })
+        .resolveStack({ workspacePath: workspace, operation: "start" })
         .pipe(
           Effect.catchTag("ManagedStackPublicationTimeoutError", (error) => Effect.succeed(error)),
         );

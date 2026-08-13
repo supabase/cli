@@ -37,7 +37,10 @@ const isLogChunks = (script: LogScript): script is LogChunks => Array.isArray(sc
 function mockHealthSpawner(
   inspectResponse: (containerId: string, callIndex: number) => string,
   logs: Readonly<Record<string, LogScript>> = {},
-  opts: { readonly runtime?: "docker" | "podman" } = {},
+  opts: {
+    readonly runtime?: "docker" | "podman";
+    readonly beforeInspect?: (containerId: string) => Effect.Effect<void>;
+  } = {},
 ) {
   const counts = new Map<string, number>();
   const encoder = new TextEncoder();
@@ -86,6 +89,9 @@ function mockHealthSpawner(
       let stderrChunks: LogChunks = [];
       if (args[0] === "container" && args[1] === "inspect") {
         const containerId = args[2] ?? "";
+        if (opts.beforeInspect !== undefined) {
+          yield* opts.beforeInspect(containerId);
+        }
         const callIndex = counts.get(containerId) ?? 0;
         counts.set(containerId, callIndex + 1);
         stdoutChunks = [inspectResponse(containerId, callIndex)];
@@ -151,6 +157,46 @@ const unusedHttpClientLayer = Layer.succeed(
 );
 
 describe("legacyWaitForHealthyServices", () => {
+  it.effect("checks containers serially in their start order", () =>
+    Effect.gen(function* () {
+      const firstStarted = yield* Deferred.make<void>();
+      const releaseFirst = yield* Deferred.make<void>();
+      const secondStarted = yield* Deferred.make<void>();
+      const mock = mockHealthSpawner(
+        () => runningHealthy,
+        {},
+        {
+          beforeInspect: (containerId) =>
+            containerId === "supabase_storage_proj"
+              ? Deferred.succeed(firstStarted, undefined).pipe(
+                  Effect.andThen(Deferred.await(releaseFirst)),
+                )
+              : Deferred.succeed(secondStarted, undefined),
+        },
+      );
+
+      const fiber = yield* legacyWaitForHealthyServices(
+        mock.spawner,
+        ["supabase_storage_proj", "supabase_studio_proj"],
+        { timeoutSeconds: 1 },
+      ).pipe(Effect.provide(unusedHttpClientLayer), Effect.forkChild({ startImmediately: true }));
+
+      yield* Deferred.await(firstStarted);
+      yield* Effect.yieldNow;
+      const secondStartedBeforeRelease = yield* Deferred.isDone(secondStarted);
+      yield* Deferred.succeed(releaseFirst, undefined);
+      const exit = yield* Fiber.await(fiber);
+
+      expect(Exit.isSuccess(exit)).toBe(true);
+      expect(secondStartedBeforeRelease).toBe(false);
+      expect(
+        mock.spawned
+          .filter((args) => args[0] === "container" && args[1] === "inspect")
+          .map((args) => args[2]),
+      ).toEqual(["supabase_storage_proj", "supabase_studio_proj"]);
+    }),
+  );
+
   it.effect(
     "polls on a 1-second backoff until the container reports healthy, without waiting a full timeout",
     () =>

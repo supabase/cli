@@ -2057,10 +2057,9 @@ const readDbTomlCore = Effect.fnUntraced(function* (
       });
     }
 
-    // B3: email (`config.go:1242-1295`) — template/notification content is I/O, stays in D. Go
-    // resolves a relative `content_path` differently per section: TEMPLATE paths are relative to
-    // the PROJECT ROOT (`config.go:854-856`, the `// FIXME` there), NOTIFICATION paths are
-    // relative to the supabase dir (`config.go:861-862`); absolute → as-is.
+    // B3: email (`config.go:1242-1295`) — template/notification content is I/O, stays in D.
+    // Native config loading resolves every relative `content_path` from the project root;
+    // absolute paths remain unchanged.
     const emailRaw = asRecord(authRawResolved["email"]);
     const templatesRaw = asRecord(emailRaw?.["template"]);
     if (templatesRaw !== undefined) {
@@ -2109,7 +2108,7 @@ const readDbTomlCore = Effect.fnUntraced(function* (
               name,
               contentPath: str(tmpl, "content_path"),
               contentPresent: tmpl["content"] !== undefined,
-              base: supabaseDir,
+              base: workdir,
             }),
           catch: (cause) =>
             new LegacyDbConfigLoadError({

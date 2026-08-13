@@ -13,7 +13,12 @@ import {
   ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
   UnsupportedManagedRegistryVersionError,
+  type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
+  type ManagedCheckoutScopedContextKind,
+  type ManagedContextKind,
+  type ManagedContextRecord,
+  type ManagedIdentityTriple,
   type ManagedOperationKind,
   type ManagedOperationRecord,
   type ManagedOperationStatus,
@@ -24,6 +29,7 @@ import {
   type ManagedRuntimeRequest,
   type ManagedStackLifecycle,
   type ManagedStackPaths,
+  type ManagedStackProjection,
   type ManagedStackRecord,
   type ManagedStackStatus,
 } from "./model.ts";
@@ -33,9 +39,9 @@ import type {
   ClaimManagedOperationResult,
   ManagedStackRepositoryShape,
   OwnedManagedStackFailure,
-  PrepareOrdinaryStackFailure,
-  PrepareOrdinaryStackInput,
-  PrepareOrdinaryStackResult,
+  PrepareStackFailure,
+  PrepareStackInput,
+  PrepareStackResult,
   ReconcileManagedOperationFailure,
   ReconcileManagedOperationResult,
   UpdateManagedStackFailure,
@@ -44,6 +50,7 @@ import type {
 import {
   assertManagedOwnerPid,
   assertManagedStackUpdatable,
+  decideManagedContextRegistration,
   managedStackOccupiesPorts,
   ManagedStackRepository,
   reconcileManagedPortAssignments,
@@ -172,6 +179,25 @@ const managedOperationStatus = (value: string): ManagedOperationStatus => {
   throw new Error(`Unknown managed operation status ${value}`);
 };
 
+const managedCheckoutKind = (value: string): ManagedCheckoutKind => {
+  if (
+    value === "bare-worktree" ||
+    value === "git" ||
+    value === "linked-worktree" ||
+    value === "ordinary"
+  ) {
+    return value;
+  }
+  throw new Error(`Unknown managed checkout kind ${value}`);
+};
+
+const managedContextKind = (value: string): ManagedContextKind => {
+  if (value === "branch" || value === "detached" || value === "workspace") {
+    return value;
+  }
+  throw new Error(`Unknown managed context kind ${value}`);
+};
+
 const managedPortIntent = (value: string): ManagedPortIntent => {
   if (value === "automatic" || value === "exact") {
     return value;
@@ -231,9 +257,69 @@ const rollbackPreservingCause = (database: ManagedSqliteDatabase): void => {
   }
 };
 
-const migrateSchema = (database: ManagedSqliteDatabase): void => {
-  database.exec("BEGIN IMMEDIATE");
+const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
   try {
+    database.exec("COMMIT");
+  } catch (error: unknown) {
+    rollbackPreservingCause(database);
+    throw error;
+  }
+};
+
+/** The handles currently between `BEGIN` and `COMMIT` — see {@link runTransaction}. */
+const openTransactions = new WeakSet<ManagedSqliteDatabase>();
+
+/**
+ * `BEGIN`, the decision's statements, and `COMMIT` as one synchronous block.
+ *
+ * Atomicity here rests on the drivers being synchronous and the handle being
+ * single-threaded: nothing else can run between the statements, so a partially
+ * applied decision is never observable. That only holds while the whole block is
+ * one JavaScript turn — splitting the boundary across effects would reintroduce
+ * a suspension point where the fiber scheduler could preempt at its operation
+ * budget and let another fiber `BEGIN` on this very handle.
+ *
+ * What synchrony cannot rule out is a decision that re-enters the repository:
+ * SQLite has no nested transactions, so the inner `BEGIN` would refuse with a
+ * driver message about the outer one, and unwinding the inner attempt would
+ * `ROLLBACK` the outer transaction's writes. Reentrancy is a bug in the calling
+ * code rather than a condition to recover from, so it is refused here — before
+ * any statement runs, and without touching the transaction already in flight.
+ */
+const runTransaction = <A>(
+  database: ManagedSqliteDatabase,
+  begin: "BEGIN" | "BEGIN IMMEDIATE",
+  run: () => A,
+): A => {
+  if (openTransactions.has(database)) {
+    throw new Error("A registry transaction is already open on this database handle");
+  }
+  database.exec(begin);
+  openTransactions.add(database);
+  try {
+    let decided: A;
+    try {
+      decided = run();
+    } catch (error: unknown) {
+      rollbackPreservingCause(database);
+      throw error;
+    }
+    commitPreservingCause(database);
+    return decided;
+  } finally {
+    openTransactions.delete(database);
+  }
+};
+
+/**
+ * The schema migration is a registry decision like any other, so it runs through
+ * {@link runTransaction}: it is the first thing an opened handle does, before the
+ * repository it initializes exists, so no transaction can be open on the handle
+ * yet. An already-current registry returns without writing and the transaction
+ * commits nothing.
+ */
+const migrateSchema = (database: ManagedSqliteDatabase): void =>
+  runTransaction(database, "BEGIN IMMEDIATE", () => {
     const versionRow = database.prepare("PRAGMA user_version").get();
     const version = getNumber(versionRow, "user_version");
     if (version !== 0 && version !== MANAGED_REGISTRY_SCHEMA_VERSION) {
@@ -243,7 +329,6 @@ const migrateSchema = (database: ManagedSqliteDatabase): void => {
       });
     }
     if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
-      database.exec("COMMIT");
       return;
     }
     database.exec(`
@@ -255,6 +340,7 @@ const migrateSchema = (database: ManagedSqliteDatabase): void => {
       CREATE TABLE checkouts (
         id TEXT PRIMARY KEY,
         project_id TEXT NOT NULL REFERENCES projects(id),
+        kind TEXT NOT NULL CHECK (kind IN ('git', 'linked-worktree', 'bare-worktree', 'ordinary')),
         created_at TEXT NOT NULL
       );
 
@@ -264,14 +350,26 @@ const migrateSchema = (database: ManagedSqliteDatabase): void => {
         canonical_path TEXT NOT NULL UNIQUE,
         last_seen_at TEXT NOT NULL
       );
-      CREATE UNIQUE INDEX one_ordinary_location_per_checkout
+      CREATE UNIQUE INDEX one_location_per_checkout
         ON checkout_locations(checkout_id);
 
       CREATE TABLE contexts (
         id TEXT PRIMARY KEY,
-        checkout_id TEXT NOT NULL REFERENCES checkouts(id),
-        created_at TEXT NOT NULL
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        checkout_id TEXT REFERENCES checkouts(id),
+        kind TEXT NOT NULL CHECK (kind IN ('branch', 'detached', 'workspace')),
+        locator TEXT,
+        created_at TEXT NOT NULL,
+        -- A branch is shared by every checkout of the repository, so its context
+        -- is project-scoped; the other two kinds belong to one checkout each.
+        CHECK (
+          (kind = 'branch' AND checkout_id IS NULL)
+          OR (kind != 'branch' AND checkout_id IS NOT NULL)
+        )
       );
+      CREATE UNIQUE INDEX one_checkout_scoped_context_per_kind
+        ON contexts(checkout_id, kind)
+        WHERE kind IN ('detached', 'workspace');
 
       CREATE TABLE stacks (
         id TEXT PRIMARY KEY,
@@ -324,12 +422,7 @@ const migrateSchema = (database: ManagedSqliteDatabase): void => {
 
       PRAGMA user_version = ${MANAGED_REGISTRY_SCHEMA_VERSION};
     `);
-    database.exec("COMMIT");
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
-  }
-};
+  });
 
 /**
  * Prepares a freshly opened handle for use as the registry.
@@ -358,43 +451,6 @@ const initializeRegistry = (
       ),
     });
   });
-
-const commitPreservingCause = (database: ManagedSqliteDatabase): void => {
-  try {
-    database.exec("COMMIT");
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
-  }
-};
-
-/**
- * `BEGIN`, the decision's statements, and `COMMIT` as one synchronous block.
- *
- * Atomicity here rests on the drivers being synchronous and the handle being
- * single-threaded: nothing else can run between the statements, so a partially
- * applied decision is never observable and two transactions can never nest on
- * the same connection. That only holds while the whole block is one JavaScript
- * turn — splitting the boundary across effects would reintroduce a suspension
- * point where the fiber scheduler could preempt at its operation budget and let
- * another fiber `BEGIN` on this very handle.
- */
-const runTransaction = <A>(
-  database: ManagedSqliteDatabase,
-  begin: "BEGIN" | "BEGIN IMMEDIATE",
-  run: () => A,
-): A => {
-  database.exec(begin);
-  let decided: A;
-  try {
-    decided = run();
-  } catch (error: unknown) {
-    rollbackPreservingCause(database);
-    throw error;
-  }
-  commitPreservingCause(database);
-  return decided;
-};
 
 /**
  * Runs one registry decision inside a transaction. `catchFailure` names the
@@ -499,6 +555,105 @@ const decodeStackWithPorts = (
 
 const decodeStack = (database: ManagedSqliteDatabase, row: unknown): ManagedStackRecord =>
   decodeStackWithPorts(row, queryPorts(database, getString(row, "id")));
+
+const decodeStackProjectionWithPorts = (
+  row: unknown,
+  ports: ReadonlyArray<ManagedPortAssignment>,
+): ManagedStackProjection => ({
+  ...decodeStackWithPorts(row, ports),
+  checkoutKind: managedCheckoutKind(getString(row, "checkout_kind")),
+  canonicalPath: getOptionalString(row, "canonical_path"),
+  contextKind: managedContextKind(getString(row, "context_kind")),
+  contextLocator: getOptionalString(row, "context_locator"),
+});
+
+/**
+ * The reader's view of the stacks table. `checkout_locations` is joined loosely
+ * because a location can be pruned out from under a stack that still exists,
+ * which leaves the canonical path unknown rather than the stack unlistable.
+ */
+const STACK_PROJECTION_SELECT = `SELECT stacks.*,
+            checkouts.kind AS checkout_kind,
+            contexts.kind AS context_kind,
+            contexts.locator AS context_locator,
+            checkout_locations.canonical_path AS canonical_path
+         FROM stacks
+         JOIN checkouts ON checkouts.id = stacks.checkout_id
+         JOIN contexts ON contexts.id = stacks.context_id
+         LEFT JOIN checkout_locations ON checkout_locations.checkout_id = stacks.checkout_id`;
+
+const getStackProjection = (
+  database: ManagedSqliteDatabase,
+  stackId: string,
+): ManagedStackProjection | undefined => {
+  const row = database.prepare(`${STACK_PROJECTION_SELECT} WHERE stacks.id = ?`).get([stackId]);
+  return row === undefined
+    ? undefined
+    : decodeStackProjectionWithPorts(row, queryPorts(database, stackId));
+};
+
+const selectStackProjections = (
+  database: ManagedSqliteDatabase,
+  options?: { readonly includeTombstoned?: boolean },
+): ReadonlyArray<ManagedStackProjection> => {
+  const order = "ORDER BY stacks.created_at, stacks.id";
+  const rows =
+    options?.includeTombstoned === true
+      ? database.prepare(`${STACK_PROJECTION_SELECT} ${order}`).all()
+      : database
+          .prepare(`${STACK_PROJECTION_SELECT} WHERE stacks.status != 'tombstoned' ${order}`)
+          .all();
+  const portsByStack = queryPortsByStack(
+    database,
+    rows.map((row) => getString(row, "id")),
+  );
+  return rows.map((row) =>
+    decodeStackProjectionWithPorts(row, portsByStack.get(getString(row, "id")) ?? []),
+  );
+};
+
+const selectStackProjectionsByIdentity = (
+  database: ManagedSqliteDatabase,
+  identity: ManagedIdentityTriple,
+  options?: { readonly includeTombstoned?: boolean },
+): ReadonlyArray<ManagedStackProjection> => {
+  const statusClause =
+    options?.includeTombstoned === true ? "" : " AND stacks.status != 'tombstoned'";
+  const rows = database
+    .prepare(
+      `${STACK_PROJECTION_SELECT}
+       WHERE stacks.project_id = ? AND stacks.checkout_id = ? AND stacks.context_id = ?${statusClause}
+       ORDER BY stacks.created_at, stacks.id`,
+    )
+    .all([identity.projectId, identity.checkoutId, identity.contextId]);
+  const portsByStack = queryPortsByStack(
+    database,
+    rows.map((row) => getString(row, "id")),
+  );
+  return rows.map((row) =>
+    decodeStackProjectionWithPorts(row, portsByStack.get(getString(row, "id")) ?? []),
+  );
+};
+
+const decodeContext = (row: unknown): ManagedContextRecord => ({
+  id: getString(row, "id"),
+  projectId: getString(row, "project_id"),
+  checkoutId: getOptionalString(row, "checkout_id"),
+  kind: managedContextKind(getString(row, "kind")),
+  locator: getOptionalString(row, "locator"),
+  createdAt: getString(row, "created_at"),
+});
+
+const findCheckoutContext = (
+  database: ManagedSqliteDatabase,
+  checkoutId: string,
+  kind: ManagedCheckoutScopedContextKind,
+): ManagedContextRecord | undefined => {
+  const row = database
+    .prepare("SELECT * FROM contexts WHERE checkout_id = ? AND kind = ?")
+    .get([checkoutId, kind]);
+  return row === undefined ? undefined : decodeContext(row);
+};
 
 const decodeOperation = (row: unknown): ManagedOperationRecord => ({
   token: getString(row, "token"),
@@ -610,7 +765,8 @@ const claimOperation = (
 
 const insertConfiguration = (
   database: ManagedSqliteDatabase,
-  input: PrepareOrdinaryStackInput,
+  input: PrepareStackInput,
+  contextId: string,
 ): void => {
   const runtimeMetadata: ManagedRuntimeMetadata = input.configuration.runtimeMetadata ?? {
     processIds: {},
@@ -629,7 +785,7 @@ const insertConfiguration = (
       input.stackId,
       input.identity.projectId,
       input.identity.checkoutId,
-      input.identity.contextId,
+      contextId,
       input.stackName,
       input.configuration.lifecycle ?? "stopped",
       input.configuration.runtimeRequest ?? "auto",
@@ -653,10 +809,64 @@ const insertConfiguration = (
   );
 };
 
-const prepareOrdinaryStack = (
+/**
+ * Registers the context the caller resolved and answers with the context the
+ * stack must actually use.
+ *
+ * A branch context's ID comes from git config, which is authoritative: the row
+ * adopts it, and only the branch name it is displayed under is refreshed when git
+ * has renamed the branch since. A checkout-scoped context is minted by whoever
+ * gets there first, so an existing row for that checkout and kind wins over the
+ * ID this caller brought — that is what makes two concurrent starts on one
+ * detached `HEAD` converge on a single context instead of splitting.
+ */
+const registerContext = (database: ManagedSqliteDatabase, input: PrepareStackInput): string => {
+  const requestedExistingRow = database
+    .prepare("SELECT * FROM contexts WHERE id = ?")
+    .get([input.identity.contextId]);
+  const requestedExisting =
+    requestedExistingRow === undefined ? undefined : decodeContext(requestedExistingRow);
+  const checkoutScopedExisting =
+    input.context.kind === "branch"
+      ? undefined
+      : findCheckoutContext(database, input.identity.checkoutId, input.context.kind);
+  const decision = decideManagedContextRegistration({
+    requestedId: input.identity.contextId,
+    projectId: input.identity.projectId,
+    checkoutId: input.identity.checkoutId,
+    context: input.context,
+    now: input.now,
+    checkoutScopedExisting,
+    requestedExisting,
+  });
+  if (decision.outcome === "existing") {
+    if (decision.refreshLocator !== undefined) {
+      database
+        .prepare("UPDATE contexts SET locator = ? WHERE id = ?")
+        .run([decision.refreshLocator, decision.contextId]);
+    }
+    return decision.contextId;
+  }
+  database
+    .prepare(
+      `INSERT INTO contexts (id, project_id, checkout_id, kind, locator, created_at)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+    )
+    .run([
+      decision.context.id,
+      decision.context.projectId,
+      decision.context.checkoutId ?? null,
+      decision.context.kind,
+      decision.context.locator ?? null,
+      decision.context.createdAt,
+    ]);
+  return decision.context.id;
+};
+
+const prepareStack = (
   database: ManagedSqliteDatabase,
-  input: PrepareOrdinaryStackInput,
-): PrepareOrdinaryStackResult => {
+  input: PrepareStackInput,
+): PrepareStackResult => {
   database
     .prepare("INSERT OR IGNORE INTO projects (id, created_at) VALUES (?, ?)")
     .run([input.identity.projectId, input.now]);
@@ -675,48 +885,36 @@ const prepareOrdinaryStack = (
     });
   }
   database
-    .prepare("INSERT OR IGNORE INTO checkouts (id, project_id, created_at) VALUES (?, ?, ?)")
-    .run([input.identity.checkoutId, input.identity.projectId, input.now]);
+    .prepare(
+      `INSERT INTO checkouts (id, project_id, kind, created_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET kind = excluded.kind`,
+    )
+    .run([input.identity.checkoutId, input.identity.projectId, input.checkoutKind, input.now]);
 
-  const contextRow = database
-    .prepare("SELECT checkout_id FROM contexts WHERE id = ?")
-    .get([input.identity.contextId]);
-  if (
-    contextRow !== undefined &&
-    getString(contextRow, "checkout_id") !== input.identity.checkoutId
-  ) {
-    throw new DuplicateManagedIdentityError({
-      identityId: input.identity.contextId,
-      existingClaim: getString(contextRow, "checkout_id"),
-      requestedClaim: input.identity.checkoutId,
-    });
-  }
-  database
-    .prepare(`INSERT OR IGNORE INTO contexts (id, checkout_id, created_at) VALUES (?, ?, ?)`)
-    .run([input.identity.contextId, input.identity.checkoutId, input.now]);
+  const contextId = registerContext(database, input);
 
   const checkoutLocation = database
     .prepare("SELECT * FROM checkout_locations WHERE checkout_id = ?")
     .get([input.identity.checkoutId]);
   if (
     checkoutLocation !== undefined &&
-    getString(checkoutLocation, "canonical_path") !== input.canonicalPath
+    getString(checkoutLocation, "canonical_path") !== input.checkoutRootPath
   ) {
     throw new DuplicateManagedIdentityError({
       identityId: input.identity.checkoutId,
       existingClaim: getString(checkoutLocation, "canonical_path"),
-      requestedClaim: input.canonicalPath,
+      requestedClaim: input.checkoutRootPath,
     });
   }
   const pathLocation = database
     .prepare("SELECT * FROM checkout_locations WHERE canonical_path = ?")
-    .get([input.canonicalPath]);
+    .get([input.checkoutRootPath]);
   if (
     pathLocation !== undefined &&
     getString(pathLocation, "checkout_id") !== input.identity.checkoutId
   ) {
     throw new DuplicateManagedIdentityError({
-      identityId: input.canonicalPath,
+      identityId: input.checkoutRootPath,
       existingClaim: getString(pathLocation, "checkout_id"),
       requestedClaim: input.identity.checkoutId,
     });
@@ -728,7 +926,7 @@ const prepareOrdinaryStack = (
                 (id, checkout_id, canonical_path, last_seen_at)
                VALUES (?, ?, ?, ?)`,
       )
-      .run([input.locationId, input.identity.checkoutId, input.canonicalPath, input.now]);
+      .run([input.locationId, input.identity.checkoutId, input.checkoutRootPath, input.now]);
   } else {
     database
       .prepare("UPDATE checkout_locations SET last_seen_at = ? WHERE id = ?")
@@ -740,14 +938,14 @@ const prepareOrdinaryStack = (
       `SELECT * FROM stacks
              WHERE checkout_id = ? AND context_id = ? AND name = ? AND status != 'tombstoned'`,
     )
-    .get([input.identity.checkoutId, input.identity.contextId, input.stackName]);
+    .get([input.identity.checkoutId, contextId, input.stackName]);
   if (existingRow !== undefined) {
     const stack = decodeStack(database, existingRow);
     const operation = getActiveOperation(database, stack.id);
     return { outcome: "existing", stack, operation };
   }
 
-  insertConfiguration(database, input);
+  insertConfiguration(database, input, contextId);
   database
     .prepare(
       `INSERT INTO operations
@@ -1017,12 +1215,12 @@ const createSqliteManagedStackRepository = (
     yield* initializeRegistry(database);
 
     return {
-      prepareOrdinaryStack: (input) =>
+      prepareStack: (input) =>
         Effect.flatMap(requireOwnerPid(input.ownerPid), () =>
           transaction(
             database,
-            () => prepareOrdinaryStack(database, input),
-            failsWith<PrepareOrdinaryStackFailure>(
+            () => prepareStack(database, input),
+            failsWith<PrepareStackFailure>(
               DuplicateManagedIdentityError,
               DuplicateManagedPortKeyError,
               InvalidManagedPortError,
@@ -1052,6 +1250,16 @@ const createSqliteManagedStackRepository = (
         ),
       getStack: (stackId) => readTransaction(database, () => getStack(database, stackId)),
       listStacks: (options) => readTransaction(database, () => selectStacks(database, options)),
+      getStackProjection: (stackId) =>
+        readTransaction(database, () => getStackProjection(database, stackId)),
+      listStackProjections: (options) =>
+        readTransaction(database, () =>
+          options?.identity === undefined
+            ? selectStackProjections(database, options)
+            : selectStackProjectionsByIdentity(database, options.identity, options),
+        ),
+      findCheckoutContext: (checkoutId, kind) =>
+        readTransaction(database, () => findCheckoutContext(database, checkoutId, kind)),
       claimOperation: (input) =>
         Effect.flatMap(requireOwnerPid(input.ownerPid), () =>
           transaction(

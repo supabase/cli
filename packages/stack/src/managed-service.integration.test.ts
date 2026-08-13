@@ -43,10 +43,12 @@ import {
   UnsafeManagedStackPathError,
   UnsupportedManagedRegistryVersionError,
   type ManagedStackConfiguration,
+  type ManagedStackProjection,
   type ManagedStackRecord,
 } from "./managed/model.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./managed/repository.ts";
+import { sqliteManagedStackRepositoryLayer, type ManagedSqliteDatabase } from "./managed/sqlite.ts";
 import type { MakeManagedStackServiceOptions, ManagedStackServiceHandle } from "./managed-bun.ts";
 import {
   bunSqliteManagedStackRepositoryLayer,
@@ -77,6 +79,53 @@ const openRegistry = async (
   return {
     repository: Context.get(await runtime.context(), ManagedStackRepository),
     close: () => runtime.dispose(),
+  };
+};
+
+/**
+ * An in-memory registry handle that runs `reenterOnce`'s callback the first time
+ * a decision reads a row, so a test can re-enter the repository from inside a
+ * transaction the way a mistaken caller would.
+ */
+const reentrantRegistry = (): {
+  readonly handle: ManagedSqliteDatabase;
+  readonly reenterOnce: (reentry: () => void) => void;
+} => {
+  const database = new Database(":memory:");
+  let pending: (() => void) | undefined;
+  const trigger = (): void => {
+    const reentry = pending;
+    pending = undefined;
+    reentry?.();
+  };
+  return {
+    reenterOnce: (reentry) => {
+      pending = reentry;
+    },
+    handle: {
+      exec(sql) {
+        database.exec(sql);
+      },
+      prepare(sql) {
+        const statement = database.query(sql);
+        return {
+          run(parameters = []) {
+            statement.run(...parameters);
+          },
+          get(parameters = []) {
+            trigger();
+            return statement.get(...parameters) ?? undefined;
+          },
+          all(parameters = []) {
+            trigger();
+            return statement.all(...parameters);
+          },
+        };
+      },
+      close() {
+        database.close();
+      },
+    },
   };
 };
 
@@ -190,10 +239,12 @@ const prepareAbandonedStack = async (
   const identity = (await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace))).identity;
   const stackId = crypto.randomUUID();
   const prepared = runRepo(
-    service.repository.prepareOrdinaryStack({
+    service.repository.prepareStack({
       identity,
-      canonicalPath: realpathSync(workspace),
+      checkoutKind: "ordinary",
+      checkoutRootPath: realpathSync(workspace),
       locationId: crypto.randomUUID(),
+      context: { kind: "workspace" },
       stackId,
       stackName: "default",
       paths: managedStackPaths(service.stateRoot, stackId),
@@ -215,7 +266,8 @@ describe("ordinary-folder managed stack contract", () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
     const stateRoot = join(root, "managed");
-    const { stack } = await service.provisionOrdinaryStack({
+    const { stack } = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
     await service.close();
@@ -248,9 +300,13 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const service = await makeInMemoryService(root);
 
-    const result = await service.inspectOrdinaryWorkspace(workspace);
+    const result = await service.resolveStack({ workspacePath: workspace, operation: "status" });
 
-    expect(result).toEqual({ registered: false, stacks: [] });
+    expect(result.outcome).toBe("report");
+    expect(result.state).toBe("unregistered");
+    expect(result.identity).toEqual({});
+    expect(result.stacks).toEqual([]);
+    expect(result.workspace.checkoutKind).toBe("ordinary");
     expect(existsSync(ordinaryWorkspaceIdentityPath(workspace))).toBe(false);
     expect(runRepo(service.repository.listStacks())).toEqual([]);
     expect(runRepo(service.repository.listCheckoutLocations())).toEqual([]);
@@ -262,19 +318,52 @@ describe("ordinary-folder managed stack contract", () => {
     const service = await makeInMemoryService(root);
     const marker = await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace));
 
-    const result = await service.inspectOrdinaryWorkspace(workspace);
+    const result = await service.resolveStack({ workspacePath: workspace, operation: "status" });
 
-    expect(result).toEqual({ registered: false, identity: marker.identity, stacks: [] });
+    expect(result.identity).toEqual({
+      projectId: marker.identity.projectId,
+      checkoutId: marker.identity.checkoutId,
+      contextId: marker.identity.contextId,
+    });
+    expect(result.state).toBe("unregistered");
+    expect(result.stacks).toEqual([]);
   });
 
-  it("filters inspected stacks by the complete project, checkout, and context identity", async () => {
+  it("uses the registry-owned workspace context when the marker context is stale", async () => {
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const service = await makeInMemoryService(root);
+
+    const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const markerPath = ordinaryWorkspaceIdentityPath(workspace);
+    const marker = JSON.parse(readFileSync(markerPath, "utf8")) as {
+      version: number;
+      projectId: string;
+      checkoutId: string;
+      contextId: string;
+    };
+    const staleContextId = crypto.randomUUID();
+    writeFileSync(markerPath, JSON.stringify({ ...marker, contextId: staleContextId }));
+
+    const result = await service.resolveStack({ workspacePath: workspace, operation: "status" });
+
+    expect(result.identity).toEqual(created.identity);
+    expect(result.stack?.id).toBe(created.stack.id);
+    expect(result.stacks).toEqual([created.stack]);
+    expect(JSON.parse(readFileSync(markerPath, "utf8"))).toEqual({
+      ...marker,
+      contextId: staleContextId,
+    });
+  });
+
+  it("reports only the stacks of the resolved project, checkout, and context", async () => {
     const root = makeRoot();
     const repository = createInMemoryManagedStackRepository();
-    let foreignContextStack: ManagedStackRecord | undefined;
+    let foreignContextStack: ManagedStackProjection | undefined;
     const filteringRepository: ManagedStackRepositoryShape = {
       ...repository,
-      listStacks: (options) =>
-        Effect.map(repository.listStacks(options), (stacks) =>
+      listStackProjections: (options) =>
+        Effect.map(repository.listStackProjections(options), (stacks) =>
           foreignContextStack === undefined ? stacks : [...stacks, foreignContextStack],
         ),
     };
@@ -282,7 +371,8 @@ describe("ordinary-folder managed stack contract", () => {
       repository: filteringRepository,
       stateRoot: join(root, "managed"),
     });
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
     foreignContextStack = {
@@ -291,9 +381,12 @@ describe("ordinary-folder managed stack contract", () => {
       contextId: crypto.randomUUID(),
     };
 
-    const result = await service.inspectOrdinaryWorkspace(join(root, "workspace"));
+    const result = await service.resolveStack({
+      workspacePath: join(root, "workspace"),
+      operation: "status",
+    });
 
-    expect(result.registered).toBe(true);
+    expect(result.state).toBe("stopped");
     expect(result.stacks).toEqual([created.stack]);
   });
 
@@ -314,7 +407,7 @@ describe("ordinary-folder managed stack contract", () => {
     );
 
     await expect(
-      service.provisionOrdinaryStack({ workspacePath: workspace }),
+      service.resolveStack({ workspacePath: workspace, operation: "start" }),
     ).rejects.toBeInstanceOf(InvalidManagedIdentityError);
     expect(runRepo(service.repository.listStacks())).toEqual([]);
     expect(runRepo(service.repository.listCheckoutLocations())).toEqual([]);
@@ -325,7 +418,11 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const service = await makeInMemoryService(root);
 
-    const provision = service.provisionOrdinaryStack({ workspacePath: workspace, stackName });
+    const provision = service.resolveStack({
+      operation: "start",
+      workspacePath: workspace,
+      stackName,
+    });
     await expect(provision).rejects.toBeInstanceOf(InvalidManagedStackNameError);
     await expect(provision).rejects.toThrow(`Invalid managed stack name: ${stackName}`);
     expect(existsSync(ordinaryWorkspaceIdentityPath(workspace))).toBe(false);
@@ -340,7 +437,7 @@ describe("ordinary-folder managed stack contract", () => {
 
     const results = await Promise.all(
       names.map((stackName) =>
-        service.provisionOrdinaryStack({ workspacePath: workspace, stackName }),
+        service.resolveStack({ operation: "start", workspacePath: workspace, stackName }),
       ),
     );
 
@@ -355,7 +452,8 @@ describe("ordinary-folder managed stack contract", () => {
     const workspace = makeWorkspace(root);
     const service = await makePersistentService(root);
 
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: workspace,
       configuration: {
         runtimeRequest: "docker",
@@ -400,7 +498,7 @@ describe("ordinary-folder managed stack contract", () => {
 
     await service.close();
     const reopened = await makePersistentService(root);
-    const reused = await reopened.provisionOrdinaryStack({ workspacePath: workspace });
+    const reused = await reopened.resolveStack({ workspacePath: workspace, operation: "start" });
 
     expect(reused.outcome).toBe(recoveredStart.expected.outcome);
     expect(reused.identityMarkerCreated).toBe(false);
@@ -428,7 +526,7 @@ describe("ordinary-folder managed stack contract", () => {
     const stateRoot = join(root, "isolated-managed-state");
     const service = await makeManagedStackService({ repository, stateRoot });
 
-    const result = await service.provisionOrdinaryStack({ workspacePath: workspace });
+    const result = await service.resolveStack({ workspacePath: workspace, operation: "start" });
 
     expect(contract.expected.outcome).toBe("create");
     expect(result.outcome).toBe("create");
@@ -447,7 +545,8 @@ describe("ordinary-folder managed stack contract", () => {
     });
     let initializerCalls = 0;
 
-    const first = service.provisionOrdinaryStack({
+    const first = service.resolveStack({
+      operation: "start",
       workspacePath: workspace,
       initialize: async () => {
         initializerCalls += 1;
@@ -457,7 +556,7 @@ describe("ordinary-folder managed stack contract", () => {
     while (runRepo(service.repository.listStacks()).length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
-    const second = service.provisionOrdinaryStack({ workspacePath: workspace });
+    const second = service.resolveStack({ workspacePath: workspace, operation: "start" });
     releaseInitialization();
     const results = await Promise.all([first, second]);
 
@@ -479,7 +578,8 @@ describe("ordinary-folder managed stack contract", () => {
       releaseInitialization = resolve;
     });
 
-    const first = service.provisionOrdinaryStack({
+    const first = service.resolveStack({
+      operation: "start",
       workspacePath: workspace,
       initialize: async () => {
         await initializationGate;
@@ -488,7 +588,8 @@ describe("ordinary-folder managed stack contract", () => {
     while (runRepo(service.repository.listStacks()).length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 1));
     }
-    const second = service.provisionOrdinaryStack({
+    const second = service.resolveStack({
+      operation: "start",
       workspacePath: workspace,
       configuration: { ports: [requested], serviceVersions: { postgres: "17.6.1.143" } },
     });
@@ -514,7 +615,8 @@ describe("ordinary-folder managed stack contract", () => {
     let failedRoot: string | undefined;
 
     await expect(
-      service.provisionOrdinaryStack({
+      service.resolveStack({
+        operation: "start",
         workspacePath: workspace,
         initialize: async (stack) => {
           failedRoot = stack.paths.root;
@@ -528,7 +630,7 @@ describe("ordinary-folder managed stack contract", () => {
     expect(await service.listStacks()).toEqual([]);
     expect(existsSync(ordinaryWorkspaceIdentityPath(workspace))).toBe(true);
 
-    const retried = await service.provisionOrdinaryStack({ workspacePath: workspace });
+    const retried = await service.resolveStack({ workspacePath: workspace, operation: "start" });
     expect(retried.outcome).toBe("create");
     expect(await service.listStacks()).toHaveLength(1);
     await service.close();
@@ -539,7 +641,7 @@ describe("ordinary-folder managed stack contract", () => {
     const firstWorkspace = makeWorkspace(root, "first");
     const secondWorkspace = makeWorkspace(root, "copy");
     const service = await makePersistentService(root);
-    await service.provisionOrdinaryStack({ workspacePath: firstWorkspace });
+    await service.resolveStack({ operation: "start", workspacePath: firstWorkspace });
     mkdirSync(join(secondWorkspace, ".supabase"), { recursive: true });
     copyFileSync(
       ordinaryWorkspaceIdentityPath(firstWorkspace),
@@ -547,7 +649,7 @@ describe("ordinary-folder managed stack contract", () => {
     );
 
     await expect(
-      service.provisionOrdinaryStack({ workspacePath: secondWorkspace }),
+      service.resolveStack({ operation: "start", workspacePath: secondWorkspace }),
     ).rejects.toBeInstanceOf(DuplicateManagedIdentityError);
     expect(await service.listStacks()).toHaveLength(1);
     expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
@@ -564,7 +666,7 @@ describe("ordinary-folder managed stack contract", () => {
     await prepareAbandonedStack(service, workspace, process.pid);
 
     await expect(
-      service.provisionOrdinaryStack({ workspacePath: workspace }),
+      service.resolveStack({ workspacePath: workspace, operation: "start" }),
     ).rejects.toBeInstanceOf(ManagedStackPublicationTimeoutError);
     expect(await service.listStacks()).toHaveLength(1);
     await service.close();
@@ -583,8 +685,8 @@ describe("ordinary-folder managed stack contract", () => {
       let livenessProbes = 0;
       const corruptedRepository: ManagedStackRepositoryShape = {
         ...repository,
-        prepareOrdinaryStack: (input) =>
-          Effect.map(repository.prepareOrdinaryStack(input), (prepared) =>
+        prepareStack: (input) =>
+          Effect.map(repository.prepareStack(input), (prepared) =>
             prepared.outcome === "existing" && prepared.operation !== undefined
               ? { ...prepared, operation: { ...prepared.operation, ownerPid } }
               : prepared,
@@ -603,7 +705,7 @@ describe("ordinary-folder managed stack contract", () => {
       await prepareAbandonedStack(service, workspace, process.pid);
 
       await expect(
-        service.provisionOrdinaryStack({ workspacePath: workspace }),
+        service.resolveStack({ workspacePath: workspace, operation: "start" }),
       ).rejects.toBeInstanceOf(ManagedAbandonedOperationError);
 
       expect(livenessProbes).toBe(0);
@@ -634,7 +736,7 @@ describe("ordinary-folder managed stack contract", () => {
     await prepareAbandonedStack(service, workspace, process.pid);
 
     await expect(
-      service.provisionOrdinaryStack({ workspacePath: workspace }),
+      service.resolveStack({ workspacePath: workspace, operation: "start" }),
     ).rejects.toBeInstanceOf(ManagedStackPublicationTimeoutError);
 
     // The backoff ceiling must never poll a publisher faster than the caller
@@ -656,7 +758,7 @@ describe("ordinary-folder managed stack contract", () => {
     });
 
     await expect(
-      service.provisionOrdinaryStack({ workspacePath: workspace }),
+      service.resolveStack({ workspacePath: workspace, operation: "start" }),
     ).rejects.toBeInstanceOf(InvalidManagedIdentityError);
     expect(existsSync(join(root, "outside"))).toBe(false);
     expect(await service.listStacks()).toEqual([]);
@@ -765,7 +867,8 @@ describe("managed service options", () => {
       },
     ) as unknown as Promise<void>;
 
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
       initialize: () => thenable,
     });
@@ -787,13 +890,41 @@ describe("managed service options", () => {
     await expect(service.listStacks()).rejects.toThrow(/closed/i);
   });
 
+  it("reports a callback's own rejection as itself even when it mentions disposal", async () => {
+    // Whether the handle is closed is the handle's own state, never something
+    // read back out of what a rejection happens to say: a caller's callback that
+    // refuses with a string mentioning disposal must reach that caller unchanged.
+    const root = makeRoot();
+    const service = await makePersistentService(root);
+    const { stack } = await service.resolveStack({
+      operation: "start",
+      workspacePath: makeWorkspace(root),
+    });
+    await service.updateStack(stack.id, { lifecycle: "running" });
+
+    let rejection: unknown;
+    try {
+      await service.deleteStack(stack.id, {
+        stop: () => Promise.reject("the container was disposed"),
+      });
+    } catch (error: unknown) {
+      rejection = error;
+    }
+
+    expect(String(rejection)).toContain("the container was disposed");
+    expect(String(rejection)).not.toContain("handle is closed");
+    expect(await service.inspectStack(stack.id)).toMatchObject({ status: "active" });
+    await service.close();
+  });
+
   it("closes a service acquired with await using when its block ends", async () => {
     const root = makeRoot();
     let acquired: ManagedStackServiceHandle | undefined;
     {
       await using service = await makePersistentService(root);
       acquired = service;
-      const created = await service.provisionOrdinaryStack({
+      const created = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root),
       });
       expect(await service.inspectStack(created.stack.id)).toMatchObject({ status: "active" });
@@ -829,10 +960,12 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
-      const first = await service.provisionOrdinaryStack({
+      const first = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "Projects"),
       });
-      const second = await service.provisionOrdinaryStack({
+      const second = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "apps"),
       });
 
@@ -861,13 +994,64 @@ describe("managed repository and lifecycle", () => {
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
 
-      const created = await service.provisionOrdinaryStack({ workspacePath: workspace });
-      const reused = await service.provisionOrdinaryStack({ workspacePath: workspace });
+      const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+      const reused = await service.resolveStack({ workspacePath: workspace, operation: "start" });
 
       expect(contract.expected.outcome).toBe("report");
       expect(created.outcome).toBe("create");
       expect(reused.outcome).toBe("reuse");
       expect(reused.selection).toEqual(created.selection);
+      await service.close();
+    });
+  }
+
+  for (const adapter of ["in-memory", "bun-sqlite"] as const) {
+    it(`scopes stack projections and preserves ordering and tombstones with the ${adapter} adapter`, async () => {
+      const root = makeRoot();
+      const service =
+        adapter === "in-memory"
+          ? await makeInMemoryService(root, {
+              clock: () => new Date("2026-08-11T00:00:00.000Z"),
+              idFactory: descendingIdFactory(),
+            })
+          : await makePersistentService(root, {
+              clock: () => new Date("2026-08-11T00:00:00.000Z"),
+              idFactory: descendingIdFactory(),
+            });
+      const workspace = makeWorkspace(root, "scoped");
+      const first = await service.resolveStack({
+        operation: "start",
+        workspacePath: workspace,
+        stackName: "first",
+      });
+      const second = await service.resolveStack({
+        operation: "start",
+        workspacePath: workspace,
+        stackName: "second",
+      });
+      await service.resolveStack({
+        operation: "start",
+        workspacePath: makeWorkspace(root, "foreign"),
+      });
+      await service.deleteStack(first.stack.id);
+
+      const identity = {
+        projectId: first.identity.projectId,
+        checkoutId: first.identity.checkoutId,
+        contextId: first.identity.contextId,
+      };
+      const live = runRepo(service.repository.listStackProjections({ identity }));
+      expect(live.map((stack) => stack.id)).toEqual([second.stack.id]);
+
+      const withTombstones = runRepo(
+        service.repository.listStackProjections({
+          identity,
+          includeTombstoned: true,
+        }),
+      );
+      expect(withTombstones.map((stack) => stack.id)).toEqual(
+        [first.stack.id, second.stack.id].sort(),
+      );
       await service.close();
     });
   }
@@ -891,13 +1075,14 @@ describe("managed repository and lifecycle", () => {
       const workspace = makeWorkspace(root);
 
       await expect(
-        service.provisionOrdinaryStack({
+        service.resolveStack({
+          operation: "start",
           workspacePath: workspace,
           configuration: { ports: [{ key: "api.port", port: 54_321.5, intent: "exact" }] },
         }),
       ).rejects.toBeInstanceOf(InvalidManagedPortError);
 
-      const created = await service.provisionOrdinaryStack({ workspacePath: workspace });
+      const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
       await expect(
         service.updateStack(created.stack.id, {
           ports: [{ key: "api.port", port: 70_000, intent: "exact" }],
@@ -922,7 +1107,8 @@ describe("managed repository and lifecycle", () => {
       ];
 
       const provisionFailure = await service
-        .provisionOrdinaryStack({
+        .resolveStack({
+          operation: "start",
           workspacePath: workspace,
           configuration: { ports: duplicateKeyPorts },
         })
@@ -932,7 +1118,7 @@ describe("managed repository and lifecycle", () => {
         "MANAGED_DUPLICATE_PORT_KEY",
       );
 
-      const created = await service.provisionOrdinaryStack({ workspacePath: workspace });
+      const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
       const updateFailure = await service
         .updateStack(created.stack.id, { ports: duplicateKeyPorts })
         .catch((error: unknown) => error);
@@ -948,10 +1134,12 @@ describe("managed repository and lifecycle", () => {
   it("persists stack configuration and reserves ports globally", async () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
-    const first = await service.provisionOrdinaryStack({
+    const first = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root, "first"),
     });
-    const second = await service.provisionOrdinaryStack({
+    const second = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root, "second"),
     });
 
@@ -994,7 +1182,8 @@ describe("managed repository and lifecycle", () => {
   it("rolls back an in-memory registration when its initial port reservation conflicts", async () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root);
-    await service.provisionOrdinaryStack({
+    await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root, "first"),
       configuration: {
         lifecycle: "running",
@@ -1004,7 +1193,8 @@ describe("managed repository and lifecycle", () => {
     const secondWorkspace = makeWorkspace(root, "second");
 
     await expect(
-      service.provisionOrdinaryStack({
+      service.resolveStack({
+        operation: "start",
         workspacePath: secondWorkspace,
         configuration: {
           lifecycle: "starting",
@@ -1015,7 +1205,10 @@ describe("managed repository and lifecycle", () => {
     expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
     expect(await service.listStacks()).toHaveLength(1);
 
-    const retried = await service.provisionOrdinaryStack({ workspacePath: secondWorkspace });
+    const retried = await service.resolveStack({
+      operation: "start",
+      workspacePath: secondWorkspace,
+    });
     expect(retried.outcome).toBe("create");
     expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(2);
   });
@@ -1023,7 +1216,8 @@ describe("managed repository and lifecycle", () => {
   it("requires actual runtime inspection before recovering an abandoned operation", async () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root, { isProcessAlive: () => false });
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
     const claimed = runRepo(
@@ -1083,7 +1277,7 @@ describe("managed repository and lifecycle", () => {
     expect(existsSync(pending.stack.paths.root)).toBe(false);
     expect(await service.listStacks()).toEqual([]);
 
-    const retried = await service.provisionOrdinaryStack({ workspacePath: workspace });
+    const retried = await service.resolveStack({ workspacePath: workspace, operation: "start" });
     expect(retried.outcome).toBe("create");
     expect(retried.stack.id).not.toBe(pending.stack.id);
     await service.close();
@@ -1104,7 +1298,7 @@ describe("managed repository and lifecycle", () => {
     expect(reconciled.abortedStackIds).toEqual([]);
     expect(reconciled.recovered).toHaveLength(1);
     expect(reconciled.recovered[0]).toMatchObject({ status: "active", lifecycle: "running" });
-    const reused = await service.provisionOrdinaryStack({ workspacePath: workspace });
+    const reused = await service.resolveStack({ workspacePath: workspace, operation: "start" });
     expect(reused.outcome).toBe("reuse");
     expect(reused.stack.id).toBe(pending.stack.id);
     await service.close();
@@ -1288,7 +1482,8 @@ describe("managed repository and lifecycle", () => {
       let dataFile: string | undefined;
 
       await expect(
-        service.provisionOrdinaryStack({
+        service.resolveStack({
+          operation: "start",
           workspacePath: makeWorkspace(root),
           initialize: async (stack) => {
             stackRoot = stack.paths.root;
@@ -1421,10 +1616,12 @@ describe("managed repository and lifecycle", () => {
   it("continues recovery when an owner finishes one operation during inspection", async () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root, { isProcessAlive: () => false });
-    const first = await service.provisionOrdinaryStack({
+    const first = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root, "first"),
     });
-    const second = await service.provisionOrdinaryStack({
+    const second = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root, "second"),
     });
     const firstOperation = runRepo(
@@ -1478,7 +1675,8 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
-      const owner = await service.provisionOrdinaryStack({
+      const owner = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "owner"),
         configuration: {
           lifecycle: "running",
@@ -1536,14 +1734,16 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
-      await service.provisionOrdinaryStack({
+      await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "owner"),
         configuration: {
           lifecycle: "running",
           ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
         },
       });
-      const blocked = await service.provisionOrdinaryStack({
+      const blocked = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "blocked"),
         configuration: {
           ports: [{ key: "api.port", port: 55_410, intent: "exact" }],
@@ -1594,14 +1794,16 @@ describe("managed repository and lifecycle", () => {
     }
     const root = makeRoot();
     const service = await makePersistentService(root);
-    await service.provisionOrdinaryStack({
+    await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
       configuration: {
         ports: [{ key: previous.key, port: previous.port, intent: previous.intent }],
       },
     });
 
-    const changed = await service.provisionOrdinaryStack({
+    const changed = await service.resolveStack({
+      operation: "start",
       workspacePath: join(root, "workspace"),
       configuration: { ports: [requested] },
     });
@@ -1612,7 +1814,8 @@ describe("managed repository and lifecycle", () => {
     if (removed === undefined) {
       throw new Error(`Fixture ${removedFixtureId} has no api.port intent`);
     }
-    const sticky = await service.provisionOrdinaryStack({
+    const sticky = await service.resolveStack({
+      operation: "start",
       workspacePath: join(root, "workspace"),
       configuration: {
         ports: [{ key: removed.key, port: 60_000, intent: removed.intent }],
@@ -1632,7 +1835,8 @@ describe("managed repository and lifecycle", () => {
     }
     const root = makeRoot();
     const service = await makePersistentService(root);
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
       configuration: {
         lifecycle: "running",
@@ -1656,7 +1860,8 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
-      const failed = await service.provisionOrdinaryStack({
+      const failed = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "failed"),
         configuration: {
           lifecycle: "failed",
@@ -1673,7 +1878,8 @@ describe("managed repository and lifecycle", () => {
         ports: [{ key: "api.port", port: 55_402, intent: "exact" }],
       });
 
-      const running = await service.provisionOrdinaryStack({
+      const running = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "running"),
         configuration: {
           lifecycle: "running",
@@ -1713,11 +1919,13 @@ describe("managed repository and lifecycle", () => {
       port: stickyAssignment.port,
       intent: stickyAssignment.intent,
     };
-    const first = await service.provisionOrdinaryStack({
+    const first = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root, "first"),
       configuration: { ports: [assignment] },
     });
-    const second = await service.provisionOrdinaryStack({
+    const second = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root, "second"),
       configuration: { ports: [assignment] },
     });
@@ -1738,7 +1946,8 @@ describe("managed repository and lifecycle", () => {
   it("reports duplicate ports inside one stack as a managed reservation error", async () => {
     const root = makeRoot();
     const service = await makePersistentService(root);
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
 
@@ -1758,7 +1967,8 @@ describe("managed repository and lifecycle", () => {
   it("rejects a second operation claim without mutating the stack", async () => {
     const root = makeRoot();
     const service = await makeInMemoryService(root);
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
     const claimed = runRepo(
@@ -1792,7 +2002,8 @@ describe("managed repository and lifecycle", () => {
         service.updateStack(crypto.randomUUID(), { lifecycle: "stopped" }),
       ).rejects.toBeInstanceOf(ManagedStackNotFoundError);
 
-      const created = await service.provisionOrdinaryStack({
+      const created = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root),
       });
       const claimed = runRepo(
@@ -1830,7 +2041,8 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
-      const deleted = await service.provisionOrdinaryStack({
+      const deleted = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "deleted"),
         configuration: { lifecycle: "running", ports: [reserved] },
       });
@@ -1847,7 +2059,8 @@ describe("managed repository and lifecycle", () => {
       });
       expect(runRepo(service.repository.listActiveOperations())).toEqual([]);
 
-      const successor = await service.provisionOrdinaryStack({
+      const successor = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "successor"),
         configuration: { lifecycle: "running", ports: [reserved] },
       });
@@ -1870,7 +2083,8 @@ describe("managed repository and lifecycle", () => {
           adapter === "in-memory"
             ? await makeInMemoryService(root, overrides)
             : await makePersistentService(root, overrides);
-        const created = await service.provisionOrdinaryStack({
+        const created = await service.resolveStack({
+          operation: "start",
           workspacePath: makeWorkspace(root),
         });
         writeFileSync(join(created.stack.paths.data, "database"), "leaked");
@@ -1945,7 +2159,8 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root, overrides)
           : await makePersistentService(root, overrides);
-      const created = await service.provisionOrdinaryStack({
+      const created = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root),
       });
       writeFileSync(join(created.stack.paths.data, "database"), "leaked");
@@ -2018,7 +2233,8 @@ describe("managed repository and lifecycle", () => {
         stateRoot,
         isProcessAlive: () => false,
       });
-      const created = await service.provisionOrdinaryStack({
+      const created = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root),
       });
       const claimed = runRepo(
@@ -2078,7 +2294,8 @@ describe("managed repository and lifecycle", () => {
       const db = { key: "db.port", port: 55_503, intent: "exact" } as const;
       const sorted = [api, db, studio];
 
-      const created = await service.provisionOrdinaryStack({
+      const created = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root),
         configuration: { ports: [studio, api, db] },
       });
@@ -2109,7 +2326,8 @@ describe("managed repository and lifecycle", () => {
       const nextToken = descendingIdFactory();
       const tokens: Array<string> = [];
       for (const name of ["first", "second", "third"]) {
-        const created = await service.provisionOrdinaryStack({
+        const created = await service.resolveStack({
+          operation: "start",
           workspacePath: makeWorkspace(root, name),
         });
         const token = nextToken();
@@ -2146,7 +2364,8 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
-      const created = await service.provisionOrdinaryStack({
+      const created = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root, "claimed"),
       });
 
@@ -2211,7 +2430,8 @@ describe("managed repository and lifecycle", () => {
         adapter === "in-memory"
           ? await makeInMemoryService(root)
           : await makePersistentService(root);
-      const created = await service.provisionOrdinaryStack({
+      const created = await service.resolveStack({
+        operation: "start",
         workspacePath: makeWorkspace(root),
         configuration: { lifecycle: "running" },
       });
@@ -2275,7 +2495,8 @@ describe("managed repository and lifecycle", () => {
       repository: racingRepository,
       stateRoot: join(root, "managed"),
     });
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
     let stoppedLifecycle: string | undefined;
@@ -2307,7 +2528,8 @@ describe("managed repository and lifecycle", () => {
       repository: racingRepository,
       stateRoot: join(root, "managed"),
     });
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
 
@@ -2325,7 +2547,8 @@ describe("managed repository and lifecycle", () => {
     const contract = fixture("reclamation.delete-repeat-is-idempotent");
     const root = makeRoot();
     const service = await makePersistentService(root);
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
       configuration: { lifecycle: "running" },
     });
@@ -2380,7 +2603,8 @@ describe("managed repository and lifecycle", () => {
       repository: guardedRepository,
       stateRoot: join(root, "managed"),
     });
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
     await service.deleteStack(created.stack.id);
@@ -2402,7 +2626,8 @@ describe("managed repository and lifecycle", () => {
     const contract = fixture("reclamation.prune-removes-metadata-only");
     const root = makeRoot();
     const service = await makePersistentService(root);
-    const created = await service.provisionOrdinaryStack({
+    const created = await service.resolveStack({
+      operation: "start",
       workspacePath: makeWorkspace(root),
     });
     const dataFile = join(created.stack.paths.data, "database");
@@ -2435,7 +2660,8 @@ describe("managed repository and lifecycle", () => {
       const workspacePath = ${JSON.stringify(workspace)};
       const firstService = await createManagedStackService({ stateRoot });
       assert.equal(runRepo(firstService.repository.getStack(randomUUID())), undefined);
-      const first = await firstService.provisionOrdinaryStack({
+      const first = await firstService.resolveStack({
+        operation: "start",
         workspacePath,
         configuration: {
           ports: [{ key: "api.port", port: 55431, intent: "exact" }],
@@ -2458,7 +2684,7 @@ describe("managed repository and lifecycle", () => {
       assert.equal(recovery.failures.length, 0);
       await firstService.close();
       const secondService = await createManagedStackService({ stateRoot });
-      const second = await secondService.provisionOrdinaryStack({ workspacePath });
+      const second = await secondService.resolveStack({ workspacePath, operation: "start" });
       assert.equal(first.outcome, "create");
       assert.equal(second.outcome, "reuse");
       assert.equal(second.stack.id, first.stack.id);
@@ -2615,6 +2841,51 @@ describe("managed repository and lifecycle", () => {
     await registry.close();
   });
 
+  it("refuses a registry decision that re-enters the repository, keeping its own writes", async () => {
+    // SQLite has no nested transactions, so a decision that calls back into the
+    // repository can only lose: the inner `BEGIN` is refused, and unwinding the
+    // inner attempt would roll back the writes the outer decision has already
+    // made. The guard therefore refuses before any statement runs.
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const identity = (await Effect.runPromise(ensureOrdinaryWorkspaceIdentity(workspace))).identity;
+    const sqlite = reentrantRegistry();
+    const runtime = ManagedRuntime.make(sqliteManagedStackRepositoryLayer(() => sqlite.handle));
+    const repository = Context.get(await runtime.context(), ManagedStackRepository);
+
+    let nested: Exit.Exit<ReadonlyArray<ManagedStackRecord>> | undefined;
+    sqlite.reenterOnce(() => {
+      nested = Effect.runSyncExit(repository.listStacks());
+    });
+
+    const stackId = crypto.randomUUID();
+    const prepared = runRepo(
+      repository.prepareStack({
+        identity,
+        checkoutKind: "ordinary",
+        checkoutRootPath: realpathSync(workspace),
+        locationId: crypto.randomUUID(),
+        context: { kind: "workspace" },
+        stackId,
+        stackName: "default",
+        paths: managedStackPaths(join(root, "managed"), stackId),
+        operationToken: crypto.randomUUID(),
+        now: "2026-08-11T00:00:00.000Z",
+        configuration: {},
+      }),
+    );
+
+    if (nested === undefined || !Exit.isFailure(nested)) {
+      throw new Error("Expected the nested decision to be refused");
+    }
+    expect(Cause.pretty(nested.cause)).toContain("A registry transaction is already open");
+    expect(prepared.outcome).toBe("create");
+    // The refusal never touched the transaction in flight, so the outer
+    // decision committed and the handle is free for the next one.
+    expect(runRepo(repository.listStacks()).map((stack) => stack.id)).toEqual([stackId]);
+    await runtime.dispose();
+  });
+
   it("writes the current schema version into a fresh registry", async () => {
     const root = makeRoot();
     const databasePath = managedRegistryPath(join(root, "fresh"));
@@ -2625,6 +2896,6 @@ describe("managed repository and lifecycle", () => {
       user_version: MANAGED_REGISTRY_SCHEMA_VERSION,
     });
     database.close();
-    expect(databasePath.endsWith("registry-v3.sqlite3")).toBe(true);
+    expect(databasePath.endsWith("registry-v4.sqlite3")).toBe(true);
   });
 });

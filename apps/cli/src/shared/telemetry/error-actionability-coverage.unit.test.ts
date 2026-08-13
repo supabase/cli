@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
+import ts from "typescript";
 import { describe, expect, it } from "vitest";
 import { CliError } from "effect/unstable/cli";
 
@@ -31,14 +32,88 @@ import {
  * forgot to classify".
  */
 
-// Matches every way an error class is defined in this workspace: direct
-// `Data.TaggedError("Tag")`, any local `*Error(...)` factory whose heritage
-// call carries the tag literal (`CliError("Tag")`, `LoginError("Tag")`, ...),
-// and plain `extends Error` classes (identified by class name). Error
-// factories must therefore be named `<Something>Error` to stay guarded —
-// which also keeps `Data.TaggedClass` event types out of the scan.
-const ERROR_DEFINITION_PATTERN =
-  /TaggedError\(\s*"([A-Za-z0-9_]+)"|class\s+[A-Za-z0-9_]+\s+extends\s+[A-Za-z0-9_.]*Error\(\s*"([A-Za-z0-9_]+)"|class\s+([A-Za-z0-9_]+)\s+extends\s+Error\b/gs;
+// The scan below recognizes every way an error class is defined in this
+// workspace: direct `Data.TaggedError("Tag")`, any local `*Error(...)` factory
+// whose heritage call carries the tag literal (`CliError("Tag")`,
+// `LoginError("Tag")`, ...), and plain `extends Error` classes (identified by
+// class name). Error factories must therefore be named `<Something>Error` to
+// stay guarded — which also keeps `Data.TaggedClass` event types out of the
+// scan. It runs on a real TypeScript AST rather than on text, so a definition
+// merely *mentioned* in a comment, a string, or a template literal is
+// structurally invisible and needs no special casing.
+
+// The simple name of a call's callee: `TaggedError` for both `TaggedError(...)`
+// and `Data.TaggedError(...)`.
+function calleeName(expression: ts.Expression): string {
+  if (ts.isIdentifier(expression)) return expression.text;
+  if (ts.isPropertyAccessExpression(expression)) return expression.name.text;
+  return "";
+}
+
+// The value of a plain string literal, seeing through an `as const` assertion
+// (`readonly code = "X" as const`). A computed or interpolated string cannot be
+// resolved statically, and none exists in this workspace.
+function stringLiteralText(expression: ts.Expression | undefined): string | undefined {
+  const inner =
+    expression !== undefined && ts.isAsExpression(expression) ? expression.expression : expression;
+  return inner !== undefined && ts.isStringLiteral(inner) ? inner.text : undefined;
+}
+
+function extendsExpression(node: ts.ClassLikeDeclaration): ts.Expression | undefined {
+  const clause = node.heritageClauses?.find((c) => c.token === ts.SyntaxKind.ExtendsKeyword);
+  return clause?.types[0]?.expression;
+}
+
+function parse(fileName: string, source: string): ts.SourceFile {
+  return ts.createSourceFile(fileName, source, ts.ScriptTarget.Latest, false, ts.ScriptKind.TS);
+}
+
+// Extracts the error identifiers a source file defines: the tag literal of
+// every `class X extends <Something>Error("Tag")` heritage call and of every
+// free-standing `TaggedError("Tag")` factory call, plus the class name of
+// every plain `class X extends Error` (untagged classes are fingerprinted by
+// name). A tagged class contributes its tag once — the heritage call is
+// claimed by the class rule so the factory rule does not count it again.
+function extractErrorTags(source: string, fileName = "scan.ts"): Array<string> {
+  const tags: Array<string> = [];
+  const claimed = new Set<ts.Node>();
+
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassLike(node)) {
+      const heritage = extendsExpression(node);
+      if (heritage !== undefined && ts.isCallExpression(heritage)) {
+        const tag = calleeName(heritage.expression).endsWith("Error")
+          ? stringLiteralText(heritage.arguments[0])
+          : undefined;
+        if (tag !== undefined) {
+          tags.push(tag);
+          claimed.add(heritage);
+        }
+      } else if (
+        heritage !== undefined &&
+        ts.isIdentifier(heritage) &&
+        heritage.text === "Error" &&
+        node.name !== undefined
+      ) {
+        tags.push(node.name.text);
+      }
+    }
+
+    if (
+      ts.isCallExpression(node) &&
+      !claimed.has(node) &&
+      calleeName(node.expression).endsWith("TaggedError")
+    ) {
+      const tag = stringLiteralText(node.arguments[0]);
+      if (tag !== undefined) tags.push(tag);
+    }
+
+    ts.forEachChild(node, visit);
+  };
+
+  ts.forEachChild(parse(fileName, source), visit);
+  return tags;
+}
 
 function scanErrorTags(root: string): Map<string, Array<string>> {
   const tagsByFile = new Map<string, Array<string>>();
@@ -50,15 +125,48 @@ function scanErrorTags(root: string): Map<string, Array<string>> {
         continue;
       }
       if (!path.endsWith(".ts") || path.endsWith(".test.ts")) continue;
-      const tags = [...readFileSync(path, "utf8").matchAll(ERROR_DEFINITION_PATTERN)].map(
-        (match) => match[1] ?? match[2] ?? match[3] ?? "",
-      );
+      const tags = extractErrorTags(readFileSync(path, "utf8"), path);
       if (tags.length > 0) tagsByFile.set(path, tags);
     }
   };
   walk(root);
   return tagsByFile;
 }
+
+describe("extractErrorTags", () => {
+  it("finds tagged, factory-tagged and plain error class definitions", () => {
+    const source = [
+      'export class TaggedThingError extends Data.TaggedError("TaggedThingError") {}',
+      'export class FactoryThingError extends CliError("FactoryTag") {}',
+      "export class PlainThingError extends Error {}",
+      'const Base = Data.TaggedError("FreeStandingTag");',
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual([
+      "TaggedThingError",
+      "FactoryTag",
+      "PlainThingError",
+      "FreeStandingTag",
+    ]);
+  });
+
+  it("ignores definitions that only appear in comments", () => {
+    const source = [
+      "// class Fake extends Error",
+      '/* e.g. Data.TaggedError("FakeTag") */',
+      "const x = 1;",
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+
+  it("ignores definitions that only appear inside string and template literals", () => {
+    const source = [
+      'const a = "class Fake extends Error";',
+      'const b = `Data.TaggedError("FakeTag")`;',
+      "const c = 'class AlsoFake extends Error';",
+    ].join("\n");
+    expect(extractErrorTags(source)).toEqual([]);
+  });
+});
 
 const kindValues = new Set<string>(Object.values(CliErrorKind));
 const categoryValues = new Set<string>(Object.values(CliErrorCategory));
@@ -203,22 +311,51 @@ describe("workspace package error tags have external adapters", () => {
 // what keeps the two halves of the contract joined — the (class, tag, code)
 // triples in the model must agree with the exported map, the code list, and the
 // code-keyed classification table.
-const MANAGED_TAGGED_CLASS_PATTERN =
-  /class\s+([A-Za-z0-9_]+)\s+extends\s+Data\.TaggedError\(\s*"([A-Za-z0-9_]+)",?\s*\)[\s\S]*?readonly\s+code\s*=\s*"([A-Z0-9_]+)"/g;
+interface ManagedErrorClass {
+  readonly className: string;
+  readonly tag: string;
+  readonly code: string;
+}
+
+// Collects the (class, tag, code) triples of every `class X extends
+// Data.TaggedError("Tag")` that also declares a string-literal `code` member.
+function scanManagedErrorClasses(path: string): Array<ManagedErrorClass> {
+  const classes: Array<ManagedErrorClass> = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isClassDeclaration(node) && node.name !== undefined) {
+      const heritage = extendsExpression(node);
+      const tag =
+        heritage !== undefined &&
+        ts.isCallExpression(heritage) &&
+        calleeName(heritage.expression) === "TaggedError"
+          ? stringLiteralText(heritage.arguments[0])
+          : undefined;
+      const code = stringLiteralText(
+        node.members
+          .filter(ts.isPropertyDeclaration)
+          .find((member) => ts.isIdentifier(member.name) && member.name.text === "code")
+          ?.initializer,
+      );
+      if (tag !== undefined && code !== undefined) {
+        classes.push({ className: node.name.text, tag, code });
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(parse(path, readFileSync(path, "utf8")), visit);
+  return classes;
+}
 
 describe("managed registry error codes are classified", () => {
   it("packages/stack/src/managed/model.ts", () => {
     const modelPath = resolve(repoRoot, "packages/stack/src/managed/model.ts");
-    const matches = [...readFileSync(modelPath, "utf8").matchAll(MANAGED_TAGGED_CLASS_PATTERN)];
-    // One match per declared code: a class written in a shape this regex cannot
+    const scanned = scanManagedErrorClasses(modelPath);
+    // One class per declared code: a class written in a shape this scan cannot
     // see would otherwise pass vacuously instead of failing loudly.
-    expect(matches.length).toBe(MANAGED_ERROR_CODES.length);
+    expect(scanned.length).toBe(MANAGED_ERROR_CODES.length);
     const declaredCodes = new Set<string>(MANAGED_ERROR_CODES);
     const scannedCodes = new Set<string>();
-    for (const match of matches) {
-      const className = match[1] ?? "";
-      const tag = match[2] ?? "";
-      const code = match[3] ?? "";
+    for (const { className, tag, code } of scanned) {
       scannedCodes.add(code);
       expect(tag, `${className} is tagged "${tag}" rather than its own export name`).toBe(
         className,

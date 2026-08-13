@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
@@ -22,7 +23,7 @@ interface DockerPostgrestOptions extends PostgrestServiceOptions {
   readonly dbHost: string;
   readonly platformOs: string;
   readonly adminPort: number;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
 }
 
 const postgrestEnv = (
@@ -66,7 +67,7 @@ export const makePostgrestServiceDocker = (opts: DockerPostgrestOptions): Servic
   };
   return dockerRunService({
     name: "postgrest",
-    apiPort: opts.apiPort,
+    identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port, opts.adminPort]),
     env,

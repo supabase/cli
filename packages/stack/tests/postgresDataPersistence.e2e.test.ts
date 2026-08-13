@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, test } from "vitest";
-import { createStack, type StackHandle } from "../src/node.ts";
+import { createStack, prefetch, type StackHandle } from "../src/node.ts";
 import { hasDockerDaemon } from "./helpers/warmup.ts";
 
 const DEV_JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
@@ -30,12 +30,15 @@ const onlyPostgresConfig = {
   edgeRuntime: false,
 } as const;
 
-const dockerContainerNameFor = (apiPort: string) => `supabase-postgres-${apiPort}`;
+const POSTGRES_CONTAINER_NAME_PREFIX = "supabase-postgres-";
+const dockerContainerNameFor = (apiPort: string) => `${POSTGRES_CONTAINER_NAME_PREFIX}${apiPort}`;
 
-const runningContainerIds = (apiPort: string): string =>
-  execSync(`docker ps -q --filter name=${dockerContainerNameFor(apiPort)}`)
+const runningContainerIds = (nameFilter: string): ReadonlyArray<string> =>
+  execSync(`docker ps -q --filter name=${nameFilter}`)
     .toString()
-    .trim();
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
 
 async function queryMarkerRows(dbPort: number): Promise<ReadonlyArray<{ note: string }>> {
   const sql = new Bun.SQL(`postgresql://supabase_admin:postgres@127.0.0.1:${dbPort}/postgres`);
@@ -51,9 +54,13 @@ async function queryMarkerRows(dbPort: number): Promise<ReadonlyArray<{ note: st
   }
 }
 
-const dockerDescribe = hasDockerDaemon() ? describe : describe.skip;
+// Native mode can fall back to Docker when its binary is unavailable.
+const canRunPersistenceE2e =
+  hasDockerDaemon() &&
+  (await prefetch({ mode: "native", services: ["postgres"] })).postgres?.type === "binary";
+const persistenceDescribe = canRunPersistenceE2e ? describe : describe.skip;
 
-dockerDescribe("postgres native/docker data persistence e2e", () => {
+persistenceDescribe("postgres native/docker data persistence e2e", () => {
   let dataDir: string;
 
   beforeAll(() => {
@@ -71,13 +78,18 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
   describe("phase 1: native postgres writes a marker row", () => {
     let stack: StackHandle;
     let apiPort: string;
+    let containerIdsBeforeCreate: ReadonlySet<string>;
 
     beforeAll(async () => {
+      containerIdsBeforeCreate = new Set(runningContainerIds(POSTGRES_CONTAINER_NAME_PREFIX));
+
       stack = await createStack({
         mode: "native",
         ...onlyPostgresConfig,
         postgres: { dataDir },
       });
+
+      apiPort = new URL(stack.url).port;
 
       try {
         await stack.start();
@@ -85,8 +97,6 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
         await stack.dispose().catch(() => {});
         throw startError;
       }
-
-      apiPort = new URL(stack.url).port;
 
       const dbPort = parseInt(new URL(stack.dbUrl).port);
       const sql = new Bun.SQL(`postgresql://supabase_admin:postgres@127.0.0.1:${dbPort}/postgres`);
@@ -110,7 +120,11 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
       "runs postgres as a native process, not a Docker container",
       { timeout: TEST_TIMEOUT_MS },
       () => {
-        expect(runningContainerIds(apiPort)).toBe("");
+        expect(
+          runningContainerIds(dockerContainerNameFor(apiPort)).filter(
+            (id) => !containerIdsBeforeCreate.has(id),
+          ),
+        ).toEqual([]);
       },
     );
   });
@@ -179,7 +193,7 @@ dockerDescribe("postgres native/docker data persistence e2e", () => {
     }, TEARDOWN_TIMEOUT_MS);
 
     test("runs postgres as a Docker container this time", { timeout: TEST_TIMEOUT_MS }, () => {
-      expect(runningContainerIds(apiPort)).not.toBe("");
+      expect(runningContainerIds(dockerContainerNameFor(apiPort))).not.toEqual([]);
     });
 
     // This is the assertion this whole file exists to make: the row written while

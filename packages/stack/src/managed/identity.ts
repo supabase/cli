@@ -1,37 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { link, mkdir, readFile, realpath, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, stat } from "node:fs/promises";
 import { dirname } from "node:path";
 import { Effect } from "effect";
+import { claimFileAtomically } from "./atomic-claim.ts";
 import {
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
+import { asRaised, failsOnlyWith } from "./failure.ts";
 import { errorCode } from "./error-code.ts";
 import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
 
 /**
- * The marker's own failures are the only ones this module reports. Filesystem
- * errors that are not part of the identity protocol — an unreadable workspace, a
- * full disk — are defects: no caller can act on them, and inventing an identity
- * failure for them would hide what actually went wrong.
- *
- * Every protocol step here is a promise, so the sorting happens after the effect
- * fails rather than inside `tryPromise`'s `catch` handler: `Effect.try` turns a
- * throwing handler into a defect, but a `tryPromise` handler that throws does so
- * inside the promise chain the runtime is awaiting, where nothing is watching for
- * it.
+ * The marker's own failures are the only ones this module reports. Every
+ * protocol step here is a promise, so each one pairs a `catch` handler that
+ * classifies nothing with a recovery that sorts the failure afterwards.
  */
-const failsWithIdentity = <A>(
-  effect: Effect.Effect<A, unknown>,
-): Effect.Effect<A, InvalidManagedIdentityError> =>
-  Effect.catch(effect, (error) =>
-    error instanceof InvalidManagedIdentityError ? Effect.fail(error) : Effect.die(error),
-  );
-
-/** A `catch` handler that classifies nothing, so it can never throw. */
-const asRaised = (error: unknown): unknown => error;
+const failsWithIdentity = failsOnlyWith(InvalidManagedIdentityError);
 
 const identityField = (value: unknown, field: string): string => {
   if (typeof value !== "object" || value === null) {
@@ -74,7 +61,15 @@ const decodeIdentity = (content: string): OrdinaryWorkspaceIdentity => {
   };
 };
 
-export const canonicalizeOrdinaryWorkspacePath = (
+/**
+ * The canonical path of a workspace directory, whatever it turns out to be.
+ *
+ * Every resolve starts here, ordinary folders and git checkouts alike: a path
+ * that is not a directory is a caller mistake rather than a workspace to
+ * classify, and canonicalizing once keeps a symlinked alias from registering as
+ * a second location for the same checkout.
+ */
+export const canonicalizeManagedWorkspacePath = (
   workspacePath: string,
 ): Effect.Effect<string, InvalidManagedIdentityError> =>
   failsWithIdentity(
@@ -117,11 +112,10 @@ export interface EnsureOrdinaryWorkspaceIdentityResult {
 
 /**
  * Claiming a workspace stays one `await` chain rather than an `Effect.gen`
- * pipeline: the temporary file, the hardlink that makes the claim atomic, its
- * `EEXIST` re-read of the winning marker, and the `finally` that removes the
- * temporary path are a single indivisible protocol. Interleaving it with other
- * work — or interrupting it between the link and the cleanup — could leave a
- * workspace holding a stray temporary marker.
+ * pipeline: reading the marker, publishing the claim, and re-reading the marker
+ * a losing claimant must adopt are a single indivisible protocol, and an
+ * interruption between those steps would leave the caller with an identity no
+ * workspace agreed to.
  */
 const ensureIdentity = async (
   workspacePath: string,
@@ -141,25 +135,21 @@ const ensureIdentity = async (
   };
 
   await mkdir(dirname(markerPath), { recursive: true });
-  const temporaryPath = `${markerPath}.tmp.${createManagedUuid(idFactory, "identity temporary id")}`;
-  await writeFile(temporaryPath, `${JSON.stringify(identity, null, 2)}\n`, { mode: 0o600 });
-  try {
-    await link(temporaryPath, markerPath);
+  const outcome = await claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
+    mode: 0o600,
+    temporaryId: createManagedUuid(idFactory, "identity temporary id"),
+  });
+  if (outcome === "claimed") {
     return { identity, created: true, markerPath };
-  } catch (error: unknown) {
-    if (errorCode(error) !== "EEXIST") {
-      throw error;
-    }
-    const winner = await readIdentity(workspacePath);
-    if (winner === undefined) {
-      throw new InvalidManagedIdentityError({
-        message: "Identity publication raced without a winning marker",
-      });
-    }
-    return { identity: winner, created: false, markerPath };
-  } finally {
-    await unlink(temporaryPath).catch(() => undefined);
   }
+
+  const winner = await readIdentity(workspacePath);
+  if (winner === undefined) {
+    throw new InvalidManagedIdentityError({
+      message: "Identity publication raced without a winning marker",
+    });
+  }
+  return { identity: winner, created: false, markerPath };
 };
 
 export const ensureOrdinaryWorkspaceIdentity = (
