@@ -523,7 +523,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           compareManagedText(left.id, right.id),
       );
 
-  const listStackProjectionRecordsByIdentity = (
+  const listStackProjectionsByIdentity = (
     identity: ManagedIdentityTriple,
     options?: { readonly includeTombstoned?: boolean },
   ): ReadonlyArray<ManagedStackProjection> =>
@@ -581,7 +581,7 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       Effect.sync(() =>
         options?.identity === undefined
           ? listStackRecords(options).map((stack) => copy(projectStack(stack)))
-          : listStackProjectionRecordsByIdentity(options.identity, options).map(copy),
+          : listStackProjectionsByIdentity(options.identity, options).map(copy),
       ),
     findCheckoutContext: (checkoutId, kind) =>
       Effect.sync(() => {
