@@ -9,6 +9,16 @@
  * runs — a snapshot of a running Postgres's data directory is not a consistent thing to copy.
  * Callers own the stop/start around the export; this module only moves bytes.
  *
+ * TODO(hot-save): the STOPPED contract could generalize to a consistency MODE. `frozen` —
+ * `docker pause` → copy → `docker unpause` — yields a crash-consistent copy (connections stall
+ * ~1s instead of dropping; restore boots through normal WAL recovery). `online` —
+ * `pg_backup_start()` → fuzzy copy → `pg_backup_stop()`, writing the returned `backup_label`
+ * into the artifact — is the zero-stall, Postgres-native form, and the ONLY one that also works
+ * for a future NATIVE (non-container) Postgres process, where no freezer exists and recovery
+ * replays the backup-labeled WAL range instead. Neither is worth the surface for the shadow
+ * cache (its export runs once per key on an already-cold path); implement when a live-stack
+ * savepoint feature needs to export without downtime.
+ *
  * **Ownership caveat:** the restore side ({@link legacyPgDataRestoreArchive}) MUST be delivered as
  * a tar stream unpacked via `docker cp - <id>:<path>`, never a directory copy — a directory copy
  * resets ownership to the extracting user (root) and Postgres refuses to start on a data directory
