@@ -351,6 +351,16 @@ const legacyResolveShadowCacheKeyInputs = <E>(
     const orioledbVersion = input.experimental.orioledb_version;
     if (orioledbVersion !== undefined && orioledbVersion.length > 0) return Option.none();
 
+    // PG <= 14 is cache-ineligible too: its setup path executes the bundled globals SQL
+    // (`LEGACY_START_DB_GLOBALS_SQL`, `db-setup.ts`'s pre-15 branch), whose `ALTER ROLE … SET`
+    // statements (statement_timeout, `postgres`'s search_path) only take effect on NEW sessions.
+    // Go/uncached runs apply migrations on the SAME session that ran the setup — before those
+    // defaults exist — while any snapshot boundary forces a reconnect that picks them up, so
+    // unqualified names in user migrations could resolve into different schemas and change the
+    // diff (review: Codex on #6184). PG15+ moves that SQL into the entrypoint's initdb heredoc,
+    // which runs before any CLI session, so no session ever observes a mid-run change there.
+    if (input.setup.majorVersion <= 14) return Option.none();
+
     const rolesPath = input.path.join(input.workdir, "supabase", "roles.sql");
     const rolesSql = yield* input.fs
       .readFileString(rolesPath)
@@ -845,6 +855,12 @@ export const legacyAcquireShadowDatabase = <E>(
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
     if (!cached) return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
+
+    // Warm hits sweep abandoned partials too: a killed concurrent writer's leftover would
+    // otherwise persist indefinitely once every later run goes warm, since the cold export's own
+    // sweep never runs again (review: Codex on #6184). Best-effort and cheap (one readdir +
+    // per-candidate stat).
+    yield* legacySweepAbandonedShadowBaselinePartials(input);
 
     return yield* legacyWarmShadow(spawner, input, tarPath).pipe(
       Effect.catch((cause) =>

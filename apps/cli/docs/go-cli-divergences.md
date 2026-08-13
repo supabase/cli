@@ -79,6 +79,18 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Behavioral divergences from the Go reference
 
+- `db diff`/`db pull`/`db schema declarative sync` shadow baseline cache (#6184): the shadow
+  database's platform baseline is cached as a PGDATA snapshot under
+  `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB, current key only) and restored into a
+  fresh container on later runs, cutting shadow provisioning from ~15s to a few seconds. TS-only,
+  default ON; `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (ambient env or project dotenv), `sync
+--no-cache` bypasses it per-invocation, and `SUPABASE_SHADOW_DEBUG=1` prints stderr-only phase
+  timings. OrioleDB clusters and PG <= 14 are cache-ineligible (external S3 state and mid-session
+  role-default mutation respectively — see `shadow-cache.ts`). Known session-semantics caveat on
+  the cached paths: migrations run on a session opened after the baseline, so role-level defaults
+  a user's `roles.sql` installs (`ALTER ROLE … SET …`) apply to migrations, whereas Go's
+  single-connection flow ran migrations before those defaults took effect; opting out restores
+  Go's exact single-session behavior.
 - `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
   `supabase/functions/<function-name>/.env` overrides matching values from the shared
   `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the

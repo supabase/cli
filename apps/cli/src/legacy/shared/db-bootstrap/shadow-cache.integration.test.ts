@@ -437,6 +437,63 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
+  it.live("stays uncached on PG14, whose setup mutates role defaults mid-session", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheEnv(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // PG<=14's globals SQL runs `ALTER ROLE … SET …` on the setup session; a snapshot
+        // boundary would force migrations onto a fresh session that observes those defaults,
+        // unlike Go's single-connection flow — so the cache must stand down entirely.
+        const base = shadowInput(fs, path);
+        const input = {
+          ...base,
+          db: { ...base.db, major_version: 14 },
+          setup: { ...base.setup, majorVersion: 14 },
+        };
+        const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input);
+        expect(handle.baselinePresent).toBe(false);
+        expect(handle.snapshotRequired).toBe(false);
+        expect(docker.calls("create")[0] ?? []).toContain("--rm");
+        yield* handle.snapshotBaseline;
+        expect(yield* soleTarName(fs, path)).toEqual([]);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("a warm hit also sweeps abandoned partials left by a killed concurrent writer", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheEnv(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+        yield* coldRun(docker, input);
+        // A concurrent writer that lost the publish race and was SIGKILLed mid-export: its
+        // partial predates the hour threshold. Every later run is warm, so the warm branch
+        // must be the one to sweep it.
+        const abandoned = path.join(
+          pgDeltaTempDir(path),
+          "shadow-baseline-0011223344556677.tar.4242.partial",
+        );
+        yield* fs.writeFileString(abandoned, "stale");
+        const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+        yield* fs.utimes(abandoned, twoHoursAgo, twoHoursAgo);
+
+        const warm = yield* legacyAcquireShadowDatabase(docker.spawner, input);
+        expect(warm.baselinePresent).toBe(true);
+        expect(yield* fs.exists(abandoned)).toBe(false);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
   it.live("stays uncached for an OrioleDB cluster even with the cache enabled", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
