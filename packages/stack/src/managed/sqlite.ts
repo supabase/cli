@@ -527,6 +527,189 @@ const createSchema = (database: ManagedSqliteDatabase): void =>
     `);
   });
 
+type ManagedSqliteIndexShape = {
+  readonly table: string;
+  readonly columns: ReadonlyArray<string>;
+  readonly unique: boolean;
+  readonly predicate?: string;
+};
+
+const managedSqliteTableColumns: Readonly<Record<string, ReadonlyArray<string>>> = {
+  projects: ["id", "created_at"],
+  checkouts: ["id", "project_id", "kind", "created_at"],
+  checkout_locations: [
+    "id",
+    "checkout_id",
+    "canonical_path",
+    "state",
+    "rebound_from_location_id",
+    "last_seen_at",
+  ],
+  contexts: ["id", "project_id", "checkout_id", "kind", "locator", "owner_branch", "created_at"],
+  identity_transitions: [
+    "id",
+    "kind",
+    "phase",
+    "project_id",
+    "checkout_id",
+    "context_id",
+    "branch",
+    "path",
+    "expected_git_value",
+    "target_git_value",
+    "created_at",
+    "updated_at",
+  ],
+  stacks: [
+    "id",
+    "project_id",
+    "checkout_id",
+    "context_id",
+    "name",
+    "status",
+    "lifecycle",
+    "runtime_request",
+    "runtime",
+    "root_path",
+    "data_path",
+    "logs_path",
+    "runtime_path",
+    "config_fingerprint",
+    "credentials_reference",
+    "service_versions_json",
+    "runtime_metadata_json",
+    "created_at",
+    "updated_at",
+    "tombstoned_at",
+  ],
+  ports: ["stack_id", "key", "port", "intent"],
+  operations: [
+    "token",
+    "stack_id",
+    "kind",
+    "status",
+    "owner_pid",
+    "started_at",
+    "finished_at",
+    "error",
+  ],
+};
+
+const managedSqliteIndexShapes: Readonly<Record<string, ManagedSqliteIndexShape>> = {
+  one_active_location_per_checkout: {
+    table: "checkout_locations",
+    columns: ["checkout_id"],
+    unique: true,
+    predicate: "state = 'active'",
+  },
+  one_active_location_per_path: {
+    table: "checkout_locations",
+    columns: ["canonical_path"],
+    unique: true,
+    predicate: "state = 'active'",
+  },
+  one_checkout_scoped_context_per_kind: {
+    table: "contexts",
+    columns: ["checkout_id", "kind"],
+    unique: true,
+    predicate: "kind IN ('detached', 'workspace')",
+  },
+  one_live_stack_per_identity: {
+    table: "stacks",
+    columns: ["checkout_id", "context_id", "name"],
+    unique: true,
+    predicate: "status != 'tombstoned'",
+  },
+  port_assignments_by_port: {
+    table: "ports",
+    columns: ["port"],
+    unique: false,
+  },
+  one_active_operation_per_stack: {
+    table: "operations",
+    columns: ["stack_id"],
+    unique: true,
+    predicate: "status = 'active'",
+  },
+};
+
+const normalizeSql = (sql: string): string =>
+  sql
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),=<>!])\s*/g, "$1")
+    .replace(/;$/, "")
+    .trim();
+
+const sqliteSchemaError = (message: string): Error =>
+  new Error(`Managed registry schema is incompatible: ${message}`);
+
+/**
+ * Checks the current schema's load-bearing shape when opening an existing
+ * registry. Object names alone are insufficient: a hand-edited or partially
+ * created database can retain every expected name while dropping a column or
+ * changing a partial uniqueness invariant.
+ */
+const validateCurrentSchema = (database: ManagedSqliteDatabase): void => {
+  for (const [table, requiredColumns] of Object.entries(managedSqliteTableColumns)) {
+    const columns = new Set(
+      database
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => getString(row, "name")),
+    );
+    for (const column of requiredColumns) {
+      if (!columns.has(column)) {
+        throw sqliteSchemaError(`table ${table} is missing column ${column}`);
+      }
+    }
+  }
+
+  for (const [indexName, shape] of Object.entries(managedSqliteIndexShapes)) {
+    const index = database
+      .prepare(`PRAGMA index_list(${shape.table})`)
+      .all()
+      .find((row) => getString(row, "name") === indexName);
+    if (index === undefined) {
+      throw sqliteSchemaError(`index ${indexName} is missing`);
+    }
+    const unique = getNumber(index, "unique") === 1;
+    if (unique !== shape.unique) {
+      throw sqliteSchemaError(`index ${indexName} has the wrong uniqueness`);
+    }
+    if (shape.predicate !== undefined && getNumber(index, "partial") !== 1) {
+      throw sqliteSchemaError(`index ${indexName} is missing its partial predicate`);
+    }
+    if (shape.predicate === undefined && getNumber(index, "partial") !== 0) {
+      throw sqliteSchemaError(`index ${indexName} unexpectedly has a partial predicate`);
+    }
+
+    const columns = [...database.prepare(`PRAGMA index_info(${indexName})`).all()]
+      .sort((left: unknown, right: unknown) => getNumber(left, "seqno") - getNumber(right, "seqno"))
+      .map((row: unknown) => getString(row, "name"));
+    if (
+      columns.length !== shape.columns.length ||
+      columns.some((column, position) => column !== shape.columns[position])
+    ) {
+      throw sqliteSchemaError(
+        `index ${indexName} has columns ${JSON.stringify(columns)} instead of ${JSON.stringify(shape.columns)}`,
+      );
+    }
+
+    if (shape.predicate !== undefined) {
+      const sqlRow = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+        .get([indexName]);
+      const sql = getString(sqlRow, "sql");
+      const normalized = normalizeSql(sql);
+      const where = normalized.match(/\bwhere\b(.+)$/)?.[1]?.trim();
+      if (where !== normalizeSql(shape.predicate)) {
+        throw sqliteSchemaError(`index ${indexName} has the wrong partial predicate`);
+      }
+    }
+  }
+};
+
 /**
  * Prepares a freshly opened handle for use as the registry.
  *
@@ -542,7 +725,10 @@ const initializeRegistry = (database: ManagedSqliteDatabase): Effect.Effect<void
       database.exec("PRAGMA foreign_keys = ON");
     });
     yield* enableWriteAheadLogging(database);
-    yield* Effect.sync(() => createSchema(database));
+    yield* Effect.sync(() => {
+      createSchema(database);
+      validateCurrentSchema(database);
+    });
   });
 
 /**

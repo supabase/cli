@@ -2912,6 +2912,59 @@ describe("managed repository and lifecycle", () => {
     expect(databasePath.endsWith("registry.sqlite3")).toBe(true);
   });
 
+  it("refuses a registry whose expected table is missing a load-bearing column", async () => {
+    const root = makeRoot();
+    const databasePath = managedRegistryPath(join(root, "missing-column"));
+    const registry = await openRegistry(databasePath);
+    await registry.close();
+
+    const database = new Database(databasePath);
+    database.exec("ALTER TABLE contexts RENAME COLUMN owner_branch TO owner_branch_missing");
+    database.close();
+
+    await expect(openRegistry(databasePath)).rejects.toThrow(
+      "table contexts is missing column owner_branch",
+    );
+  });
+
+  it("refuses a registry whose active-location index has the wrong columns", async () => {
+    const root = makeRoot();
+    const databasePath = managedRegistryPath(join(root, "wrong-index-columns"));
+    const registry = await openRegistry(databasePath);
+    await registry.close();
+
+    const database = new Database(databasePath);
+    database.exec(`
+      DROP INDEX one_active_location_per_path;
+      CREATE UNIQUE INDEX one_active_location_per_path
+        ON checkout_locations(checkout_id) WHERE state = 'active';
+    `);
+    database.close();
+
+    await expect(openRegistry(databasePath)).rejects.toThrow(
+      "index one_active_location_per_path has columns",
+    );
+  });
+
+  it("refuses a registry whose active-location index lost its partial predicate", async () => {
+    const root = makeRoot();
+    const databasePath = managedRegistryPath(join(root, "missing-index-predicate"));
+    const registry = await openRegistry(databasePath);
+    await registry.close();
+
+    const database = new Database(databasePath);
+    database.exec(`
+      DROP INDEX one_active_location_per_path;
+      CREATE UNIQUE INDEX one_active_location_per_path
+        ON checkout_locations(canonical_path);
+    `);
+    database.close();
+
+    await expect(openRegistry(databasePath)).rejects.toThrow(
+      "index one_active_location_per_path is missing its partial predicate",
+    );
+  });
+
   describe("managed identity repository decisions", () => {
     const adapters = async () => {
       const root = makeRoot();
