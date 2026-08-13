@@ -55,6 +55,7 @@
  */
 
 import * as nodePath from "node:path";
+import { legacyResolveNotificationContentPath } from "../../../shared/legacy-config-validate.ts";
 
 import type { LegacyStartContainerSpec } from "../../../shared/db-bootstrap/docker-create-args.ts";
 import { legacyEnvOrDefault } from "../lib/legacy-env-or-default.ts";
@@ -147,6 +148,13 @@ export interface LegacyKongEmailTemplateMount {
   readonly id: string;
   /** `tmpl.ContentPath` — empty means "not configured", matching Go's `len(contentPath) == 0` early return (no bind emitted). */
   readonly contentPath: string;
+  /**
+   * Notification mounts resolve through
+   * `legacyResolveNotificationContentPath` so the bind targets the same file
+   * config validation accepted (including the legacy `supabase/`-relative
+   * fallback); template mounts keep plain workdir resolution.
+   */
+  readonly notification?: boolean;
 }
 
 /**
@@ -165,9 +173,11 @@ export function legacyBuildKongEmailTemplateBind(
   workdir: string,
 ): string | undefined {
   if (mount.contentPath.length === 0) return undefined;
-  const hostPath = nodePath.isAbsolute(mount.contentPath)
-    ? mount.contentPath
-    : nodePath.resolve(workdir, mount.contentPath);
+  const hostPath = mount.notification
+    ? legacyResolveNotificationContentPath(workdir, mount.contentPath)
+    : nodePath.isAbsolute(mount.contentPath)
+      ? mount.contentPath
+      : nodePath.resolve(workdir, mount.contentPath);
   const dockerPath = nodePath.posix.join(
     LEGACY_KONG_NGINX_EMAIL_TEMPLATE_DIR,
     `${mount.id}${nodePath.extname(hostPath)}`,

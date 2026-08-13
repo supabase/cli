@@ -10,7 +10,8 @@
  */
 
 import type { ProjectConfig } from "@supabase/config";
-import { existsSync, readFileSync } from "node:fs";
+import { legacyResolveNotificationContentPath } from "../../../../shared/legacy-config-validate.ts";
+import { readFileSync } from "node:fs";
 import { isAbsolute, dirname, join } from "node:path";
 
 type AuthEmail = ProjectConfig["auth"]["email"];
@@ -115,13 +116,7 @@ export function loadAuthEmailContent(cwd: string, email: AuthEmail): AuthEmailCo
     if (contentPath.length === 0) {
       continue;
     }
-    let resolved = resolveContentPath(contentPath, cwd);
-    // Older scaffolds documented notification content_path relative to
-    // `supabase/`; fall back when the root-resolved file is missing.
-    if (!isAbsolute(contentPath) && !existsSync(resolved)) {
-      const legacyResolved = resolveContentPath(contentPath, join(cwd, "supabase"));
-      if (existsSync(legacyResolved)) resolved = legacyResolved;
-    }
+    const resolved = legacyResolveNotificationContentPath(cwd, contentPath);
     notification[name] = readTemplateContent("notification", name, resolved);
   }
 

@@ -758,15 +758,27 @@ export function legacyResolveEmailTemplateContentPath(args: {
     }
     return undefined;
   }
-  if (isAbsolute(args.contentPath)) return args.contentPath;
-  const resolved = join(args.base, args.contentPath);
-  // Older scaffolds documented notification content_path relative to
-  // `supabase/` (the file lives at `<root>/supabase/templates/...` while
-  // config says `./templates/...`). Project-root resolution is canonical;
-  // when the root-resolved file is missing but the supabase-relative one
-  // exists, keep those configs working.
-  if (args.section === "notification" && !existsSync(resolved)) {
-    const legacyResolved = join(args.base, "supabase", args.contentPath);
+  if (args.section === "notification") {
+    return legacyResolveNotificationContentPath(args.base, args.contentPath);
+  }
+  return isAbsolute(args.contentPath) ? args.contentPath : join(args.base, args.contentPath);
+}
+
+/**
+ * Notification `content_path` resolution with the legacy fallback. Older
+ * scaffolds documented these paths relative to `supabase/` (the file lives at
+ * `<root>/supabase/templates/...` while config says `./templates/...`).
+ * Project-root resolution is canonical; when the root-resolved file is
+ * missing but the supabase-relative one exists, that path wins so existing
+ * configs keep working. Shared by config validation, `config push` content
+ * loading, and the Kong template mount builder so every consumer sees the
+ * SAME file.
+ */
+export function legacyResolveNotificationContentPath(base: string, contentPath: string): string {
+  if (isAbsolute(contentPath)) return contentPath;
+  const resolved = join(base, contentPath);
+  if (!existsSync(resolved)) {
+    const legacyResolved = join(base, "supabase", contentPath);
     if (existsSync(legacyResolved)) return legacyResolved;
   }
   return resolved;

@@ -358,8 +358,10 @@ function resolveGotrueEnvInput(params: {
  * Go's `mountEmailTemplates` call sites for Kong (`start.go:544-558`): every configured template,
  * then every ENABLED notification, suffixed `_notification`.
  *
- * Native config loading resolves every relative `content_path` from the project root. The Kong
- * mount builder applies that same base when it turns these paths into absolute host paths.
+ * Native config loading resolves every relative `content_path` from the project root, with the
+ * legacy `supabase/`-relative fallback for notifications. The Kong mount builder applies the same
+ * resolution when it turns these paths into absolute host paths, so the bind targets the file
+ * validation accepted.
  */
 function buildKongEmailTemplateMounts(
   email: LegacyResolvedAuthEmail,
@@ -374,6 +376,7 @@ function buildKongEmailTemplateMounts(
       .map(([id, notification]) => ({
         id: `${id}_notification`,
         contentPath: notification.content_path,
+        notification: true,
       })),
   ];
 }
