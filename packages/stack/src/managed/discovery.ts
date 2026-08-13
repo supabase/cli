@@ -64,6 +64,21 @@ export interface ManagedWorkspaceDiscoveryIdentity {
   readonly contextId?: string;
 }
 
+/** Evidence from an ordinary-folder marker found beside a Git checkout. */
+export interface ManagedOrdinaryMarkerEvidence {
+  readonly path: string;
+  readonly present: boolean;
+  readonly identity?: ManagedWorkspaceDiscoveryIdentity;
+}
+
+/** One exact live ordinary-folder claim eligible for folder-to-Git migration. */
+export interface ManagedFolderToGitClaim {
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly contextId: string;
+  readonly canonicalPath: string;
+}
+
 export interface ManagedBranchOwnerEvidence {
   readonly contextId?: string;
   readonly authoritativeOwnerBranch?: string;
@@ -88,6 +103,10 @@ export interface ManagedWorkspaceDiscovery {
   readonly context: ManagedWorkspaceDiscoveryContext;
   readonly contextDescriptor: ManagedContextDescriptor;
   readonly identity: ManagedWorkspaceDiscoveryIdentity;
+  /** Ordinary marker is evidence only; it never becomes the active Git identity. */
+  readonly ordinaryMarker?: ManagedOrdinaryMarkerEvidence;
+  /** Exact live ordinary-folder claims eligible for one folder-to-Git migration. */
+  readonly folderToGitClaims: ReadonlyArray<ManagedFolderToGitClaim>;
   readonly registryContextId?: string;
   readonly stacks: ReadonlyArray<ManagedStackProjection>;
   readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
@@ -122,6 +141,7 @@ const transitionMatches = (
   workspaceRoot: string,
 ): boolean =>
   transition.phase !== "finalized" &&
+  (transition.kind !== "folder-to-git" || transition.branch === branch) &&
   ((transition.projectId === identity.projectId &&
     transition.checkoutId === undefined &&
     transition.contextId === undefined &&
@@ -280,6 +300,7 @@ export const discoverWorkspace = (
     let identity: ManagedWorkspaceDiscoveryIdentity = {};
     let registryContextId: string | undefined;
     let ownerEvidence: ManagedBranchOwnerEvidence | undefined;
+    let ordinaryMarker: ManagedOrdinaryMarkerEvidence | undefined;
 
     if (inspection.kind === "ordinary-folder") {
       const marker = yield* readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPath);
@@ -296,6 +317,20 @@ export const discoverWorkspace = (
         registryContextId = context?.id;
       }
     } else {
+      // A tracked `.supabase/identity.json` can be left behind by a folder
+      // becoming a repository. It is read as transition evidence only; its
+      // values never populate the active Git identity below.
+      const markerPath = ordinaryWorkspaceIdentityPath(canonicalPath);
+      const fs = yield* FileSystem.FileSystem;
+      const markerExists = yield* fs
+        .exists(markerPath)
+        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
+      const marker = yield* Effect.exit(readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPath));
+      ordinaryMarker = {
+        path: markerPath,
+        present: markerExists,
+        identity: marker._tag === "Success" ? marker.value : undefined,
+      };
       const stored = yield* readGitCheckoutIdentityWithFileSystem(inspection);
       const contextId =
         inspection.head.kind === "detached"
@@ -313,20 +348,50 @@ export const discoverWorkspace = (
     }
 
     const claims = yield* repository.listIdentityClaims(identity.projectId);
+    const allClaims =
+      identity.projectId === undefined ? claims : yield* repository.listIdentityClaims();
     // A new-checkout transition is reserved before the marker has an identity,
     // so its project scope is intentionally empty. Read the complete transition
     // set when a marker now supplies a project ID; otherwise an interrupted
     // publication would disappear from discovery instead of remaining resumable.
     const transitionClaims =
       identity.projectId === undefined ? claims : yield* repository.listIdentityClaims();
+    const folderToGitClaims: ReadonlyArray<ManagedFolderToGitClaim> =
+      inspection.kind === "git-checkout"
+        ? allClaims.locations
+            .filter(
+              (location) =>
+                location.state === "active" &&
+                location.canonicalPath === metadata.workspace.workspaceRoot,
+            )
+            .flatMap((location) => {
+              const context = allClaims.contexts.find(
+                (candidate) =>
+                  candidate.checkoutId === location.checkoutId && candidate.kind === "workspace",
+              );
+              return context === undefined
+                ? []
+                : [
+                    {
+                      projectId: context.projectId,
+                      checkoutId: location.checkoutId,
+                      contextId: context.id,
+                      canonicalPath: location.canonicalPath,
+                    },
+                  ];
+            })
+        : [];
     const locations =
       identity.checkoutId === undefined
         ? claims.locations
         : claims.locations.filter((location) => location.checkoutId === identity.checkoutId);
+    const folderClaimCheckoutIds = new Set(folderToGitClaims.map((claim) => claim.checkoutId));
     const samePathClaims = claims.locations.filter(
       (location) =>
         location.canonicalPath === metadata.workspace.workspaceRoot &&
-        location.checkoutId !== identity.checkoutId,
+        (identity.checkoutId !== undefined
+          ? location.checkoutId !== identity.checkoutId
+          : !folderClaimCheckoutIds.has(location.checkoutId)),
     );
 
     const stacks = yield* matchingStacks(repository, identity);
@@ -477,6 +542,16 @@ export const discoverWorkspace = (
     ) {
       state = "ambiguous";
       conflicts.push(`Context ${identity.contextId} has multiple plausible live owners`);
+    } else if (folderToGitClaims.length > 1) {
+      state = "duplicate";
+      conflicts.push("Multiple live ordinary-folder claims match this Git checkout path");
+    } else if (
+      folderToGitClaims.length === 1 &&
+      inspection.kind === "git-checkout" &&
+      !completeIdentity(identity)
+    ) {
+      state = "adoptable";
+      warnings.push("An exact ordinary-folder claim can be migrated into Git-owned identity");
     } else if (
       metadata.context.kind === "branch" &&
       currentBranch !== undefined &&
@@ -549,6 +624,8 @@ export const discoverWorkspace = (
       state,
       ...metadata,
       identity,
+      ordinaryMarker,
+      folderToGitClaims,
       registryContextId,
       stacks,
       locations,

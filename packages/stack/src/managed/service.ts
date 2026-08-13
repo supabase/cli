@@ -43,14 +43,16 @@ import {
   type ManagedStackRecord,
   type ManagedStackSelection,
 } from "./model.ts";
-import { ensureOrdinaryWorkspaceIdentity } from "./identity.ts";
+import { ensureOrdinaryWorkspaceIdentity, publishGitCheckoutIdentity } from "./identity.ts";
 import {
   ensureBranchContextId,
   ensureGitCheckoutIdentity,
   GitConfigStore,
+  gitBranchContextIdKey,
   inspectWorkspace,
   replaceBranchContextId,
   readBranchContextId,
+  readGitCheckoutIdentityWithFileSystem,
   type GitCheckoutInspection,
 } from "./git.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
@@ -58,6 +60,7 @@ import {
   assertManagedStackRoot,
   managedStackPaths,
   ordinaryWorkspaceIdentityPath,
+  gitConfigPath,
   requireExplicitManagedStateRoot,
 } from "./paths.ts";
 import { fromCallback, isBooleanAnswer } from "./callback.ts";
@@ -978,6 +981,259 @@ export class ManagedStackService extends Context.Service<
               Effect.provideService(ManagedStackRepository, repository),
             ),
           );
+
+        /**
+         * Convert one exact ordinary-folder claim into Git-owned identity.
+         * The ordinary marker is deliberately never rewritten or deleted: it
+         * is historical evidence, while the registry claim and the Git files
+         * are the authoritative winner. A reserved transition owns the whole
+         * sequence, so an interrupted publication can only resume after every
+         * expected value still matches.
+         */
+        const migrateFolderToGit = (
+          report: ManagedWorkspaceDiscovery,
+        ): Effect.Effect<
+          ManagedWorkspaceDiscovery,
+          | InvalidManagedIdentityError
+          | DuplicateManagedIdentityError
+          | UnsupportedGitWorkspaceError
+          | ManagedIdentityRecoveryError
+        > =>
+          Effect.gen(function* () {
+            const resuming = report.activeTransition?.kind === "folder-to-git";
+            if (!resuming) {
+              if (report.folderToGitClaims.length === 0) return report;
+              if (report.folderToGitClaims.length > 1) {
+                return yield* Effect.fail(
+                  new ManagedCheckoutConflictError({
+                    checkoutId: report.folderToGitClaims[0]?.checkoutId ?? "unknown",
+                    canonicalPath: report.workspace.workspaceRoot,
+                  }),
+                );
+              }
+              if (report.folderToGitClaims.length !== 1) return report;
+              if (
+                report.state !== "adoptable" ||
+                report.conflicts.length > 0 ||
+                report.identity.projectId !== undefined ||
+                report.identity.checkoutId !== undefined ||
+                report.identity.contextId !== undefined
+              ) {
+                return report;
+              }
+            }
+            const claim =
+              report.folderToGitClaims[0] ??
+              (report.activeTransition?.projectId !== undefined &&
+              report.activeTransition.checkoutId !== undefined &&
+              report.activeTransition.contextId !== undefined &&
+              report.activeTransition.path !== undefined
+                ? {
+                    projectId: report.activeTransition.projectId,
+                    checkoutId: report.activeTransition.checkoutId,
+                    contextId: report.activeTransition.contextId,
+                    canonicalPath: report.activeTransition.path,
+                  }
+                : undefined);
+            if (claim === undefined || report.workspace.checkoutKind === "ordinary") return report;
+            const path = report.workspace.workspaceRoot;
+            const inspection = yield* withWorkspaceServices(inspectWorkspace(path));
+            if (inspection.kind !== "git-checkout") {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Folder-to-Git migration lost its Git workspace",
+                }),
+              );
+            }
+            const transition =
+              report.activeTransition?.kind === "folder-to-git"
+                ? report.activeTransition
+                : yield* repository.reserveIdentityTransition({
+                    id: yield* managedUuid("identity transition"),
+                    kind: "folder-to-git",
+                    projectId: claim.projectId,
+                    checkoutId: claim.checkoutId,
+                    contextId: claim.contextId,
+                    branch: report.context.kind === "branch" ? report.context.branch : undefined,
+                    path,
+                    expectedGitValue: "absent",
+                    targetGitValue: claim.contextId,
+                    now: now(),
+                  });
+            if (
+              transition.kind !== "folder-to-git" ||
+              transition.projectId !== claim.projectId ||
+              transition.checkoutId !== claim.checkoutId ||
+              transition.contextId !== claim.contextId ||
+              transition.path !== path ||
+              transition.expectedGitValue !== "absent" ||
+              transition.targetGitValue !== claim.contextId ||
+              transition.branch !==
+                (report.context.kind === "branch" ? report.context.branch : undefined)
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+
+            if (transition.phase === "reserved") {
+              const claimsAfterReserve = yield* repository.listIdentityClaims();
+              const exactLocationClaims = claimsAfterReserve.locations.filter(
+                (location) => location.state === "active" && location.canonicalPath === path,
+              );
+              const exactContext = claimsAfterReserve.contexts.find(
+                (context) => context.id === claim.contextId,
+              );
+              if (
+                exactLocationClaims.length !== 1 ||
+                exactLocationClaims[0]?.checkoutId !== claim.checkoutId ||
+                exactContext?.projectId !== claim.projectId ||
+                exactContext.checkoutId !== claim.checkoutId ||
+                exactContext.kind !== "workspace"
+              ) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+            }
+
+            const gitIdentity = yield* withWorkspaceServices(
+              readGitCheckoutIdentityWithFileSystem(inspection),
+            );
+            const branchContext =
+              inspection.head.kind !== "detached"
+                ? yield* withWorkspaceServices(
+                    readBranchContextId(inspection, inspection.head.branch),
+                  )
+                : undefined;
+            if (
+              (gitIdentity.projectId !== undefined && gitIdentity.projectId !== claim.projectId) ||
+              (gitIdentity.checkoutId !== undefined &&
+                gitIdentity.checkoutId !== claim.checkoutId) ||
+              (branchContext !== undefined && branchContext !== claim.contextId)
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            if (transition.phase === "reserved") {
+              const config = gitConfigPath(inspection.commonDirectory);
+              const publishConfig = (key: string, value: string) =>
+                withWorkspaceServices(
+                  Effect.gen(function* () {
+                    const store = yield* GitConfigStore;
+                    const values = yield* store.getAll(config, key);
+                    if (values.length === 0) {
+                      yield* store.add(config, key, value);
+                      const winner = yield* store.getAll(config, key);
+                      if (winner[0] !== value) {
+                        return yield* Effect.fail(
+                          new ManagedIdentityTransitionOwnershipError({
+                            transitionId: transition.id,
+                          }),
+                        );
+                      }
+                    } else if (values[0] !== value) {
+                      return yield* Effect.fail(
+                        new ManagedIdentityTransitionOwnershipError({
+                          transitionId: transition.id,
+                        }),
+                      );
+                    }
+                  }),
+                );
+              yield* publishConfig("supabase.projectId", claim.projectId);
+              yield* withWorkspaceServices(
+                publishGitCheckoutIdentity(inspection.gitDirectory, claim.checkoutId),
+              );
+              if (inspection.head.kind !== "detached") {
+                yield* publishConfig(
+                  gitBranchContextIdKey(inspection.head.branch),
+                  claim.contextId,
+                );
+              }
+              const reread = yield* withWorkspaceServices(
+                readGitCheckoutIdentityWithFileSystem(inspection),
+              );
+              const rereadBranch =
+                inspection.head.kind !== "detached"
+                  ? yield* withWorkspaceServices(
+                      readBranchContextId(inspection, inspection.head.branch),
+                    )
+                  : undefined;
+              if (
+                reread.projectId !== claim.projectId ||
+                reread.checkoutId !== claim.checkoutId ||
+                (inspection.head.kind !== "detached" && rereadBranch !== claim.contextId)
+              ) {
+                return yield* Effect.fail(
+                  new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+                );
+              }
+              yield* repository.advanceIdentityTransition({
+                id: transition.id,
+                expectedPhase: "reserved",
+                phase: "git-written",
+                now: now(),
+              });
+            }
+
+            if (inspection.head.kind !== "detached") {
+              yield* repository.migrateContextToBranch({
+                contextId: claim.contextId,
+                projectId: claim.projectId,
+                checkoutId: claim.checkoutId,
+                branch: inspection.head.branch,
+                now: now(),
+              });
+            }
+            const requiredGitIdentity = yield* withWorkspaceServices(
+              readGitCheckoutIdentityWithFileSystem(inspection),
+            );
+            const requiredBranchContext =
+              inspection.head.kind !== "detached"
+                ? yield* withWorkspaceServices(
+                    readBranchContextId(inspection, inspection.head.branch),
+                  )
+                : undefined;
+            if (
+              requiredGitIdentity.projectId !== claim.projectId ||
+              requiredGitIdentity.checkoutId !== claim.checkoutId ||
+              (inspection.head.kind !== "detached" && requiredBranchContext !== claim.contextId)
+            ) {
+              return yield* Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+              );
+            }
+            yield* repository.registerCheckoutIdentity({
+              identity: {
+                projectId: claim.projectId,
+                checkoutId: claim.checkoutId,
+                contextId: claim.contextId,
+              },
+              checkoutKind: checkoutKindOf(inspection),
+              checkoutRootPath: path,
+              locationId: yield* managedUuid("checkout location"),
+              context:
+                inspection.head.kind !== "detached"
+                  ? { kind: "branch", locator: inspection.head.branch }
+                  : { kind: "workspace" },
+              now: now(),
+            });
+            const latest =
+              (yield* repository.listIdentityClaims()).transitions.find(
+                (candidate) => candidate.id === transition.id,
+              ) ?? transition;
+            if (latest.phase === "git-written") {
+              yield* repository.finalizeIdentityTransition({
+                id: latest.id,
+                expectedPhase: "git-written",
+                now: now(),
+              });
+            }
+            const migrated = yield* discover(path);
+            return migrated;
+          });
 
         const compareText = (left: string, right: string): number =>
           left < right ? -1 : left > right ? 1 : 0;
@@ -2120,6 +2376,14 @@ export class ManagedStackService extends Context.Service<
               );
             }
             let recoveryReportForStart = settledReport;
+            if (
+              resolveOptions.operation === "start" &&
+              (settledReport.folderToGitClaims.length > 0 ||
+                (settledReport.state === "transitioning" &&
+                  settledReport.activeTransition?.kind === "folder-to-git"))
+            ) {
+              recoveryReportForStart = yield* migrateFolderToGit(settledReport);
+            }
             if (resolveOptions.operation === "start" && settledReport.state === "moved") {
               recoveryReportForStart = yield* rebindCheckout({
                 workspacePath: resolveOptions.workspacePath,

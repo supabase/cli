@@ -4,14 +4,16 @@ import { dirname } from "node:path";
 import { Effect, FileSystem, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
 import {
+  GIT_CHECKOUT_IDENTITY_VERSION,
   InvalidManagedIdentityError,
   ORDINARY_WORKSPACE_IDENTITY_VERSION,
+  type GitCheckoutIdentity,
   type OrdinaryWorkspaceIdentity,
 } from "./model.ts";
 import { assertManagedUuid, createManagedUuid } from "./ids.ts";
 import { asRaised, failsOnlyWith } from "./failure.ts";
 import { errorCode } from "./error-code.ts";
-import { ordinaryWorkspaceIdentityPath } from "./paths.ts";
+import { gitCheckoutIdentityPath, ordinaryWorkspaceIdentityPath } from "./paths.ts";
 
 /**
  * The marker's own failures are the only ones this module reports. Every
@@ -217,5 +219,94 @@ export const ensureOrdinaryWorkspaceIdentity = (
     Effect.tryPromise({
       try: () => ensureIdentity(workspacePath, idFactory),
       catch: asRaised,
+    }),
+  );
+
+/**
+ * Publish a caller-selected checkout identity into a git directory without
+ * ever replacing a winner. Folder-to-Git conversion uses this primitive after
+ * reserving its registry transition; an existing matching marker is already
+ * the settled winner, while a different marker is a transition ownership
+ * failure and must not be overwritten.
+ */
+export const publishGitCheckoutIdentity = (
+  gitDirectory: string,
+  checkoutId: string,
+): Effect.Effect<void, InvalidManagedIdentityError, FileSystem.FileSystem> =>
+  failsWithIdentity(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const markerPath = gitCheckoutIdentityPath(gitDirectory);
+      const identity: GitCheckoutIdentity = {
+        version: GIT_CHECKOUT_IDENTITY_VERSION,
+        checkoutId: assertManagedUuid(checkoutId, "checkoutId"),
+      };
+      const existing = yield* fs.readFileString(markerPath).pipe(
+        Effect.map((content) => {
+          try {
+            const value: unknown = JSON.parse(content);
+            if (typeof value !== "object" || value === null) return undefined;
+            const version = Reflect.get(value, "version");
+            const valueId = Reflect.get(value, "checkoutId");
+            return version === GIT_CHECKOUT_IDENTITY_VERSION && typeof valueId === "string"
+              ? assertManagedUuid(valueId, "checkoutId")
+              : undefined;
+          } catch {
+            return undefined;
+          }
+        }),
+        Effect.catchTag("PlatformError", (error) =>
+          error.reason._tag === "NotFound"
+            ? Effect.succeed<string | undefined>(undefined)
+            : Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: `Git checkout identity is inaccessible (${error.message})`,
+                }),
+              ),
+        ),
+      );
+      if (existing !== undefined) {
+        if (existing !== identity.checkoutId) {
+          return yield* Effect.fail(
+            new InvalidManagedIdentityError({
+              message: "Git checkout identity changed before folder-to-Git migration",
+            }),
+          );
+        }
+        return;
+      }
+      const outcome = yield* Effect.tryPromise({
+        try: () =>
+          claimFileAtomically(markerPath, `${JSON.stringify(identity, null, 2)}\n`, {
+            mode: 0o600,
+            temporaryId: createManagedUuid(randomUUID, "git checkout identity temporary id"),
+          }),
+        catch: asRaised,
+      });
+      if (outcome === "claimed") return;
+      const winner = yield* fs.readFileString(markerPath).pipe(
+        Effect.map((content) => {
+          try {
+            const value: unknown = JSON.parse(content);
+            const valueId =
+              typeof value === "object" && value !== null
+                ? Reflect.get(value, "checkoutId")
+                : undefined;
+            return typeof valueId === "string"
+              ? assertManagedUuid(valueId, "checkoutId")
+              : undefined;
+          } catch {
+            return undefined;
+          }
+        }),
+        Effect.catchTag("PlatformError", () => Effect.succeed<string | undefined>(undefined)),
+      );
+      if (winner !== identity.checkoutId) {
+        return yield* Effect.fail(
+          new InvalidManagedIdentityError({
+            message: "Git checkout identity publication raced without the requested winner",
+          }),
+        );
+      }
     }),
   );
