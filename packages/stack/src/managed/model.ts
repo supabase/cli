@@ -1,6 +1,5 @@
 import { Data } from "effect";
 
-export const MANAGED_REGISTRY_SCHEMA_VERSION = 4;
 export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
 export const GIT_CHECKOUT_IDENTITY_VERSION = 1;
 export const DEFAULT_MANAGED_STACK_NAME = "default";
@@ -271,19 +270,6 @@ export class UnsupportedGitWorkspaceError extends Data.TaggedError("UnsupportedG
 
   override get message(): string {
     return `${this.reason}: ${JSON.stringify(this.path)}`;
-  }
-}
-
-export class UnsupportedManagedRegistryVersionError extends Data.TaggedError(
-  "UnsupportedManagedRegistryVersionError",
-)<{
-  readonly found: number;
-  readonly supported: number;
-}> {
-  readonly code = "UNSUPPORTED_MANAGED_REGISTRY_VERSION" as const;
-
-  override get message(): string {
-    return `Managed registry version ${this.found} is unsupported; expected version ${this.supported}`;
   }
 }
 
@@ -565,8 +551,7 @@ export type ManagedStackError =
   | ManagedStackNotStoppedError
   | ManagedStackPublicationTimeoutError
   | UnsafeManagedStackPathError
-  | UnsupportedGitWorkspaceError
-  | UnsupportedManagedRegistryVersionError;
+  | UnsupportedGitWorkspaceError;
 
 /**
  * Every `code` literal declared by a managed failure, and every `_tag`
@@ -630,7 +615,6 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "MANAGED_STACK_PUBLICATION_TIMEOUT",
   "UNSAFE_MANAGED_STACK_PATH",
   "UNSUPPORTED_GIT_WORKSPACE",
-  "UNSUPPORTED_MANAGED_REGISTRY_VERSION",
 ] as const);
 
 /**
@@ -668,7 +652,6 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_STACK_PUBLICATION_TIMEOUT: "ManagedStackPublicationTimeoutError",
   UNSAFE_MANAGED_STACK_PATH: "UnsafeManagedStackPathError",
   UNSUPPORTED_GIT_WORKSPACE: "UnsupportedGitWorkspaceError",
-  UNSUPPORTED_MANAGED_REGISTRY_VERSION: "UnsupportedManagedRegistryVersionError",
 } as const satisfies Record<ManagedErrorCode, ManagedErrorTag>;
 
 const MANAGED_ERROR_TAGS: ReadonlySet<string> = new Set(Object.values(MANAGED_ERROR_TAG_BY_CODE));

@@ -10,13 +10,11 @@ import {
   DuplicateManagedPortKeyError,
   InvalidManagedOwnerPidError,
   InvalidManagedPortError,
-  MANAGED_REGISTRY_SCHEMA_VERSION,
   ManagedOperationOwnershipError,
   ManagedPendingStackUpdateError,
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
-  UnsupportedManagedRegistryVersionError,
   type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
   type ManagedIdentityClaims,
@@ -380,24 +378,42 @@ const runTransaction = <A>(
 };
 
 /**
- * The schema migration is a registry decision like any other, so it runs through
- * {@link runTransaction}: it is the first thing an opened handle does, before the
- * repository it initializes exists, so no transaction can be open on the handle
- * yet. An already-current registry returns without writing and the transaction
- * commits nothing.
+ * Creates the current registry schema directly on a fresh database handle.
+ * This package is unreleased, so there is no historical schema to migrate or
+ * version marker to maintain.
  */
-const migrateSchema = (database: ManagedSqliteDatabase): void =>
+const createSchema = (database: ManagedSqliteDatabase): void =>
   runTransaction(database, "BEGIN IMMEDIATE", () => {
-    const versionRow = database.prepare("PRAGMA user_version").get();
-    const version = getNumber(versionRow, "user_version");
-    if (version !== 0 && version !== MANAGED_REGISTRY_SCHEMA_VERSION) {
-      throw new UnsupportedManagedRegistryVersionError({
-        found: version,
-        supported: MANAGED_REGISTRY_SCHEMA_VERSION,
-      });
-    }
-    if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
+    const requiredObjects = [
+      "projects",
+      "checkouts",
+      "checkout_locations",
+      "one_active_location_per_checkout",
+      "one_active_location_per_path",
+      "contexts",
+      "one_checkout_scoped_context_per_kind",
+      "identity_transitions",
+      "stacks",
+      "one_live_stack_per_identity",
+      "ports",
+      "port_assignments_by_port",
+      "operations",
+      "one_active_operation_per_stack",
+    ] as const;
+    const existingObjects = new Set(
+      database
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE name IN (${requiredObjects.map(() => "?").join(", ")})`,
+        )
+        .all(requiredObjects)
+        .map((row) => getString(row, "name")),
+    );
+    if (existingObjects.size === requiredObjects.length) {
       return;
+    }
+    if (existingObjects.size !== 0) {
+      throw new Error("Managed registry schema is incomplete");
     }
     database.exec(`
       CREATE TABLE projects (
@@ -508,7 +524,6 @@ const migrateSchema = (database: ManagedSqliteDatabase): void =>
         ON operations(stack_id)
         WHERE status = 'active';
 
-      PRAGMA user_version = ${MANAGED_REGISTRY_SCHEMA_VERSION};
     `);
   });
 
@@ -516,28 +531,18 @@ const migrateSchema = (database: ManagedSqliteDatabase): void =>
  * Prepares a freshly opened handle for use as the registry.
  *
  * `busy_timeout` is set first so every later statement waits out a writer on its
- * own, then the file is converted to WAL, and only then is the schema read and
- * created. A registry written by an unsupported version is the one outcome a
- * caller can act on, so it is the only failure this reports; everything else the
- * driver raises stays a defect.
+ * own, then the file is converted to WAL, and only then is the current schema
+ * created directly. Driver errors stay defects so actual SQLite corruption/open
+ * failures remain visible to callers.
  */
-const initializeRegistry = (
-  database: ManagedSqliteDatabase,
-): Effect.Effect<void, UnsupportedManagedRegistryVersionError> =>
+const initializeRegistry = (database: ManagedSqliteDatabase): Effect.Effect<void> =>
   Effect.gen(function* () {
     yield* Effect.sync(() => {
       database.exec("PRAGMA busy_timeout = 5000");
       database.exec("PRAGMA foreign_keys = ON");
     });
     yield* enableWriteAheadLogging(database);
-    yield* Effect.try({
-      try: () => {
-        migrateSchema(database);
-      },
-      catch: failsWith<UnsupportedManagedRegistryVersionError>(
-        UnsupportedManagedRegistryVersionError,
-      ),
-    });
+    yield* Effect.sync(() => createSchema(database));
   });
 
 /**
@@ -1660,7 +1665,7 @@ const requireOwnerPid = (
  */
 const createSqliteManagedStackRepository = (
   database: ManagedSqliteDatabase,
-): Effect.Effect<ManagedStackRepositoryShape, UnsupportedManagedRegistryVersionError> =>
+): Effect.Effect<ManagedStackRepositoryShape> =>
   Effect.gen(function* () {
     yield* initializeRegistry(database);
 
@@ -1870,7 +1875,7 @@ export const hardenManagedRegistryFile = (path: string): void => {
  */
 export const sqliteManagedStackRepositoryLayer = (
   openDatabase: () => ManagedSqliteDatabase,
-): Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError> =>
+): Layer.Layer<ManagedStackRepository> =>
   Layer.effect(
     ManagedStackRepository,
     Effect.gen(function* () {

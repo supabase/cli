@@ -26,7 +26,6 @@ import {
   ManagedCheckoutConflictError,
   DuplicateManagedPortKeyError,
   InvalidManagedIdentityError,
-  MANAGED_REGISTRY_SCHEMA_VERSION,
   InvalidManagedOwnerPidError,
   ManagedAbandonedOperationError,
   InvalidManagedPortError,
@@ -42,7 +41,6 @@ import {
   ManagedStackPublicationTimeoutError,
   ManagedIdentityTransitionOwnershipError,
   UnsafeManagedStackPathError,
-  UnsupportedManagedRegistryVersionError,
   type ManagedStackConfiguration,
   type ManagedStackProjection,
   type ManagedStackRecord,
@@ -2819,49 +2817,6 @@ describe("managed repository and lifecycle", () => {
     await registry.close();
   });
 
-  it("fails safely when a registry has a newer schema version", async () => {
-    const root = makeRoot();
-    const databasePath = join(root, "future.sqlite3");
-    const database = new Database(databasePath, { create: true });
-    database.exec("PRAGMA user_version = 999");
-    database.close();
-
-    await expect(openRegistry(databasePath)).rejects.toBeInstanceOf(
-      UnsupportedManagedRegistryVersionError,
-    );
-  });
-
-  it("refuses the production entrypoint over a registry written by a newer CLI", async () => {
-    // The one registry failure a caller can act on has to survive the whole
-    // production path — layer, runtime, facade — as itself, so an embedder can
-    // tell "upgrade your CLI" apart from a bug in this one.
-    const root = makeRoot();
-    const stateRoot = join(root, "managed");
-    mkdirSync(stateRoot, { recursive: true });
-    const database = new Database(managedRegistryPath(stateRoot), { create: true });
-    database.exec("PRAGMA user_version = 999");
-    database.close();
-
-    await expect(createManagedStackService({ stateRoot })).rejects.toBeInstanceOf(
-      UnsupportedManagedRegistryVersionError,
-    );
-  });
-
-  it.each([1, 2])(
-    "fails clearly instead of opening obsolete development schema v%i",
-    async (version) => {
-      const root = makeRoot();
-      const databasePath = join(root, `obsolete-v${version}.sqlite3`);
-      const database = new Database(databasePath, { create: true });
-      database.exec(`PRAGMA user_version = ${version}`);
-      database.close();
-
-      await expect(openRegistry(databasePath)).rejects.toBeInstanceOf(
-        UnsupportedManagedRegistryVersionError,
-      );
-    },
-  );
-
   it("keeps registry transactions atomic while concurrent fibers share one handle", async () => {
     // A registry decision is a transaction on a single connection, so its
     // `BEGIN`, statements, and `COMMIT` must run without a suspension point
@@ -2939,17 +2894,22 @@ describe("managed repository and lifecycle", () => {
     await runtime.dispose();
   });
 
-  it("writes the current schema version into a fresh registry", async () => {
+  it("creates and reopens the current registry without mutating SQLite user_version", async () => {
     const root = makeRoot();
     const databasePath = managedRegistryPath(join(root, "fresh"));
-    await (await openRegistry(databasePath)).close();
+    const first = await openRegistry(databasePath);
+    expect(runRepo(first.repository.listStacks())).toEqual([]);
+    await first.close();
 
     const database = new Database(databasePath, { readonly: true });
     expect(database.query("PRAGMA user_version").get()).toEqual({
-      user_version: MANAGED_REGISTRY_SCHEMA_VERSION,
+      user_version: 0,
     });
     database.close();
-    expect(databasePath.endsWith("registry-v4.sqlite3")).toBe(true);
+    const second = await openRegistry(databasePath);
+    expect(runRepo(second.repository.listStacks())).toEqual([]);
+    await second.close();
+    expect(databasePath.endsWith("registry.sqlite3")).toBe(true);
   });
 
   describe("managed identity repository decisions", () => {
