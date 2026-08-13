@@ -240,11 +240,13 @@ local Implementation captures these targets before persistence or orchestrator s
 them for managed daemons, and uses them as a force-removal safety net after graceful stop. Launch,
 exact cleanup, and candidate cleanup all derive container identity through the same naming
 function, which is keyed by a namespaced form of the stack's `instanceId` when the caller supplied
-one and by its api port otherwise. An identified stack's containers also carry the raw identity as
-a `com.supabase.stack-id` Docker label, so they stay findable by it regardless of their names.
-Keying by identity is what keeps two stacks that share a port — a crashed one's leftovers and the
-sibling that reused its ports — from colliding. Auto-created PostgreSQL, Storage, and runtime paths
-are also removed.
+one and by its api port otherwise. The Docker service builder can also attach the raw identity as a
+`com.supabase.stack-id` label when a caller supplies one. The current CLI managed callers do not yet
+pass the managed stack UUID through this contract, and cleanup does not sweep by that label; wiring
+identity-keyed names, labels, and cleanup into those callers is the forward-looking CLI-2108
+contract. Once that caller wiring lands, identity-keyed names and labels will keep two stacks that
+share a port — a crashed one's leftovers and the sibling that reused its ports — from colliding.
+Auto-created PostgreSQL, Storage, and runtime paths are also removed.
 
 Cleanup is intentionally defensive:
 

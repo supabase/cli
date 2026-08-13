@@ -19,8 +19,9 @@ export interface StackIdentity {
 }
 
 /**
- * The Docker label every container of an identified stack carries, so its
- * containers can be found by identity even when their names change.
+ * The Docker label attached when a caller supplies an identified stack. A
+ * managed CLI caller can use it as a stable cleanup key when that integration
+ * passes its UUID through; current cleanup remains name-based.
  */
 export const STACK_ID_LABEL = "com.supabase.stack-id";
 

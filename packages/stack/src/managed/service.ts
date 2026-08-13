@@ -154,7 +154,7 @@ export interface ManagedStackResolution {
   readonly state: ResolvedManagedStackState;
   readonly selection?: ManagedStackSelection;
   readonly stack?: ManagedStackProjection;
-  /** Every live stack already registered in the resolved context, this one included. */
+  /** Every live stack already registered in the resolved project, checkout, and context, this one included. */
   readonly stacks: ReadonlyArray<ManagedStackProjection>;
   /** Whether this call published a checkout identity that did not exist yet. */
   readonly identityMarkerCreated: boolean;
@@ -753,7 +753,10 @@ export class ManagedStackService extends Context.Service<
           inspection: GitCheckoutInspection,
           branch: string,
           claim: boolean,
-        ): Effect.Effect<string | undefined, InvalidManagedIdentityError> =>
+        ): Effect.Effect<
+          string | undefined,
+          InvalidManagedIdentityError | UnsupportedGitWorkspaceError
+        > =>
           withWorkspaceServices(
             claim
               ? ensureBranchContextId(inspection, branch, idFactory)
@@ -813,6 +816,10 @@ export class ManagedStackService extends Context.Service<
                 marker === undefined
                   ? yield* readOrdinaryWorkspaceIdentity(canonicalPath)
                   : marker.identity;
+              const ownedContext =
+                identity?.checkoutId === undefined
+                  ? undefined
+                  : yield* repository.findCheckoutContext(identity.checkoutId, "workspace");
               return {
                 // A folder keeps all three identities in one marker, so that
                 // marker is both identity locations.
@@ -828,21 +835,23 @@ export class ManagedStackService extends Context.Service<
                 identity: {
                   projectId: identity?.projectId,
                   checkoutId: identity?.checkoutId,
-                  contextId: identity?.contextId,
+                  contextId: ownedContext?.id ?? identity?.contextId,
                 },
                 identityMarkerCreated: marker?.created ?? false,
               };
             }
 
-            // Read so a non-claiming `status` still has an identity to report;
-            // a claiming `start` reports whether it published this checkout's
-            // identity from the claim's own outcome, not from this read, which
-            // two racing claimants can both see as absent.
-            const stored = yield* withWorkspaceServices(readGitCheckoutIdentity(inspection));
             const claimed = claim
               ? yield* withWorkspaceServices(ensureGitCheckoutIdentity(inspection, idFactory))
               : undefined;
-            const checkoutId = claimed?.checkoutId ?? stored.checkoutId;
+            // Read so a non-claiming `status` still has an identity to report;
+            // a claiming `start` uses the authoritative result of its ensure
+            // call, not a redundant read that racing claimants could both see
+            // as absent.
+            const stored = claim
+              ? undefined
+              : yield* withWorkspaceServices(readGitCheckoutIdentity(inspection));
+            const checkoutId = claimed?.checkoutId ?? stored?.checkoutId;
             const head = inspection.head;
             return {
               workspace: {
@@ -864,7 +873,7 @@ export class ManagedStackService extends Context.Service<
                   ? { kind: "detached" }
                   : { kind: "branch", locator: head.branch },
               identity: {
-                projectId: claimed?.projectId ?? stored.projectId,
+                projectId: claimed?.projectId ?? stored?.projectId,
                 checkoutId,
                 contextId:
                   head.kind === "detached"
@@ -895,7 +904,7 @@ export class ManagedStackService extends Context.Service<
             : Effect.succeed({ projectId, checkoutId, contextId });
         };
 
-        /** Every live stack of one context, as a reader sees them. */
+        /** Every live stack of one resolved project, checkout, and context, as a reader sees them. */
         const contextStacks = (
           identity: ManagedIdentityTriple,
         ): Effect.Effect<ReadonlyArray<ManagedStackProjection>> =>

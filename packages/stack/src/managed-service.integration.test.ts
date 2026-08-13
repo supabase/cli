@@ -329,6 +329,33 @@ describe("ordinary-folder managed stack contract", () => {
     expect(result.stacks).toEqual([]);
   });
 
+  it("uses the registry-owned workspace context when the marker context is stale", async () => {
+    const root = makeRoot();
+    const workspace = makeWorkspace(root);
+    const service = await makeInMemoryService(root);
+
+    const created = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const markerPath = ordinaryWorkspaceIdentityPath(workspace);
+    const marker = JSON.parse(readFileSync(markerPath, "utf8")) as {
+      version: number;
+      projectId: string;
+      checkoutId: string;
+      contextId: string;
+    };
+    const staleContextId = crypto.randomUUID();
+    writeFileSync(markerPath, JSON.stringify({ ...marker, contextId: staleContextId }));
+
+    const result = await service.resolveStack({ workspacePath: workspace, operation: "status" });
+
+    expect(result.identity).toEqual(created.identity);
+    expect(result.stack?.id).toBe(created.stack.id);
+    expect(result.stacks).toEqual([created.stack]);
+    expect(JSON.parse(readFileSync(markerPath, "utf8"))).toEqual({
+      ...marker,
+      contextId: staleContextId,
+    });
+  });
+
   it("reports only the stacks of the resolved project, checkout, and context", async () => {
     const root = makeRoot();
     const repository = createInMemoryManagedStackRepository();

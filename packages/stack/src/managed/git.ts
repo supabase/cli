@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
-import { Context, Duration, Effect, FileSystem, Layer, type PlatformError } from "effect";
+import { Context, Duration, Effect, FileSystem, Layer, Schedule, type PlatformError } from "effect";
 import { claimFileAtomically } from "./atomic-claim.ts";
 import { errorCode } from "./error-code.ts";
 import { asRaised, failsOnlyWith, failsWith } from "./failure.ts";
@@ -25,7 +26,7 @@ const PACKED_REFS_FILE = "packed-refs";
 const SYMBOLIC_REF_PREFIX = "ref: ";
 
 /** SHA-1 and SHA-256 object ids, the two hashes a `HEAD` can be detached at. */
-const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
+const OBJECT_ID_PATTERN = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/i;
 
 /**
  * Entries every git directory has. A workspace that has them at its own top
@@ -76,14 +77,42 @@ export interface GitCheckoutInspection {
 export type WorkspaceInspection = GitCheckoutInspection | OrdinaryFolderInspection;
 
 const failsWithGitWorkspace = failsOnlyWith(UnsupportedGitWorkspaceError);
-const failsWithIdentity = failsOnlyWith(InvalidManagedIdentityError);
+const failsWithIdentity = <A, R>(
+  effect: Effect.Effect<A, unknown, R>,
+): Effect.Effect<A, InvalidManagedIdentityError | UnsupportedGitWorkspaceError, R> =>
+  Effect.catch(effect, (error) => {
+    if (
+      error instanceof InvalidManagedIdentityError ||
+      error instanceof UnsupportedGitWorkspaceError
+    ) {
+      return Effect.fail(error);
+    }
+    return Effect.die(error);
+  });
 
 const unsupported = (
   path: string,
   reason: string,
-  cause: UnsupportedGitWorkspaceCause,
+  workspaceCause: UnsupportedGitWorkspaceCause,
 ): Effect.Effect<never, UnsupportedGitWorkspaceError> =>
-  Effect.fail(new UnsupportedGitWorkspaceError({ path, reason, cause }));
+  Effect.fail(new UnsupportedGitWorkspaceError({ path, reason, workspaceCause }));
+
+const platformErrorPath = (error: PlatformError.PlatformError): string | undefined =>
+  error.reason._tag === "BadArgument" || typeof error.reason.pathOrDescriptor !== "string"
+    ? undefined
+    : error.reason.pathOrDescriptor;
+
+const inaccessiblePlatformError = (
+  fallbackPath: string,
+  error: PlatformError.PlatformError,
+): Effect.Effect<never, UnsupportedGitWorkspaceError> => {
+  const detail = error.reason.description === undefined ? error.message : error.reason.description;
+  return unsupported(
+    platformErrorPath(error) ?? fallbackPath,
+    `Git metadata is inaccessible (${error.reason._tag}): ${detail}`,
+    "metadata-inaccessible",
+  );
+};
 
 /**
  * A file git may or may not have written. Absence is an answer throughout git's
@@ -288,10 +317,10 @@ const resolveHead = (
   });
 
 const CONFIG_SECTION_PATTERN = /^\s*\[\s*([\w.-]+)\s*(\]?)/;
-const CORE_BARE_PATTERN = /^\s*bare\s*(?:=(.*))?$/i;
-const REF_STORAGE_PATTERN = /^\s*refStorage\s*(?:=(.*))?$/i;
-const WORKTREE_CONFIG_PATTERN = /^\s*worktreeConfig\s*(?:=(.*))?$/i;
-const TRUTHY_CONFIG_VALUES: ReadonlySet<string> = new Set(["", "1", "on", "true", "yes"]);
+const CORE_BARE_PATTERN = /^\s*bare\s*(?:=(.*))?\s*(?:[;#].*)?$/i;
+const REF_STORAGE_PATTERN = /^\s*refStorage\s*(?:=(.*))?\s*(?:[;#].*)?$/i;
+const WORKTREE_CONFIG_PATTERN = /^\s*worktreeConfig\s*(?:=(.*))?\s*(?:[;#].*)?$/i;
+const TRUTHY_CONFIG_VALUES: ReadonlySet<string> = new Set(["1", "on", "true", "yes"]);
 const REFTABLE_REF_STORAGE = "reftable";
 
 /**
@@ -337,9 +366,11 @@ const configValue = (content: string, section: string, key: RegExp): string | un
     }
     const match = inSection ? key.exec(line) : null;
     if (match !== null) {
-      // A variable with no value is `true` in git's config syntax.
-      const raw = match[1]?.split(/[;#]/)[0]?.trim() ?? "";
-      value = unquoteConfigValue(raw);
+      // A variable with no equals sign is `true` in git's config syntax. An
+      // explicit empty assignment (`bare =`, including a trailing comment) is
+      // different and means false for boolean keys.
+      const raw = match[1];
+      value = raw === undefined ? "true" : unquoteConfigValue(raw.split(/[;#]/)[0]?.trim() ?? "");
     }
   }
   return value;
@@ -462,16 +493,33 @@ export const inspectWorkspace = (
         head: yield* resolveHead(fs, gitDirectory, commonDirectory),
       };
       return inspection;
-    }),
+    }).pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "BadArgument"
+          ? Effect.die(error)
+          : inaccessiblePlatformError(workspacePath, error),
+      ),
+    ),
   );
 
 export interface GitConfigStoreShape {
   /** Every value stored at `key`, in file order; empty when it is not set. */
-  readonly getAll: (file: string, key: string) => Effect.Effect<ReadonlyArray<string>>;
+  readonly getAll: (
+    file: string,
+    key: string,
+  ) => Effect.Effect<ReadonlyArray<string>, UnsupportedGitWorkspaceError>;
   /** Appends a value to `key`, replacing nothing. */
-  readonly add: (file: string, key: string, value: string) => Effect.Effect<void>;
+  readonly add: (
+    file: string,
+    key: string,
+    value: string,
+  ) => Effect.Effect<void, UnsupportedGitWorkspaceError>;
   /** Collapses `key` to exactly `value`. */
-  readonly replace: (file: string, key: string, value: string) => Effect.Effect<void>;
+  readonly replace: (
+    file: string,
+    key: string,
+    value: string,
+  ) => Effect.Effect<void, UnsupportedGitWorkspaceError>;
 }
 
 /**
@@ -490,29 +538,18 @@ export class GitConfigStore extends Context.Service<GitConfigStore, GitConfigSto
 /** `git config --get-all` exits 1 for a key that is not set, which is an answer. */
 const MISSING_KEY_EXIT_CODE = 1;
 
-/**
- * The statuses git exits with when it cannot take the config lock: the one for a
- * config it cannot write, and the generic one it dies with.
- *
- * Matched on status rather than on the message, which is localized. Nothing else
- * git reports is worth waiting for, so a status that only looks like contention
- * costs the wait and then becomes the defect it always was.
- */
-const LOCK_CONTENTION_EXIT_CODES: ReadonlySet<number> = new Set([4, 255]);
-
-const CONFIG_LOCK_ATTEMPTS = 40;
-const CONFIG_LOCK_DELAY = Duration.millis(10);
-
 type GitConfigResult =
   | { readonly kind: "answered"; readonly stdout: string }
-  | { readonly kind: "locked"; readonly detail: string }
-  | { readonly kind: "unset" };
+  | { readonly kind: "unset" }
+  | { readonly kind: "retryable"; readonly detail: string }
+  | { readonly kind: "failed"; readonly detail: string; readonly status?: number };
 
 const runGitConfig = (
   args: ReadonlyArray<string>,
   tolerateUnset: boolean,
+  file: string,
 ): Promise<GitConfigResult> =>
-  new Promise((settle, refuse) => {
+  new Promise((settle) => {
     execFile("git", ["config", ...args], { encoding: "utf8" }, (error, stdout, stderr) => {
       if (error === null) {
         settle({ kind: "answered", stdout });
@@ -521,15 +558,33 @@ const runGitConfig = (
       // A non-zero exit reports the status as a number; a spawn failure reports an
       // `errno` string instead, and is never something git decided.
       const exitCode = error.code;
-      if (tolerateUnset && exitCode === MISSING_KEY_EXIT_CODE) {
+      if (tolerateUnset && exitCode === MISSING_KEY_EXIT_CODE && stderr.trim().length === 0) {
         settle({ kind: "unset" });
         return;
       }
-      if (typeof exitCode === "number" && LOCK_CONTENTION_EXIT_CODES.has(exitCode)) {
-        settle({ kind: "locked", detail: stderr.trim() });
-        return;
+      const detail =
+        stderr.trim().length > 0
+          ? stderr.trim()
+          : typeof exitCode === "number"
+            ? `git config exited with status ${exitCode}`
+            : `git config could not be spawned (${String(exitCode)})`;
+      // A lock can disappear between git's refusal and this callback, so the
+      // concrete lock-file check is necessarily racy. Git's write statuses 4
+      // and 255 are also ambiguous (they can mean a transient lock or a host
+      // failure), but bounded retry preserves safe concurrent claims; any
+      // terminal result is still reported as generic metadata-inaccessible.
+      if (
+        (typeof exitCode === "number" && existsSync(`${file}.lock`)) ||
+        (typeof exitCode === "number" && (exitCode === 4 || exitCode === 255))
+      ) {
+        settle({ kind: "retryable", detail });
+      } else {
+        settle({
+          kind: "failed",
+          detail,
+          status: typeof exitCode === "number" ? exitCode : undefined,
+        });
       }
-      refuse(error);
     });
   });
 
@@ -537,44 +592,66 @@ const runGitConfig = (
  * `git config` does not wait for another process' config lock — it refuses
  * immediately — so waiting is this store's job. Every claim in a repository with
  * sibling worktrees contends for that lock, so a refusal to wait would make
- * concurrent starts fail rather than serialize.
+ * concurrent starts fail rather than serialize. Retry is bounded and only
+ * triggered by concrete lock evidence or the two ambiguous git statuses above.
  */
 const gitConfig = (
   args: ReadonlyArray<string>,
   tolerateUnset: boolean,
-): Effect.Effect<string | undefined> => {
-  const attempt = (attemptsLeft: number): Effect.Effect<string | undefined> =>
-    Effect.flatMap(
-      Effect.promise(() => runGitConfig(args, tolerateUnset)),
-      (result): Effect.Effect<string | undefined> => {
-        if (result.kind === "answered") {
-          return Effect.succeed(result.stdout);
-        }
-        if (result.kind === "unset") {
-          return Effect.succeed(undefined);
-        }
-        return attemptsLeft > 0
-          ? Effect.flatMap(Effect.sleep(CONFIG_LOCK_DELAY), () => attempt(attemptsLeft - 1))
-          : Effect.die(new Error(`git config could not take the config lock: ${result.detail}`));
-      },
-    );
-  return attempt(CONFIG_LOCK_ATTEMPTS);
-};
+  file: string,
+): Effect.Effect<string | undefined, UnsupportedGitWorkspaceError> =>
+  Effect.flatMap(
+    Effect.catch(
+      Effect.retry(
+        Effect.flatMap(
+          Effect.promise(() => runGitConfig(args, tolerateUnset, file)),
+          (result) => (result.kind === "retryable" ? Effect.fail(result) : Effect.succeed(result)),
+        ),
+        {
+          while: (error) => error.kind === "retryable",
+          schedule: Schedule.exponential(Duration.millis(10)).pipe(
+            Schedule.upTo({ duration: Duration.millis(400) }),
+          ),
+        },
+      ),
+      (error) =>
+        unsupported(file, `Git config is inaccessible (${error.detail})`, "metadata-inaccessible"),
+    ),
+    (result) => {
+      if (result.kind === "answered") return Effect.succeed(result.stdout);
+      if (result.kind === "unset") return Effect.succeed(undefined);
+      if (result.kind === "failed" && result.status === 128) {
+        return unsupported(
+          file,
+          `Git config is malformed (${result.detail})`,
+          "malformed-metadata",
+        );
+      }
+      return unsupported(
+        file,
+        `Git config is inaccessible (${result.detail})`,
+        "metadata-inaccessible",
+      );
+    },
+  );
 
 /** A write refuses rather than tolerating an exit status of its own. */
-const gitConfigWrite = (args: ReadonlyArray<string>): Effect.Effect<void> =>
-  Effect.asVoid(gitConfig(args, false));
+const gitConfigWrite = (
+  args: ReadonlyArray<string>,
+  file: string,
+): Effect.Effect<void, UnsupportedGitWorkspaceError> => Effect.asVoid(gitConfig(args, false, file));
 
 export const gitConfigStoreLayer: Layer.Layer<GitConfigStore> = Layer.succeed(GitConfigStore, {
   getAll: (file, key) =>
-    Effect.map(gitConfig(["--file", file, "--get-all", key], true), (stdout) =>
+    Effect.map(gitConfig(["--file", file, "--get-all", key], true, file), (stdout) =>
       (stdout ?? "")
         .split("\n")
         .map((value) => value.trim())
         .filter((value) => value.length > 0),
     ),
-  add: (file, key, value) => gitConfigWrite(["--file", file, "--add", key, value]),
-  replace: (file, key, value) => gitConfigWrite(["--file", file, "--replace-all", key, value]),
+  add: (file, key, value) => gitConfigWrite(["--file", file, "--add", key, value], file),
+  replace: (file, key, value) =>
+    gitConfigWrite(["--file", file, "--replace-all", key, value], file),
 });
 
 const requireUuid = (
@@ -609,7 +686,11 @@ const readConfigId = (
   file: string,
   key: string,
   label: string,
-): Effect.Effect<string | undefined, InvalidManagedIdentityError, GitConfigStore> =>
+): Effect.Effect<
+  string | undefined,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore
+> =>
   Effect.gen(function* () {
     const store = yield* GitConfigStore;
     const value = settledValue(yield* store.getAll(file, key));
@@ -640,7 +721,11 @@ const ensureConfigId = (
   key: string,
   label: string,
   idFactory: () => string,
-): Effect.Effect<string, InvalidManagedIdentityError, GitConfigStore> =>
+): Effect.Effect<
+  string,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore
+> =>
   Effect.gen(function* () {
     const store = yield* GitConfigStore;
     const existing = yield* store.getAll(file, key);
@@ -660,7 +745,10 @@ const ensureConfigId = (
     }
     const id = yield* requireUuid(settled, label);
     if (values.length > 1) {
-      yield* Effect.catchDefect(store.replace(file, key, id), () => Effect.void);
+      yield* Effect.catchDefect(
+        Effect.catch(store.replace(file, key, id), () => Effect.void),
+        () => Effect.void,
+      );
     }
     return id;
   });
@@ -701,7 +789,17 @@ const readCheckoutIdentity = async (
     if (errorCode(error) === "ENOENT") {
       return undefined;
     }
-    throw error;
+    if (
+      error instanceof InvalidManagedIdentityError ||
+      error instanceof UnsupportedGitWorkspaceError
+    ) {
+      throw error;
+    }
+    throw new UnsupportedGitWorkspaceError({
+      path: gitCheckoutIdentityPath(gitDirectory),
+      reason: `Git checkout identity is inaccessible (${errorCode(error) ?? String(error)})`,
+      workspaceCause: "metadata-inaccessible",
+    });
   }
 };
 
@@ -734,14 +832,29 @@ const ensureCheckoutIdentity = async (
     version: GIT_CHECKOUT_IDENTITY_VERSION,
     checkoutId: createManagedUuid(idFactory, "checkoutId"),
   };
-  const outcome = await claimFileAtomically(
-    gitCheckoutIdentityPath(gitDirectory),
-    `${JSON.stringify(identity, null, 2)}\n`,
-    {
-      mode: 0o600,
-      temporaryId: createManagedUuid(idFactory, "git checkout identity temporary id"),
-    },
-  );
+  let outcome: Awaited<ReturnType<typeof claimFileAtomically>>;
+  try {
+    outcome = await claimFileAtomically(
+      gitCheckoutIdentityPath(gitDirectory),
+      `${JSON.stringify(identity, null, 2)}\n`,
+      {
+        mode: 0o600,
+        temporaryId: createManagedUuid(idFactory, "git checkout identity temporary id"),
+      },
+    );
+  } catch (error: unknown) {
+    if (
+      error instanceof InvalidManagedIdentityError ||
+      error instanceof UnsupportedGitWorkspaceError
+    ) {
+      throw error;
+    }
+    throw new UnsupportedGitWorkspaceError({
+      path: gitCheckoutIdentityPath(gitDirectory),
+      reason: `Git checkout identity is inaccessible (${errorCode(error) ?? String(error)})`,
+      workspaceCause: "metadata-inaccessible",
+    });
+  }
   if (outcome === "claimed") {
     return { checkoutId: identity.checkoutId, created: true };
   }
@@ -791,7 +904,11 @@ export interface GitCheckoutIdentityState {
 export const ensureGitCheckoutIdentity = (
   inspection: GitCheckoutInspection,
   idFactory: () => string = randomUUID,
-): Effect.Effect<EnsureGitCheckoutIdentityResult, InvalidManagedIdentityError, GitConfigStore> =>
+): Effect.Effect<
+  EnsureGitCheckoutIdentityResult,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore
+> =>
   failsWithIdentity(
     Effect.gen(function* () {
       const projectId = yield* ensureConfigId(
@@ -817,7 +934,11 @@ export const ensureGitCheckoutIdentity = (
 /** {@link ensureGitCheckoutIdentity} without the claim: absent stays absent. */
 export const readGitCheckoutIdentity = (
   inspection: GitCheckoutInspection,
-): Effect.Effect<GitCheckoutIdentityState, InvalidManagedIdentityError, GitConfigStore> =>
+): Effect.Effect<
+  GitCheckoutIdentityState,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore
+> =>
   failsWithIdentity(
     Effect.gen(function* () {
       const projectId = yield* readConfigId(
@@ -856,7 +977,11 @@ export const ensureBranchContextId = (
   inspection: GitCheckoutInspection,
   branch: string,
   idFactory: () => string = randomUUID,
-): Effect.Effect<string, InvalidManagedIdentityError, GitConfigStore> =>
+): Effect.Effect<
+  string,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore
+> =>
   failsWithIdentity(
     Effect.flatMap(requireBranch(branch), (name) =>
       ensureConfigId(
@@ -872,7 +997,11 @@ export const ensureBranchContextId = (
 export const readBranchContextId = (
   inspection: GitCheckoutInspection,
   branch: string,
-): Effect.Effect<string | undefined, InvalidManagedIdentityError, GitConfigStore> =>
+): Effect.Effect<
+  string | undefined,
+  InvalidManagedIdentityError | UnsupportedGitWorkspaceError,
+  GitConfigStore
+> =>
   failsWithIdentity(
     Effect.flatMap(requireBranch(branch), (name) =>
       readConfigId(

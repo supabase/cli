@@ -204,12 +204,15 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
  * - `malformed-metadata` — the path is a checkout, but its git metadata
  *   (`.git` link target, `HEAD`, or the ref `HEAD` names) cannot be read or
  *   makes no sense.
+ * - `metadata-inaccessible` — the metadata exists or was expected to exist,
+ *   but the host filesystem or git config command refused access to it.
  * - `reftable` — the repository's refs are stored in a reftable, which this
  *   package does not read yet.
  */
 export type UnsupportedGitWorkspaceCause =
   | "inside-git-directory"
   | "malformed-metadata"
+  | "metadata-inaccessible"
   | "reftable";
 
 /**
@@ -225,7 +228,7 @@ export type UnsupportedGitWorkspaceCause =
 export class UnsupportedGitWorkspaceError extends Data.TaggedError("UnsupportedGitWorkspaceError")<{
   readonly path: string;
   readonly reason: string;
-  readonly cause: UnsupportedGitWorkspaceCause;
+  readonly workspaceCause: UnsupportedGitWorkspaceCause;
 }> {
   readonly code = "UNSUPPORTED_GIT_WORKSPACE" as const;
 

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach } from "vitest";
-import { Effect, Layer, type FileSystem } from "effect";
+import { Effect, FileSystem, Layer, PlatformError } from "effect";
 import {
   git,
   makeBareRepository,
@@ -82,6 +82,38 @@ describe("workspace topology", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
+  it.live("turns an inaccessible metadata filesystem failure into a typed refusal", () =>
+    Effect.gen(function* () {
+      const workspace = makeRepository(makeRoot());
+      const sharedConfig = gitConfigPath(join(workspace, ".git"));
+      const failingFileSystem = Effect.map(FileSystem.FileSystem, (fs) => ({
+        ...fs,
+        readFileString: (path: string, encoding?: string) =>
+          path === sharedConfig
+            ? Effect.fail(
+                PlatformError.systemError({
+                  _tag: "PermissionDenied",
+                  module: "test",
+                  method: "readFileString",
+                  pathOrDescriptor: path,
+                }),
+              )
+            : fs.readFileString(path, encoding),
+      }));
+
+      const failure = yield* Effect.flip(
+        inspectWorkspace(workspace).pipe(
+          Effect.provideServiceEffect(FileSystem.FileSystem, failingFileSystem),
+        ),
+      );
+
+      expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      if (failure instanceof UnsupportedGitWorkspaceError) {
+        expect(failure.workspaceCause).toBe("metadata-inaccessible");
+      }
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("resolves a primary checkout the same way from its root and from a nested path", () =>
     Effect.gen(function* () {
       const root = makeRoot();
@@ -113,7 +145,8 @@ describe("workspace topology", () => {
       const failure = yield* Effect.flip(inspectWorkspace(workspace));
 
       expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
-      expect(failure.cause).toBe("malformed-metadata");
+      expect(failure.workspaceCause).toBe("malformed-metadata");
+      expect(failure.cause).toBeUndefined();
     }).pipe(Effect.provide(gitLayer)),
   );
 
@@ -129,7 +162,7 @@ describe("workspace topology", () => {
       const failure = yield* Effect.flip(inspectWorkspace(worktree));
 
       expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
-      expect(failure.cause).toBe("malformed-metadata");
+      expect(failure.workspaceCause).toBe("malformed-metadata");
     }).pipe(Effect.provide(gitLayer)),
   );
 
@@ -145,7 +178,7 @@ describe("workspace topology", () => {
       const failure = yield* Effect.flip(inspectWorkspace(worktree));
 
       expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
-      expect(failure.cause).toBe("malformed-metadata");
+      expect(failure.workspaceCause).toBe("malformed-metadata");
       expect(existsSync(gitCheckoutIdentityPath(gitDirectory))).toBe(false);
       expect(storedConfigValue(gitConfigPath(join(repository, ".git")), GIT_PROJECT_ID_KEY)).toBe(
         undefined,
@@ -170,7 +203,7 @@ describe("workspace topology", () => {
         const failure = yield* Effect.flip(inspectWorkspace(repository));
 
         expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
-        expect(failure.cause).toBe("malformed-metadata");
+        expect(failure.workspaceCause).toBe("malformed-metadata");
       }
     }).pipe(Effect.provide(gitLayer)),
   );
@@ -180,6 +213,18 @@ describe("workspace topology", () => {
       const repository = makeRepository(makeRoot());
       const commit = git(repository, "rev-parse", "HEAD").trim();
       git(repository, "checkout", "-q", commit);
+
+      const inspection = yield* inspectCheckout(repository);
+
+      expect(inspection.head).toEqual({ kind: "detached", commit });
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("accepts an uppercase object id in a detached HEAD", () =>
+    Effect.gen(function* () {
+      const repository = makeRepository(makeRoot());
+      const commit = git(repository, "rev-parse", "HEAD").trim().toUpperCase();
+      writeFileSync(join(repository, ".git", "HEAD"), `${commit}\n`);
 
       const inspection = yield* inspectCheckout(repository);
 
@@ -301,6 +346,42 @@ describe("workspace topology", () => {
     }).pipe(Effect.provide(gitLayer)),
   );
 
+  it.live("distinguishes valueless core.bare from an explicitly empty value", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      git(repository, "worktree", "add", "-q", join(root, "wt-a"), "-b", "feat/a");
+      const config = gitConfigPath(join(repository, ".git"));
+
+      appendToConfig(config, "[core]\n\tbare = ; explicitly empty\n");
+      expect((yield* inspectCheckout(join(root, "wt-a"))).checkoutKind).toBe("linked-worktree");
+
+      appendToConfig(config, '[core]\n\tbare = ""\n');
+      expect((yield* inspectCheckout(join(root, "wt-a"))).checkoutKind).toBe("linked-worktree");
+
+      appendToConfig(config, "[core]\n\tbare\n");
+      expect((yield* inspectCheckout(join(root, "wt-a"))).checkoutKind).toBe("bare-worktree");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("applies the same boolean distinction in worktree config", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const source = makeRepository(root);
+      const bare = makeBareRepository(root, source);
+      const worktree = join(root, "bare-a");
+      git(bare, "worktree", "add", "-q", worktree, "-b", "bare-a", "main");
+      git(worktree, "sparse-checkout", "set", ".");
+      const config = gitWorktreeConfigPath(bare);
+
+      appendToConfig(config, "[core]\n\tbare = # explicitly empty\n");
+      expect((yield* inspectCheckout(worktree)).checkoutKind).toBe("linked-worktree");
+
+      appendToConfig(config, "[core]\n\tbare\n");
+      expect((yield* inspectCheckout(worktree)).checkoutKind).toBe("bare-worktree");
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("reads extensions.refStorage from the plain section only", () =>
     Effect.gen(function* () {
       const repository = makeRepository(makeRoot());
@@ -329,7 +410,7 @@ describe("workspace topology", () => {
 
       const refused = yield* Effect.flip(inspectWorkspace(repository));
       expect(refused).toBeInstanceOf(UnsupportedGitWorkspaceError);
-      expect(refused.cause).toBe("reftable");
+      expect(refused.workspaceCause).toBe("reftable");
     }).pipe(Effect.provide(gitLayer)),
   );
 
@@ -348,7 +429,7 @@ describe("workspace topology", () => {
       const refused = yield* Effect.flip(inspectWorkspace(reftable));
       expect(refused).toBeInstanceOf(UnsupportedGitWorkspaceError);
       expect(refused.code).toBe("UNSUPPORTED_GIT_WORKSPACE");
-      expect(refused.cause).toBe("reftable");
+      expect(refused.workspaceCause).toBe("reftable");
 
       // The `HEAD` stub is the tripwire behind the extension: a repository whose
       // `extensions.refStorage` cannot be read is still refused rather than
@@ -362,7 +443,7 @@ describe("workspace topology", () => {
       );
       const stillRefused = yield* Effect.flip(inspectWorkspace(reftable));
       expect(stillRefused).toBeInstanceOf(UnsupportedGitWorkspaceError);
-      expect(stillRefused.cause).toBe("reftable");
+      expect(stillRefused.workspaceCause).toBe("reftable");
 
       // A workspace nothing could classify is a workspace nothing claimed.
       expect(existsSync(gitCheckoutIdentityPath(gitDirectory))).toBe(false);
@@ -384,7 +465,7 @@ describe("workspace topology", () => {
         const failure = yield* Effect.flip(inspectWorkspace(path));
         expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
         expect(failure.code).toBe("UNSUPPORTED_GIT_WORKSPACE");
-        expect(failure.cause).toBe("inside-git-directory");
+        expect(failure.workspaceCause).toBe("inside-git-directory");
       }
     }).pipe(Effect.provide(gitLayer)),
   );
@@ -539,6 +620,21 @@ describe("git-stored identity", () => {
         expect(state.checkoutId).toBeUndefined();
         expect(yield* readBranchContextId(inspection, "main")).toBeUndefined();
         expectNothingClaimed(inspection, "main");
+      }
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("reports malformed shared git config as a typed workspace failure", () =>
+    Effect.gen(function* () {
+      const repository = makeRepository(makeRoot());
+      const inspection = yield* inspectCheckout(repository);
+      appendToConfig(gitConfigPath(inspection.commonDirectory), "[core\n");
+
+      const failure = yield* Effect.flip(readGitCheckoutIdentity(inspection));
+      expect(failure).toBeInstanceOf(UnsupportedGitWorkspaceError);
+      if (failure instanceof UnsupportedGitWorkspaceError) {
+        expect(failure.workspaceCause).toBe("malformed-metadata");
+        expect(failure.cause).toBeUndefined();
       }
     }).pipe(Effect.provide(gitLayer)),
   );

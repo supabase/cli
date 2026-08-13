@@ -64,8 +64,8 @@ export const dockerRunService = (opts: DockerRunServiceOptions): ServiceDef => {
     "--rm",
     "--name",
     containerName,
-    // The label survives any change to how names are built, so a stack's
-    // containers stay findable by the identity that owns them.
+    // Keep the identity available to a future label-keyed cleanup path when a
+    // caller supplies it; current cleanup removes the exact name below.
     ...(opts.identity.stackId === undefined
       ? []
       : ["--label", `${STACK_ID_LABEL}=${opts.identity.stackId}`]),

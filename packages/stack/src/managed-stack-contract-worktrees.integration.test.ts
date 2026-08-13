@@ -686,6 +686,7 @@ describe.each(adapters)(
       bindings.bind(context.contextId, existing.identity.contextId);
       bindings.bind(sibling.stackId, existing.stack.id);
       expect(existing.stack.lifecycle).toBe(sibling.lifecycle);
+      expect(existing.stacks).toEqual([existing.stack]);
 
       const claim = await claimCheckout(workspaceB);
       const checkoutB = checkoutFact(scenario, second.path);
@@ -706,6 +707,8 @@ describe.each(adapters)(
       bindSelection(bindings, scenario, result.selection);
       expect(result.workspace.checkoutKind).toBe(CHECKOUT_KIND_OF_MODE[second.mode]);
       expect(result.stack.paths.root).not.toBe(existing.stack.paths.root);
+      expect(result.stacks).toEqual([result.stack]);
+      expect(result.stacks.map((stack) => stack.checkoutId)).toEqual([result.stack.checkoutId]);
       const locations: WorkspaceLocations = {
         commonDirectory: join(root, gitState.commonDirectory),
         gitDirectory: join(root, gitState.gitDirectory),

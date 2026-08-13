@@ -678,13 +678,13 @@ describe("classifyCliErrorActionability", () => {
   // different causes (CLI-2107): running inside git metadata, malformed git
   // metadata, and a reftable repository. Collapsing them into one fingerprint
   // would group unrelated defects as repeats, so the adapter branches on the
-  // error's own typed `cause` field.
+  // error's own typed `workspaceCause` field.
   it("splits managed git workspace refusals by their structured cause", () => {
     const insideGitDirectory = classifyCliErrorActionability({
       _tag: "UnsupportedGitWorkspaceError",
       path: "/private/project/.git",
       reason: "Refusing to inspect a git directory as a workspace",
-      cause: "inside-git-directory",
+      workspaceCause: "inside-git-directory",
     });
     expect(insideGitDirectory.error_category).toBe("invalid_input");
     expect(insideGitDirectory.error_fingerprint).toBe(
@@ -695,7 +695,7 @@ describe("classifyCliErrorActionability", () => {
       _tag: "UnsupportedGitWorkspaceError",
       path: "/private/project/.git",
       reason: "The checkout has no readable HEAD",
-      cause: "malformed-metadata",
+      workspaceCause: "malformed-metadata",
     });
     expect(malformedMetadata.error_fingerprint).toBe(
       "tag:UnsupportedGitWorkspaceError:managed_git_workspace_malformed_metadata",
@@ -706,13 +706,27 @@ describe("classifyCliErrorActionability", () => {
       path: "/private/project/.git",
       reason:
         "Refusing a repository whose refs are stored in a reftable, which is not supported yet",
-      cause: "reftable",
+      workspaceCause: "reftable",
     });
     expect(reftable.error_fingerprint).toBe(
       "tag:UnsupportedGitWorkspaceError:managed_git_workspace_reftable",
     );
 
     expect(JSON.stringify(insideGitDirectory)).not.toContain("/private/project");
+  });
+
+  it("fingerprints workspaceCause without populating native Error.cause", () => {
+    const error = new (class extends Error {
+      readonly _tag = "UnsupportedGitWorkspaceError";
+      readonly code = "UNSUPPORTED_GIT_WORKSPACE";
+      readonly path = "/private/project/.git";
+      readonly reason = "metadata is inaccessible";
+      readonly workspaceCause = "metadata-inaccessible" as const;
+    })();
+    expect(error.cause).toBeUndefined();
+    expect(classifyCliErrorActionability(error).error_fingerprint).toBe(
+      "tag:UnsupportedGitWorkspaceError:managed_git_workspace_metadata_inaccessible",
+    );
   });
 
   it("leaves an unregistered managed-shaped failure unclassified", () => {

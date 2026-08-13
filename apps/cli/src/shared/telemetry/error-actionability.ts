@@ -110,6 +110,7 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "invalid_config",
   "managed_git_workspace_inside_git_directory",
   "managed_git_workspace_malformed_metadata",
+  "managed_git_workspace_metadata_inaccessible",
   "managed_git_workspace_reftable",
   "managed_identity",
   "managed_identity_conflict",
@@ -790,16 +791,22 @@ const UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE: Record<
 > = {
   "inside-git-directory": "managed_git_workspace_inside_git_directory",
   "malformed-metadata": "managed_git_workspace_malformed_metadata",
+  "metadata-inaccessible": "managed_git_workspace_metadata_inaccessible",
   reftable: "managed_git_workspace_reftable",
 };
 
 function isUnsupportedGitWorkspaceCause(value: string): value is UnsupportedGitWorkspaceCause {
-  return value === "inside-git-directory" || value === "malformed-metadata" || value === "reftable";
+  return (
+    value === "inside-git-directory" ||
+    value === "malformed-metadata" ||
+    value === "metadata-inaccessible" ||
+    value === "reftable"
+  );
 }
 
-/** Branches on the error's own typed `cause` field, never on `reason`/message text. */
+/** Branches on the error's own typed `workspaceCause` field, never on reason text. */
 function unsupportedGitWorkspaceFingerprintSuffix(error: ErrorRecord): CliErrorFingerprintSuffix {
-  const cause = readString(error, "cause");
+  const cause = readString(error, "workspaceCause");
   return cause !== undefined && isUnsupportedGitWorkspaceCause(cause)
     ? UNSUPPORTED_GIT_WORKSPACE_FINGERPRINT_SUFFIX_BY_CAUSE[cause]
     : "managed_git_workspace_malformed_metadata";
@@ -842,7 +849,7 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
   }),
   // The directory the command ran in holds git metadata rather than a working
   // tree — a bare repository or a `.git` — so the remediation is to run it from a
-  // checkout instead. The suffix is split by the error's own `cause` field: see
+  // checkout instead. The suffix is split by the error's own `workspaceCause` field: see
   // unsupportedGitWorkspaceFingerprintSuffix.
   UNSUPPORTED_GIT_WORKSPACE: (error) => ({
     ...actionability.invalidInput,
