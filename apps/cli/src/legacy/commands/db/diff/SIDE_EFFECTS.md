@@ -1,80 +1,63 @@
 # `supabase db diff`
 
 Native Effect port. Diffs the local project's expected schema (a throwaway shadow
-database) against a target database (local / linked / `--db-url`). Pg-delta runs
-in-process by default, migra runs in Docker via edge-runtime, and pgAdmin runs
-natively through the differ container. `--use-pg-schema` is the command's only
-remaining Go delegation (a documented keep-in-Go exception, CLI-1960).
+database) against a target database (local / linked / `--db-url`), using one of
+three native engines: bundled in-process pg-delta, migra (edge-runtime), or
+pgAdmin (CLI-1968 — a native `docker run` of the differ container, no
+edge-runtime involved). `--use-pg-schema` is the CLI's sole remaining Go
+delegation on this command — a documented keep-in-Go exception (CLI-1960), not a
+pending port.
 
-## Pg-delta implementation and compatibility
-
-- The default implementation is the in-process pg-delta engine bundled into the
-  CLI binary together with pg-topo. Its version is fixed when the CLI is built;
-  there is no runtime package download or automatic fallback to the legacy engine.
-- `SUPABASE_USE_PG_DELTA_NEXT=false` selects the legacy edge-runtime implementation
-  from either the shell or project `supabase/.env` (the shell wins). Only that
-  opt-out reads legacy catalogs under `supabase/.temp/pgdelta/`,
-  `supabase/.temp/pgdelta-version`, or `PGDELTA_NPM_REGISTRY`.
-- With `PGDELTA_DEBUG`, default-engine snapshots, plans, and diagnostics are written
-  under `supabase/.temp/pgdelta/v2/debug/<id>/`. The directory contains
-  `metadata.json` and, when available, `source-snapshot.json`,
-  `desired-snapshot.json`, `plan.json`, and `diagnostics.json`. These are diagnostic
-  artifacts, not reusable catalogs.
-- The default engine always refuses extraction errors. Coverage gaps
-  (`unmodeled_kind` or `unresolved_security_label`) warn and remain unmanaged by
-  default; `--strict-coverage` turns them into a refusal. Warnings identify the
-  diagnostic origin and explain that unsupported changes are absent from the diff;
-  when debug capture is enabled, the bundle is saved before policy evaluation.
-- SQL text and file segmentation may differ from the legacy renderer. Applicable
-  output and convergence (a subsequent diff is empty) are the compatibility contract.
-- Default-engine plans retain pg-delta's safe compaction and are formatted with
-  its human-facing preset (lowercase keywords, max width 180). A JSON object in
-  `[experimental.pgdelta].format_options` partially overrides that preset; the
-  JSON literal `null` disables formatting without disabling compaction.
+Set `SUPABASE_USE_PG_DELTA_NEXT=false` to use the legacy edge-runtime pg-delta
+implementation and its runtime package/catalog cache. The bundled engine has no
+automatic fallback; coverage gaps warn, while `--strict-coverage` makes them fatal,
+and `PGDELTA_DEBUG` writes diagnostic JSON under
+`supabase/.temp/pgdelta/v2/debug/<id>/`. Its SQL and transaction-aware file
+splits may differ from legacy output; applicable, convergent SQL is the contract.
+The bundled formatter defaults to lowercase SQL at width 180; config overrides
+it, and JSON `null` disables formatting without disabling safe compaction.
 
 ## Files Read
 
-| Path                                                                                                                                 | Format     | When                                                                                           |
-| ------------------------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`                                                                                                     | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version)                              |
-| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file                                            | dotenv     | shadow provisioning (all native targets, and the explicit `--from/--to migrations` cache miss) |
-| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                                                               | PEM        | shadow provisioning, when `api.enabled && api.tls.enabled`                                     |
-| `<workdir>/supabase/migrations/*.sql`                                                                                                | SQL        | shadow provisioning, including the native pgAdmin path                                         |
-| `<workdir>/supabase/roles.sql`                                                                                                       | SQL        | shadow provisioning, PG14 and PG15 alike; missing file tolerated                               |
-| `[db.migrations].schema_paths` globs / `<workdir>/supabase/database/**` (pg-delta declarative dir) / `<workdir>/supabase/schemas/**` | SQL        | local target's declarative fallback ladder; pgAdmin does not read it                           |
-| `~/.supabase/access-token`                                                                                                           | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                        |
-| `<workdir>/supabase/.temp/project-ref`                                                                                               | plain text | linked-ref resolution unless `--project-ref` or `SUPABASE_PROJECT_ID` supplies it              |
-| `<workdir>/supabase/.temp/pgdelta-version`                                                                                           | plain text | legacy opt-out only                                                                            |
-| `<workdir>/supabase/.temp/edge-runtime-version`                                                                                      | plain text | legacy opt-out only: edge-runtime image tag                                                    |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                                                                                            | JSON       | legacy opt-out only: explicit `--from/--to migrations` catalog cache                           |
+| Path                                                                                      | Format     | When                                                                                                                 |
+| ----------------------------------------------------------------------------------------- | ---------- | -------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`                                                          | TOML       | always (db port/password, `[experimental.pgdelta]`, deno_version)                                                    |
+| `<workdir>/supabase/.env`, `.env.local`, project-root/`SUPABASE_ENV`-selected dotenv file | dotenv     | shadow provisioning (all native targets, and the explicit `--from/--to migrations` cache miss)                       |
+| `api.tls.cert_path` / `api.tls.key_path` (under `<workdir>/supabase/`)                    | PEM        | shadow provisioning, when `api.enabled && api.tls.enabled`                                                           |
+| `<workdir>/supabase/migrations/*.sql`                                                     | SQL        | shadow provisioning (applied to the shadow source) — `--use-pgadmin` too, via the SAME `legacyMigrateShadowDatabase` |
+| `<workdir>/supabase/roles.sql`                                                            | SQL        | shadow provisioning, PG14 and PG15 alike (unlike `db reset`'s PG15-only local path); missing file tolerated          |
+| `~/.supabase/access-token`                                                                | plain text | `--linked` / `--db-url` with no `SUPABASE_ACCESS_TOKEN`                                                              |
+| `<workdir>/supabase/.temp/project-ref`                                                    | plain text | `--linked` ref resolution — skipped when `--project-ref` (or `SUPABASE_PROJECT_ID`) is set                           |
+| `<workdir>/supabase/.temp/{pgdelta-version,edge-runtime-version}`                         | plain text | legacy pg-delta opt-out only                                                                                         |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                                                 | JSON       | legacy opt-out's explicit `--from/--to migrations` catalog cache                                                     |
 
 ## Files Written
 
-| Path                                                        | Format | When                                                                                                        |
-| ----------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | non-empty `--file` diff; pg-delta may emit multiple transaction-aware files, while pgAdmin always emits one |
-| `<path>` (from `--output` / `-o`)                           | SQL    | explicit `--from/--to` mode with `--output`                                                                 |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                   | JSON   | legacy opt-out only: migrations catalog                                                                     |
-| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`    | PEM    | legacy opt-out only: Supabase TLS target                                                                    |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`     | JSON   | default engine with `PGDELTA_DEBUG`                                                                         |
-| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | `--linked` (post-run cache)                                                                                 |
-| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)                                                                                 |
+| Path                                                        | Format | When                                                                                                               |
+| ----------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql` | SQL    | non-empty `--file` diff; bundled pg-delta may emit ordered transaction-aware files, while pgAdmin always emits one |
+| `<path>` (from `--output` / `-o`)                           | SQL    | explicit `--from/--to` mode with `--output`                                                                        |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                   | JSON   | legacy opt-out's explicit migrations catalog                                                                       |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`    | PEM    | legacy opt-out, for a Supabase TLS target                                                                          |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                |
+| `~/.supabase/<workdir-hash>/linked-project.json`            | JSON   | `--linked` (post-run cache)                                                                                        |
+| `~/.supabase/telemetry.json`                                | JSON   | every invocation (post-run)                                                                                        |
 
 ## Docker
 
-- Edge-runtime container (migra, or pg-delta only under the legacy opt-out). The
-  legacy explicit `--from/--to migrations` path also runs the native pg-delta
-  catalog-export script there on a cache miss (CLI-1959; no hidden `__catalog`
-  subprocess).
+- Edge-runtime container (migra, or pg-delta under the legacy opt-out; also runs the legacy
+  declarative apply script and the pg-delta
+  catalog-export script for explicit `--from/--to migrations` on a cache miss —
+  CLI-1959, native, no longer the hidden Go `__catalog` seam).
 - Shadow Postgres container — provisioned and torn down natively (`legacyPrepareShadowSource`
   in `legacy/commands/db/shared/legacy-shadow-source.ts`, over the lower-level primitives in
   `legacy/shared/db-bootstrap/shadow-database.ts`), no longer via a Go seam. Explicit
-  `--from/--to migrations` also provisions natively. The default implementation keeps a live,
-  config-gated migrated shadow; the legacy opt-out uses `legacyResolveMigrationsCatalogRef` ->
-  `exportViaShadowCatalog` and its historical unconditional platform baseline. Neither uses a
-  `__catalog`-specific shadow or the retired `mode: "diff"` seam. `--use-pgadmin` provisions its
-  own shadow via a narrower composition — `legacyCreateShadowDatabase` -> health-wait ->
-  `legacyMigrateShadowDatabase`
+  `--from/--to migrations` reuses the SAME native primitives on a cache miss
+  (`legacyResolveMigrationsCatalogRef` -> `exportViaShadowCatalog`, `legacy-pgdelta.cache.ts`),
+  called with `targetLocal: false`/`usePgDelta: false` to skip the declarative-schema-override
+  branch — not a second, `__catalog`-specific shadow, and not a shared `mode: "diff"` parameter
+  (that seam-era concept no longer exists). `--use-pgadmin` provisions its OWN shadow via a
+  narrower composition — `legacyCreateShadowDatabase` -> health-wait -> `legacyMigrateShadowDatabase`
   directly (`diff.handler.ts`'s pgadmin branch) — with no declarative-schema-override branch and
   no `targetUrlOverride`, matching Go's `pgadmin.go` calling `MigrateShadowDatabase` directly
   rather than `PrepareShadowSource`.
@@ -113,8 +96,8 @@ natively as part of this command's own target resolve, ahead of the differ conta
 | `SUPABASE_NETWORK_ID` (`--network-id`)                                                | forces the shadow container/network onto an existing Docker network                                                                                                                                                 | no        |
 | `SUPABASE_EXPERIMENTAL_PG_DELTA`                                                      | force pg-delta engine                                                                                                                                                                                               | no        |
 | `PGDELTA_DEBUG`                                                                       | pg-delta debug capture                                                                                                                                                                                              | no        |
-| `SUPABASE_USE_PG_DELTA_NEXT`                                                          | set to `false` for the legacy edge-runtime pg-delta implementation                                                                                                                                                  | no        |
-| `PGDELTA_NPM_REGISTRY`                                                                | legacy opt-out only: scoped `@supabase` npm registry for edge-runtime                                                                                                                                               | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT`                                                          | set to `false` for legacy edge-runtime pg-delta                                                                                                                                                                     | no        |
+| `PGDELTA_NPM_REGISTRY`                                                                | legacy opt-out's scoped npm registry                                                                                                                                                                                | no        |
 | `SUPABASE_SSL_DEBUG`                                                                  | migra SSL debug logging                                                                                                                                                                                             | no        |
 | `SUPABASE_INTERNAL_IMAGE_REGISTRY`                                                    | overrides the differ's / shadow's image registry (shell **or** project `.env`, applied for the run via `legacyApplyProjectEnv`, matching `db push`/`db pull`/`db dump`)                                             | no        |
 
@@ -152,20 +135,19 @@ migra/pg-delta-engine-specific).
 
 ### `--output-format text` (Go CLI compatible)
 
-For migra and pg-delta, progress goes to stderr (`Creating shadow database...`, `Diffing schemas[: <list>]`,
+Progress to stderr (`Creating shadow database...`, `Diffing schemas[: <list>]`,
 `Finished supabase db diff on branch <branch>.`, drop-statement warning, and the
-`--file` write warning). A configured `[db.migrations].schema_paths` also prints a
-transition warning because it no longer changes the diff target. The SQL diff
-prints to stdout when neither `--file` nor explicit `--output` is set.
+`--file` write warning). A configured `[db.migrations].schema_paths` also warns
+that it no longer changes the migrations baseline. The SQL diff prints to stdout
+when neither `--file` nor explicit `--output` is set.
 
 ### `--output-format json` / `stream-json`
 
 Progress strings still go to stderr; stdout carries a single structured envelope
 `{ diff, file, files, schemas, engine, dropStatements, advisories? }` instead of
-the raw SQL. With the default pg-delta implementation, a non-empty `--file` diff
-and a non-empty declarative tree add the informational
-`DeclarativeSchemaNotUsedAsDiffBaseline` advisory; the same note is written to
-stderr. Inspection is best-effort and never changes command success.
+the raw SQL. Bundled pg-delta reports the best-effort
+`DeclarativeSchemaNotUsedAsDiffBaseline` advisory for a non-empty `--file` diff
+when declarative files exist.
 
 ### `--use-pgadmin` (CLI-1968)
 
@@ -230,13 +212,9 @@ stderr. Inspection is best-effort and never changes command success.
   effects are Go's); the Go child's telemetry is disabled so the single
   `cli_command_executed` event comes from this TS command.
 - Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
-- `--strict-coverage` applies to the bundled pg-delta engine and refuses output when
-  it encounters schema objects it cannot manage.
-- Normal mode always compares the migrations shadow with the selected live
-  database. Declarative files and `schema_paths` never replace that migrations baseline; use
-  `supabase db schema declarative sync` for declarative comparison.
-- Under the legacy opt-out, the explicit `migrations` target resolves natively
-  (CLI-1959): a bare
+- Normal mode always compares the migrations shadow to the selected live database;
+  declarative files and `schema_paths` do not replace that baseline.
+- Under the legacy opt-out, the explicit `migrations` target resolves natively (CLI-1959): a bare
   migrations-content hash cache lookup (`<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`,
   shared with `db push`'s post-apply cache write), and on a miss, a natively-provisioned
   shadow database (CLI-1956 — `legacyCreateShadowDatabase`/`legacyPrepareShadowSource`,

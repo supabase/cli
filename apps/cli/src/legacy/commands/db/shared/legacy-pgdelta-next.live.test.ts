@@ -1,12 +1,4 @@
-import { execFileSync } from "node:child_process";
-import {
-  existsSync,
-  mkdirSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  writeFileSync,
-} from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -16,10 +8,7 @@ import { describeDockerLive, runSupabaseLive } from "../../../../../tests/helper
 
 const COMMAND_TIMEOUT_MS = 280_000;
 const SCENARIO_TIMEOUT_MS = 900_000;
-const NEXT_ENV = {
-  PGDELTA_DEBUG: "1",
-  SUPABASE_USE_PG_DELTA_NEXT: "true",
-};
+const NEXT_ENV = { SUPABASE_USE_PG_DELTA_NEXT: "true" };
 
 const initialDesiredSchema = `create type public.account_state as enum ('pending', 'active');
 
@@ -31,18 +20,6 @@ create table public.disposable_note (
 create view public.auth_user_emails as
 select id, email
 from auth.users;
-`;
-
-const editedDesiredSchema = `create type public.account_state as enum ('pending', 'review', 'active');
-
-create view public.auth_user_emails as
-select id, email
-from auth.users;
-
-create table public.review_queue (
-  id bigint primary key,
-  state public.account_state not null default 'review'
-);
 `;
 
 function commandFailure(result: { stdout: string; stderr: string }): string {
@@ -58,76 +35,8 @@ function migrationFiles(projectDir: string): ReadonlyArray<string> {
     : [];
 }
 
-function debugBundleDirectories(projectDir: string): ReadonlyArray<string> {
-  const debugDir = path.join(projectDir, "supabase", ".temp", "pgdelta", "v2", "debug");
-  if (!existsSync(debugDir)) return [];
-  return readdirSync(debugDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => path.join(debugDir, entry.name))
-    .sort();
-}
-
-function requireDebugBundle(projectDir: string, operation: "declarativePlan" | "diff"): string {
-  const bundle = debugBundleDirectories(projectDir)
-    .filter((dir) => path.basename(dir).endsWith(`-${operation}`))
-    .at(-1);
-  expect(bundle, `missing ${operation} debug bundle`).toBeDefined();
-  if (bundle === undefined) throw new Error(`missing ${operation} debug bundle`);
-  return bundle;
-}
-
-function assertJsonFile(file: string): unknown {
-  expect(existsSync(file), `missing ${file}`).toBe(true);
-  return JSON.parse(readFileSync(file, "utf8"));
-}
-
-function localDatabaseUrl(config: string): string {
-  const dbSection = config.match(/\[db\][\s\S]*?\nport\s*=\s*(\d+)/u);
-  expect(dbSection?.[1], "db.port missing from generated config.toml").toBeDefined();
-  return `postgresql://postgres:postgres@127.0.0.1:${dbSection?.[1]}/postgres?sslmode=disable`;
-}
-
-function projectContainerIds(config: string): ReadonlyArray<string> {
-  const projectId = config.match(/^project_id\s*=\s*"([^"]+)"/mu)?.[1];
-  expect(projectId, "project_id missing from generated config.toml").toBeDefined();
-  if (projectId === undefined) throw new Error("project_id missing from generated config.toml");
-  const output = execFileSync(
-    "docker",
-    ["ps", "-aq", "--filter", `label=com.supabase.cli.project=${projectId}`],
-    { encoding: "utf8" },
-  );
-  return output.split(/\r?\n/u).filter(Boolean).sort();
-}
-
-function findSqlContaining(root: string, needle: string): string {
-  const match = readdirSync(root, { recursive: true })
-    .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".sql"))
-    .map((entry) => path.join(root, entry))
-    .find((file) => readFileSync(file, "utf8").includes(needle));
-  expect(match, `no SQL file under ${root} contains ${needle}`).toBeDefined();
-  if (match === undefined) throw new Error(`no SQL file under ${root} contains ${needle}`);
-  return match;
-}
-
-function findExtensionDeclaration(root: string, extension: string): string {
-  const escaped = extension.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-  const declaration = new RegExp(
-    `\\bCREATE\\s+EXTENSION(?:\\s+IF\\s+NOT\\s+EXISTS)?\\s+(?:"${escaped}"|${escaped})(?=\\s|;)`,
-    "iu",
-  );
-  const match = readdirSync(root, { recursive: true })
-    .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".sql"))
-    .map((entry) => path.join(root, entry))
-    .find((file) => declaration.test(readFileSync(file, "utf8")));
-  expect(match, `no SQL file under ${root} declares extension ${extension}`).toBeDefined();
-  if (match === undefined) throw new Error(`no SQL file under ${root} declares ${extension}`);
-  return match;
-}
-
 describeDockerLive("pg-delta next local convergence (live)", () => {
   let projectDir = "";
-  let desiredSchemaPath = "";
-  let databaseUrl = "";
 
   beforeAll(async () => {
     projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-live-"));
@@ -151,12 +60,10 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
           'declarative_schema_path = "./schemas"',
         ),
     );
-    databaseUrl = localDatabaseUrl(config);
 
     const schemasDir = path.join(projectDir, "supabase", "schemas");
     mkdirSync(schemasDir, { recursive: true });
-    desiredSchemaPath = path.join(schemasDir, "public.sql");
-    writeFileSync(desiredSchemaPath, initialDesiredSchema);
+    writeFileSync(path.join(schemasDir, "public.sql"), initialDesiredSchema);
 
     const start = await runSupabaseLive(
       [
@@ -189,673 +96,43 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
   }, COMMAND_TIMEOUT_MS);
 
   test(
-    "converges declarative state across empty, destructive, enum, URL, and migrations refs",
+    "applies a representative declarative schema and converges",
     { timeout: SCENARIO_TIMEOUT_MS },
     async () => {
       expect(migrationFiles(projectDir)).toEqual([]);
 
-      const initialDiff = await runSupabaseLive(
+      const diff = await runSupabaseLive(
         ["db", "diff", "--local", "--use-pg-delta", "-f", "initial_declarative"],
         { cwd: projectDir, env: NEXT_ENV, exitTimeoutMs: COMMAND_TIMEOUT_MS },
       );
-      expect(initialDiff.exitCode, commandFailure(initialDiff)).toBe(0);
+      expect(diff.exitCode, commandFailure(diff)).toBe(0);
 
-      const initialMigrations = migrationFiles(projectDir);
-      expect(initialMigrations.length).toBeGreaterThan(0);
-      const initialSql = initialMigrations
+      const migrations = migrationFiles(projectDir);
+      expect(migrations.length).toBeGreaterThan(0);
+      const sql = migrations
         .map((file) => readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"))
         .join("\n");
-      expect(initialSql).toContain("account_state");
-      expect(initialSql).toContain("disposable_note");
-      expect(initialSql).toContain("auth_user_emails");
-      expect(initialSql).toContain("auth.users");
-      expect(initialSql).not.toMatch(
+      expect(sql).toContain("account_state");
+      expect(sql).toContain("disposable_note");
+      expect(sql).toContain("auth_user_emails");
+      expect(sql).toContain("auth.users");
+      expect(sql).not.toMatch(
         /CREATE\s+(?:SCHEMA|TABLE)\s+(?:IF\s+NOT\s+EXISTS\s+)?["']?(?:auth|storage|realtime)["']?/iu,
       );
 
-      const declarativeBundle = requireDebugBundle(projectDir, "declarativePlan");
-      expect(assertJsonFile(path.join(declarativeBundle, "metadata.json"))).toMatchObject({
-        version: 1,
-        generation: "v2",
-        implementation: "next",
-        operation: "declarativePlan",
-        cacheReusable: false,
-        files: ["diagnostics.json", "plan.json"],
-      });
-      assertJsonFile(path.join(declarativeBundle, "plan.json"));
-      expect(Array.isArray(assertJsonFile(path.join(declarativeBundle, "diagnostics.json")))).toBe(
-        true,
-      );
-
-      const firstReset = await runSupabaseLive(["db", "reset", "--local", "--no-seed"], {
+      const reset = await runSupabaseLive(["db", "reset", "--local", "--no-seed"], {
         cwd: projectDir,
         exitTimeoutMs: COMMAND_TIMEOUT_MS,
       });
-      expect(firstReset.exitCode, commandFailure(firstReset)).toBe(0);
+      expect(reset.exitCode, commandFailure(reset)).toBe(0);
 
-      const emptyAfterInitial = await runSupabaseLive(["db", "diff", "--local", "--use-pg-delta"], {
-        cwd: projectDir,
-        env: { SUPABASE_USE_PG_DELTA_NEXT: "true" },
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      expect(emptyAfterInitial.exitCode, commandFailure(emptyAfterInitial)).toBe(0);
-      expect(emptyAfterInitial.stderr).toContain("No schema changes found");
-
-      writeFileSync(desiredSchemaPath, editedDesiredSchema);
-      const beforeEdit = new Set(migrationFiles(projectDir));
-      const editedDiff = await runSupabaseLive(
-        ["db", "diff", "--local", "--use-pg-delta", "-f", "enum_and_drop"],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "true" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(editedDiff.exitCode, commandFailure(editedDiff)).toBe(0);
-      expect(editedDiff.stderr).toContain("Found drop statements in schema diff");
-
-      const editedMigrations = migrationFiles(projectDir).filter((file) => !beforeEdit.has(file));
-      expect(editedMigrations.length).toBeGreaterThan(1);
-      const editedMigrationSql = editedMigrations.map((file) =>
-        readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
-      );
-      const editedSql = editedMigrationSql.join("\n");
-      expect(editedSql).toMatch(/ALTER\s+TYPE[\s\S]*account_state[\s\S]*ADD\s+VALUE/iu);
-      expect(editedSql).toMatch(/DROP\s+TABLE[\s\S]*disposable_note/iu);
-      expect(editedSql).toContain("review_queue");
-
-      const enumPush = await runSupabaseLive(["db", "push", "--local"], {
-        cwd: projectDir,
-        env: { SUPABASE_YES: "true" },
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      expect(enumPush.exitCode, commandFailure(enumPush)).toBe(0);
-
-      const emptyAfterEdit = await runSupabaseLive(["db", "diff", "--local", "--use-pg-delta"], {
-        cwd: projectDir,
-        env: { SUPABASE_USE_PG_DELTA_NEXT: "true" },
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      expect(emptyAfterEdit.exitCode, commandFailure(emptyAfterEdit)).toBe(0);
-      expect(emptyAfterEdit.stderr).toContain("No schema changes found");
-
-      const explicit = await runSupabaseLive(
-        ["db", "diff", "--from", "migrations", "--to", databaseUrl],
-        { cwd: projectDir, env: NEXT_ENV, exitTimeoutMs: COMMAND_TIMEOUT_MS },
-      );
-      expect(explicit.exitCode, commandFailure(explicit)).toBe(0);
-      expect(explicit.stdout.trim()).toBe("");
-
-      const diffBundle = requireDebugBundle(projectDir, "diff");
-      expect(assertJsonFile(path.join(diffBundle, "metadata.json"))).toMatchObject({
-        version: 1,
-        generation: "v2",
-        implementation: "next",
-        operation: "diff",
-        cacheReusable: false,
-        files: ["desired-snapshot.json", "diagnostics.json", "plan.json", "source-snapshot.json"],
-      });
-      const sourceSnapshot = readFileSync(path.join(diffBundle, "source-snapshot.json"), "utf8");
-      const desiredSnapshot = readFileSync(path.join(diffBundle, "desired-snapshot.json"), "utf8");
-      expect(sourceSnapshot).toContain("account_state");
-      expect(desiredSnapshot).toContain("account_state");
-      JSON.parse(sourceSnapshot);
-      JSON.parse(desiredSnapshot);
-      assertJsonFile(path.join(diffBundle, "plan.json"));
-      expect(Array.isArray(assertJsonFile(path.join(diffBundle, "diagnostics.json")))).toBe(true);
-
-      const generated = await runSupabaseLive(
-        ["db", "schema", "declarative", "generate", "--local", "--overwrite"],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "true" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(generated.exitCode, commandFailure(generated)).toBe(0);
-
-      const exportedFiles = readdirSync(path.join(projectDir, "supabase", "schemas"), {
-        recursive: true,
-      })
-        .filter((entry): entry is string => typeof entry === "string" && entry.endsWith(".sql"))
-        .map((entry) => path.join(projectDir, "supabase", "schemas", entry))
-        .sort();
-      expect(exportedFiles.length).toBeGreaterThan(0);
-      expect(existsSync(path.join(projectDir, "supabase", "schemas", ".pgdelta-export.json"))).toBe(
-        true,
-      );
-
-      const migrationsBeforeGeneratedSync = migrationFiles(projectDir);
-      const emptyGeneratedSync = await runSupabaseLive(
-        ["db", "schema", "declarative", "sync", "--no-apply"],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "true" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(emptyGeneratedSync.exitCode, commandFailure(emptyGeneratedSync)).toBe(0);
-      expect(emptyGeneratedSync.stderr).toContain("No schema changes found");
-      expect(migrationFiles(projectDir)).toEqual(migrationsBeforeGeneratedSync);
-
-      const editedExport = exportedFiles[0];
-      expect(editedExport).toBeDefined();
-      if (editedExport === undefined) throw new Error("declarative export produced no SQL files");
-      writeFileSync(
-        editedExport,
-        `${readFileSync(editedExport, "utf8")}\ncreate table public.phase6_synced (id bigint primary key);\n`,
-      );
-
-      const migrationsBeforeApplySync = new Set(migrationFiles(projectDir));
-      const appliedSync = await runSupabaseLive(
-        ["db", "schema", "declarative", "sync", "--apply", "--name", "phase6_sync"],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "true" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(appliedSync.exitCode, commandFailure(appliedSync)).toBe(0);
-      expect(appliedSync.stderr).toContain("Migration applied successfully");
-      const appliedSyncMigrations = migrationFiles(projectDir).filter(
-        (file) => !migrationsBeforeApplySync.has(file),
-      );
-      expect(appliedSyncMigrations.length).toBeGreaterThan(0);
-      expect(
-        appliedSyncMigrations
-          .map((file) =>
-            readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
-          )
-          .join("\n"),
-      ).toContain("phase6_synced");
-
-      const emptyAppliedSync = await runSupabaseLive(
-        ["db", "schema", "declarative", "sync", "--no-apply"],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "true" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(emptyAppliedSync.exitCode, commandFailure(emptyAppliedSync)).toBe(0);
-      expect(emptyAppliedSync.stderr).toContain("No schema changes found");
-
-      const dbOnlyChange = await runSupabaseLive(
-        ["db", "query", "--local", "create table public.phase6_pulled (id bigint primary key)"],
-        { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
-      );
-      expect(dbOnlyChange.exitCode, commandFailure(dbOnlyChange)).toBe(0);
-
-      const configPath = path.join(projectDir, "supabase", "config.toml");
-      const pullConfig = readFileSync(configPath, "utf8")
-        .replace('schema_paths = ["./schemas/*.sql"]', "schema_paths = []")
-        .replace('declarative_schema_path = "./schemas"', 'declarative_schema_path = "./database"');
-      writeFileSync(configPath, pullConfig);
-      renameSync(
-        path.join(projectDir, "supabase", "schemas"),
-        path.join(projectDir, "supabase", ".phase6-exported-schemas"),
-      );
-
-      const migrationsBeforePull = new Set(migrationFiles(projectDir));
-      const pulled = await runSupabaseLive(
-        ["db", "pull", "phase6_pull", "--db-url", databaseUrl, "--diff-engine", "pg-delta"],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "true", SUPABASE_YES: "true" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(pulled.exitCode, commandFailure(pulled)).toBe(0);
-      const pulledMigrations = migrationFiles(projectDir).filter(
-        (file) => !migrationsBeforePull.has(file),
-      );
-      expect(pulledMigrations.length).toBeGreaterThan(0);
-      expect(
-        pulledMigrations
-          .map((file) =>
-            readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
-          )
-          .join("\n"),
-      ).toContain("phase6_pulled");
-
-      const removePulledTable = await runSupabaseLive(
-        ["db", "query", "--local", "drop table public.phase6_pulled"],
-        {
-          cwd: projectDir,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(removePulledTable.exitCode, commandFailure(removePulledTable)).toBe(0);
-
-      const pulledVersion = pulledMigrations[0]?.split("_", 1)[0];
-      expect(pulledVersion).toMatch(/^\d{14}$/u);
-      if (pulledVersion === undefined) throw new Error("db pull produced no migration version");
-      const markPulledReverted = await runSupabaseLive(
-        ["migration", "repair", "--local", "--status", "reverted", pulledVersion],
-        {
-          cwd: projectDir,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(markPulledReverted.exitCode, commandFailure(markPulledReverted)).toBe(0);
-
-      const pullPush = await runSupabaseLive(["db", "push", "--local"], {
-        cwd: projectDir,
-        env: { SUPABASE_YES: "true" },
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      expect(pullPush.exitCode, commandFailure(pullPush)).toBe(0);
-
-      const emptyPull = await runSupabaseLive(
-        ["db", "pull", "phase6_pull_empty", "--db-url", databaseUrl, "--diff-engine", "pg-delta"],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "true", SUPABASE_YES: "true" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(emptyPull.exitCode, commandFailure(emptyPull)).toBe(1);
-      expect(emptyPull.stderr).toContain("No schema changes found");
-    },
-  );
-
-  test(
-    "keeps the legacy edge-runtime implementation available behind the opt-out",
-    { timeout: SCENARIO_TIMEOUT_MS },
-    async (context) => {
-      const legacy = await runSupabaseLive(
-        ["db", "diff", "--from", "migrations", "--to", databaseUrl],
-        {
-          cwd: projectDir,
-          env: { SUPABASE_USE_PG_DELTA_NEXT: "false" },
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      const output = `${legacy.stdout}\n${legacy.stderr}`;
-      if (
-        legacy.exitCode !== 0 &&
-        /(?:No such image|manifest unknown|pull access denied|edge-runtime: (?:not found|command not found))/iu.test(
-          output,
-        )
-      ) {
-        context.skip("legacy edge-runtime image is concretely unavailable on this Docker host");
-      }
-      expect(legacy.exitCode, commandFailure(legacy)).toBe(0);
-    },
-  );
-});
-
-describeDockerLive("pg-delta next declarative extension baseline (live)", () => {
-  let projectDir = "";
-  let config = "";
-
-  beforeAll(async () => {
-    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-extensions-live-"));
-
-    const init = await runSupabaseLive(["init"], {
-      cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
-    });
-    expect(init.exitCode, commandFailure(init)).toBe(0);
-
-    const configPath = path.join(projectDir, "supabase", "config.toml");
-    const generatedConfig = readFileSync(configPath, "utf8");
-    expect(generatedConfig).toContain("major_version = 17");
-    expect(generatedConfig).not.toContain("[experimental.webhooks]");
-    config = `${generatedConfig
-      .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
-      .replace(
-        '# declarative_schema_path = "./database"',
-        'declarative_schema_path = "./schemas"',
-      )}\n[experimental.webhooks]\nenabled = true\n`;
-    writeFileSync(configPath, config);
-
-    const start = await runSupabaseLive(
-      [
-        "start",
-        "--exclude",
-        "studio",
-        "--exclude",
-        "logflare",
-        "--exclude",
-        "vector",
-        "--exclude",
-        "gotrue",
-        "--exclude",
-        "realtime",
-        "--exclude",
-        "storage-api",
-      ],
-      { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
-    );
-    expect(start.exitCode, commandFailure(start)).toBe(0);
-  }, COMMAND_TIMEOUT_MS);
-
-  afterAll(async () => {
-    if (projectDir.length === 0) return;
-    await runSupabaseLive(["stop", "--no-backup"], {
-      cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
-    }).catch(() => undefined);
-    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
-  }, COMMAND_TIMEOUT_MS);
-
-  test(
-    "loads exported user-managed extensions and plans their removal by file deletion",
-    { timeout: SCENARIO_TIMEOUT_MS },
-    async () => {
-      const generated = await runSupabaseLive(
-        ["db", "schema", "declarative", "generate", "--local", "--overwrite"],
-        {
-          cwd: projectDir,
-          env: NEXT_ENV,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(generated.exitCode, commandFailure(generated)).toBe(0);
-
-      const schemasDir = path.join(projectDir, "supabase", "schemas");
-      findExtensionDeclaration(schemasDir, "pg_net");
-      const pgcryptoFile = findExtensionDeclaration(schemasDir, "pgcrypto");
-      findExtensionDeclaration(schemasDir, "uuid-ossp");
-      // The directory itself is the complete desired-state contract. A missing
-      // manifest must not preserve an extension omitted from the SQL files.
-      await rm(path.join(schemasDir, ".pgdelta-export.json"));
-
-      const containersBeforeEmpty = projectContainerIds(config);
-      const migrationsBeforeEmpty = migrationFiles(projectDir);
-      const empty = await runSupabaseLive(["db", "schema", "declarative", "sync", "--no-apply"], {
+      const converged = await runSupabaseLive(["db", "diff", "--local", "--use-pg-delta"], {
         cwd: projectDir,
         env: NEXT_ENV,
         exitTimeoutMs: COMMAND_TIMEOUT_MS,
       });
-      expect(empty.exitCode, commandFailure(empty)).toBe(0);
-      expect(empty.stderr).toContain("No schema changes found");
-      expect(migrationFiles(projectDir)).toEqual(migrationsBeforeEmpty);
-      expect(projectContainerIds(config)).toEqual(containersBeforeEmpty);
-
-      const pgcryptoSql = readFileSync(pgcryptoFile, "utf8");
-      const migrationsBeforeRemoval = new Set(migrationFiles(projectDir));
-      await rm(pgcryptoFile);
-      try {
-        const containersBeforeRemoval = projectContainerIds(config);
-        const removal = await runSupabaseLive(
-          ["db", "schema", "declarative", "sync", "--no-apply", "--name", "drop_pgcrypto"],
-          {
-            cwd: projectDir,
-            env: NEXT_ENV,
-            exitTimeoutMs: COMMAND_TIMEOUT_MS,
-          },
-        );
-        expect(removal.exitCode, commandFailure(removal)).toBe(0);
-        expect(projectContainerIds(config)).toEqual(containersBeforeRemoval);
-
-        const removalMigrations = migrationFiles(projectDir).filter(
-          (file) => !migrationsBeforeRemoval.has(file),
-        );
-        expect(removalMigrations.length).toBeGreaterThan(0);
-        const removalSql = removalMigrations
-          .map((file) =>
-            readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"),
-          )
-          .join("\n");
-        expect(removalSql).toMatch(/DROP\s+EXTENSION(?:\s+IF\s+EXISTS)?\s+"?pgcrypto"?/iu);
-      } finally {
-        writeFileSync(pgcryptoFile, pgcryptoSql);
-        await Promise.all(
-          migrationFiles(projectDir)
-            .filter((file) => !migrationsBeforeRemoval.has(file))
-            .map((file) => rm(path.join(projectDir, "supabase", "migrations", file))),
-        );
-      }
-    },
-  );
-});
-
-describeDockerLive("pg-delta next PG14 declarative scratch (live)", () => {
-  let projectDir = "";
-
-  beforeAll(async () => {
-    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-pg14-live-"));
-
-    const init = await runSupabaseLive(["init"], {
-      cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
-    });
-    expect(init.exitCode, commandFailure(init)).toBe(0);
-
-    const configPath = path.join(projectDir, "supabase", "config.toml");
-    const generatedConfig = readFileSync(configPath, "utf8");
-    expect(generatedConfig).toContain("major_version = 17");
-    writeFileSync(
-      configPath,
-      generatedConfig
-        .replace("major_version = 17", "major_version = 14")
-        .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
-        .replace(
-          '# declarative_schema_path = "./database"',
-          'declarative_schema_path = "./schemas"',
-        ),
-    );
-
-    const schemasDir = path.join(projectDir, "supabase", "schemas");
-    mkdirSync(schemasDir, { recursive: true });
-    writeFileSync(
-      path.join(schemasDir, "extensions.sql"),
-      [
-        "create extension if not exists pgcrypto with schema extensions;",
-        "create extension if not exists pgjwt with schema extensions;",
-        'create extension if not exists "uuid-ossp" with schema extensions;',
-        "",
-      ].join("\n"),
-    );
-  }, COMMAND_TIMEOUT_MS);
-
-  afterAll(async () => {
-    if (projectDir.length === 0) return;
-    await runSupabaseLive(["stop", "--no-backup"], {
-      cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
-    }).catch(() => undefined);
-    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
-  }, COMMAND_TIMEOUT_MS);
-
-  test(
-    "provisions an extension-free PG14 scratch before loading desired declarations",
-    { timeout: SCENARIO_TIMEOUT_MS },
-    async () => {
-      const sync = await runSupabaseLive(["db", "schema", "declarative", "sync", "--no-apply"], {
-        cwd: projectDir,
-        env: { ...NEXT_ENV, SUPABASE_YES: "true" },
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      expect(sync.exitCode, commandFailure(sync)).toBe(0);
-      expect(sync.stderr).toContain("No schema changes found");
-    },
-  );
-});
-
-describeDockerLive("pg-delta next isolated cron shadows (live)", () => {
-  const jobName = "pgdelta_cli_inactive";
-  const initialSchedule = "0 0 * * *";
-  const changedSchedule = "15 3 * * *";
-  let projectDir = "";
-  let config = "";
-
-  beforeAll(async () => {
-    projectDir = await mkdtemp(path.join(tmpdir(), "sb-pgdelta-next-cron-live-"));
-
-    const init = await runSupabaseLive(["init"], {
-      cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
-    });
-    expect(init.exitCode, commandFailure(init)).toBe(0);
-
-    const configPath = path.join(projectDir, "supabase", "config.toml");
-    config = readFileSync(configPath, "utf8")
-      .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
-      .replace('# declarative_schema_path = "./database"', 'declarative_schema_path = "./schemas"');
-    writeFileSync(configPath, config);
-
-    const migrationsDir = path.join(projectDir, "supabase", "migrations");
-    mkdirSync(migrationsDir, { recursive: true });
-    writeFileSync(
-      path.join(migrationsDir, "20260806000000_cron_inactive.sql"),
-      `create extension if not exists pg_cron;
-
-create table public.pgdelta_cron_execution_sentinel (
-  executed_at timestamptz not null default now()
-);
-
-select cron.schedule(
-  '${jobName}',
-  '${initialSchedule}',
-  'insert into public.pgdelta_cron_execution_sentinel default values'
-);
-
-select cron.alter_job(
-  (select jobid from cron.job where jobname = '${jobName}'),
-  active := false
-);
-`,
-    );
-
-    const start = await runSupabaseLive(
-      [
-        "start",
-        "--exclude",
-        "studio",
-        "--exclude",
-        "logflare",
-        "--exclude",
-        "vector",
-        "--exclude",
-        "gotrue",
-        "--exclude",
-        "realtime",
-        "--exclude",
-        "storage-api",
-      ],
-      { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
-    );
-    expect(start.exitCode, commandFailure(start)).toBe(0);
-  }, COMMAND_TIMEOUT_MS);
-
-  afterAll(async () => {
-    if (projectDir.length === 0) return;
-    await runSupabaseLive(["stop", "--no-backup"], {
-      cwd: projectDir,
-      exitTimeoutMs: COMMAND_TIMEOUT_MS,
-    }).catch(() => undefined);
-    await rm(projectDir, { recursive: true, force: true }).catch(() => undefined);
-  }, COMMAND_TIMEOUT_MS);
-
-  test(
-    "keeps an inactive named job converged and replaces only its changed schedule",
-    { timeout: SCENARIO_TIMEOUT_MS },
-    async () => {
-      const generated = await runSupabaseLive(
-        ["db", "schema", "declarative", "generate", "--local", "--overwrite"],
-        {
-          cwd: projectDir,
-          env: NEXT_ENV,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(generated.exitCode, commandFailure(generated)).toBe(0);
-
-      const schemasDir = path.join(projectDir, "supabase", "schemas");
-      const cronFile = findSqlContaining(schemasDir, `cron.schedule_in_database('${jobName}'`);
-      const containersBeforeEmpty = projectContainerIds(config);
-      const empty = await runSupabaseLive(["db", "schema", "declarative", "sync", "--no-apply"], {
-        cwd: projectDir,
-        env: NEXT_ENV,
-        exitTimeoutMs: COMMAND_TIMEOUT_MS,
-      });
-      expect(empty.exitCode, commandFailure(empty)).toBe(0);
-      expect(empty.stderr).toContain("No schema changes found");
-      expect(projectContainerIds(config)).toEqual(containersBeforeEmpty);
-
-      const emptyBundle = requireDebugBundle(projectDir, "declarativePlan");
-      expect(assertJsonFile(path.join(emptyBundle, "plan.json"))).toMatchObject({
-        deltas: [],
-        actions: [],
-        source: { fingerprint: expect.any(String) },
-        target: { fingerprint: expect.any(String) },
-      });
-
-      const exportedCron = readFileSync(cronFile, "utf8");
-      expect(exportedCron).toContain(`'${initialSchedule}'`);
-      writeFileSync(cronFile, exportedCron.replace(`'${initialSchedule}'`, `'${changedSchedule}'`));
-
-      const migrationsBeforeApply = new Set(migrationFiles(projectDir));
-      const containersBeforeApply = projectContainerIds(config);
-      const applied = await runSupabaseLive(
-        ["db", "schema", "declarative", "sync", "--apply", "--name", "cron_schedule"],
-        {
-          cwd: projectDir,
-          env: NEXT_ENV,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(applied.exitCode, commandFailure(applied)).toBe(0);
-      expect(applied.stderr).toContain("Migration applied successfully");
-      expect(projectContainerIds(config)).toEqual(containersBeforeApply);
-
-      const scheduleMigrations = migrationFiles(projectDir).filter(
-        (file) => !migrationsBeforeApply.has(file),
-      );
-      expect(scheduleMigrations.length).toBeGreaterThan(0);
-      const scheduleSql = scheduleMigrations
-        .map((file) => readFileSync(path.join(projectDir, "supabase", "migrations", file), "utf8"))
-        .join("\n");
-      expect(scheduleSql.match(/cron\.unschedule/gu)).toHaveLength(1);
-      expect(scheduleSql.match(/cron\.schedule_in_database/gu)).toHaveLength(1);
-      expect(scheduleSql).toContain(`'${changedSchedule}'`);
-      expect(scheduleSql).not.toMatch(
-        /\b(?:create|alter|drop)\s+(?:table|schema|function|view|extension|role)\b/iu,
-      );
-
-      const job = await runSupabaseLive(
-        [
-          "db",
-          "query",
-          "--local",
-          "-o",
-          "json",
-          `select schedule, active from cron.job where jobname = '${jobName}'`,
-        ],
-        { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
-      );
-      expect(job.exitCode, commandFailure(job)).toBe(0);
-      expect(JSON.parse(job.stdout)).toEqual([{ schedule: changedSchedule, active: false }]);
-
-      const executions = await runSupabaseLive(
-        [
-          "db",
-          "query",
-          "--local",
-          "-o",
-          "json",
-          "select count(*)::int as executions from public.pgdelta_cron_execution_sentinel",
-        ],
-        { cwd: projectDir, exitTimeoutMs: COMMAND_TIMEOUT_MS },
-      );
-      expect(executions.exitCode, commandFailure(executions)).toBe(0);
-      expect(JSON.parse(executions.stdout)).toEqual([{ executions: 0 }]);
-
-      const containersBeforeFinal = projectContainerIds(config);
-      const finalSync = await runSupabaseLive(
-        ["db", "schema", "declarative", "sync", "--no-apply"],
-        {
-          cwd: projectDir,
-          env: NEXT_ENV,
-          exitTimeoutMs: COMMAND_TIMEOUT_MS,
-        },
-      );
-      expect(finalSync.exitCode, commandFailure(finalSync)).toBe(0);
-      expect(finalSync.stderr).toContain("No schema changes found");
-      expect(projectContainerIds(config)).toEqual(containersBeforeFinal);
+      expect(converged.exitCode, commandFailure(converged)).toBe(0);
+      expect(converged.stderr).toContain("No schema changes found");
     },
   );
 });

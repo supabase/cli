@@ -6,11 +6,9 @@ health poll → write `.env` → `db push` → start suggestion. Every step is n
 including the migration push (`legacyDbPushCore`, shared with the standalone `supabase db push`
 command — see Notes).
 
-The embedded push step does not warm pg-delta state under the default bundled
-engine: no next-engine consumer uses the legacy catalog. Setting
-`SUPABASE_USE_PG_DELTA_NEXT=false` retains Go's edge-runtime catalog warmup.
-`PGDELTA_NPM_REGISTRY`, `.temp/pgdelta-version`, and catalogs directly under
-`.temp/pgdelta/` are meaningful only for that legacy opt-out.
+The push step uses the bundled in-process pg-delta engine by default. Set
+`SUPABASE_USE_PG_DELTA_NEXT=false` to retain legacy catalog warming; only that
+path uses the runtime pg-delta package/edge-runtime settings and catalog cache.
 
 ## Files Read
 
@@ -26,8 +24,8 @@ engine: no next-engine consumer uses the legacy catalog. Setting
 | `<workdir>/supabase/migrations/*.sql`                              | SQL        | native push step, for each pending migration applied                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | seed files from `[db.seed].sql_paths`                              | SQL        | native push step (`--include-seed` is always set; gated on `[db.seed].enabled`)                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | `<workdir>/supabase/roles.sql`                                     | SQL        | native push step (`--include-roles` is always set; existence check + apply)                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| `<workdir>/supabase/.temp/pgdelta-version`                         | plain text | always read by push config loading for compatibility; affects the legacy opt-out only                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
-| `<workdir>/supabase/.temp/edge-runtime-version`                    | plain text | legacy opt-out only: push-step catalog warmup image tag, resolved against the bootstrap workdir                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta-version`                         | plain text | loaded for compatibility; used only by the legacy pg-delta opt-out                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `<workdir>/supabase/.temp/edge-runtime-version`                    | plain text | legacy opt-out's catalog warmup image tag, resolved against the bootstrap workdir                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 
 ## Files Written
 
@@ -38,8 +36,8 @@ engine: no next-engine consumer uses the legacy catalog. Setting
 | `<workdir>/supabase/.temp/project-ref`                                                                | plain text | always (mandatory; fails the command on write error)                                                                                                              |
 | `<workdir>/supabase/.temp/{pooler-url,rest-version,gotrue-version,storage-version,storage-migration}` | plain text | best-effort, from `link.LinkServices`                                                                                                                             |
 | `<workdir>/.env`                                                                                      | dotenv     | best-effort (write failure prints a warning and continues)                                                                                                        |
-| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json`                       | JSON       | legacy opt-out push step, best-effort after a successful migration apply when pg-delta is enabled; failure only warns                                             |
-| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                                              | PEM        | legacy opt-out catalog export when the target requires SSL                                                                                                        |
+| `<workdir>/supabase/.temp/pgdelta/catalog-<prefix>-migrations-<hash>-<ts>.json`                       | JSON       | legacy pg-delta opt-out, best-effort after migration apply (write failure only warns)                                                                             |
+| `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                                              | PEM        | legacy pg-delta opt-out, when the target requires SSL                                                                                                             |
 | `<workdir>/supabase/.temp/linked-project.json`                                                        | JSON       | PersistentPostRun linked-project cache (`Effect.ensuring`); resolves against the bootstrap workdir (the prompted/`--workdir`/env target), not `cliConfig.workdir` |
 | `~/.supabase/telemetry.json`                                                                          | JSON       | PersistentPostRun telemetry flush (`Effect.ensuring`)                                                                                                             |
 
@@ -79,10 +77,10 @@ neither branch ever reaches the temp-login-role/Management-API path a passwordle
 | `SUPABASE_ACCESS_TOKEN`            | auth bypass for ensure-login                                                                                            | no        |
 | `SUPABASE_PROFILE`                 | profile name/path (env → `~/.supabase/profile` → `supabase`)                                                            | no        |
 | `SUPABASE_YES`                     | auto-confirm the native push step's prompts (Go's viper `YES`), read project-`.env`-aware like the standalone `db push` | no        |
-| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the legacy opt-out push cache when `[experimental.pgdelta].enabled` is unset, read project-`.env`-aware         | no        |
-| `SUPABASE_USE_PG_DELTA_NEXT`       | set to `false` to retain the legacy push-step catalog warmup, read project-`.env`-aware                                 | no        |
-| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | legacy opt-out only: overrides the push step's edge-runtime image registry, read project-`.env`-aware                   | no        |
-| `PGDELTA_NPM_REGISTRY`             | legacy opt-out only: overrides the push-step edge-runtime npm registry, read project-`.env`-aware                       | no        |
+| `SUPABASE_EXPERIMENTAL_PG_DELTA`   | enables the legacy opt-out's catalog cache when `[experimental.pgdelta].enabled` is unset, read project-`.env`-aware    | no        |
+| `SUPABASE_USE_PG_DELTA_NEXT`       | set to `false` for legacy catalog warming, read project-`.env`-aware                                                    | no        |
+| `SUPABASE_INTERNAL_IMAGE_REGISTRY` | legacy opt-out's edge-runtime image registry, read project-`.env`-aware                                                 | no        |
+| `PGDELTA_NPM_REGISTRY`             | legacy opt-out's edge-runtime npm registry, read project-`.env`-aware                                                   | no        |
 
 ## Exit Codes
 
