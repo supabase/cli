@@ -204,6 +204,7 @@ export const legacyStartEdgeRuntimeContainer = Effect.fn("legacy.start.edgeRunti
     // and an empty `envFilePath`/`nil` `noVerifyJWT`/empty `importMapPath`
     // — `start` has no CLI flags of its own for any of these.
     envFile: Option.none(),
+    discoverFunctionEnvFiles: false,
     importMap: Option.none(),
     noVerifyJwt: Option.none(),
     inspectMode: undefined,
