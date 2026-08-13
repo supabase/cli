@@ -117,8 +117,8 @@ or failed stack is updated. A stack may change port numbers as part of one trans
 port-occupying lifecycle; intent-only updates never count as runtime port drift.
 
 Managed identity is separated into project, checkout, and context ownership. A project belongs to a
-repository, a checkout belongs to one canonical folder (including linked worktrees), and a branch
-context is shared by the project while detached and ordinary-folder contexts remain checkout-scoped.
+repository, a checkout belongs to one canonical folder (including linked worktrees), branch
+contexts are project-scoped, and detached and ordinary-folder contexts are checkout-scoped.
 Branch renames and in-place ref updates preserve the context; copying a branch, deleting and
 recreating a ref, changing checkout folders, detaching `HEAD`, or moving between a folder and Git
 produces an explicit discovery state instead of silently aliasing stacks. `discoverWorkspace()` is
