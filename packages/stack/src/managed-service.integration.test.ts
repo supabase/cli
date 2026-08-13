@@ -48,7 +48,11 @@ import {
   type ManagedStackRecord,
 } from "./managed/model.ts";
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
-import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./managed/repository.ts";
+import {
+  decideManagedIdentityMetadataPrune,
+  ManagedStackRepository,
+  type ManagedStackRepositoryShape,
+} from "./managed/repository.ts";
 import { sqliteManagedStackRepositoryLayer, type ManagedSqliteDatabase } from "./managed/sqlite.ts";
 import type { MakeManagedStackServiceOptions, ManagedStackServiceHandle } from "./managed-bun.ts";
 import {
@@ -2641,13 +2645,54 @@ describe("managed repository and lifecycle", () => {
     const dataFile = join(created.stack.paths.data, "database");
     writeFileSync(dataFile, "preserve me");
 
-    const pruned = await service.pruneCheckoutLocations(() => true);
+    const locations = runRepo(service.repository.listCheckoutLocations());
+    const pruned = await service.prune({ recordIds: locations.map((location) => location.id) });
 
     expect(contract.expected.outcome).toBe("update");
-    expect(pruned).toBe(0);
+    expect(pruned.removed).toBe(0);
+    expect(pruned.preservedRecordIds).toEqual(locations.map((location) => location.id));
     expect(runRepo(service.repository.listCheckoutLocations())).toHaveLength(1);
     expect((await service.inspectStack(created.stack.id))?.status).toBe("active");
     expect(readFileSync(dataFile, "utf8")).toBe("preserve me");
+    await service.close();
+  });
+
+  it("accepts an explicit discovery prune operation and validates its record IDs", async () => {
+    const root = makeRoot();
+    const service = await makePersistentService(root);
+    const created = await service.resolveStack({
+      operation: "start",
+      workspacePath: makeWorkspace(root),
+    });
+    const locationsBefore = runRepo(service.repository.listCheckoutLocations());
+    const current = locationsBefore[0];
+    if (current === undefined) throw new Error("expected a registered checkout location");
+    runRepo(
+      service.repository.applyCheckoutLocation({
+        checkoutId: current.checkoutId,
+        locationId: "superseded-location",
+        canonicalPath: join(root, "moved-checkout"),
+        now: "2026-08-13T00:01:00.000Z",
+      }),
+    );
+
+    const pruned = await service.prune({
+      operation: "prune",
+      recordIds: [current.id],
+    });
+
+    expect(pruned).toMatchObject({
+      removed: 0,
+      prunedRecordIds: [],
+      preservedRecordIds: [current.id],
+    });
+    expect((await service.inspectStack(created.stack.id))?.status).toBe("active");
+    await expect(service.prune({ recordIds: [" "] })).rejects.toBeInstanceOf(
+      InvalidManagedIdentityError,
+    );
+    await expect(service.prune({ recordIds: [current.id, current.id] })).rejects.toBeInstanceOf(
+      InvalidManagedIdentityError,
+    );
     await service.close();
   });
 
@@ -3456,6 +3501,125 @@ describe("managed repository and lifecycle", () => {
       } finally {
         await Promise.all(cases.map((adapter) => adapter.close()));
       }
+    });
+
+    it("protects checkout locations referenced by unfinished transitions in both adapters", async () => {
+      const cases = await adapters();
+      try {
+        for (const adapter of cases) {
+          seedCheckout(adapter.repository, adapter.name);
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-a", "/a")));
+          runRepo(adapter.repository.applyCheckoutLocation(location("checkout-a", "loc-b", "/b")));
+          runRepo(
+            adapter.repository.reserveIdentityTransition({
+              id: `${adapter.name}-prune-transition`,
+              kind: "rebind-checkout",
+              checkoutId: "checkout-a",
+              path: "/a",
+              now: "2026-08-13T00:01:00.000Z",
+            }),
+          );
+
+          const unfinished = runRepo(
+            adapter.repository.pruneIdentityMetadata({
+              locationIds: ["loc-a", "loc-b"],
+            }),
+          );
+          expect(unfinished, adapter.name).toEqual({
+            removed: 0,
+            prunedRecordIds: [],
+            preservedRecordIds: ["loc-a", "loc-b"],
+          });
+
+          runRepo(
+            adapter.repository.advanceIdentityTransition({
+              id: `${adapter.name}-prune-transition`,
+              expectedPhase: "reserved",
+              phase: "git-written",
+              now: "2026-08-13T00:02:00.000Z",
+            }),
+          );
+          runRepo(
+            adapter.repository.finalizeIdentityTransition({
+              id: `${adapter.name}-prune-transition`,
+              expectedPhase: "git-written",
+              now: "2026-08-13T00:03:00.000Z",
+            }),
+          );
+
+          const finalized = runRepo(
+            adapter.repository.pruneIdentityMetadata({
+              locationIds: ["loc-a", "loc-b"],
+            }),
+          );
+          expect(finalized, adapter.name).toEqual({
+            removed: 0,
+            prunedRecordIds: [],
+            preservedRecordIds: ["loc-a", "loc-b"],
+          });
+        }
+      } finally {
+        await Promise.all(cases.map((adapter) => adapter.close()));
+      }
+    });
+
+    it("prunes superseded locations unless a transition or ancestry protects them", () => {
+      const location = {
+        id: "superseded",
+        checkoutId: "checkout-a",
+        canonicalPath: "/a",
+        state: "superseded" as const,
+        lastSeenAt: "2026-08-13T00:00:00.000Z",
+      };
+      const transition = {
+        id: "transition",
+        kind: "rebind-checkout" as const,
+        phase: "reserved" as const,
+        checkoutId: "checkout-a",
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+      };
+      const pathTransition = {
+        ...transition,
+        id: "path-transition",
+        checkoutId: undefined,
+        path: "/a",
+      };
+      expect(
+        decideManagedIdentityMetadataPrune({
+          locations: [location],
+          locationIds: [location.id],
+          transitions: [],
+        }),
+      ).toEqual({ removed: 1, prunedRecordIds: [location.id], preservedRecordIds: [] });
+      expect(
+        decideManagedIdentityMetadataPrune({
+          locations: [location],
+          locationIds: [location.id],
+          transitions: [transition],
+        }),
+      ).toEqual({ removed: 0, prunedRecordIds: [], preservedRecordIds: [location.id] });
+      expect(
+        decideManagedIdentityMetadataPrune({
+          locations: [location],
+          locationIds: [location.id],
+          transitions: [pathTransition],
+        }),
+      ).toEqual({ removed: 0, prunedRecordIds: [], preservedRecordIds: [location.id] });
+      expect(
+        decideManagedIdentityMetadataPrune({
+          locations: [location],
+          locationIds: [location.id],
+          transitions: [{ ...pathTransition, phase: "git-written" }],
+        }),
+      ).toEqual({ removed: 0, prunedRecordIds: [], preservedRecordIds: [location.id] });
+      expect(
+        decideManagedIdentityMetadataPrune({
+          locations: [location],
+          locationIds: [location.id],
+          transitions: [{ ...pathTransition, phase: "finalized" }],
+        }),
+      ).toEqual({ removed: 1, prunedRecordIds: [location.id], preservedRecordIds: [] });
     });
 
     it("enforces transition resource overlap and true phase CAS in both adapters", async () => {

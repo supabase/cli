@@ -184,6 +184,21 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         [next, "active"],
       ]),
     );
+
+    const recovered = await inspect(service.repository, next);
+    const prune = recovered.recoveryOperations.find((operation) => operation.operation === "prune");
+    const previousLocation = claims.locations.find(
+      (location) => location.canonicalPath === previous,
+    );
+    if (previousLocation === undefined) throw new Error("expected the superseded location");
+    expect(prune).toEqual({
+      operation: "prune",
+      recordIds: [previousLocation.id],
+    });
+    if (prune?.operation === "prune") {
+      const result = await service.prune(prune);
+      expect(result.preservedRecordIds).toEqual(prune.recordIds);
+    }
   });
 
   it("publishes a new checkout identity without claiming a stack", async () => {

@@ -613,6 +613,22 @@ export const discoverWorkspace = (
       state = "unregistered";
       recoveryOperations.push({ operation: "newCheckout", path: metadata.workspace.workspaceRoot });
     }
+    if (activeTransition === undefined && conflicts.length === 0) {
+      const pruneRecordIds = historicalPathEvidence
+        .filter(
+          (evidence) => evidence.locationState === "superseded" && evidence.probe === "missing",
+        )
+        .flatMap((evidence) => {
+          const location = locations.find(
+            (candidate) =>
+              candidate.canonicalPath === evidence.path && candidate.state === "superseded",
+          );
+          return location === undefined ? [] : [location.id];
+        });
+      if (pruneRecordIds.length > 0) {
+        recoveryOperations.push({ operation: "prune", recordIds: pruneRecordIds });
+      }
+    }
     if (ownerEvidence !== undefined && context?.ownerBranch !== undefined) {
       if (metadata.context.kind === "branch" && context.ownerBranch !== metadata.context.branch) {
         warnings.push(

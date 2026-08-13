@@ -30,7 +30,6 @@ import {
   UnsafeManagedStackPathError,
   UnsupportedGitWorkspaceError,
   type ManagedCheckoutKind,
-  type ManagedCheckoutLocation,
   type ManagedContextDescriptor,
   type ManagedContextKind,
   type ManagedIdentityTriple,
@@ -75,8 +74,15 @@ import {
   type PrepareStackFailure,
   type UpdateManagedStackFailure,
 } from "./repository.ts";
-import type { ManagedIdentityRecoveryError } from "./repository.ts";
-import { discoverWorkspace, type ManagedWorkspaceDiscovery } from "./discovery.ts";
+import type {
+  ManagedIdentityRecoveryError,
+  PruneManagedIdentityMetadataResult,
+} from "./repository.ts";
+import {
+  discoverWorkspace,
+  type ManagedRecoveryOperation,
+  type ManagedWorkspaceDiscovery,
+} from "./discovery.ts";
 
 export interface ManagedStackServiceOptions {
   readonly stateRoot: string;
@@ -127,6 +133,16 @@ export interface ManagedCheckoutRecoveryRequest {
   /** A discovery report obtained immediately before requesting recovery. */
   readonly observation?: ManagedWorkspaceDiscovery;
 }
+
+/** Explicit metadata records selected for safe, non-destructive pruning. */
+export type ManagedPruneRequest =
+  | { readonly recordIds: ReadonlyArray<string> }
+  | Extract<ManagedRecoveryOperation, { readonly operation: "prune" }>;
+
+/** The repository policy result for a metadata-only prune request. */
+export type ManagedPruneResult = PruneManagedIdentityMetadataResult;
+
+export type ManagedPruneFailure = InvalidManagedIdentityError | ManagedIdentityRecoveryError;
 
 /** What the workspace turned out to be, and where its identities are kept. */
 export interface ResolvedManagedWorkspace {
@@ -376,9 +392,9 @@ export interface ManagedStackServiceShape {
   readonly reconcileAbandonedOperations: (
     options: ReconcileAbandonedOperationsOptions,
   ) => Effect.Effect<ReconcileAbandonedOperationsResult, InvalidManagedIdentityError>;
-  readonly pruneCheckoutLocations: <E = never>(
-    shouldPrune: (location: ManagedCheckoutLocation) => Effect.Effect<boolean, E>,
-  ) => Effect.Effect<number, E>;
+  readonly prune: (
+    request: ManagedPruneRequest,
+  ) => Effect.Effect<ManagedPruneResult, ManagedPruneFailure>;
 }
 
 const selectionForStack = (stack: ManagedStackRecord): ManagedStackSelection => ({
@@ -2687,17 +2703,41 @@ export class ManagedStackService extends Context.Service<
             };
           });
 
-        const pruneCheckoutLocations = <E = never>(
-          shouldPrune: (location: ManagedCheckoutLocation) => Effect.Effect<boolean, E>,
-        ): Effect.Effect<number, E> =>
+        const prune = (
+          request: ManagedPruneRequest,
+        ): Effect.Effect<ManagedPruneResult, ManagedPruneFailure> =>
           Effect.gen(function* () {
-            const stale: Array<string> = [];
-            for (const location of yield* repository.listCheckoutLocations()) {
-              if (yield* shouldPrune(location)) {
-                stale.push(location.id);
-              }
+            const recordIds =
+              "operation" in request
+                ? request.operation === "prune"
+                  ? request.recordIds
+                  : yield* Effect.fail(
+                      new InvalidManagedIdentityError({
+                        message: "Managed prune requires a prune recovery operation",
+                      }),
+                    )
+                : request.recordIds;
+            if (
+              !Array.isArray(recordIds) ||
+              recordIds.some((recordId) => typeof recordId !== "string" || recordId.trim() === "")
+            ) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed prune record IDs must be non-empty strings",
+                }),
+              );
             }
-            return yield* repository.pruneCheckoutLocations(stale);
+            const uniqueRecordIds = new Set(recordIds);
+            if (uniqueRecordIds.size !== recordIds.length) {
+              return yield* Effect.fail(
+                new InvalidManagedIdentityError({
+                  message: "Managed prune record IDs must be unique",
+                }),
+              );
+            }
+            return yield* repository.pruneIdentityMetadata({
+              locationIds: recordIds,
+            });
           });
 
         return {
@@ -2713,7 +2753,7 @@ export class ManagedStackService extends Context.Service<
           updateStack: updateStackRecord,
           deleteStack,
           reconcileAbandonedOperations,
-          pruneCheckoutLocations,
+          prune,
         };
       }),
     );

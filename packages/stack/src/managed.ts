@@ -15,12 +15,15 @@ export type {
   ClaimManagedOperationInput,
   ClaimManagedOperationResult,
   ManagedStackRepositoryShape,
+  ManagedIdentityRecoveryError,
   OwnedManagedStackFailure,
   PrepareStackFailure,
   PrepareStackInput,
   PrepareStackResult,
   ReconcileManagedOperationFailure,
   ReconcileManagedOperationResult,
+  PruneManagedIdentityMetadataInput,
+  PruneManagedIdentityMetadataResult,
   UpdateManagedStackFailure,
   UpdateManagedStackInput,
 } from "./managed/repository.ts";
@@ -32,3 +35,8 @@ export type {
   ReconcileAbandonedOperationsRequest,
   ResolveManagedStackRequest,
 } from "./managed/create-service.ts";
+export type {
+  ManagedPruneFailure,
+  ManagedPruneRequest,
+  ManagedPruneResult,
+} from "./managed/service.ts";

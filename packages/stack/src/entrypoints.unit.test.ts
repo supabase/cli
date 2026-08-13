@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, expectTypeOf, it } from "vitest";
+import { Effect } from "effect";
 import type { Layer } from "effect";
 import * as bunRoot from "./bun.ts";
 import * as bunEffect from "./effect-bun.ts";
@@ -11,6 +12,13 @@ import * as managed from "./managed-bun.ts";
 import type { StackHandle } from "./createStack.ts";
 import type { Stack } from "./Stack.ts";
 import * as testing from "./testing.ts";
+import type {
+  ManagedPruneRequest,
+  ManagedPruneFailure,
+  ManagedPruneResult,
+  ManagedStackServiceHandle,
+  ManagedStackServiceShape,
+} from "./managed-bun.ts";
 
 const INTERNAL_EFFECT_EXPORTS = [
   "ApiProxy",
@@ -68,6 +76,13 @@ describe("@supabase/stack entrypoints", () => {
     expect(managed).toHaveProperty("managedStackLayer");
     expect(managed).toHaveProperty("bunSqliteManagedStackRepositoryLayer");
     expect(nodeRoot).not.toHaveProperty("createManagedStackService");
+    expectTypeOf<ManagedStackServiceHandle["prune"]>().toEqualTypeOf<
+      (request: ManagedPruneRequest) => Promise<ManagedPruneResult>
+    >();
+    expectTypeOf<ManagedStackServiceShape>().toHaveProperty("prune");
+    expectTypeOf<ManagedStackServiceShape["prune"]>().toMatchTypeOf<
+      (request: ManagedPruneRequest) => Effect.Effect<ManagedPruneResult, ManagedPruneFailure>
+    >();
   });
 
   it("pins the managed runtime surface so internals cannot leak into it", () => {
@@ -88,6 +103,10 @@ describe("@supabase/stack entrypoints", () => {
       "MANAGED_ERROR_TAG_BY_CODE",
       "MANAGED_REGISTRY_SCHEMA_VERSION",
       "ManagedAbandonedOperationError",
+      "ManagedCheckoutConflictError",
+      "ManagedCopiedBranchConflictError",
+      "ManagedIdentityTransitionOwnershipError",
+      "ManagedInaccessiblePathError",
       "ManagedOperationInProgressError",
       "ManagedOperationOwnershipError",
       "ManagedPendingStackUpdateError",
@@ -105,10 +124,13 @@ describe("@supabase/stack entrypoints", () => {
       "UnsupportedManagedRegistryVersionError",
       "assertManagedStackRoot",
       "assertManagedUuid",
+      "branchRefExists",
       "bunSqliteManagedStackRepositoryLayer",
       "canonicalizeManagedWorkspacePath",
+      "canonicalizeManagedWorkspacePathWithFileSystem",
       "createManagedStackService",
       "createManagedUuid",
+      "discoverWorkspace",
       "ensureBranchContextId",
       "ensureGitCheckoutIdentity",
       "ensureOrdinaryWorkspaceIdentity",
@@ -124,9 +146,13 @@ describe("@supabase/stack entrypoints", () => {
       "managedStackLayer",
       "managedStackPaths",
       "ordinaryWorkspaceIdentityPath",
+      "publishGitCheckoutIdentity",
       "readBranchContextId",
       "readGitCheckoutIdentity",
+      "readGitCheckoutIdentityWithFileSystem",
       "readOrdinaryWorkspaceIdentity",
+      "readOrdinaryWorkspaceIdentityWithFileSystem",
+      "replaceBranchContextId",
       "requireExplicitManagedStateRoot",
       "resolveManagedStateRoot",
     ]);

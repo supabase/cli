@@ -1,9 +1,8 @@
 import { Context, Effect, Layer, ManagedRuntime, type FileSystem } from "effect";
-import { fromCallback, isBooleanAnswer, isFinished } from "./callback.ts";
+import { fromCallback, isFinished } from "./callback.ts";
 import { UnsafeManagedStackPathError } from "./model.ts";
 import type {
   InvalidManagedOwnerPidError,
-  ManagedCheckoutLocation,
   ManagedOperationRecord,
   ManagedStackConfiguration,
   ManagedStackProjection,
@@ -28,6 +27,8 @@ import {
   type ResolveManagedStackOperation,
   type ManagedCheckoutRecoveryRequest,
   type StartedManagedStackResolution,
+  type ManagedPruneRequest,
+  type ManagedPruneResult,
 } from "./service.ts";
 import type { ManagedWorkspaceDiscovery } from "./discovery.ts";
 
@@ -108,9 +109,7 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   reconcileAbandonedOperations(
     options: ReconcileAbandonedOperationsRequest,
   ): Promise<ReconcileAbandonedOperationsResult>;
-  pruneCheckoutLocations(
-    shouldPrune: (location: ManagedCheckoutLocation) => boolean | Promise<boolean>,
-  ): Promise<number>;
+  prune(request: ManagedPruneRequest): Promise<ManagedPruneResult>;
   close(): Promise<void>;
 }
 
@@ -222,12 +221,7 @@ const managedStackServiceHandle = async <ER>(
         ),
       );
     },
-    pruneCheckoutLocations: (shouldPrune) =>
-      run(
-        service.pruneCheckoutLocations((location) =>
-          fromCallback(() => shouldPrune(location), isBooleanAnswer),
-        ),
-      ),
+    prune: (request) => run(service.prune(request)),
     close: dispose,
     [Symbol.asyncDispose]: dispose,
   };
