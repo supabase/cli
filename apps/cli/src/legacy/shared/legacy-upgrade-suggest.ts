@@ -9,6 +9,7 @@ import type * as HttpClientResponse from "effect/unstable/http/HttpClientRespons
 
 import { LegacyCliConfig } from "../config/legacy-cli-config.service.ts";
 import { resolveLegacyAccessToken } from "./legacy-resolve-token.ts";
+import { parsePlanGateEnvelope, planGateSuggestion } from "../../shared/api/plan-gate.ts";
 import { Analytics } from "../../shared/telemetry/analytics.service.ts";
 import {
   EventUpgradeSuggested,
@@ -24,30 +25,6 @@ function readString(obj: unknown, key: string): string {
     return typeof value === "string" ? value : "";
   }
   return "";
-}
-
-interface LegacyPlanGateEnvelope {
-  readonly feature: string;
-  readonly upgradeUrl: string;
-}
-
-// Hand-validated: the packages/api codegen emits no non-2xx schemas.
-function parseLegacyPlanGateEnvelope(body: unknown): LegacyPlanGateEnvelope | undefined {
-  if (typeof body !== "object" || body === null) return undefined;
-  const error = (body as { readonly error?: unknown }).error;
-  if (typeof error !== "object" || error === null) return undefined;
-  const code = readString(error, "code");
-  const feature = readString(error, "feature");
-  const upgradeUrl = readString(error, "upgrade_url");
-  if (code !== "entitlement_required" || feature === "" || upgradeUrl === "") {
-    return undefined;
-  }
-  return { feature, upgradeUrl };
-}
-
-function legacyOrgSlugFromUpgradeUrl(upgradeUrl: string): string {
-  const match = /\/org\/([^/]+)/.exec(upgradeUrl);
-  return match?.[1] ?? "";
 }
 
 export function legacyGateResponse(
@@ -74,7 +51,12 @@ export const legacyGateMapError =
     });
 
 /**
- * Ports `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
+ * Entitlements-lookup fallback for envelope-less plan-gate denials (older
+ * servers, ungated routes like v1 SSO). Envelope-carrying denials are handled
+ * centrally in `mapLegacyHttpError` (hint, telemetry, and error fields), so
+ * this stops after confirming the gate when the response body parses as an
+ * `entitlement_required` envelope. Ports Go's
+ * `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
  *
  * The fallback bypasses the typed API client: its strict response schemas
  * reject the cli-e2e replay fixtures' placeholder refs (same workaround as
@@ -85,9 +67,8 @@ export const legacyGateMapError =
 export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly projectRef: string;
   /**
-   * Entitlements-fallback key. Omit for envelope-only sites: the domains
-   * add-on gate has no plan-level entitlement key, so the fallback would
-   * false-positive on unrelated 4xxs.
+   * Entitlements-fallback key. Without it the fallback no-ops: a lookup
+   * without a known key would false-positive on unrelated 4xxs.
    */
   readonly featureKey?: string;
   readonly statusCode: number;
@@ -114,7 +95,9 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly accessToken?: Option.Option<Redacted.Redacted<string>>;
   /**
    * Set false where the Go twin fires no `TrackUpgradeSuggested` (vanity
-   * check-availability), keeping telemetry 1:1.
+   * check-availability), keeping telemetry 1:1 on the fallback path. The
+   * central handler's equivalent switch is `trackUpgradeSuggested` on its
+   * `mapLegacyHttpError` options.
    */
   readonly trackAnalytics?: boolean;
 }) {
@@ -127,89 +110,76 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   const cliConfig = yield* LegacyCliConfig;
   const httpClient = yield* HttpClient.HttpClient;
 
-  let gate:
-    | { readonly billingUrl: string; readonly feature: string; readonly orgSlug: string }
-    | undefined;
-
   if (opts.response !== undefined) {
     const body = yield* opts.response.json.pipe(Effect.option);
-    const envelope = Option.isSome(body) ? parseLegacyPlanGateEnvelope(body.value) : undefined;
+    const envelope = Option.isSome(body) ? parsePlanGateEnvelope(body.value) : undefined;
     if (envelope !== undefined) {
-      gate = {
-        billingUrl: envelope.upgradeUrl,
-        feature: envelope.feature,
-        orgSlug: legacyOrgSlugFromUpgradeUrl(envelope.upgradeUrl),
-      };
+      // Confirmed gated, but the central handler already attached the error
+      // fields, printed the hint, and fired the telemetry for this denial.
+      return true;
     }
   }
 
-  if (gate === undefined) {
-    if (opts.featureKey === undefined || opts.featureKey === "") {
-      return false;
-    }
-
-    const tokenOpt = opts.accessToken ?? (yield* resolveLegacyAccessToken);
-    const authHeader: (
-      req: HttpClientRequest.HttpClientRequest,
-    ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
-      ? HttpClientRequest.bearerToken(tokenOpt.value)
-      : (req) => req;
-
-    const apiUrl = opts.apiUrl ?? cliConfig.apiUrl;
-    const projectReq = HttpClientRequest.get(`${apiUrl}/v1/projects/${opts.projectRef}`).pipe(
-      authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
-    );
-    const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
-    if (projectResp._tag === "None" || projectResp.value.status !== 200) {
-      return false;
-    }
-    const projectBody = yield* projectResp.value.json.pipe(Effect.option);
-    if (projectBody._tag === "None") {
-      return false;
-    }
-    const orgSlug = readString(projectBody.value, "organization_slug");
-    if (orgSlug.length === 0) {
-      return false;
-    }
-
-    const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
-      authHeader,
-      HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
-    );
-    const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
-    if (entResp._tag === "None" || entResp.value.status !== 200) {
-      return false;
-    }
-    const entBody = yield* entResp.value.json.pipe(Effect.option);
-    if (entBody._tag === "None") {
-      return false;
-    }
-    const entitlements = (entBody.value as { entitlements?: unknown }).entitlements;
-    if (!Array.isArray(entitlements)) {
-      return false;
-    }
-
-    const gated = entitlements.some((entry: unknown) => {
-      if (typeof entry !== "object" || entry === null) return false;
-      const feature = (entry as { feature?: unknown }).feature;
-      if (typeof feature !== "object" || feature === null) return false;
-      const key = (feature as { key?: unknown }).key;
-      const hasAccess = (entry as { hasAccess?: unknown }).hasAccess;
-      return key === opts.featureKey && hasAccess === false;
-    });
-    if (!gated) {
-      return false;
-    }
-
-    gate = {
-      billingUrl: legacyBillingUrl(cliConfig.profile, orgSlug),
-      feature: opts.featureKey,
-      orgSlug,
-    };
+  if (opts.featureKey === undefined || opts.featureKey === "") {
+    return false;
   }
 
-  const suggestion = `Your organization does not have access to this feature. Upgrade your plan: ${styleText("bold", gate.billingUrl)}`;
+  const tokenOpt = opts.accessToken ?? (yield* resolveLegacyAccessToken);
+  const authHeader: (
+    req: HttpClientRequest.HttpClientRequest,
+  ) => HttpClientRequest.HttpClientRequest = Option.isSome(tokenOpt)
+    ? HttpClientRequest.bearerToken(tokenOpt.value)
+    : (req) => req;
+
+  const apiUrl = opts.apiUrl ?? cliConfig.apiUrl;
+  const projectReq = HttpClientRequest.get(`${apiUrl}/v1/projects/${opts.projectRef}`).pipe(
+    authHeader,
+    HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+  );
+  const projectResp = yield* httpClient.execute(projectReq).pipe(Effect.option);
+  if (projectResp._tag === "None" || projectResp.value.status !== 200) {
+    return false;
+  }
+  const projectBody = yield* projectResp.value.json.pipe(Effect.option);
+  if (projectBody._tag === "None") {
+    return false;
+  }
+  const orgSlug = readString(projectBody.value, "organization_slug");
+  if (orgSlug.length === 0) {
+    return false;
+  }
+
+  const entReq = HttpClientRequest.get(`${apiUrl}/v1/organizations/${orgSlug}/entitlements`).pipe(
+    authHeader,
+    HttpClientRequest.setHeader("User-Agent", cliConfig.userAgent),
+  );
+  const entResp = yield* httpClient.execute(entReq).pipe(Effect.option);
+  if (entResp._tag === "None" || entResp.value.status !== 200) {
+    return false;
+  }
+  const entBody = yield* entResp.value.json.pipe(Effect.option);
+  if (entBody._tag === "None") {
+    return false;
+  }
+  const entitlements = (entBody.value as { entitlements?: unknown }).entitlements;
+  if (!Array.isArray(entitlements)) {
+    return false;
+  }
+
+  const gated = entitlements.some((entry: unknown) => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const feature = (entry as { feature?: unknown }).feature;
+    if (typeof feature !== "object" || feature === null) return false;
+    const key = (feature as { key?: unknown }).key;
+    const hasAccess = (entry as { hasAccess?: unknown }).hasAccess;
+    return key === opts.featureKey && hasAccess === false;
+  });
+  if (!gated) {
+    return false;
+  }
+
+  const billingUrl = legacyBillingUrl(cliConfig.profile, orgSlug);
+  const suggestion = planGateSuggestion(styleText("bold", billingUrl));
 
   if (output.format === "text") {
     yield* output.raw(suggestion + "\n", "stderr");
@@ -217,8 +187,8 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
 
   if (opts.trackAnalytics !== false) {
     yield* analytics.capture(EventUpgradeSuggested, {
-      [PropFeatureKey]: gate.feature,
-      [PropOrgSlug]: gate.orgSlug,
+      [PropFeatureKey]: opts.featureKey,
+      [PropOrgSlug]: orgSlug,
     });
   }
 

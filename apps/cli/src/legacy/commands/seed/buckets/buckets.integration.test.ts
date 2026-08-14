@@ -8,7 +8,12 @@ import { Effect, Exit, Layer, Option } from "effect";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import type * as HttpClientError from "effect/unstable/http/HttpClientError";
 
-import { mockOutput, mockStdin, mockTty } from "../../../../../tests/helpers/mocks.ts";
+import {
+  mockAnalytics,
+  mockOutput,
+  mockStdin,
+  mockTty,
+} from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
@@ -187,6 +192,7 @@ function setupLegacySeedBuckets(
     out.layer,
     httpLayer,
     telemetry.layer,
+    mockAnalytics().layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
     // Seed-bucket prompts model an interactive user answering via `confirm`.

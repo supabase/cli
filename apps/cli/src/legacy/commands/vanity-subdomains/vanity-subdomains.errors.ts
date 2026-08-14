@@ -45,11 +45,12 @@ export class LegacyVanitySubdomainsGetUnexpectedStatusError extends Data.TaggedE
   readonly status: number;
   readonly body: string;
   readonly message: string;
+  readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // Unlike check/activate, this gated wrapper does not yet retain the typed
-    // entitlement result. Keep 404 conservative rather than masking a plan gate.
-    return statusCodeActionability(this.status);
+    // Unlike check/activate, non-gated 404s stay on the conservative
+    // API-status policy rather than reading as invalid input.
+    return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
   }
 }
 

@@ -76,21 +76,7 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
         Effect.catch(
           legacyGateMapError(
             { projectRef: branchRef, featureKey: "branching_persistent" },
-            (cause, upgradeSuggested) =>
-              Effect.gen(function* () {
-                const mapped = yield* Effect.flip(mapUpdateError(cause));
-                if (mapped._tag === "LegacyBranchesUpdateUnexpectedStatusError") {
-                  return yield* Effect.fail(
-                    new LegacyBranchesUpdateUnexpectedStatusError({
-                      status: mapped.status,
-                      body: mapped.body,
-                      message: mapped.message,
-                      upgradeSuggested,
-                    }),
-                  );
-                }
-                return yield* Effect.fail(mapped);
-              }),
+            (cause, upgradeSuggested) => mapUpdateError(cause, { upgradeSuggested }),
           ),
         ),
       );

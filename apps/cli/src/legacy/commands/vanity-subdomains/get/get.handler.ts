@@ -15,7 +15,6 @@ import {
   legacyGoStruct,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
-import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import {
   LegacyVanitySubdomainsGetNetworkError,
   LegacyVanitySubdomainsGetUnexpectedStatusError,
@@ -53,7 +52,7 @@ export const legacyVanitySubdomainsGet = Effect.fn("legacy.vanity-subdomains.get
         output.format === "text" ? yield* output.task("Getting vanity subdomain...") : undefined;
       const response = yield* api.v1.getVanitySubdomainConfig({ ref }).pipe(
         Effect.tapError(() => fetching?.fail() ?? Effect.void),
-        Effect.catch(legacyGateMapError({ projectRef: ref }, mapGetError)),
+        Effect.catch(mapGetError),
       );
       yield* fetching?.clear() ?? Effect.void;
 

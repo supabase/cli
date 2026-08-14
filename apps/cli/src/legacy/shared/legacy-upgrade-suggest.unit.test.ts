@@ -241,52 +241,23 @@ describe("legacySuggestUpgrade", () => {
     return legacyJsonResponse(request, status, body);
   }
 
-  it.live("envelope path suggests with zero API calls and envelope-derived telemetry", () => {
-    const { layer, out, analytics, api } = setup();
-    return Effect.gen(function* () {
-      yield* legacySuggestUpgrade({
-        projectRef: LEGACY_VALID_REF,
-        featureKey: "branching_limit",
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-      });
-      expect(api.requests).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "branching_persistent", org_slug: "env-org" },
-        },
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("envelope path works without a featureKey (envelope-only sites)", () => {
-    const { layer, out, analytics, api } = setup();
-    return Effect.gen(function* () {
-      yield* legacySuggestUpgrade({
-        projectRef: LEGACY_VALID_REF,
-        statusCode: 400,
-        response: gateResponse(400, {
-          message: "add-on required",
-          error: {
-            code: "entitlement_required",
-            feature: "custom_domain",
-            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
-          },
-        }),
-      });
-      expect(api.requests).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "custom_domain", org_slug: "env-org" },
-        },
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
+  it.live(
+    "returns without hint, telemetry, or API calls when the response carries the envelope",
+    () => {
+      const { layer, out, analytics, api } = setup();
+      return Effect.gen(function* () {
+        yield* legacySuggestUpgrade({
+          projectRef: LEGACY_VALID_REF,
+          featureKey: "branching_limit",
+          statusCode: 402,
+          response: gateResponse(402, ENVELOPE_BODY),
+        });
+        expect(api.requests).toHaveLength(0);
+        expect(out.stderrText).toBe("");
+        expect(analytics.captured).toEqual([]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("a caller-provided reconciled token authenticates the fallback GETs", () => {
     // Go resolves credentials for the process-wide reconciled CurrentProfile —
@@ -376,33 +347,6 @@ describe("legacySuggestUpgrade", () => {
       });
       expect(api.requests).toHaveLength(2);
       expect(out.stderrText).toContain("/org/test-org/billing");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("envelope path respects json output mode (no stderr, telemetry fires)", () => {
-    const { layer, out, analytics } = setup({ format: "json" });
-    return Effect.gen(function* () {
-      yield* legacySuggestUpgrade({
-        projectRef: LEGACY_VALID_REF,
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-      });
-      expect(out.stderrText).toBe("");
-      expect(analytics.captured).toHaveLength(1);
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("envelope path respects trackAnalytics=false", () => {
-    const { layer, out, analytics } = setup();
-    return Effect.gen(function* () {
-      yield* legacySuggestUpgrade({
-        projectRef: LEGACY_VALID_REF,
-        statusCode: 402,
-        response: gateResponse(402, ENVELOPE_BODY),
-        trackAnalytics: false,
-      });
-      expect(analytics.captured).toHaveLength(0);
-      expect(out.stderrText).toContain("Upgrade your plan:");
     }).pipe(Effect.provide(layer));
   });
 });

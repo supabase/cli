@@ -34,12 +34,10 @@ export class LegacyDomainsUnexpectedStatusError extends Data.TaggedError(
   readonly status: number;
   readonly body: string;
   readonly message: string;
+  readonly upgradeSuggested?: boolean;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
-    // The gated create/get/activate/reverify wrappers currently do not retain
-    // the entitlement check's boolean on this shared error. Keep 404 on the
-    // conservative API-status policy until that typed signal is threaded.
-    return statusCodeActionability(this.status);
+    return statusCodeActionability(this.status, { upgradeSuggested: this.upgradeSuggested });
   }
 }
 

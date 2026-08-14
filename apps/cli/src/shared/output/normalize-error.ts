@@ -1,5 +1,6 @@
 import { Cause, Option } from "effect";
 import { CliError } from "effect/unstable/cli";
+import { errorEntitlement, type PlanGateEntitlement } from "../api/plan-gate.ts";
 import { formatInvalidValueMessage } from "../cli/invalid-value-message.ts";
 import type { CliErrorSuggestionContext } from "../cli/subcommand-flag-suggestions.ts";
 import { formatCliErrorsForDisplay } from "../cli/subcommand-flag-suggestions.ts";
@@ -9,6 +10,7 @@ type NormalizedCliError = {
   readonly message: string;
   readonly detail?: string;
   readonly suggestion?: string;
+  readonly entitlement?: PlanGateEntitlement;
 };
 
 type ErrorRecord = Record<string, unknown>;
@@ -207,11 +209,13 @@ export function normalizeCliError(
     // `Fprintln(os.Stderr, CmdSuggestion)`). `readString` would trim exactly
     // that away.
     const suggestion = readRawString(error, "suggestion");
+    const entitlement = errorEntitlement(error);
     return {
       code,
       message,
       ...(detail && detail !== message ? { detail } : {}),
       ...(suggestion !== undefined && suggestion.length > 0 ? { suggestion } : {}),
+      ...(entitlement ? { entitlement } : {}),
     };
   }
 

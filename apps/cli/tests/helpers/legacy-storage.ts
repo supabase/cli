@@ -13,7 +13,7 @@ import { LegacyProjectNotLinkedError } from "../../src/legacy/config/legacy-proj
 import { LegacyProjectRefResolver } from "../../src/legacy/config/legacy-project-ref.service.ts";
 import { LegacyYesFlag } from "../../src/shared/legacy/global-flags.ts";
 import type { OutputFormat } from "../../src/shared/output/types.ts";
-import { mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
+import { mockAnalytics, mockOutput, mockRuntimeInfo, mockStdin, mockTty } from "./mocks.ts";
 import {
   LEGACY_VALID_REF,
   legacyJsonResponse,
@@ -207,6 +207,7 @@ export function setupLegacyStorage(workdir: string, opts: SetupLegacyStorageOpti
     httpLayer,
     telemetry.layer,
     linkedCache.layer,
+    mockAnalytics().layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
     projectRefLayer,

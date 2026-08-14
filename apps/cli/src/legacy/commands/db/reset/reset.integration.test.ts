@@ -9,6 +9,7 @@ import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientResponse from "effect/unstable/http/HttpClientResponse";
 
 import {
+  mockAnalytics,
   mockOutput,
   mockProcessControl,
   mockRuntimeInfo,
@@ -494,6 +495,7 @@ function setup(
     out.layer,
     conn.layer,
     resolver.layer,
+    mockAnalytics().layer,
     mockLegacyCliConfig({ workdir }),
     BunServices.layer,
     child.layer,

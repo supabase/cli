@@ -6,6 +6,7 @@ import type {
 import { describe, expect, it } from "@effect/vitest";
 import { Effect, Exit, Option } from "effect";
 
+import { errorEntitlement } from "../../../shared/api/plan-gate.ts";
 import { mockAnalytics, mockOutput } from "../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
@@ -111,38 +112,44 @@ describe("legacy vanity-subdomains get", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("suggests upgrade from entitlement_required envelope on 400", () => {
-    const out = mockOutput({ format: "text" });
-    const analytics = mockAnalytics();
-    const api = mockLegacyPlatformApi({
-      response: {
-        status: 400,
-        body: {
-          message: "This feature requires the Pro, Team, or Enterprise organization plan.",
-          error: {
-            code: "entitlement_required",
-            feature: "vanity_subdomain",
-            upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+  it.live(
+    "carries entitlement and fires central telemetry on an entitlement_required envelope",
+    () => {
+      const out = mockOutput({ format: "text" });
+      const analytics = mockAnalytics();
+      const api = mockLegacyPlatformApi({
+        response: {
+          status: 400,
+          body: {
+            message: "This feature requires the Pro, Team, or Enterprise organization plan.",
+            error: {
+              code: "entitlement_required",
+              feature: "vanity_subdomain",
+              upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+            },
           },
         },
-      },
-    });
-    const layer = runtimeWith({ out, api, analytics });
+      });
+      const layer = runtimeWith({ out, api, analytics });
 
-    return Effect.gen(function* () {
-      const exit = yield* Effect.exit(legacyVanitySubdomainsGet({ projectRef: Option.none() }));
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(api.requests).toHaveLength(1);
-      expect(out.stderrText).toContain("Upgrade your plan:");
-      expect(out.stderrText).toContain("/org/env-org/billing");
-      expect(analytics.captured).toEqual([
-        {
-          event: "cli_upgrade_suggested",
-          properties: { feature_key: "vanity_subdomain", org_slug: "env-org" },
-        },
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
+      return Effect.gen(function* () {
+        const exit = yield* Effect.exit(legacyVanitySubdomainsGet({ projectRef: Option.none() }));
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(errorEntitlement(Option.getOrUndefined(Exit.findErrorOption(exit)))).toEqual({
+          feature: "vanity_subdomain",
+          upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+        });
+        expect(api.requests).toHaveLength(1);
+        expect(out.stderrText).not.toContain("Upgrade your plan:");
+        expect(analytics.captured).toEqual([
+          {
+            event: "cli_upgrade_suggested",
+            properties: { feature_key: "vanity_subdomain", org_slug: "env-org" },
+          },
+        ]);
+      }).pipe(Effect.provide(layer));
+    },
+  );
 
   it.live("plain 404 without envelope produces no upgrade hint", () => {
     const out = mockOutput({ format: "text" });

@@ -41,6 +41,30 @@ describe("normalizeCliError", () => {
     });
   });
 
+  test("passes entitlement and suggestion through the generic fallback", () => {
+    const error = {
+      _tag: "LegacyDomainsUnexpectedStatusError",
+      message: "unexpected get hostname status 400: {}",
+      suggestion:
+        "Your organization does not have access to this feature. Upgrade your plan: https://supabase.com/dashboard/org/env-org/billing",
+      entitlement: {
+        feature: "custom_domain",
+        upgrade_url: "https://supabase.com/dashboard/org/env-org/billing",
+      },
+    };
+    expect(normalizeCliError(error)).toEqual({
+      code: "LegacyDomainsUnexpectedStatusError",
+      message: "unexpected get hostname status 400: {}",
+      suggestion: error.suggestion,
+      entitlement: error.entitlement,
+    });
+  });
+
+  test("drops malformed entitlement fields", () => {
+    const error = { _tag: "SomeError", message: "boom", entitlement: { feature: "x" } };
+    expect(normalizeCliError(error)).toEqual({ code: "SomeError", message: "boom" });
+  });
+
   test("MissingOption renders Go Cobra's `required flag(s) X not set` wording", () => {
     const error = { _tag: "MissingOption", option: "type" };
     expect(normalizeCliError(error)).toEqual({

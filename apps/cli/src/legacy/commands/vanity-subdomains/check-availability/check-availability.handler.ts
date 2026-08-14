@@ -33,6 +33,7 @@ const mapCheckError = mapLegacyHttpError({
   statusError: LegacyVanitySubdomainsCheckUnexpectedStatusError,
   networkMessage: (cause) => `failed to check vanity subdomain: ${cause}`,
   statusMessage: (status, body) => `unexpected check vanity subdomain status ${status}: ${body}`,
+  trackUpgradeSuggested: false,
 });
 
 export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
@@ -77,29 +78,18 @@ export const legacyVanitySubdomainsCheckAvailability = Effect.fn(
           Effect.tapError(() => checking?.fail() ?? Effect.void),
           Effect.catch((cause) =>
             Effect.gen(function* () {
-              // Flip the always-failing mapper into a success so we can inspect the
-              // tagged error before deciding whether to suggest an upgrade, then re-fail.
-              const mapped = yield* Effect.flip(mapCheckError(cause));
-              if (mapped._tag === "LegacyVanitySubdomainsCheckUnexpectedStatusError") {
-                // The check command calls SuggestUpgradeOnError without a following
-                // TrackUpgradeSuggested, so the analytics event is suppressed here too.
-                const upgradeSuggested = yield* legacySuggestUpgrade({
-                  projectRef: ref,
-                  featureKey: "vanity_subdomain",
-                  statusCode: mapped.status,
-                  response: legacyGateResponse(cause),
-                  trackAnalytics: false,
-                });
-                return yield* Effect.fail(
-                  new LegacyVanitySubdomainsCheckUnexpectedStatusError({
-                    status: mapped.status,
-                    body: mapped.body,
-                    message: mapped.message,
-                    upgradeSuggested,
-                  }),
-                );
-              }
-              return yield* Effect.fail(mapped);
+              // The check command calls SuggestUpgradeOnError without a following
+              // TrackUpgradeSuggested, so the analytics event is suppressed on
+              // both paths: `trackAnalytics` here, `trackUpgradeSuggested` on
+              // the mapper.
+              const upgradeSuggested = yield* legacySuggestUpgrade({
+                projectRef: ref,
+                featureKey: "vanity_subdomain",
+                statusCode: legacyGateResponse(cause)?.status ?? 0,
+                response: legacyGateResponse(cause),
+                trackAnalytics: false,
+              });
+              return yield* mapCheckError(cause, { upgradeSuggested });
             }),
           ),
         );
