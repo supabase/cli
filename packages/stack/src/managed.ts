@@ -1,5 +1,13 @@
 export * from "./managed/git.ts";
-export * from "./managed/identity.ts";
+export {
+  canonicalizeManagedWorkspacePath,
+  canonicalizeManagedWorkspacePathWithFileSystem,
+  ensureOrdinaryWorkspaceIdentity,
+  publishGitCheckoutIdentity,
+  readOrdinaryWorkspaceIdentity,
+  readOrdinaryWorkspaceIdentityWithFileSystem,
+} from "./managed/identity.ts";
+export type { EnsureOrdinaryWorkspaceIdentityResult } from "./managed/identity.ts";
 export * from "./managed/ids.ts";
 export * from "./managed/model.ts";
 export * from "./managed/paths.ts";
