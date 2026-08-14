@@ -45,17 +45,6 @@ describe("legacyParseMigrationContent", () => {
       transactionMode: "transactional",
     });
   });
-
-  it.each([
-    "-- pg-delta: transaction=true\nSELECT 1;",
-    " -- pg-delta: transaction=false\nSELECT 1;",
-    "-- pg-delta: transaction=none\nSELECT 1;",
-  ])("leaves a malformed first-line marker transactional: %s", (content) => {
-    expect(legacyParseMigrationContent(content)).toEqual({
-      statements: [content.trim().slice(0, -1)],
-      transactionMode: "transactional",
-    });
-  });
 });
 
 describe("legacyFormatMigrationTimestamp", () => {

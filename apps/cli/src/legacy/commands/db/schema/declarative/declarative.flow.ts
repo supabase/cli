@@ -176,19 +176,28 @@ function maskSqlComments(sql: string): string {
   );
 }
 
-function declaredImplicitExtensions(
+export function legacyDeclaredExtensions(
   files: readonly LegacyDeclarativeSqlFile[],
-): ReadonlySet<LegacyDeclarativeImplicitExtension> {
-  const declared = new Set<LegacyDeclarativeImplicitExtension>();
+): ReadonlySet<string> {
+  const declared = new Set<string>();
   const pattern =
     /\bCREATE\s+EXTENSION\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/gi;
   for (const file of files) {
     for (const match of maskSqlNonCode(file.sql).matchAll(pattern)) {
-      const extensionName = (match[1] ?? match[2])?.toLowerCase();
-      const extension = LEGACY_IMPLICIT_EXTENSIONS.find((implicit) => implicit === extensionName);
-      if (extension !== undefined) declared.add(extension);
+      const extension = match[1] ?? match[2];
+      if (extension !== undefined) declared.add(extension.toLowerCase());
     }
   }
+  return declared;
+}
+
+function declaredImplicitExtensions(
+  files: readonly LegacyDeclarativeSqlFile[],
+): ReadonlySet<LegacyDeclarativeImplicitExtension> {
+  const declaredNames = legacyDeclaredExtensions(files);
+  const declared = new Set(
+    LEGACY_IMPLICIT_EXTENSIONS.filter((extension) => declaredNames.has(extension)),
+  );
   return declared;
 }
 
@@ -248,6 +257,15 @@ export function legacyClassifyDeclarativeLoadCompatibility(opts: {
 export const legacyExtensionDeclaration = (extension: string): string =>
   `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";`;
 
+export const legacyNextExportAdoptionCommands = [
+  "  supabase db schema declarative generate --local --overwrite \\",
+  "    --output supabase/database-next --experimental",
+  "",
+  "  # review supabase/database-next",
+  "  rm -rf supabase/database && mv supabase/database-next supabase/database",
+  "  supabase db schema declarative sync --no-apply --experimental",
+] as const;
+
 export function legacyFormatStagedExportRecommendation(
   gap: LegacyDeclarativeCompatibilityGap,
 ): string {
@@ -270,11 +288,6 @@ export function legacyFormatStagedExportRecommendation(
     "WARNING: pg-delta next manages schema state that the legacy export did not represent.",
     ...detected,
     "Generate a next-compatible schema into a separate directory, review it, and adopt it when ready:",
-    "  supabase db schema declarative generate --local --overwrite \\",
-    "    --output supabase/database-next --experimental",
-    "",
-    "  # review supabase/database-next",
-    "  rm -rf supabase/database && mv supabase/database-next supabase/database",
-    "  supabase db schema declarative sync --no-apply --experimental",
+    ...legacyNextExportAdoptionCommands,
   ].join("\n");
 }

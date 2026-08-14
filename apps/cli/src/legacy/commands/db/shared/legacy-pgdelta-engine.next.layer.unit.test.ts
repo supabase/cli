@@ -2,21 +2,8 @@ import { Effect } from "effect";
 import { describe, expect, it } from "vitest";
 
 import type { LegacyPgDeltaDatabaseEndpoint } from "./legacy-pgdelta-engine.service.ts";
-import {
-  legacyParsePgDeltaNextEndpoint,
-  legacyPgDeltaNextIsolatedShadowPlanOptions,
-} from "./legacy-pgdelta-engine.next.layer.ts";
+import { legacyParsePgDeltaNextEndpoint } from "./legacy-pgdelta-engine.next.layer.ts";
 import { LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
-
-describe("legacyPgDeltaNextIsolatedShadowPlanOptions", () => {
-  it("uses the isolated full-baseline mode shared by both declarative planner entrypoints", () => {
-    expect(legacyPgDeltaNextIsolatedShadowPlanOptions).toEqual({
-      isolatedShadow: true,
-      seedAssumedSchemas: false,
-      strictDataStatements: true,
-    });
-  });
-});
 
 describe("legacyParsePgDeltaNextEndpoint", () => {
   it("fails malformed explicit URLs through the typed error channel and redacts passwords", () => {

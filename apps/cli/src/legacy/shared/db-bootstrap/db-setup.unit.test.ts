@@ -593,46 +593,6 @@ describe("legacyStartSetupLocalDatabase", () => {
     );
   });
 
-  describe("Database Webhooks", () => {
-    it.effect("does not install pg_net merely because Edge Runtime is enabled", () => {
-      const workdir = makeWorkdir();
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      const config = decodeConfig({ edge_runtime: { enabled: true } });
-      return run(baseInput(workdir, session, { majorVersion: 14, config }), out, docker).pipe(
-        Effect.map(() => {
-          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.some((sql) => sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(false);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
-    });
-
-    it.effect("installs pg_net from the effective Database Webhooks environment override", () => {
-      const workdir = makeWorkdir();
-      writeConfigToml(workdir, "[experimental.webhooks]\nenabled = false\n");
-      writeFileSync(
-        join(workdir, "supabase", ".env"),
-        "SUPABASE_EXPERIMENTAL_WEBHOOKS_ENABLED=true\n",
-      );
-      const { session, calls } = fakeSession();
-      const out = mockOutput();
-      const docker = mockDockerRun();
-      const config = decodeConfig({
-        edge_runtime: { enabled: false },
-        experimental: { webhooks: { enabled: false } },
-      });
-      return run(baseInput(workdir, session, { majorVersion: 14, config }), out, docker).pipe(
-        Effect.map(() => {
-          const execSql = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
-          expect(execSql.filter((sql) => sql.includes(PG_NET_CREATE_FINGERPRINT))).toHaveLength(1);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      );
-    });
-  });
-
   describe("vault upsert + custom-roles seed", () => {
     it.effect("upserts vault secrets before seeding supabase/roles.sql", () => {
       const workdir = makeWorkdir();

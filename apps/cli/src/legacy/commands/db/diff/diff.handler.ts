@@ -555,13 +555,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       usePgSchema,
       pgDeltaDefault,
     });
-    // The bundled next engine is the ONLY mode whose baseline is local migrations
-    // alone. Every other mode — migra, pgAdmin, and the `SUPABASE_USE_PG_DELTA_NEXT=
-    // false` legacy pg-delta opt-out — still substitutes the declared-schema
-    // `contrib_regression` target for a local database (`legacy-shadow-source.ts`'s
-    // `migrationMode !== "pgdelta-next"` branch), so under those engines
-    // `schema_paths` genuinely does still shape the output and the transition warning
-    // would be factually wrong. Gate it on the resolved engine, not on the setting.
+    // Only the next engine ignores schema_paths when building its migrations baseline.
     const usesPgDeltaNext = useDelta && pgDelta.implementation === "next";
     if (usesPgDeltaNext && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
       yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
@@ -635,12 +629,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         password: shadowBase.password,
         database: "postgres",
       };
-      // Same `acquireUseRelease` rationale as the migra/pg-delta branch below: `acquire` is
-      // ONLY container creation (uninterruptible); the health-wait + migrate + diff run
-      // inside the interruptible `use` phase. `acquire` here is ONLY
-      // `legacyCreateShadowDatabase` — NOT `legacyPrepareShadowSource` (no `--target-local`
-      // declarative-schema branch, no `targetUrlOverride`, no pg-delta apply: the pgAdmin
-      // engine migrates the shadow directly).
+      // Register cleanup atomically with shadow creation; preparation stays interruptible.
       const sql = yield* Effect.acquireUseRelease(
         legacyCreateShadowDatabase(spawner, shadowBase),
         (handle) =>
@@ -692,26 +681,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
         pgDelta: cfg.pgDelta,
         ctx,
       };
-      // `Effect.acquireUseRelease`, NOT a separate `yield* legacyCreateShadowDatabase(...)`
-      // followed by a later `.pipe(Effect.ensuring(...))`: the latter shape leaves a real gap
-      // between the shadow's successful creation and the `Effect.ensuring` finalizer actually
-      // being attached — a fiber interrupt landing in that gap (between the two `yield*`
-      // statements) would skip `legacyRemoveShadowDatabase` entirely, leaking the live shadow
-      // container and leaving the shadow port occupied. `acquireUseRelease` closes that:
-      // `acquire` runs inside an `uninterruptibleMask`, and the release finalizer is registered
-      // in the SAME uninterruptible continuation `acquire` resolves into. This does NOT make
-      // removal unconditional, though — see `legacyCreateShadowDatabase`'s own doc comment
-      // (`shadow-database.ts`) for the still-present leak window when `acquire` itself fails
-      // partway through (a `docker create` success followed by a `docker cp`/`docker start`
-      // failure).
-      //
-      // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT the
-      // health-wait/migrate/declarative-apply `legacyPrepareShadowSource` performs. Those run
-      // inside the `use` phase below instead, where a SIGINT can still interrupt them; passing
-      // all of `legacyPrepareShadowSource` as `acquire` made that whole sequence uninterruptible
-      // too, since `acquireUseRelease`'s `uninterruptibleMask` has no `restore` around
-      // `acquire` — see `legacy-shadow-source.ts`'s own doc comment on
-      // `legacyPrepareShadowSource` for the full rationale.
+      // Register cleanup atomically with creation; prepare and diff remain interruptible.
       diffResult = yield* Effect.acquireUseRelease(
         legacyCreateShadowDatabase(spawner, shadowInput),
         (handle) =>
@@ -819,15 +789,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       // writing a `<timestamp>_.sql` migration with no name.
     } else if (Option.isSome(flags.file) && flags.file.value.length > 0) {
       const fileName = flags.file.value;
-      // A pg-delta plan that crosses a transaction boundary yields more than one
-      // ordered unit; writing them into a single migration file would later fail
-      // when `db push`/`reset` applies it as one transaction. Write one migration
-      // file per unit in that case via the shared writer: each file appends the
-      // unit name and gets a strictly increasing timestamp, the full set is
-      // collision-checked against existing migrations, and every file is written
-      // exclusively so a pre-existing migration is never overwritten. A
-      // single-unit plan (and the migra engine) keeps the exact `<ts>_<name>.sql`
-      // file.
+      // Plans spanning transaction boundaries need one migration per ordered unit.
       const planFiles = diffResult.files ?? [];
       if (planFiles.length > 1) {
         const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {

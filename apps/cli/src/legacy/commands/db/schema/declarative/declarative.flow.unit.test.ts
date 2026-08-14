@@ -23,72 +23,83 @@ const removals = {
   ],
 };
 
+const classifyGap = (
+  overrides: Partial<Parameters<typeof legacyClassifyDeclarativeCompatibilityGap>[0]> = {},
+) =>
+  legacyClassifyDeclarativeCompatibilityGap({
+    implementation: "next",
+    manifestPresent: false,
+    removals,
+    ...overrides,
+  });
+
+const classifyLoad = (
+  overrides: Partial<Parameters<typeof legacyClassifyDeclarativeLoadCompatibility>[0]>,
+) =>
+  legacyClassifyDeclarativeLoadCompatibility({
+    implementation: "next",
+    manifestPresent: false,
+    diagnostics: [],
+    files: [],
+    ...overrides,
+  });
+
 describe("legacyClassifyDeclarativeCompatibilityGap", () => {
-  it("repairs only the known legacy-implicit extension set", () => {
-    const gap = legacyClassifyDeclarativeCompatibilityGap({
-      implementation: "next",
-      manifestPresent: false,
-      removals: { extensions: ["uuid-ossp", "pgcrypto", "pgcrypto"], extensionIntents: [] },
-    });
-    expect(gap).toEqual({
-      repairableExtensions: ["pgcrypto", "uuid-ossp"],
-      extensionIntents: [],
-      ambiguousRemovals: [],
-      recommendedAction: "repair-extensions",
-    });
+  it.each([
+    {
+      name: "repairs known implicit extensions",
+      overrides: {
+        removals: { extensions: ["uuid-ossp", "pgcrypto", "pgcrypto"], extensionIntents: [] },
+      },
+      expected: {
+        recommendedAction: "repair-extensions",
+        repairableExtensions: ["pgcrypto", "uuid-ossp"],
+        ambiguousRemovals: [],
+      },
+    },
+    {
+      name: "stages mixed known and unknown removals",
+      overrides: {
+        removals: { extensions: ["pgcrypto", "postgis"], extensionIntents: [] },
+      },
+      expected: {
+        recommendedAction: "stage-next-export",
+        repairableExtensions: ["pgcrypto"],
+        ambiguousRemovals: ["postgis"],
+      },
+    },
+    {
+      name: "stages extension intents",
+      overrides: {},
+      expected: { recommendedAction: "stage-next-export" },
+    },
+    {
+      name: "trusts a next export manifest",
+      overrides: { manifestPresent: true },
+      expected: { recommendedAction: "none" },
+    },
+    {
+      name: "leaves legacy behavior unchanged",
+      overrides: { implementation: "legacy" as const },
+      expected: { recommendedAction: "none" },
+    },
+    {
+      name: "ignores an empty removal set",
+      overrides: { removals: { extensions: [], extensionIntents: [] } },
+      expected: { recommendedAction: "none" },
+    },
+  ])("$name", ({ overrides, expected }) => {
+    expect(classifyGap(overrides)).toMatchObject(expected);
+  });
+
+  it("formats repair and staging instructions", () => {
     expect(legacyExtensionDeclaration("uuid-ossp")).toBe(
       'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";',
     );
-  });
-
-  it("stages a next export for mixed or unknown extension removals", () => {
-    const gap = legacyClassifyDeclarativeCompatibilityGap({
-      implementation: "next",
-      manifestPresent: false,
-      removals: { extensions: ["pgcrypto", "postgis"], extensionIntents: [] },
-    });
-    expect(gap.repairableExtensions).toEqual(["pgcrypto"]);
-    expect(gap.ambiguousRemovals).toEqual(["postgis"]);
-    expect(gap.recommendedAction).toBe("stage-next-export");
-  });
-
-  it("stages a next export when extension intents are present", () => {
-    const gap = legacyClassifyDeclarativeCompatibilityGap({
-      implementation: "next",
-      manifestPresent: false,
-      removals,
-    });
-    expect(gap.recommendedAction).toBe("stage-next-export");
+    const gap = classifyGap();
     expect(legacyFormatStagedExportRecommendation(gap)).toContain(
       "generate --local --overwrite \\\n    --output supabase/database-next --experimental",
     );
-  });
-
-  it("is suppressed for next exports with a manifest", () => {
-    expect(
-      legacyClassifyDeclarativeCompatibilityGap({
-        implementation: "next",
-        manifestPresent: true,
-        removals,
-      }).recommendedAction,
-    ).toBe("none");
-  });
-
-  it("is suppressed for the legacy engine and irrelevant removals", () => {
-    expect(
-      legacyClassifyDeclarativeCompatibilityGap({
-        implementation: "legacy",
-        manifestPresent: false,
-        removals,
-      }),
-    ).toMatchObject({ recommendedAction: "none" });
-    expect(
-      legacyClassifyDeclarativeCompatibilityGap({
-        implementation: "next",
-        manifestPresent: false,
-        removals: { extensions: [], extensionIntents: [] },
-      }),
-    ).toMatchObject({ recommendedAction: "none" });
   });
 });
 
@@ -102,9 +113,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
     ["net.http_post(text, jsonb)", "pg_net"],
   ])("maps a missing %s routine to %s", (routine, extension) => {
     const symbol = routine.slice(0, routine.indexOf("("));
-    const findings = legacyClassifyDeclarativeLoadCompatibility({
-      implementation: "next",
-      manifestPresent: false,
+    const findings = classifyLoad({
       diagnostics: [
         stuck(
           `schemas/app/tables/members.sql: ERROR: function ${routine} does not exist (failed identically in 6 rounds)`,
@@ -133,9 +142,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
     "maps a direct missing %s extension diagnostic",
     (extension) => {
       expect(
-        legacyClassifyDeclarativeLoadCompatibility({
-          implementation: "next",
-          manifestPresent: false,
+        classifyLoad({
           diagnostics: [
             stuck(`cluster/config.sql: ERROR: extension "${extension}" does not exist`),
           ],
@@ -158,9 +165,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
   );
 
   it("reports the authored line from the diagnostic's file and ignores cascades", () => {
-    const findings = legacyClassifyDeclarativeLoadCompatibility({
-      implementation: "next",
-      manifestPresent: false,
+    const findings = classifyLoad({
       diagnostics: [
         stuck(
           "schemas/app/tables/members.sql: ERROR: function extensions.uuid_generate_v4() does not exist",
@@ -199,7 +204,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
       manifestPresent: boolean,
       diagnostics: ReadonlyArray<{ code: string; severity: string; message: string }>,
     ) =>
-      legacyClassifyDeclarativeLoadCompatibility({
+      classifyLoad({
         implementation,
         manifestPresent,
         diagnostics,
@@ -217,9 +222,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
 
   it("does not classify an extension already declared anywhere in the tree", () => {
     expect(
-      legacyClassifyDeclarativeLoadCompatibility({
-        implementation: "next",
-        manifestPresent: false,
+      classifyLoad({
         diagnostics: [stuck("members.sql: function extensions.uuid_generate_v4() does not exist")],
         files: [
           { name: "members.sql", sql: "select extensions.uuid_generate_v4();" },
@@ -234,9 +237,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
 
   it("does not treat a commented or quoted declaration as an extension declaration", () => {
     expect(
-      legacyClassifyDeclarativeLoadCompatibility({
-        implementation: "next",
-        manifestPresent: false,
+      classifyLoad({
         diagnostics: [stuck("members.sql: function extensions.uuid_generate_v4() does not exist")],
         files: [
           {
@@ -254,9 +255,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
 
   it("returns an unlocated finding when the diagnostic has no authored match", () => {
     expect(
-      legacyClassifyDeclarativeLoadCompatibility({
-        implementation: "next",
-        manifestPresent: false,
+      classifyLoad({
         diagnostics: [stuck('unknown.sql: extension "pg_net" does not exist')],
         files: [],
       }),
@@ -272,9 +271,7 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
   it("deduplicates identical findings from repeated load diagnostics", () => {
     const diagnostic = stuck("members.sql: function extensions.uuid_generate_v4() does not exist");
     expect(
-      legacyClassifyDeclarativeLoadCompatibility({
-        implementation: "next",
-        manifestPresent: false,
+      classifyLoad({
         diagnostics: [diagnostic, diagnostic],
         files: [{ name: "members.sql", sql: "select extensions.uuid_generate_v4();" }],
       }),
@@ -283,46 +280,26 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
 });
 
 describe("legacyResolveDeclarativeMigrationName", () => {
-  it("prefers an explicit --name over --file", () => {
-    expect(legacyResolveDeclarativeMigrationName("my_change", "declarative_sync")).toBe(
-      "my_change",
-    );
-  });
-
-  it("falls back to --file when --name is empty", () => {
-    expect(legacyResolveDeclarativeMigrationName("", "declarative_sync")).toBe("declarative_sync");
+  it.each([
+    ["my_change", "declarative_sync", "my_change"],
+    ["", "declarative_sync", "declarative_sync"],
+  ])("resolves name=%j file=%j", (name, file, expected) => {
+    expect(legacyResolveDeclarativeMigrationName(name, file)).toBe(expected);
   });
 });
 
 describe("legacyResolveDeclarativeSyncApplyDecision", () => {
-  const base = { apply: false, noApply: false, yes: false, tty: false };
-
-  it("skips when --no-apply is set, regardless of other flags", () => {
-    expect(
-      legacyResolveDeclarativeSyncApplyDecision({
-        apply: true,
-        noApply: true,
-        yes: true,
-        tty: true,
-      }),
-    ).toBe("skip");
-  });
-
-  it("applies when --apply is set (and --no-apply is not)", () => {
-    expect(
-      legacyResolveDeclarativeSyncApplyDecision({ ...base, apply: true, yes: false, tty: false }),
-    ).toBe("apply");
-  });
-
-  it("applies when global --yes is set", () => {
-    expect(legacyResolveDeclarativeSyncApplyDecision({ ...base, yes: true })).toBe("apply");
-  });
-
-  it("prompts when on a TTY and no apply flags are set", () => {
-    expect(legacyResolveDeclarativeSyncApplyDecision({ ...base, tty: true })).toBe("prompt");
-  });
-
-  it("skips in non-interactive mode with no apply flags", () => {
-    expect(legacyResolveDeclarativeSyncApplyDecision(base)).toBe("skip");
+  it.each([
+    ["--no-apply wins", { apply: true, noApply: true, yes: true, tty: true }, "skip"],
+    ["--apply applies", { apply: true, noApply: false, yes: false, tty: false }, "apply"],
+    ["--yes applies", { apply: false, noApply: false, yes: true, tty: false }, "apply"],
+    ["TTY prompts", { apply: false, noApply: false, yes: false, tty: true }, "prompt"],
+    [
+      "non-interactive defaults to skip",
+      { apply: false, noApply: false, yes: false, tty: false },
+      "skip",
+    ],
+  ] as const)("%s", (_name, options, expected) => {
+    expect(legacyResolveDeclarativeSyncApplyDecision(options)).toBe(expected);
   });
 });

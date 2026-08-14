@@ -732,7 +732,7 @@ export const legacyMigrateShadowDatabase = <E>(
   void,
   LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
   Output | LegacyDockerRun | RuntimeInfo | LegacyDbConnection
-> => migrateShadowDatabase(spawner, input, { legacyPgNetBaseline: true });
+> => migrateShadowDatabase(spawner, input, { webhooks: "enabled" });
 
 /**
  * Migrates a shadow for the in-process pg-delta engine. Unlike the legacy engine,

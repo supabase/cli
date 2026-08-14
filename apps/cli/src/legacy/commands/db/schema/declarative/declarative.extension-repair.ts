@@ -1,23 +1,12 @@
 import { Effect, FileSystem, Path } from "effect";
 
-import { legacyExtensionDeclaration } from "./declarative.flow.ts";
+import { legacyDeclaredExtensions, legacyExtensionDeclaration } from "./declarative.flow.ts";
 
 interface LegacyExtensionRepairResult {
   readonly path: string;
   readonly addedExtensions: ReadonlyArray<string>;
   readonly addedDeclarations: ReadonlyArray<string>;
 }
-
-const declaredExtensions = (sql: string): ReadonlySet<string> => {
-  const extensions = new Set<string>();
-  const pattern =
-    /\bCREATE\s+EXTENSION\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:"([^"]+)"|([a-zA-Z_][\w$-]*))/gi;
-  for (const match of sql.matchAll(pattern)) {
-    const extension = match[1] ?? match[2];
-    if (extension !== undefined) extensions.add(extension);
-  }
-  return extensions;
-};
 
 /** Appends missing legacy extension declarations without replacing existing SQL. */
 export const legacyAppendExtensionDeclarations = Effect.fnUntraced(function* (
@@ -29,7 +18,7 @@ export const legacyAppendExtensionDeclarations = Effect.fnUntraced(function* (
   const extensionPath = path.join(declarativeDir, "extension.sql");
   const exists = yield* fs.exists(extensionPath);
   const existing = exists ? yield* fs.readFileString(extensionPath) : "";
-  const declared = declaredExtensions(existing);
+  const declared = legacyDeclaredExtensions([{ name: "extension.sql", sql: existing }]);
   const addedExtensions = [...new Set(extensions)]
     .filter((extension) => !declared.has(extension))
     .sort();

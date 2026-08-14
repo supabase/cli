@@ -49,18 +49,6 @@ describe("pg-delta next diagnostic coverage policy", () => {
             subject: "role:postgres",
             message: "edge references a fact not in the base",
           },
-          {
-            origin: "declarativeLoad",
-            code: "invalid_routine_body",
-            severity: "warning",
-            message: "routine body failed validation",
-          },
-          {
-            origin: "snapshot",
-            code: "unresolved_security_label",
-            severity: "warning",
-            message: "provider was not resolved",
-          },
         ],
         false,
       );
@@ -72,13 +60,7 @@ describe("pg-delta next diagnostic coverage policy", () => {
           "pg-delta does not manage these PostgreSQL object kinds: statistics object, text search configuration. Changes to these objects are omitted from the generated database diff.",
       });
       expect(out.messages.some(({ message }) => message.includes("dangling_edge"))).toBe(false);
-      expect(out.messages.some(({ message }) => message.includes("invalid_routine_body"))).toBe(
-        false,
-      );
-      expect(
-        out.messages.some(({ message }) => message.includes("unresolved_security_label")),
-      ).toBe(false);
-      expect(debugMessages).toHaveLength(5);
+      expect(debugMessages).toHaveLength(3);
       expect(debugMessages).toContain(
         "pg-delta next diagnostic: origin=source code=dangling_edge subject=role:postgres message=edge references a fact not in the base",
       );
@@ -118,42 +100,6 @@ describe("pg-delta next diagnostic coverage policy", () => {
     }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
   });
 
-  it("uses the upstream coverage policy to block unmodeled declarative drift", () => {
-    const report = legacyPgDeltaNextDiagnosticReport(
-      [
-        {
-          origin: "declarativeDrift",
-          code: "unmodeled_drift",
-          severity: "warning",
-          message: "desired text search configuration is absent from the target",
-          context: { kind: "text search configuration" },
-        },
-      ],
-      true,
-    );
-
-    expect(report.coverage).toHaveLength(1);
-    expect(report.blocking).toEqual(report.coverage);
-  });
-
-  it("can suppress a repeated feedback invitation without suppressing warnings", () => {
-    const out = mockOutput();
-    const debugMessages: string[] = [];
-    return Effect.gen(function* () {
-      yield* legacyReportPgDeltaNextDiagnostics(
-        "declarativePlan",
-        [unmodeled("text search configuration")],
-        false,
-        false,
-      );
-
-      expect(out.messages.some(({ message }) => message.includes("supabase issue feature"))).toBe(
-        false,
-      );
-      expect(out.messages.some(({ type }) => type === "warn")).toBe(true);
-    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
-  });
-
   const skippedStatement = (file: string, statement: string): LegacyPgDeltaNextDiagnostic => ({
     origin: "declarativeLoad",
     code: LEGACY_PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE,
@@ -181,47 +127,9 @@ describe("pg-delta next diagnostic coverage policy", () => {
         message:
           "pg-delta could not load 2 declarative schema statements in roles.sql. Changes to these objects are omitted from the declarative migration plan.",
       });
-      // Statement text stays out of the default-visibility summary; the per-diagnostic
-      // detail carries it and is routed to debug unless strict/verbose.
       expect(out.messages.some(({ message }) => message.includes("s3cret"))).toBe(false);
       expect(debugMessages.some((message) => message.includes("s3cret"))).toBe(true);
     }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
-  });
-
-  it("fails on skipped declarative statements under strict coverage", () => {
-    const out = mockOutput();
-    const debugMessages: string[] = [];
-    return Effect.gen(function* () {
-      const exit = yield* legacyReportPgDeltaNextDiagnostics(
-        "declarativePlan",
-        [skippedStatement("roles.sql", "create role app")],
-        true,
-      ).pipe(Effect.exit);
-
-      expect(Exit.isFailure(exit)).toBe(true);
-      expect(out.messages).toContainEqual({
-        type: "warn",
-        message:
-          "pg-delta could not load 1 declarative schema statement in roles.sql. Strict coverage is enabled, so the operation will stop.",
-      });
-      // Strict mode renders the detail (with the statement) so the user can fix it.
-      expect(out.messages.some(({ message }) => message.includes("create role app"))).toBe(true);
-      // No object kinds involved, so no unmodeled-kind summary and no feedback invite.
-      expect(out.messages.some(({ message }) => message.includes("does not manage"))).toBe(false);
-      expect(out.messages.some(({ message }) => message.includes("supabase issue feature"))).toBe(
-        false,
-      );
-    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
-  });
-
-  it("classifies a skipped statement as a coverage gap only under strict coverage", () => {
-    const diagnostics = [skippedStatement("roles.sql", "create role app")];
-    const lenient = legacyPgDeltaNextDiagnosticReport(diagnostics, false);
-    expect(lenient.coverage).toHaveLength(1);
-    expect(lenient.blocking).toEqual([]);
-
-    const strict = legacyPgDeltaNextDiagnosticReport(diagnostics, true);
-    expect(strict.blocking).toEqual(strict.coverage);
   });
 
   it("always renders and fails error diagnostics", () => {
@@ -297,8 +205,6 @@ describe("pg-delta next diagnostic coverage policy", () => {
         unmodeled("a future kind"),
         unmodeled("a future kind"),
         unmodeled("line\nbreak"),
-        unmodeled(undefined),
-        unmodeled("  "),
         {
           origin: "snapshot",
           code: "unresolved_security_label",
@@ -316,8 +222,8 @@ describe("pg-delta next diagnostic coverage policy", () => {
       true,
     );
 
-    expect(report.coverage).toHaveLength(8);
-    expect(report.blocking).toHaveLength(8);
+    expect(report.coverage).toHaveLength(6);
+    expect(report.blocking).toEqual(report.coverage);
     expect(report.unmodeledKinds).toEqual(["a future kind", "line break", "z future kind"]);
   });
 
@@ -338,9 +244,6 @@ describe("pg-delta next diagnostic coverage policy", () => {
     expect(invitation).not.toContain("private diagnostic message");
     expect(invitation).not.toContain("subject");
     expect(invitation).not.toContain("public.");
-  });
-
-  it("shell-quotes future kind names without making feedback kind-specific", () => {
     expect(legacyPgDeltaNextFeedbackInvitation(["user's future kind"])).toContain(
       `user'"'"'s future kind`,
     );

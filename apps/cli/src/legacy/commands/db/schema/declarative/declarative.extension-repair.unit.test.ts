@@ -1,6 +1,5 @@
 import { readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
@@ -43,23 +42,6 @@ describe("legacyAppendExtensionDeclarations", () => {
         'CREATE EXTENSION "pgcrypto";\r\n-- keep me\r\n' +
           'CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA "extensions";\r\n',
       );
-    }).pipe(Effect.provide(BunServices.layer));
-  });
-
-  it.effect("appends to the representative legacy root extension.sql", () => {
-    const fixture = join(
-      dirname(fileURLToPath(import.meta.url)),
-      "fixtures",
-      "legacy",
-      "extension.sql",
-    );
-    const extensionPath = join(tmp.current, "extension.sql");
-    writeFileSync(extensionPath, readFileSync(fixture, "utf8"));
-    return Effect.gen(function* () {
-      yield* legacyAppendExtensionDeclarations(tmp.current, ["uuid-ossp"]);
-      const updated = readFileSync(extensionPath, "utf8");
-      expect(updated).toContain('CREATE EXTENSION IF NOT EXISTS "vector"');
-      expect(updated).toContain('CREATE EXTENSION IF NOT EXISTS "uuid-ossp"');
     }).pipe(Effect.provide(BunServices.layer));
   });
 });

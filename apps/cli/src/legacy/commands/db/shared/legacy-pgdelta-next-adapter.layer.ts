@@ -27,7 +27,6 @@ import {
   LegacyPgDeltaNextError,
   type LegacyPgDeltaNextAdapterShape,
   type LegacyPgDeltaNextDeclarativeExportInput,
-  type LegacyPgDeltaNextDeclarativeManifestInput,
   type LegacyPgDeltaNextDeclarativePlanInput,
   type LegacyPgDeltaNextDiagnostic,
   type LegacyPgDeltaNextDiagnosticOrigin,
@@ -87,6 +86,7 @@ interface LegacyPgDeltaNextLibrarySchemaExport<Subject> {
 }
 
 type LegacyPgDeltaNextLibraryExportOptions = ReturnType<typeof legacyPgDeltaNextExportOptions>;
+type LegacyPgDeltaNextLibraryPlanOptions = ReturnType<typeof legacyPgDeltaNextPlanOptions>;
 
 interface LegacyPgDeltaNextLibrarySchemaPlan<Plan, Subject> {
   readonly plan: Plan;
@@ -123,7 +123,7 @@ export interface LegacyPgDeltaNextLibraries<FactBase, PlanOptions extends object
     targetPool: Pool,
     shadowPool: Pool,
     files: readonly LegacyPgDeltaNextSqlFile[],
-    input: LegacyPgDeltaNextDeclarativePlanInput,
+    input: LegacyPgDeltaNextLibraryPlanOptions,
   ) => Promise<LegacyPgDeltaNextLibrarySchemaPlan<Plan, Subject>>;
   readonly serializeSnapshot: (
     factBase: FactBase,
@@ -470,69 +470,24 @@ function legacyPgDeltaNextExportOptions(input: LegacyPgDeltaNextDeclarativeExpor
   const format = legacyPgDeltaNextFormatOptions(input.formatOptions);
   return {
     profile: legacyPgDeltaNextProfile(input.schema),
-    ...(input.scope !== undefined ? { scope: input.scope } : {}),
-    ...(input.redactSecrets !== undefined ? { redactSecrets: input.redactSecrets } : {}),
-    ...(input.restrictToApplier !== undefined
-      ? { resolveOptions: { restrictToApplier: input.restrictToApplier } }
-      : {}),
-    ...(input.layout !== undefined ? { layout: input.layout } : {}),
-    ...(input.grouping !== undefined
-      ? {
-          grouping: {
-            ...(input.grouping.mode !== undefined ? { mode: input.grouping.mode } : {}),
-            ...(input.grouping.groupPatterns !== undefined
-              ? { groupPatterns: [...input.grouping.groupPatterns] }
-              : {}),
-            ...(input.grouping.flatSchemas !== undefined
-              ? { flatSchemas: [...input.grouping.flatSchemas] }
-              : {}),
-            ...(input.grouping.autoGroupPartitions !== undefined
-              ? { autoGroupPartitions: input.grouping.autoGroupPartitions }
-              : {}),
-          },
-        }
-      : {}),
-    ...(input.defaultOwner !== undefined ? { defaultOwner: input.defaultOwner } : {}),
+    layout: "grouped" as const,
     ...(format !== undefined ? { format } : {}),
-    ...(input.onWarning !== undefined ? { onWarning: input.onWarning } : {}),
-  };
-}
-
-function legacyPgDeltaNextManifest(manifest: LegacyPgDeltaNextDeclarativeManifestInput) {
-  return {
-    ...(manifest.redactSecrets !== undefined ? { redactSecrets: manifest.redactSecrets } : {}),
-    ...(manifest.profile !== undefined ? { profile: manifest.profile } : {}),
-    ...(manifest.scope !== undefined ? { scope: manifest.scope } : {}),
-    ...(manifest.baselineDigest !== undefined ? { baselineDigest: manifest.baselineDigest } : {}),
-    ...(manifest.defaultOwner !== undefined ? { defaultOwner: manifest.defaultOwner } : {}),
-    ...(manifest.files !== undefined ? { files: [...manifest.files] } : {}),
   };
 }
 
 function legacyPgDeltaNextPlanOptions(input: LegacyPgDeltaNextDeclarativePlanInput) {
+  let manifest;
+  if (input.manifest !== undefined) {
+    const { files, ...metadata } = input.manifest;
+    manifest = { ...metadata, ...(files !== undefined ? { files: [...files] } : {}) };
+  }
   return {
     profile: legacyPgDeltaNextProfile(input.schema),
-    ...(input.scope !== undefined ? { scope: input.scope } : {}),
-    ...(input.manifest !== undefined
-      ? { manifest: legacyPgDeltaNextManifest(input.manifest) }
-      : {}),
-    ...(input.redactSecrets !== undefined ? { redactSecrets: input.redactSecrets } : {}),
-    ...(input.skipClusterDdl !== undefined ? { skipClusterDdl: input.skipClusterDdl } : {}),
-    ...(input.isolatedShadow !== undefined ? { isolatedShadow: input.isolatedShadow } : {}),
-    ...(input.seedAssumedSchemas !== undefined
-      ? { seedAssumedSchemas: input.seedAssumedSchemas }
-      : {}),
-    ...(input.restrictToApplier !== undefined
-      ? { resolveOptions: { restrictToApplier: input.restrictToApplier } }
-      : {}),
-    ...(input.strictFunctionBodies !== undefined
-      ? { strictFunctionBodies: input.strictFunctionBodies }
-      : {}),
-    ...(input.strictDataStatements !== undefined
-      ? { strictDataStatements: input.strictDataStatements }
-      : {}),
-    reorder: input.reorder ?? true,
-    ...(input.onWarning !== undefined ? { onWarning: input.onWarning } : {}),
+    ...(manifest !== undefined ? { manifest } : {}),
+    isolatedShadow: true,
+    seedAssumedSchemas: false,
+    strictDataStatements: true,
+    reorder: true,
   };
 }
 
@@ -543,24 +498,18 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
     diff: (input: LegacyPgDeltaNextDiffInput) =>
       legacyTryPgDeltaNext("diff", async () => {
         const format = legacyPgDeltaNextFormatOptions(input.formatOptions);
-        const redactSecrets = input.redactSecrets ?? true;
         const profile = await libraries.resolveProfile(
           input.sourcePool,
-          {
-            redactSecrets,
-            ...(input.restrictToApplier !== undefined
-              ? { restrictToApplier: input.restrictToApplier }
-              : {}),
-          },
+          { redactSecrets: true },
           input.schema,
         );
         const [source, desired] = await Promise.all([
-          profile.extract(input.sourcePool, { redactSecrets }),
-          profile.extract(input.desiredPool, { redactSecrets }),
+          profile.extract(input.sourcePool, { redactSecrets: true }),
+          profile.extract(input.desiredPool, { redactSecrets: true }),
         ]);
         const generatedPlan = libraries.plan(source.factBase, desired.factBase, {
           ...profile.planOptions,
-          redactSecrets,
+          redactSecrets: true,
         });
         const rendered = libraries.renderPlanFiles(generatedPlan, {
           allowDrops: input.allowDrops,
@@ -592,12 +541,12 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
                 debug: {
                   sourceSnapshot: libraries.serializeSnapshot(source.factBase, {
                     pgVersion: source.pgVersion,
-                    redactSecrets,
+                    redactSecrets: true,
                     profile: profile.id,
                   }),
                   desiredSnapshot: libraries.serializeSnapshot(desired.factBase, {
                     pgVersion: desired.pgVersion,
-                    redactSecrets,
+                    redactSecrets: true,
                     profile: profile.id,
                   }),
                   plan: libraries.serializePlan(generatedPlan),
@@ -628,12 +577,11 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
     planDeclarativeSchema: (input: LegacyPgDeltaNextDeclarativePlanInput) =>
       legacyTryPgDeltaNext("declarativePlan", async () => {
         const format = legacyPgDeltaNextFormatOptions(input.formatOptions);
-        const planningInput = { ...input, reorder: input.reorder ?? true };
         const result = await libraries.planSchemaFiles(
           input.targetPool,
           input.shadowPool,
           input.files,
-          planningInput,
+          legacyPgDeltaNextPlanOptions(input),
         );
         const rendered = libraries.renderPlanFiles(result.plan, {
           allowDrops: input.allowDrops,
@@ -677,22 +625,16 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
       }),
     captureSnapshot: (input: LegacyPgDeltaNextSnapshotCaptureInput) =>
       legacyTryPgDeltaNext("snapshotCapture", async () => {
-        const redactSecrets = input.redactSecrets ?? true;
         const profile = await libraries.resolveProfile(input.pool, {
-          redactSecrets,
+          redactSecrets: true,
           skipBaseline: true,
         });
-        const result = await profile.extract(input.pool, {
-          redactSecrets,
-          ...(input.statementTimeoutMs !== undefined
-            ? { statementTimeoutMs: input.statementTimeoutMs }
-            : {}),
-        });
+        const result = await profile.extract(input.pool, { redactSecrets: true });
         return {
           generation: "v2",
           snapshot: libraries.serializeSnapshot(result.factBase, {
             pgVersion: result.pgVersion,
-            redactSecrets,
+            redactSecrets: true,
             profile: profile.id,
           }),
           pgVersion: result.pgVersion,
@@ -743,13 +685,13 @@ const legacyPgDeltaNextRealLibraries = {
     targetPool: Pool,
     shadowPool: Pool,
     files: readonly LegacyPgDeltaNextSqlFile[],
-    input: LegacyPgDeltaNextDeclarativePlanInput,
+    input: LegacyPgDeltaNextLibraryPlanOptions,
   ) => {
     const result = await planSchemaFiles(
       targetPool,
       shadowPool,
       files.map((file) => ({ name: file.name, sql: file.sql })),
-      legacyPgDeltaNextPlanOptions(input),
+      input,
     );
     const [loadDiagnostics, targetDiagnostics] = await Promise.all([
       legacyFilterPgDeltaNextPlatformDiagnostics(shadowPool, result.loadDiagnostics),

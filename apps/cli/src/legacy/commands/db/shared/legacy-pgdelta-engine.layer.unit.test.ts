@@ -1,37 +1,13 @@
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-import { Effect, Exit, Layer, Option } from "effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as BunServices from "@effect/platform-bun/BunServices";
+import { Effect, Exit, Layer } from "effect";
 import { it } from "@effect/vitest";
-import { afterEach, describe, expect } from "vitest";
+import { describe, expect } from "vitest";
 
-import {
-  mockLegacyCliConfig,
-  useLegacyTempWorkdir,
-} from "../../../../../tests/helpers/legacy-mocks.ts";
-import { mockOutput, mockRuntimeInfo } from "../../../../../tests/helpers/mocks.ts";
-import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
-import {
-  LegacyDebugFlag,
-  LegacyExperimentalFlag,
-  LegacyNetworkIdFlag,
-} from "../../../../shared/legacy/global-flags.ts";
-import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
-import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
-import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
-import { LegacyPgDeltaSslProbe } from "../../../shared/legacy-pgdelta-ssl-probe.service.ts";
-import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
-import { LegacyPgDeltaNextAdapter } from "./legacy-pgdelta-next-adapter.service.ts";
-import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
 import {
-  legacyPgDeltaEngineLayer,
+  legacyPgDeltaImplementationFlag,
   legacyPgDeltaEngineSelectorLayer,
 } from "./legacy-pgdelta-engine.layer.ts";
 import { LegacyPgDeltaEngine } from "./legacy-pgdelta-engine.service.ts";
-
-const FLAG = "SUPABASE_USE_PG_DELTA_NEXT";
 
 function debugLayer(messages: Array<string>) {
   return Layer.succeed(LegacyDebugLogger, {
@@ -53,47 +29,6 @@ function metadataLayer(implementation: "next" | "legacy") {
   );
 }
 
-const unusedLegacyRuntime = Layer.mergeAll(
-  BunServices.layer,
-  FetchHttpClient.layer,
-  Layer.succeed(LegacyEdgeRuntimeScript, {
-    run: () => Effect.die("edge runtime not needed"),
-  }),
-  Layer.succeed(LegacyPgDeltaSslProbe, {
-    requireSsl: () => Effect.die("SSL probe not needed"),
-    requireSslForHost: () => Effect.die("SSL probe not needed"),
-  }),
-  Layer.succeed(LegacyDeclarativeSeam, {
-    exportCatalog: () => Effect.die("catalog not needed"),
-    ensureLocalDatabaseStarted: () => Effect.die("local start not needed"),
-    ensureLocalPostgresImageCurrent: () => Effect.die("image check not needed"),
-  }),
-  Layer.succeed(LegacyPgDeltaNextAdapter, {
-    diff: () => Effect.die("adapter not needed"),
-    exportDeclarativeSchema: () => Effect.die("adapter not needed"),
-    planDeclarativeSchema: () => Effect.die("adapter not needed"),
-    captureSnapshot: () => Effect.die("adapter not needed"),
-  }),
-  Layer.succeed(LegacyPgDeltaNextShadow, {
-    provisionMigrations: () => Effect.die("next migrations shadow not needed"),
-    provisionPlan: () => Effect.die("next plan shadows not needed"),
-  }),
-  Layer.succeed(LegacyDbConnection, {
-    connect: () => Effect.die("database connection not needed"),
-  }),
-  Layer.succeed(LegacyDockerRun, {
-    run: () => Effect.die("docker run not needed"),
-    runCapture: () => Effect.die("docker capture not needed"),
-    runStream: () => Effect.die("docker stream not needed"),
-  }),
-  Layer.succeed(CliArgs, { args: [] }),
-  Layer.succeed(LegacyDebugFlag, false),
-  Layer.succeed(LegacyExperimentalFlag, false),
-  Layer.succeed(LegacyNetworkIdFlag, Option.none<string>()),
-  mockRuntimeInfo(),
-  mockOutput().layer,
-);
-
 describe("legacyPgDeltaEngineSelectorLayer", () => {
   it.effect("selects next by default and logs the decision once", () => {
     const messages: Array<string> = [];
@@ -104,22 +39,6 @@ describe("legacyPgDeltaEngineSelectorLayer", () => {
     }).pipe(
       Effect.provide(
         legacyPgDeltaEngineSelectorLayer(undefined, {
-          next: metadataLayer("next"),
-          legacy: metadataLayer("legacy"),
-        }).pipe(Layer.provide(debugLayer(messages))),
-      ),
-    );
-  });
-
-  it.effect("selects legacy only for an explicit false value", () => {
-    const messages: Array<string> = [];
-    return Effect.gen(function* () {
-      const engine = yield* LegacyPgDeltaEngine;
-      expect(engine.implementation).toBe("legacy");
-      expect(messages).toEqual(["Using pg-delta legacy implementation."]);
-    }).pipe(
-      Effect.provide(
-        legacyPgDeltaEngineSelectorLayer("false", {
           next: metadataLayer("next"),
           legacy: metadataLayer("legacy"),
         }).pipe(Layer.provide(debugLayer(messages))),
@@ -203,76 +122,10 @@ describe("legacyPgDeltaEngineSelectorLayer", () => {
   });
 });
 
-describe("legacyPgDeltaEngineLayer", () => {
-  const tmp = useLegacyTempWorkdir("pgdelta-engine-selector-");
-
-  afterEach(() => {
-    delete process.env[FLAG];
-  });
-
-  const provideProductionSelector = (messages: Array<string>) =>
-    legacyPgDeltaEngineLayer.pipe(
-      Layer.provide(unusedLegacyRuntime),
-      Layer.provide(debugLayer(messages)),
-      Layer.provide(mockLegacyCliConfig({ workdir: tmp.current })),
-    );
-
-  const writeProjectFlag = (value: string) => {
-    mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", ".env"), `${FLAG}=${value}\n`);
-  };
-
-  it.effect("selects legacy from the project environment when the shell is unset", () => {
-    const messages: Array<string> = [];
-    writeProjectFlag("false");
-
-    return Effect.gen(function* () {
-      const engine = yield* LegacyPgDeltaEngine;
-      expect(engine.implementation).toBe("legacy");
-      expect(messages).toEqual(["Using pg-delta legacy implementation."]);
-    }).pipe(Effect.provide(provideProductionSelector(messages)));
-  });
-
-  it.effect("prefers a true shell value over a false project value", () => {
-    const messages: Array<string> = [];
-    process.env[FLAG] = "true";
-    writeProjectFlag("false");
-
-    return Effect.gen(function* () {
-      expect((yield* LegacyPgDeltaEngine).implementation).toBe("next");
-    }).pipe(Effect.provide(provideProductionSelector(messages)));
-  });
-
-  it.effect("prefers a false shell value over a true project value", () => {
-    const messages: Array<string> = [];
-    process.env[FLAG] = "false";
-    writeProjectFlag("true");
-
-    return Effect.gen(function* () {
-      expect((yield* LegacyPgDeltaEngine).implementation).toBe("legacy");
-    }).pipe(Effect.provide(provideProductionSelector(messages)));
-  });
-
-  it.effect("defaults to next when neither environment defines the flag", () => {
-    const messages: Array<string> = [];
-    return Effect.gen(function* () {
-      expect((yield* LegacyPgDeltaEngine).implementation).toBe("next");
-      expect(messages).toEqual(["Using pg-delta next implementation."]);
-    }).pipe(Effect.provide(provideProductionSelector(messages)));
-  });
-
-  it.effect("reads the environment once for the command-scoped service", () => {
-    const messages: Array<string> = [];
-    process.env[FLAG] = "false";
-
-    return Effect.gen(function* () {
-      const first = yield* LegacyPgDeltaEngine;
-      process.env[FLAG] = "true";
-      const second = yield* LegacyPgDeltaEngine;
-
-      expect(first).toBe(second);
-      expect(second.implementation).toBe("legacy");
-      expect(messages).toEqual(["Using pg-delta legacy implementation."]);
-    }).pipe(Effect.provide(provideProductionSelector(messages)));
+describe("legacyPgDeltaImplementationFlag", () => {
+  it("prefers shell presence and otherwise uses the project value", () => {
+    expect(legacyPgDeltaImplementationFlag("true", "false")).toBe("true");
+    expect(legacyPgDeltaImplementationFlag("", "false")).toBe("");
+    expect(legacyPgDeltaImplementationFlag(undefined, "false")).toBe("false");
   });
 });

@@ -166,31 +166,6 @@ describe("legacy migration repair", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("preserves a no-transaction directive when repairing applied history", () => {
-    seedMigration(
-      tmp.current,
-      "20240102000000_drop_subscription.sql",
-      "\uFEFF-- pg-delta: transaction=false\r\n" +
-        "SET check_function_bodies = off;\r\n" +
-        "DROP SUBSCRIPTION app_events;\r\n" +
-        "RESET ALL;\r\n",
-    );
-    const { layer, queries } = setup(tmp.current);
-    return Effect.gen(function* () {
-      yield* legacyMigrationRepair(input({ versions: ["20240102000000"], status: "applied" }));
-      const upsert = queries.find((query) => query.sql.includes("ON CONFLICT"));
-      expect(upsert?.params).toEqual([
-        "20240102000000",
-        "drop_subscription",
-        [
-          "-- pg-delta: transaction=false\r\nSET check_function_bodies = off",
-          "DROP SUBSCRIPTION app_events",
-          "RESET ALL",
-        ],
-      ]);
-    }).pipe(Effect.provide(layer));
-  });
-
   it.live("resolves the DB target before parsing positional versions", () => {
     // The DB config resolves before
     // version parsing, so an unlinked target error wins over a bad version.

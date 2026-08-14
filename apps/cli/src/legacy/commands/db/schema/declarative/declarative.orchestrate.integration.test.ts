@@ -445,7 +445,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
   // `--strict-coverage` is enforced entirely by the next engine's diagnostic report;
   // the legacy engine has no coverage diagnostics, so the flag silently did nothing
   // under `SUPABASE_USE_PG_DELTA_NEXT=false`. It must say so instead.
-  const runWithLegacyEngine = (strictCoverage: boolean) => {
+  const runWithStrictCoverageOnLegacyEngine = () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
     const declDir = join(dir, "supabase", "database");
     mkdirSync(declDir, { recursive: true });
@@ -460,7 +460,7 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       dir,
       out,
       effect: legacyDiffDeclarativeToMigrations(
-        { ...ctx(dir, declDir), strictCoverage },
+        { ...ctx(dir, declDir), strictCoverage: true },
         toml,
         setupInputs,
       ).pipe(
@@ -480,25 +480,13 @@ describe("legacyDiffDeclarativeToMigrations", () => {
   };
 
   it.effect("warns that --strict-coverage does nothing on the legacy engine", () => {
-    const { dir, out, effect } = runWithLegacyEngine(true);
+    const { dir, out, effect } = runWithStrictCoverageOnLegacyEngine();
     return effect.pipe(
       Effect.tap(() =>
         Effect.sync(() => {
           expect(out.stderrText).toContain(
             '"--strict-coverage" has no effect with the legacy pg-delta engine.',
           );
-          rmSync(dir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("stays silent about --strict-coverage when the flag is unset", () => {
-    const { dir, out, effect } = runWithLegacyEngine(false);
-    return effect.pipe(
-      Effect.tap(() =>
-        Effect.sync(() => {
-          expect(out.stderrText).not.toContain("--strict-coverage");
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

@@ -596,49 +596,6 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--overwrite preserves unmanaged files in the absolute --output destination", () => {
-    const destination = mkdtempSync(join(tmpdir(), "legacy-decl-output-"));
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "select 1;");
-    writeFileSync(join(destination, "stale.sql"), "select 'stale';");
-    const s = setup(tmp.current, { experimental: true, engineImplementation: "next" });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(
-        flags({
-          local: Option.some(true),
-          output: Option.some(destination),
-          overwrite: true,
-        }),
-      );
-      expect(readFileSync(join(destination, "stale.sql"), "utf8")).toBe("select 'stale';");
-      expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(true);
-      // The destination had no manifest, so nothing could be classified as stale and
-      // `stale.sql` silently survived an "overwrite" the user confirmed. Say so, and
-      // point at the only instruction that produces a clean tree.
-      const stderrText = stripAnsi(
-        s.out.rawChunks
-          .filter((chunk) => chunk.stream === "stderr")
-          .map((chunk) => chunk.text)
-          .join(""),
-      );
-      expect(stderrText).toContain(
-        "1 existing declarative schema file(s) in " + destination + " are not tracked",
-      );
-      expect(stderrText).toContain("stale.sql");
-      expect(stderrText).toContain(`remove ${destination} and re-run`);
-      expect(
-        readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
-      ).toBe("select 1;");
-      expect(
-        s.out.rawChunks.map((chunk) => ({ text: stripAnsi(chunk.text), stream: chunk.stream })),
-      ).toContainEqual({
-        text: `Declarative schema written to ${destination}\n`,
-        stream: "stderr",
-      });
-      rmSync(destination, { recursive: true, force: true });
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("explicit --local checks the local Postgres image before generating", () => {
     const s = setup(tmp.current, { experimental: true, staleLocalImage: true });
     return Effect.gen(function* () {
@@ -805,25 +762,6 @@ describe("legacy db schema declarative generate integration", () => {
       expect(Exit.isSuccess(exit)).toBe(true);
       // Took the explicit linked path: the resolver was called with connType "linked".
       expect(s.resolverCalls).toContainEqual(expect.objectContaining({ connType: "linked" }));
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("explicit --linked does not route the export source through the Go seam", () => {
-    const ref = "abcdefghijklmnopqrst";
-    const s = setup(tmp.current, { experimental: true, projectId: Option.some(ref) });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ linked: Option.some(true) }));
-      expect(s.seamExportCalls.some((call) => call.mode === "baseline")).toBe(false);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("explicit --local keeps raw-shadow export independent of linked state", () => {
-    const s = setup(tmp.current, { experimental: true });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
-      expect(s.seamExportCalls.some((call) => call.mode === "baseline")).toBe(false);
-      // No linked ref resolved → no linked-project cache write (Go gates on ProjectRef).
-      expect(s.cache.cached).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 

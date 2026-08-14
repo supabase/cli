@@ -1,4 +1,5 @@
 import { Clock, Effect, FileSystem, Layer, Path } from "effect";
+import type { Pool } from "pg";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import {
@@ -30,13 +31,6 @@ import {
   legacyPgDeltaNextDiagnosticReport,
   legacyReportPgDeltaNextDiagnostics,
 } from "./legacy-pgdelta-next-diagnostics.ts";
-
-/** Shared by both declarative planner entrypoints over the full isolated baseline. */
-export const legacyPgDeltaNextIsolatedShadowPlanOptions = {
-  isolatedShadow: true,
-  seedAssumedSchemas: false,
-  strictDataStatements: true,
-} as const;
 
 function legacyPgDeltaNextConnectSuggestion(cause: unknown): string | undefined {
   if (cause instanceof LegacyDbConnectError) return cause.suggestion;
@@ -196,6 +190,37 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
       );
     };
 
+    const diffPools = (
+      input: {
+        readonly context: { readonly cwd: string };
+        readonly schema: ReadonlyArray<string>;
+        readonly formatOptions: string;
+        readonly debug: boolean;
+        readonly strictCoverage: boolean;
+      },
+      sourcePool: Pool,
+      desiredPool: Pool,
+    ) =>
+      Effect.gen(function* () {
+        const result = yield* adapter.diff({
+          sourcePool,
+          desiredPool,
+          allowDrops: true,
+          debug: input.debug,
+          schema: input.schema,
+          formatOptions: input.formatOptions,
+        });
+        const debugDirectory =
+          result.debug !== undefined
+            ? yield* saveDebugArtifacts(input.context.cwd, "diff", {
+                ...result.debug,
+                diagnostics: result.diagnostics,
+              })
+            : undefined;
+        yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
+        return normalizeNextDiff(result, debugDirectory);
+      });
+
     return LegacyPgDeltaEngine.of({
       implementation: "next",
       diffExplicit: (input) =>
@@ -249,23 +274,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               [endpointPool(input.source), endpointPool(input.desired)],
               { concurrency: 2 },
             );
-            const result = yield* adapter.diff({
-              sourcePool,
-              desiredPool,
-              allowDrops: true,
-              debug: input.debug,
-              schema: input.schema,
-              formatOptions: input.formatOptions,
-            });
-            const debugDirectory =
-              result.debug !== undefined
-                ? yield* saveDebugArtifacts(input.context.cwd, "diff", {
-                    ...result.debug,
-                    diagnostics: result.diagnostics,
-                  })
-                : undefined;
-            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
-            return normalizeNextDiff(result, debugDirectory);
+            return yield* diffPools(input, sourcePool, desiredPool);
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
       diffDatabase: (input) =>
@@ -273,23 +282,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
           Effect.gen(function* () {
             const migrationsPool = yield* acquireDatabase(input.source);
             const desiredPool = yield* acquireDatabase(input.target);
-            const result = yield* adapter.diff({
-              sourcePool: migrationsPool,
-              desiredPool,
-              allowDrops: true,
-              debug: input.debug,
-              schema: input.schema,
-              formatOptions: input.formatOptions,
-            });
-            const debugDirectory =
-              result.debug !== undefined
-                ? yield* saveDebugArtifacts(input.context.cwd, "diff", {
-                    ...result.debug,
-                    diagnostics: result.diagnostics,
-                  })
-                : undefined;
-            yield* reportDiagnostics("diff", result.diagnostics, input.strictCoverage, input.debug);
-            return normalizeNextDiff(result, debugDirectory);
+            return yield* diffPools(input, migrationsPool, desiredPool);
           }),
         ).pipe(Effect.mapError(legacyPgDeltaNextEngineError)),
       exportDeclarativeSchema: (input) =>
@@ -298,13 +291,12 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
             const pool = yield* acquireDatabase(input.target);
             const result = yield* adapter.exportDeclarativeSchema({
               pool,
-              layout: "grouped",
               schema: input.schema,
               formatOptions: input.formatOptions,
             });
             if (input.debug) {
               const capture = yield* adapter
-                .captureSnapshot({ pool, redactSecrets: true })
+                .captureSnapshot({ pool })
                 .pipe(Effect.orElseSucceed(() => undefined));
               yield* saveDebugArtifacts(input.context.cwd, "declarativeExport", {
                 ...(capture !== undefined ? { desiredSnapshot: capture.snapshot } : {}),
@@ -354,8 +346,6 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               files: input.files,
               allowDrops: true,
               debug: input.debug,
-              reorder: true,
-              ...legacyPgDeltaNextIsolatedShadowPlanOptions,
               schema: input.schema,
               formatOptions: input.formatOptions,
               ...(input.manifest !== undefined ? { manifest: input.manifest } : {}),

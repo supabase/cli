@@ -236,7 +236,7 @@ const alwaysReadyHttpClientLayer = Layer.succeed(
 );
 
 /** Mirrors `start.integration.test.ts`'s own `fakeDbSession` — PG15+ (this suite's default) never calls `exec`/`query` (its schema init is three one-shot `LegacyDockerRun` jobs instead). */
-function fakeDbSession(appliedMigrationStatements?: ReadonlyArray<string>) {
+function fakeDbSession() {
   const calls: Array<{ kind: "exec" | "query"; sql: string }> = [];
   const session: LegacyDbSession = {
     exec: (sql) =>
@@ -246,18 +246,7 @@ function fakeDbSession(appliedMigrationStatements?: ReadonlyArray<string>) {
     query: (sql) =>
       Effect.sync(() => {
         calls.push({ kind: "query", sql });
-        // The Database Webhooks convergence reads applied-migration statements to
-        // decide whether pg_net is migration-owned (and must not be dropped).
-        return appliedMigrationStatements !== undefined &&
-          sql.includes("supabase_migrations.schema_migrations")
-          ? [
-              {
-                version: "20240101000000",
-                name: "migration",
-                statements: [...appliedMigrationStatements],
-              },
-            ]
-          : [];
+        return [];
       }),
     extensionExists: () => Effect.succeed(false),
     copyToCsv: () => Effect.succeed(new Uint8Array()),
@@ -297,12 +286,6 @@ interface SetupOpts {
   readonly connectFailures?: number;
   /** Whether the mocked connect failures are dial-level (`retryable`). Defaults to `true`. */
   readonly connectFailuresRetryable?: boolean;
-  /**
-   * Statements of one recorded row in `supabase_migrations.schema_migrations`, read by
-   * the existing-volume Database Webhooks convergence to decide whether pg_net is
-   * migration-owned. Defaults to an empty history.
-   */
-  readonly appliedMigrationStatements?: ReadonlyArray<string>;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -324,7 +307,7 @@ function setup(opts: SetupOpts = {}) {
         ? runningCheckFailsRoute(baseRoute)
         : baseRoute;
   const child = mockContainerCliSpawner(route);
-  const dbSession = fakeDbSession(opts.appliedMigrationStatements);
+  const dbSession = fakeDbSession();
   const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
   const edgeRuntime = Layer.succeed(LegacyEdgeRuntimeScript, {
     run: (runOpts: LegacyEdgeRuntimeRunOpts) => {
@@ -630,24 +613,6 @@ describe("legacy db start", () => {
       });
     },
   );
-
-  it.live("leaves migration-owned pg_net alone when Webhooks are disabled", () => {
-    // `supabase start` does not replay migrations on an existing volume, so dropping
-    // pg_net here would silently break a database whose own migration created it, with
-    // nothing to put it back.
-    // Config validation rejects an explicit `enabled = false`, so "disabled" is the
-    // key being absent — exactly what a user who removes the block ends up with.
-    const { layer, dbSession } = setup({
-      configContents: 'project_id = "test"\n',
-      appliedMigrationStatements: ["create extension if not exists pg_net with schema extensions"],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbStart(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-      expect(dbSession.calls.some((call) => call.sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(
-        false,
-      );
-    });
-  });
 
   it.live("installs pg_net on an existing volume from effective Webhooks config", () => {
     const { layer, out, child, dbSession } = setup({

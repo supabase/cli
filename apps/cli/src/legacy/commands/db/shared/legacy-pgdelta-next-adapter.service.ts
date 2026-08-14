@@ -9,6 +9,7 @@ import {
 import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migration-file.ts";
 import type {
   LegacyPgDeltaErrorDiagnostic,
+  LegacyPgDeltaExportManifest,
   LegacyPgDeltaHazardKind,
   LegacyPgDeltaHazardReport,
   LegacyPgDeltaRemovalSummary,
@@ -67,8 +68,6 @@ export interface LegacyPgDeltaNextDiffInput {
   readonly desiredPool: Pool;
   readonly allowDrops: boolean;
   readonly debug: boolean;
-  readonly redactSecrets?: boolean;
-  readonly restrictToApplier?: boolean;
   readonly schema?: readonly string[];
   readonly formatOptions?: string;
 }
@@ -82,56 +81,18 @@ interface LegacyPgDeltaNextDiffResult {
   readonly debug?: LegacyPgDeltaNextDebugArtifacts;
 }
 
-type LegacyPgDeltaNextManagementScope = "database" | "cluster";
-type LegacyPgDeltaNextExportLayout = "by-object" | "ordered" | "grouped";
-
-interface LegacyPgDeltaNextExportGroupingPattern {
-  readonly pattern: string;
-  readonly name: string;
-}
-
-interface LegacyPgDeltaNextExportGrouping {
-  readonly mode?: "single-file" | "subdirectory";
-  readonly groupPatterns?: readonly LegacyPgDeltaNextExportGroupingPattern[];
-  readonly flatSchemas?: readonly string[];
-  readonly autoGroupPartitions?: boolean;
-}
-
 export interface LegacyPgDeltaNextDeclarativeExportInput {
   readonly pool: Pool;
-  readonly scope?: LegacyPgDeltaNextManagementScope;
-  readonly redactSecrets?: boolean;
-  readonly restrictToApplier?: boolean;
-  readonly layout?: LegacyPgDeltaNextExportLayout;
-  readonly grouping?: LegacyPgDeltaNextExportGrouping;
-  readonly defaultOwner?: string | null;
-  readonly onWarning?: (message: string) => void;
   readonly schema?: readonly string[];
   readonly formatOptions?: string;
 }
 
-export interface LegacyPgDeltaNextExportManifest {
-  readonly redactSecrets: boolean;
-  readonly scope: LegacyPgDeltaNextManagementScope;
-  readonly profile?: string;
-  readonly baselineDigest?: string;
-  readonly defaultOwner?: string | null;
-  readonly files?: readonly string[];
-}
+export type LegacyPgDeltaNextExportManifest = LegacyPgDeltaExportManifest;
 
 interface LegacyPgDeltaNextDeclarativeExportResult {
   readonly files: readonly LegacyPgDeltaNextSqlFile[];
   readonly manifest: LegacyPgDeltaNextExportManifest;
   readonly diagnostics: readonly LegacyPgDeltaNextDiagnostic[];
-}
-
-export interface LegacyPgDeltaNextDeclarativeManifestInput {
-  readonly redactSecrets?: boolean;
-  readonly profile?: string;
-  readonly scope?: LegacyPgDeltaNextManagementScope;
-  readonly baselineDigest?: string;
-  readonly defaultOwner?: string | null;
-  readonly files?: readonly string[];
 }
 
 export interface LegacyPgDeltaNextDeclarativePlanInput {
@@ -140,20 +101,8 @@ export interface LegacyPgDeltaNextDeclarativePlanInput {
   readonly files: readonly LegacyPgDeltaNextSqlFile[];
   readonly allowDrops: boolean;
   readonly debug: boolean;
-  readonly scope?: LegacyPgDeltaNextManagementScope;
-  readonly manifest?: LegacyPgDeltaNextDeclarativeManifestInput;
-  readonly redactSecrets?: boolean;
-  readonly skipClusterDdl?: boolean;
-  readonly isolatedShadow?: boolean;
-  readonly seedAssumedSchemas?: boolean;
-  readonly restrictToApplier?: boolean;
-  readonly strictFunctionBodies?: boolean;
-  /** Reject data-changing SQL observed while loading declarative schema files. */
-  readonly strictDataStatements?: boolean;
+  readonly manifest?: LegacyPgDeltaNextExportManifest;
   readonly formatOptions?: string;
-  /** Defaults to true, preserving pg-topo statement-level reorder support. */
-  readonly reorder?: boolean;
-  readonly onWarning?: (message: string) => void;
   readonly schema?: readonly string[];
 }
 
@@ -175,8 +124,6 @@ interface LegacyPgDeltaNextDeclarativePlanResult {
 
 export interface LegacyPgDeltaNextSnapshotCaptureInput {
   readonly pool: Pool;
-  readonly redactSecrets?: boolean;
-  readonly statementTimeoutMs?: number;
 }
 
 interface LegacyPgDeltaNextSnapshotCaptureResult {

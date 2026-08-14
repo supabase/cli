@@ -598,60 +598,40 @@ const execMigrationBatch = <E>(
       const version = forceNoVersion ? "" : (matches?.[1] ?? "");
       const name = matches?.[2] ?? "";
 
+      const executeSequentially = (cleanup: string) =>
+        Effect.gen(function* () {
+          for (const [index, statement] of statements.entries()) {
+            yield* session
+              .exec(statement)
+              .pipe(
+                Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)),
+              );
+          }
+          if (version.length > 0) {
+            yield* session
+              .query(INSERT_MIGRATION_VERSION, [version, name, statements])
+              .pipe(
+                Effect.mapError((cause) =>
+                  legacyFormatExecBatchError(cause, statements.length, INSERT_MIGRATION_VERSION),
+                ),
+              );
+          }
+        }).pipe(Effect.tapError(() => session.exec(cleanup).pipe(Effect.ignore)));
+
       // The pg-delta directive is file-level execution metadata. Run the complete
       // sequence on this session without adding transaction boundaries so session
       // settings remain active for the nontransactional action. History is recorded
       // only after every statement succeeds. A failed sequence gets a best-effort
       // session reset because the generated trailing RESET ALL may not have run yet.
       if (transactionMode === "none") {
-        const nonTransactional = Effect.gen(function* () {
-          for (const [index, statement] of statements.entries()) {
-            yield* session
-              .exec(statement)
-              .pipe(
-                Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)),
-              );
-          }
-          if (version.length > 0) {
-            yield* session
-              .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-              .pipe(
-                Effect.mapError((cause) =>
-                  legacyFormatExecBatchError(cause, statements.length, INSERT_MIGRATION_VERSION),
-                ),
-              );
-          }
-        });
-        return yield* nonTransactional.pipe(
-          Effect.tapError(() => session.exec("RESET ALL").pipe(Effect.ignore)),
-        );
+        return yield* executeSequentially("RESET ALL");
       }
 
       // A headerless file with authored transaction boundaries owns those semantics.
       // Execute the statements exactly as written, clean up a failed authored
       // transaction, and only send the history insert after every statement succeeds.
       if (statements.some(legacyHasTransactionControl)) {
-        const authored = Effect.gen(function* () {
-          for (const [index, statement] of statements.entries()) {
-            yield* session
-              .exec(statement)
-              .pipe(
-                Effect.mapError((cause) => legacyFormatExecBatchError(cause, index, statement)),
-              );
-          }
-          if (version.length > 0) {
-            yield* session
-              .query(INSERT_MIGRATION_VERSION, [version, name, statements])
-              .pipe(
-                Effect.mapError((cause) =>
-                  legacyFormatExecBatchError(cause, statements.length, INSERT_MIGRATION_VERSION),
-                ),
-              );
-          }
-        });
-        return yield* authored.pipe(
-          Effect.tapError(() => session.exec("ROLLBACK").pipe(Effect.ignore)),
-        );
+        return yield* executeSequentially("ROLLBACK");
       }
 
       // `executed` is the global statement index of the next statement to run, so the

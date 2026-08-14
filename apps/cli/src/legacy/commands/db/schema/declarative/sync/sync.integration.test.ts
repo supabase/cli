@@ -1050,35 +1050,7 @@ describe("legacy db schema declarative sync integration", () => {
       expect(JSON.stringify(error)).toContain(
         "supabase db schema declarative generate --local --overwrite",
       );
-      expect(s.out.promptSelectCalls).toHaveLength(0);
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
-      const output = stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""));
-      expect(output).not.toContain("pg-toolbelt/issues");
-      expect(output).not.toContain("circular REFERENCES");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("offers adopt, repair, or cancel before a load-failure plan exists", () => {
-    seedLegacyUuidDeclarative(tmp.current);
-    const s = setup(tmp.current, {
-      engineImplementation: "next",
-      stdinIsTty: true,
-      planErrors: [legacyUuidLoadError()],
-      promptSelectResponses: ["cancel"],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(s.out.promptSelectCalls[0]?.options).toEqual([
-        expect.objectContaining({ value: "stage", hint: "recommended" }),
-        expect.objectContaining({ value: "repair" }),
-        expect.objectContaining({ value: "cancel" }),
-      ]);
-      expect(
-        s.out.promptSelectCalls[0]?.options.some((option) => option.value === "continue"),
-      ).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1095,10 +1067,6 @@ describe("legacy db schema declarative sync integration", () => {
       expect(s.planCalls).toBe(2);
       expect(readFileSync(join(tmp.current, "supabase", "database", "extension.sql"), "utf8")).toBe(
         'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";\n',
-      );
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""))).toContain(
-        "No schema changes found",
       );
     }).pipe(Effect.provide(s.layer));
   });
@@ -1123,7 +1091,6 @@ describe("legacy db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(s.declarativeExportCalls).toHaveLength(1);
       expect(readFileSync(activeMember, "utf8")).toBe(before);
       expect(
         readFileSync(
@@ -1142,7 +1109,6 @@ describe("legacy db schema declarative sync integration", () => {
       expect(
         existsSync(join(tmp.current, "supabase", "database-next", ".pgdelta-export.json")),
       ).toBe(true);
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1168,7 +1134,6 @@ describe("legacy db schema declarative sync integration", () => {
         message: expect.stringContaining("pg_cron job refresh download metrics"),
       });
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(s.dbExec).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1189,30 +1154,6 @@ describe("legacy db schema declarative sync integration", () => {
         message: expect.stringContaining("[experimental.webhooks]\nenabled = true"),
       });
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
-      expect(s.out.promptSelectCalls).toHaveLength(0);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("keeps explicit extension repair for non-config-managed extensions", () => {
-    seedDeclarative(tmp.current);
-    const s = setup(tmp.current, {
-      engineImplementation: "next",
-      stdinIsTty: true,
-      diffSql: 'DROP EXTENSION "pgcrypto";\n',
-      replannedDiffSql: "",
-      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
-      promptSelectResponses: ["repair"],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(readFileSync(join(tmp.current, "supabase", "database", "extension.sql"), "utf8")).toBe(
-        'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";\n',
-      );
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""))).toContain(
-        "No schema changes found",
-      );
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1230,7 +1171,6 @@ describe("legacy db schema declarative sync integration", () => {
       return Effect.gen(function* () {
         yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
         expect(readdirSync(join(tmp.current, "supabase", "migrations"))).toHaveLength(1);
-        expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -1246,28 +1186,6 @@ describe("legacy db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("fails safely instead of repairing when sync is non-interactive", () => {
-    seedDeclarative(tmp.current);
-    const s = setup(tmp.current, {
-      engineImplementation: "next",
-      diffSql: 'DROP EXTENSION "pgcrypto";\n',
-      removals: { extensions: ["pgcrypto"], extensionIntents: [] },
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) })).pipe(
-        Effect.exit,
-      );
-      expect(failError(exit)).toMatchObject({
-        _tag: "LegacyDeclarativeCompatibilityError",
-        message: expect.stringContaining(
-          'CREATE EXTENSION IF NOT EXISTS "pgcrypto" WITH SCHEMA "extensions";',
-        ),
-      });
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
       expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
     }).pipe(Effect.provide(s.layer));

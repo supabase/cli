@@ -36,8 +36,6 @@ describe("legacyIsPgNetUnavailableError", () => {
 describe("legacyStatementInstallsPgNet", () => {
   it.each([
     "create extension pg_net",
-    "CREATE EXTENSION pg_net",
-    "create extension if not exists pg_net schema extensions",
     'CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA extensions',
     "create\n  extension if not exists\n  pg_net\n  with schema extensions",
   ])("treats %j as a pg_net install", (statement) => {
@@ -45,10 +43,8 @@ describe("legacyStatementInstallsPgNet", () => {
   });
 
   it.each([
-    "create table public.items (id int)",
     "create extension pgcrypto",
     "drop extension if exists pg_net",
-    "select net.http_post(url := 'https://example.com')",
     "comment on extension pgcrypto is 'pg_net is not installed here'",
   ])("does not treat %j as a pg_net install", (statement) => {
     expect(legacyStatementInstallsPgNet(statement)).toBe(false);

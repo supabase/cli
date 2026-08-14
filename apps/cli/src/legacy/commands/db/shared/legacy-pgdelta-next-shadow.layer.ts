@@ -225,9 +225,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           timeoutSeconds: input.base.healthTimeoutSeconds,
         });
         const setup = setupRunInput(input, handle);
-        yield* legacySetupShadowDatabase(input.spawner, setup, {
-          activateUserExtensions: false,
-        });
+        yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" });
         yield* Effect.scoped(
           Effect.gen(function* () {
             const session = yield* legacyConnectShadowDatabase(setup.connConfig);

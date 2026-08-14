@@ -460,10 +460,7 @@ export interface LegacySetupDatabaseInput {
 
 /** Controls the extension side effects of {@link legacySetupDatabase}. */
 export interface LegacySetupDatabaseOptions {
-  /** Apply extensions enabled by project config. Disabled for a declarative desired-state scratch. */
-  readonly activateUserExtensions?: boolean;
-  /** Install `pg_net` as a legacy platform baseline, independently of project config. */
-  readonly legacyPgNetBaseline?: boolean;
+  readonly webhooks?: "config" | "enabled" | "disabled";
 }
 
 /** Input to {@link legacyStartSetupLocalDatabase}. */
@@ -1056,15 +1053,13 @@ export const legacySetupDatabase = (
         if (requiresPg14WebhooksCleanup) {
           yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
         }
-        const activateUserExtensions = options.activateUserExtensions ?? true;
-        const legacyPgNetBaseline = options.legacyPgNetBaseline ?? false;
-        const userEnabled = activateUserExtensions && input.webhooksEnabled;
+        const webhooks = options.webhooks ?? "config";
         yield* legacyApplyDatabaseWebhooks(
           session,
           fs,
           path,
           tmpDir,
-          legacyPgNetBaseline || userEnabled,
+          webhooks === "enabled" || (webhooks === "config" && input.webhooksEnabled),
         );
         yield* legacyApplyApiPrivileges(session, fs, path, tmpDir, input.apiAutoExposeNewTables);
       }),
@@ -1323,22 +1318,7 @@ const legacyConnectLocalPostgres = (input: {
       );
   });
 
-/**
- * Idempotently converges Database Webhooks on a healthy, existing local database —
- * in BOTH directions. Installing pg_net when the setting is on was always covered;
- * removing it when the setting is turned back off was not, so pg_net silently
- * survived on the volume while the next engine's shadow baseline (rebuilt from the
- * current config) omitted it, reporting pg_net drift on every `db diff`/`db pull`.
- *
- * The removal is guarded, because `supabase start` does NOT replay migrations on an
- * existing volume: an unconditional drop would delete an extension a user's own
- * migration created, with nothing to put it back. So pg_net is dropped only when no
- * applied migration in `supabase_migrations.schema_migrations` installs it (see
- * {@link legacyStatementInstallsPgNet}), and any failure to read that history —
- * missing table, malformed table, insufficient privileges — is treated as
- * "migration-owned" and leaves the extension alone. Erring toward not dropping is
- * the only safe direction here.
- */
+/** Converges pg_net while preserving extensions installed by user migrations. */
 export const legacyRunDatabaseWebhooksSetup = (input: {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;

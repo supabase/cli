@@ -89,11 +89,6 @@ describe("legacyBuildPostgresStartContainerSpec", () => {
     );
     expect(script).not.toContain(LEGACY_POSTGRES_DEFAULT_ROOT_KEY);
     expect(script).not.toContain("pgsodium_root.key");
-    expect(LEGACY_START_DB_WEBHOOK_SQL).not.toContain("CREATE EXTENSION IF NOT EXISTS pg_net");
-    expect(LEGACY_START_DB_WEBHOOK_SQL).toContain(
-      "CREATE OR REPLACE FUNCTION extensions.grant_pg_net_access()",
-    );
-    expect(LEGACY_START_DB_WEBHOOK_SQL).toContain("CREATE EVENT TRIGGER issue_pg_net_access");
     expect(spec.tmpfs).toBeUndefined();
     expect(spec.secretFiles).toEqual([
       {

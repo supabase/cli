@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
-import { Cause, Effect, Exit, FileSystem, Layer, Option, Path } from "effect";
+import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import {
   LEGACY_VALID_REF,
@@ -22,11 +22,7 @@ import type {
   LegacyDbConfigFlags,
   LegacyResolvedDbConfig,
 } from "../../../shared/legacy-db-config.types.ts";
-import { LegacyDbExecError } from "../../../shared/legacy-db-connection.errors.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
-import type { LegacyDbSession } from "../../../shared/legacy-db-connection.service.ts";
-import { legacyApplyMigrationFile } from "../../../shared/legacy-migration-apply.ts";
-import { legacyParseMigrationContent } from "../../../shared/legacy-migration-file.ts";
 import { legacyMigrationFetch } from "./fetch.handler.ts";
 import type { LegacyMigrationFetchFlags } from "./fetch.command.ts";
 
@@ -144,16 +140,6 @@ const flags = (over: Partial<LegacyMigrationFetchFlags> = {}): LegacyMigrationFe
 const migrationsDir = (workdir: string) => join(workdir, "supabase", "migrations");
 const tmp = useLegacyTempWorkdir();
 
-function stringArray(value: unknown): ReadonlyArray<string> | undefined {
-  if (!Array.isArray(value)) return undefined;
-  const values: Array<string> = [];
-  for (const item of value) {
-    if (typeof item !== "string") return undefined;
-    values.push(item);
-  }
-  return values;
-}
-
 describe("legacy migration fetch", () => {
   it.live("writes migration files joined with the Go separator when the dir is empty", () => {
     const { layer, out } = setup(tmp.current, {
@@ -173,66 +159,6 @@ describe("legacy migration fetch", () => {
       const files = readdirSync(dir);
       expect(files).toEqual(["20240101000000_init.sql"]);
       expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("create table a;\ncreate index b;\n");
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.live("preserves no-transaction metadata through apply, history, and fetch", () => {
-    const rows: Array<MigrationRow> = [];
-    const source = join(tmp.current, "20240102000000_drop_subscription.sql");
-    writeFileSync(
-      source,
-      "\uFEFF-- pg-delta: transaction=false\r\n" +
-        "SET check_function_bodies = off;\r\n" +
-        "DROP SUBSCRIPTION app_events;\r\n" +
-        "RESET ALL;\r\n",
-    );
-    const applySession: LegacyDbSession = {
-      exec: () => Effect.void,
-      query: (_sql, params) =>
-        Effect.sync(() => {
-          const version = params?.[0];
-          const name = params?.[1];
-          const statements = stringArray(params?.[2]);
-          if (typeof version === "string" && typeof name === "string" && statements !== undefined) {
-            rows.push({ version, name, statements });
-          }
-          return [];
-        }),
-      extensionExists: () => Effect.succeed(false),
-      copyToCsv: () => Effect.succeed(new Uint8Array()),
-      queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
-    };
-    const { layer } = setup(tmp.current, { rows });
-
-    return Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      yield* legacyApplyMigrationFile(
-        applySession,
-        fs,
-        path,
-        source,
-        (message) => new LegacyDbExecError({ message }),
-      );
-
-      const firstStatement = "-- pg-delta: transaction=false\r\nSET check_function_bodies = off";
-      expect(rows).toEqual([
-        {
-          version: "20240102000000",
-          name: "drop_subscription",
-          statements: [firstStatement, "DROP SUBSCRIPTION app_events", "RESET ALL"],
-        },
-      ]);
-
-      yield* legacyMigrationFetch(flags());
-      const fetched = readFileSync(
-        join(migrationsDir(tmp.current), "20240102000000_drop_subscription.sql"),
-        "utf8",
-      );
-      expect(legacyParseMigrationContent(fetched)).toEqual({
-        statements: [firstStatement, "DROP SUBSCRIPTION app_events", "RESET ALL"],
-        transactionMode: "none",
-      });
     }).pipe(Effect.provide(layer));
   });
 

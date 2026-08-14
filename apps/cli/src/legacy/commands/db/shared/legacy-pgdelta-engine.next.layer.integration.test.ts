@@ -6,7 +6,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import { LegacyDeclarativeShadowDbError } from "./legacy-pgdelta.errors.ts";
 import { legacyPgDeltaNextEngineLayer } from "./legacy-pgdelta-engine.next.layer.ts";
-import { LegacyPgDeltaEngine, LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
+import { LegacyPgDeltaEngine } from "./legacy-pgdelta-engine.service.ts";
 import { LegacyPgDeltaNextAdapter } from "./legacy-pgdelta-next-adapter.service.ts";
 import { LegacyPgDeltaNextShadow } from "./legacy-pgdelta-next-shadow.service.ts";
 import type { LegacyDbTomlValues } from "../../../shared/legacy-db-config.toml-read.ts";
@@ -173,33 +173,6 @@ describe("pg-delta next shadow selection", () => {
         .pipe(Effect.exit);
 
       expect(state).toEqual({ migrations: 0, plan: 1 });
-    }).pipe(Effect.provide(layer));
-  });
-
-  it.effect("returns malformed explicit URLs as typed failures rather than defects", () => {
-    const { state, layer } = setup();
-    return Effect.gen(function* () {
-      const engine = yield* LegacyPgDeltaEngine;
-      const error = yield* engine
-        .diffExplicit({
-          ...common,
-          source: {
-            kind: "database",
-            ref: "postgresql://postgres:source-secret@[/postgres",
-            connectOptions: { isLocal: false, dnsResolver: "native" },
-          },
-          desired: {
-            kind: "database",
-            ref: "postgresql://postgres:desired-secret@[/postgres",
-            connectOptions: { isLocal: false, dnsResolver: "native" },
-          },
-        })
-        .pipe(Effect.flip);
-
-      expect(error).toBeInstanceOf(LegacyPgDeltaEngineError);
-      expect(String(error.cause)).not.toContain("source-secret");
-      expect(String(error.cause)).not.toContain("desired-secret");
-      expect(state).toEqual({ migrations: 0, plan: 0 });
     }).pipe(Effect.provide(layer));
   });
 });

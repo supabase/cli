@@ -34,6 +34,7 @@ import {
 import {
   legacyClassifyDeclarativeLoadCompatibility,
   legacyExtensionDeclaration,
+  legacyNextExportAdoptionCommands,
   type LegacyDeclarativeLoadCompatibilityFinding,
 } from "./declarative.flow.ts";
 
@@ -83,12 +84,7 @@ const formatImplicitExtensionLoadFailure = (
     "",
     "Recommended — generate a next-compatible tree, review it, then adopt:",
     "",
-    "  supabase db schema declarative generate --local --overwrite \\",
-    "    --output supabase/database-next --experimental",
-    "",
-    "  # review supabase/database-next",
-    "  rm -rf supabase/database && mv supabase/database-next supabase/database",
-    "  supabase db schema declarative sync --no-apply --experimental",
+    ...legacyNextExportAdoptionCommands,
     "",
     "Alternative — add the missing extension declarations to extension.sql, then re-plan:",
     ...extensions.map((extension) => legacyExtensionDeclaration(extension)),

@@ -6,21 +6,6 @@ import { LegacyPgDeltaEngineError } from "./legacy-pgdelta-engine.service.ts";
 import { LegacyPgDeltaNextError } from "./legacy-pgdelta-next-adapter.service.ts";
 
 describe("pg-delta next engine errors", () => {
-  it("preserves database connection suggestions when wrapping failures", () => {
-    const cause = new LegacyDbConnectError({
-      message: "failed to connect to postgres",
-      suggestion: "Retry with --dns-resolver https.",
-    });
-
-    expect(legacyPgDeltaNextEngineError(cause)).toEqual(
-      new LegacyPgDeltaEngineError({
-        message: "failed to connect to postgres",
-        suggestion: "Retry with --dns-resolver https.",
-        cause,
-      }),
-    );
-  });
-
   it("finds connection suggestions nested in adapter failures", () => {
     const cause = new LegacyDbConnectError({
       message: "failed to connect to postgres",
@@ -32,9 +17,11 @@ describe("pg-delta next engine errors", () => {
       cause,
     });
 
-    expect(legacyPgDeltaNextEngineError(adapterError).suggestion).toBe(
-      "Retry with --dns-resolver https.",
-    );
+    const error = legacyPgDeltaNextEngineError(adapterError);
+    expect(error).toBeInstanceOf(LegacyPgDeltaEngineError);
+    expect(error.message).toBe("Database diff failed");
+    expect(error.suggestion).toBe("Retry with --dns-resolver https.");
+    expect(error.cause).toBe(adapterError);
   });
 
   it("preserves structured diagnostics from adapter failures", () => {
@@ -60,10 +47,5 @@ describe("pg-delta next engine errors", () => {
         diagnostics,
       }),
     );
-  });
-
-  it("does not wrap an existing engine error again", () => {
-    const error = new LegacyPgDeltaEngineError({ message: "blocked", cause: "diagnostic" });
-    expect(legacyPgDeltaNextEngineError(error)).toBe(error);
   });
 });

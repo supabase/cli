@@ -663,18 +663,6 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("migra local diff does not print the schema_paths transition warning", () => {
-    writeSchemaPathsConfig(false);
-    const s = setup(tmp.current, {
-      pgDeltaImplementation: "next",
-      diffSql: "create table result ();\n",
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbDiff(flags());
-      expect(stderr(s.out)).not.toContain("schema_paths no longer changes the migrations baseline");
-    }).pipe(Effect.provide(s.layer));
-  });
-
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
     // This covers the PG14 branch of the `legacySetupDatabase` pipeline, which execs
     // SQL directly via the session instead of the three one-shot `LegacyDockerRun`
@@ -1423,49 +1411,7 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  for (const format of ["json", "stream-json"] as const) {
-    it.effect(`includes the ignored declarative baseline advisory in ${format} output`, () => {
-      mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-      writeFileSync(
-        join(tmp.current, "supabase", "database", "items.sql"),
-        "create table items ();\n",
-      );
-      const s = setup(tmp.current, {
-        format,
-        pgDeltaImplementation: "next",
-        diffSql: "create table dogfood_note ();\n",
-      });
-      return Effect.gen(function* () {
-        yield* legacyDbDiff(
-          flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
-        );
-        const success = s.out.messages.find((message) => message.type === "success");
-        expect(success?.data).toMatchObject({
-          diff: "create table dogfood_note ();\n",
-          engine: "pg-delta",
-          advisories: [
-            {
-              code: "DeclarativeSchemaNotUsedAsDiffBaseline",
-              severity: "info",
-              context: {
-                baseline: "supabase/migrations",
-                declarativePath: "supabase/database",
-                fileFlagFiltersObjects: false,
-              },
-            },
-          ],
-        });
-        expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
-        const written = readdirSync(join(tmp.current, "supabase", "migrations"));
-        expect(written).toHaveLength(1);
-        expect(readFileSync(join(tmp.current, "supabase", "migrations", written[0]!), "utf8")).toBe(
-          "create table dogfood_note ();\n",
-        );
-      }).pipe(Effect.provide(s.layer));
-    });
-  }
-
-  it.effect("does not emit the advisory for the legacy pg-delta implementation", () => {
+  it.effect("includes the ignored declarative baseline advisory in JSON output", () => {
     mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "database", "items.sql"),
@@ -1473,7 +1419,7 @@ describe("legacy db diff", () => {
     );
     const s = setup(tmp.current, {
       format: "json",
-      pgDeltaImplementation: "legacy",
+      pgDeltaImplementation: "next",
       diffSql: "create table dogfood_note ();\n",
     });
     return Effect.gen(function* () {
@@ -1481,8 +1427,22 @@ describe("legacy db diff", () => {
         flags({ usePgDelta: Option.some(true), file: Option.some("dogfood_note") }),
       );
       const success = s.out.messages.find((message) => message.type === "success");
-      expect(success?.data).not.toHaveProperty("advisories");
-      expect(stderr(s.out)).not.toContain("db diff -f uses supabase/migrations");
+      expect(success?.data).toMatchObject({
+        diff: "create table dogfood_note ();\n",
+        engine: "pg-delta",
+        advisories: [
+          {
+            code: "DeclarativeSchemaNotUsedAsDiffBaseline",
+            severity: "info",
+            context: {
+              baseline: "supabase/migrations",
+              declarativePath: "supabase/database",
+              fileFlagFiltersObjects: false,
+            },
+          },
+        ],
+      });
+      expect(stderr(s.out)).toContain("db diff -f uses supabase/migrations as its baseline");
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1515,50 +1475,26 @@ describe("legacy db diff", () => {
   });
 
   it.effect("writes one migration file per unit for a multi-unit pg-delta plan", () => {
-    // A pg-delta plan that crosses a transaction boundary yields more than one
-    // ordered unit; writing them into one migration would fail when db push/reset
-    // applies it as a single transaction. Each unit becomes its own file (Go's
-    // WritePgDeltaMigrations), named `<name>_<unit>` with strictly increasing
-    // timestamps, and the machine payload's `files` lists them all.
     const s = setup(tmp.current, {
       format: "json",
       diffFiles: [
-        { name: "schema_changes", sql: "alter type mood add value 'ok';" },
-        { name: "after_enum_values", sql: "insert into t values ('ok');" },
-      ],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
-      const dir = join(tmp.current, "supabase", "migrations");
-      const files = readdirSync(dir).sort();
-      expect(files).toHaveLength(2);
-      expect(files[0]).toMatch(/^\d{14}_my_diff_schema_changes\.sql$/);
-      expect(files[1]).toMatch(/^\d{14}_my_diff_after_enum_values\.sql$/);
-      // Each unit's file carries only that unit's SQL, terminated with a newline.
-      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("alter type mood add value 'ok';\n");
-      const success = s.out.messages.find((m) => m.type === "success");
-      const data = success?.data as { file: string; files: ReadonlyArray<string> };
-      expect(data.files).toHaveLength(2);
-      // `file` stays the first written path for released string-field consumers.
-      expect(data.file).toBe(data.files[0]);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("uses exact next-renderer suffixes for multi-file migration names", () => {
-    const s = setup(tmp.current, {
-      diffFiles: [
-        { name: "ignored_legacy_name", sql: "a" },
-        { name: "ignored_legacy_name", sql: "b" },
+        { name: "ignored", sql: "alter type mood add value 'ok';" },
+        { name: "ignored", sql: "insert into t values ('ok');" },
       ],
       diffSuffixes: ["_1", "_2"],
     });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
       const dir = join(tmp.current, "supabase", "migrations");
-      expect(readdirSync(dir).sort()).toEqual([
-        "19700101000000_my_diff_1.sql",
-        "19700101000001_my_diff_2.sql",
-      ]);
+      const files = readdirSync(dir).sort();
+      expect(files).toHaveLength(2);
+      expect(files[0]).toBe("19700101000000_my_diff_1.sql");
+      expect(files[1]).toBe("19700101000001_my_diff_2.sql");
+      expect(readFileSync(join(dir, files[0]!), "utf8")).toBe("alter type mood add value 'ok';\n");
+      const success = s.out.messages.find((m) => m.type === "success");
+      const data = success?.data as { file: string; files: ReadonlyArray<string> };
+      expect(data.files).toHaveLength(2);
+      expect(data.file).toBe(data.files[0]);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1573,78 +1509,6 @@ describe("legacy db diff", () => {
       expect(dirs).toHaveLength(1);
       expect(dirs[0]).toMatch(/^\d{14}_snapshots$/);
       expect(readdirSync(join(migrationsRoot, dirs[0]!))).toEqual(["remote.sql"]);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("creates nested parent directories for a nested multi-unit --file name", () => {
-    const s = setup(tmp.current, {
-      format: "json",
-      diffFiles: [
-        { name: "schema_changes", sql: "alter type mood add value 'ok';" },
-        { name: "after_enum_values", sql: "insert into t values ('ok');" },
-      ],
-    });
-    return Effect.gen(function* () {
-      yield* legacyDbDiff(
-        flags({ usePgDelta: Option.some(true), file: Option.some("snapshots/remote") }),
-      );
-      const success = s.out.messages.find((m) => m.type === "success");
-      const data = success?.data as { files: ReadonlyArray<string> };
-      expect(data.files).toHaveLength(2);
-      for (const written of data.files) expect(existsSync(written)).toBe(true);
-      expect(data.files[0]).toMatch(/\d{14}_snapshots\/remote_schema_changes\.sql$/u);
-      expect(data.files[1]).toMatch(/\d{14}_snapshots\/remote_after_enum_values\.sql$/u);
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("bumps the version set when another migration uses the same version", () => {
-    // Migration identity is the timestamp, not the full filename. If another name
-    // already uses a generated version, the whole set advances so every new version
-    // stays strictly ascending and unique.
-    const s = setup(tmp.current, {
-      format: "json",
-      diffFiles: [
-        { name: "schema_changes", sql: "a" },
-        { name: "after_enum_values", sql: "b" },
-      ],
-    });
-    return Effect.gen(function* () {
-      const dir = join(tmp.current, "supabase", "migrations");
-      mkdirSync(dir, { recursive: true });
-      // TestClock starts at epoch 0, so the first version the writer tries is
-      // 19700101000000; pre-seed a differently named migration at that version.
-      const clashing = join(dir, "19700101000000_different_name.sql");
-      writeFileSync(clashing, "-- pre-existing\n");
-      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }));
-      expect(readdirSync(dir).sort()).toEqual([
-        "19700101000000_different_name.sql",
-        "19700101000001_my_diff_schema_changes.sql",
-        "19700101000002_my_diff_after_enum_values.sql",
-      ]);
-      // The pre-existing file was never overwritten.
-      expect(readFileSync(clashing, "utf8")).toBe("-- pre-existing\n");
-    }).pipe(Effect.provide(s.layer));
-  });
-
-  it.effect("removes already-written unit files when a later unit write fails", () => {
-    // A mid-loop write failure best-effort removes every file this invocation
-    // already wrote, so no partial multi-file migration is left behind.
-    const s = setup(tmp.current, {
-      format: "json",
-      failWriteOnCall: 2,
-      diffFiles: [
-        { name: "schema_changes", sql: "a" },
-        { name: "after_enum_values", sql: "b" },
-      ],
-    });
-    return Effect.gen(function* () {
-      const exit = yield* legacyDbDiff(
-        flags({ usePgDelta: Option.some(true), file: Option.some("my_diff") }),
-      ).pipe(Effect.exit);
-      expect(Exit.isFailure(exit)).toBe(true);
-      const dir = join(tmp.current, "supabase", "migrations");
-      const remaining = existsSync(dir) ? readdirSync(dir) : [];
-      expect(remaining).toEqual([]);
     }).pipe(Effect.provide(s.layer));
   });
 

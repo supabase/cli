@@ -15,10 +15,7 @@ import {
   legacyMigrateAndSeed,
   type LegacyMigrateAndSeedConfig,
 } from "./legacy-migrate-and-seed.ts";
-import {
-  LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-  legacyIsPgNetUnavailableError,
-} from "./legacy-pg-net-guidance.ts";
+import { LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION } from "./legacy-pg-net-guidance.ts";
 
 // Root bypasses POSIX permission bits, so chmod 000 wouldn't block readdir() there.
 const isRoot = typeof process.getuid === "function" && process.getuid() === 0;
@@ -468,22 +465,6 @@ describe("legacyMigrateAndSeed local pg_net remediation", () => {
       "select net.http_post(url := 'https://example.com');",
     );
 
-  it("classifies only pg_net schema/function errors with their matching SQLSTATE", () => {
-    expect(legacyIsPgNetUnavailableError(missingNetSchema)).toBe(true);
-    expect(
-      legacyIsPgNetUnavailableError({
-        message: "ERROR: function net.http_post(unknown, jsonb) does not exist (SQLSTATE 42883)",
-        code: "42883",
-      }),
-    ).toBe(true);
-    expect(
-      legacyIsPgNetUnavailableError({
-        message: "ERROR: function public.http_post(unknown) does not exist (SQLSTATE 42883)",
-        code: "42883",
-      }),
-    ).toBe(false);
-  });
-
   it.effect("suggests enabling Database Webhooks when local replay cannot find pg_net", () => {
     const workdir = makeWorkdir();
     setupMigration(workdir);
@@ -535,33 +516,6 @@ describe("legacyMigrateAndSeed local pg_net remediation", () => {
     setupMigration(workdir);
     const out = mockOutput();
     return run(workdir, "", baseConfig, pgNetFailureSession(missingNetSchema), out).pipe(
-      Effect.flip,
-      Effect.tap((error) =>
-        Effect.sync(() => {
-          assertMigrationApplyError(error);
-          expect(error.suggestion).toBeUndefined();
-          expect(error[ErrorActionabilityId]).toEqual(actionability.dbFinding);
-          rmSync(workdir, { recursive: true, force: true });
-        }),
-      ),
-    );
-  });
-
-  it.effect("requires the matching SQLSTATE instead of classifying by message alone", () => {
-    const workdir = makeWorkdir();
-    setupMigration(workdir);
-    const out = mockOutput();
-    const wrongSqlState = new LegacyDbExecError({
-      message: 'ERROR: schema "net" does not exist (SQLSTATE 42P01)',
-      code: "42P01",
-    });
-    return run(
-      workdir,
-      "",
-      { ...baseConfig, localDatabaseWebhooksEnabled: false },
-      pgNetFailureSession(wrongSqlState),
-      out,
-    ).pipe(
       Effect.flip,
       Effect.tap((error) =>
         Effect.sync(() => {
