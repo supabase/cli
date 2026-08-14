@@ -49,6 +49,12 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 - `projects create` has a TS-only `--high-availability` flag (no Go equivalent). It sets
   `high_availability` in the create request body. Default behavior (omitted flag) matches
   Go exactly.
+- `projects create` has TS-only `--release-channel` and `--postgres-engine` flags (no Go
+  equivalent). They set `release_channel` / `postgres_engine` in the create request body —
+  fields the upstream Management API OpenAPI spec deliberately hides even though
+  `POST /v1/projects` accepts them (restored via `packages/api/scripts/openapi-overrides.json`,
+  CLI-2180). Both flags are hidden and gated behind `--experimental` (or `SUPABASE_EXPERIMENTAL`)
+  until PROD-548 exposes them officially; omitting them matches Go exactly.
 - `link` has a TS-only `[ref-or-branch]` positional argument (no Go equivalent), and its
   `--project-ref` flag additionally accepts a branch name. A value matching the 20-lowercase-letter
   project ref shape is always treated as a ref; any other non-empty value is resolved to its

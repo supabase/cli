@@ -4,6 +4,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { Tty } from "../../../../shared/runtime/tty.service.ts";
+import { legacyRequireExperimental } from "../../../shared/legacy-experimental-gate.ts";
 import { legacyProjectCreateCore } from "../../../shared/legacy-project-create-core.ts";
 import { LegacyProjectsCreateMissingArgError } from "../projects.errors.ts";
 import type { LegacyProjectsCreateFlags } from "./create.command.ts";
@@ -15,6 +16,10 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const tty = yield* Tty;
+
+  if (Option.isSome(flags.releaseChannel) || Option.isSome(flags.postgresEngine)) {
+    yield* legacyRequireExperimental;
+  }
 
   let createdRef: string | undefined;
 
@@ -31,6 +36,8 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
     const dbPassword = Option.getOrElse(flags.dbPassword, () => "");
     const size = Option.getOrUndefined(flags.size);
     const highAvailability = Option.getOrUndefined(flags.highAvailability);
+    const releaseChannel = Option.getOrUndefined(flags.releaseChannel);
+    const postgresEngine = Option.getOrUndefined(flags.postgresEngine);
 
     // Non-interactive: `--org-id`, `--db-password`, `--region` are required,
     // plus exactly 1 positional arg for the project name.
@@ -54,6 +61,8 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
       region,
       size,
       highAvailability,
+      releaseChannel,
+      postgresEngine,
       templateUrl: undefined,
       emitStructuredResult: true,
     });
