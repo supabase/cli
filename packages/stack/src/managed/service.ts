@@ -319,14 +319,8 @@ const processIsAlive = (pid: number): boolean => {
 };
 
 /**
- * The managed registry's policy layer: workspace classification, identity
- * ownership, provisioning order, publication waiting, deletion, and recovery of
- * abandoned operations.
- *
- * Every isolation rule the managed surface has lives here rather than in the
- * registry or in a caller: which checkout a path belongs to, which context a
- * `HEAD` names, and what a stack name is scoped by. The registry stores those
- * decisions and enforces their uniqueness; it never makes them.
+ * Public managed-stack contract and composition root. Policy implementations
+ * are supplied by the workspace-identity and stack-lifecycle modules below.
  */
 export class ManagedStackService extends Context.Service<
   ManagedStackService,

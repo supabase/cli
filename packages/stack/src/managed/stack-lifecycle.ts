@@ -18,7 +18,6 @@ import {
   type ManagedStackLifecycle,
   type ManagedStackRecord,
 } from "./model.ts";
-import type { ManagedRecoveryOperation } from "./discovery.ts";
 import { failsWith } from "./failure.ts";
 import {
   isUsableManagedOwnerPid,
@@ -120,7 +119,7 @@ export interface ReconcileAbandonedOperationsResult {
 
 export type ManagedPruneRequest =
   | { readonly recordIds: ReadonlyArray<string> }
-  | Extract<ManagedRecoveryOperation, { readonly operation: "prune" }>;
+  | { readonly operation: "prune"; readonly recordIds: ReadonlyArray<string> };
 
 export type ManagedPruneResult = PruneManagedIdentityMetadataResult;
 
@@ -217,6 +216,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
     probeProcessAlive,
   } = dependencies;
 
+  // Reclamation is always guarded by the validated stack root; callers can
+  // report a failed removal without risking a path outside the managed root.
   const removeStackState = (stack: ManagedStackRecord) =>
     Effect.flatMap(
       Effect.try({
@@ -226,6 +227,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       (root) => fs.remove(root, { force: true, recursive: true }),
     );
 
+  // Data removal is best effort after the registry transition. A failed remove
+  // is part of the result so callers can retry without hiding the tombstone.
   const reclaimStackState = (
     stack: ManagedStackRecord,
   ): Effect.Effect<DeleteManagedStackResult["dataReclamation"]> =>
@@ -244,6 +247,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       recordUnlessInterrupted(() => Effect.succeed(false)),
     );
 
+  // Operation claims must be released even when the protected work fails; the
+  // original cause is then re-raised unchanged to the caller.
   const releasingClaimOnFailure =
     (stackId: string, operationToken: string) =>
     <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
@@ -400,6 +405,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
         try: () => managedStackPaths(stateRoot, stackId),
         catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
       });
+      // The mask starts before prepareStack creates the claim, so interruption
+      // cannot strand a pending row or its operation token without cleanup.
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const prepared = yield* repository.prepareStack({
@@ -517,6 +524,9 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       if (existing.status === "tombstoned") {
         return deletionResult("no-op", existing, yield* reclaimStackState(existing));
       }
+      // As in registration, claim acquisition and its release compensation
+      // must be interruption-safe; only the caller's stop/reclamation work is
+      // restored to interruptible execution.
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const operation = yield* requireOperation(stackId, "delete");
@@ -588,6 +598,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
 
       const settleOperation = (operation: ManagedOperationRecord): Effect.Effect<void> =>
         Effect.gen(function* () {
+          // Invalid persisted pids are treated as ownerless; probing one could
+          // misclassify an abandoned claim and retain it until the next pass.
           if (forcedOperation === undefined && isUsableManagedOwnerPid(operation.ownerPid)) {
             const alive = yield* Effect.exit(probeProcessAlive(operation.ownerPid));
             if (Exit.isFailure(alive)) {
@@ -719,8 +731,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
     });
 
   return {
-    inspectStack: (stackId) => repository.getStackProjection(stackId),
-    listStacks: (listOptions) => repository.listStackProjections(listOptions),
+    inspectStack: repository.getStackProjection,
+    listStacks: repository.listStackProjections,
     updateStack: updateStackRecord,
     registerStack,
     deleteStack,
