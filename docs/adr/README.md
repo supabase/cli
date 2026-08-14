@@ -57,6 +57,7 @@ When an ADR becomes outdated, mark it as `deprecated` or reference the supersedi
 | 0013 | [Live E2E Tests Bypass the Replay Server](0013-live-e2e-bypasses-replay-server.md)         | proposed |
 | 0015 | [Managed Stack Contract Fixtures](0015-managed-stack-contract-fixtures.md)                 | proposed |
 | 0016 | [Legacy Port Completion and Go CLI Authority Scope](0016-legacy-port-completion-and-go-cli-authority-scope.md) | proposed |
+| 0017 | [Sparse Config Subtraction](0017-sparse-config-subtraction.md)                             | proposed |
 
 ## Template
 
