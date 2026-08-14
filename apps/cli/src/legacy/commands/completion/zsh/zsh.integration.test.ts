@@ -44,11 +44,10 @@ describe("legacy completion zsh", () => {
       const out = setupLegacyCompletionZsh();
       // Running through the real command (rather than calling the handler
       // directly, as the two tests above do) also runs
-      // `withLegacyCommandInstrumentation` (CLI-1965 review finding: telemetry
-      // parity with the Go CLI's `cli_command_executed` event), which needs
-      // `Analytics`/`ProcessControl`/`Stdio` alongside `Output` — the same
-      // minimal layer set `telemetry.integration.test.ts` uses for its own
-      // local-only (no Management API) native command.
+      // `withLegacyCommandInstrumentation` (fires the `cli_command_executed`
+      // event), which needs `Analytics`/`ProcessControl`/`Stdio` alongside
+      // `Output` — the same minimal layer set `telemetry.integration.test.ts`
+      // uses for its own local-only (no Management API) native command.
       const layer = Layer.mergeAll(
         out.layer,
         mockAnalytics().layer,

@@ -145,16 +145,16 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("returns an empty array for Go zero-value shapes (null, missing/null lints)", () => {
-    // Go's json.Unmarshal leaves the struct at zero on a top-level null or an
-    // absent/null `lints`, yielding no lints (No issues found).
+    // A top-level null or an absent/null `lints` decodes to the zero value,
+    // yielding no lints (No issues found).
     expect(apiResponseToLegacyAdvisorLints(null)).toEqual([]);
     expect(apiResponseToLegacyAdvisorLints({})).toEqual([]);
     expect(apiResponseToLegacyAdvisorLints({ lints: null })).toEqual([]);
   });
 
   it("null lints element becomes zero-value lint (Go encoding/json nil-slice decode parity)", () => {
-    // Go's encoding/json decodes a null slice element to the zero-value struct,
-    // not an UnmarshalTypeError. The zero lint has empty strings and nil categories.
+    // A null slice element decodes to the zero-value struct, not a throw. The
+    // zero lint has empty strings and null categories.
     const result = apiResponseToLegacyAdvisorLints({
       lints: [
         null,
@@ -186,8 +186,8 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("null categories element becomes empty string (Go encoding/json []string null-element parity)", () => {
-    // Go's encoding/json decodes a null element inside a []string to the zero
-    // string "", not an UnmarshalTypeError.
+    // A null element inside a string array decodes to the zero string "", not
+    // a throw.
     const result = apiResponseToLegacyAdvisorLints({
       lints: [{ name: "x", categories: [null, "SECURITY"] }],
     });
@@ -195,10 +195,10 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("throws on structural shapes Go's typed decode rejects", () => {
-    // Go decodes into V1ProjectAdvisorsResponse; a type mismatch on a container
-    // field is an UnmarshalTypeError → non-zero failure (not "No issues found").
-    // The previous tolerant parser wrongly coerced these to []. Keep the
-    // string-enum tolerance (above), but reject wrong-typed containers.
+    // A type mismatch on a container field throws → non-zero failure (not "No
+    // issues found"). The previous tolerant parser wrongly coerced these to
+    // []. Keep the string-enum tolerance (above), but reject wrong-typed
+    // containers.
     expect(() => apiResponseToLegacyAdvisorLints("nope")).toThrow();
     expect(() => apiResponseToLegacyAdvisorLints([])).toThrow();
     expect(() => apiResponseToLegacyAdvisorLints({ lints: "nope" })).toThrow();
@@ -217,9 +217,9 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("throws on scalar fields with the wrong JSON type (Go UnmarshalTypeError)", () => {
-    // Go's typed decode rejects a non-string for a string/`type X string` field
-    // and a non-string `[]string` element — even though it tolerates any string
-    // VALUE. The previous parser coerced 123 -> "123" via String().
+    // The typed decode rejects a non-string for a string field and a
+    // non-string array element — even though it tolerates any string VALUE.
+    // The previous parser coerced 123 -> "123" via String().
     expect(() => apiResponseToLegacyAdvisorLints({ lints: [{ name: 123 }] })).toThrow();
     expect(() =>
       apiResponseToLegacyAdvisorLints({ lints: [{ name: "x", level: true }] }),
@@ -234,8 +234,7 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
 
   it("treats absent scalar fields as the empty-string zero value (Go json)", () => {
     // A missing field decodes to "" with no error; only present-but-wrong-type fails.
-    // `categories` absent → nil slice → encoded as `null` (advisors.go:197-199
-    // append-onto-nil with zero iterations; no omitempty on the field).
+    // `categories` absent → encoded as `null` (no omitempty on the field).
     const lints = apiResponseToLegacyAdvisorLints({ lints: [{ name: "only_name" }] });
     expect(lints[0]).toEqual({
       name: "only_name",
@@ -251,12 +250,12 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("collapses null and empty categories to null (Go nil-slice parity)", () => {
-    // null categories → nil slice → "categories": null
+    // null categories → "categories": null
     const fromNull = apiResponseToLegacyAdvisorLints({
       lints: [{ name: "x", categories: null }],
     });
     expect(fromNull[0]?.categories).toBeNull();
-    // empty [] → zero append iterations → nil slice → "categories": null
+    // empty [] → "categories": null
     const fromEmpty = apiResponseToLegacyAdvisorLints({
       lints: [{ name: "x", categories: [] }],
     });
@@ -269,8 +268,7 @@ describe("apiResponseToLegacyAdvisorLints (maps Go TestApiResponseToLints)", () 
   });
 
   it("normalizes null fkey_columns elements to 0 (Go encoding/json float32 zero value)", () => {
-    // Go's encoding/json decodes a JSON null array element into the zero value
-    // for float32 (0), not an UnmarshalTypeError. Mirror that parity.
+    // A null array element decodes to the zero value (0), not a throw.
     const result = apiResponseToLegacyAdvisorLints({
       lints: [{ name: "x", metadata: { fkey_columns: [null, 2] } }],
     });
@@ -359,7 +357,7 @@ describe("encodeLegacyAdvisorLints (Go outputAndCheck byte parity)", () => {
   });
 
   it("emits categories:null (key present, null value) when categories is null — Go nil []string parity", () => {
-    // Go has no omitempty on Lint.Categories; a nil slice encodes as
+    // No omitempty on `categories`; a null value encodes as
     // `"categories": null`, not omitted. Verify the key is present AND the
     // value is the literal `null` (not `[]` or absent).
     const lintWithNullCategories: LegacyAdvisorLint = {

@@ -1,12 +1,11 @@
 import { describe, expect, test } from "vitest";
 import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
 
-// Argument-validation negatives for `functions download`. This validation
-// lives in the Go CLI today (the legacy TS command proxies to it); a
-// black-box subprocess test keeps these assertions valid through the
-// eventual native TS port — it guards behavior, not implementation. Mirrors
-// `deploy.e2e.test.ts`'s coverage for the sibling `--use-docker` default bug
-// (CLI-1862).
+// Argument-validation negatives for `functions download`. A black-box
+// subprocess test keeps these assertions valid regardless of where the
+// mutex validation lives internally — it guards behavior, not
+// implementation. Mirrors `deploy.e2e.test.ts`'s coverage for the sibling
+// `--use-docker` default bug (CLI-1862).
 //
 // The mutex-conflict cases below fail before any network call (flag parsing
 // / mutex validation), so no auth or linked project is required.
@@ -39,7 +38,7 @@ describe("supabase functions download (legacy) — argument validation", () => {
     });
   }
 
-  // CLI-1862: `--use-docker` now defaults to `true` (Go parity). Before the
+  // CLI-1862: `--use-docker` now defaults to `true`. Before the
   // fix, that default was counted as "explicitly selected" by the mutex
   // check, so passing `--use-api` alone was incorrectly rejected as
   // conflicting with the (unpassed) `--use-docker` default. Covered in

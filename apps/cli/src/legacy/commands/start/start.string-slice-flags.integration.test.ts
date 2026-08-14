@@ -16,15 +16,13 @@ import {
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { legacyStartCommand } from "./start.command.ts";
 
-// Go parity (CLI-2005): `--exclude`/`-x` is a pflag `StringSliceVarP`
-// (`cmd/start.go:58`), so malformed CSV aborts cobra's `ParseFlags` before
-// RunE — before any Docker interaction — with pflag's exact
-// `invalid argument %q for %q flag: %v` line on stderr. Because the flag has
-// a shorthand, pflag frames the diagnostic with BOTH spellings
-// (`-x, --exclude`, pflag v1.0.10 `errors.go:108-117`) regardless of which
-// one the user typed. These scenarios run the whole command tree
-// (`Command.runWith`), mirroring the network-bans/network-restrictions prior
-// art from CLI-1983.
+// `--exclude`/`-x` is a string-slice flag (CLI-2005), so malformed CSV
+// aborts flag parsing before the handler runs — before any Docker
+// interaction — with the exact `invalid argument %q for %q flag: %v` line
+// on stderr. Because the flag has a shorthand, the diagnostic frames BOTH
+// spellings (`-x, --exclude`) regardless of which one the user typed.
+// These scenarios run the whole command tree (`Command.runWith`), mirroring
+// the network-bans/network-restrictions prior art from CLI-1983.
 
 const tempRoot = useLegacyTempWorkdir("supabase-start-string-slice-int-");
 
@@ -77,8 +75,9 @@ function setup() {
 }
 
 describe("legacy start --exclude flag (pflag CSV parity)", () => {
-  // Go-verified (CLI-2005): the rendered line is identical for both
-  // spellings — pflag always frames a shorthand flag as `-x, --exclude`.
+  // Verified against pflag's actual output (CLI-2005): the rendered line is
+  // identical for both spellings — pflag always frames a shorthand flag as
+  // `-x, --exclude`.
   const spellings: ReadonlyArray<{ readonly name: string; readonly flag: string }> = [
     { name: "--exclude", flag: "--exclude" },
     { name: "-x", flag: "-x" },

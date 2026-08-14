@@ -75,8 +75,8 @@ interface SetupOpts {
   readonly pgDeltaImplementation?: "legacy" | "next";
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
-  // When set, the PGDELTA_DEBUG shadow-catalog export (Go's `DiffDatabase`,
-  // `internal/db/diff/diff.go:228-244`) fails with this message instead of succeeding.
+  // When set, the PGDELTA_DEBUG shadow-catalog export fails with this message
+  // instead of succeeding.
   readonly catalogExportFailWith?: string;
   // When set, the shadow's own PG15+ one-shot platform-baseline job(s) exit
   // non-zero, exercising cleanup-on-partial-failure (the shadow is still removed).
@@ -89,9 +89,10 @@ interface SetupOpts {
   // `mockLegacyShadowContainerCliSpawner`'s own doc comment for why this is required
   // (not `Effect.never`) to observe a genuinely suspended retry loop.
   readonly neverHealthyShadow?: boolean;
-  // `LegacyCliConfig.projectId` (Go's `SUPABASE_PROJECT_ID` env-only reader). Defaults to
-  // `Option.some("test")`; pass `Option.none()` to exercise the config.toml/workdir-basename
-  // fallback `legacyResolveLocalProjectId` provides for the pg-delta edge-runtime cache bind.
+  // `LegacyCliConfig.projectId` (the `SUPABASE_PROJECT_ID` env-only reader). Defaults
+  // to `Option.some("test")`; pass `Option.none()` to exercise the
+  // config.toml/workdir-basename fallback `legacyResolveLocalProjectId` provides for
+  // the pg-delta edge-runtime cache bind.
   readonly projectId?: Option.Option<string>;
   // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
   // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
@@ -114,7 +115,7 @@ interface SetupOpts {
   readonly pgadminDockerFail?: "spawn" | "pull";
   // Makes the pre-flight `docker container inspect supabase_db_<projectId>` probe
   // (`legacyIsLocalDbRunning`, run before `--use-pgadmin` provisions anything) report
-  // "container not found" — Go's `supabase start is not running.`.
+  // "container not found" — surfaces as "supabase start is not running.".
   readonly dbNotRunning?: boolean;
   // Makes that SAME probe fail with a daemon-unreachable stderr instead — the
   // `daemonDown: true` classification branch. Mutually exclusive with `dbNotRunning`.
@@ -161,9 +162,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const telemetry = mockLegacyTelemetryStateTracked();
   const cache = mockLegacyLinkedProjectCacheTracked();
 
-  // Shadow provisioning is native (CLI-1956): a real docker-spawner fake backs
-  // container create/start/health-inspect/cleanup, and a real (fake) Postgres
-  // session backs the shadow's own platform-baseline/migration/declarative setup.
+  // A real docker-spawner fake backs container create/start/health-inspect/cleanup,
+  // and a real (fake) Postgres session backs the shadow's own
+  // platform-baseline/migration/declarative setup.
   const shadowSpawner = mockLegacyShadowContainerCliSpawner({
     neverHealthy: opts.neverHealthyShadow ?? false,
     dbNotRunning: opts.dbNotRunning ?? false,
@@ -269,19 +270,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
 
   // `dockerCalls` tracks the migra OOM bash fallback's own `runCapture` calls — the
   // native shadow's PG15+ one-shot setup jobs (`legacyRunStartMigrateJob`) go through
-  // `runStream` instead (constant-memory stdout discard, matching Go's `io.Discard`
-  // writer for these jobs), so they're tracked separately in `shadowSetupJobCalls`
-  // (their `env`, notably `DB_HOST`, is the one shadow-specific parameterization
-  // CLI-1956 exists to get right).
+  // `runStream` instead (constant-memory stdout discard), so they're tracked
+  // separately in `shadowSetupJobCalls` (their `env`, notably `DB_HOST`, is the one
+  // shadow-specific parameterization that matters to get right).
   const dockerCalls: unknown[] = [];
-  // The pgAdmin differ's own `runCapture` calls (CLI-1968), tracked separately from
+  // The pgAdmin differ's own `runCapture` calls, tracked separately from
   // `dockerCalls` (the migra OOM bash fallback's image) so pgadmin tests never
   // conflate the two — both go through the SAME `LegacyDockerRun.runCapture` seam,
   // distinguished only by `image`.
   const differCalls: Array<LegacyDockerRunOpts> = [];
   // The `runCapture` SECOND (options) argument for every differ call, parallel to
-  // `differCalls` — pinned `undefined` below, since Go never tees the differ's raw
-  // stderr to the parent terminal (see `legacy-pgadmin-diff.ts`'s own doc comment).
+  // `differCalls` — pinned `undefined` below, since the differ's raw stderr is
+  // never teed to the parent terminal (see `legacy-pgadmin-diff.ts`'s own doc
+  // comment).
   const differCaptureOpts: Array<{ readonly teeStderr?: boolean } | undefined> = [];
   // Snapshots `process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"]` at the moment each
   // differ `runCapture` call is made — the real `legacyDockerRunLayer`'s own image
@@ -483,9 +484,9 @@ const stderr = (out: ReturnType<typeof mockOutput>) =>
 
 const tmp = useLegacyTempWorkdir();
 
-// --- CLI-1968 (native --use-pgadmin) fixtures ---
+// --- native --use-pgadmin fixtures ---
 
-/** Go's `DiffEntry` (`container_output.go:127-134`) shape, defaulting to a kept entry. */
+/** `DiffEntry` shape, defaulting to a kept entry. */
 function pgadminEntry(overrides: Record<string, unknown> = {}) {
   return {
     type: "table",
@@ -500,8 +501,9 @@ function pgadminEntry(overrides: Record<string, unknown> = {}) {
 const PGADMIN_DIFF_SQL = `${LEGACY_PGADMIN_DIFF_HEADER}\n\nALTER TABLE test;\n`;
 
 // The default `resolver`/shadow-port fixtures in `setup()` below (conn
-// 127.0.0.1:54322, shadow port 54320) — Go's `source` (the user's db, via
-// `legacyToPostgresURL`) and `target` (the shadow, a raw, hardcoded `Sprintf`).
+// 127.0.0.1:54322, shadow port 54320) — `source` is the user's db (via
+// `legacyToPostgresURL`) and `target` is the shadow (a raw, hardcoded connection
+// string).
 const PGADMIN_SOURCE_URL =
   "postgresql://postgres:postgres@127.0.0.1:54322/postgres?connect_timeout=10";
 const PGADMIN_TARGET_URL = "postgresql://postgres:postgres@127.0.0.1:54320/postgres";
@@ -521,14 +523,14 @@ describe("legacy db diff", () => {
       expect(stderr(s.out)).toContain("Finished supabase db diff on branch");
       expect(s.telemetry.flushed).toBe(true);
       // The shadow's PG15+ one-shot platform-baseline job(s) connect to the shadow over
-      // Docker's embedded DNS using the shadow container's OWN 12-char short id as `DB_HOST`
-      // (Go's `container[:12]`, `diff.go:172`) — NOT the real `db` container's name, and not
-      // some other slice length (a mutation from `.slice(0, 12)` to `.slice(0, 8)` must fail
-      // this). This is the one shadow-specific parameterization this port exists to get right
-      // (`legacyBuildShadowSetupDatabaseInput`'s `dbHost`). The default config enables realtime
-      // (and PG >= 15 by default), so this always exercises at least one one-shot job —
-      // Realtime's own env sets `DB_HOST` directly; Storage/Auth embed the same host inside a
-      // `DATABASE_URL`-style connection string instead.
+      // Docker's embedded DNS using the shadow container's OWN 12-char short id as
+      // `DB_HOST` — NOT the real `db` container's name, and not some other slice length
+      // (a mutation from `.slice(0, 12)` to `.slice(0, 8)` must fail this). This is the
+      // one shadow-specific parameterization that matters
+      // (`legacyBuildShadowSetupDatabaseInput`'s `dbHost`). The default config enables
+      // realtime (and PG >= 15 by default), so this always exercises at least one
+      // one-shot job — Realtime's own env sets `DB_HOST` directly; Storage/Auth embed
+      // the same host inside a `DATABASE_URL`-style connection string instead.
       const expectedHost = LEGACY_FAKE_SHADOW_CONTAINER_ID.slice(0, 12);
       expect(s.shadowSetupJobCalls.length).toBeGreaterThan(0);
       let sawHost = false;
@@ -627,11 +629,9 @@ describe("legacy db diff", () => {
   });
 
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
-    // Go's own shadow test coverage hardcodes PG14 (`diff_test.go`); the PG15+ short-id
-    // DNS resolution path was verified separately (empirical Docker probe, see the
-    // task's own header) — this covers the OTHER major-version branch of the SAME
-    // `legacySetupDatabase` pipeline, which execs SQL directly via the session
-    // instead of the three one-shot `LegacyDockerRun` jobs.
+    // This covers the PG14 branch of the `legacySetupDatabase` pipeline, which execs
+    // SQL directly via the session instead of the three one-shot `LegacyDockerRun`
+    // jobs (the PG15+ short-id DNS resolution path is covered separately).
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 14\n");
     const s = setup(tmp.current, { diffSql: "create table pg14 ();\n" });
@@ -641,7 +641,7 @@ describe("legacy db diff", () => {
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
       expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
       // PG14's `legacyStartInitSchemaPre15` execs SQL over the session directly —
-      // no one-shot `LegacyDockerRun` jobs (Go's `initSchema15` never runs).
+      // no one-shot `LegacyDockerRun` jobs run for this branch.
       expect(s.dockerCalls).toEqual([]);
       expect(s.shadowExecCalls.length).toBeGreaterThan(0);
     }).pipe(Effect.provide(s.layer));
@@ -650,9 +650,8 @@ describe("legacy db diff", () => {
   it.effect(
     "removes the shadow even when its own platform-baseline setup fails midway (ok-sentinel cleanup)",
     () => {
-      // Mirrors Go's `ok`-sentinel + `defer` pattern (`shadow.go:42-47`): once the
-      // shadow container is created, ANY later failure (here, a PG15+ one-shot
-      // platform-baseline job exiting non-zero) still removes it.
+      // Once the shadow container is created, ANY later failure (here, a PG15+
+      // one-shot platform-baseline job exiting non-zero) still removes it.
       const s = setup(tmp.current, { diffSql: "create table x ();\n", failShadowSetupJob: true });
       return Effect.gen(function* () {
         const exit = yield* legacyDbDiff(flags()).pipe(Effect.exit);
@@ -663,11 +662,10 @@ describe("legacy db diff", () => {
     },
   );
   it.effect("a linked [remotes.<ref>] block enabling pg-delta selects the pg-delta engine", () => {
-    // Go loads the project ref before LoadConfig on the linked path, merging the
-    // matching [remotes.<ref>] block before experimental.pgdelta.enabled is read
-    // (flags/db_url.go:87-97). The default db diff target is local (no merge), so
-    // this only applies with --linked; base config disables pg-delta, the remote
-    // override enables it, so the diff must pick the pg-delta engine.
+    // The linked path merges the matching [remotes.<ref>] block before
+    // experimental.pgdelta.enabled is read. The default db diff target is local (no
+    // merge), so this only applies with --linked; base config disables pg-delta, the
+    // remote override enables it, so the diff must pick the pg-delta engine.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -938,13 +936,10 @@ describe("legacy db diff", () => {
   it.effect(
     "caches the linked ref even when the merged config fails to load afterward (review: PRRT_kwDOErm0O86XLe6s)",
     () => {
-      // Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the GLOBAL
-      // `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
-      // unconditionally after `rootCmd.ExecuteC()` regardless of whether the command itself
-      // errored — so a ref resolved via `LoadProjectRef` gets cached even when a LATER step
-      // (here, `legacyReadDbToml`'s own config-load) fails. `db.migrations.enabled = "notabool"`
-      // fails `legacyReadDbToml`'s own bool parse AFTER the ref is already known, exercising
-      // exactly that gap.
+      // The project ref is cached the moment it's known, and stays cached even when a
+      // LATER step (here, `legacyReadDbToml`'s own config-load) fails afterward.
+      // `db.migrations.enabled = "notabool"` fails `legacyReadDbToml`'s own bool
+      // parse AFTER the ref is already known, exercising exactly that gap.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -989,13 +984,13 @@ describe("legacy db diff", () => {
       const s = setup(tmp.current, { pgadminStdout: [JSON.stringify([pgadminEntry()])] });
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgAdmin: Option.some(true) }));
-        // CLI-1968: --use-pgadmin no longer delegates to the bundled Go binary.
+        // --use-pgadmin no longer delegates to the bundled Go binary.
         expect(s.proxyCalls).toEqual([]);
         expect(s.proxyCaptureCalls).toEqual([]);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toHaveLength(1);
         expect(s.differCalls).toHaveLength(1);
-        // Status lines go to STDOUT (Go's fakeProgram fmt.Println), not stderr.
+        // Status lines go to STDOUT, not stderr.
         expect(stdout(s.out)).toBe(
           `Creating shadow database...\nDiffing local database with current migrations...\n${PGADMIN_DIFF_SQL}\n`,
         );
@@ -1057,11 +1052,10 @@ describe("legacy db diff", () => {
   it.effect(
     "--use-pgadmin --linked succeeds when only the [remotes.<ref>] override fixes an invalid base config",
     () => {
-      // CLI-1968: pgadmin now shares the SAME target resolve as migra/pg-delta (Go
-      // resolves the target in the root PersistentPreRunE, strictly before
-      // RunPgAdmin), so it validates the remote-merged config, prints the override
-      // line, and succeeds — unlike the old Go-delegate era, where the whole
-      // command (config load included) ran inside the delegated child.
+      // pgadmin now shares the SAME target resolve as migra/pg-delta, so it validates
+      // the remote-merged config, prints the override line, and succeeds — unlike the
+      // old Go-delegate era, where the whole command (config load included) ran
+      // inside the delegated child.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1094,11 +1088,9 @@ describe("legacy db diff", () => {
   it.effect(
     "--use-pgadmin --linked's preflight probe targets the resolved LINKED project id, not the base config's",
     () => {
-      // Go's `UpdateDockerIds` runs AFTER the linked remote merge, so `DbId` derives
-      // from the resolved `Config.ProjectId` singleton (`config_path.go:10-15`,
-      // `pkg/config/config.go:604-610`, `internal/utils/config.go:57-65`), NOT the
-      // base config's own `project_id` — the matched `[remotes.<ref>]` block's own
-      // `project_id` must suppress it.
+      // The preflight probe's project id derives from the resolved config AFTER the
+      // linked remote merge, NOT the base config's own `project_id` — the matched
+      // `[remotes.<ref>]` block's own `project_id` must suppress it.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1148,8 +1140,8 @@ describe("legacy db diff", () => {
 
   it.effect("a native local diff still validates the base config", () => {
     // Control for the delegate case: the local/db-url native path reads the base
-    // config (Go's local LoadConfig, no remote merge), so an invalid base value
-    // (db.major_version=16) must still fail — matching Go.
+    // config (no remote merge), so an invalid base value (db.major_version=16) must
+    // still fail.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "config.toml"), "[db]\nmajor_version = 16\n");
     const s = setup(tmp.current, { diffSql: "create table x ();\n" });
@@ -1166,11 +1158,10 @@ describe("legacy db diff", () => {
       // which already runs ahead of `resolver.resolve()`. `api.tls` is "L only" — `cfg`
       // only tracks its dotted keys for remote-override gating, it never reads the cert/key
       // files (see `legacyBuildLocalDbContainerInputs`'s doc comment) — so this is the ONE
-      // config error only `legacyBuildLocalDbContainerInputs`'s own validation catches. Go
-      // validates it as part of `LoadConfig`, in the root `PersistentPreRunE`, strictly
-      // before `NewDbConfigWithPassword` (`resolver.resolve()`'s parity target) ever runs
-      // (review: PRRT_kwDOErm0O86XIUK1) — so `resolverCalls` must stay empty here, proving
-      // the shadow's config validation ran first, not just that the command failed.
+      // config error only `legacyBuildLocalDbContainerInputs`'s own validation catches, and
+      // it must run strictly before `resolver.resolve()` ever runs — so `resolverCalls`
+      // must stay empty here, proving the shadow's config validation ran first, not just
+      // that the command failed.
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
       writeFileSync(
         join(tmp.current, "supabase", "config.toml"),
@@ -1200,7 +1191,7 @@ describe("legacy db diff", () => {
     // flags.schema holds the single parsed value `tenant,one`; forwarding it raw
     // would let the Go child's pflag StringSlice CSV-split it into two schemas, so
     // it must be re-encoded as a quoted CSV field. `--use-pg-schema` is the only
-    // remaining delegate path (CLI-1968 cut pgadmin's own delegation).
+    // remaining delegate path.
     const s = setup(tmp.current);
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ usePgSchema: Option.some(true), schema: ["tenant,one"] }));
@@ -1232,14 +1223,13 @@ describe("legacy db diff", () => {
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgSchema: Option.some(true) }));
-        // CLI-1960: the TS wrapper prints its own deprecation notice pointing at
-        // pg-delta / the default migra engine, additive to (not a replacement for)
-        // the delegated Go child's own "experimental" warning (`cmd/db.go:121`,
-        // unchanged, printed by the real Go binary rather than this mocked proxy).
-        // Assert on a stable substring so future wording tweaks don't require
-        // touching every test site.
+        // The TS wrapper prints its own deprecation notice pointing at pg-delta /
+        // the default migra engine, additive to (not a replacement for) the
+        // delegated Go child's own "experimental" warning (unchanged, printed by
+        // the real Go binary rather than this mocked proxy). Assert on a stable
+        // substring so future wording tweaks don't require touching every test site.
         expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
-        // The TS wrapper must not print a second copy of Go's own warning.
+        // The TS wrapper must not print a second copy of the delegated child's own warning.
         expect(stderr(s.out)).not.toContain("--use-pg-schema flag is experimental");
         // Delegation to Go is unchanged besides the new warning.
         expect(s.proxyCalls[0]?.args).toEqual(["db", "diff", "--use-pg-schema"]);
@@ -1341,9 +1331,9 @@ describe("legacy db diff", () => {
       expect(s.proxyCaptureCalls).toHaveLength(1);
       const success = s.out.messages.find((m) => m.type === "success");
       expect(success?.data).toMatchObject({ diff: "create table e ();\n", engine: "pg-schema" });
-      // CLI-1960: the deprecation notice is a diagnostic, so it must still reach
-      // stderr in machine output mode (CLI-1546) rather than being dropped or
-      // leaking into the stdout payload.
+      // The deprecation notice is a diagnostic, so it must still reach stderr in
+      // machine output mode rather than being dropped or leaking into the stdout
+      // payload.
       expect(stderr(s.out)).toContain('"--use-pg-schema" is deprecated');
       // The child's own telemetry is disabled here too, same as the text-mode delegate.
       expect(s.proxyCaptureCalls[0]?.env).toEqual({ SUPABASE_TELEMETRY_DISABLED: "1" });
@@ -1527,7 +1517,7 @@ describe("legacy db diff", () => {
 
   it.effect("creates nested parent directories for a nested single-unit --file name", () => {
     // `db diff -f snapshots/remote` must create the `<ts>_snapshots/` parent dir
-    // before writing, mirroring Go's `utils.WriteFile`.
+    // before writing.
     const s = setup(tmp.current, { diffSql: "create table g ();\n" });
     return Effect.gen(function* () {
       yield* legacyDbDiff(flags({ file: Option.some("snapshots/remote") }));
@@ -1683,10 +1673,10 @@ describe("legacy db diff", () => {
   it.effect(
     "forwards an explicit --linked=false target flag to the delegated pg-schema child",
     () => {
-      // Target flags are selectors keyed on flag.Changed in Go; dropping Some(false)
-      // would make the child default to local instead of the linked target the
-      // native path selected. `--use-pg-schema` is the only remaining delegate path
-      // (CLI-1968 cut pgadmin's own delegation).
+      // Target flags are selectors keyed on flag.Changed in the delegated Go child;
+      // dropping Some(false) would make the child default to local instead of the
+      // linked target the native path selected. `--use-pg-schema` is the only
+      // remaining delegate path.
       const s = setup(tmp.current);
       return Effect.gen(function* () {
         yield* legacyDbDiff(flags({ usePgSchema: Option.some(true), linked: Option.some(false) }));
@@ -1698,8 +1688,8 @@ describe("legacy db diff", () => {
   it.effect(
     "an empty --file value prints to stdout instead of writing a nameless migration",
     () => {
-      // Go's SaveDiff gates the file write on len(file) > 0; an empty --file (e.g.
-      // an unset shell var) falls through to stdout rather than writing
+      // The file write is gated on the value being non-empty; an empty --file
+      // (e.g. an unset shell var) falls through to stdout rather than writing
       // `<timestamp>_.sql`.
       const s = setup(tmp.current, { diffSql: "create table y ();\n" });
       return Effect.gen(function* () {
@@ -1714,8 +1704,8 @@ describe("legacy db diff", () => {
   it.effect(
     "explicit --output with an empty value prints to stdout instead of writing a file",
     () => {
-      // Go gates the file write on len(outputPath) > 0; an empty value falls through
-      // to stdout rather than writing SQL into the project directory.
+      // The file write is gated on the value being non-empty; an empty value falls
+      // through to stdout rather than writing SQL into the project directory.
       const s = setup(tmp.current, { diffSql: "create table z ();\n" });
       return Effect.gen(function* () {
         yield* legacyDbDiff(
@@ -1784,10 +1774,10 @@ describe("legacy db diff", () => {
   });
 
   it.effect("explicit --from local --to migrations --linked seeds the merged config", () => {
-    // Go's root ParseDatabaseConfig runs LoadProjectRef+LoadConfig for a changed
-    // --linked before RunExplicit, leaving the config remote-merged — so the
-    // migrations catalog's shadow (and local refs/format options) use the linked
-    // override even though neither explicit ref is itself `linked`.
+    // A changed --linked resolves the project ref and remote-merges the config
+    // before the explicit refs resolve — so the migrations catalog's shadow (and
+    // local refs/format options) use the linked override even though neither
+    // explicit ref is itself `linked`.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -1826,8 +1816,7 @@ describe("legacy db diff", () => {
   it.effect("explicit --from local --to migrations --linked validates the merged config", () => {
     // The explicit base config read is deferred until after the linked preflight, so
     // a base config that's only valid after the [remotes.<ref>] merge (base
-    // major_version=16, override=15) does not fail before the ref is resolved —
-    // matching Go's stateful pre-run (LoadConfig after LoadProjectRef on --linked).
+    // major_version=16, override=15) does not fail before the ref is resolved.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -1972,8 +1961,8 @@ describe("legacy db diff", () => {
   });
 
   it.effect("the migra OOM fallback honors --network-id over host networking", () => {
-    // Go's bash fallback routes through DockerStart, which overrides the requested
-    // host network with --network-id when set (internal/utils/docker.go:266-271).
+    // The migra OOM bash fallback routes through Docker start, which overrides the
+    // requested host network with --network-id when set.
     const s = setup(tmp.current, {
       oom: true,
       diffSql: "create table fb ();\n",
@@ -2000,8 +1989,8 @@ describe("legacy db diff", () => {
       // `uninterruptibleMask` (no `restore` around `acquire`) made completely
       // uninterruptible — a SIGINT landing during the health wait (which can run for
       // up to 30 real seconds, `LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS`) was silently
-      // swallowed until the health check gave up on its own, unlike Go's single
-      // cancellable `ctx`. `acquire` is now ONLY `legacyCreateShadowDatabase`
+      // swallowed until the health check gave up on its own. `acquire` is now ONLY
+      // `legacyCreateShadowDatabase`
       // (container creation); the health wait runs inside the interruptible `use`
       // phase instead, so a `Fiber.interrupt` here must land promptly.
       const s = setup(tmp.current, { neverHealthyShadow: true });
@@ -2202,15 +2191,11 @@ describe("legacy db diff", () => {
     it.effect(
       "a supabase/.env-only SUPABASE_INTERNAL_IMAGE_REGISTRY reaches the differ's image resolver during the run, and reverts after",
       () => {
-        // TS `db diff` never applied project env at all before this fix (unlike `db
-        // push`/`pull`/`dump`/`reset`/`bootstrap`) — Go's `loadNestedEnv` `os.Setenv`s
-        // the project `.env` during config load (`pkg/config/config.go:788-791`),
-        // before `GetRegistry()` (`internal/utils/docker.go:221-231,244-246`) ever
-        // reads it. `legacyDockerRunLayer`'s own image resolver has no
-        // `projectEnvValues` in scope, so it falls back to reading `process.env`
-        // directly at `runCapture` call time; this mock docker layer records that
-        // same read (`differRegistryEnvAtCall`) since it replaces the real resolver
-        // wholesale and can't observe an already-rewritten image.
+        // `legacyDockerRunLayer`'s own image resolver has no `projectEnvValues` in
+        // scope, so it falls back to reading `process.env` directly at `runCapture`
+        // call time; this mock docker layer records that same read
+        // (`differRegistryEnvAtCall`) since it replaces the real resolver wholesale
+        // and can't observe an already-rewritten image.
         const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -2353,11 +2338,9 @@ describe("legacy db diff", () => {
     it.effect(
       "emits a failed run's captured progress statuses before the container-error surfaces",
       () => {
-        // Go's stderr goroutine (`NewDiffStream`'s `io.Pipe`) scans progress
-        // concurrently WHILE the container runs, so a run that later exits non-zero
-        // still had its status lines printed already. This port batches stderr via
-        // `runCapture` instead of streaming it, so parity requires processing/
-        // emitting that batch BEFORE the exit-code check, not after returning early.
+        // This port batches stderr via `runCapture` instead of streaming it, so a
+        // run that later exits non-zero must still have its captured status lines
+        // processed/emitted BEFORE the exit-code check, not after returning early.
         const s = setup(tmp.current, {
           pgadminExitCode: 1,
           pgadminStderr: ["Comparing Tables 45%\nDiffing 100%\n"],

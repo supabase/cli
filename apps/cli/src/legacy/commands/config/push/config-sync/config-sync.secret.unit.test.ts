@@ -1,17 +1,16 @@
 /**
- * Unit tests for config-sync.secret.ts — golden parity with Go's
- * `Secret.MarshalText` + `DecryptSecretHookFunc` (`apps/cli-go/pkg/config/secret.go`).
+ * Unit tests for config-sync.secret.ts.
  *
- * The HMAC keys/values below were captured from the same `createHmac` the port
- * uses; they lock the exact `hash:<sha256hex>` serialisation Go emits.
+ * The HMAC keys/values below were captured from the same `createHmac` the
+ * implementation uses; they lock the exact `hash:<sha256hex>` serialisation.
  */
 
 import { describe, expect, it } from "vitest";
 
 import { secretHash, secretPlaintext } from "./config-sync.secret.ts";
 
-// Go's test vector — `apps/cli-go/pkg/config/secret_test.go:9-19` (same one
-// `legacy-vault-decrypt.unit.test.ts` uses). Decrypts to the plaintext "value".
+// Shared test vector — same one `legacy-vault-decrypt.unit.test.ts` uses.
+// Decrypts to the plaintext "value".
 const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";
 const ENCRYPTED_VALUE =
   "encrypted:BKiXH15AyRzeohGyUrmB6cGjSklCrrBjdesQlX1VcXo/Xp20Bi2gGZ3AlIqxPQDmjVAALnhZamKnuY73l8Dz1P+BYiZUgxTSLzdCvdYUyVbNekj2UudbdUizBViERtZkuQwZHIv/";

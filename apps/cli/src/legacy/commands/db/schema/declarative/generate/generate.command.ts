@@ -30,7 +30,8 @@ const config = {
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
     // Go registers `--schema` as a cobra `StringSliceVarP`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:495`), which CSV-splits each
+    // (`apps/cli-go/cmd/db_schema_declarative.go:495`, deleted in CLI-1970;
+    // last present at commit 7b469f5b3), which CSV-splits each
     // occurrence so `-s public,auth` includes the two schemas separately. Mirror
     // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
     Flag.mapTryCatch(
@@ -46,7 +47,8 @@ const config = {
   ),
   // Go gates explicit-target selection on `flag.Changed` (presence), not the bool
   // value — `hasExplicitTargetFlag` is `Changed("local")||Changed("linked")||
-  // Changed("db-url")` (`apps/cli-go/cmd/db_schema_declarative.go:139-141`). Model
+  // Changed("db-url")` (`apps/cli-go/cmd/db_schema_declarative.go:139-141`,
+  // deleted in CLI-1970; last present at commit 7b469f5b3). Model
   // `--linked`/`--local` as `Option` (like `--db-url`) so `--linked=false` still
   // takes the explicit linked path, matching Go (and the `db query` fix).
   linked: Flag.boolean("linked").pipe(

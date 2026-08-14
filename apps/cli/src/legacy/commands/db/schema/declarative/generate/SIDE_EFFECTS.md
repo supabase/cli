@@ -18,7 +18,7 @@ formatting without disabling safe compaction.
 | `<workdir>/supabase/config.toml`                | TOML       | always — pg-delta gate, ports, format options |
 | `<workdir>/supabase/.temp/pgdelta-version`      | plain text | loaded for compatibility; legacy opt-out only |
 | `<workdir>/supabase/.temp/edge-runtime-version` | plain text | legacy opt-out's edge-runtime image tag       |
-| `<workdir>/supabase/.temp/postgres-version`     | plain text | shadow-DB image resolution (Go seam)          |
+| `<workdir>/supabase/.temp/postgres-version`     | plain text | legacy opt-out's shadow-DB image resolution   |
 | `<workdir>/supabase/migrations/*.sql`           | SQL        | smart mode — detect whether migrations exist  |
 | `<workdir>/supabase/.temp/pgdelta/*.json`       | JSON       | legacy opt-out's catalog cache                |
 | `~/.supabase/access-token`                      | plain text | `--linked` (token resolution)                 |
@@ -34,11 +34,11 @@ formatting without disabling safe compaction.
 
 ## Subprocesses / Containers
 
-| What                                                                                                                                                                            | When                                                           |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `supabase-go db schema declarative __catalog --mode baseline --experimental` (hidden seam) — provisions a shadow Postgres + `start.SetupDatabase`, exports the baseline catalog | legacy opt-out only                                            |
-| Edge-runtime container (`supabase/edge-runtime`) running the pg-delta declarative-export Deno script (host network, deno-cache volume `supabase_edge_runtime_<projectId>`)      | legacy opt-out only                                            |
-| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase`     | smart-mode Local choice when reset is confirmed (or `--reset`) |
+| What                                                                                                                                                                                                                                                        | When                                                           |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Natively-provisioned shadow Postgres container (create, health-wait, platform-baseline setup via one-shot auth/storage/realtime migrate jobs, then remove) — the same primitives `db diff`/`db pull` use for their own shadow, exports the baseline catalog | legacy opt-out only                                            |
+| Edge-runtime container (`supabase/edge-runtime`) running the pg-delta declarative-export Deno script (host network, deno-cache volume `supabase_edge_runtime_<projectId>`)                                                                                  | legacy opt-out only                                            |
+| `docker`/`podman` container recreate for the local `db` (+ satellite restarts, Kong reload) — the same primitives `db start`/`db reset` use, via `legacyResetLocalDatabase`                                                                                 | smart-mode Local choice when reset is confirmed (or `--reset`) |
 
 ## Environment Variables
 
@@ -49,8 +49,7 @@ formatting without disabling safe compaction.
 | `SUPABASE_USE_PG_DELTA_NEXT` | set to `false` for legacy edge-runtime pg-delta    | no        |
 | `PGDELTA_NPM_REGISTRY`       | legacy opt-out's private npm registry              | no        |
 | `PGDELTA_DEBUG`              | bundled-engine debug artifacts                     | no        |
-| `SUPABASE_GO_BINARY`         | override the `supabase-go` seam binary             | no        |
-| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local` (Go `GetHostname`)     | no        |
+| `SUPABASE_SERVICES_HOSTNAME` | local DB host for `--local`                        | no        |
 | `DOCKER_HOST`                | tcp daemon host used as the local DB host fallback | no        |
 
 ## Exit Codes
@@ -64,10 +63,9 @@ formatting without disabling safe compaction.
 | `1`  | shadow-database / selected pg-delta engine / export failure           |
 
 The pg-delta gate and the mutex check are both raised before any side effects run,
-but the gate wins when both conditions apply simultaneously: Go's
-`PersistentPreRunE` runs before `ValidateFlagGroups()`
-(`cobra@v1.10.2/command.go:985,1010`), so a closed gate (missing `--experimental`)
-surfaces before a `--db-url`/`--linked`/`--local` conflict is ever checked.
+but the gate wins when both conditions apply simultaneously: the gate check runs
+first, so a closed gate (missing `--experimental`) surfaces before a
+`--db-url`/`--linked`/`--local` conflict is ever checked.
 
 ## Output
 
@@ -75,7 +73,7 @@ Diagnostics (target resolution, prompts, `Declarative schema written to <dir>`)
 always go to stderr, in every `--output-format`. On success:
 
 - `text` mode prints `Finished supabase db schema declarative generate.` to
-  stdout (matches Go's PostRun `fmt.Println`, `cmd/db_schema_declarative.go:116-118`).
+  stdout.
 - `json`/`stream-json` mode instead emits a structured success envelope
   (`output.success("Finished supabase db schema declarative generate.")`) so
   the machine stdout payload isn't corrupted by a bare human line
@@ -91,7 +89,8 @@ always go to stderr, in every `--output-format`. On success:
 - Under the legacy opt-out, remote Supabase targets get the embedded pg-delta CA
   bundle written under `supabase/.temp/pgdelta/` and the URL rewritten to
   `sslmode=verify-ca`; the bundled engine uses the shared connection/TLS behavior.
-- **Architecture:** under the legacy opt-out, the platform baseline is provisioned by the
-  bundled `supabase-go` via the hidden `db schema declarative __catalog` command
-  (it runs `start.SetupDatabase`'s auth/storage/realtime service migrations). The
-  bundled engine extracts and renders the target in-process.
+- **Architecture:** the bundled engine extracts and renders the target in-process.
+  Under the legacy opt-out, the shadow-database platform baseline is provisioned
+  in-process (create the shadow container, wait for health, run the
+  auth/storage/realtime one-shot migrate jobs, export the catalog, remove the
+  container) using the same primitives as `db diff` and `db pull`.

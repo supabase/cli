@@ -335,7 +335,7 @@ major_version = 15
     }).pipe(Effect.ensuring(Effect.sync(() => rmSync(workdir, { recursive: true, force: true }))));
   });
 
-  // A token present doesn't bypass the format guard (Go's warning is
+  // A token present doesn't bypass the format guard (the warning is
   // unconditional on login too) — same code path as the previous test, so this
   // isn't new branch coverage, just pinning that login state can't skip it.
   it.live("still warns on a malformed ref even when logged in", () => {
@@ -534,7 +534,7 @@ major_version = 15
       yield* legacyServices({}).pipe(Effect.provide(layer));
 
       expect(out.stdoutText).toContain("[[services]]");
-      // Go's hand-written imageVersion struct emits PascalCase field names in
+      // The hand-written imageVersion struct emits PascalCase field names in
       // declaration order (Name, Local, Remote) with 2-space indent (CLI-1975).
       expect(out.stdoutText).toContain('  Name = "supabase/postgres"');
     });

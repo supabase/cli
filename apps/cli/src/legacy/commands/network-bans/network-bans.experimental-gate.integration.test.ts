@@ -19,7 +19,7 @@ import { legacyNetworkBansCommand } from "./network-bans.command.ts";
 // rationale: this proves `--experimental` is wired into the actual
 // `.command.ts` handler pipeline AND runs before
 // `legacyManagementApiRuntimeLayer`'s eager access-token resolution
-// (Go's `IsExperimental` check precedes `IsManagementAPI` in
+// (the `IsExperimental` check precedes `IsManagementAPI` in
 // `apps/cli-go/cmd/root.go:91-109`).
 
 const tempRoot = useLegacyTempWorkdir("supabase-network-bans-experimental-int-");
@@ -101,13 +101,12 @@ describe("legacy network-bans experimental gate (Go PersistentPreRunE parity)", 
   it.live(
     "remove: malformed --db-unban-ip CSV fails at parse time with pflag's exact diagnostic, before the gate",
     () => {
-      // Go parity (CLI-1983): pflag's `readAsCSV` error aborts cobra's
-      // `ParseFlags` BEFORE `PersistentPreRunE`'s experimental-gate check, so
-      // the parse error must win even with `--experimental` unset. The
-      // rendered line — what `runCli`'s `handledProgram` writes to stderr via
-      // `normalizeCause` — byte-matches the real Go CLI (pflag v1.0.10
-      // `errors.go:116` wrapping `encoding/csv`; `"1.2.3.4` is 8 bytes → EOF
-      // at column 9).
+      // pflag's `readAsCSV` error aborts cobra's `ParseFlags` BEFORE
+      // `PersistentPreRunE`'s experimental-gate check, so the parse error
+      // must win even with `--experimental` unset. The rendered line — what
+      // `runCli`'s `handledProgram` writes to stderr via `normalizeCause` —
+      // matches pflag's own diagnostic (pflag v1.0.10 `errors.go:116`
+      // wrapping `encoding/csv`; `"1.2.3.4` is 8 bytes → EOF at column 9).
       const { layer, api } = setup();
       return Effect.gen(function* () {
         const exit = yield* Effect.exit(

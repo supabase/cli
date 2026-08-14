@@ -67,8 +67,8 @@ function mockResolver(opts: {
   const layer = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (flags) => {
       calls.push(flags);
-      // Simulate Go's NewDbConfigWithPassword failing during connection resolution
-      // (IPv6 probe / pooler / temp login-role) after the ref is already loaded.
+      // Simulate connection resolution failing (IPv6 probe / pooler / temp
+      // login-role) after the ref is already loaded.
       if (opts.resolveFails === true) {
         return Effect.fail(
           new LegacyDbConfigConnectTempRoleError({ message: "failed to create temp role" }),
@@ -190,8 +190,8 @@ function mockDockerRun(opts: {
         stderr: r.stderr ?? "",
       });
     },
-    // db dump now streams stdout: deliver the configured bytes to `onStdout` (as Go's
-    // StdCopy would), then report the exit code + stderr.
+    // db dump now streams stdout: deliver the configured bytes to `onStdout`,
+    // then report the exit code + stderr.
     runStream: (runOpts, streamOpts) =>
       Effect.gen(function* () {
         allOpts.push(runOpts);
@@ -331,8 +331,8 @@ describe("legacy db dump integration", () => {
   it.live(
     "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
     () => {
-      // cobra's required-flag check keys off flag.Changed, so `--data-only=false`
-      // satisfies it; Go proceeds and runs the schema dump with dataOnly=false.
+      // The required-flag check keys off explicit presence, so `--data-only=false`
+      // satisfies it; the command proceeds and runs the schema dump with dataOnly=false.
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
         const exit = yield* legacyDbDump(
@@ -407,8 +407,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
-    // cobra keys the target mutex off flag.Changed, so the explicit-false `--linked`
-    // still counts as set and conflicts with `--local`.
+    // The target mutex keys off explicit presence, so the explicit-false
+    // `--linked` still counts as set and conflicts with `--local`.
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyDbDump(
@@ -435,8 +435,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
-    // Go selects local on Changed("local") before the linked default, so `--local=false`
-    // resolves the local target, not the linked one.
+    // Local is selected on explicit presence of `--local` before the linked
+    // default, so `--local=false` resolves the local target, not the linked one.
     const { layer, resolver } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ local: Option.some(false), dryRun: true }));
@@ -457,9 +457,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
-    // Go's dump.Run skips opening the file on dry-run but returns success, so cobra's
-    // PostRun still prints `Dumped schema to <abs>.` (cmd/db.go:148-156), with no
-    // dry-run guard and without touching the file (dump.go:23-32).
+    // The file is never opened on dry-run, but `Dumped schema to <abs>.` is
+    // still printed, with no dry-run guard and without touching the file.
     const filePath = join(tmp.current, "dry.sql");
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
@@ -469,16 +468,15 @@ describe("legacy db dump integration", () => {
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
-      // No container ran and the file was never created/truncated on dry-run.
       expect(docker.lastOpts).toBeUndefined();
       expect(existsSync(filePath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
-    // Go keys every --file branch off len(path) > 0, not flag presence
-    // (internal/db/dump/dump.go:20-32); an explicit empty --file means stdout, with
-    // no "Dumped schema to …" line and no file ever touched.
+    // Every --file branch keys off len(path) > 0, not flag presence; an
+    // explicit empty --file means stdout, with no "Dumped schema to …" line
+    // and no file ever touched.
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
@@ -489,8 +487,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
-    // Go runs ParseDatabaseConfig (→ config.Load → Validate) in the root PreRunE
-    // before dump.Run, even for --dry-run, so an invalid config fails without printing.
+    // The merged config is validated before the dump runs, even for
+    // --dry-run, so an invalid config fails without printing.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -565,9 +563,9 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("joins a multi-schema selection into EXTRA_FLAGS with pipes", () => {
-    // CSV-splitting of `--schema` now happens at the flag level via
-    // `legacyParseSchemaFlags` (Go's cobra StringSlice / `cmd/db.go:444`), so the
-    // handler receives the already-split array and the env builder pipe-joins it.
+    // CSV-splitting of `--schema` happens at the flag level via
+    // `legacyParseSchemaFlags`, so the handler receives the already-split
+    // array and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ schema: ["public", "auth"], local: Option.some(true) }));
@@ -576,8 +574,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("resolves a relative --file against the workdir", () => {
-    // Go chdir's into the workdir before opening --file, so a relative path is
-    // written under the workdir, not the original cwd.
+    // A relative `--file` is resolved against the workdir, so it is written
+    // under the workdir, not the original cwd.
     const { layer } = setup({
       isLocal: true,
       stdout: "CREATE SCHEMA public;\n",
@@ -600,10 +598,9 @@ describe("legacy db dump integration", () => {
   it.live(
     "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
     () => {
-      // Go's `dockerExec` sets host networking by default (dump.go:91-93), but
-      // `DockerStart` overrides it with `viper.GetString("network-id")` whenever that
-      // resolves non-empty (docker.go:379-380) — a value sourced only from
-      // `supabase/.env` (after `loadNestedEnv`'s `os.Setenv`) still wins over host.
+      // Host networking is the default, but a resolved `--network-id`/`SUPABASE_NETWORK_ID`
+      // value overrides it whenever non-empty — a value sourced only from `supabase/.env`
+      // still wins over host.
       const prev = process.env["SUPABASE_NETWORK_ID"];
       delete process.env["SUPABASE_NETWORK_ID"];
       mkdirSync(join(tmp.current, "supabase"), { recursive: true });
@@ -633,11 +630,11 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("caches the linked project even when connection resolution fails (Go PostRun)", () => {
-    // Go's LoadProjectRef sets flags.ProjectRef BEFORE NewDbConfigWithPassword
-    // (flags/db_url.go:88 vs :95), and ensureProjectGroupsCached runs on failure too
-    // (cmd/root.go:176). So an IPv6/pooler/login-role failure during resolution still
-    // refreshes the linked-project cache, because the ref was already loaded — here
-    // from config.toml project_id.
+    // The project ref is resolved before the connection is built, and the
+    // linked-project cache is refreshed unconditionally afterward. So an
+    // IPv6/pooler/login-role failure during resolution still refreshes the
+    // linked-project cache, because the ref was already loaded — here from
+    // config.toml project_id.
     const { layer, cache, resolver } = setup({
       projectId: Option.some("abcdefghijklmnopqrst"),
       resolveFails: true,
@@ -679,8 +676,8 @@ describe("legacy db dump integration", () => {
   it.live("does not cache when the linked ref is unknown and resolution fails", () => {
     // No config project_id and no .temp/project-ref file (workdir is a throwaway
     // path), so the up-front `loadProjectRef` pre-capture itself fails "not linked"
-    // (linkedFails) before `resolve()` is ever reached; Go gates
-    // ensureProjectGroupsCached on flags.ProjectRef != "", so nothing is cached.
+    // (linkedFails) before `resolve()` is ever reached; the cache is only written
+    // when a ref is known, so nothing is cached.
     const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
     return Effect.gen(function* () {
       const exit = yield* legacyDbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
@@ -769,7 +766,6 @@ describe("legacy db dump integration", () => {
       expect(failMessage(exit)).toBe(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      // The guard fires before any connection resolution or cache write.
       expect(resolver.calls).toEqual([]);
       expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
@@ -833,8 +829,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("linked: preserves the original dump error when the pooler fallback fails", () => {
-    // Go's PoolerFallbackConfig returns ok=false on any fallback-resolution error and
-    // reports the original pg_dump failure — the optional retry must not replace it.
+    // Any fallback-resolution error reports the original pg_dump failure — the
+    // optional retry must not replace it.
     const { layer, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -881,8 +877,8 @@ describe("legacy db dump integration", () => {
       // The fallback was attempted (classified IPv6) but returned no pooler.
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(docker.allOpts).toHaveLength(1);
-      // Go's SetConnectSuggestion attaches the IPv6 pooler guidance on the no-fallback
-      // path (pooler_fallback.go:60-64); the bare container error must carry it.
+      // The IPv6 pooler guidance is attached on the no-fallback path; the bare
+      // container error must carry it.
       expect(failSuggestion(exit)).toContain(
         "Your network does not support IPv6, which is required for direct connections",
       );
@@ -891,9 +887,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("linked: attaches the IPv6 suggestion when the pooler retry also fails", () => {
-    // Go's RunWithPoolerFallback calls SetConnectSuggestion on the retry's stderr when
-    // the pooler retry also fails (pooler_fallback.go:52-55); an IPv6 retry failure
-    // surfaces the same guidance.
+    // The IPv6 pooler guidance is also attached to the retry's stderr when the
+    // pooler retry also fails; an IPv6 retry failure surfaces the same guidance.
     const { layer, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,

@@ -207,10 +207,6 @@ function faultyFsLayer(opts: FsFaultOpts): Layer.Layer<FileSystem.FileSystem> {
   ).pipe(Layer.provide(BunServices.layer));
 }
 
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
-
 const alwaysReadyHttpClientLayer = Layer.succeed(
   HttpClient.HttpClient,
   HttpClient.make((request) =>
@@ -434,10 +430,6 @@ const failureTag = (exit: Exit.Exit<unknown, unknown>): string | undefined => {
 const tmp = useLegacyTempWorkdir();
 
 describe("legacy migration squash", () => {
-  // -------------------------------------------------------------------------
-  // Flag surface & ordering
-  // -------------------------------------------------------------------------
-
   describe("flag surface & ordering", () => {
     it.effect("rejects --linked combined with --local", () => {
       const s = setup(tmp.current, { args: ["--linked", "--local"] });
@@ -513,7 +505,6 @@ describe("legacy migration squash", () => {
             "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
           );
         }
-        // The guard fires before any resolver call, shadow/dump work, or cache write.
         expect(s.resolverCalls).toEqual([]);
         expect(s.shadowSpawned).toEqual([]);
         expect(s.dumpCalls).toEqual([]);
@@ -599,10 +590,6 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // squashToVersion
-  // -------------------------------------------------------------------------
-
   describe("squashToVersion", () => {
     it.effect("fails with 'version not found' when the migrations directory is empty", () => {
       const s = setup(tmp.current);
@@ -655,7 +642,7 @@ describe("legacy migration squash", () => {
           );
           expect(s.shadowSpawned).toEqual([]);
           expect(s.dumpCalls).toEqual([]);
-          // Step 2 still runs on the no-op path (Go falls through to it).
+          // Step 2 still runs on the no-op path (it falls through to it).
           expect(stdout(s.out)).toContain("Finished supabase migration squash.");
           expect(stderr(s.out)).toContain(
             "Run supabase migration repair --status applied to update your remote migration history table.",
@@ -665,9 +652,7 @@ describe("legacy migration squash", () => {
     );
   });
 
-  // -------------------------------------------------------------------------
   // Happy path — squashing two-or-more migrations
-  // -------------------------------------------------------------------------
 
   describe("squashing local migrations", () => {
     const BEFORE_SQL = "CREATE SCHEMA IF NOT EXISTS auth;\nold auth object;\n";
@@ -751,8 +736,8 @@ describe("legacy migration squash", () => {
             expect(call.env["PGDATABASE"]).toBe("postgres");
             expect(call.network).toEqual({ _tag: "host" });
             expect(call.cmd).toEqual(["bash", "-c", legacyDumpSchemaScript, "--"]);
-            // `legacyStreamPgDump` applies the registry mirror itself (Go's
-            // `GetRegistryImageUrl`) — the default (no override) registry rewrites
+            // `legacyStreamPgDump` applies the registry mirror itself —
+            // the default (no override) registry rewrites
             // to the ECR mirror, not the bare Dockerfile-manifest tag.
             expect(call.image).toBe(legacyGetRegistryImageUrl(dockerfileServiceImage("pg")));
           }
@@ -810,12 +795,11 @@ describe("legacy migration squash", () => {
     it.effect(
       "resolves the pg_dump image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
       () => {
-        // Go's `loadNestedEnv` `os.Setenv`s the project `.env` (config.go:789) before any of
+        // The project `.env` is applied before any of
         // squash's three pg_dump containers start; each one resolves its image through
-        // `DockerStart` -> `GetRegistryImageUrl`/`GetRegistryImageUrls` (docker.go:221-246,
-        // 326-348,363-371) — so a registry mirror set only in `supabase/.env` reaches all
-        // three. The handler mirrors that with `legacyApplyProjectEnv`, scoped to the run
-        // and reverted when it completes.
+        // the same registry-mirror lookup — so a registry mirror set only in `supabase/.env`
+        // reaches all three. The handler applies that with `legacyApplyProjectEnv`, scoped to
+        // the run and reverted when it completes.
         const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         const s = setupHappyPath();
@@ -847,10 +831,9 @@ describe("legacy migration squash", () => {
     it.effect(
       "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
       () => {
-        // Go's `dockerExec` sets host networking by default (dump.go:91-93), but
-        // `DockerStart` overrides it with `viper.GetString("network-id")` whenever that
-        // resolves non-empty (docker.go:379-380) — a value sourced only from
-        // `supabase/.env` (after `loadNestedEnv`'s `os.Setenv`) still wins over host.
+        // Host networking is the default, but an explicit network id
+        // overrides it whenever that resolves non-empty — a value sourced only from
+        // `supabase/.env` still wins over host.
         const prev = process.env["SUPABASE_NETWORK_ID"];
         delete process.env["SUPABASE_NETWORK_ID"];
         const s = setupHappyPath();
@@ -895,10 +878,8 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // Failure paths — every one leaves the shadow removed (unless creation
-  // itself is what failed, matching Go's leak-on-create-failure parity).
-  // -------------------------------------------------------------------------
+  // itself is what failed, matching the established leak-on-create-failure behavior).
 
   describe("squashMigrations failure paths", () => {
     it.effect("fails when the shadow container cannot be created and never attempts a dump", () => {
@@ -909,8 +890,8 @@ describe("legacy migration squash", () => {
         const exit = yield* legacyMigrationSquash(flags()).pipe(Effect.exit);
         expect(failureTag(exit)).toBe("LegacyShadowDbError");
         expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
-        // Nothing to release — the container was never created (Go's own
-        // leak-on-create-failure parity, see `legacyCreateShadowDatabase`'s doc).
+        // Nothing to release — the container was never created (the established
+        // leak-on-create-failure behavior, see `legacyCreateShadowDatabase`'s doc).
         expect(s.shadowSpawned.filter((c) => c.args[0] === "rm")).toEqual([]);
         expect(s.dumpCalls).toEqual([]);
       }).pipe(Effect.provide(s.layer));
@@ -1045,8 +1026,8 @@ describe("legacy migration squash", () => {
     it.effect(
       "fails with 'failed to copy docker logs' when streaming the full dump into the target file fails",
       () => {
-        // Go's underlying failure on this path is `stdcopy.StdCopy`'s own write into the
-        // target file (`DockerStreamLogs`, `docker.go:574-576`), byte-matching "failed to
+        // The underlying failure on this path is the docker-log-stream write into the
+        // target file, byte-matching "failed to
         // copy docker logs:" — NOT `lineByLineDiff`'s own "failed to write line:" below.
         seedMigration(tmp.current, "0_init.sql");
         seedMigration(tmp.current, "1_target.sql");
@@ -1177,9 +1158,7 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // Step 2 — local target
-  // -------------------------------------------------------------------------
 
   describe("local target", () => {
     it.effect(
@@ -1208,9 +1187,7 @@ describe("legacy migration squash", () => {
     });
   });
 
-  // -------------------------------------------------------------------------
   // Step 2 — remote target
-  // -------------------------------------------------------------------------
 
   describe("remote target", () => {
     function setupRemote(opts: SetupOpts = {}) {
@@ -1340,7 +1317,7 @@ describe("legacy migration squash", () => {
     );
 
     it.effect("baselines the surviving older version when a merged-file removal failed", () => {
-      // Go re-lists local versions AFTER the file removals — a failed removal
+      // Local versions are re-listed AFTER the file removals — a failed removal
       // means the squash TARGET survives on disk (already true), but so does
       // the OLDER merged file whose removal failed, and THAT older version is
       // what an empty `--version` baselines to, not the squash target.
@@ -1471,10 +1448,6 @@ describe("legacy migration squash", () => {
       },
     );
   });
-
-  // -------------------------------------------------------------------------
-  // Output formats
-  // -------------------------------------------------------------------------
 
   describe("output formats", () => {
     it.effect("json emits the squash payload on stdout and keeps progress on stderr", () => {

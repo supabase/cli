@@ -287,10 +287,10 @@ function freshVolumeRoute(
   base: (args: ReadonlyArray<string>) => RouteResult,
 ): (args: ReadonlyArray<string>) => RouteResult {
   return (args) => {
-    // `legacyVolumeExists` now distinguishes a confirmed "not found" from
-    // any other inspect error (matching Go's `errdefs.IsNotFound` gate) — the
-    // stderr text is what makes this simulate a genuinely fresh/non-existent
-    // volume rather than an ambiguous inspect failure.
+    // `legacyVolumeExists` distinguishes a confirmed "not found" from any
+    // other inspect error — the stderr text is what makes this simulate a
+    // genuinely fresh/non-existent volume rather than an ambiguous inspect
+    // failure.
     if (args[0] === "volume" && args[1] === "inspect") {
       return { exitCode: 1, stderr: [`Error: No such volume: ${args[2] ?? ""}`] };
     }
@@ -525,8 +525,8 @@ function missingSuffixesForExcludeKey(excludeKey: string): ReadonlyArray<string>
   return [CONTAINER_SUFFIX_BY_EXCLUDE_KEY[excludeKey]!];
 }
 
-// Go's test vector (`apps/cli-go/pkg/config/secret_test.go`): this ciphertext decrypts to
-// "value" under the keypair below — same fixture used by `legacy-local-config-values.unit.test.ts`'s
+// A known test vector: this ciphertext decrypts to "value" under the keypair
+// below — same fixture used by `legacy-local-config-values.unit.test.ts`'s
 // "encrypted auth secrets" suite. Hoisted to file scope so both the GoTrue-secret suite and the
 // Edge-Runtime-secret suite below reuse the exact same known-good dotenvx ciphertext instead of
 // each needing to produce their own (that requires the real ECIES encryption this fixture already
@@ -776,7 +776,7 @@ describe("legacy start integration", () => {
         // wrapConfigOverride checks (e.g. storage.analytics.enabled), which sit AFTER the
         // already-running early return and therefore never run in this branch. A malformed
         // per-bucket file_size_limit must still fail here, before the already-running banner ever
-        // prints, matching Go's Config.Load decrypting/decoding unconditionally regardless of
+        // prints — config decrypting/decoding happens unconditionally regardless of
         // whether the stack is already up.
         const { layer, child } = setup({
           configContents:
@@ -1241,9 +1241,8 @@ describe("legacy start integration", () => {
 
   describe("config load / validation failures", () => {
     it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () => {
-      // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) `os.Chdir`s the
-      // explicit workdir before config load or any Docker call — a missing path must fail
-      // immediately, matching `status`/`stop`'s own equivalent test.
+      // The explicit workdir is `chdir`'d into before config load or any Docker call — a
+      // missing path must fail immediately, matching `status`/`stop`'s own equivalent test.
       const missingWorkdir = join(tempRoot.current, "does-not-exist");
       const { layer, child } = setup({ workdir: missingWorkdir, skipConfig: true });
       return Effect.gen(function* () {
@@ -1568,7 +1567,7 @@ describe("legacy start integration", () => {
         // (`legacyResolveGotruePasskeyWebauthn`, `resolveGotrueExternalProviders`,
         // `buildKongEmailTemplateMounts`, `values.analyticsBackend`) in one pass, none of
         // which interact with each other. A malformed `db.health_timeout` is exercised
-        // separately below (it now hard-fails the whole command, matching Go, so it can't
+        // separately below (it now hard-fails the whole command, so it can't
         // be bundled into this "successful bring-up" scenario anymore).
         const { layer, workdir, child } = setup({
           configContents: `project_id = "demo"
@@ -1642,10 +1641,8 @@ content_path = "./supabase/templates/custom_notice.html"
     );
 
     it.live(
-      // Go's own backoff policy for "0s" performs exactly one immediate health
-      // probe with no retries (`internal/db/start/start.go:192-198` — the retry
-      // count is `uint64(timeout.Seconds())`, and the backoff library stops
-      // immediately at 0) — this is NOT a 30s fallback. The mock's default route
+      // The backoff policy for "0s" performs exactly one immediate health
+      // probe with no retries — this is NOT a 30s fallback. The mock's default route
       // heals on the very first check either way, so this only proves "0s" is
       // accepted and doesn't hang/fail, not the exact retry count.
       "accepts a zero db.health_timeout without hanging, and blanks webauthn fields on an empty [auth.webauthn] section",
@@ -1662,10 +1659,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails config loading on an unparseable db.health_timeout before any Docker work, matching Go's Config.Load",
       () => {
-        // Go's Config.Load decodes db.health_timeout in the same unconditional mapstructure pass
-        // as every other duration field, before start.Run touches Docker at all — a malformed
-        // value fails before network/image/Postgres work, so Go's own rollback (only reached when
-        // run() itself fails) never even runs. Resolved eagerly here, alongside the other
+        // db.health_timeout decodes in the same unconditional pass as every other
+        // duration field, before any Docker work — a malformed value fails before
+        // network/image/Postgres work, so rollback (only reached on a genuine run
+        // failure) never even runs. Resolved eagerly here, alongside the other
         // config-override fields, for the same reason — no containers should ever be created.
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[db]\nhealth_timeout = "not-a-duration"\n',
@@ -1686,8 +1683,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid storage.file_size_limit even when storage is excluded, matching Go's Config.Load",
       () => {
-        // Go's sizeInBytes decoder rejects a malformed file_size_limit unconditionally at
-        // Config.Load, regardless of --exclude — this proves the eager validation in
+        // The size decoder rejects a malformed file_size_limit unconditionally at
+        // config load, regardless of --exclude — this proves the eager validation in
         // start.handler.ts really is unconditional, not merely earlier-but-still-gated on
         // Storage actually running.
         const { layer, child } = setup({
@@ -1709,8 +1706,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_S3_PROTOCOL_ENABLED even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.s3_protocol.enabled` is a plain bool decoded via Go's generic Viper pass in
-        // Config.Load, unconditionally — same class of gap as storage.file_size_limit above,
+        // `storage.s3_protocol.enabled` is a plain bool decoded unconditionally at
+        // config load — same class of gap as storage.file_size_limit above,
         // now fixed the same way (hoisted eager wrapConfigOverride in start.handler.ts).
         const previous = process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"];
         process.env["SUPABASE_STORAGE_S3_PROTOCOL_ENABLED"] = "not-a-bool";
@@ -1740,9 +1737,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_ENABLED even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.analytics.enabled` is the `Enabled` bool sibling of the
-        // max_namespaces/max_tables/max_catalogs uint fields below, decoded via Go's generic
-        // Viper pass in Config.Load, unconditionally — same class of gap as
+        // `storage.analytics.enabled` is the bool sibling of the
+        // max_namespaces/max_tables/max_catalogs uint fields below, decoded
+        // unconditionally at config load — same class of gap as
         // storage.s3_protocol.enabled above, now fixed the same way (hoisted eager
         // wrapConfigOverride in start.handler.ts).
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_ENABLED"];
@@ -1772,9 +1769,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.analytics.max_namespaces` is a plain uint decoded via Go's generic
-        // Viper/mapstructure Config.Load pass (pkg/config/storage.go:28-39), unconditionally —
-        // same class of gap as storage.s3_protocol.enabled above, now fixed the same way
+        // `storage.analytics.max_namespaces` is a plain uint decoded
+        // unconditionally at config load — same class of gap as
+        // storage.s3_protocol.enabled above, now fixed the same way
         // (hoisted eager wrapConfigOverride in start.handler.ts).
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_NAMESPACES"] = "not-a-uint";
@@ -1805,7 +1802,7 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_TABLES even when storage is excluded, matching Go's Config.Load",
       () => {
         // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_tables`
-        // is decoded in the same Config.Load pass (pkg/config/storage.go:28-39).
+        // decodes in the same config-load pass.
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_TABLES"] = "not-a-uint";
         const { layer, child } = setup();
@@ -1835,7 +1832,7 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on an invalid SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS even when storage is excluded, matching Go's Config.Load",
       () => {
         // Same gap as storage.analytics.max_namespaces above — `storage.analytics.max_catalogs`
-        // is decoded in the same Config.Load pass (pkg/config/storage.go:28-39).
+        // decodes in the same config-load pass.
         const previous = process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"];
         process.env["SUPABASE_STORAGE_ANALYTICS_MAX_CATALOGS"] = "not-a-uint";
         const { layer, child } = setup();
@@ -1864,8 +1861,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_BUCKETS even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.vector.max_buckets` is a plain uint decoded in the same Config.Load pass as
-        // storage.analytics.* above (pkg/config/storage.go:28-39), unconditionally.
+        // `storage.vector.max_buckets` is a plain uint decoded in the same config-load pass as
+        // storage.analytics.* above, unconditionally.
         const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"];
         process.env["SUPABASE_STORAGE_VECTOR_MAX_BUCKETS"] = "not-a-uint";
         const { layer, child } = setup();
@@ -1893,8 +1890,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_STORAGE_VECTOR_MAX_INDEXES even when storage is excluded, matching Go's Config.Load",
       () => {
-        // `storage.vector.max_indexes` is a plain uint decoded in the same Config.Load pass as
-        // storage.vector.max_buckets above (pkg/config/storage.go:28-39), unconditionally.
+        // `storage.vector.max_indexes` is a plain uint decoded in the same config-load pass as
+        // storage.vector.max_buckets above, unconditionally.
         const previous = process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"];
         process.env["SUPABASE_STORAGE_VECTOR_MAX_INDEXES"] = "not-a-uint";
         const { layer, child } = setup();
@@ -1922,7 +1919,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid auth.sms.max_frequency even when auth is disabled, matching Go's Config.Load",
       () => {
-        // Go's Config.Load decodes every GoTrue duration field unconditionally, regardless of
+        // Every GoTrue duration field decodes unconditionally, regardless of
         // auth.enabled — proving the eager validation covers fields beyond auth.email.max_frequency
         // and really is independent of whether GoTrue's own spec builder ever runs.
         const { layer, child } = setup({
@@ -1945,8 +1942,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.rate_limit.*` are plain uints decoded unconditionally in Go's Config.Load
-        // (pkg/config/auth.go:200-208) — `resolveGotrueRateLimit` only throws via an env var
+        // `auth.rate_limit.*` are plain uints decoded unconditionally at config
+        // load — `resolveGotrueRateLimit` only throws via an env var
         // override (a bad TOML value is caught by @supabase/config's own schema first), so this
         // models the override directly, same as the storage.s3_protocol.enabled test above.
         const previous = process.env["SUPABASE_AUTH_RATE_LIMIT_ANONYMOUS_USERS"];
@@ -1979,8 +1976,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_WEB3_SOLANA_ENABLED even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.web3.*.enabled` are plain bools decoded unconditionally in Go's Config.Load
-        // (pkg/config/auth.go:379-382) — same override-only-throw reasoning as the rate_limit
+        // `auth.web3.*.enabled` are plain bools decoded unconditionally at
+        // config load — same override-only-throw reasoning as the rate_limit
         // test above.
         const previous = process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"];
         process.env["SUPABASE_AUTH_WEB3_SOLANA_ENABLED"] = "not-a-bool";
@@ -2012,7 +2009,7 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on an invalid SUPABASE_AUTH_OAUTH_SERVER_ENABLED even when auth is disabled, matching Go's Config.Load",
       () => {
         // `auth.oauth_server.enabled`/`allow_dynamic_registration` are plain bools decoded
-        // unconditionally in Go's Config.Load (pkg/config/auth.go:394-398) — same
+        // unconditionally at config load — same
         // override-only-throw reasoning as the two tests above.
         const previous = process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"];
         process.env["SUPABASE_AUTH_OAUTH_SERVER_ENABLED"] = "not-a-bool";
@@ -2043,8 +2040,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally in Go's
-        // Config.Load (pkg/config/auth.go:210-240), same override-only-throw reasoning as the
+        // `auth.third_party.<provider>.enabled` are plain bools decoded unconditionally at
+        // config load, same override-only-throw reasoning as the
         // web3/oauth_server tests above (review: PRRT_kwDOErm0O86WXFqj).
         const previous = process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"];
         process.env["SUPABASE_AUTH_THIRD_PARTY_FIREBASE_ENABLED"] = "not-a-bool";
@@ -2076,8 +2073,8 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid auth.passkey.enabled even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all — Go decodes
-        // `auth.passkey.enabled` unconditionally in Config.Load (pkg/config/auth.go:384-386) via
+        // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema at all —
+        // `auth.passkey.enabled` decodes unconditionally at config load via
         // `legacyResolveGotruePasskeyWebauthn`'s raw-document read, same override-only-throw
         // reasoning as the web3/oauth_server tests above, except the malformed value lives directly in
         // config.toml here since `@supabase/config` never sees (or rejects) this unmodeled field —
@@ -2102,7 +2099,7 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on an invalid auth.external.<custom>.enabled even when auth is disabled, matching Go's Config.Load",
       () => {
-        // `auth.external` is a genuine Go `map[string]provider` (auth.go:190) — an unmodeled/
+        // `auth.external` is an open-ended provider map — an unmodeled/
         // custom provider name like `custom` is a legitimate config shape `@supabase/config`'s
         // schema silently drops at decode time (see the "custom auth.external providers" describe
         // block below for the accepted-value counterpart), so
@@ -2128,11 +2125,11 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails on a per-function env field, matching Go's Config.Load rejecting an unknown functions[slug] key",
       () => {
-        // Go's `function` struct (pkg/config/config.go:290-296) has no `env` field — `Config.Load`'s
-        // `v.UnmarshalExact` (ErrorUnused: true) rejects it unconditionally, before any Docker
-        // work. Empirically confirmed against the real Go binary: `'functions[foo]' has invalid
-        // keys: env`. `@supabase/config`'s own schema DOES model `[functions.<slug>.env]` (a
-        // legitimate next/-only feature), so this must be a legacy-only rejection.
+        // A per-function `env` key is rejected unconditionally at config
+        // load, before any Docker work — the established error is
+        // `'functions[foo]' has invalid keys: env`. `@supabase/config`'s own schema DOES model
+        // `[functions.<slug>.env]` (a legitimate next/-only feature), so this must be a
+        // legacy-only rejection.
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[functions.foo]\nenabled = true\n[functions.foo.env]\nFOO = "env(SOME_VAR)"\n',
@@ -2285,10 +2282,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "ignores SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED when [storage.image_transformation] is absent from config.toml",
       () => {
-        // Go's `Storage.ImageTransformation` is a nil-unless-declared pointer
-        // (`pkg/config/storage.go:16`) — with no `[storage.image_transformation]` table, the env
-        // var is never even looked up (`start.go:302-303`'s `!= nil && .Enabled` gate), so ImgProxy
-        // must stay off even though storage itself is enabled.
+        // `storage.image_transformation` is a nil-unless-declared field —
+        // with no `[storage.image_transformation]` table, the env var is
+        // never even looked up, so ImgProxy must stay off even though
+        // storage itself is enabled.
         const previous = process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"];
         process.env["SUPABASE_STORAGE_IMAGE_TRANSFORMATION_ENABLED"] = "true";
         const { layer, child } = setup();
@@ -2398,9 +2395,7 @@ content_path = "./supabase/templates/custom_notice.html"
         return Effect.gen(function* () {
           yield* legacyStart(flags({ exclude: ["edge-runtime"] }));
           expect(out.stderrText).not.toContain("failed to cache migrations catalog");
-          // Runs once, AFTER the fresh-volume migrate+seed pipeline — matching Go's
-          // `SetupLocalDatabase` calling `pgcache.TryCacheMigrationsCatalog` immediately
-          // after `apply.MigrateAndSeed` (`start.go:368-379`).
+          // Runs once, immediately AFTER the fresh-volume migrate+seed pipeline.
           expect(edgeRunCalls).toHaveLength(1);
           const tempDir = join(workdir, "supabase", ".temp", "pgdelta");
           const catalogFiles = readdirSync(tempDir).filter((name) =>
@@ -2446,10 +2441,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "resolves an excluded service's migrate-job image through a project-dotenv-only registry override",
       () => {
-        // The auth/realtime/storage migrate jobs run regardless of `--exclude` (Go parity —
-        // see this describe block's own header comment), but `--exclude gotrue` removes the
-        // gotrue image from `imagePlan`, which used to make its migrate-job image fall back to
-        // `LegacyDockerRun`'s ambient-`process.env`-only registry resolver — invisible to a
+        // The auth/realtime/storage migrate jobs run regardless of `--exclude`, but
+        // `--exclude gotrue` removes the gotrue image from `imagePlan`, which used to
+        // make its migrate-job image fall back to `LegacyDockerRun`'s
+        // ambient-`process.env`-only registry resolver — invisible to a
         // registry override that only exists in the project's own `.env` file.
         const workdir = tempRoot.current;
         const { layer, child } = setup({ route: freshVolumeRoute(defaultRoute()) });
@@ -2475,9 +2470,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "does not attempt to resolve an excluded service's migrate-job image on a non-fresh-volume restart",
       () => {
-        // Go's own pre-pull (`ensureImagesCached`, `start.go:237-262`) only ever touches
-        // non-excluded services, and the one-shot setup-job images are resolved lazily,
-        // only from inside `initSchema15` when it actually runs — a fresh volume AND
+        // The pre-pull step only ever touches non-excluded services, and the
+        // one-shot setup-job images are resolved lazily, only from inside
+        // `initSchema15` when it actually runs — a fresh volume AND
         // PG15+. On an ordinary restart (this test's default, non-fresh-volume setup),
         // `--exclude storage-api` must not even attempt to resolve Storage's image, or an
         // unavailable/rate-limited Storage image would fail `start` even though nothing
@@ -2516,12 +2511,11 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on an undecryptable [db.vault] secret even on a non-fresh volume, matching Go's Config.Load",
       () => {
         // `legacyCheckDbToml`'s own internal call inside `legacyStartSetupLocalDatabase` only
-        // runs on a fresh volume (Go's `NoBackupVolume` gate) — an undecryptable `[db.vault]`
+        // runs on a fresh volume — an undecryptable `[db.vault]`
         // secret (a DB-specific field `@supabase/config`'s own schema never decrypts, only
         // `legacyCheckDbToml`'s pipeline does) must still fail eagerly, before any Docker work,
-        // on an ordinary restart against an existing (non-fresh) volume, matching Go's
-        // `Config.Load`, which decrypts every `encrypted:` value unconditionally regardless of
-        // volume state.
+        // on an ordinary restart against an existing (non-fresh) volume: every `encrypted:`
+        // value decrypts unconditionally regardless of volume state.
         const previous = process.env["DOTENV_PRIVATE_KEY"];
         delete process.env["DOTENV_PRIVATE_KEY"];
         const encrypted =
@@ -2553,7 +2547,7 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on a bucket's invalid file_size_limit even on a non-fresh volume, matching Go's Config.Load",
       () => {
         // Same class of gap as the `[db.vault]` test above: the per-bucket `file_size_limit`
-        // (Go's same `sizeInBytes` decode hook as the storage-level default) was previously only
+        // (the same size decode hook as the storage-level default) was previously only
         // parsed deep inside `legacySeedBucketsRun`, reached only on a fresh volume with Storage
         // actually seeding — a malformed value on an ordinary restart against an existing
         // (non-fresh) volume went completely unvalidated. `legacyCheckDbToml` now catches it
@@ -2814,9 +2808,8 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         // `resolveFunctionBindMounts` backs Studio's function bind mounts
         // unconditionally of Edge Runtime being enabled (see
-        // `start.handler.ts`'s "studio" case doc comment) — Go's
-        // `PopulatePerFunctionConfigs` still logs the skip line via that path
-        // alone here, since Edge Runtime itself never runs to log it too.
+        // `start.handler.ts`'s "studio" case doc comment) — the skip line still
+        // logs via that path alone here, since Edge Runtime itself never runs to log it too.
         const workdir = tempRoot.current;
         mkdirSync(join(workdir, "supabase", "functions", "foo"), { recursive: true });
         writeFileSync(join(workdir, "supabase", "functions", "foo", "index.ts"), "export {};\n");
@@ -2966,21 +2959,22 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "still fails when the daemon dies mid-pre-pull under --ignore-health-check — Go's exit-0 swallow is an unintended quirk this port deliberately does not reproduce (CLI-1987)",
       () => {
-        // Go's `IsUnhealthyError` (`internal/db/start/start.go:227-231`) matches any
-        // `errors.Join`-shaped error, which accidentally includes `ensureImagesCached`'s
-        // joined pull errors — so Go with `--ignore-health-check` swallows a total pre-pull
-        // failure, prints "Started supabase local development setup." + the status table,
-        // and exits 0 with no container running. Ruled an unintended quirk (CLI-1987):
-        // this port keeps the failure fatal regardless of the flag — no success banner,
-        // no status table on stdout, and no rollback (nothing was created yet). This
-        // scenario models the daemon-becoming-unreachable trigger: `hasLocalImage`
-        // (`legacy-docker-image-resolve.ts`) fails IMMEDIATELY on a daemon-unreachable
-        // `image inspect` stderr — no registry-candidate retries, no real 4s/8s backoff
-        // sleeps (review r3689619133) — while the flagless test above already pins the
-        // other trigger, pull-retry exhaustion. Both funnel into the same joined
+        // Historically, matching any `errors.Join`-shaped error — which
+        // accidentally includes `ensureImagesCached`'s joined pull errors — meant
+        // `--ignore-health-check` swallowed a total pre-pull failure, printing
+        // "Started supabase local development setup." + the status table, and
+        // exiting 0 with no container running. Ruled an unintended quirk
+        // (CLI-1987): this port keeps the failure fatal regardless of the flag —
+        // no success banner, no status table on stdout, and no rollback (nothing
+        // was created yet). This scenario models the daemon-becoming-unreachable
+        // trigger: `hasLocalImage` (`legacy-docker-image-resolve.ts`) fails
+        // IMMEDIATELY on a daemon-unreachable `image inspect` stderr — no
+        // registry-candidate retries, no real 4s/8s backoff sleeps (review
+        // r3689619133) — while the flagless test above already pins the other
+        // trigger, pull-retry exhaustion. Both funnel into the same joined
         // `LegacyImagePrepullError` (`lib/image-prepull.ts`). See
         // `legacyIsUnhealthyStartError`'s doc comment (`start.rollback.ts`) and
-        // `SIDE_EFFECTS.md`'s "Notes" before "fixing" this toward Go.
+        // `SIDE_EFFECTS.md`'s "Notes" before changing this behavior.
         const base = defaultRoute();
         const route = (args: ReadonlyArray<string>): RouteResult => {
           if (args[0] === "image" && args[1] === "inspect") {
@@ -3020,9 +3014,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "rolls back on a SIGINT-style interruption mid-bring-up, matching Go's context.Canceled rollback",
       () => {
-        // Go's `start` rolls back on Ctrl-C: `cmd/root.go:99,155` wraps every command's context
-        // with `signal.NotifyContext`, and `internal/start/start.go:73-82` rolls back on ANY
-        // non-nil `run()` error, including the `context.Canceled` a SIGINT produces. The native
+        // Rollback on Ctrl-C: every command's context is wrapped so a SIGINT
+        // produces a genuine interrupt, and rollback runs on ANY failure,
+        // including that interrupt. The native
         // port installs no signal handling of its own, so this relies entirely on the global
         // `signalAwareProgram` wrapper (`shared/cli/run.ts`) calling `Fiber.interrupt`, and on
         // rollback being wired via `Effect.onError` (not `Effect.tapError`, which never sees a
@@ -3223,8 +3217,8 @@ content_path = "./supabase/templates/custom_notice.html"
       "fails on a malformed auth.email.max_frequency before any Docker work, matching Go's Config.Load",
       () => {
         // `auth.email.max_frequency` is a plain, unvalidated string in `@supabase/config`'s
-        // schema. Go decodes it in the same unconditional Config.Load mapstructure pass as every
-        // other duration field, before start.Run touches Docker at all — this is now validated
+        // schema. It decodes in the same unconditional config-load pass as every
+        // other duration field, before any Docker work — this is now validated
         // eagerly here too (see the `resolvedEmail` validation in start.handler.ts), so a
         // malformed value fails before the network/Postgres/Kong/GoTrue sequence ever begins,
         // not partway through it.
@@ -3353,10 +3347,10 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "exits 0 on --ignore-health-check when Postgres itself never becomes healthy, without rolling back and without starting any other service",
       () => {
-        // Mirrors the regression test above, but with `--ignore-health-check` set — Go's
-        // `Run()` (`start.go:74-75`) applies `ignoreHealthCheck && IsUnhealthyError(err)`
-        // uniformly to whatever `run()` returns, including Postgres's own health-wait
-        // failure, which `run()` propagates immediately (`start.go:294-296`) before any
+        // Mirrors the regression test above, but with `--ignore-health-check` set — the
+        // `ignoreHealthCheck && legacyIsUnhealthyStartError(err)` downgrade applies
+        // uniformly to whatever the run returns, including Postgres's own health-wait
+        // failure, which propagates immediately before any
         // other service is even created.
         const neverHealthy = new Set<string>();
         const base = defaultRoute({ neverHealthy });
@@ -3390,11 +3384,11 @@ content_path = "./supabase/templates/custom_notice.html"
           // `--ignore-health-check` leaves the stack up, so a bare restart would be a
           // no-op — the sequence must stop first.
           expect(out.stderrText).toContain("supabase stop");
-          // No other service's container is ever created — Go's `StartDatabase`
-          // returns before `run()`'s "Starting containers..." message or any other
+          // No other service's container is ever created — the database bring-up
+          // returns before the "Starting containers..." message or any other
           // service's bring-up even begins.
           expect(createdContainerNames(child.spawned)).toEqual([expect.stringContaining("_db_")]);
-          // Go never fires `cli_stack_started` on this fallthrough either — the
+          // `cli_stack_started` never fires on this fallthrough either — the
           // capture sits after the entire bring-up + bulk health check, neither of
           // which is reached once Postgres's own wait is downgraded to a warning.
           expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
@@ -3492,9 +3486,8 @@ content_path = "./supabase/templates/custom_notice.html"
         // advice names the image actually resolved for that container.
         expect(out.stderrText).toContain("supabase_auth_demo container is not ready");
         expect(out.stderrText).toContain("docker image rm -f public.ecr.aws/supabase/gotrue:");
-        // Go never fires `cli_stack_started` on the ignored-unhealthy
-        // fallthrough (`start.go:1287` sits after the `if err != nil` block) —
-        // only a genuine bulk health-check SUCCESS reaches that capture.
+        // `cli_stack_started` never fires on the ignored-unhealthy
+        // fallthrough — only a genuine bulk health-check SUCCESS reaches that capture.
         expect(analytics.captured.some((c) => c.event === "cli_stack_started")).toBe(false);
       }).pipe(Effect.provide(layer));
     },
@@ -3678,11 +3671,9 @@ content_path = "./supabase/templates/custom_notice.html"
     });
 
     it.live("falls back to SUPABASE_NETWORK_ID when the flag itself is omitted", () => {
-      // Go's `network-id` is a persistent flag bound to viper under `SetEnvPrefix("SUPABASE")`
-      // + `AutomaticEnv()` (`apps/cli-go/cmd/root.go:318-334`), and `DockerStart` reads
-      // `viper.GetString("network-id")` fresh at its own call site — well after `Config.Load`'s
-      // dotenv pass — so a shell/project-dotenv `SUPABASE_NETWORK_ID` is effective when the flag
-      // itself is omitted (review: PRRT_kwDOErm0O86VlqIL).
+      // `--network-id` falls back to the `SUPABASE_NETWORK_ID` shell/project-dotenv env var
+      // ONLY when the flag was never passed (review: PRRT_kwDOErm0O86VlqIL) — see
+      // `start.handler.ts`'s own comment on this resolution for the full precedence.
       const previous = process.env["SUPABASE_NETWORK_ID"];
       process.env["SUPABASE_NETWORK_ID"] = "env-net";
       const { layer, child } = setup();
@@ -4020,7 +4011,7 @@ content_path = "./supabase/templates/custom_notice.html"
         const previousMaxFrequency = process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"];
         process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
         process.env["SUPABASE_AUTH_SMS_MAX_FREQUENCY"] = "10s";
-        // A complete, enabled provider is required, or Go's own `sms.validate()` downgrades
+        // A complete, enabled provider is required, or SMS validation downgrades
         // enable_signup to false regardless of the override — see the "disables phone login"
         // test below for that behavior itself.
         const { layer, child } = setup({
@@ -4057,9 +4048,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "disables phone login and warns when enable_signup is true with no SMS provider enabled",
       () => {
-        // Go's `(s *sms) validate()` (`config.go:1412-1415`) takes the `case s.EnableSignup:`
-        // switch branch — reached only when every named provider is disabled — and mutates
-        // `EnableSignup = false` (plus a stderr warning) before `buildGotrueEnv` ever reads it.
+        // SMS validation downgrades `enable_signup` to `false` (plus a stderr warning) —
+        // reached only when every named provider is disabled — before `legacyBuildGotrueEnv`
+        // ever reads it.
         const previous = process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"];
         process.env["SUPABASE_AUTH_SMS_ENABLE_SIGNUP"] = "true";
         const { layer, child, out } = setup();
@@ -4156,10 +4147,9 @@ content_path = "./supabase/templates/custom_notice.html"
     it.live(
       "fails fast on SUPABASE_AUTH_EMAIL_TEMPLATE_<NAME>_CONTENT with no content_path configured, matching Go's Config.Validate",
       () => {
-        // Go's Viper `AutomaticEnv` folds this override into `Content *string` before
-        // `Config.Validate` runs (`config.go:749,882`), so `(e *email) validate` rejects it
-        // exactly like a raw TOML `content` key with no `content_path` — before start touches
-        // Docker at all.
+        // The env override folds into the email template's content field before
+        // validation runs, so it is rejected exactly like a raw TOML `content` key with
+        // no `content_path` — before start touches Docker at all.
         const previous = process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"];
         process.env["SUPABASE_AUTH_EMAIL_TEMPLATE_CONFIRMATION_CONTENT"] = "<html>Hi</html>";
         const { layer, child } = setup({
@@ -4583,8 +4573,8 @@ content_path = "./supabase/templates/custom_notice.html"
       },
     );
 
-    // Go's `len(c.Api.Tls.CertPath) > 0` gate (`pkg/config/config.go:1006-1027`) treats an empty
-    // but present `cert_path`/`key_path` the same as absent — it must NOT attempt a disk read.
+    // An empty but present `cert_path`/`key_path` is treated the same as
+    // absent — it must NOT attempt a disk read.
     it.live(
       "falls back to the embedded default cert/key when cert_path/key_path are present but empty",
       () => {
@@ -4653,8 +4643,8 @@ content_path = "./supabase/templates/custom_notice.html"
   });
 
   describe("SUPABASE_API_ENABLED override", () => {
-    // Go nests the entire TLS cert/key disk read inside `if c.Api.Enabled`
-    // (`pkg/config/config.go:1006-1027`) — when API is disabled (however that happened), Kong
+    // The entire TLS cert/key disk read is nested inside the API-enabled check —
+    // when API is disabled (however that happened), Kong
     // keeps its embedded default cert/key regardless of `api.tls.enabled`/cert_path/key_path.
     it.live(
       "skips the configured cert/key read for Kong when API is disabled only via env override",
@@ -4840,10 +4830,8 @@ content_path = "./supabase/templates/custom_notice.html"
           expect(envFilePath).toBeDefined();
           const envFileContent = readFileSync(envFilePath ?? "", "utf-8");
           expect(envFileContent).toContain("MY_SECRET=shh-do-not-tell");
-          // Names reach the container UPPERCASED — Go's config loader applies
-          // `strings.ToUpper` to every secret key (`pkg/config/config.go:766-771`)
-          // — and empty values are skipped — Go's `set.ListSecrets` SHA256>0
-          // gate (`internal/secrets/set/set.go:48-52`), shared with
+          // Names reach the container UPPERCASED — every secret key is uppercased
+          // — and empty values are skipped, shared with
           // `functions serve` via `toPlainEdgeRuntimeConfig`.
           expect(envFileContent).toContain("MY_LOWER_SECRET=keep-me");
           expect(envFileContent).not.toContain("my_lower_secret=");
@@ -4856,9 +4844,9 @@ content_path = "./supabase/templates/custom_notice.html"
       "decrypts an encrypted [edge_runtime.secrets] entry into plaintext, not the raw ciphertext",
       () => {
         // Mirrors "encrypted secrets reach GoTrue's container" above, but for
-        // `edge_runtime.secrets` — Go's `DecryptSecretHookFunc` decrypts this field during
-        // `Config.Load` too, so the real Edge Runtime container's env file must contain the
-        // decrypted "value", never the literal `encrypted:...` string.
+        // `edge_runtime.secrets` — this field decrypts during config load too, so the real
+        // Edge Runtime container's env file must contain the decrypted "value", never the
+        // literal `encrypted:...` string.
         const previous = process.env["DOTENV_PRIVATE_KEY"];
         process.env["DOTENV_PRIVATE_KEY"] = VAULT_PRIVATE_KEY;
         const { layer, child } = setup({
@@ -5446,7 +5434,7 @@ content_path = "./supabase/templates/custom_notice.html"
         // `auth.passkey`/`auth.webauthn` have no `@supabase/config` schema, so the pre-decode
         // `env(...)` walker substitutes the real value but leaves it a raw string (no type
         // coercion for schema-unmodeled paths) — a strict `=== true` check would silently read
-        // this valid Go config as disabled.
+        // this valid config as disabled.
         const previous = process.env["PASSKEY_ENABLED"];
         process.env["PASSKEY_ENABLED"] = "true";
         const { layer, child } = setup({

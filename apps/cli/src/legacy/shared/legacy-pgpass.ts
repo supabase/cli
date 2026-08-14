@@ -4,8 +4,8 @@ import { join } from "node:path";
 
 /**
  * libpq `.pgpass` password lookup, a 1:1 port of `jackc/pgpassfile`
- * (`ParsePassfile` + `FindPassword`) as used by `pgconn.ParseConfig`
- * (`config.go:369-378`): when a connection string omits the password, pgconn
+ * (`ParsePassfile` + `FindPassword`) as used by `pgconn.ParseConfig`:
+ * when a connection string omits the password, pgconn
  * reads the passfile and returns the first entry matching host/port/database/
  * user (with `*` wildcards). For a unix-socket host pgconn matches `localhost`.
  */
@@ -81,7 +81,7 @@ type LegacyPassfileEnv = (name: string) => string | undefined;
 const processEnv: LegacyPassfileEnv = (name) => process.env[name];
 
 /**
- * Resolve the passfile path with pgconn's precedence (`config.go:293,369-377`): an
+ * Resolve the passfile path with pgconn's precedence: an
  * explicit `passfile=` connection-string setting wins, then `PGPASSFILE`, then the
  * libpq per-OS default (`~/.pgpass`, or `%APPDATA%/postgresql/pgpass.conf`).
  *

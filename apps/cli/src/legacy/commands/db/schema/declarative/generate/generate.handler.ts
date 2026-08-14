@@ -93,7 +93,8 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
       });
 
       // cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")`
-      // (`apps/cli-go/cmd/db_schema_declarative.go:570`) runs via
+      // (`apps/cli-go/cmd/db_schema_declarative.go:570`, deleted in CLI-1970;
+      // last present at commit 7b469f5b3) runs via
       // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
       // gate above) — see legacyRequirePgDelta's doc comment for the full ordering.
       // "Set" follows cobra's `Changed`: Option set when `Some`, boolean when `true`.

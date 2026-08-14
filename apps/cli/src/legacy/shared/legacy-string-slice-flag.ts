@@ -32,11 +32,11 @@ const lengthNL = (b: Uint8Array): number => (b.length > 0 && b[b.length - 1] ===
  * Thrown by `legacyParseStringSliceFlag` when a value is not valid CSV.
  *
  * `message` reproduces Go's error string byte-for-byte:
- *  - `csv.ParseError.Error()` for malformed CSV (with the
- *    `record on line %d; ` prefix when the record starts on an earlier
- *    physical line than the error — `encoding/csv/reader.go`), or
- *  - the literal `EOF` when the value contains only blank lines (pflag's
- *    `readAsCSV` propagates `csv.Reader.Read`'s `io.EOF` unchanged).
+ * - `csv.ParseError.Error()` for malformed CSV (with the
+ * `record on line %d; ` prefix when the record starts on an earlier
+ * physical line than the error — `encoding/csv/reader.go`), or
+ * - the literal `EOF` when the value contains only blank lines (pflag's
+ * `readAsCSV` propagates `csv.Reader.Read`'s `io.EOF` unchanged).
  */
 export class LegacyStringSliceFlagParseError extends Error {
   static readonly [ErrorActionabilityFingerprintId] = "LegacyStringSliceFlagParseError";
@@ -75,28 +75,28 @@ export class LegacyStringSliceFlagParseError extends Error {
  * `csv.Reader.Read()` with `NewReader` defaults (comma delimiter, no
  * comments, `LazyQuotes`/`TrimLeadingSpace` off) — the exact call pflag's
  * `readAsCSV` makes (`string_slice.go`). Ported from `readRecord`/`readLine`
- * in Go's `encoding/csv/reader.go`; verified against the real Go CLI,
+ * in `encoding/csv/reader.go`; verified against the real Go CLI,
  * including multiline and multibyte values.
  *
  * Semantics that only show up with `\r`/`\n` in the value (all Go-observed):
- *  - **Only the first record is read.** An unquoted newline ends the record
- *    and everything after it is silently dropped (`1.2.3.4\n5.6.7.8` →
- *    `["1.2.3.4"]`), because pflag calls `Read()` once.
- *  - Blank lines before the record are skipped; a value that is *only* blank
- *    lines makes `Read()` return `io.EOF`, which pflag surfaces as the error
- *    `EOF`.
- *  - `\r\n` is normalized to `\n` (so a quoted multiline field keeps `\n`,
- *    not `\r\n`); a lone `\r` is kept, except a trailing `\r` at EOF, which
- *    is dropped.
- *  - Parse errors report 1-based physical line numbers and 1-based **byte**
- *    columns within that line, with a `record on line N; ` prefix when the
- *    record started on an earlier line.
+ * - **Only the first record is read.** An unquoted newline ends the record
+ * and everything after it is silently dropped (`1.2.3.4\n5.6.7.8` →
+ * `["1.2.3.4"]`), because pflag calls `Read()` once.
+ * - Blank lines before the record are skipped; a value that is *only* blank
+ * lines makes `Read()` return `io.EOF`, which pflag surfaces as the error
+ * `EOF`.
+ * - `\r\n` is normalized to `\n` (so a quoted multiline field keeps `\n`,
+ * not `\r\n`); a lone `\r` is kept, except a trailing `\r` at EOF, which
+ * is dropped.
+ * - Parse errors report 1-based physical line numbers and 1-based **byte**
+ * columns within that line, with a `record on line N; ` prefix when the
+ * record started on an earlier line.
  *
  * **Throws `LegacyStringSliceFlagParseError`** on the malformed-CSV
- * conditions Go's `csv.Reader` rejects:
- *   - Quoted field with no closing quote (`"tenant`) → "extraneous or missing \" in quoted-field" (column = one past the last byte, Go hits EOF)
- *   - Extra non-comma bytes after a closing quote (`"a"b`) → "extraneous or missing \" in quoted-field" (column = the closing quote)
- *   - A bare `"` inside an unquoted field (`a"b`) → "bare \" in non-quoted-field" (column = the bare quote)
+ * conditions `csv.Reader` rejects:
+ * - Quoted field with no closing quote (`"tenant`) → "extraneous or missing \" in quoted-field" (column = one past the last byte, Go hits EOF)
+ * - Extra non-comma bytes after a closing quote (`"a"b`) → "extraneous or missing \" in quoted-field" (column = the closing quote)
+ * - A bare `"` inside an unquoted field (`a"b`) → "bare \" in non-quoted-field" (column = the bare quote)
  */
 function readAsCSVStrict(val: string): string[] {
   if (val === "") return [];
@@ -265,11 +265,11 @@ function readAsCSVStrict(val: string): string[] {
  * runs (Go: `invalid argument "..." for "--<flag>" flag: parse error ...`).
  *
  * Valid behaviour:
- *   - `"tenant,one"` → `["tenant,one"]` (quoted comma stays one field)
- *   - `public,private` → `["public", "private"]`
- *   - no trimming, `""` escapes a literal quote inside a quoted field
- *   - empty string → no field; a value with an unquoted newline keeps only
- *     the first line's record (pflag reads a single CSV record)
+ * - `"tenant,one"` → `["tenant,one"]` (quoted comma stays one field)
+ * - `public,private` → `["public", "private"]`
+ * - no trimming, `""` escapes a literal quote inside a quoted field
+ * - empty string → no field; a value with an unquoted newline keeps only
+ * the first line's record (pflag reads a single CSV record)
  */
 export function legacyParseStringSliceFlag(
   rawValues: ReadonlyArray<string>,
@@ -287,24 +287,23 @@ export function legacyParseStringSliceFlag(
  * Builds a legacy flag that ports a pflag `StringSliceVar`/`StringSliceVarP`:
  * repeatable, CSV-split per occurrence, accumulated across repeats.
  *
- * On malformed CSV it fails at parse time — matching Go, where pflag's
- * `readAsCSV` error aborts cobra's `ParseFlags` before `PersistentPreRunE`
- * (so before the `--experimental` gate, telemetry, and the handler) — with
- * pflag's exact diagnostic: `invalid argument %q for %q flag: %v`
- * (pflag v1.0.10 `errors.go:116`, wrapped per occurrence in `flag.go:493`).
- * The full Go message is emitted as the failure's `expected` text so the
+ * On malformed CSV it fails at parse time — matching pflag's
+ * `readAsCSV` error aborting flag parsing before the `--experimental` gate,
+ * telemetry, and the handler — with
+ * pflag's exact diagnostic: `invalid argument %q for %q flag: %v`.
+ * The full established message is emitted as the failure's `expected` text so the
  * renderer's pflag passthrough (`formatInvalidValueMessage`) prints it
- * verbatim, byte-matching the Go CLI's stderr line. `JSON.stringify` mirrors
- * Go's `%q` for the ASCII/printable-Unicode values these flags carry —
+ * verbatim, byte-matching the established stderr line. `JSON.stringify` mirrors
+ * `%q` for the ASCII/printable-Unicode values these flags carry —
  * including `\n`/`\r` escapes in multiline values (same precedent as
  * `sso.format.ts`).
  *
  * `options.alias` ports the `StringSliceVarP` shorthand (e.g. `start`'s
  * `-x`). pflag then frames the diagnostic with BOTH spellings — `invalid
- * argument %q for "-x, --exclude" flag: ...` (`errors.go:108-117` branches on
+ * argument %q for "-x, --exclude" flag: ...` (branches on
  * `flag.Shorthand`) — regardless of which one the user typed, so the alias
  * must be registered here (not piped on afterwards) for the framing to
- * stay byte-identical to Go.
+ * stay byte-identical.
  */
 export function legacyStringSliceFlag(
   name: string,

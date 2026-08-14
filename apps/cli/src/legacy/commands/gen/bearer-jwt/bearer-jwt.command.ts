@@ -12,22 +12,19 @@ import { legacyGenBearerJwt } from "./bearer-jwt.handler.ts";
 import { legacyParseBearerJwtExp, legacyParseBearerJwtValidFor } from "./bearer-jwt.flags.ts";
 
 const config = {
-  // Go: `cobra.CheckErr(genJWTCmd.MarkFlagRequired("role"))` (`cmd/gen.go:175`) — but
-  // cobra's `ValidateRequiredFlags` runs AFTER `PersistentPreRunE`
-  // (`cobra@v1.10.2/command.go:985,1007`), which is where Go's telemetry service gets
-  // constructed and later flushed to `telemetry.json` on Execute()'s return path. A
-  // missing `--role` must still flush telemetry (verified against the real binary:
-  // CI-1961 e2e parity run showed `telemetry.json` written on this exact failure).
-  // The framework's own `MissingOption` parse-time rejection (`normalize-error.ts`)
-  // would short-circuit before this command's handler — and its
-  // `Effect.ensuring(telemetryState.flush)` — ever runs, so `role` stays optional at
-  // parse time and presence is enforced in the handler instead, same established
-  // pattern as `vanity-subdomains activate`'s `--desired-subdomain`
-  // (`activate.command.ts`/`activate.handler.ts`).
+  // `--role` is required, but required-flag validation must run AFTER the
+  // telemetry context is installed and flushed on the return path, so a
+  // missing `--role` must still flush telemetry. The framework's own
+  // `MissingOption` parse-time rejection (`normalize-error.ts`) would
+  // short-circuit before this command's handler — and its
+  // `Effect.ensuring(telemetryState.flush)` — ever runs, so `role` stays
+  // optional at parse time and presence is enforced in the handler
+  // instead, same established pattern as `vanity-subdomains activate`'s
+  // `--desired-subdomain` (`activate.command.ts`/`activate.handler.ts`).
   role: Flag.string("role").pipe(Flag.withDescription("Postgres role to use."), Flag.optional),
-  // Go's `DefValue` is cosmetically overwritten to "anonymous" (`cmd/gen.go:177`) but the
-  // bound variable's real default stays "" — verified against the real binary, an
-  // omitted `--sub` never puts a `sub` claim in the token at all.
+  // The displayed default is cosmetically "anonymous" but the real default
+  // stays "" — an omitted `--sub` never puts a `sub` claim in the token at
+  // all.
   sub: Flag.string("sub").pipe(Flag.withDescription("User ID to impersonate."), Flag.optional),
   exp: Flag.string("exp").pipe(
     Flag.withDescription("Expiry timestamp for this token."),

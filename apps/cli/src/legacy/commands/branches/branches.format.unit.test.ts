@@ -299,7 +299,7 @@ describe("toStandardEnvs", () => {
     expect(result.envs.POSTGRES_URL).toContain(
       "@aws-0-us-east-1.pooler.supabase.com:6543/postgres",
     );
-    // The pooler password is replaced with the direct password — Go parity.
+    // The pooler password is replaced with the direct password.
     expect(result.envs.POSTGRES_URL).toContain(":secret@");
     expect(result.envs.POSTGRES_URL_NON_POOLING).toContain("@db.example.com:5432/postgres");
     expect(result.poolerWarning).toBeUndefined();

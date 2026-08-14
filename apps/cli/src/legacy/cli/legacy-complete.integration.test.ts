@@ -16,8 +16,7 @@ import { legacyRoot } from "./root.ts";
 // never reads `CurrentAnalyticsContext`, so it can't see the `command` value
 // `withAnalyticsContext` attaches. This local double mirrors the REAL
 // `legacyAnalyticsLayer`'s own capture implementation just enough to merge
-// that context in, so this file can assert on `command` the same way the
-// review finding (CLI-1965) requires.
+// that context in, so this file can assert on `command` too.
 function mockAnalyticsWithContext() {
   const captured: Array<{
     event: string;

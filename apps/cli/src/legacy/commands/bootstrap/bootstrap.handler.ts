@@ -11,6 +11,10 @@ import {
   legacyResolveYes,
   legacyResolveYesWithProjectEnv,
 } from "../../../shared/legacy/global-flags.ts";
+import {
+  emitSuccessTrailer,
+  setSuccessWorkingDirectory,
+} from "../../../shared/cli/success-trailer.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -51,7 +55,7 @@ import {
 import { type LegacyStarterTemplate, LegacyTemplateService } from "./bootstrap.templates.ts";
 import type { LegacyBootstrapFlags } from "./bootstrap.command.ts";
 
-// Go's built-in starter (`cmd/bootstrap.go:17-21`).
+// Built-in starter.
 const SCRATCH_TEMPLATE: LegacyStarterTemplate = {
   name: "scratch",
   description: "An empty project from scratch.",
@@ -75,27 +79,25 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
   const telemetryState = yield* LegacyTelemetryState;
   const workdirFlag = yield* LegacyWorkdirFlag;
   const dnsResolver = yield* LegacyDnsResolverFlag;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
+  // `--yes` OR `SUPABASE_YES`.
   const yesFlag = yield* legacyResolveYes;
 
   const isText = output.format === "text";
   const retry = { schedule: retrySchedule, times: LEGACY_BOOTSTRAP_MAX_RETRIES } as const;
 
-  // `process.chdir` mirrors Go's `ChangeWorkDir`; restore the original cwd in a
+  // `process.chdir` changes into the resolved workdir; restore the original cwd in a
   // finalizer so the surrounding process is left untouched once this command
   // returns (every step below reads its own explicit `workdir` var, never
   // `process.cwd()`, so nothing else depends on the chdir staying in effect).
   const originalCwd = process.cwd();
   let createdRef: string | undefined;
   // Resolved bootstrap workdir, hoisted so the linked-project-cache finalizer writes
-  // beside the other `supabase/.temp/` files instead of `cliConfig.workdir`. Go achieves
-  // this by re-running `flags.LoadConfig` after `ChangeWorkDir` (`bootstrap.go:98-100`).
+  // beside the other `supabase/.temp/` files instead of `cliConfig.workdir`.
   let resolvedWorkdir: string | undefined;
 
   yield* Effect.gen(function* () {
-    // A. Resolve workdir (flag -> env -> prompt -> cwd). `bootstrap.go:30-40`.
-    // Go's viper uses `SetEnvPrefix("SUPABASE")`, so `viper.IsSet("WORKDIR")` reads
-    // the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
+    // A. Resolve workdir (flag -> env -> prompt -> cwd).
+    // Reads the prefixed `SUPABASE_WORKDIR` only (never plain `WORKDIR`).
     const workdirRaw = Option.isSome(workdirFlag)
       ? workdirFlag.value
       : process.env["SUPABASE_WORKDIR"];
@@ -111,7 +113,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       : path.join(runtimeInfo.cwd, workdirInput);
     resolvedWorkdir = workdir;
 
-    // B. List templates + resolve the starter. `bootstrap.go:38-58` / `cmd:25-58`.
+    // B. List templates + resolve the starter.
     const samples = yield* templateService.listSamples;
     const allTemplates = [...samples, SCRATCH_TEMPLATE];
     let starter: LegacyStarterTemplate;
@@ -132,7 +134,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       starter = allTemplates.find((t) => t.name === choice) ?? SCRATCH_TEMPLATE;
     }
 
-    // C. mkdir + overwrite prompt. `bootstrap.go:41-53`.
+    // C. mkdir + overwrite prompt.
     yield* fs.makeDirectory(workdir, { recursive: true });
     const entries = yield* fs
       .readDirectory(workdir)
@@ -143,10 +145,10 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         ),
       );
     if (entries.length > 0) {
-      // Go's `PromptYesNo(title, true)` (`bootstrap.go:47-48`, `console.go:64-82`):
-      // `--yes`/`SUPABASE_YES` auto-confirms with the `<title> [Y/n] y` stderr echo
-      // instead of silently skipping the prompt, and a non-TTY stdin scans one
-      // piped line (100ms) before falling back to the Yes default (CLI-1974).
+      // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms with
+      // the `<title> [Y/n] y` stderr echo instead of silently skipping the
+      // prompt, and a non-TTY stdin scans one piped line (100ms) before
+      // falling back to the Yes default.
       const overwrite = yield* legacyPromptYesNo(
         output,
         yesFlag,
@@ -160,15 +162,15 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       }
     }
 
-    // D. chdir + "Using workdir" to stderr. `bootstrap.go:54` + `misc.go:240-247`.
-    // Go only prints the line when the resolved workdir differs from the original
-    // cwd (`cwd != CurrentDirAbs`); match that guard.
+    // D. chdir + "Using workdir" to stderr.
+    // Only prints the line when the resolved workdir differs from the
+    // original cwd.
     yield* Effect.sync(() => process.chdir(workdir));
     if (workdir !== runtimeInfo.cwd) {
       yield* output.raw(`Using workdir ${legacyBold(workdir)}\n`, "stderr");
     }
 
-    // E. Download template OR scaffold a blank project. `bootstrap.go:57-65`.
+    // E. Download template OR scaffold a blank project.
     if (starter.url.length > 0) {
       if (isText) yield* output.raw(`Downloading: ${starter.url}\n`, "stdout");
       yield* templateService.download(starter.url, workdir);
@@ -184,11 +186,11 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       });
     }
 
-    // F. Ensure login (browser flow when no token). `bootstrap.go:66-77`.
+    // F. Ensure login (browser flow when no token).
     yield* legacyEnsureLogin({ openBrowser: tty.stdinIsTty });
 
-    // G. Create project (echoes via the shared create core). `bootstrap.go:78-87`.
-    // Go binds `-p` to viper `DB_PASSWORD`; with the `SUPABASE` env prefix the env
+    // G. Create project (echoes via the shared create core).
+    // `-p` binds to `DB_PASSWORD`; with the `SUPABASE` env prefix the env
     // fallback is `SUPABASE_DB_PASSWORD` (consumed by `flags.PromptPassword`).
     const seededPassword = Option.isSome(flags.password)
       ? flags.password.value
@@ -207,7 +209,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     createdRef = projectRef.length > 0 ? projectRef : undefined;
 
     // H. Fetch api keys with backoff; each attempt prints "Linking project...".
-    // `bootstrap.go:88-97`. The notify wrapper reproduces Go's `NewErrorCallback`
+    // The notify wrapper reproduces the established retry-callback shape
     // (`<err>\nRetry (n/8):` after each failed attempt); a fresh counter per block.
     const apiKeysNotify = legacyBootstrapRetryNotify();
     const keys = yield* Effect.gen(function* () {
@@ -217,14 +219,14 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     const { anon } = legacyExtractServiceKeys(keys);
 
     // I. Load config.toml + link services (best-effort, anon key) + mandatory
-    // project-ref write. `bootstrap.go:98-105`: Go's `flags.LoadConfig(fsys)`
-    // (`bootstrap.go:99`) runs FIRST — right before `link.LinkServices` — and a
-    // malformed config.toml aborts bootstrap here (a hard `return err`), before
-    // `link.LinkServices`, the health poll, or the `.env` write ever run. This
-    // also fixes the "Loading config override: [remotes.x]" print's position to
-    // match Go. `legacyApplyProjectEnv`'s scope (mirroring Go's process-lifetime
-    // `os.Setenv`) is opened here and stays open for the rest of the handler —
-    // see the `Effect.scoped` on this function's own outer pipe below.
+    // project-ref write. Established ordering: the config load runs FIRST —
+    // right before `link.LinkServices` — and a malformed config.toml aborts
+    // bootstrap here (a hard `return err`), before `link.LinkServices`, the
+    // health poll, or the `.env` write ever run. This also fixes the "Loading
+    // config override: [remotes.x]" print's position to match. `legacyApplyProjectEnv`'s
+    // scope (mirroring the established process-lifetime `os.Setenv`) is opened
+    // here and stays open for the rest of the handler — see the `Effect.scoped`
+    // on this function's own outer pipe below.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
     yield* legacyApplyProjectEnv(projectEnv);
     const pushYes = yield* legacyResolveYesWithProjectEnv(projectEnv);
@@ -243,7 +245,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     yield* fs.makeDirectory(path.dirname(paths.projectRef), { recursive: true });
     yield* fs.writeFileString(paths.projectRef, projectRef);
 
-    // J. Poll health until db is healthy. `bootstrap.go:106-113`.
+    // J. Poll health until db is healthy.
     const healthNotify = legacyBootstrapRetryNotify();
     yield* Effect.gen(function* () {
       if (isText) yield* output.raw("Checking project health...\n", "stderr");
@@ -259,8 +261,8 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       }
     }).pipe(healthNotify, Effect.retry(retry));
 
-    // K. Derive db config + write .env (non-fatal). `bootstrap.go:114-121`. Kept
-    // as the naive direct-host connection (matching Go's `NewDbConfigWithPassword`
+    // K. Derive db config + write .env (non-fatal). Kept as the naive
+    // direct-host connection (matching the established `NewDbConfigWithPassword`
     // shape, minus its own IPv6/pooler-fallback — a pre-existing, out-of-scope
     // `.env` divergence: unlike step L below, `.env` is never used to actually
     // connect, so it doesn't need the real probe+fallback resolution).
@@ -293,59 +295,56 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       ),
     );
 
-    // L. Push migrations — native call to `legacyDbPushCore` (CLI-1953). Mirrors
-    // Go's `push.Run(ctx, false, false, true, true, config, fsys)`
-    // (`bootstrap.go:122-127`) => `includeAll: false, includeRoles: true,
-    // includeSeed: true, dryRun: false`.
+    // L. Push migrations — native call to `legacyDbPushCore` (CLI-1953):
+    // `includeAll: false, includeRoles: true, includeSeed: true, dryRun: false`.
     //
-    // The connection itself is resolved via `legacyResolveLinkedConn` — the same
-    // dial-direct-host / fall-back-to-IPv4-pooler logic Go's
-    // `flags.NewDbConfigWithPassword` uses (`db_url.go:132-172`), not the naive
-    // `deriveDbConfig` used for `.env` above. New Supabase projects commonly have
-    // an IPv6-only direct DB host, so without this fallback the push would burn
-    // all 9 retries and fail on IPv4-only networks — the exact regression this
-    // fix closes. `created.dbPassword` is always non-empty by this point (the
-    // create step already prompted for/generated one), so — matching Go — the
-    // temp-login-role branches are never actually reached; only the TCP probe
-    // and a read of the `<workdir>/supabase/.temp/pooler-url` file `link.LinkServices`
-    // already wrote in step I. Matching Go's own leniency here: given a non-empty
-    // password, the only reachable failure is the direct host being unreachable
-    // with no saved pooler URL yet (`LegacyDbConfigIpv6Error`) — Go's
-    // `NewDbConfigWithPassword` still returns its best-effort direct-host config
-    // alongside that error (`db_url.go:161-163`), and `bootstrap.go:115-118` logs
-    // the error to stderr and presses on with it rather than aborting. `push.Run`
-    // dials fresh on every call (`push.go:29`) and bootstrap retries `push.Run`
-    // itself (`bootstrap.go:122-127`), so this leniency buys real reconnect
-    // attempts across the backoff window — e.g. while a freshly created
-    // project's link/pooler metadata is still propagating — not a guaranteed
-    // repeat failure. Reproduced below: catch that one error tag, log it, and
-    // fall back to the same direct-host shape already computed for `.env` above
-    // (step K's `dbConfig`) instead of failing bootstrap outright.
+    // The connection itself is resolved via `legacyResolveLinkedConn` — the
+    // same dial-direct-host / fall-back-to-IPv4-pooler logic used elsewhere,
+    // not the naive `deriveDbConfig` used for `.env` above. New Supabase
+    // projects commonly have an IPv6-only direct DB host, so without this
+    // fallback the push would burn all 9 retries and fail on IPv4-only
+    // networks — the exact regression this fix closes. `created.dbPassword`
+    // is always non-empty by this point (the create step already prompted
+    // for/generated one), so the temp-login-role branches are never actually
+    // reached; only the TCP probe and a read of the
+    // `<workdir>/supabase/.temp/pooler-url` file `link.LinkServices` already
+    // wrote in step I. Given a non-empty password, the only reachable
+    // failure is the direct host being unreachable with no saved pooler URL
+    // yet (`LegacyDbConfigIpv6Error`) — the established resolver still
+    // returns its best-effort direct-host config alongside that error,
+    // logging it to stderr and pressing on rather than aborting. The push
+    // dials fresh on every call and bootstrap retries the push itself, so
+    // this leniency buys real reconnect attempts across the backoff window —
+    // e.g. while a freshly created project's link/pooler metadata is still
+    // propagating — not a guaranteed repeat failure. Reproduced below: catch
+    // that one error tag, log it, and fall back to the same direct-host
+    // shape already computed for `.env` above (step K's `dbConfig`) instead
+    // of failing bootstrap outright.
     //
-    // Go never re-resolves the project ref or config.toml for push (reuses what
-    // step I already loaded above) — so this passes `workdir`/`projectRef`/`toml`
-    // straight through as plain values instead of calling `legacyDbPush` (the
-    // full flags-based command), which would re-resolve them via
-    // `LegacyProjectRefResolver`/`LegacyDbConfigResolver` — both keyed off
-    // `LegacyCliConfig.workdir`, stale after this handler's own `process.chdir`
-    // above (step D) since that layer is built once, before the handler runs.
+    // The project ref or config.toml is never re-resolved for push (reuses
+    // what step I already loaded above) — so this passes
+    // `workdir`/`projectRef`/`toml` straight through as plain values instead
+    // of calling `legacyDbPush` (the full flags-based command), which would
+    // re-resolve them via `LegacyProjectRefResolver`/`LegacyDbConfigResolver`
+    // — both keyed off `LegacyCliConfig.workdir`, stale after this handler's
+    // own `process.chdir` above (step D) since that layer is built once,
+    // before the handler runs.
     //
-    // `legacyBootstrapRetryNotify`/`Effect.retry(retry)` reproduce Go's
-    // `policy.Reset()` + `backoff.RetryNotify` wrap around the push call
-    // (`bootstrap.go:122-127`), matching the api-keys/health-poll retries above —
-    // matching Go, only `push.Run` itself is retried, not the connection
-    // resolution (Go's `NewDbConfigWithPassword` runs once, outside the loop).
-    // No instrumentation wrap: `legacyDbPushCore` is the bare handler function,
-    // not `push.command.ts`'s wrapped command, so it never fires its own
-    // `cli_command_executed` — no double-count risk.
+    // `legacyBootstrapRetryNotify`/`Effect.retry(retry)` reproduce the
+    // established retry-reset-and-notify wrap around the push call, matching
+    // the api-keys/health-poll retries above — only the push itself is
+    // retried, not the connection resolution (which runs once, outside the
+    // loop). No instrumentation wrap: `legacyDbPushCore` is the bare handler
+    // function, not `push.command.ts`'s wrapped command, so it never fires
+    // its own `cli_command_executed` — no double-count risk.
     //
     // `legacyResolveLinkedConn` (unlike `LegacyDbConfigResolver.resolve`) returns a
     // bare connection with no `suggestionContext` attached — that context is normally
     // stapled on by the resolver layer bootstrap deliberately bypasses (see this
     // call's own doc comment above). Attach it here too, so a connect failure inside
-    // the native push (refused/auth/IPv6/wrong-profile) still renders Go's
-    // `SetConnectSuggestion` hint instead of silently falling back to the generic
-    // "--debug" suggestion.
+    // the native push (refused/auth/IPv6/wrong-profile) still renders the
+    // established connect-suggestion hint instead of silently falling back
+    // to the generic "--debug" suggestion.
     const suggestionContext: LegacyConnectSuggestionContext = {
       dashboardUrl: cliConfig.dashboardUrl,
       profileName: cliConfig.profile,
@@ -382,10 +381,10 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
       emitStructuredResult: false,
     }).pipe(pushNotify, Effect.retry(retry));
 
-    // M. Start suggestion. `bootstrap.go:128-130`.
+    // M. Start suggestion.
     if (isText) {
       const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, legacyAqua);
-      yield* output.raw(`${suggestion}\n`, "stderr");
+      yield* emitSuccessTrailer(`${suggestion}\n`);
     } else {
       yield* output.success("", {
         workdir,
@@ -395,6 +394,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         env_file: envFileWritten ? envFilePath : null,
       });
     }
+    yield* setSuccessWorkingDirectory(workdir);
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {
@@ -417,8 +417,9 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // to revert `SUPABASE_INTERNAL_IMAGE_REGISTRY` when its scope closes. Its
     // lifetime must span the rest of this handler (link services, health poll,
     // `.env` write, and the push step's own edge-runtime/pg-delta cache use of
-    // that env var) — matching Go's process-lifetime `os.Setenv` — so the scope
-    // is closed here, at the outermost pipe, not narrowly around a single step.
+    // that env var) — matching the established process-lifetime `os.Setenv`
+    // behavior — so the scope is closed here, at the outermost pipe, not
+    // narrowly around a single step.
     Effect.scoped,
   );
 });
@@ -433,7 +434,7 @@ function isDecodeFailureCause(cause: unknown): boolean {
   return cause._tag === "SchemaError";
 }
 
-// Mirrors Go's `checkProjectHealth` non-200 branch: `Error status %d: %s`.
+// Non-200 branch: `Error status %d: %s`.
 const mapHealthError = (cause: unknown): Effect.Effect<never, LegacyBootstrapHealthError> => {
   if (HttpClientError.isHttpClientError(cause) && cause.response !== undefined) {
     const status = cause.response.status;

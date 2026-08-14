@@ -12,7 +12,7 @@ import { legacyLoadLocalProjectContext } from "./legacy-local-project-context.ts
  * `db-bootstrap/docker-create-args.ts`) here — `legacyLoadLocalProjectContext` deliberately does
  * NOT install any of these from a project `.env` (see its own doc comment; review:
  * PRRT_kwDOErm0O86WXFqw): Go's Docker connectivity is the package-level
- * `var Docker = NewDocker()` (`apps/cli-go/internal/utils/docker.go:39`), frozen at binary
+ * `var Docker = NewDocker()`, frozen at binary
  * startup, well before `godotenv.Load` ever runs — so a project-dotenv-only override can never
  * reach it, and installing it here would retarget native commands' Docker daemon relative to Go.
  */

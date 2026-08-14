@@ -171,9 +171,9 @@ describe("legacy functions deploy", () => {
   });
 
   it.live("prints a duplicated slug argument verbatim, matching Go's raw strings.Join", () => {
-    // Go: `strings.Join(slugs, ", ")` (`internal/functions/deploy/deploy.go:70`)
-    // joins the raw CLI-arg slugs, not a deduped set, so a repeated slug prints
-    // twice even though only one deploy request is made for it.
+    // The established join uses the raw CLI-arg slugs, not a deduped set, so
+    // a repeated slug prints twice even though only one deploy request is
+    // made for it.
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi({
       handler: (request) => {
@@ -438,14 +438,13 @@ describe("legacy functions deploy", () => {
   });
 
   it.live("rejects a bundled file whose workdir-relative name escapes with a `..` segment", () => {
-    // Go parity (CLI-1985): Go's `toRelPath` (`pkg/function/deploy.go:94-103`)
-    // anchors uploaded file names and the server-recorded `entrypoint_path` /
-    // `import_map_path` at `os.Getwd()` — the workdir — never at the git root.
-    // A monorepo import outside the workdir but inside the git root (allowed
-    // by the source-root containment check since #5755) would otherwise
-    // upload with a Go-style `../`-relative name. Go's `writeForm`/`addFile`
-    // (`pkg/function/deploy.go:251-284`) opens every uploaded path through an
-    // `fs.FS`, which rejects any path containing a `..` element (`fs.ValidPath`)
+    // Established behavior: uploaded file names and the server-recorded
+    // `entrypoint_path` / `import_map_path` are anchored at `os.Getwd()` —
+    // the workdir — never at the git root. A monorepo import outside the
+    // workdir but inside the git root (allowed by the source-root
+    // containment check since #5755) would otherwise upload with a
+    // `../`-relative name. Every uploaded path is opened through an `fs.FS`,
+    // which rejects any path containing a `..` element (`fs.ValidPath`)
     // before the read — and thus the upload — happens. This asserts the CLI
     // hard-fails the same way instead of letting the `..`-relative name reach
     // the server.
@@ -698,9 +697,9 @@ describe("legacy functions deploy", () => {
       yield* legacyFunctionsDeploy({ ...baseFlags, prune: true });
 
       expect(out.promptConfirmCalls).toHaveLength(0);
-      // Go's `PromptYesNo` echoes the accepted prompt to stderr under the global
-      // YES flag (`console.go:70-72`) — byte-match `confirmPruneAll` + choices
-      // (each slug is bolded like Go's `utils.Bold`, so strip SGR codes first).
+      // Established behavior: the accepted prompt echoes to stderr under the
+      // global YES flag — byte-match `confirmPruneAll` + choices (each slug
+      // is bolded, so strip SGR codes first).
       expect(stripSgr(out.stderrText)).toContain(
         "Do you want to delete the following Functions from your project?\n • remote-only\n\n [y/N] y\n",
       );
@@ -832,7 +831,7 @@ describe("legacy functions deploy", () => {
           functionNames: ["hello-world", "bye-world"],
         }).pipe(Effect.flip);
 
-        // Go's `errors.Join`: one message per failed upload, in input order.
+        // Established join behavior: one message per failed upload, in input order.
         expect((error as Error).message).toBe(
           [
             'unexpected deploy status 409: {"message":"rejected hello-world"}',
@@ -952,7 +951,7 @@ describe("legacy functions deploy", () => {
     it.live("rejects --jobs > 1 with --use-docker=false and no --use-api (Go parity gap)", () => {
       // Divergence this test guards: previously the guard only fired when local
       // bundling (Docker/legacy-bundle) was active, so `--use-docker=false --jobs 2`
-      // (no --use-api) silently passed in TS while Go rejected it.
+      // (no --use-api) silently passed where it should error.
       const { layer } = setupJobsTest([
         "functions",
         "deploy",
@@ -1094,7 +1093,7 @@ describe("legacy functions deploy", () => {
 
   describe("bundler routing with --use-api=false (Go parity: cmd/functions.go:79-80)", () => {
     it.live("falls through to Docker bundling, not the API path, when --use-api=false", () => {
-      // Divergence this test guards: Go's `if useApi { useDocker = false }` only forces
+      // Divergence this test guards: `if useApi { useDocker = false }` only forces
       // the API path when the RESOLVED value is true. `--use-api=false` alone must leave
       // `useDocker`'s own value (default true) in effect, routing to Docker — previously
       // `useLocalBundler` keyed off flag *presence* (`explicitUseApi`), so typing
@@ -1651,10 +1650,9 @@ describe("legacy functions deploy", () => {
             "--label",
             "com.docker.compose.project=test-project",
           ]);
-          // `-w <toDockerPath(projectRoot)>` — Go's bundler sets WorkingDir to
-          // the post-ChangeWorkDir cwd (`bundle.go:79`), which
-          // `deploy.ts`/`deploy.handler.ts` resolve to `cliConfig.workdir`,
-          // i.e. `tempRoot.current` in this test.
+          // `-w <toDockerPath(projectRoot)>` — the bundler sets WorkingDir to
+          // the post-ChangeWorkDir cwd, which `deploy.ts`/`deploy.handler.ts`
+          // resolve to `cliConfig.workdir`, i.e. `tempRoot.current` in this test.
           const workingDirIndex = runCommand?.args.indexOf("-w") ?? -1;
           expect(runCommand?.args.slice(workingDirIndex, workingDirIndex + 2)).toEqual([
             "-w",
@@ -1672,11 +1670,11 @@ describe("legacy functions deploy", () => {
     it.live(
       "does not climb to an ancestor project's config.toml for the Docker bundling path",
       () => {
-        // Go's `flags.LoadConfig` only ever resolves `supabase/config.toml`
-        // from the already-resolved workdir, with no ancestor climb
-        // (`NewPathBuilder`, `pkg/config/utils.go:43-48`) — mirrored by
-        // `loadFunctionsProjectConfig`'s `search: false` (a real behavior
-        // change: deploy did NOT have this before CLI-1963, unlike download).
+        // Established behavior: `supabase/config.toml` only ever resolves
+        // from the already-resolved workdir, with no ancestor climb —
+        // implemented via `loadFunctionsProjectConfig`'s `search: false` (a
+        // real behavior change: deploy did NOT have this before CLI-1963,
+        // unlike download).
         const nestedWorkdir = join(tempRoot.current, "nested");
         const out = mockOutput({ format: "text" });
         const api = mockFunctionCreateApi();

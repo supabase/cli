@@ -119,3 +119,19 @@ func TestEnvSignals(t *testing.T) {
 	assert.Equal(t, strings.Repeat("x", 80), signals["TERM"])
 	assert.NotContains(t, signals, "AI_AGENT")
 }
+
+func TestUpdateNotifierEnabled(t *testing.T) {
+	for value, wantEnabled := range map[string]bool{
+		"":        true,
+		"0":       true,
+		"false":   true,
+		"garbage": true,
+		"1":       false,
+		"true":    false,
+		"TRUE":    false,
+		"t":       false,
+	} {
+		t.Setenv("SUPABASE_NO_UPDATE_NOTIFIER", value)
+		assert.Equal(t, wantEnabled, updateNotifierEnabled(), "value %q", value)
+	}
+}

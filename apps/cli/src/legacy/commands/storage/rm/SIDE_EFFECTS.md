@@ -1,19 +1,18 @@
 # `supabase storage rm <file> ...`
 
-Native TypeScript port of `apps/cli-go/internal/storage/rm`. Removes objects by path.
-Paths are grouped by bucket; each bucket is confirmed, its explicit prefixes are deleted
+Removes objects by path. Paths are grouped by bucket; each bucket is confirmed, its explicit prefixes are deleted
 (chunked at 1000), and any prefix that resolved to a directory is removed recursively
 when `-r` is set. With no paths and `-r`, every bucket is cleared and deleted.
 
 ## Files Read
 
-| Path                                          | Format     | When                                                               |
-| --------------------------------------------- | ---------- | ------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked)              |
-| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset                    |
-| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref                            |
-| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`                          |
-| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878; Go's `loadNestedEnv`) |
+| Path                                          | Format     | When                                                  |
+| --------------------------------------------- | ---------- | ----------------------------------------------------- |
+| `<workdir>/supabase/config.toml`              | TOML       | always (local creds; `[remotes.*]` merge when linked) |
+| `~/.supabase/access-token`                    | plain text | linked path, when `SUPABASE_ACCESS_TOKEN` unset       |
+| `~/.supabase/<hash>/linked-project.json`      | JSON       | linked path, to resolve the project ref               |
+| local Kong TLS cert/key                       | PEM        | local + `api.enabled` + `api.tls.enabled`             |
+| `<workdir>/supabase/.env*`, `<workdir>/.env*` | dotenv     | always, to resolve `SUPABASE_YES` (CLI-1878)          |
 
 ## Files Written
 
@@ -39,10 +38,10 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 `SUPABASE_AUTH_SERVICE_ROLE_KEY`, `SUPABASE_AUTH_JWT_SECRET`, `SUPABASE_ACCESS_TOKEN`,
 `SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME`, plus `SUPABASE_YES` (auto-confirm) —
 read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` files
-(shell wins; CLI-1878, matching Go's `loadNestedEnv` before `viper.GetBool("YES")`).
+(shell wins; CLI-1878).
 `SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
 
-`storage` is an experimental command (Go `root.go:63`): `rm` requires `--experimental`
+`storage` is an experimental command: `rm` requires `--experimental`
 (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
 `must set the --experimental flag to run this command` before any other work.
 
@@ -56,11 +55,11 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 - `Confirm deleting files in bucket <bold bucket>?` prompt (default no); `--yes`/`SUPABASE_YES`
   echoes `<label> [y/N] y` and proceeds.
-- `Deleting objects: [<space-separated prefixes>]` (Go slice repr) per delete batch (stderr).
+- `Deleting objects: [<space-separated prefixes>]` per delete batch (stderr).
 - `Object not found: <prefix>` (non-recursive) / `Deleting bucket: <bucket>` /
   `Bucket not found: <bucket>` (stderr).
 
@@ -89,7 +88,7 @@ read from the shell env OR the project `.env`/`.env.local`/`.env.<env>[.local]` 
   It never implies `--linked`: passing it with `--local` is a hard error
   rather than a silently discarded flag.
 - Validation (missing bucket, missing `-r` for a directory) runs before any network call;
-  the no-args missing-`-r` error runs after the client is built (matching Go).
+  the no-args missing-`-r` error runs after the client is built.
 - A declined confirmation skips that bucket and is not an error.
 - Explicit deletes are attempted first ("in case the paths resolve to extensionless files");
   prefixes not returned as removed are then walked recursively when `-r` is set.

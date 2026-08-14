@@ -13,7 +13,8 @@ import { commandRuntimeLayer } from "../../shared/runtime/command-runtime.layer.
  * Runtime layer shared by `supabase test db` and its hidden Go-parity alias
  * `supabase db test` (`apps/cli/src/legacy/commands/db/test/test.command.ts`).
  * Go registers these as two distinct `cobra.Command`s that share the literal
- * same `RunE` (`apps/cli-go/cmd/test.go:19-20`: `RunE: dbTestCmd.RunE`); the TS
+ * same `RunE` (`apps/cli-go/cmd/test.go:19-20`, deleted in CLI-1970; last
+ * present at commit 7b469f5b3: `RunE: dbTestCmd.RunE`); the TS
  * port mirrors that by having both `.command.ts` files call this same factory
  * and `legacyRunTestDbCommand`.
  *

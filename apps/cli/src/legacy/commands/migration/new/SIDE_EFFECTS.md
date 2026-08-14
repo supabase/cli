@@ -35,11 +35,10 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints `Created new migration at <bold supabase/migrations/<timestamp>_<name>.sql>` to
-stdout. The path is **workdir-relative** (Go chdir's into `--workdir`, so the printed
-path is independent of the resolved project root).
+stdout. The path is **workdir-relative** — independent of the resolved project root.
 
 ### `--output-format json`
 
@@ -60,6 +59,6 @@ Same structured result as `json`, delivered as an NDJSON `result` event.
 - The file is written with mode `0644`.
 - **Path-traversal hardening (TS-only):** the name is rejected before any write if
   `<workdir>/supabase/migrations/<timestamp>_<name>.sql` resolves outside the
-  migrations directory (e.g. a `..`-laden name). Go has no such check; the guard is
-  parity-neutral for legitimate names (simple identifiers) and only closes the
-  arbitrary-write vector (CWE-22) when the name is attacker/template-controlled.
+  migrations directory (e.g. a `..`-laden name). This is a new check with no effect
+  on legitimate names (simple identifiers) and only closes the arbitrary-write
+  vector (CWE-22) when the name is attacker/template-controlled.

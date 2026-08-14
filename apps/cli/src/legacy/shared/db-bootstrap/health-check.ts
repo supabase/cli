@@ -29,7 +29,7 @@ import { legacyKongAuthHeaders } from "../legacy-kong-auth.ts";
 
 type Spawner = ChildProcessSpawner["Service"];
 
-/** Go's `serviceTimeout` (`apps/cli-go/internal/start/start.go:161`). */
+/** Go's `serviceTimeout` (`apps/cli-go/internal/start/start.go:161`, deleted in CLI-1966; last present at commit a253ccba2). */
 const LEGACY_HEALTH_CHECK_TIMEOUT_SECONDS = 30;
 
 /**

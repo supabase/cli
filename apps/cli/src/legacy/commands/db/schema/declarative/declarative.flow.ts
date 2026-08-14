@@ -14,8 +14,9 @@ export interface LegacyDeclarativeCompatibilityGap {
 }
 
 /**
- * Pure control-flow helpers ported from the legacy Go implementation and kept
- * free of Effect/services so handler decisions remain unit-testable.
+ * Pure control-flow helpers ported from the legacy Go implementation (deleted
+ * in CLI-1970; last present at commit 7b469f5b3) and kept free of
+ * Effect/services so handler decisions remain unit-testable.
  */
 
 export function legacyResolveDeclarativeMigrationName(name: string, file: string): string {

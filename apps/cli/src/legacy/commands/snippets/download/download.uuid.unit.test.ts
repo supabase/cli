@@ -73,23 +73,23 @@ describe("legacyParseSnippetUuid", () => {
     });
   });
 
-  // Go's `uuid.Parse` dispatches on `len(s)` — UTF-8 BYTES — where a JS
+  // `uuid.Parse` dispatches on `len(s)` — UTF-8 BYTES — where a JS
   // string's `length` counts UTF-16 code units. Non-ASCII arguments must take
-  // Go's branch and report Go's byte count. Every expectation below is ground
-  // truth from go1.26 + google/uuid v1.6.0.
+  // the byte-length branch and report the byte count. Every expectation
+  // below is ground truth from go1.26 + google/uuid v1.6.0.
   describe("UTF-8 byte-length dispatch (non-ASCII arguments)", () => {
     const canonical = "0b0d48f6-878b-4190-88d7-2ca33ed800bc";
 
     it("counts a multibyte char as its byte width, never slipping into the braced branch", () => {
       // JS length 38 (would hit the braced branch and issue a request for the
-      // embedded canonical UUID); Go sees 39 bytes → length error.
+      // embedded canonical UUID); byte length is 39 → length error.
       expect(legacyParseSnippetUuid(`é${canonical}}`)).toEqual({
         error: "invalid UUID length: 39",
       });
       expect(legacyParseSnippetUuid(`{${canonical}é`)).toEqual({
         error: "invalid UUID length: 39",
       });
-      // JS length 36; Go sees 37 bytes.
+      // JS length 36; byte length is 37.
       expect(legacyParseSnippetUuid(`é${canonical.slice(1)}`)).toEqual({
         error: "invalid UUID length: 37",
       });
@@ -103,8 +103,8 @@ describe("legacyParseSnippetUuid", () => {
     });
 
     it("renders a rune split by the 9-byte prefix slice as Go's lone \\xNN escape", () => {
-      // 8 ASCII + é(2 bytes) + 35 = 45 bytes; byte 9 cuts é in half, so Go's
-      // `%q` shows its orphaned lead byte: `"12345678\xc3"`.
+      // 8 ASCII + é(2 bytes) + 35 = 45 bytes; byte 9 cuts é in half, so the
+      // reference `%q` formatting shows its orphaned lead byte: `"12345678\xc3"`.
       expect(legacyParseSnippetUuid(`12345678é${canonical.slice(0, 35)}`)).toEqual({
         error: 'invalid urn prefix: "12345678\\xc3"',
       });

@@ -5,10 +5,9 @@ import { encodeToml, type TomlField, type TomlValue } from "./config-sync.toml.t
 import { intToUint } from "../../../../shared/legacy-size-units.ts";
 
 /**
- * Push-subset of Go's `db.Settings`, `db.NetworkRestrictions`,
- * `db.SslEnforcement` (`pkg/config/db.go`). Each sub-service has its own diff
- * label, GET/PUT/POST endpoint, and update body, matching
- * `pkg/config/updater.go`.
+ * Push-subset of the `db.settings` / `db.network_restrictions` /
+ * `db.ssl_enforcement` config sections. Each sub-service has its own diff
+ * label, GET/PUT/POST endpoint, and update body.
  */
 
 // === db.settings ============================================================
@@ -220,7 +219,8 @@ export interface RemoteSslEnforcement {
  *
  * `@supabase/config` decodes `ssl_enforcement` to a defaulted `{ enabled: false }`
  * whether or not the section appears, so the caller passes `present` (from
- * raw-TOML key detection) to recover Go's nil-pointer skip semantics.
+ * raw-TOML key detection) to recover nil-pointer skip semantics: the section
+ * is treated as absent unless it was actually declared.
  */
 export function sslEnforcementFromConfig(
   config: ProjectConfig,

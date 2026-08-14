@@ -128,7 +128,8 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       });
 
       // cobra `MarkFlagsMutuallyExclusive("apply", "no-apply")`
-      // (`apps/cli-go/cmd/db_schema_declarative.go:561`) runs via
+      // (`apps/cli-go/cmd/db_schema_declarative.go:561`, deleted in CLI-1970;
+      // last present at commit 7b469f5b3) runs via
       // `ValidateFlagGroups()`, which cobra invokes AFTER `PersistentPreRunE` (the
       // gate above) — see legacyRequirePgDelta's doc comment for the full ordering.
       // Reject the conflict here rather than letting `--no-apply` silently win in
@@ -182,7 +183,8 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // Go's `saveApplyDebugBundle`: warn (rather than masking the apply error) and
       // treat the bundle path as empty when the debug directory cannot be created, so
       // an apply failure still surfaces without claiming a bundle was saved
-      // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`).
+      // (`apps/cli-go/cmd/db_schema_declarative.go:447-461`, deleted in
+      // CLI-1970; last present at commit 7b469f5b3).
       const saveApplyDebugBundle = (bundle: LegacyDebugBundle) =>
         legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, bundle).pipe(
           Effect.matchEffect({
@@ -625,7 +627,8 @@ const applyMigrationToLocal = (
       .connect(
         {
           // Go's applyMigrationToLocal connects with utils.Config.Hostname
-          // (`apps/cli-go/cmd/db_schema_declarative.go:463`), honoring
+          // (`apps/cli-go/cmd/db_schema_declarative.go:463`, deleted in
+          // CLI-1970; last present at commit 7b469f5b3), honoring
           // SUPABASE_SERVICES_HOSTNAME / tcp DOCKER_HOST — not a hardcoded loopback.
           host: legacyGetHostname(),
           port: local.port,

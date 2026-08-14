@@ -29,9 +29,9 @@ export const legacySnippetsListCommand = Command.make("list", config).pipe(
   ]),
   Command.withHandler((flags) =>
     legacySnippetsList(flags).pipe(
-      // No `safeFlags` — Go's `cmd/snippets.go` does not call
-      // `markFlagTelemetrySafe` for `--project-ref`, so the telemetry payload
-      // redacts the value (matches Go's default behavior for unmarked flags).
+      // No `safeFlags` — `--project-ref` is not on the telemetry-safe list,
+      // so the telemetry payload redacts the value (the default behavior for
+      // unmarked flags).
       withLegacyCommandInstrumentation({ flags }),
       withJsonErrorHandling,
     ),

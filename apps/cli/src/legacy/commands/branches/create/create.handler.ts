@@ -47,26 +47,25 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
   const telemetryState = yield* LegacyTelemetryState;
 
   // -----------------------------------------------------------------------
-  // Branch-name resolution. Go's `create.go:17-28` defaults to the current
-  // git branch when the arg is omitted, prompting Y/N first. The decline
-  // path returns `context.Canceled` — we tag-error and short-circuit before
-  // resolving the project ref so the linked-project cache write does not fire.
+  // Branch-name resolution: defaults to the current git branch when the arg
+  // is omitted, prompting Y/N first. The decline path returns
+  // `context.Canceled` — tag-error and short-circuit before resolving the
+  // project ref so the linked-project cache write does not fire.
   // -----------------------------------------------------------------------
   let branchName = Option.getOrElse(flags.name, () => "");
   // An explicit `--git-branch` flag takes precedence over the auto-detected
-  // branch, mirroring Go's `cmd/branches.go` (the flag sets `body.GitBranch`)
-  // and `create.go`'s `if body.GitBranch == nil` guard during auto-detect.
+  // branch (the flag sets `body.GitBranch`, guarded during auto-detect).
   let gitBranchForBody = Option.getOrUndefined(flags.gitBranch);
 
   if (branchName.length === 0) {
     const gitBranch = yield* detectGitBranch();
     if (Option.isSome(gitBranch) && gitBranch.value.length > 0) {
-      // Go's `create.go:20-25` routes this through `PromptYesNo(title, true)`
-      // (`console.go:64-82`), so `--yes`/`SUPABASE_YES` auto-confirms with the
-      // `<title> [Y/n] y` stderr echo instead of blocking a TTY, and a non-TTY
-      // stdin prints the label and scans one piped line (100ms) before falling
-      // back to the Yes default — `echo n | supabase branches create` cancels
-      // (CLI-1974). Go wraps the branch name in `utils.Aqua` (`create.go:20`).
+      // Established prompt behavior: `--yes`/`SUPABASE_YES` auto-confirms
+      // with the `<title> [Y/n] y` stderr echo instead of blocking a TTY,
+      // and a non-TTY stdin prints the label and scans one piped line
+      // (100ms) before falling back to the Yes default —
+      // `echo n | supabase branches create` cancels. The branch name is
+      // wrapped in `utils.Aqua`.
       const yes = yield* legacyResolveYes;
       const confirmed = yield* legacyPromptYesNo(
         output,
@@ -113,8 +112,8 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
       })
       .pipe(
         Effect.tapError(() => creating?.fail() ?? Effect.void),
-        // Mirror Go's `create.go:34-37`: on any non-201 status (including
-        // gated 4xx), run the plan-gate check before mapping the error.
+        // On any non-201 status (including gated 4xx), run the plan-gate
+        // check before mapping the error.
         Effect.catch(
           legacyGateMapError(
             { projectRef: ref, featureKey: "branching_limit" },
@@ -140,8 +139,8 @@ export const legacyBranchesCreate = Effect.fn("legacy.branches.create")(function
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
 
-    // Go writes "Created preview branch:" to stdout (`fmt.Println`), then
-    // the table or the encoded payload via EncodeOutput.
+    // Established output: "Created preview branch:" writes to stdout, then
+    // the table or the encoded payload.
     if (goFmt === "json") {
       yield* output.raw("Created preview branch:\n");
       yield* output.raw(encodeGoJson(created));

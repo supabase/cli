@@ -26,12 +26,13 @@ export interface LegacyCnameFailure {
 
 /**
  * Extract the first CNAME answer's `data` from a Cloudflare DNS-over-HTTPS JSON
- * response. Mirrors Go's `utils.ResolveCNAME`
+ * response. Mirrors `utils.ResolveCNAME`
  * (`apps/cli-go/internal/utils/api.go:60-79`): scan `Answer` for the first entry
- * with `type === 5` and return its `data`; otherwise fail with Go's
- * "failed to locate" wording, embedding a capped, readable JSON dump of the
- * answers instead of Go's actual (uncapped, `%+v`-on-`[]byte`) dump — see the
- * NOTE at the failure site below for why those don't byte-match.
+ * with `type === 5` and return its `data`; otherwise fail with the
+ * established "failed to locate" wording, embedding a capped, readable JSON
+ * dump of the answers instead of the reference implementation's actual
+ * (uncapped, `%+v`-on-`[]byte`) dump — see the NOTE at the failure site below
+ * for why those don't byte-match.
  */
 export function parseFirstCname(
   payload: unknown,
@@ -46,12 +47,12 @@ export function parseFirstCname(
   // Cap the embedded answer dump (mirrors the 1024-byte policy in
   // `sanitizeLegacyErrorBody`) so an oversized DNS response can't flood the
   // error envelope. Both the cap and the readable-JSON format are deliberate
-  // TS divergences, not a faithful port of Go's dump: Go's `ResolveCNAME`
-  // (`apps/cli-go/internal/utils/api.go:73-78`) JSON-marshals the answers to a
-  // `[]byte`, then formats that `[]byte` with `%+v` — a `%+v`-on-`[]byte`
-  // footgun that Go's `fmt` renders as an uncapped decimal byte-value array
-  // (e.g. `[91 10 32 32 ...]` — `91` is the `[` that opens the marshaled JSON
-  // array, not the JSON text itself; empirically verified by compiling Go).
+  // TS divergences: `ResolveCNAME` (`apps/cli-go/internal/utils/api.go:73-78`)
+  // JSON-marshals the answers to a `[]byte`, then formats that `[]byte` with
+  // `%+v` — a `%+v`-on-`[]byte` footgun that Go's `fmt` renders as an
+  // uncapped decimal byte-value array (e.g. `[91 10 32 32 ...]` — `91` is the
+  // `[` that opens the marshaled JSON array, not the JSON text itself;
+  // empirically verified by compiling Go).
   const dump = JSON.stringify(answers, null, 4);
   const capped = dump.length > 1024 ? `${dump.slice(0, 1024)}…` : dump;
   return Effect.fail({
@@ -63,7 +64,7 @@ export function parseFirstCname(
 /**
  * Render the `%w`-wrapped cause string for the "failed to resolve" CNAME error.
  * Transport / timeout / parse failures all flow through here so the outer
- * message stays Go-shaped without leaking object internals.
+ * message stays consistently shaped without leaking object internals.
  */
 export function formatCnameCause(cause: unknown): string {
   if (cause instanceof Error) return cause.message;
@@ -78,9 +79,8 @@ const transportFailure = (cause: unknown): LegacyCnameFailure => ({
 
 /**
  * Verify that `customHostname` has a CNAME record pointing at the project's
- * Supabase subdomain before initializing a custom hostname. Mirrors
- * `apps/cli-go/internal/hostnames/common.go:14-22` + `cloudflare/api.go`:
- * queries `https://1.1.1.1/dns-query` (DNS-over-HTTPS, `accept: application/dns-json`,
+ * Supabase subdomain before initializing a custom hostname. Queries
+ * `https://1.1.1.1/dns-query` (DNS-over-HTTPS, `accept: application/dns-json`,
  * 10s timeout) and compares the resolved CNAME to `<ref>.<projectHost>.`.
  *
  * The `HttpClient` is passed in (not yielded) so this helper carries no service

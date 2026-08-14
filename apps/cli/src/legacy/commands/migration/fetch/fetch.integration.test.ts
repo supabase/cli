@@ -125,7 +125,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockTty({ stdinIsTty: opts.isTTY ?? true }),
     mockStdin(
       opts.isTTY ?? true,
-      // Migration prompts read stdin directly (Go's PromptYesNo), so a confirm answer is
+      // Migration prompts read stdin directly, so a confirm answer is
       // supplied via piped stdin rather than the Output prompt mock.
       opts.pipedInput ?? (opts.confirm === undefined ? undefined : opts.confirm ? "y\n" : "n\n"),
     ),
@@ -167,7 +167,7 @@ describe("legacy migration fetch", () => {
     });
     return Effect.gen(function* () {
       yield* legacyMigrationFetch(flags());
-      // Go prints the connection banner to stderr before dialing (connect.go:343-348).
+      // The connection banner prints to stderr before dialing.
       expect(out.stderrText).toContain("Connecting to remote database...");
       const dir = migrationsDir(tmp.current);
       const files = readdirSync(dir);
@@ -238,9 +238,9 @@ describe("legacy migration fetch", () => {
 
   it.live("writes a lone separator for a row with no statements (Go parity)", () => {
     // A `schema_migrations` row can legally have a NULL/empty `statements` array
-    // (older projects, manually-inserted rows). Go does `strings.Join(stmts, ";\n")
-    // + ";\n"`, so an empty array yields exactly ";\n" — a file with a stray
-    // semicolon, not an empty file. The strict-1:1 port keeps these bytes; lock it
+    // (older projects, manually-inserted rows). Joining statements with ";\n"
+    // plus a trailing ";\n" means an empty array yields exactly ";\n" — a file with a stray
+    // semicolon, not an empty file. This port keeps these bytes; lock it
     // so a future "emit an empty file instead" refactor is a conscious divergence.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "20240101000000", name: "empty", statements: [] }],
@@ -279,14 +279,13 @@ describe("legacy migration fetch", () => {
         const failure = Cause.findErrorOption(exit.cause);
         expect(Option.isSome(failure) && failure.value._tag).toBe("LegacyOperationCanceledError");
       }
-      // No new file written on cancel.
       expect(readdirSync(migrationsDir(tmp.current))).toEqual(["existing.sql"]);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("honors a piped 'n' answer without a TTY (cancels the overwrite)", () => {
-    // The overwrite prompt defaults to YES; Go reads piped stdin even when non-interactive,
-    // so a piped `n` overrides the default and cancels (console.go:64-82). Proves the
+    // The overwrite prompt defaults to YES; piped stdin is read even when non-interactive,
+    // so a piped `n` overrides the default and cancels. Proves the
     // non-TTY path reads the answer instead of blindly taking the default.
     mkdirSync(migrationsDir(tmp.current), { recursive: true });
     writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
@@ -324,9 +323,8 @@ describe("legacy migration fetch", () => {
     "auto-confirms the overwrite prompt from SUPABASE_YES in the project .env (Go loadNestedEnv)",
     () => {
       // SUPABASE_YES lives only in supabase/.env, not the shell — `fetch` defaults to
-      // `--linked` (Go: migration.go:161), and root's `ParseDatabaseConfig` loads the project
-      // `.env` files before `fetch.Run`'s overwrite prompt (root.go:118), so the overwrite
-      // auto-confirms with no --yes flag and no piped stdin answer (CLI-1878).
+      // `--linked`, and the project `.env` files load before the overwrite prompt, so the
+      // overwrite auto-confirms with no --yes flag and no piped stdin answer (CLI-1878).
       mkdirSync(migrationsDir(tmp.current), { recursive: true });
       writeFileSync(join(migrationsDir(tmp.current), "existing.sql"), "select 1;\n");
       writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_YES=true\n");
@@ -342,7 +340,7 @@ describe("legacy migration fetch", () => {
   );
 
   it.live("still prompts on stderr in json mode and proceeds on a piped yes", () => {
-    // Go writes the prompt to stderr and reads stdin regardless of --output (console.go),
+    // The prompt writes to stderr and reads stdin regardless of --output,
     // so --output-format json must NOT silently auto-accept: the overwrite prompt fires on
     // stderr and a piped `y` proceeds, while the json result still goes to stdout.
     mkdirSync(migrationsDir(tmp.current), { recursive: true });
@@ -406,9 +404,9 @@ describe("legacy migration fetch", () => {
   });
 
   it.live("writes a Go-valid signed version verbatim (no all-digits requirement)", () => {
-    // Go writes the raw `version` column into `<version>_<name>.sql` with no digit check
-    // (`internal/migration/fetch/fetch.go:36`), so a malformed-but-safe value like `-1`
-    // (listable/repairable in Go) must fetch, not abort the whole run.
+    // The raw `version` column writes into `<version>_<name>.sql` with no digit check,
+    // so a malformed-but-safe value like `-1`
+    // (listable/repairable) must fetch, not abort the whole run.
     const { layer } = setup(tmp.current, {
       rows: [{ version: "-1", name: "legacy", statements: ["select 1"] }],
     });
@@ -437,8 +435,8 @@ describe("legacy migration fetch", () => {
 
   it.live("reports a write failure", () => {
     // A file at <workdir>/supabase/migrations makes `makeDirectory` fail. `supabase` itself
-    // must stay a real directory here: the handler's project-env load (CLI-1878, honoring
-    // Go's `loadNestedEnv`) reads `<workdir>/supabase/.env*` before this mkdir, and a plain
+    // must stay a real directory here: the handler's project-env load (CLI-1878)
+    // reads `<workdir>/supabase/.env*` before this mkdir, and a plain
     // file at `<workdir>/supabase` would make that read fail first (ENOTDIR) instead.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "migrations"), "not a directory");
@@ -454,8 +452,8 @@ describe("legacy migration fetch", () => {
   });
 
   it.live("resolves DB config before creating the migrations dir or prompting", () => {
-    // Go's root PersistentPreRunE parses the DB config before fetch.Run (cmd/root.go:118),
-    // so an invalid target fails before any filesystem/prompt side effect. With the resolver
+    // The DB config resolves before any filesystem/prompt side effect,
+    // so an invalid target fails first. With the resolver
     // failing, the supabase/migrations dir must NOT be created and no prompt is shown.
     const { layer, out } = setup(tmp.current, { resolveFails: true });
     return Effect.gen(function* () {
@@ -534,8 +532,6 @@ describe("legacy migration fetch", () => {
           "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
         );
       }
-      // The guard fires before any connection resolution, filesystem write, or
-      // cache write.
       expect(existsSync(migrationsDir(tmp.current))).toBe(false);
       expect(out.promptConfirmCalls.length).toBe(0);
       expect(cache.cached).toBe(false);

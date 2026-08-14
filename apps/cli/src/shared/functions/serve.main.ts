@@ -107,7 +107,13 @@ const functionsConfig: Record<string, FunctionConfig> = (() => {
     const functionsConfig = JSON.parse(FUNCTIONS_CONFIG_STRING);
 
     if (DEBUG) {
-      console.log("Functions config:", JSON.stringify(functionsConfig, null, 2));
+      const debugConfig = Object.fromEntries(
+        Object.entries(functionsConfig).map(([name, config]) => [
+          name,
+          Object.fromEntries(Object.entries(config).filter(([key]) => key !== "env")),
+        ]),
+      );
+      console.log("Functions config:", JSON.stringify(debugConfig, null, 2));
     }
 
     return functionsConfig;

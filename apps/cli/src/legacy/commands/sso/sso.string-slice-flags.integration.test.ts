@@ -16,15 +16,13 @@ import {
 } from "../../../../tests/helpers/legacy-mocks.ts";
 import { legacySsoCommand } from "./sso.command.ts";
 
-// Go parity (CLI-2005): all four sso domain-list flags are pflag
-// `StringSliceVar`s (`cmd/sso.go:158,170-172`), so malformed CSV aborts
-// cobra's `ParseFlags` before RunE — and before
+// All four sso domain-list flags are CSV string-slice flags, so malformed
+// CSV aborts flag parsing before the handler runs — and before
 // `legacyManagementApiRuntimeLayer`'s eager access-token resolution — with
-// pflag's exact `invalid argument %q for %q flag: %v` line on stderr. These
-// scenarios run the whole command tree (`Command.runWith`) so the assertion
-// covers the real flag wiring plus the renderer's pflag passthrough
-// (`formatInvalidValueMessage`), mirroring the network-bans/
-// network-restrictions prior art from CLI-1983.
+// an `invalid argument %q for %q flag: %v` line on stderr. These scenarios
+// run the whole command tree (`Command.runWith`) so the assertion covers
+// the real flag wiring plus the renderer's pflag passthrough
+// (`formatInvalidValueMessage`).
 
 const tempRoot = useLegacyTempWorkdir("supabase-sso-string-slice-int-");
 
@@ -77,8 +75,6 @@ function setup() {
 }
 
 describe("legacy sso StringSlice flags (pflag CSV parity)", () => {
-  // Every rendered line below was verified against the real Go CLI binary
-  // (apps/cli-go, pflag v1.0.10 → encoding/csv).
   const cases: ReadonlyArray<{
     readonly name: string;
     readonly args: ReadonlyArray<string>;

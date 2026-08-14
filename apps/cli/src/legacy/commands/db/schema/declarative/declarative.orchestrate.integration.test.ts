@@ -400,6 +400,78 @@ describe("legacyDiffDeclarativeToMigrations", () => {
   );
 
   it.effect(
+    "fails when the zero-migrations baseline cache probe itself fails, before any shadow work",
+    () => {
+      // A probe failure that isn't not-found (permissions, I/O under `.temp/pgdelta`) must
+      // propagate — matching Go's `getMigrationsCatalogRef` returning the `afero.Exists`
+      // error immediately — instead of being converted into a cache miss that provisions a
+      // Docker shadow and only surfaces the filesystem problem at the eventual write to the
+      // same location (codex review, PR #6162).
+      const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+      const declDir = join(dir, "supabase", "database");
+      mkdirSync(declDir, { recursive: true });
+      const baselineFileName = legacyBaselineCatalogFileName(legacyBaselineCatalogKey(setupInputs));
+      const seam = mockSeam({
+        declarative: "supabase/.temp/pgdelta/decl.json",
+        baseline: "supabase/.temp/pgdelta/base.json",
+      });
+      const edge = mockEdge("ALTER TABLE x;\n");
+      const out = mockOutput();
+      const shadow = mockShadowInfra();
+      // Wraps the real Bun `FileSystem` so only the baseline probe fails, with a genuine
+      // `PlatformError` (same construction as the cache unit tests' failing-fs fakes).
+      // Merged LAST so it overrides `BunServices.layer`'s own `FileSystem`.
+      const failingFsLayer = Layer.effect(
+        FileSystem.FileSystem,
+        Effect.gen(function* () {
+          const real = yield* FileSystem.FileSystem;
+          const err = yield* real.readDirectory(join(dir, "does-not-exist")).pipe(Effect.flip);
+          const failing: FileSystem.FileSystem = {
+            ...real,
+            exists: (p) => (p.endsWith(baselineFileName) ? Effect.fail(err) : real.exists(p)),
+          };
+          return failing;
+        }),
+      ).pipe(Layer.provide(BunServices.layer));
+      return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), toml, setupInputs).pipe(
+        Effect.exit,
+        Effect.tap((exit) =>
+          Effect.sync(() => {
+            expect(Exit.isFailure(exit)).toBe(true);
+            // The whole point: the failure surfaces BEFORE any Docker side effect.
+            expect(shadow.spawned).toEqual([]);
+            rmSync(dir, { recursive: true, force: true });
+          }),
+        ),
+        Effect.provide(
+          Layer.mergeAll(
+            BunServices.layer,
+            seam.layer,
+            edge.layer,
+            probe,
+            out.layer,
+            shadow.layer,
+            legacyPgDeltaLegacyEngineLayer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  seam.layer,
+                  edge.layer,
+                  probe,
+                  out.layer,
+                  BunServices.layer,
+                  shadow.layer,
+                  failingFsLayer,
+                ),
+              ),
+            ),
+            failingFsLayer,
+          ),
+        ),
+      );
+    },
+  );
+
+  it.effect(
     "with local migrations present and cache enabled, provisions a shadow and caches the resulting catalog",
     () => {
       // The dominant real-world code path (a project WITH local migrations, cache

@@ -106,11 +106,11 @@ disables formatting without disabling safe compaction.
 | `1`  | `--project-ref` set with a resolved target other than linked; `--project-ref` combined with the `--experimental` structured-dump pull (see Notes)                                                   |
 
 > Note: unlike `db diff`, an empty diff (`No schema changes found`) is a **non-zero
-> exit** for `db pull` — Go returns `errInSync` as an error.
+> exit** for `db pull`.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Progress to stderr. Migration path: `Creating shadow database...`,
 `Diffing schemas[: <list>]`, `Schema written to <path>`. Declarative path:
@@ -152,8 +152,8 @@ Progress strings still go to stderr; stdout carries a single structured envelope
   `-- pg-delta: transaction=false`, which later migration commands honor.
 - The initial-migra pull (no local migrations) is native: it streams a `pg_dump` of
   the remote schema into the migration file, then appends the migra diff. An empty
-  diff after a non-empty dump is swallowed (Go's `swallowInitialInSync`); an empty
-  dump + empty diff is "No schema changes found".
+  diff after a non-empty dump is swallowed; an empty dump + empty diff is "No schema
+  changes found".
 - The `--experimental` structured-dump branch (or the `SUPABASE_EXPERIMENTAL`
   project-`.env` equivalent) still rebuilds the argv and execs the bundled Go
   binary (its side effects are Go's — see Files Written above for what that

@@ -8,11 +8,10 @@ import { legacyDbDiff } from "./diff.handler.ts";
 import { legacyDbDiffRuntimeLayer } from "./diff.layers.ts";
 
 const config = {
-  // The four engine flags form a cobra mutually-exclusive group
-  // (`apps/cli-go/cmd/db.go:416`) and `--use-migra` defaults to true, so they are
-  // modelled as `Option` to track pflag `Changed`: the mutex check and
-  // `resolveDiffEngine`'s `useMigraChanged` key off whether the flag was passed,
-  // not its value.
+  // The four engine flags are a mutually-exclusive group, and `--use-migra`
+  // defaults to true, so they are modelled as `Option` to track whether the flag
+  // was passed: the mutex check and `resolveDiffEngine`'s `useMigraChanged` key
+  // off whether the flag was passed, not its value.
   useMigra: Flag.boolean("use-migra").pipe(
     Flag.withDescription("Use migra to generate schema diff."),
     Flag.optional,
@@ -22,12 +21,11 @@ const config = {
     Flag.optional,
   ),
   usePgSchema: Flag.boolean("use-pg-schema").pipe(
-    // CLI-1960: deprecated in favor of the pg-delta engine (or the default
-    // migra engine); a keep-in-Go exception (in-process stripe/pg-schema-diff
-    // library, no TS/container equivalent — see SIDE_EFFECTS.md), not a pending
-    // port. The flag itself is not marked deprecated in Go (no `MarkDeprecated`
-    // upstream), so this description-only notice is TS-only — see
-    // diff.handler.ts's runtime warning for the enforced half of the deprecation.
+    // Deprecated in favor of the pg-delta engine (or the default migra engine) —
+    // a keep-in-Go exception (in-process stripe/pg-schema-diff library, no
+    // TS/container equivalent — see SIDE_EFFECTS.md). This description-only
+    // notice is not enforced by the flag framework — see diff.handler.ts's
+    // runtime warning for the enforced half of the deprecation.
     Flag.withDescription(
       "Use pg-schema-diff to generate schema diff. Deprecated: use the pg-delta engine ([experimental.pgdelta] enabled = true / --use-pg-delta) or the default migra engine instead.",
     ),
@@ -61,9 +59,9 @@ const config = {
     ),
     Flag.optional,
   ),
-  // The target flags form the cobra group `[db-url linked local]`
-  // (`apps/cli-go/cmd/db.go:423`); modelled as `Option` so the mutex check tracks
-  // `Changed`. `--local` defaults to true via the target resolver's fall-through.
+  // The target flags form a mutually-exclusive group; modelled as `Option` so
+  // the mutex check tracks whether a flag was passed. `--local` defaults to true
+  // via the target resolver's fall-through.
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Diffs local migration files against the linked project."),
     Flag.optional,
@@ -88,9 +86,8 @@ const config = {
     Flag.withAlias("s"),
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
-    // Go registers --schema/-s as a cobra StringSliceVarP (`apps/cli-go/cmd/db.go:425`),
-    // CSV-parsing each value; use the shared pflag-faithful helper so quoted commas
-    // survive and malformed CSV fails at parse time.
+    // `--schema`/`-s` CSV-parses each value; use the shared helper so quoted
+    // commas survive and malformed CSV fails at parse time.
     Flag.mapTryCatch(
       (rawValues) => legacyParseSchemaFlags(rawValues),
       (err) => (err instanceof Error ? err.message : String(err)),

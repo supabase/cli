@@ -1,9 +1,9 @@
 /**
  * Connection-failure behavior of the real `@effect/sql-pg` driver layer against
- * real sockets: the `LegacyDbConnectError` message must carry Go's
+ * real sockets: the `LegacyDbConnectError` message must carry the established
  * `failed to connect to postgres: failed to connect to
- * `host=… user=… database=…`: <cause>` structure (pgconn `errors.go:66-72`,
- * `pkg/pgxv5/connect.go:33`), and the connect suggestion must classify real
+ * `host=… user=… database=…`: <cause>` structure (pgconn's own connect-error
+ * wrapping), and the connect suggestion must classify real
  * node-postgres error shapes, not libpq wording.
  */
 import * as net from "node:net";

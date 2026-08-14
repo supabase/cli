@@ -94,7 +94,8 @@ export const legacyResolveRemoteEndpoint = Effect.fnUntraced(function* (
 
 /**
  * Smart-mode (no explicit target) interactive target resolution — Go's
- * `runDeclarativeGenerate` smart branch (`apps/cli-go/cmd/db_schema_declarative.go:198-298`).
+ * `runDeclarativeGenerate` smart branch (`apps/cli-go/cmd/db_schema_declarative.go:198-298`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3).
  * Shared by `generate` (smart mode) and `sync` (no-declarative-files bootstrap) so
  * both offer the same local / linked / custom choice and local-reset prompt.
  */
@@ -155,7 +156,8 @@ export const legacyResolveSmartTargetEndpoint = Effect.fnUntraced(function* (
       );
     }
     // Go parses the entry with pgconn.ParseConfig then feeds pg-delta a normalized
-    // ToPostgresURL (`apps/cli-go/cmd/db_schema_declarative.go:283-287`). Layer the
+    // ToPostgresURL (`apps/cli-go/cmd/db_schema_declarative.go:283-287`, deleted
+    // in CLI-1970; last present at commit 7b469f5b3). Layer the
     // project env (loaded once above) under the shell env like the --db-url path so
     // libpq PG* fallbacks resolve, and reject malformed input with Go's "failed to
     // parse connection string" error (password redacted, CWE-209).

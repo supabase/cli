@@ -29,10 +29,10 @@
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -42,12 +42,12 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                                                                                                                                                                              | Required?                                                                                          |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                                 | no (falls back to keyring → `~/.supabase/access-token`)                                            |
-| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (Go parity — used by the cli-e2e test harness). | no (defaults to `supabase`)                                                                        |
-| `SUPABASE_PROJECT_ID`   | PARENT project ref fallback (1st candidate) when `--project-ref` is unset (CLI-2167 follow-up)                                                                                                                                                                                                       | no (also reads `linked-project.json` → `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
-| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                                    | no (walks up from CWD looking for `supabase/config.toml`)                                          |
+| Variable                | Purpose                                                                                                                                                                                                                                                                                  | Required?                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                                            |
+| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                                        |
+| `SUPABASE_PROJECT_ID`   | PARENT project ref fallback (1st candidate) when `--project-ref` is unset (CLI-2167 follow-up)                                                                                                                                                                                           | no (also reads `linked-project.json` → `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
+| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml`)                                          |
 
 ## Exit Codes
 
@@ -67,15 +67,13 @@
 | ---------------------- | ------------------------------------------ | ----------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` whitelisted) |
 
-Matches `apps/cli-go/internal/branches/list/`. Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-The legacy `--output {pretty,json,yaml,toml,env}` flag (Go-compatible) and the new global `--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the same Glamour render.
+The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the same Glamour render.
 
-### `--output pretty` (Go default) / `--output-format text`
+### `--output pretty` (default) / `--output-format text`
 
-Prints a Glamour-styled markdown table with columns `ID`, `NAME`, `DEFAULT`, `GIT BRANCH`, `WITH DATA`, `STATUS`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`. Byte-matched against the Go CLI.
+Prints a Glamour-styled markdown table with columns `ID`, `NAME`, `DEFAULT`, `GIT BRANCH`, `WITH DATA`, `STATUS`, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
 
 TS-only QoL (CLI-2167 follow-up, no Go counterpart): the row whose `project_ref` matches the
 CURRENTLY linked ref renders its NAME cell as `<name> (active)` — mirrors `next/`'s
@@ -83,7 +81,7 @@ CURRENTLY linked ref renders its NAME cell as `<name> (active)` — mirrors `nex
 `--output-format json|stream-json`, which stay byte-identical (no `active` field is added there,
 unlike `next/`'s JSON payload).
 
-### `--output json` (Go-compat)
+### `--output json`
 
 Indented JSON of the `BranchResponse[]` array with alphabetical keys + trailing newline.
 
@@ -93,7 +91,7 @@ YAML document of the branch array.
 
 ### `--output toml`
 
-TOML document wrapping the array as `[[branches]]` (Go parity).
+TOML document wrapping the array as `[[branches]]`.
 
 ### `--output env`
 
@@ -109,5 +107,5 @@ One `result` NDJSON event with `{branches: [...]}`.
 
 ## Notes
 
-- Reads timestamp formatting follows Go's `utils.FormatTime` (UTC `YYYY-MM-DD HH:MM:SS`).
+- Timestamps are formatted as UTC `YYYY-MM-DD HH:MM:SS`.
 - Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

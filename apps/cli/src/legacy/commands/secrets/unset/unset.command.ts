@@ -41,7 +41,7 @@ export const legacySecretsUnsetCommand = Command.make("unset", config).pipe(
     ),
   ),
   // `stdinLayer`: the confirmation prompt reads piped stdin via `legacyPromptYesNo`
-  // (Go's `Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
+  // (`Console.ReadLine`, `console.go:38-61`) on a non-TTY stdin.
   Command.provide(
     Layer.mergeAll(legacyManagementApiRuntimeLayer(["secrets", "unset"]), stdinLayer),
   ),

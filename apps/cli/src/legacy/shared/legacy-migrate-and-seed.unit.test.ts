@@ -134,7 +134,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
           Effect.sync(() => {
             expect(execs).toContain("create table schema_marker ()");
             expect(execs).not.toContain("create table migration_marker ()");
-            // Go's `applyMigrationFiles` prints "Applying migration ...", which
+            // `applyMigrationFiles` prints "Applying migration ...", which
             // `applySchemaFiles` never does — confirms the migration branch didn't run too.
             expect(out.rawChunks.map((c) => c.text).join("")).not.toContain("Applying migration");
             rmSync(workdir, { recursive: true, force: true });
@@ -278,7 +278,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
     );
   });
 
-  // Go's `TestGlobSQLFiles` (`pkg/config/config_test.go`) — same two scenarios, ported.
+  // Same two scenarios as the original test suite this was ported from.
   it.effect(
     "expands a directory schema_paths entry to its .sql files, recursively, in declared order",
     () => {
@@ -342,7 +342,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
   it.effect.skipIf(isRoot)(
     "fails a matched schema_paths directory that cannot be traversed, instead of treating it as empty",
     () => {
-      // Go's `walkMatchedDir` returns `failed to walk matched directory: %w` on a read
+      // `walkMatchedDir` returns `failed to walk matched directory: %w` on a read
       // error; `applySchemaFiles` propagates it when nothing else matched either. Mode
       // 000 makes `stat` (parent-directory lookup) succeed but `readdir` fail with EACCES.
       const workdir = makeWorkdir();
@@ -381,7 +381,7 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
   it.effect(
     "skips a symlinked .sql file and an entire symlinked subdirectory inside a matched schema_paths directory",
     () => {
-      // Go's `walkMatchedDir` (`fs.WalkDir` + `entry.Type().IsRegular()`) never follows a
+      // `walkMatchedDir` (`fs.WalkDir` + `entry.Type().IsRegular()`) never follows a
       // symlinked `DirEntry` — a symlinked `.sql` file is excluded regardless of target, and a
       // symlinked subdirectory is never even descended into. Both live OUTSIDE the matched
       // directory here, so applying either would mean executing SQL Go would never touch.

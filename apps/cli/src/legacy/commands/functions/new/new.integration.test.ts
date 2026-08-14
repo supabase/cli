@@ -232,8 +232,8 @@ describe("legacy functions new integration", () => {
     const { layer, out, workdir } = setup({ yes: false });
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "with-env-yes", auth: "apikey" });
-      // Same bytes as Go's `viper.GetBool("YES")` branch (`console.go:70-72`),
-      // reached through the env var — not just the --yes flag (CLI-1974).
+      // Established `--yes` branch bytes, reached through the env var —
+      // not just the --yes flag.
       expect(out.stderrText).toContain("Generate VS Code settings for Deno? [Y/n] y");
       expect(existsSync(join(workdir, ".vscode", "settings.json"))).toBe(true);
     }).pipe(
@@ -248,9 +248,9 @@ describe("legacy functions new integration", () => {
   });
 
   it.live("piped `n` then `y` declines VS Code and writes IntelliJ settings (Go parity)", () => {
-    // Go's non-TTY `PromptYesNo` scans one piped line per question
-    // (`console.go:38-61`), so `printf 'n\ny\n'` answers VS Code=no,
-    // IntelliJ=yes instead of hardcoding the VS Code default.
+    // Established non-TTY prompt behavior scans one piped line per
+    // question, so `printf 'n\ny\n'` answers VS Code=no, IntelliJ=yes
+    // instead of hardcoding the VS Code default.
     const { layer, out, workdir } = setup({ stdinIsTty: false, stdinInput: "n\ny\n" });
     return Effect.gen(function* () {
       yield* legacyFunctionsNew({ functionName: "piped-idea", auth: "apikey" });

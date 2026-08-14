@@ -6,10 +6,10 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -40,4 +40,4 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Output
 
-Silent on success in every mode (Go parity).
+Silent on success in every mode.

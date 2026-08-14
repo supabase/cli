@@ -5,7 +5,7 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 
-/** `--last 0`. Byte-matches Go's `--last must be greater than 0` (`down.go:21`). */
+/** `--last 0`. Matches the established `--last must be greater than 0` text. */
 export class LegacyMigrationLastZeroError extends Data.TaggedError("LegacyMigrationLastZeroError")<{
   readonly message: string;
 }> {
@@ -15,8 +15,8 @@ export class LegacyMigrationLastZeroError extends Data.TaggedError("LegacyMigrat
 }
 
 /**
- * `--last` >= the number of applied migrations. Byte-matches Go's
- * `--last must be smaller than total applied migrations: <total>` (`down.go:35`);
+ * `--last` >= the number of applied migrations. Matches the established
+ * `--last must be smaller than total applied migrations: <total>` text;
  * the `supabase db reset` suggestion is attached separately.
  */
 export class LegacyMigrationLastTooLargeError extends Data.TaggedError(

@@ -12,12 +12,12 @@
  * the RAW flag token (instead of a pre-normalized number) is load-bearing for
  * parity:
  *
- *  - every sign prefix is rejected, including `-0` and `+1` (a numeric
- *    normalization turns `-0` into negative zero, for which `value < 0` is
- *    false, silently accepting what Go rejects);
- *  - error messages carry the ORIGINAL spelling (`-01`, not `-1`);
- *  - base 0 enables Go's prefix/underscore forms: `0x10` → 16, `0o10`/`010` →
- *    8 (octal!), `0b10` → 2, and `1_0` → 10 — all of which Go accepts.
+ * - every sign prefix is rejected, including `-0` and `+1` (a numeric
+ * normalization turns `-0` into negative zero, for which `value < 0` is
+ * false, silently accepting what Go rejects);
+ * - error messages carry the ORIGINAL spelling (`-01`, not `-1`);
+ * - base 0 enables Go's prefix/underscore forms: `0x10` → 16, `0o10`/`010` →
+ * 8 (octal!), `0b10` → 2, and `1_0` → 10 — all of which Go accepts.
  *
  * All verdicts below are verified against go1.26 (`strconv.ParseUint(s, 0, 64)`):
  * `-0`/`-01`/`+1`/`3.5`/`abc`/`09`/`0x`/`_1`/`1_`/`1__0`/` 1` → invalid
@@ -125,8 +125,7 @@ export function legacyParseUintBase0(token: string): LegacyParseUintResult {
 /**
  * Faithful port of Go's `strconv.ParseInt(s, 0, 64)` — the exact parser
  * pflag runs for an `Int64VarP`/`Int64Var` flag (`int64Value.Set`,
- * `pflag/int64.go`), e.g. `backups restore --timestamp`
- * (`apps/cli-go/cmd/backups.go:43`). Only a syntax-and-range VERDICT is
+ * `pflag/int64.go`), e.g. `backups restore --timestamp`. Only a syntax-and-range VERDICT is
  * needed for completion (not the parsed value), so this returns a boolean
  * rather than mirroring `LegacyParseUintResult`'s shape.
  *
@@ -136,8 +135,7 @@ export function legacyParseUintBase0(token: string): LegacyParseUintResult {
  * `+`/`-`, parse the magnitude, and bound it against `int64`'s asymmetric
  * two's-complement range — `-9223372036854775808` is valid, but that same
  * magnitude, `9223372036854775808`, is NOT (it is one past `int64`'s
- * positive bound, `9223372036854775807`) — verified empirically against a
- * real `apps/cli-go` build: `backups restore --timestamp
+ * positive bound, `9223372036854775807`) — verified empirically: `backups restore --timestamp
  * 9223372036854775808 --p` returns zero candidates with the Default
  * directive, while `--timestamp 9223372036854775807` (`int64` max) and
  * `--timestamp -9223372036854775808` (`int64` min) both still offer
@@ -152,7 +150,7 @@ export function legacyIsValidBase0Int64(token: string): boolean {
 }
 
 /**
- * Go's `underscoreOK` (`strconv/atoi.go`): underscores must sit between
+ * `underscoreOK` (`strconv/atoi.go`): underscores must sit between
  * digits, or between the base prefix and the first digit (`0x_10` is valid).
  * The sign skip is unreachable through `legacyParseUintBase0` (a sign already
  * fails the digit loop before `underscoreOk` is ever reached) but IS reachable

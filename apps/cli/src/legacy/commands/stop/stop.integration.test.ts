@@ -65,7 +65,7 @@ type RouteResult = {
  * hook, see that function's doc comment) so `legacyCleanupStartSecrets` gets container
  * names/workdirs from the same request that lists ids to stop, rather than a second,
  * separately-formatted `docker ps` call — which would cost an extra real Docker Engine
- * API request Go never makes. `stdout` for a `ps` route response is one `<id>\t<name>`
+ * API request. `stdout` for a `ps` route response is one `<id>\t<name>`
  * line per container (no third, workdir column — every test here exercises the
  * `cliConfig.workdir` fallback path); `defaultRoute` below tab-joins each configured id
  * with itself.
@@ -332,8 +332,8 @@ describe("legacy stop integration", () => {
   it.live(
     "sanitizes a dirty config.toml project_id before filtering, matching start's label",
     () => {
-      // Go's Config.Validate rewrites Config.ProjectId to its sanitized form once
-      // at config-load time (pkg/config/config.go:938-944); every later reader —
+      // Config validation rewrites the resolved project id to its sanitized form once
+      // at config-load time; every later reader —
       // including the Docker label `start` writes — sees that same sanitized
       // string. Filtering on the raw value here would match nothing `start`
       // ever labeled.
@@ -357,8 +357,8 @@ describe("legacy stop integration", () => {
   );
 
   it.live("keeps an explicit --project-id raw, unsanitized (Go's bypass)", () => {
-    // Go assigns the --project-id flag value straight to Config.ProjectId
-    // without going through Validate (internal/stop/stop.go:19-20), so this
+    // The --project-id flag value assigns straight to the resolved project id
+    // without going through validation, so this
     // path must NOT sanitize even though the default (config-derived) path does.
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
     return Effect.gen(function* () {
@@ -433,7 +433,7 @@ describe("legacy stop integration", () => {
   });
 
   it.live("falls back to config.toml when --project-id is an empty string", () => {
-    // Go's check is `len(projectId) > 0` (internal/stop/stop.go:18), not just
+    // The check is `len(projectId) > 0`, not just
     // "was --project-id set" — an empty value must fall through to config.toml
     // exactly like an absent flag, not resolve to the bare/all-projects filter.
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
@@ -452,9 +452,9 @@ describe("legacy stop integration", () => {
   });
 
   it.live("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () => {
-    // Go's Config.Load runs loadNestedEnv (supabase/.env(.local) via godotenv)
-    // before loadFromFile's AutomaticEnv reads SUPABASE_PROJECT_ID
-    // (pkg/config/config.go:735-738) — an env-file-only value overrides
+    // Config loading loads the nested env (supabase/.env(.local))
+    // before reading SUPABASE_PROJECT_ID from the resolved environment —
+    // an env-file-only value overrides
     // config.toml's project_id too, not just an ambient shell export.
     const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
     writeEnvFile(tempRoot.current, ".env", "SUPABASE_PROJECT_ID=env-file-project\n");
@@ -496,8 +496,8 @@ describe("legacy stop integration", () => {
   it.live(
     "does not climb to an ancestor project's config.toml when workdir has none of its own",
     () => {
-      // Go's ChangeWorkDir uses an explicit/defaulted workdir exactly, with no
-      // ancestor search (apps/cli-go/internal/utils/misc.go:231-247) — mirrored
+      // The resolved workdir is used exactly, with no
+      // ancestor search — mirrored
       // here by `search: false`. A workdir with no supabase/config.toml of its
       // own must fall back to defaults (workdir-basename project id), not an
       // ancestor project's config.toml, even though `cliConfig.workdir` sits
@@ -527,8 +527,8 @@ describe("legacy stop integration", () => {
   );
 
   it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () => {
-    // Go's loadNestedEnv runs unconditionally, before config.toml is ever
-    // opened (pkg/config/config.go:786-793) — a supabase/.env-only project id
+    // The nested env load runs unconditionally, before config.toml is ever
+    // opened — a supabase/.env-only project id
     // must still be honored even when there's no config.toml to fall back to
     // template defaults from.
     const { layer, child } = setup({ skipConfig: true, route: defaultRoute() });
@@ -548,8 +548,8 @@ describe("legacy stop integration", () => {
   });
 
   it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
-    // Go's loadNestedEnv walks past supabase/ one more level, to the project
-    // root/workdir (pkg/config/config.go:1169-1190) — a project-root-only
+    // The nested env load walks past supabase/ one more level, to the project
+    // root/workdir — a project-root-only
     // dotenv value must override config.toml too, not just supabase/.env.
     const { layer, child } = setup({ configuredProjectId: "toml-project", route: defaultRoute() });
     writeFileSync(join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
@@ -568,8 +568,7 @@ describe("legacy stop integration", () => {
   });
 
   it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () => {
-    // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
-    // `os.Chdir`s the explicit workdir in `PersistentPreRunE`, before any of
+    // The explicit workdir is `chdir`'d into before any of
     // `stop`'s own flag validation, config load, or Docker access — a missing
     // path must fail immediately, not fall through to the workdir-basename
     // default and prune under that name.
@@ -658,9 +657,8 @@ describe("legacy stop integration", () => {
     "omits --all from docker's volume prune on a pre-1.42 API host, matching Go's gate",
     () => {
       // Docker CLI's own `volume prune --all` flag requires API >= 1.42 and
-      // hard-fails (pruning nothing) on an older daemon — Go avoids ever
-      // sending it by checking `Docker.ClientVersion() >= "1.42"`
-      // (docker.go:126-133). This mirrors that gate via `docker version`.
+      // hard-fails (pruning nothing) on an older daemon — this gate avoids ever
+      // sending it by checking the client version via `docker version`.
       const { layer, child } = setup({
         configuredProjectId: "demo",
         route: defaultRoute({ dockerApiVersion: "1.41" }),
@@ -703,9 +701,9 @@ describe("legacy stop integration", () => {
   });
 
   it.live("--backup=false alone does not delete data volumes, matching Go's dead flag", () => {
-    // Go's `--backup` is declared but never bound to a variable (`cmd/stop.go:26`) —
-    // `RunE` always passes `!noBackup`, so `--backup=false` has zero effect in the
-    // real Go binary today. Only `--no-backup` deletes volumes.
+    // `--backup` is declared but never bound to a variable —
+    // the handler always uses `!noBackup`, so `--backup=false` has zero effect.
+    // Only `--no-backup` deletes volumes.
     const { layer, child } = setup({ configuredProjectId: "demo", route: defaultRoute() });
     return Effect.gen(function* () {
       yield* legacyStop(flags({ backup: false }));
@@ -761,8 +759,8 @@ describe("legacy stop integration", () => {
   });
 
   it.live("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () => {
-    // Go's Config.Validate builds the duplicate map across all [remotes.*]
-    // blocks unconditionally (config.go:503-518), so this must fail before
+    // Config validation builds the duplicate map across all [remotes.*]
+    // blocks unconditionally, so this must fail before
     // stop ever selects a remote or touches Docker — not just when a
     // matching --project-ref is requested.
     const workdir = tempRoot.current;
@@ -790,8 +788,8 @@ project_id = "aaaaaaaaaaaaaaaaaaaa"
   });
 
   it.live("fails when a [remotes.*] project_id is not a valid 20-letter ref", () => {
-    // Go's Config.Validate (config.go:996-1001) checks every [remotes.*].project_id
-    // against refPattern unconditionally on every config load, so an invalid
+    // Config validation checks every [remotes.*].project_id
+    // against the ref pattern unconditionally on every config load, so an invalid
     // format must fail closed before stop reaches Docker.
     const workdir = tempRoot.current;
     mkdirSync(join(workdir, "supabase"), { recursive: true });
@@ -817,7 +815,7 @@ project_id = "short"
   it.live(
     "decodes a comma-separated string into an array field ([]string) for stop to proceed",
     () => {
-      // Go's `newDecodeHook` wires `mapstructure.StringToSliceHookFunc(",")`
+      // The decode hook wires a comma-split decoder
       // unconditionally, so a plain string value for a `[]string` field like
       // `additional_redirect_urls` decodes fine and must not block stop from
       // reaching Docker.
@@ -850,7 +848,7 @@ additional_redirect_urls = "http://a,http://b"
   it.live("warns on stderr for a deprecated auth.external provider", () => {
     // `normalizeDeprecatedExternalProviders` (packages/config/src/io.ts) emits
     // this WARN via `Console.error` only when `goViperCompat` is set — verify
-    // legacy stop keeps that Go-parity behavior wired on.
+    // legacy stop keeps that behavior wired on.
     const workdir = tempRoot.current;
     mkdirSync(join(workdir, "supabase"), { recursive: true });
     writeFileSync(
@@ -877,10 +875,9 @@ enabled = true
   it.live(
     "fails and never spawns docker when config.toml has an unsupported db.major_version",
     () => {
-      // Matches Go's default `stop` path, which runs `flags.LoadConfig` (config
-      // load + `Validate`) entirely before any Docker call
-      // (`internal/stop/stop.go:15-25` -> `pkg/config/config.go:882`) — a config
-      // Go rejects must fail `stop` before it touches containers, not just when
+      // The default `stop` path runs config load + validation entirely before
+      // any Docker call — a config
+      // that fails validation must fail `stop` before it touches containers, not just when
       // reading `project_id`.
       const workdir = tempRoot.current;
       mkdirSync(join(workdir, "supabase"), { recursive: true });
@@ -902,8 +899,7 @@ enabled = true
   );
 
   it.live("does not run config Validate for --all (bypasses config entirely)", () => {
-    // `internal/stop/stop.go:15-25`: the `--all` branch never calls
-    // `flags.LoadConfig`, so an otherwise-invalid config.toml must not block it.
+    // The `--all` branch never loads config, so an otherwise-invalid config.toml must not block it.
     const workdir = tempRoot.current;
     mkdirSync(join(workdir, "supabase"), { recursive: true });
     writeFileSync(
@@ -920,8 +916,8 @@ enabled = true
   });
 
   it.live("does not run config Validate for --project-id (bypasses config entirely)", () => {
-    // `internal/stop/stop.go:15-25`: an explicit `--project-id` sets
-    // `Config.ProjectId` directly and never calls `flags.LoadConfig`.
+    // An explicit `--project-id` sets
+    // the resolved project id directly and never loads config.
     const workdir = tempRoot.current;
     mkdirSync(join(workdir, "supabase"), { recursive: true });
     writeFileSync(
@@ -1245,9 +1241,8 @@ enabled = true
 
   it.live("still reports success when the post-run volume listing fails", () => {
     // The volume-suggestion check is best-effort (`Effect.orElseSucceed`): a
-    // failure listing volumes after a successful stop must not fail the command,
-    // matching Go's `if resp, err := ...; err == nil && ...` (stop.go:29) — a
-    // listing error there is silently ignored, not surfaced.
+    // failure listing volumes after a successful stop must not fail the command —
+    // a listing error there is silently ignored, not surfaced.
     const { layer, out } = setup({
       configuredProjectId: "demo",
       route: defaultRoute(),

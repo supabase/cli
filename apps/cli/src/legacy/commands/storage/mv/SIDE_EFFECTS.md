@@ -1,8 +1,8 @@
 # `supabase storage mv <src> <dst>`
 
-Native TypeScript port of `apps/cli-go/internal/storage/mv`. Moves objects within a
-bucket. Both paths must be `ss://` and resolve to the same bucket. A direct move that
-returns `not_found` falls back to a recursive per-object move when `--recursive` is set.
+Moves objects within a bucket. Both paths must be `ss://` and resolve to the same bucket.
+A direct move that returns `not_found` falls back to a recursive per-object move when
+`--recursive` is set.
 
 ## Files Read
 
@@ -36,7 +36,7 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 `SUPABASE_PROJECT_ID`, `SUPABASE_SERVICES_HOSTNAME` — same roles as `storage ls`.
 `SUPABASE_PROJECT_ID`'s linked-ref resolution is superseded by `--project-ref` when set.
 
-`storage` is an experimental command (Go `root.go:63`): `mv` requires `--experimental`
+`storage` is an experimental command: `mv` requires `--experimental`
 (or `SUPABASE_EXPERIMENTAL`), else it exits 1 with
 `must set the --experimental flag to run this command` before any other work.
 
@@ -50,7 +50,7 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 - `Moving object: <src> => <dst>` (stderr) for the top-level move and each recursive move.
 - The move response `message` is printed (stderr) on a successful single move.
@@ -81,7 +81,7 @@ Auth: `apikey` always; `Authorization: Bearer <key>` unless the key is `sb_`-pre
   resolution used above (flag > `SUPABASE_PROJECT_ID` > `.temp/project-ref`).
   It never implies `--linked`: passing it with `--local` is a hard error
   rather than a silently discarded flag.
-- Both `src` and `dst` must be `ss://` URLs (Go uses `ParseStorageURL`, not the lenient
-  `url.Parse` that `cp` uses).
+- Both `src` and `dst` must be `ss://` URLs (a stricter parse than the lenient one
+  `cp` uses).
 - The cross-bucket and missing-path checks run before any network call.
 - `--recursive`/`-r` only takes effect when the direct move returns `"error":"not_found"`.

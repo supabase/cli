@@ -15,7 +15,8 @@ const config = {
     Flag.withDescription("Comma separated list of schema to include."),
     Flag.atLeast(0),
     // Go registers `--schema` as a cobra `StringSliceVarP`
-    // (`apps/cli-go/cmd/db_schema_declarative.go:484`), which CSV-splits each
+    // (`apps/cli-go/cmd/db_schema_declarative.go:484`, deleted in CLI-1970;
+    // last present at commit 7b469f5b3), which CSV-splits each
     // occurrence so `-s public,auth` includes the two schemas separately. Mirror
     // the `gen types` / `db lint` parsing so quoted commas are handled the same way.
     Flag.mapTryCatch(

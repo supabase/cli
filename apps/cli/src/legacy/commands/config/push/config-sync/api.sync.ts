@@ -6,10 +6,10 @@ import { legacyStrToArr } from "../../../../shared/legacy-local-config-values.ts
 import { intToUint } from "../../../../shared/legacy-size-units.ts";
 
 /**
- * Push-subset of Go's `api` struct (`pkg/config/api.go`). Only `toml`-tagged
- * fields are serialised — `toml:"-"` locals (`image`, `kong_image`, tls cert
- * contents) are excluded. Field order matches the Go struct declaration, which
- * the BurntSushi encoder preserves.
+ * Push-subset of the `api` config section. Only serialisable fields are
+ * included — locals (`image`, `kong_image`, tls cert contents) are excluded.
+ * Field order matches the established struct declaration, which the
+ * BurntSushi encoder preserves.
  */
 export interface ApiSubset {
   readonly enabled: boolean;
@@ -77,10 +77,9 @@ export function apiSubsetFromConfig(config: ProjectConfig): ApiSubset {
 }
 
 /**
- * Port of Go `(*api).FromRemoteApiConfig`. Returns a copy of `local` with the
- * remote-derived fields applied. When the remote schema is empty the api is
- * disabled and the remaining fields are left as the local copy's values
- * (matching Go's early return).
+ * Returns a copy of `local` with the remote-derived fields applied. When the
+ * remote schema is empty the api is disabled and the remaining fields are
+ * left as the local copy's values.
  */
 function applyRemoteApiConfig(local: ApiSubset, remote: RemoteApiConfig): ApiSubset {
   const enabled = remote.db_schema.length > 0;

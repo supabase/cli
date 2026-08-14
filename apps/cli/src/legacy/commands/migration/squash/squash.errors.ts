@@ -8,8 +8,8 @@ import {
 
 /**
  * `squashToVersion` found no local migrations to squash — either the migrations
- * directory is empty, or `--version` filtered out every file. Byte-matches Go's
- * `ErrMissingVersion` (`squash.go:26`, `errors.New("version not found")`).
+ * directory is empty, or `--version` filtered out every file. Matches the
+ * established `"version not found"` text.
  */
 export class LegacyMigrationSquashMissingVersionError extends Data.TaggedError(
   "LegacyMigrationSquashMissingVersionError",
@@ -22,9 +22,8 @@ export class LegacyMigrationSquashMissingVersionError extends Data.TaggedError(
 }
 
 /**
- * One of squash's three `pg_dump` containers exited non-zero. Byte-matches Go's
- * `"error running container: exit " + code` (`DockerStreamLogs`, reached via
- * `migration.DumpSchema` -> `dump.DockerExec`).
+ * One of squash's three `pg_dump` containers exited non-zero. Matches the
+ * established `"error running container: exit " + code` text.
  */
 export class LegacyMigrationSquashDumpError extends Data.TaggedError(
   "LegacyMigrationSquashDumpError",
@@ -38,9 +37,9 @@ export class LegacyMigrationSquashDumpError extends Data.TaggedError(
 
 /**
  * The target migration file could not be truncated/opened for writing, or a chunk
- * of the full dump/separator/diff could not be appended to it. Byte-matches Go's
- * `"failed to open migration file: " + err` (`squash.go:123`) / `"failed to write
- * line: " + err` (`squash.go:153`).
+ * of the full dump/separator/diff could not be appended to it. Matches the
+ * established `"failed to open migration file: " + err` / `"failed to write
+ * line: " + err` text.
  */
 export class LegacyMigrationSquashWriteError extends Data.TaggedError(
   "LegacyMigrationSquashWriteError",
@@ -54,8 +53,8 @@ export class LegacyMigrationSquashWriteError extends Data.TaggedError(
 
 /**
  * `baselineMigrations`'s history-table batch (`LEGACY_DELETE_MIGRATION_BEFORE` +
- * `INSERT_MIGRATION_VERSION`) failed to send/commit. Byte-matches Go's `"failed to
- * update migration history: " + err` (`squash.go:187`). Classified `dbConnection`,
+ * `INSERT_MIGRATION_VERSION`) failed to send/commit. Matches the established
+ * `"failed to update migration history: " + err` text. Classified `dbConnection`,
  * matching `migration repair`'s `LegacyMigrationRepairUpdateError`
  * (`repair.errors.ts:19`) — both wrap the identical history-table batch-send
  * failure shape.

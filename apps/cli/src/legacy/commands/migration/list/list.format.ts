@@ -13,8 +13,7 @@ export interface LegacyMigrationListRow {
 
 /**
  * Two-pointer merge of remote + local migration versions into chronological
- * rows. Pure port of Go's `makeTable` (`internal/migration/list/list.go:38-79`)
- * minus the markdown framing: non-numeric versions are skipped, and the time
+ * rows, minus the markdown framing: non-numeric versions are skipped, and the time
  * column uses `FormatTimestampVersion`.
  */
 export function legacyMakeMigrationListRows(
@@ -63,8 +62,8 @@ export function legacyMakeMigrationListRows(
 }
 
 /**
- * Renders the merged rows as the backtick-wrapped Glamour markdown cells Go
- * emits (`|`<v>`|` `|`<time>`|`): present cells are inline code spans, absent
+ * Renders the merged rows as backtick-wrapped Glamour markdown cells
+ * (`|`<v>`|` `|`<time>`|`): present cells are inline code spans, absent
  * cells are a single space inside backticks. AsciiStyle preserves the backticks
  * (`code.block_prefix`/`block_suffix` = "`"), so the rendered table includes them.
  */

@@ -284,10 +284,9 @@ export const legacyLink = Effect.fn("legacy.link")(function* (flags: LegacyLinkF
   // ref at all", so the post-run cache fill correctly stays a no-op for it.
   let resolvedRef: string | undefined;
 
-  // Mirror Go's PersistentPostRun (`apps/cli-go/cmd/root.go:176`): persist the
-  // linked-project cache and telemetry state whether the link succeeds or fails.
-  // `link` itself writes `linked-project.json` on success (below), so `cache`
-  // only fires for the failure / 404 paths.
+  // Persist the linked-project cache and telemetry state whether the link
+  // succeeds or fails. `link` itself writes `linked-project.json` on success
+  // (below), so `cache` only fires for the failure / 404 paths.
   yield* Effect.gen(function* () {
     // Normalize inputs: an empty-string positional or flag value is absent,
     // mirroring the resolver's own treatment of an empty `--project-ref`.

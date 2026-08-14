@@ -424,7 +424,8 @@ describe("legacy db schema declarative generate integration", () => {
     () => {
       // Go's flags.LoadConfig runs loadNestedEnv (which os.Setenv's each project-.env key)
       // before dbDeclarativeCmd.PersistentPreRunE reads viper.GetBool("EXPERIMENTAL")
-      // (apps/cli-go/cmd/db_schema_declarative.go:73-78, pkg/config/config.go:789), so a
+      // (apps/cli-go/cmd/db_schema_declarative.go:73-78, deleted in CLI-1970; last
+      // present at commit 7b469f5b3; pkg/config/config.go:789), so a
       // SUPABASE_EXPERIMENTAL set only in supabase/.env opens the gate and lets the mutex
       // check fire, same as the shell-env case above.
       const saved = process.env["SUPABASE_EXPERIMENTAL"];

@@ -4,7 +4,6 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/long_running_queries/long_running_queries.sql`.
 const SQL = `SELECT
   pid,
   age(now(), pg_stat_activity.query_start)::text AS duration,
@@ -20,9 +19,8 @@ ORDER BY
 
 /**
  * `inspect db long-running-queries` — queries running longer than 5 minutes.
- * Port of `apps/cli-go/internal/inspect/long_running_queries/long_running_queries.go`.
  * Note: unlike locks/blocking/outliers/calls, the `query` column is NOT
- * whitespace-collapsed in Go (`%s` directly), so it uses `legacyInspectText`.
+ * whitespace-collapsed, so it uses `legacyInspectText`.
  */
 export const legacyLongRunningQueriesSpec: LegacyInspectQuerySpec = {
   name: "long-running-queries",

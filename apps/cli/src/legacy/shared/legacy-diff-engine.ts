@@ -1,14 +1,12 @@
-// Pure diff-engine resolution shared by `db diff` and `db pull`. Mirrors the
-// three Go helpers in `apps/cli-go/cmd/db.go:375-401` so engine selection stays
-// byte-identical to the Go CLI. No Effect / service dependencies — unit-tested
-// directly.
+// Pure diff-engine resolution shared by `db diff` and `db pull`. No Effect / service
+// dependencies — unit-tested directly.
 
 export const legacySchemaPathsTransitionWarning =
   "WARNING: [db.migrations].schema_paths no longer changes the migrations baseline used by db diff or migration-style db pull. These commands always compare local migrations with the selected database. Use `supabase db schema declarative sync` to compare declarative schema files.\n";
 
 /**
- * Whether pg-delta is the active default engine. Mirrors Go's `shouldUsePgDelta`
- * (`db.go:375-376`): `utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")`.
+ * Whether pg-delta is the active default engine. Mirrors `shouldUsePgDelta`:
+ * `utils.IsPgDeltaEnabled() || usePgDelta || viper.GetBool("EXPERIMENTAL_PG_DELTA")`.
  * The three inputs are the resolved config flag (`[experimental.pgdelta].enabled`),
  * the command's `--use-pg-delta` flag, and the `SUPABASE_EXPERIMENTAL_PG_DELTA`
  * env var.
@@ -23,7 +21,7 @@ export function legacyShouldUsePgDelta(inputs: {
 
 /**
  * Reports whether `db diff` should run in pg-delta mode. Mirrors Go's
- * `resolveDiffEngine` (`db.go:385-390`): an explicit `--use-migra`,
+ * `resolveDiffEngine`: an explicit `--use-migra`,
  * `--use-pgadmin`, or `--use-pg-schema` is an authoritative rollback that clears
  * pg-delta mode; `--use-migra` defaults to true so only an explicit pass
  * (`useMigraChanged`) counts as opting out.
@@ -42,7 +40,7 @@ export function legacyResolveDiffEngine(inputs: {
 
 /**
  * Selects whether migration-style `db pull` uses pg-delta for the shadow diff
- * step. Mirrors Go's `resolvePullDiffEngine` (`db.go:396-401`): an explicit
+ * step. Mirrors `resolvePullDiffEngine`: an explicit
  * `--diff-engine` always wins (so `--diff-engine migra` is an authoritative
  * rollback even when pg-delta is enabled in config); otherwise the default
  * follows the active engine.
@@ -81,7 +79,7 @@ export function legacyParseBoolEnv(raw: string | undefined): boolean {
  * Resolves `db pull` declarative mode from the raw argv, replicating pflag's
  * single-variable, last-occurrence-wins binding. Go binds BOTH `--declarative`
  * and the deprecated alias `--use-pg-delta` to the same `useDeclarative`
- * variable (`apps/cli-go/cmd/db.go:534-535`), so when both appear the LAST
+ * variable, so when both appear the LAST
  * occurrence in argv wins — e.g. `db pull --declarative --use-pg-delta=false`
  * ends in migration mode (`false`), and `--use-pg-delta --declarative=false`
  * likewise. OR-ing the two parsed booleans would instead take the declarative

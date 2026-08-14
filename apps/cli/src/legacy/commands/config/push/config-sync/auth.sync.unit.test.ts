@@ -1,12 +1,10 @@
 /**
- * Unit tests for auth.sync.ts — golden parity with Go `pkg/config/auth_test.go`.
+ * Unit tests for auth.sync.ts.
  *
  * Each test builds `AuthSubset` values directly (secrets already pre-hashed,
- * durations already in Go `.String()` form) and calls `diffAuth`, mirroring
- * Go's `assertSnapshotEqual(t, diff)` approach. Expected diffs are the literal
- * bytes of `apps/cli-go/pkg/config/testdata/TestXxxDiff/*.diff`.
+ * durations already in normalized string form) and calls `diffAuth`.
  *
- * Go's `newWithDefaults()` sets:
+ * The default "remote" baseline used across these tests sets:
  *   EnableSignup = true
  *   AdditionalRedirectUrls = []string{}
  *   Email.EnableConfirmations = true
@@ -25,10 +23,6 @@ import {
   type AuthSubset,
   type RemoteAuthConfig,
 } from "./auth.sync.ts";
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
 
 const lines = (...l: ReadonlyArray<string>) => l.join("\n") + "\n";
 
@@ -140,10 +134,6 @@ function withRemote(local: AuthSubset, remote: RemoteAuthConfig): AuthSubset {
   return applyRemoteAuthConfig(local, remote);
 }
 
-// ---------------------------------------------------------------------------
-// TestAuthDiff
-// ---------------------------------------------------------------------------
-
 describe("TestAuthDiff", () => {
   it("local and remote enabled — no diff", () => {
     const local = bareAuth({
@@ -254,10 +244,6 @@ describe("TestAuthDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TestCaptchaDiff
-// ---------------------------------------------------------------------------
-
 describe("TestCaptchaDiff", () => {
   it("local and remote enabled — no diff", () => {
     const local = bareAuth({
@@ -359,10 +345,6 @@ describe("TestCaptchaDiff", () => {
     expect(diffAuth(remote, local)).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// TestHookDiff
-// ---------------------------------------------------------------------------
 
 describe("TestHookDiff", () => {
   it("local and remote enabled — no diff", () => {
@@ -619,10 +601,6 @@ describe("TestHookDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TestMfaDiff
-// ---------------------------------------------------------------------------
-
 describe("TestMfaDiff", () => {
   it("local and remote enabled — no diff", () => {
     const local = bareAuth({
@@ -744,13 +722,9 @@ describe("TestMfaDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TestSmsDiff
-// ---------------------------------------------------------------------------
-
 describe("TestSmsDiff", () => {
   it("local disabled remote enabled — matches golden diff", () => {
-    // Go's newWithDefaults() has enable_signup=true, TestOTP={}
+    // The default baseline has enable_signup=true, TestOTP={}
     const local = bareAuth({ enable_signup: true }); // sms = defaults (all disabled)
     const remote = withRemote(local, {
       external_phone_enabled: true,
@@ -908,10 +882,6 @@ describe("TestSmsDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
-// TestRateLimitsDiff
-// ---------------------------------------------------------------------------
-
 describe("TestRateLimitsDiff", () => {
   it("local and remote rate limits match — no diff", () => {
     const local = bareAuth({
@@ -1020,10 +990,6 @@ describe("TestRateLimitsDiff", () => {
     expect(diffAuth(remote, local)).toBe("");
   });
 });
-
-// ---------------------------------------------------------------------------
-// TestExternalDiff
-// ---------------------------------------------------------------------------
 
 describe("TestExternalDiff", () => {
   it("local and remote enabled — no diff", () => {
@@ -1373,9 +1339,7 @@ describe("TestExternalDiff", () => {
   });
 });
 
-// ---------------------------------------------------------------------------
 // authToUpdateBody — secret round-trip (regression: must send raw values, not hashes)
-// ---------------------------------------------------------------------------
 
 describe("authToUpdateBody secrets", () => {
   it("sends the raw plaintext secret value, not the hash (Go Secret.Value)", () => {
@@ -1404,7 +1368,6 @@ describe("authToUpdateBody secrets", () => {
     const body = authToUpdateBody(local);
     expect(body["security_captcha_secret"]).toBe("my-captcha-plaintext");
     expect(body["external_github_secret"]).toBe("my-github-plaintext");
-    // Never the hashed form.
     expect(body["security_captcha_secret"]).not.toContain("hash:");
     expect(body["external_github_secret"]).not.toContain("hash:");
   });
@@ -1460,11 +1423,11 @@ describe("authToUpdateBody secrets", () => {
 // ---------------------------------------------------------------------------
 // password_required_characters mapping
 //
-// Regression for the Go const-name-vs-API-value bug: the port must map the
-// local `password_requirements` enum to the real API values (with `:`
-// separators between character-class groups), NOT the oapi-codegen constant
-// *names*. The API values below are copied from the generated
-// `V1UpdateAuthServiceConfigInput` `password_required_characters` literals.
+// Regression: local `password_requirements` enum values must map to the real
+// API values (with `:` separators between character-class groups), NOT any
+// internal constant *names*. The API values below are copied from the
+// generated `V1UpdateAuthServiceConfigInput`
+// `password_required_characters` literals.
 // ---------------------------------------------------------------------------
 
 describe("password_required_characters mapping", () => {

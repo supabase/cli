@@ -44,11 +44,11 @@
 
 ## Output
 
-Two-axis: Go's `--output {pretty|json|yaml|toml|env}` wins when set; otherwise the TS
-`--output-format`. `--output env` is **unsupported** (errors). go json/yaml encode the
-`linkedProject[]`; go toml wraps them as `{projects=[...]}`.
+Two-axis: `--output {pretty|json|yaml|toml|env}` wins when set; otherwise
+`--output-format`. `--output env` is **unsupported** (errors). `--output json/yaml`
+encode the `linkedProject[]`; `--output toml` wraps them as `{projects=[...]}`.
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Glamour ASCII table. Column order: `LINKED`, `ORG ID`, `REFERENCE ID`, `NAME`, `REGION`,
 `CREATED AT (UTC)`. The `LINKED` cell shows `  ●` for the linked project (else blank),

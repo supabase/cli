@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { tmpdir, platform as osPlatform } from "node:os";
 import { randomUUID } from "node:crypto";
 
-export type CLITarget = "go" | "ts-legacy" | "ts-next";
+export type CLITarget = "ts-legacy" | "ts-next";
 
 export interface CLIResult {
   stdout: string;
@@ -115,8 +115,6 @@ interface BuiltCommand {
 
 function buildCommand(target: CLITarget): BuiltCommand {
   switch (target) {
-    case "go":
-      return { cmd: [process.env["SUPABASE_GO_BINARY"] ?? "supabase"] };
     case "ts-legacy": {
       const binaryPath = tsCliBinary("legacy");
       assertTsCliBuilt(binaryPath);
@@ -148,8 +146,7 @@ export async function exec(
     SUPABASE_NO_KEYRING: "true",
     SUPABASE_TELEMETRY_DISABLED: "1",
     // Isolate CLI filesystem side-effects (e.g. telemetry.json) to the CWD so
-    // tests don't touch the developer's real ~/.supabase and parity tests can
-    // track file changes via snapshotChangedFiles().
+    // tests don't touch the developer's real ~/.supabase.
     SUPABASE_HOME: harness.options.cwd ?? tmpdir(),
     ...(harness.options.projectId ? { SUPABASE_PROJECT_ID: harness.options.projectId } : {}),
     // When a test writes a pooler-url file the Go CLI takes the pooler path in
@@ -161,17 +158,16 @@ export async function exec(
     ...opts?.env,
   };
 
-  // The Go CLI uses a profile system rather than SUPABASE_API_URL. Write a
-  // temporary profile file pointing to the replay server.
-  // - Go's viper reads SUPABASE_PROFILE as a config file path (prefix
-  //   SUPABASE_ + AutomaticEnv) when the value isn't a built-in profile name.
-  // - The ts-legacy CLI mirrors this dual semantics in `LegacyCliConfig`
-  //   (built-in name first, YAML file path second) for any natively-ported
-  //   command; proxy-wrapped commands still shell out to Go which reads the
-  //   same file directly.
+  // The Go CLI uses a profile system rather than SUPABASE_API_URL. The ts-legacy
+  // CLI mirrors this dual semantics in `LegacyCliConfig` (built-in name first,
+  // YAML file path second) for any natively-ported command; proxy-wrapped
+  // commands still shell out to Go, which reads the same file directly via
+  // viper's SUPABASE_PROFILE (prefix SUPABASE_ + AutomaticEnv) when the value
+  // isn't a built-in profile name. Write a temporary profile file pointing at
+  // the replay server so both paths reach it.
   // - ts-next reads SUPABASE_API_URL directly, so it doesn't need a profile file.
   let profilePath: string | undefined;
-  if (harness.target === "go" || harness.target === "ts-legacy") {
+  if (harness.target === "ts-legacy") {
     profilePath = join(tmpdir(), `cli-e2e-profile-${randomUUID()}.yaml`);
     const url = harness.options.apiUrl;
     writeFileSync(

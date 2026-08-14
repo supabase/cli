@@ -20,9 +20,9 @@ import { LegacySeedMutuallyExclusiveFlagsError } from "./buckets.errors.ts";
  * target-flag resolution and the post-run cache + telemetry side effects.
  */
 export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
-  // Target (linked vs. local) is selected from the changed-flag set (Go's
-  // flag.Changed), not the parsed `linked`/`local` values — only `projectRef`
-  // is read directly below.
+  // Target (linked vs. local) is selected from the changed-flag set
+  // (`flag.Changed`), not the parsed `linked`/`local` values — only
+  // `projectRef` is read directly below.
   flags: LegacyBucketsFlags,
 ) {
   const telemetryState = yield* LegacyTelemetryState;
@@ -30,15 +30,15 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
   const cliArgs = yield* CliArgs;
 
   // Set once --linked resolves a ref; drives the post-run linked-project cache
-  // write + org/project group identify, mirroring Go's `ensureProjectGroupsCached`
-  // (`cmd/root.go`, gated on a non-empty `flags.ProjectRef`). Empty on the local
+  // write + org/project group identify (`cmd/root.go`'s `ensureProjectGroupsCached`,
+  // gated on a non-empty `flags.ProjectRef`). Empty on the local
   // path, so the cache is never written there.
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
     // Resolve the project ref for --linked BEFORE loading config, so that the
     // matching `[remotes.<name>]` override (whose `project_id == ref`) is merged
-    // over the base config by `loadProjectConfig`. Go selects the target from
+    // over the base config by `loadProjectConfig`. The target is selected from
     // `flag.Changed`, not the flag value: `--linked` is the linked path whenever
     // it's *set* (even `--linked=false`).
     const setFlags = legacySeedChangedTargetFlags(cliArgs.args);
@@ -62,8 +62,8 @@ export const legacySeedBuckets = Effect.fn("legacy.seed.buckets")(function* (
 
     yield* legacySeedBucketsRun({ projectRef, emitSummary: true });
   }).pipe(
-    // Go's root `Execute` caches the linked project + fires org/project group
-    // identify whenever `flags.ProjectRef` is set — only on the --linked path.
+    // Caches the linked project + fires org/project group identify whenever
+    // `flags.ProjectRef` is set — only on the --linked path.
     Effect.ensuring(
       Effect.suspend(() => (linkedRef === "" ? Effect.void : linkedProjectCache.cache(linkedRef))),
     ),

@@ -62,28 +62,26 @@ const MIGRATE_FILE_PATTERN = /^([0-9]+)_(.*)\.sql$/u;
 const applyError = (message: string, suggestion?: string) =>
   new LegacyDbResetApplyError({ message, ...(suggestion !== undefined ? { suggestion } : {}) });
 
-/** Go's `toLogMessage` (`internal/db/reset/reset.go:88-91`). */
+/** Formats the "to version" / "..." suffix for the reset log line. */
 const toLogMessage = (version: string): string =>
   version.length > 0 ? ` to version: ${version}` : "...";
 
 /**
  * `supabase db reset` — reinitialise a database from local migrations (+ seed).
  *
- * Strict 1:1 port of `apps/cli-go/internal/db/reset/reset.go`. Fully native — no
- * remaining Go delegation on either target. The local path's container-recreate
- * primitives are native (the hidden `db __db-bootstrap` Go seam this used to
- * delegate to, CLI-1325 Stage 3's documented interim, is gone — CLI-1955), and the
- * local-reset composition itself is hoisted into `legacyResetLocalDatabase`
- * (`legacy/shared/db-bootstrap/reset-local-database.ts`, CLI-2062) so `db schema
+ * Fully native — no remaining Go delegation on either target. The local
+ * path's container-recreate primitives are native, and the local-reset
+ * composition itself is hoisted into `legacyResetLocalDatabase`
+ * (`legacy/shared/db-bootstrap/reset-local-database.ts`) so `db schema
  * declarative`'s smart-target/sync recovery reset can call it in-process too,
  * instead of shelling out to a second `supabase-go` child. The remote target's
- * `--experimental` schema-files path — the last remaining Go delegation on this
- * command — is now also native (`legacyApplySchemaFiles`, CLI-1958): a versionless
- * `--experimental`/`SUPABASE_EXPERIMENTAL` remote reset with pg-delta NOT enabled
- * takes Go's EXPERIMENTAL declarative schema-files branch of `apply.MigrateAndSeed`
- * instead of replaying timestamped migrations, mirroring `legacyMigrateAndSeed`'s
- * already-native local-side implementation of the exact same Go branch (reused by
- * both the PG14 and PG15 recreate paths).
+ * `--experimental` schema-files path — the last remaining Go delegation on
+ * this command — is now also native (`legacyApplySchemaFiles`): a versionless
+ * `--experimental`/`SUPABASE_EXPERIMENTAL` remote reset with pg-delta NOT
+ * enabled takes the EXPERIMENTAL declarative schema-files branch instead of
+ * replaying timestamped migrations, mirroring `legacyMigrateAndSeed`'s
+ * already-native local-side implementation of the exact same branch (reused
+ * by both the PG14 and PG15 recreate paths).
  */
 export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: LegacyDbResetFlags) {
   const output = yield* Output;
@@ -99,18 +97,18 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
 
   const workdir = cliConfig.workdir;
   const migrationsDir = path.join(workdir, "supabase", "migrations");
-  // Go's `ParseDatabaseConfig` runs `loadNestedEnv` (which `os.Setenv`s each project-.env key)
-  // before `reset.Run` reads `viper.GetBool("YES")` / `viper.GetBool("EXPERIMENTAL")`, so a
-  // `SUPABASE_YES` / `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` is honored. Load the
-  // project env first and resolve both gates against it, as `db pull` does for `yes`.
+  // The project `.env` is applied before the `yes`/`experimental` gates are
+  // read, so a `SUPABASE_YES` / `SUPABASE_EXPERIMENTAL` set only in
+  // `supabase/.env` is honored. Load the project env first and resolve both
+  // gates against it, as `db pull` does for `yes`.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
   const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
   let linkedRefForCache: string | undefined;
 
   const body = Effect.gen(function* () {
-    // Go's `loadNestedEnv` (`os.Setenv`) makes every project-`.env` key visible to the
-    // WHOLE reset run, not just the flag-gate reads above — in particular
+    // The project `.env` is applied to make every key visible to the WHOLE
+    // reset run, not just the flag-gate reads above — in particular
     // `legacyGetRegistryImageUrl` / `legacyPgDeltaNpmRegistryOption` read
     // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / `PGDELTA_NPM_REGISTRY` straight from
     // `process.env` for the pg-delta catalog export below (review CLI-1958). `db push`
@@ -120,7 +118,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     // default registries.
     yield* legacyApplyProjectEnv(projectEnv);
     const target = resolveLegacyDbTargetFlags(cliArgs.args);
-    // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local").
+    // Mutually-exclusive db-url/linked/local group.
     if (target.setFlags.length > 1) {
       return yield* Effect.fail(
         new LegacyDbResetTargetFlagsError({
@@ -128,9 +126,9 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         }),
       );
     }
-    // Go declares `--last` as `UintVar`, so cobra rejects a negative at parse time
-    // (`Flag.integer` here accepts it). Reject it the same way rather than silently
-    // treating it as "no --last" and resetting the full history.
+    // `--last` is an unsigned flag, so a negative value is rejected at parse
+    // time (`Flag.integer` here accepts it). Reject it the same way rather
+    // than silently treating it as "no --last" and resetting the full history.
     if (Option.isSome(flags.last) && flags.last.value < 0) {
       return yield* Effect.fail(
         new LegacyDbResetLastFlagError({
@@ -138,7 +136,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         }),
       );
     }
-    // cobra MarkFlagsMutuallyExclusive("version", "last") — alphabetical group.
+    // Mutually-exclusive version/last group — alphabetical group.
     if (Option.isSome(flags.version) && Option.isSome(flags.last)) {
       return yield* Effect.fail(
         new LegacyDbResetVersionFlagsError({
@@ -148,8 +146,8 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       );
     }
 
-    // Go's validateDbResetSeedFlags (PreRunE): `--no-seed` conflicts with
-    // `--sql-paths`, and each `--sql-paths` value must be non-empty.
+    // `--no-seed` conflicts with `--sql-paths`, and each `--sql-paths` value
+    // must be non-empty.
     if (flags.noSeed && flags.sqlPaths.length > 0) {
       return yield* Effect.fail(
         new LegacyDbResetSeedFlagsError({
@@ -168,7 +166,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         }),
       );
     }
-    // Go's warnRemoteResetSeedOverride (PreRunE): a remote target flag + --sql-paths.
+    // A remote target flag + --sql-paths warns about the seed override.
     if (
       flags.sqlPaths.length > 0 &&
       (target.setFlags.includes("linked") || target.setFlags.includes("db-url"))
@@ -179,29 +177,29 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       );
     }
 
-    // Version / last resolution (Go's reset.Run lines 34-52), filesystem only.
+    // Version / last resolution, filesystem only.
     let resolvedVersion = "";
-    // Go's `len(version) > 0` guard (reset.go:34) skips validation entirely for an
-    // empty --version, falling through as if no version were given at all.
+    // An empty --version skips validation entirely, falling through as if no
+    // version were given at all.
     if (Option.isSome(flags.version) && flags.version.value.length > 0) {
       const v = flags.version.value;
-      // Go's `strconv.Atoi` (== `ParseInt(s, 10, 0)`) rejects non-numeric text AND
-      // values outside the int64 range; `legacyParseMigrationVersion` mirrors that
-      // exactly (`migration repair` uses the same helper for its own version parse).
+      // Rejects non-numeric text AND values outside the int64 range;
+      // `legacyParseMigrationVersion` mirrors that exactly (`migration repair`
+      // uses the same helper for its own version parse).
       if (legacyParseMigrationVersion(v) === undefined) {
-        // Go's reset.Run returns the bare repair.ErrInvalidVersion (reset.go:35-36);
-        // the `failed to parse <v>:` wrapper belongs to `migration repair` only.
+        // The bare "invalid version number" is returned unwrapped; the
+        // `failed to parse <v>:` wrapper belongs to `migration repair` only.
         return yield* Effect.fail(
           new LegacyDbResetInvalidVersionError({
             message: "invalid version number",
           }),
         );
       }
-      // Go validates the version with `repair.GetMigrationFile` (repair.go:90-100),
-      // which globs `supabase/migrations/<version>_*.sql` DIRECTLY with no filtering —
-      // so a deprecated first migration (e.g. `20200101000000_init.sql`) that
-      // `legacyListLocalMigrations` excludes is still accepted. Mirror that with a raw
-      // directory read + Go-glob match instead of the filtered migration listing.
+      // The version is validated by globbing `supabase/migrations/<version>_*.sql`
+      // DIRECTLY with no filtering — so a deprecated first migration (e.g.
+      // `20200101000000_init.sql`) that `legacyListLocalMigrations` excludes is
+      // still accepted. Mirror that with a raw directory read + glob match
+      // instead of the filtered migration listing.
       const entries = yield* fs
         .readDirectory(migrationsDir)
         .pipe(Effect.orElseSucceed(() => [] as ReadonlyArray<string>));
@@ -241,11 +239,11 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       );
     }
 
-    // Go's ParseDatabaseConfig runs LoadProjectRef BEFORE the fallible linked
-    // resolution (db_url.go:87-95), and Execute() writes the linked-project cache
-    // even when a later step errors (root.go:171-181). Pre-load the ref so the
-    // post-run cache finalizer still fires when resolve fails mid-way (merged
-    // config, temp-role mint, connection) — mirrors push.handler.
+    // The project ref is loaded BEFORE the fallible linked resolution, and
+    // the linked-project cache is written even when a later step errors.
+    // Pre-load the ref so the post-run cache finalizer still fires when
+    // resolve fails mid-way (merged config, temp-role mint, connection) —
+    // mirrors push.handler.
     if (connType === "linked") {
       const refResolver = yield* LegacyProjectRefResolver;
       linkedRefForCache = yield* refResolver.loadProjectRef(flags.projectRef);
@@ -258,13 +256,13 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
       linkedProjectRef: flags.projectRef,
     });
 
-    // Local target → native local reset. Mirrors `internal/db/reset/reset.go:57-77`;
-    // the actual composition (running check, container recreate, storage-health gate,
-    // bucket seeding, git-branch line) is hoisted into `legacyResetLocalDatabase`
-    // (CLI-2062) — shared with `db schema declarative`'s in-process recovery reset —
-    // so this call site stays a thin wrapper around it, keeping only the version/
-    // seed-flags plumbing and the JSON envelope, which belong to this top-level
-    // command alone (see that function's own header for why).
+    // Local target → native local reset. The actual composition (running
+    // check, container recreate, storage-health gate, bucket seeding,
+    // git-branch line) is hoisted into `legacyResetLocalDatabase` — shared
+    // with `db schema declarative`'s in-process recovery reset — so this
+    // call site stays a thin wrapper around it, keeping only the version/
+    // seed-flags plumbing and the JSON envelope, which belong to this
+    // top-level command alone (see that function's own header for why).
     if (cfg.isLocal) {
       yield* legacyResetLocalDatabase({
         version: resolvedVersion,
@@ -286,13 +284,14 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     const linkedRef = Option.getOrUndefined(cfg.ref ?? Option.none());
     if (connType === "linked" && linkedRef !== undefined) linkedRefForCache = linkedRef;
 
-    // Single Go-parity config load (`flags.LoadConfig` → `config.Load` + `Validate`):
-    // decodes the whole config with Go's env-expansion + `strconv.ParseBool` weak typing
-    // (so `enabled = "env(SEED_ENABLED)"` etc. load like Go), applies `SUPABASE_*`
-    // AutomaticEnv overrides, merges a matching `[remotes.<ref>]` block, and decrypts every
-    // `encrypted:` secret with the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys —
-    // aborting here (before the destructive prompt / `legacyDropUserSchemas`) on any
-    // undecryptable/invalid config, exactly like Go's `LoadConfig` before ResetAll.
+    // Single config load: decodes the whole config with env-expansion +
+    // weak-typed boolean parsing (so `enabled = "env(SEED_ENABLED)"` etc.
+    // load), applies `SUPABASE_*` env overrides, merges a matching
+    // `[remotes.<ref>]` block, and decrypts every `encrypted:` secret with
+    // the shell AND project-`.env` `DOTENV_PRIVATE_KEY*` keys — aborting here
+    // (before the destructive prompt / `legacyDropUserSchemas`) on any
+    // undecryptable/invalid config, exactly like the established behavior
+    // before the reset runs.
     const configRef = connType === "linked" && linkedRef !== undefined ? linkedRef : undefined;
     const toml = yield* legacyCheckDbToml(fs, path, workdir, configRef);
     if (toml.appliedRemote !== undefined) {
@@ -300,7 +299,7 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     }
     const vaultSecrets = toml.vault;
 
-    // Go's resetRemote: prompt (default false) → cancel, then ResetAll.
+    // Prompt (default false) → cancel, then reset everything.
     const shouldReset = yield* legacyPromptYesNo(
       output,
       yes,
@@ -314,26 +313,27 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
     }
     yield* output.raw(`Resetting remote database${toLogMessage(resolvedVersion)}\n`, "stderr");
 
-    // Go connects with io.Discard, so NO "Connecting to ... database..." line.
+    // Established output contract: NO "Connecting to ... database..." line
+    // is printed here.
     yield* Effect.scoped(
       Effect.gen(function* () {
         const session = yield* dbConn.connect(cfg.conn, { isLocal: false, dnsResolver });
-        // ResetAll: drop user schemas → upsert vault → migrate + seed.
+        // Reset everything: drop user schemas → upsert vault → migrate + seed.
         yield* legacyDropUserSchemas(session, applyError);
         yield* legacyUpsertVaultSecrets(session, vaultSecrets);
 
-        // Go's three-conjunct EXPERIMENTAL gate (`apply.MigrateAndSeed`, `apply.go:19`):
-        // `--experimental`/`SUPABASE_EXPERIMENTAL` + no resolved version + pg-delta NOT
-        // enabled. A hard `if`/`else if` in Go (`apply.go:19-27`) — taking the
-        // schema-files branch means timestamped migrations never run at all, even when
-        // the glob matches nothing (Go's `schema_paths = []` default silently applies
-        // NOTHING rather than falling back to migrations — CLI-1958).
+        // Three-conjunct EXPERIMENTAL gate: `--experimental`/`SUPABASE_EXPERIMENTAL`
+        // + no resolved version + pg-delta NOT enabled. A hard if/else-if —
+        // taking the schema-files branch means timestamped migrations never
+        // run at all, even when the glob matches nothing (an empty
+        // `schema_paths = []` default silently applies NOTHING rather than
+        // falling back to migrations — CLI-1958).
         const useSchemaFiles = experimental && resolvedVersion === "" && !toml.pgDelta.enabled;
         if (useSchemaFiles) {
-          // `projectEnv` (loaded above, before `experimental`/`yes` resolve) is threaded
-          // through so a `SUPABASE_SCANNER_BUFFER_SIZE` set only in `supabase/.env` is
-          // honored here exactly like Go's `loadNestedEnv` (see
-          // `checkScannerBufferSize`'s doc comment, `legacy-migration-apply.ts`).
+          // `projectEnv` (loaded above, before `experimental`/`yes` resolve) is
+          // threaded through so a `SUPABASE_SCANNER_BUFFER_SIZE` set only in
+          // `supabase/.env` is honored here (see `checkScannerBufferSize`'s
+          // doc comment, `legacy-migration-apply.ts`).
           yield* legacyApplySchemaFiles(
             session,
             fs,
@@ -355,10 +355,10 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
         }
 
         // `--no-seed` disables seeding; `--sql-paths` overrides [db.seed].sql_paths
-        // and force-enables it (Go's applyDbResetSeedFlags). The two are mutually
-        // exclusive (validated above). Same single home as the local path's identical
-        // override (`legacyResolveResetSeedConfig`, `db-setup.ts`) — one implementation
-        // of Go's `applyDbResetSeedFlags` for both targets, per "Hoist Before You
+        // and force-enables it. The two are mutually exclusive (validated
+        // above). Same single home as the local path's identical override
+        // (`legacyResolveResetSeedConfig`, `db-setup.ts`) — one implementation
+        // of this seed-flags override for both targets, per "Hoist Before You
         // Duplicate" (`apps/cli/CLAUDE.md`).
         const resolvedSeed = legacyResolveResetSeedConfig(
           toml.seed,
@@ -376,14 +376,13 @@ export const legacyDbReset = Effect.fn("legacy.db.reset")(function* (flags: Lega
           yield* legacySeedData(session, fs, workdir, path, seeds, applyError);
         }
 
-        // Go's `down.ResetAll` (`internal/migration/down/down.go:48-61`) — the function
-        // `resetRemote` delegates to — best-effort caches the migrations catalog for
-        // pg-delta right after `apply.MigrateAndSeed` succeeds, warning (never failing
-        // the reset) on error. `pgcache.TryCacheMigrationsCatalog` itself no-ops when
-        // `resolvedVersion` is non-empty (`len(version) > 0`, `pgcache/cache.go:73`) —
-        // a versioned reset (`--version`/`--last`) never refreshes the cache — so gate
-        // the call the same way rather than threading that check into the shared
-        // native helper (already used by `db push`, which has no version concept).
+        // Best-effort caches the migrations catalog for pg-delta right after
+        // the migrate-and-seed step succeeds, warning (never failing the
+        // reset) on error. The cache call itself no-ops when `resolvedVersion`
+        // is non-empty — a versioned reset (`--version`/`--last`) never
+        // refreshes the cache — so gate the call the same way rather than
+        // threading that check into the shared native helper (already used
+        // by `db push`, which has no version concept).
         const cacheEnabled =
           resolvedVersion === "" &&
           (toml.pgDelta.enabled ||

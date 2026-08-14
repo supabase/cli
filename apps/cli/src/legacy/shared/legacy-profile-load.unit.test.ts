@@ -174,7 +174,7 @@ describe("legacyLoadProfile", () => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         // Built-in: EqualFold match resolves to the canonical (lower-case)
-        // table name — the keyring account Go reads (`access_token.go:43`).
+        // table name — the keyring account Go reads.
         expect((yield* legacyLoadProfile("SUPABASE-LOCAL", fs)).name).toBe("supabase-local");
         // File profile: `UnmarshalExact` populates Name from the required
         // `name:` key, NOT from the file path.

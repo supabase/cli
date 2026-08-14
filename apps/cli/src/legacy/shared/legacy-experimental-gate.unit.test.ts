@@ -51,7 +51,7 @@ describe("legacyRequireExperimental", () => {
     () =>
       Effect.gen(function* () {
         // viper's bound-pflag lookup returns the flag value whenever Changed is true —
-        // BEFORE falling back to AutomaticEnv (viper@v1.21.0/viper.go:1176-1178) — so an
+        // BEFORE falling back to AutomaticEnv — so an
         // explicit --experimental=false must win over SUPABASE_EXPERIMENTAL=1.
         const saved = process.env[ENV];
         process.env[ENV] = "1";
@@ -69,7 +69,7 @@ describe("legacyRequireExperimental", () => {
     "passes with SUPABASE_EXPERIMENTAL=1 when --experimental=false is a positional operand after --",
     () =>
       Effect.gen(function* () {
-        // Both pflag/cobra (`apps/cli-go`'s pinned cobra/pflag: a value placed after --
+        // Both pflag/cobra (a value placed after --
         // never sets cmd.Flags().Changed(...)) and this CLI's own lexer
         // (effect/unstable/cli/internal/lexer.ts, `argv.indexOf("--")`) stop parsing
         // flags at the first bare `--`. A positional operand that merely LOOKS like a
@@ -95,7 +95,7 @@ describe("legacyRequireExperimental", () => {
       Effect.gen(function* () {
         // pflag/viper bind ONE variable per flag, so repeated occurrences collapse to
         // whichever Set() call happened last — verified empirically against the pinned
-        // apps/cli-go cobra@v1.10.2/pflag@v1.0.10/viper@v1.21.0 versions. A scan that
+        // cobra@v1.10.2/pflag@v1.0.10/viper@v1.21.0 versions. A scan that
         // merely checks "does any pre-terminator token say false" gets this ordering
         // backwards and would incorrectly fail open here.
         const exit = yield* legacyRequireExperimental.pipe(

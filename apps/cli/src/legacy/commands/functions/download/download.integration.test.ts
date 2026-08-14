@@ -310,7 +310,7 @@ describe("legacy functions download", () => {
         expect(out.stderrText).toContain("Downloading function: hello-world\n");
         expect(out.stdoutText).toContain("unbundle: wrote index.ts\n");
         expect(out.stderrText).toContain("unbundle: warning about deno.json\n");
-        // Go parity finding (CLI-1963 audit): unlike the server-side and
+        // Established behavior (CLI-1963 audit): unlike the server-side and
         // `--legacy-bundle` paths, `downloadWithDockerUnbundle` never prints
         // a "Downloaded Function ... from project ..." success line —
         // guarded here against a future accidental regression.
@@ -401,11 +401,11 @@ describe("legacy functions download", () => {
       );
 
       return Effect.gen(function* () {
-        // Go's override is value-based (`if useApi { useDocker = false }`,
-        // apps/cli-go/cmd/functions.go:51-53), not presence-based. An
-        // explicit `--use-api=false` must not be treated like `--use-api` —
-        // it should leave the `--use-docker` default (true) in effect and
-        // still run the native Docker path (CLI-1963).
+        // The override is value-based (`if useApi { useDocker = false }`),
+        // not presence-based. An explicit `--use-api=false` must not be
+        // treated like `--use-api` — it should leave the `--use-docker`
+        // default (true) in effect and still run the native Docker path
+        // (CLI-1963).
         yield* legacyFunctionsDownload({ ...baseFlags, useApi: false, useDocker: true });
 
         expect(proxy.calls).toEqual([]);
@@ -627,13 +627,12 @@ describe("legacy functions download", () => {
   });
 
   it.live("omits the named Deno cache volume bind on Bitbucket", () => {
-    // Go's `DockerStart` drops the named-volume bind entirely on Bitbucket
-    // (`internal/utils/docker.go:400-405`) rather than just skipping its
-    // explicit creation — `docker run -v <name>:...` would otherwise still
-    // implicitly create the named volume, which Bitbucket's restricted Docker
-    // environment doesn't allow (review round on CLI-1963's `functions
-    // download` port; `deploy.ts`'s `buildDockerBinds` already applies this
-    // same carve-out).
+    // Established behavior: the named-volume bind is dropped entirely on
+    // Bitbucket rather than just skipping its explicit creation —
+    // `docker run -v <name>:...` would otherwise still implicitly create the
+    // named volume, which Bitbucket's restricted Docker environment doesn't
+    // allow (review round on CLI-1963's `functions download` port;
+    // `deploy.ts`'s `buildDockerBinds` already applies this same carve-out).
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
     const proxy = mockProxy();
@@ -697,7 +696,7 @@ describe("legacy functions download", () => {
     // `kind: "json"`, so `executeRaw` would otherwise default to
     // `Accept: application/json` (`buildRequest`'s unconditional `acceptJson`
     // for json-kind operations) and risk a negotiated JSON response instead
-    // of the raw eszip body Go's un-overridden request receives (review round
+    // of the raw eszip body an un-overridden request receives (review round
     // on CLI-1963's `functions download` port).
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
@@ -777,11 +776,10 @@ describe("legacy functions download", () => {
   it.live(
     "falls back to the generated network name when --network-id is passed with an empty value",
     () => {
-      // Go only overrides the network when `len(viper.GetString("network-id")) > 0`
-      // (`internal/utils/docker.go:379-382`) — an explicit-but-empty
-      // `--network-id=` must fall through to the generated network name just
-      // like an omitted flag (review round on CLI-1963's `functions download`
-      // port).
+      // The network is only overridden when the value is non-empty — an
+      // explicit-but-empty `--network-id=` must fall through to the
+      // generated network name just like an omitted flag (review round on
+      // CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
       const api = mockLegacyPlatformApi();
       const proxy = mockProxy();
@@ -867,9 +865,9 @@ describe("legacy functions download", () => {
   it.live(
     "falls back to the generated network name when the final --network-id occurrence is empty",
     () => {
-      // Same last-wins rule as above, applied to Go's `len(networkId) > 0`
-      // gate: a non-empty default followed by an explicit-but-empty override
-      // must fall through to the generated network name, not the earlier
+      // Same last-wins rule as above, applied to the non-empty-value gate: a
+      // non-empty default followed by an explicit-but-empty override must
+      // fall through to the generated network name, not the earlier
       // non-empty value.
       const out = mockOutput({ format: "text" });
       const api = mockLegacyPlatformApi();
@@ -911,10 +909,9 @@ describe("legacy functions download", () => {
   it.live(
     "does not climb to an ancestor project's config.toml for the Docker download path",
     () => {
-      // Go's `flags.LoadConfig` only ever resolves `supabase/config.toml` from
-      // the already-resolved workdir, with no ancestor climb
-      // (`NewPathBuilder`, `pkg/config/utils.go:43-48`) — mirrored here by
-      // `resolveEdgeRuntimeImage`'s `search: false` (review round on
+      // Established behavior: `supabase/config.toml` only ever resolves from
+      // the already-resolved workdir, with no ancestor climb — implemented
+      // here by `resolveEdgeRuntimeImage`'s `search: false` (review round on
       // CLI-1963's `functions download` port). A nested workdir with no
       // `supabase/config.toml` of its own must fall back to `--project-ref`
       // for network/volume naming, not an ancestor project's configured
@@ -970,11 +967,10 @@ describe("legacy functions download", () => {
   );
 
   it.live("prefers config.toml over a stray config.json for the Docker download path", () => {
-    // Go's `NewPathBuilder`/`Config.Load` (`pkg/config/utils.go:43-48`) has
-    // no concept of a JSON project config file — it always resolves
-    // `supabase/config.toml`, mirrored here by `resolveEdgeRuntimeImage`'s
-    // `tomlOnly: true` (review round on CLI-1963's `functions download`
-    // port). A workdir with both files must resolve `project_id` from
+    // Established behavior: there is no concept of a JSON project config
+    // file — it always resolves `supabase/config.toml`, implemented here by
+    // `resolveEdgeRuntimeImage`'s `tomlOnly: true` (review round on
+    // CLI-1963's `functions download` port). A workdir with both files must resolve `project_id` from
     // `config.toml`, not prefer the JSON file as the package loader
     // otherwise would.
     const out = mockOutput({ format: "text" });
@@ -1027,13 +1023,13 @@ describe("legacy functions download", () => {
   });
 
   it.live("skips network creation for a container: network mode", () => {
-    // Go's `container.NetworkMode.IsUserDefined()`
-    // (`docker/api/types/container/hostconfig_unix.go:23-25`) explicitly
-    // excludes `IsContainer()` — `--network-id container:redis` attaches to
-    // another container's network stack, so `DockerNetworkCreateIfNotExists`
-    // never inspects or creates a network for it, and the mode is passed
-    // straight through to `docker run --network` (review round on
-    // CLI-1963's `functions download` port).
+    // Established behavior: user-defined network detection explicitly
+    // excludes container-mode networks — `--network-id container:redis`
+    // attaches to another container's network stack, so
+    // `DockerNetworkCreateIfNotExists` never inspects or creates a network
+    // for it, and the mode is passed straight through to
+    // `docker run --network` (review round on CLI-1963's `functions
+    // download` port).
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
     const proxy = mockProxy();
@@ -1070,12 +1066,11 @@ describe("legacy functions download", () => {
   });
 
   it.live("does not double-prefix an already v-prefixed edge-runtime-version pin", () => {
-    // Go's `replaceImageTag` (`pkg/config/utils.go:81-84`) appends the pin
-    // file's raw content verbatim after the image's `:`, so a pin already
-    // carrying its own `v` prefix (a legitimate form — see
-    // `legacy-edge-runtime-image.unit.test.ts`'s own `"v9.9.9"` fixture) must
-    // not be prepended with a second `v` (review round on CLI-1963's
-    // `functions download` port).
+    // Established behavior: the pin file's raw content is appended verbatim
+    // after the image's `:`, so a pin already carrying its own `v` prefix (a
+    // legitimate form — see `legacy-edge-runtime-image.unit.test.ts`'s own
+    // `"v9.9.9"` fixture) must not be prepended with a second `v` (review
+    // round on CLI-1963's `functions download` port).
     const out = mockOutput({ format: "text" });
     const api = mockLegacyPlatformApi();
     const proxy = mockProxy();
@@ -1153,7 +1148,7 @@ describe("legacy functions download", () => {
   it.live(
     "removes the temporary eszip file when --debug=false overrides the flag's own presence",
     () => {
-      // Go gates this on `viper.GetBool("DEBUG")`, so an explicit
+      // This gates on the resolved boolean value, so an explicit
       // `--debug=false` resolves to `false` (cleanup runs) — a presence-only
       // check would get this backwards and treat `--debug=false` like
       // `--debug` (review round on CLI-1963's `functions download` port).
@@ -1195,11 +1190,11 @@ describe("legacy functions download", () => {
   it.live(
     "fails on an invalid project config before falling back when Docker is not running",
     () => {
-      // Go's `Run` calls `flags.LoadConfig(fsys)` unconditionally at the very
-      // top, before checking whether Docker is running (`download.go:135-138`)
-      // — an invalid `supabase/config.toml` must fail up front instead of
-      // silently falling through to the server-side path's API/filesystem
-      // side effects (review round on CLI-1963's `functions download` port).
+      // Established behavior: the config load happens unconditionally at the
+      // very top, before checking whether Docker is running — an invalid
+      // `supabase/config.toml` must fail up front instead of silently
+      // falling through to the server-side path's API/filesystem side
+      // effects (review round on CLI-1963's `functions download` port).
       const out = mockOutput({ format: "text" });
       const api = mockLegacyPlatformApi();
       const proxy = mockProxy();
@@ -1296,10 +1291,10 @@ describe("legacy functions download", () => {
         const proxy = mockProxy();
         const child = mockDockerUnbundle({
           runExitCode: 1,
-          // Go's scanner requires a full-line, case-insensitive match
-          // (`strings.EqualFold(line, "invalid eszip v2")`, `download.go:295`)
-          // — a line merely containing the phrase as a substring (e.g.
-          // "error: invalid eszip v2 header") does not fire the suggestion.
+          // Established behavior: the scanner requires a full-line,
+          // case-insensitive match — a line merely containing the phrase as
+          // a substring (e.g. "error: invalid eszip v2 header") does not
+          // fire the suggestion.
           runStderr: ["invalid eszip v2"],
         });
         const layer = Layer.mergeAll(
@@ -1442,7 +1437,7 @@ describe("legacy functions download", () => {
       );
       expect(child.spawned.some((spawned) => spawned.args[0] === "volume")).toBe(false);
       expect(child.spawned.some((spawned) => spawned.args[0] === "run")).toBe(false);
-      // Go parity fix (CLI-1963 review): `Effect.ensuring` wraps the whole
+      // Fix (CLI-1963 review): `Effect.ensuring` wraps the whole
       // Docker-extraction sequence, so the temp eszip written just before it
       // is still cleaned up even though the failure happened before Docker
       // ever ran — not only after a successful `runChildProcess` call.
@@ -1612,14 +1607,12 @@ describe("legacy functions download", () => {
   });
 
   it.live("fails loudly instead of silently dropping a malformed function-list entry", () => {
-    // Go: `FunctionResponse.Slug` (`pkg/api/types.gen.go:6465`) is a
-    // required, non-pointer `string` — a list entry with no "slug" key
-    // decodes to the zero value "" and then fails `ValidateFunctionSlug`
-    // in `downloadAll` (`download.go:182-188`), rather than being dropped
-    // from the list. A malicious/compromised API response returning
-    // `[{}]` must surface an error here too, never "No functions found."
-    // nor a silent partial download (review round on CLI-1963's
-    // `functions download` port).
+    // Established behavior: a list entry with no "slug" key decodes to the
+    // zero value "" and then fails `ValidateFunctionSlug` in `downloadAll`,
+    // rather than being dropped from the list. A malicious/compromised API
+    // response returning `[{}]` must surface an error here too, never "No
+    // functions found." nor a silent partial download (review round on
+    // CLI-1963's `functions download` port).
     const out = mockOutput({ format: "json" });
     const api = mockLegacyPlatformApi({
       handler: (request) =>

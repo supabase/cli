@@ -19,7 +19,7 @@ export interface LegacyStarterTemplate {
 interface LegacyTemplateServiceShape {
   /**
    * Fetches and decodes `samples.json` from the `supabase-community/supabase-samples`
-   * repo (Go's `ListSamples`). Returns the declared starter templates.
+   * repo (`ListSamples`). Returns the declared starter templates.
    */
   readonly listSamples: Effect.Effect<
     ReadonlyArray<LegacyStarterTemplate>,
@@ -28,7 +28,7 @@ interface LegacyTemplateServiceShape {
   /**
    * Downloads every file under a `https://github.com/<owner>/<repo>/tree/<ref>/<root>`
    * template URL into `targetDir`, preserving the directory layout below `<root>`
-   * (Go's `downloadSample`). Concurrency matches Go's job queue (5).
+   * (`downloadSample`). Concurrency matches the established job queue (5).
    */
   readonly download: (
     templateUrl: string,

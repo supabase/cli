@@ -1,7 +1,6 @@
 /**
- * renderGlamourTable - Reproduces the byte output of Go's `glamour.RenderTable`
- * using `styles.AsciiStyle` for the markdown tables the Go CLI emits (see
- * `apps/cli-go/internal/utils/output.go:109-122`).
+ * renderGlamourTable - Reproduces the byte output of glamour's `RenderTable`
+ * using `styles.AsciiStyle` for the markdown tables this CLI emits.
  *
  * Output shape (each line terminated by "\n"):
  *

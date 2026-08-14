@@ -40,8 +40,7 @@ export const legacyGenTypesRuntimeLayer = (() => {
   );
   // `legacyIdentityStitchLayer` (one per-command identity stitcher) is provided by
   // the SAME reference to the platform-API factory and the linked-project cache so
-  // memoisation gives both a single `stitchAttempted` guard — Go's one root-context
-  // `sync.Once`.
+  // memoisation gives both a single `stitchAttempted` guard.
   const platformApiFactory = legacyPlatformApiFactoryLayer.pipe(
     Layer.provide(credentials),
     Layer.provide(cliConfig),
@@ -69,8 +68,8 @@ export const legacyGenTypesRuntimeLayer = (() => {
     ),
     legacyPgDeltaSslProbeLayer,
     legacyTelemetryStateLayer,
-    // The one per-command identity stitcher (Go's single root-context `sync.Once`),
-    // exposed at top level so `withLegacyCommandInstrumentation` can read
+    // The one per-command identity stitcher, exposed at top level so
+    // `withLegacyCommandInstrumentation` can read
     // `stitchedDistinctId()` and attribute the cli_command_executed event to the
     // gotrue id. The SAME reference is provided to platformApiFactory /
     // linkedProjectCache above, so memoisation gives both a single

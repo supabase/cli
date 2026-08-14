@@ -7,16 +7,15 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Tagged errors for `db advisors`, one per Go failure path
- * (`internal/db/advisors/advisors.go` + the command's `PreRunE`). Messages
- * byte-match Go's `errors.Errorf` / `fmt.Errorf` text.
+ * Tagged errors for `db advisors`, one per failure path. Message text is an
+ * established output contract.
  *
  * Connection failures reuse the shared `LegacyDbConnectError`; project-ref
  * resolution failures reuse the resolver's `LegacyProjectNotLinkedError` /
  * `LegacyInvalidProjectRefError`.
  */
 
-/** cobra `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` (`db.go`). */
+/** Conflicting `db-url`/`linked`/`local` flags; message text is an established output contract. */
 export class LegacyDbAdvisorsMutuallyExclusiveFlagsError extends Data.TaggedError(
   "LegacyDbAdvisorsMutuallyExclusiveFlagsError",
 )<{ readonly message: string }> {
@@ -26,9 +25,8 @@ export class LegacyDbAdvisorsMutuallyExclusiveFlagsError extends Data.TaggedErro
 }
 
 /**
- * `--linked` PreRunE: no access token. Message is Go's `utils.ErrMissingToken`;
- * `suggestion` is Go's `utils.CmdSuggestion` ("Run supabase login first.").
- * See `apps/cli-go/cmd/db.go` advisors PreRunE + `internal/utils/access_token.go:18`.
+ * `--linked` PreRunE: no access token; message text and the "Run supabase
+ * login first." suggestion are an established output contract.
  */
 export class LegacyDbAdvisorsNotLoggedInError extends Data.TaggedError(
   "LegacyDbAdvisorsNotLoggedInError",
@@ -39,11 +37,10 @@ export class LegacyDbAdvisorsNotLoggedInError extends Data.TaggedError(
 }
 
 /**
- * `--linked` PreRunE: the resolved access token is malformed. Message is Go's
- * `utils.ErrInvalidToken` ("Invalid access token format. Must be like
- * `sbp_0102...1920`."); `suggestion` is Go's `utils.CmdSuggestion`. Go's
- * `LoadAccessTokenFS` validates the token (env/keyring/file) before any project
- * resolution or API call (`internal/utils/access_token.go:17,24-33`).
+ * `--linked` PreRunE: the resolved access token is malformed ("Invalid access
+ * token format. Must be like `sbp_0102...1920`."); message text and
+ * suggestion are an established output contract. The token (env/keyring/file)
+ * is validated before any project resolution or API call.
  */
 export class LegacyDbAdvisorsInvalidTokenError extends Data.TaggedError(
   "LegacyDbAdvisorsInvalidTokenError",
@@ -64,7 +61,7 @@ export class LegacyDbAdvisorsInvalidTokenError extends Data.TaggedError(
   }
 }
 
-/** `failed to begin transaction: %w` (`advisors.go:105`). */
+/** `failed to begin transaction: %w`; message text is an established output contract. */
 export class LegacyDbAdvisorsBeginTxError extends Data.TaggedError("LegacyDbAdvisorsBeginTxError")<{
   readonly message: string;
 }> {
@@ -73,7 +70,7 @@ export class LegacyDbAdvisorsBeginTxError extends Data.TaggedError("LegacyDbAdvi
   }
 }
 
-/** `failed to prepare lint session: %w` (`advisors.go:115`). */
+/** `failed to prepare lint session: %w`; message text is an established output contract. */
 export class LegacyDbAdvisorsSetupError extends Data.TaggedError("LegacyDbAdvisorsSetupError")<{
   readonly message: string;
 }> {
@@ -82,7 +79,7 @@ export class LegacyDbAdvisorsSetupError extends Data.TaggedError("LegacyDbAdviso
   }
 }
 
-/** `failed to query lints: %w` (`advisors.go:120`). */
+/** `failed to query lints: %w`; message text is an established output contract. */
 export class LegacyDbAdvisorsQueryError extends Data.TaggedError("LegacyDbAdvisorsQueryError")<{
   readonly message: string;
 }> {
@@ -92,10 +89,11 @@ export class LegacyDbAdvisorsQueryError extends Data.TaggedError("LegacyDbAdviso
 }
 
 /**
- * `failed to fetch security advisors: %w` (`advisors.go:165`). Go folds a
- * decode error into the same message path as a transport failure — `decode`
- * distinguishes them for actionability so a 200-response decode failure
- * classifies as an API response problem instead of a network problem.
+ * `failed to fetch security advisors: %w`; message text is an established
+ * output contract. A decode error folds into the same message path as a
+ * transport failure — `decode` distinguishes them for actionability so a
+ * 200-response decode failure classifies as an API response problem instead
+ * of a network problem.
  */
 export class LegacyDbAdvisorsSecurityNetworkError extends Data.TaggedError(
   "LegacyDbAdvisorsSecurityNetworkError",
@@ -107,7 +105,7 @@ export class LegacyDbAdvisorsSecurityNetworkError extends Data.TaggedError(
   }
 }
 
-/** `unexpected security advisors status %d: %s` (`advisors.go:168`). */
+/** `unexpected security advisors status %d: %s`; message text is an established output contract. */
 export class LegacyDbAdvisorsSecurityStatusError extends Data.TaggedError(
   "LegacyDbAdvisorsSecurityStatusError",
 )<{ readonly status: number; readonly body: string; readonly message: string }> {
@@ -117,10 +115,11 @@ export class LegacyDbAdvisorsSecurityStatusError extends Data.TaggedError(
 }
 
 /**
- * `failed to fetch performance advisors: %w` (`advisors.go:176`). Go folds a
- * decode error into the same message path as a transport failure — `decode`
- * distinguishes them for actionability so a 200-response decode failure
- * classifies as an API response problem instead of a network problem.
+ * `failed to fetch performance advisors: %w`; message text is an established
+ * output contract. A decode error folds into the same message path as a
+ * transport failure — `decode` distinguishes them for actionability so a
+ * 200-response decode failure classifies as an API response problem instead
+ * of a network problem.
  */
 export class LegacyDbAdvisorsPerformanceNetworkError extends Data.TaggedError(
   "LegacyDbAdvisorsPerformanceNetworkError",
@@ -132,7 +131,7 @@ export class LegacyDbAdvisorsPerformanceNetworkError extends Data.TaggedError(
   }
 }
 
-/** `unexpected performance advisors status %d: %s` (`advisors.go:179`). */
+/** `unexpected performance advisors status %d: %s`; message text is an established output contract. */
 export class LegacyDbAdvisorsPerformanceStatusError extends Data.TaggedError(
   "LegacyDbAdvisorsPerformanceStatusError",
 )<{ readonly status: number; readonly body: string; readonly message: string }> {
@@ -141,7 +140,7 @@ export class LegacyDbAdvisorsPerformanceStatusError extends Data.TaggedError(
   }
 }
 
-/** `fail-on is set to %s, non-zero exit` (`advisors.go:257`). */
+/** `fail-on is set to %s, non-zero exit`; message text is an established output contract. */
 export class LegacyDbAdvisorsFailOnError extends Data.TaggedError("LegacyDbAdvisorsFailOnError")<{
   readonly message: string;
 }> {
