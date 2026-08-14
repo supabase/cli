@@ -15,8 +15,6 @@ import {
   ManagedStackPublicationTimeoutError,
   UnsafeManagedStackPathError,
   UnsupportedGitWorkspaceError,
-  type ManagedCheckoutKind,
-  type ManagedContextKind,
   type ManagedIdentityTriple,
   type ManagedStackConfiguration,
   type ManagedStackLifecycle,
@@ -41,6 +39,7 @@ import type { ManagedWorkspaceDiscovery } from "./discovery.ts";
 import { discoveryObservation } from "./discovery-observation.ts";
 import {
   makeStackLifecycle,
+  type StackLifecycle,
   type DeleteManagedStackFailure as LifecycleDeleteManagedStackFailure,
   type DeleteManagedStackResult as LifecycleDeleteManagedStackResult,
   type ManagedOperationRecoveryFailure as LifecycleManagedOperationRecoveryFailure,
@@ -56,14 +55,21 @@ import {
 } from "./stack-lifecycle.ts";
 import {
   makeWorkspaceIdentity,
+  requireResolvedIdentity,
   type ManagedCheckoutRecoveryRequest,
   type ManagedIdentityTransitionAbandonRequest,
+  type ResolvedManagedContext,
+  type ResolvedManagedIdentity,
+  type ResolvedManagedWorkspace,
   type ResolvedWorkspacePlan,
 } from "./workspace-identity.ts";
 
 export type {
   ManagedCheckoutRecoveryRequest,
   ManagedIdentityTransitionAbandonRequest,
+  ResolvedManagedContext,
+  ResolvedManagedIdentity,
+  ResolvedManagedWorkspace,
 } from "./workspace-identity.ts";
 
 export interface ManagedStackServiceOptions {
@@ -109,40 +115,6 @@ export type ManagedPruneRequest = LifecycleManagedPruneRequest;
 export type ManagedPruneResult = LifecycleManagedPruneResult;
 
 export type ManagedPruneFailure = LifecycleManagedPruneFailure;
-
-/** What the workspace turned out to be, and where its identities are kept. */
-export interface ResolvedManagedWorkspace {
-  readonly checkoutKind: ManagedCheckoutKind;
-  readonly canonicalPath: string;
-  /** The checkout's top-level directory; the canonical path for a folder. */
-  readonly workspaceRoot: string;
-  /**
-   * Where the project identity lives: the common git directory of a repository,
-   * or the identity marker of an ordinary folder.
-   */
-  readonly projectIdentityLocation: string;
-  /** Where this checkout's own identity lives, under the same rule. */
-  readonly checkoutIdentityLocation: string;
-}
-
-export interface ResolvedManagedContext {
-  readonly kind: ManagedContextKind;
-  /** The branch a branch context was resolved under. */
-  readonly branch?: string;
-  /** The commit a detached `HEAD` is parked on; never part of the identity. */
-  readonly commit?: string;
-}
-
-/**
- * The identity triple, with each part absent until something has claimed it. A
- * `status` resolve of a workspace nothing has ever started reports all three as
- * absent, because claiming one would be a write.
- */
-export interface ResolvedManagedIdentity {
-  readonly projectId?: string;
-  readonly checkoutId?: string;
-  readonly contextId?: string;
-}
 
 /** Whether the named stack exists yet, and if it does, what it is doing. */
 export type ResolvedManagedStackState = "unregistered" | ManagedStackLifecycle;
@@ -201,7 +173,15 @@ export type ResolveManagedStackFailure =
 
 export type DeleteManagedStackFailure = LifecycleDeleteManagedStackFailure;
 
-export interface ManagedStackServiceShape {
+export interface ManagedStackServiceShape extends Pick<
+  StackLifecycle,
+  | "inspectStack"
+  | "listStacks"
+  | "updateStack"
+  | "deleteStack"
+  | "reconcileAbandonedOperations"
+  | "prune"
+> {
   readonly stateRoot: string;
   readonly discoverWorkspace: (
     workspacePath: string,
@@ -259,34 +239,6 @@ export interface ManagedStackServiceShape {
       options: ResolveManagedStackOptions,
     ): Effect.Effect<ManagedStackResolution, ResolveManagedStackFailure>;
   };
-  readonly inspectStack: (stackId: string) => Effect.Effect<ManagedStackProjection | undefined>;
-  readonly listStacks: (options?: {
-    readonly includeTombstoned?: boolean;
-  }) => Effect.Effect<ReadonlyArray<ManagedStackProjection>>;
-  readonly updateStack: (
-    stackId: string,
-    configuration: ManagedStackConfiguration,
-  ) => Effect.Effect<ManagedStackRecord, UpdateManagedStackConfigurationFailure>;
-  /**
-   * The `stop` callback's failure reaches the caller unchanged — a stack that
-   * refused to stop was not deleted — so its error type flows through.
-   */
-  readonly deleteStack: <E = never>(
-    stackId: string,
-    options?: { readonly stop?: (stack: ManagedStackRecord) => Effect.Effect<void, E> },
-  ) => Effect.Effect<DeleteManagedStackResult, DeleteManagedStackFailure | E>;
-  /**
-   * Recovery reports rather than fails: a runtime it could not inspect is a
-   * retained operation, and a reclamation it could not finish is a reported
-   * failure. Only a forced target that is not a pair of managed UUIDs refuses
-   * the whole pass.
-   */
-  readonly reconcileAbandonedOperations: (
-    options: ReconcileAbandonedOperationsOptions,
-  ) => Effect.Effect<ReconcileAbandonedOperationsResult, InvalidManagedIdentityError>;
-  readonly prune: (
-    request: ManagedPruneRequest,
-  ) => Effect.Effect<ManagedPruneResult, ManagedPruneFailure>;
 }
 
 const selectionForStack = (stack: ManagedStackRecord): ManagedStackSelection => ({
@@ -406,27 +358,6 @@ export class ManagedStackService extends Context.Service<
           managedUuid,
           now,
         });
-
-        /**
-         * The identity a mutating resolve must have ended up with. Every claim
-         * from the composed identity policy either produces all three parts or fails,
-         * so a gap here is a bug in this module rather than a state a caller
-         * could be in — but it is
-         * reported rather than asserted, because inventing an identity is the one
-         * thing this layer must never do.
-         */
-        const requireResolvedIdentity = (
-          plan: ResolvedWorkspacePlan,
-        ): Effect.Effect<ManagedIdentityTriple, InvalidManagedIdentityError> => {
-          const { projectId, checkoutId, contextId } = plan.identity;
-          return projectId === undefined || checkoutId === undefined || contextId === undefined
-            ? Effect.fail(
-                new InvalidManagedIdentityError({
-                  message: `${plan.workspace.canonicalPath} was resolved without a complete identity`,
-                }),
-              )
-            : Effect.succeed({ projectId, checkoutId, contextId });
-        };
 
         /**
          * Every live stack of one resolved project, checkout, and context, as a

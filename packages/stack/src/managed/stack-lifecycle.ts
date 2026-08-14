@@ -110,9 +110,19 @@ export interface ManagedOperationRecoveryFailure {
 
 export interface ReconcileAbandonedOperationsResult {
   readonly recovered: ReadonlyArray<ManagedStackRecord>;
-  /** State removal succeeded; failed removals are reported separately. */
+  /**
+   * Discarded pending stacks whose leaked provisioning data was removed. A stack
+   * whose removal failed is reported under `failures` with the
+   * `state-reclamation` phase instead, never here: this list means the data is
+   * gone.
+   */
   readonly abortedStackIds: ReadonlyArray<string>;
-  /** State removal succeeded; failed removals are reported separately. */
+  /**
+   * Tombstoned stacks whose abandoned deletion recovery finished, with the same
+   * removal-succeeded guarantee as {@link abortedStackIds}. The registry
+   * tombstone is deliberately preserved so repeated deletion stays idempotent;
+   * only the leaked stack directory is reclaimed.
+   */
   readonly reclaimedStackIds: ReadonlyArray<string>;
   readonly retained: ReadonlyArray<RetainedManagedOperation>;
   readonly skippedOperationIds: ReadonlyArray<string>;
@@ -194,10 +204,20 @@ export interface StackLifecycle {
   readonly registerStack: (
     input: RegisterManagedStackInput,
   ) => Effect.Effect<RegisterManagedStackResult, RegisterManagedStackFailure>;
+  /**
+   * The `stop` callback's failure reaches the caller unchanged — a stack that
+   * refused to stop was not deleted — so its error type flows through.
+   */
   readonly deleteStack: <E = never>(
     stackId: string,
     options?: { readonly stop?: (stack: ManagedStackRecord) => Effect.Effect<void, E> },
   ) => Effect.Effect<DeleteManagedStackResult, DeleteManagedStackFailure | E>;
+  /**
+   * Recovery reports rather than fails: a runtime it could not inspect is a
+   * retained operation, and a reclamation it could not finish is a reported
+   * failure. Only a forced target that is not a pair of managed UUIDs refuses
+   * the whole pass.
+   */
   readonly reconcileAbandonedOperations: (
     options: ReconcileAbandonedOperationsOptions,
   ) => Effect.Effect<ReconcileAbandonedOperationsResult, InvalidManagedIdentityError>;
@@ -218,6 +238,15 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
     publicationPollMs,
     probeProcessAlive,
   } = dependencies;
+
+  const requireManagedUuid = (
+    value: string,
+    label: string,
+  ): Effect.Effect<string, InvalidManagedIdentityError> =>
+    Effect.try({
+      try: () => assertManagedUuid(value, label),
+      catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
+    });
 
   // Reclamation is always guarded by the validated stack root; callers can
   // report a failed removal without risking a path outside the managed root.
@@ -581,15 +610,11 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       const failures: Array<ManagedOperationRecoveryFailure> = [];
       const forcedOperation = reconcileOptions.force;
       if (forcedOperation !== undefined) {
-        yield* Effect.try({
-          try: () => assertManagedUuid(forcedOperation.stackId, "forced recovery stackId"),
-          catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-        });
-        yield* Effect.try({
-          try: () =>
-            assertManagedUuid(forcedOperation.operationToken, "forced recovery operation token"),
-          catch: failsWith<InvalidManagedIdentityError>(InvalidManagedIdentityError),
-        });
+        yield* requireManagedUuid(forcedOperation.stackId, "forced recovery stackId");
+        yield* requireManagedUuid(
+          forcedOperation.operationToken,
+          "forced recovery operation token",
+        );
       }
       const operations = (yield* repository.listActiveOperations(
         forcedOperation === undefined ? reconcileOptions.startedBefore : undefined,

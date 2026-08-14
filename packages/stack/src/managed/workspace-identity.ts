@@ -57,27 +57,71 @@ export interface WorkspaceIdentityDependencies {
   readonly now: () => string;
 }
 
+/** What the workspace turned out to be, and where its identities are kept. */
+export interface ResolvedManagedWorkspace {
+  readonly checkoutKind: ManagedCheckoutKind;
+  readonly canonicalPath: string;
+  /** The checkout's top-level directory; the canonical path for a folder. */
+  readonly workspaceRoot: string;
+  /**
+   * Where the project identity lives: the common git directory of a repository,
+   * or the identity marker of an ordinary folder.
+   */
+  readonly projectIdentityLocation: string;
+  /** Where this checkout's own identity lives, under the same rule. */
+  readonly checkoutIdentityLocation: string;
+}
+
+export interface ResolvedManagedContext {
+  readonly kind: ManagedContextKind;
+  /** The branch a branch context was resolved under. */
+  readonly branch?: string;
+  /** The commit a detached `HEAD` is parked on; never part of the identity. */
+  readonly commit?: string;
+}
+
+/**
+ * The identity triple, with each part absent until something has claimed it. A
+ * `status` resolve of a workspace nothing has ever started reports all three as
+ * absent, because claiming one would be a write.
+ */
+export interface ResolvedManagedIdentity {
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+}
+
+/**
+ * The settled workspace, context, and identity facts shared between identity
+ * policy and the service composition while resolving a managed stack.
+ */
 export interface ResolvedWorkspacePlan {
-  readonly workspace: {
-    readonly checkoutKind: ManagedCheckoutKind;
-    readonly canonicalPath: string;
-    readonly workspaceRoot: string;
-    readonly projectIdentityLocation: string;
-    readonly checkoutIdentityLocation: string;
-  };
-  readonly context: {
-    readonly kind: ManagedContextKind;
-    readonly branch?: string;
-    readonly commit?: string;
-  };
+  readonly workspace: ResolvedManagedWorkspace;
+  readonly context: ResolvedManagedContext;
   readonly contextDescriptor: ManagedContextDescriptor;
-  readonly identity: {
-    readonly projectId?: string;
-    readonly checkoutId?: string;
-    readonly contextId?: string;
-  };
+  readonly identity: ResolvedManagedIdentity;
   readonly identityMarkerCreated: boolean;
 }
+
+/**
+ * The identity a mutating resolve must have ended up with. Every claim
+ * produces all three parts or fails, so a gap here is a bug in the identity
+ * policy rather than a state a caller could be in — but it is reported rather
+ * than asserted, because inventing an identity is the one thing this policy
+ * must never do.
+ */
+export const requireResolvedIdentity = (
+  plan: ResolvedWorkspacePlan,
+): Effect.Effect<ManagedIdentityTriple, InvalidManagedIdentityError> => {
+  const { projectId, checkoutId, contextId } = plan.identity;
+  return projectId === undefined || checkoutId === undefined || contextId === undefined
+    ? Effect.fail(
+        new InvalidManagedIdentityError({
+          message: `${plan.workspace.canonicalPath} was resolved without a complete identity`,
+        }),
+      )
+    : Effect.succeed({ projectId, checkoutId, contextId });
+};
 
 /** A read observation consumed by an explicit checkout recovery operation. */
 export interface ManagedCheckoutRecoveryRequest {
@@ -1572,26 +1616,6 @@ export const makeWorkspaceIdentity = ({
         targetGitValue: transition.targetGitValue,
       });
     });
-
-  /**
-   * The identity a mutating resolve must have ended up with. Every claim
-   * above either produces all three parts or fails, so a gap here is a bug
-   * in this module rather than a state a caller could be in — but it is
-   * reported rather than asserted, because inventing an identity is the one
-   * thing this layer must never do.
-   */
-  const requireResolvedIdentity = (
-    plan: ResolvedWorkspacePlan,
-  ): Effect.Effect<ManagedIdentityTriple, InvalidManagedIdentityError> => {
-    const { projectId, checkoutId, contextId } = plan.identity;
-    return projectId === undefined || checkoutId === undefined || contextId === undefined
-      ? Effect.fail(
-          new InvalidManagedIdentityError({
-            message: `${plan.workspace.canonicalPath} was resolved without a complete identity`,
-          }),
-        )
-      : Effect.succeed({ projectId, checkoutId, contextId });
-  };
 
   return {
     discover,

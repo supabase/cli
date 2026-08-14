@@ -479,13 +479,16 @@ The managed surface is two `Context.Service` tags, each with layer factories:
   The contract contains no SQLite types, so the adapter is swappable without the policy layer
   noticing. A fresh registry creates the current format directly; incomplete existing registries
   fail closed rather than being migrated.
-- `ManagedStackService` is the policy layer described above: workspace classification, identity
-  ownership, provisioning order, publication waiting, deletion, and recovery.
+- `ManagedStackService` is the public composition facade and orchestration seam over the
+  `workspace-identity.ts` and `stack-lifecycle.ts` policy modules.
   `ManagedStackService.make(options)` returns a layer requiring
   `FileSystem.FileSystem | GitConfigStore | ManagedStackRepository` and failing with
   `InvalidManagedOwnerPidError | UnsafeManagedStackPathError`, so a blank state root or an owner PID
   that could never be probed is refused while the layer is being built rather than at whichever call
   first touches a path.
+
+Current policy ownership is explicit: `workspace-identity.ts` owns workspace discovery, identity,
+and recovery policy; `stack-lifecycle.ts` owns stack lifecycle, operation, and reclamation policy.
 
 `managedStackLayer(options)` — exported from `managed-bun.ts` and `managed-node.ts` — is those two
 composed with the platform filesystem and the state root resolved by the one resolver that owns that
