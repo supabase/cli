@@ -51,17 +51,34 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * running Logflare against an unmigrated database lets Oban die on the
  * missing `public.oban_jobs` table instead.
  */
-// Both `exec`s route `docker stop`'s SIGTERM to Logflare's BEAM as PID 1 (`exec sh run.sh`
-// replaces the outer wrapper shell; `exec ./logflare start` replaces `run.sh`'s own shell once
-// the migrate step succeeded) — necessary but, measured, NOT yet sufficient: with beam.smp as
-// PID 1 a `docker stop -t 10` still burns the full grace period (~10.5s), so Logflare's own
-// SIGTERM shutdown hangs upstream, the same class of problem postgres-meta had before
-// postgres-meta#1103. Keep the execs (one less layer between the signal and the BEAM, and they
-// become load-bearing the moment upstream fixes its handler); the remaining ~10s needs an
-// upstream Logflare image fix. The `migrate && start` sequencing is unchanged and deliberate —
-// see the doc comment above (#6088). Stop timing is outside the Go-parity surface (ADR 0016).
+// A trap-and-escalate supervisor rather than a bare `exec`: measured with beam.smp as PID 1
+// (a plain `exec` chain), `docker stop -t 10` STILL burned the full grace period — Logflare's
+// own SIGTERM shutdown hangs upstream, the same class of problem postgres-meta had before
+// postgres-meta#1103. So `run.sh`'s shell stays PID 1 deliberately, with a real handler:
+// forward SIGTERM to the BEAM, give its graceful shutdown a 3s window, then SIGKILL it. Today's
+// post-timeout outcome is already SIGKILL, so escalating early produces the identical end state
+// ~7s sooner (Logflare's durable state lives in Postgres/BigQuery, both crash-safe) — and if
+// upstream ever fixes its handler, the graceful window wins first and the KILL never fires.
+// The `migrate`-then-`start` sequencing (a failed migrate exits the container so the
+// `unless-stopped` policy retries) is unchanged and deliberate — see the doc comment above
+// (#6088). Stop timing is outside the Go-parity surface (ADR 0016).
+// `run.sh` line by line: migrate (exit on failure — the container-restart retry above), start
+// the BEAM in the background, install the TERM handler, then `wait`. A trapped signal interrupts
+// `wait` with a >128 status, so the follow-up `wait` collects the BEAM's real exit status once
+// the trap's TERM-then-KILL escalation finishes; the `127` guard keeps the first status when the
+// BEAM was already reaped (a second `wait` on a reaped pid is an error). A clean BEAM exit takes
+// the single-`wait` path untouched.
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
-  "cat <<'EOF' > run.sh && exec sh run.sh\n./logflare eval Logflare.Release.migrate &&\nexec ./logflare start --sname logflare\nEOF\n";
+  "cat <<'EOF' > run.sh && exec sh run.sh\n" +
+  "./logflare eval Logflare.Release.migrate || exit $?\n" +
+  "./logflare start --sname logflare &\n" +
+  "BEAM_PID=$!\n" +
+  'trap \'kill -TERM "$BEAM_PID" 2>/dev/null; n=0; while [ "$n" -lt 3 ] && kill -0 "$BEAM_PID" 2>/dev/null; do n=$((n+1)); sleep 1; done; kill -KILL "$BEAM_PID" 2>/dev/null\' TERM\n' +
+  'wait "$BEAM_PID"\n' +
+  "code=$?\n" +
+  'if [ "$code" -gt 128 ]; then wait "$BEAM_PID" 2>/dev/null; code2=$?; [ "$code2" -ne 127 ] && code=$code2; fi\n' +
+  'exit "$code"\n' +
+  "EOF\n";
 
 export interface LegacyLogflareContainerSpecInput {
   /**
