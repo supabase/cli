@@ -126,6 +126,143 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(calls.count).toBe(0);
   });
 
+  it("rejects conflicting recovery path spellings before mutation", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "recovery-path");
+    const service = await open(root);
+    openHandles.push(service);
+    const readOptional = (path: string): string | undefined =>
+      existsSync(path) ? readFileSync(path, "utf8") : undefined;
+    const snapshot = async () => ({
+      claims: await Effect.runPromise(service.repository.listIdentityClaims()),
+      locations: await Effect.runPromise(service.repository.listCheckoutLocations()),
+      stacks: await Effect.runPromise(service.repository.listStacks({ includeTombstoned: true })),
+      operations: await Effect.runPromise(service.repository.listActiveOperations()),
+      tree: snapshotTree(root),
+      identityFiles: {
+        ordinaryMarker: readOptional(ordinaryWorkspaceIdentityPath(workspace)),
+        gitConfig: readOptional(gitConfigPath(join(workspace, ".git"))),
+        gitMarker: readOptional(gitCheckoutIdentityPath(join(workspace, ".git"))),
+      },
+    });
+
+    const beforeNewCheckout = await snapshot();
+    await expect(
+      service.newCheckout({
+        workspacePath: workspace,
+        path: join(root, "different-path"),
+      }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+    expect(await snapshot()).toEqual(beforeNewCheckout);
+
+    const transitionId = "00000000-0000-7000-8000-000000000301";
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: transitionId,
+        kind: "new-checkout",
+        path: workspace,
+        now: new Date().toISOString(),
+      }),
+    );
+    const beforeAbandon = await snapshot();
+    await expect(
+      service.abandonIdentityTransition({
+        transitionId,
+        workspacePath: workspace,
+        path: join(root, "different-path"),
+      }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+    const afterAbandon = await snapshot();
+    expect(afterAbandon).toEqual(beforeAbandon);
+    expect(afterAbandon.claims.transitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: transitionId, kind: "new-checkout", phase: "reserved" }),
+      ]),
+    );
+  });
+
+  it("settles unrelated first starts while registry claims change between observations", async () => {
+    const root = makeRoot();
+    const workspaceA = makeRepository(root, "workspace-a");
+    const workspaceB = makeRepository(root, "workspace-b");
+    const stateRoot = join(root, "shared-managed");
+    let serviceA: Awaited<ReturnType<typeof open>>;
+    let serviceB: Awaited<ReturnType<typeof open>>;
+    let injected = false;
+    let injectedStart: Promise<unknown> | undefined;
+
+    if (_name === "in-memory") {
+      const shared = createInMemoryManagedStackRepository();
+      serviceB = await makeManagedStackService({
+        repository: shared,
+        stateRoot,
+        publicationPollMs: 1,
+      });
+      const wrapped: ManagedStackRepositoryShape = {
+        ...shared,
+        listIdentityClaims: (projectId) =>
+          Effect.gen(function* () {
+            const stale = yield* shared.listIdentityClaims(projectId);
+            if (!injected) {
+              injected = true;
+              const start = serviceB.resolveStack({
+                workspacePath: workspaceB,
+                operation: "start",
+              });
+              injectedStart = start;
+              yield* Effect.promise(() => start).pipe(Effect.asVoid);
+            }
+            return stale;
+          }).pipe(Effect.orDie),
+      };
+      serviceA = await makeManagedStackService({
+        repository: wrapped,
+        stateRoot,
+        publicationPollMs: 1,
+      });
+    } else {
+      serviceB = await open(root);
+      const base = await open(root);
+      const wrapped: ManagedStackRepositoryShape = {
+        ...base.repository,
+        listIdentityClaims: (projectId) =>
+          Effect.gen(function* () {
+            const stale = yield* base.repository.listIdentityClaims(projectId);
+            if (!injected) {
+              injected = true;
+              const start = serviceB.resolveStack({
+                workspacePath: workspaceB,
+                operation: "start",
+              });
+              injectedStart = start;
+              yield* Effect.promise(() => start).pipe(Effect.asVoid);
+            }
+            return stale;
+          }).pipe(Effect.orDie),
+      };
+      serviceA = await makeManagedStackService({
+        repository: wrapped,
+        stateRoot,
+        publicationPollMs: 1,
+      });
+    }
+    openHandles.push(serviceA, serviceB);
+
+    const startedA = await serviceA.resolveStack({ workspacePath: workspaceA, operation: "start" });
+    expect(injected).toBe(true);
+    expect(injectedStart).toBeDefined();
+    await injectedStart;
+    expect(startedA.identity.checkoutId).toBeDefined();
+
+    const reportA = await serviceA.discoverWorkspace(workspaceA);
+    expect(reportA.locations.map((location) => location.canonicalPath)).not.toContain(workspaceB);
+    const fresh = makeDirectory(root, "workspace-c");
+    const reportFresh = await serviceA.discoverWorkspace(fresh);
+    expect(reportFresh.locations.map((location) => location.canonicalPath)).not.toContain(
+      workspaceB,
+    );
+  });
+
   it("resolves healthy branch, detached, and ordinary identities", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
@@ -447,7 +584,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.identity.checkoutId).toBe(first.identity.checkoutId);
   });
 
-  it("supports explicit rebind and refuses adoption of a healthy checkout", async () => {
+  it("supports explicit rebind of a healthy checkout", async () => {
     const root = makeRoot();
     const previous = makeRepository(root);
     const next = join(root, "explicit-recovery");
@@ -464,16 +601,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(rebound.locations).toEqual(
       expect.arrayContaining([expect.objectContaining({ canonicalPath: next, state: "active" })]),
     );
-
-    await expect(
-      service.adoptCheckout({
-        workspacePath: next,
-        checkoutId: first.identity.checkoutId,
-      }),
-    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
   });
 
-  it("refuses adopting a live copied checkout when its project key is missing", async () => {
+  it("refuses a live copied checkout when its project key is missing", async () => {
     const root = makeRoot();
     const ownerWorkspace = makeRepository(root, "owner");
     const copiedWorkspace = join(root, "copied");
@@ -502,13 +632,6 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
     expect(report.state).toBe("duplicate");
     expect(report.recoveryOperations).toEqual([]);
-    await expect(
-      service.adoptCheckout({
-        workspacePath: copiedWorkspace,
-        checkoutId: owner.identity.checkoutId,
-      }),
-    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
-
     expect(readFileSync(copiedConfig, "utf8")).toBe(beforeConfig);
     expect(readFileSync(copiedMarker, "utf8")).toBe(beforeMarker);
     expect(gitStatus(copiedWorkspace)).toBe(beforeStatus);
@@ -520,7 +643,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(snapshotTree(root)).toEqual(beforeTree);
   });
 
-  it("does not advertise adoption when the active checkout project key is missing", async () => {
+  it("does not advertise recovery when the active checkout project key is missing", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
     const service = await open(root);
@@ -544,13 +667,6 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
     expect(report.state).toBe("duplicate");
     expect(report.recoveryOperations).toEqual([]);
-    await expect(
-      service.adoptCheckout({
-        workspacePath: repository,
-        checkoutId: started.identity.checkoutId,
-      }),
-    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
-
     expect(readFileSync(configPath, "utf8")).toBe(beforeConfig);
     expect(readFileSync(markerPath, "utf8")).toBe(beforeMarker);
     expect(gitStatus(repository)).toBe(beforeStatus);
@@ -1045,46 +1161,6 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       expect.arrayContaining([expect.objectContaining({ path: previous, probe: "same" })]),
     );
   }, 15_000);
-
-  it("refuses checkout adoption for an ownerless branch context", async () => {
-    const root = makeRoot();
-    const repository = makeRepository(root);
-    const service = await open(root);
-    openHandles.push(service);
-    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
-    const ownerless: ManagedStackRepositoryShape = {
-      ...service.repository,
-      listIdentityClaims: (projectId) =>
-        Effect.orDie(
-          Effect.map(service.repository.listIdentityClaims(projectId), (claims) => ({
-            ...claims,
-            contexts: claims.contexts.map((context) =>
-              context.id === started.identity.contextId
-                ? { ...context, ownerBranch: undefined }
-                : context,
-            ),
-          })),
-        ),
-    };
-    const ownerlessService = await makeManagedStackService({
-      repository: ownerless,
-      stateRoot: join(root, "ownerless-recovery"),
-      publicationPollMs: 1,
-    });
-    openHandles.push(ownerlessService);
-    const before = await Effect.runPromise(service.repository.listIdentityClaims());
-
-    await expect(
-      ownerlessService.adoptCheckout({
-        workspacePath: repository,
-        checkoutId: started.identity.checkoutId,
-      }),
-    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
-
-    const after = await Effect.runPromise(service.repository.listIdentityClaims());
-    expect(after.locations).toEqual(before.locations);
-    expect(after.transitions).toEqual(before.transitions);
-  });
 
   it("settles concurrent rebinds with one CAS winner", async () => {
     const root = makeRoot();

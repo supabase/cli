@@ -370,7 +370,7 @@ Discovery and recovery deliberately separate observation from mutation. Branch r
 ref updates keep the same branch context, while branch copies, detached `HEAD`, linked-worktree
 moves, recycled folders, and folder-to-Git changes are reported as duplicate, moved, orphaned,
 ambiguous, adoptable, or transitioning states. A report can carry a typed `newCheckout`,
-`rebindCheckout`, `adoptCheckout`, `adoptContext`, or `prune` operation; callers pass the exact
+`rebindCheckout`, `adoptContext`, or `prune` operation; callers pass the exact
 operation back to the service after reviewing its IDs and paths. Location history is explicit:
 `active` is the current claim, `superseded` is historical evidence, and `blocked` preserves a
 conflict. Recovery never infers a new identity from a path alone and never removes stack records or

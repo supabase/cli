@@ -89,6 +89,13 @@ import {
   type ManagedRecoveryOperation,
   type ManagedWorkspaceDiscovery,
 } from "./discovery.ts";
+import {
+  NEW_CHECKOUT_DETACHED_TOPOLOGY,
+  NEW_CHECKOUT_ORDINARY_TOPOLOGY,
+  checkoutKindOf,
+  newCheckoutTopologyMatches,
+} from "./topology.ts";
+import { discoveryObservation } from "./discovery-observation.ts";
 
 export interface ManagedStackServiceOptions {
   readonly stateRoot: string;
@@ -348,15 +355,6 @@ export interface ManagedStackServiceShape {
     | ManagedIdentityRecoveryError
     | ManagedInaccessiblePathError
   >;
-  readonly adoptCheckout: (
-    options: ManagedCheckoutRecoveryRequest,
-  ) => Effect.Effect<
-    ManagedWorkspaceDiscovery,
-    | InvalidManagedIdentityError
-    | UnsupportedGitWorkspaceError
-    | ManagedIdentityRecoveryError
-    | ManagedInaccessiblePathError
-  >;
   readonly adoptContext: (
     options: ManagedCheckoutRecoveryRequest,
   ) => Effect.Effect<
@@ -439,31 +437,6 @@ const dataRetained = (error: unknown): DeleteManagedStackResult["dataReclamation
   outcome: "retained",
   error,
 });
-
-/**
- * How a git checkout's own classification maps onto a registry checkout kind. The
- * two vocabularies differ in one word — git's `primary` is the registry's `git` —
- * because the registry also has to name a checkout that is no repository at all.
- */
-const checkoutKindOf = (inspection: GitCheckoutInspection): ManagedCheckoutKind =>
-  inspection.checkoutKind === "primary" ? "git" : inspection.checkoutKind;
-
-const NEW_CHECKOUT_ORDINARY_TOPOLOGY = "topology:ordinary";
-const NEW_CHECKOUT_DETACHED_TOPOLOGY = "topology:detached";
-
-const newCheckoutTopologyMatches = (
-  transition: ManagedIdentityTransitionRecord,
-  report: ManagedWorkspaceDiscovery,
-): boolean => {
-  if (report.context.kind === "branch") return transition.branch === report.context.branch;
-  return (
-    transition.branch === undefined &&
-    transition.expectedGitValue ===
-      (report.context.kind === "workspace"
-        ? NEW_CHECKOUT_ORDINARY_TOPOLOGY
-        : NEW_CHECKOUT_DETACHED_TOPOLOGY)
-  );
-};
 
 const observationMatches = (
   report: ManagedWorkspaceDiscovery,
@@ -1288,7 +1261,7 @@ export class ManagedStackService extends Context.Service<
                     }
                   }),
                 );
-              yield* publishConfig("supabase.projectId", claim.projectId);
+              yield* publishConfig(GIT_PROJECT_ID_KEY, claim.projectId);
               yield* withWorkspaceServices(
                 publishGitCheckoutIdentity(inspection.gitDirectory, claim.checkoutId),
               );
@@ -1388,213 +1361,20 @@ export class ManagedStackService extends Context.Service<
             return migrated;
           });
 
-        const compareText = (left: string, right: string): number =>
-          left < right ? -1 : left > right ? 1 : 0;
-        const observationValue = (value: string | number | boolean | undefined): string => {
-          const text = value === undefined ? "" : String(value);
-          return `${value === undefined ? "u" : "v"}${text.length}:${text}`;
-        };
-        const observationList = (values: ReadonlyArray<string>): string =>
-          observationValue(values.join(""));
-        const sortedBy = <T>(values: ReadonlyArray<T>, key: (value: T) => string) =>
-          [...values].sort((left, right) => compareText(key(left), key(right)));
-        const stringRecordObservation = (record: Readonly<Record<string, string>>): string =>
-          observationList(
-            Object.entries(record)
-              .sort(([left], [right]) => compareText(left, right))
-              .flatMap(([key, value]) => [observationValue(key), observationValue(value)]),
-          );
-        const numberRecordObservation = (record: Readonly<Record<string, number>>): string =>
-          observationList(
-            Object.entries(record)
-              .sort(([left], [right]) => compareText(left, right))
-              .flatMap(([key, value]) => [observationValue(key), observationValue(value)]),
-          );
-        const discoveryObservation = (report: ManagedWorkspaceDiscovery): string => {
-          const transitionObservation = (transition: ManagedIdentityTransitionRecord) =>
-            observationList([
-              observationValue(transition.id),
-              observationValue(transition.kind),
-              observationValue(transition.phase),
-              observationValue(transition.projectId),
-              observationValue(transition.checkoutId),
-              observationValue(transition.contextId),
-              observationValue(transition.branch),
-              observationValue(transition.path),
-              observationValue(transition.expectedGitValue),
-              observationValue(transition.targetGitValue),
-              observationValue(transition.createdAt),
-              observationValue(transition.updatedAt),
-            ]);
-          const locationObservation = (location: ManagedWorkspaceDiscovery["locations"][number]) =>
-            observationList([
-              observationValue(location.id),
-              observationValue(location.checkoutId),
-              observationValue(location.canonicalPath),
-              observationValue(location.state),
-              observationValue(location.reboundFromLocationId),
-              observationValue(location.lastSeenAt),
-            ]);
-          const stackObservation = (stack: ManagedWorkspaceDiscovery["stacks"][number]) =>
-            observationList([
-              observationValue(stack.id),
-              observationValue(stack.projectId),
-              observationValue(stack.checkoutId),
-              observationValue(stack.contextId),
-              observationValue(stack.name),
-              observationValue(stack.status),
-              observationValue(stack.lifecycle),
-              observationValue(stack.runtimeRequest),
-              observationValue(stack.runtime),
-              observationValue(stack.paths.root),
-              observationValue(stack.paths.data),
-              observationValue(stack.paths.logs),
-              observationValue(stack.paths.runtime),
-              observationList(
-                sortedBy(stack.ports, (port) => `${port.key}\0${port.port}\0${port.intent}`).map(
-                  (port) =>
-                    observationList([
-                      observationValue(port.key),
-                      observationValue(port.port),
-                      observationValue(port.intent),
-                    ]),
-                ),
-              ),
-              stringRecordObservation(stack.serviceVersions),
-              observationValue(stack.runtimeMetadata.pid),
-              observationValue(stack.runtimeMetadata.socketPath),
-              numberRecordObservation(stack.runtimeMetadata.processIds),
-              stringRecordObservation(stack.runtimeMetadata.containerIds),
-              observationValue(stack.configFingerprint),
-              observationValue(stack.credentialsReference),
-              observationValue(stack.createdAt),
-              observationValue(stack.updatedAt),
-              observationValue(stack.tombstonedAt),
-              observationValue(stack.checkoutKind),
-              observationValue(stack.canonicalPath),
-              observationValue(stack.contextKind),
-              observationValue(stack.contextLocator),
-            ]);
-          const operationObservation = (operation: ManagedOperationRecord) =>
-            observationList([
-              observationValue(operation.token),
-              observationValue(operation.stackId),
-              observationValue(operation.kind),
-              observationValue(operation.status),
-              observationValue(operation.ownerPid),
-              observationValue(operation.startedAt),
-              observationValue(operation.finishedAt),
-              observationValue(operation.error),
-            ]);
-          const recoveryObservation = (recovery: ManagedRecoveryOperation) =>
-            observationList([
-              observationValue(recovery.operation),
-              observationValue("checkoutId" in recovery ? recovery.checkoutId : undefined),
-              observationValue("contextId" in recovery ? recovery.contextId : undefined),
-              observationValue("branch" in recovery ? recovery.branch : undefined),
-              observationValue("path" in recovery ? recovery.path : undefined),
-              observationList(
-                "recordIds" in recovery
-                  ? [...recovery.recordIds].sort(compareText).map(observationValue)
-                  : [],
-              ),
-            ]);
-          return observationList([
-            observationValue(report.state),
-            observationValue(report.workspace.checkoutKind),
-            observationValue(report.workspace.canonicalPath),
-            observationValue(report.workspace.workspaceRoot),
-            observationValue(report.workspace.projectIdentityLocation),
-            observationValue(report.workspace.checkoutIdentityLocation),
-            observationValue(report.context.kind),
-            observationValue(report.context.branch),
-            observationValue(report.context.commit),
-            observationValue(report.contextDescriptor.kind),
-            observationValue(
-              report.contextDescriptor.kind === "branch"
-                ? report.contextDescriptor.locator
-                : undefined,
-            ),
-            observationValue(report.identity.projectId),
-            observationValue(report.identity.checkoutId),
-            observationValue(report.identity.contextId),
-            observationValue(report.ordinaryMarker?.path),
-            observationValue(report.ordinaryMarker?.present),
-            observationValue(report.ordinaryMarker?.identity?.projectId),
-            observationValue(report.ordinaryMarker?.identity?.checkoutId),
-            observationValue(report.ordinaryMarker?.identity?.contextId),
-            observationList(
-              sortedBy(
-                report.folderToGitClaims,
-                (claim) =>
-                  `${claim.projectId}\0${claim.checkoutId}\0${claim.contextId}\0${claim.canonicalPath}`,
-              ).map((claim) =>
-                observationList([
-                  observationValue(claim.projectId),
-                  observationValue(claim.checkoutId),
-                  observationValue(claim.contextId),
-                  observationValue(claim.canonicalPath),
-                ]),
-              ),
-            ),
-            observationValue(report.registryContextId),
-            observationList(sortedBy(report.stacks, (stack) => stack.id).map(stackObservation)),
-            observationList(
-              sortedBy(report.locations, (location) => location.id).map(locationObservation),
-            ),
-            observationList(
-              sortedBy(report.conflictingLocations ?? [], (location) => location.id).map(
-                locationObservation,
-              ),
-            ),
-            observationValue(report.ownerEvidence?.contextId),
-            observationValue(report.ownerEvidence?.authoritativeOwnerBranch),
-            observationList(
-              sortedBy(
-                report.ownerEvidence?.claims ?? [],
-                (claim) => `${claim.branch}\0${claim.contextId}\0${claim.live}`,
-              ).map((claim) =>
-                observationList([
-                  observationValue(claim.branch),
-                  observationValue(claim.contextId),
-                  observationValue(claim.live),
-                ]),
-              ),
-            ),
-            observationList(
-              sortedBy(report.activeOperations, (operation) => operation.token).map(
-                operationObservation,
-              ),
-            ),
-            report.activeTransition === undefined
-              ? observationValue(undefined)
-              : transitionObservation(report.activeTransition),
-            observationList([...report.conflicts].sort(compareText).map(observationValue)),
-            observationList([...report.warnings].sort(compareText).map(observationValue)),
-            observationList(
-              sortedBy(report.recoveryOperations, recoveryObservation).map(recoveryObservation),
-            ),
-            observationList(
-              [...(report.inaccessiblePaths ?? [])].sort(compareText).map(observationValue),
-            ),
-            observationList(
-              sortedBy(
-                report.historicalPathEvidence ?? [],
-                (evidence) => `${evidence.path}\0${evidence.locationState}\0${evidence.probe}`,
-              ).map((evidence) =>
-                observationList([
-                  observationValue(evidence.path),
-                  observationValue(evidence.locationState),
-                  observationValue(evidence.probe),
-                ]),
-              ),
-            ),
-          ]);
-        };
-
         const requestedRecoveryPath = (
-          options: ManagedCheckoutRecoveryRequest,
+          options: Pick<ManagedCheckoutRecoveryRequest, "workspacePath" | "path">,
         ): Effect.Effect<string, InvalidManagedIdentityError> => {
+          if (
+            options.workspacePath !== undefined &&
+            options.path !== undefined &&
+            options.workspacePath !== options.path
+          ) {
+            return Effect.fail(
+              new InvalidManagedIdentityError({
+                message: "workspacePath and path must identify the same workspace",
+              }),
+            );
+          }
           const path = options.workspacePath ?? options.path;
           return path === undefined || path.trim().length === 0
             ? Effect.fail(
@@ -1629,7 +1409,7 @@ export class ManagedStackService extends Context.Service<
 
         const reserveRecoveryTransition = (
           report: ManagedWorkspaceDiscovery,
-          kind: "new-checkout" | "rebind-checkout" | "adopt-checkout",
+          kind: "new-checkout" | "rebind-checkout",
           checkoutId: string | undefined,
           path: string,
         ): Effect.Effect<
@@ -1744,11 +1524,6 @@ export class ManagedStackService extends Context.Service<
                 }),
               );
             }
-            if (current.inaccessiblePaths !== undefined && current.inaccessiblePaths.length > 0) {
-              return yield* Effect.fail(
-                new ManagedInaccessiblePathError({ path: current.inaccessiblePaths[0] ?? path }),
-              );
-            }
 
             let phase = transition.phase;
             if (phase === "reserved") {
@@ -1773,7 +1548,6 @@ export class ManagedStackService extends Context.Service<
             }
 
             if (phase === "git-written") {
-              yield* rejectHistoricalRecoveryEvidence(current);
               const active = current.locations.find(
                 (location) =>
                   location.checkoutId === checkoutId &&
@@ -1885,7 +1659,7 @@ export class ManagedStackService extends Context.Service<
               transition.projectId === undefined ||
               transition.checkoutId === undefined ||
               transition.contextId === undefined ||
-              !newCheckoutTopologyMatches(transition, report)
+              !newCheckoutTopologyMatches(transition, report.context)
             ) {
               return yield* Effect.fail(
                 new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
@@ -1907,7 +1681,7 @@ export class ManagedStackService extends Context.Service<
                 reserved.phase !== "reserved" ||
                 reserved.kind !== "new-checkout" ||
                 reserved.path !== path ||
-                !newCheckoutTopologyMatches(reserved, beforePublication) ||
+                !newCheckoutTopologyMatches(reserved, beforePublication.context) ||
                 (beforePublication.identity.projectId !== undefined &&
                   beforePublication.identity.projectId !== targetIdentity.projectId) ||
                 (beforePublication.identity.checkoutId !== undefined &&
@@ -1994,7 +1768,7 @@ export class ManagedStackService extends Context.Service<
           });
 
         const recoverCheckout = (
-          operation: "rebind-checkout" | "adopt-checkout",
+          operation: "rebind-checkout",
           options: ManagedCheckoutRecoveryRequest,
         ): Effect.Effect<
           ManagedWorkspaceDiscovery,
@@ -2039,13 +1813,7 @@ export class ManagedStackService extends Context.Service<
             const validState =
               operation === "rebind-checkout"
                 ? report.state === "moved" || report.state === "healthy"
-                : report.state === "adoptable" &&
-                  report.recoveryOperations.some(
-                    (recovery) =>
-                      recovery.operation === "adoptCheckout" &&
-                      recovery.checkoutId === checkoutId &&
-                      recovery.path === path,
-                  );
+                : false;
             if (!validState) {
               return yield* Effect.fail(
                 new InvalidManagedIdentityError({
@@ -2064,9 +1832,6 @@ export class ManagedStackService extends Context.Service<
 
         const rebindCheckout = (options: ManagedCheckoutRecoveryRequest) =>
           recoverCheckout("rebind-checkout", options);
-
-        const adoptCheckout = (options: ManagedCheckoutRecoveryRequest) =>
-          recoverCheckout("adopt-checkout", options);
 
         const branchCopyIsUnambiguous = (report: ManagedWorkspaceDiscovery): boolean => {
           if (
@@ -2478,7 +2243,7 @@ export class ManagedStackService extends Context.Service<
                 );
               }
             } else if (
-              (transition.kind === "rebind-checkout" || transition.kind === "adopt-checkout") &&
+              transition.kind === "rebind-checkout" &&
               (report.workspace.checkoutKind === "ordinary" ||
                 report.locations.some(
                   (location) =>
@@ -3224,7 +2989,6 @@ export class ManagedStackService extends Context.Service<
           discoverWorkspace: discover,
           newCheckout,
           rebindCheckout,
-          adoptCheckout,
           adoptContext,
           abandonIdentityTransition,
           resolveStack,

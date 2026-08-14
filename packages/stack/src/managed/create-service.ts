@@ -95,7 +95,6 @@ export interface ManagedStackServiceHandle extends AsyncDisposable {
   resolveStack(options: ResolveManagedStackRequest): Promise<ManagedStackResolution>;
   newCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   rebindCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
-  adoptCheckout(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   adoptContext(options: ManagedCheckoutRecoveryRequest): Promise<ManagedWorkspaceDiscovery>;
   abandonIdentityTransition(
     options: ManagedIdentityTransitionAbandonRequest,
@@ -202,7 +201,6 @@ const managedStackServiceHandle = async <ER>(
     resolveStack,
     newCheckout: (options) => run(service.newCheckout(options)),
     rebindCheckout: (options) => run(service.rebindCheckout(options)),
-    adoptCheckout: (options) => run(service.adoptCheckout(options)),
     adoptContext: (options) => run(service.adoptContext(options)),
     abandonIdentityTransition: (options) => run(service.abandonIdentityTransition(options)),
     inspectStack: (stackId) => run(service.inspectStack(stackId)),

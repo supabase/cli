@@ -642,11 +642,7 @@ export const transitionResourceKeys = (input: {
   const keys: string[] = [];
   if (input.kind === "new-checkout") {
     if (path !== undefined) keys.push(`path:${path}`);
-  } else if (
-    input.kind === "adopt-checkout" ||
-    input.kind === "rebind-checkout" ||
-    input.kind === "folder-to-git"
-  ) {
+  } else if (input.kind === "rebind-checkout" || input.kind === "folder-to-git") {
     if (checkoutId !== undefined) keys.push(`checkout:${checkoutId}`);
     if (path !== undefined) keys.push(`path:${path}`);
   } else {

@@ -265,7 +265,6 @@ const managedIdentityTransitionPhase = (value: string): ManagedIdentityTransitio
 
 const managedIdentityTransitionKind = (value: string): ManagedIdentityTransitionKind => {
   if (
-    value === "adopt-checkout" ||
     value === "adopt-context" ||
     value === "branch-copy" ||
     value === "folder-to-git" ||
@@ -467,7 +466,7 @@ const createSchema = (database: ManagedSqliteDatabase): void =>
 
       CREATE TABLE identity_transitions (
         id TEXT PRIMARY KEY,
-        kind TEXT NOT NULL CHECK (kind IN ('adopt-checkout', 'adopt-context', 'branch-copy', 'folder-to-git', 'new-checkout', 'rebind-checkout')),
+        kind TEXT NOT NULL CHECK (kind IN ('adopt-context', 'branch-copy', 'folder-to-git', 'new-checkout', 'rebind-checkout')),
         phase TEXT NOT NULL CHECK (phase IN ('reserved', 'git-written', 'finalized')),
         project_id TEXT,
         checkout_id TEXT,
@@ -1233,8 +1232,20 @@ const registerCheckoutIdentity = (
       ]);
   } else {
     database
-      .prepare("UPDATE contexts SET locator = ? WHERE id = ?")
-      .run([decision.registration.context.locator ?? null, decision.registration.context.id]);
+      .prepare(
+        `UPDATE contexts
+            SET project_id = ?, checkout_id = ?, kind = ?, locator = ?, owner_branch = ?, created_at = ?
+          WHERE id = ?`,
+      )
+      .run([
+        decision.registration.context.projectId,
+        decision.registration.context.checkoutId ?? null,
+        decision.registration.context.kind,
+        decision.registration.context.locator ?? null,
+        decision.registration.context.ownerBranch ?? null,
+        decision.registration.context.createdAt,
+        decision.registration.context.id,
+      ]);
   }
   for (const updated of decision.locationDecision.updates ?? []) {
     database
@@ -2046,7 +2057,7 @@ const createSqliteManagedStackRepository = (
           ),
         ),
       listActiveOperations: (startedBefore) =>
-        Effect.sync(() => selectActiveOperations(database, startedBefore)),
+        readTransaction(database, () => selectActiveOperations(database, startedBefore)),
       reconcileOperation: (stackId, operationToken, lifecycle, now) =>
         transaction(
           database,
@@ -2068,7 +2079,8 @@ const createSqliteManagedStackRepository = (
             ManagedStackNotFoundError,
           ),
         ),
-      listCheckoutLocations: () => Effect.sync(() => selectCheckoutLocations(database)),
+      listCheckoutLocations: () =>
+        readTransaction(database, () => selectCheckoutLocations(database)),
       pruneIdentityMetadata: (input) =>
         transaction(
           database,

@@ -1535,7 +1535,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
         message: "Cannot verify whether /mnt/project-a still owns checkout-a",
         recovery: [
           "Restore access to /mnt/project-a and retry",
-          "Explicitly adopt checkout-a for /new/project-a",
+          "Rediscover the workspace after access is restored",
         ],
       },
       writes: [],
@@ -1546,7 +1546,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           fields: { previousPath: "/mnt/project-a", currentPath: "/new/project-a" },
           recovery: [
             "Restore access to /mnt/project-a and retry",
-            "Explicitly adopt checkout-a for /new/project-a",
+            "Rediscover the workspace after access is restored",
           ],
         },
         json: {
@@ -1555,7 +1555,7 @@ const additionalIdentityContractFixtures = defineManagedStackContractFixtures([
           checkout_id: "checkout-a",
           recovery: [
             "Restore access to /mnt/project-a and retry",
-            "Explicitly adopt checkout-a for /new/project-a",
+            "Rediscover the workspace after access is restored",
           ],
         },
       },

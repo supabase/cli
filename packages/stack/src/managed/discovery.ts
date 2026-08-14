@@ -31,6 +31,7 @@ import {
   protectedManagedCheckoutLocationIds,
   type ManagedStackRepositoryShape,
 } from "./repository.ts";
+import { checkoutKindOf, newCheckoutTopologyMatches } from "./topology.ts";
 
 export type ManagedWorkspaceDiscoveryState =
   | "adoptable"
@@ -45,7 +46,6 @@ export type ManagedWorkspaceDiscoveryState =
 export type ManagedRecoveryOperation =
   | { readonly operation: "newCheckout"; readonly path: string }
   | { readonly operation: "rebindCheckout"; readonly checkoutId: string; readonly path: string }
-  | { readonly operation: "adoptCheckout"; readonly checkoutId: string; readonly path: string }
   | { readonly operation: "adoptContext"; readonly contextId: string; readonly branch: string }
   | { readonly operation: "prune"; readonly recordIds: ReadonlyArray<string> };
 
@@ -129,32 +129,12 @@ export interface ManagedWorkspaceDiscovery {
   readonly historicalPathEvidence?: ReadonlyArray<ManagedHistoricalPathEvidence>;
 }
 
-const checkoutKindOf = (inspection: GitCheckoutInspection): ManagedCheckoutKind =>
-  inspection.checkoutKind === "primary" ? "git" : inspection.checkoutKind;
-
 const completeIdentity = (
   identity: ManagedWorkspaceDiscoveryIdentity,
 ): identity is ManagedIdentityTriple =>
   identity.projectId !== undefined &&
   identity.checkoutId !== undefined &&
   identity.contextId !== undefined;
-
-const NEW_CHECKOUT_ORDINARY_TOPOLOGY = "topology:ordinary";
-const NEW_CHECKOUT_DETACHED_TOPOLOGY = "topology:detached";
-
-const newCheckoutTopologyMatches = (
-  transition: ManagedIdentityTransitionRecord,
-  context: ManagedWorkspaceDiscoveryContext,
-): boolean => {
-  if (context.kind === "branch") return transition.branch === context.branch;
-  return (
-    transition.branch === undefined &&
-    transition.expectedGitValue ===
-      (context.kind === "workspace"
-        ? NEW_CHECKOUT_ORDINARY_TOPOLOGY
-        : NEW_CHECKOUT_DETACHED_TOPOLOGY)
-  );
-};
 
 const transitionMatches = (
   transition: ManagedIdentityTransitionRecord,
@@ -383,17 +363,6 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
   } else if (identityComplete && evidence.activeLocation !== undefined) {
     state = "healthy";
   } else if (
-    evidence.identity.checkoutId !== undefined &&
-    evidence.identity.contextId !== undefined &&
-    evidence.locationCount > 0
-  ) {
-    state = "adoptable";
-    recoveryOperations.push({
-      operation: "adoptCheckout",
-      checkoutId: evidence.identity.checkoutId,
-      path: evidence.workspaceRoot,
-    });
-  } else if (
     !identityComplete ||
     (evidence.locationCount === 0 &&
       evidence.activeLocation === undefined &&
@@ -410,20 +379,18 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
   return { state, conflicts, warnings, recoveryOperations };
 };
 
-type PreviousLocationProbe = ManagedHistoricalPathProbe;
-
 const probePreviousLocation = (
   fs: FileSystem.FileSystem,
   path: string,
   checkoutId: string,
-): Effect.Effect<PreviousLocationProbe, never, FileSystem.FileSystem | GitConfigStore> =>
+): Effect.Effect<ManagedHistoricalPathProbe, never, FileSystem.FileSystem | GitConfigStore> =>
   Effect.gen(function* () {
     const stat = yield* fs.stat(path).pipe(
       Effect.as<"exists">("exists"),
       Effect.catchTag("PlatformError", (error) =>
         error.reason._tag === "NotFound"
-          ? Effect.succeed<PreviousLocationProbe>("missing")
-          : Effect.succeed<PreviousLocationProbe>("inaccessible"),
+          ? Effect.succeed<ManagedHistoricalPathProbe>("missing")
+          : Effect.succeed<ManagedHistoricalPathProbe>("inaccessible"),
       ),
     );
     if (stat !== "exists") return stat;
@@ -641,7 +608,9 @@ export const discoverWorkspace = (
         : [];
     const locations =
       identity.checkoutId === undefined
-        ? claims.locations
+        ? claims.locations.filter(
+            (location) => location.canonicalPath === metadata.workspace.workspaceRoot,
+          )
         : claims.locations.filter((location) => location.checkoutId === identity.checkoutId);
     const folderClaimCheckoutIds = new Set(folderToGitClaims.map((claim) => claim.checkoutId));
     const samePathClaims = allClaims.locations.filter(
@@ -671,14 +640,14 @@ export const discoverWorkspace = (
     const previousPathProbes: ReadonlyArray<{
       readonly path: string;
       readonly locationState: ManagedCheckoutLocation["state"];
-      readonly result: PreviousLocationProbe;
+      readonly result: ManagedHistoricalPathProbe;
     }> = completeIdentity(identity)
       ? yield* Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const probes: Array<{
             readonly path: string;
             readonly locationState: ManagedCheckoutLocation["state"];
-            readonly result: PreviousLocationProbe;
+            readonly result: ManagedHistoricalPathProbe;
           }> = [];
           const candidates =
             activeLocation === undefined

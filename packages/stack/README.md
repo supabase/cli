@@ -124,8 +124,8 @@ recreating a ref, changing checkout folders, detaching `HEAD`, or moving between
 produces an explicit discovery state instead of silently aliasing stacks. `discoverWorkspace()` is
 read-only and reports states such as `healthy`, `moved`, `duplicate`, `orphaned`, `ambiguous`, and
 `transitioning`, together with typed recovery operations (`newCheckout`, `rebindCheckout`,
-`adoptCheckout`, `adoptContext`, and metadata-only `prune`). Callers pass the returned operation back
-to the matching method after reviewing it; recovery never deletes stack data or runtime state.
+`adoptContext`, and metadata-only `prune`). Callers pass the returned operation back to the matching
+method after reviewing it; recovery never deletes stack data or runtime state.
 If a process dies while reserving identity metadata, `abandonIdentityTransition({ transitionId,
 workspacePath })` performs an exact compare-and-delete of a still-`reserved` transition. It refuses
 published or ambiguous targets and is idempotent when the transition was already removed; callers

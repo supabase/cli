@@ -175,7 +175,6 @@ export interface ManagedCheckoutLocation {
 export type ManagedCheckoutLocationState = "active" | "blocked" | "superseded";
 
 export type ManagedIdentityTransitionKind =
-  | "adopt-checkout"
   | "adopt-context"
   | "branch-copy"
   | "folder-to-git"

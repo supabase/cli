@@ -631,7 +631,6 @@ describe("managed stack acceptance contract", () => {
         (diagnostic) => diagnostic?.recoveryOperations?.map(({ operation }) => operation) ?? [],
       );
     });
-    expect(advertisedRecoveryOperations).not.toContain("adoptCheckout");
     expect(advertisedRecoveryOperations).not.toContain("newCheckout");
   });
 
