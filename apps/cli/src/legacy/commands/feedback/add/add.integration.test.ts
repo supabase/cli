@@ -3,11 +3,11 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { BunServices } from "@effect/platform-bun";
 import { Effect, Layer, Option, Stdio } from "effect";
-import type { FeedbackSubmission } from "../../../../shared/feedback/feedback-submitter.service.ts";
+import type { FeedbackSubmission } from "../../../../shared/feedback/feedback-client.service.ts";
 import {
-  FeedbackSubmitError,
-  FeedbackSubmitter,
-} from "../../../../shared/feedback/feedback-submitter.service.ts";
+  FeedbackBackendError,
+  FeedbackClient,
+} from "../../../../shared/feedback/feedback-client.service.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import {
@@ -43,18 +43,24 @@ function writeLinkedProjectRef(workdir: string, ref: string, opts: { asDirectory
   writeFileSync(refPath, `${ref}\n`);
 }
 
-function mockFeedbackSubmitter(opts: { failWith?: string } = {}) {
+const MOCK_DELETE_TOKEN = "123e4567-e89b-12d3-a456-426614174000";
+
+function mockFeedbackClient(opts: { failWith?: string } = {}) {
   const submissions: FeedbackSubmission[] = [];
   return {
     layer: Layer.succeed(
-      FeedbackSubmitter,
-      FeedbackSubmitter.of({
+      FeedbackClient,
+      FeedbackClient.of({
         submit: (submission) =>
           opts.failWith !== undefined
-            ? Effect.fail(new FeedbackSubmitError({ message: opts.failWith }))
+            ? Effect.fail(new FeedbackBackendError({ message: opts.failWith, operation: "submit" }))
             : Effect.sync(() => {
                 submissions.push(submission);
+                return { deleteToken: MOCK_DELETE_TOKEN };
               }),
+        // `feedback add` never previews or deletes.
+        preview: () => Effect.die("preview is not reachable from feedback add"),
+        delete: () => Effect.die("delete is not reachable from feedback add"),
       }),
     ),
     submissions,
@@ -80,7 +86,7 @@ function setupLegacyFeedback(
   } = {},
 ) {
   const out = mockOutput(opts.output);
-  const submitter = mockFeedbackSubmitter(
+  const submitter = mockFeedbackClient(
     opts.submitFailWith === undefined ? {} : { failWith: opts.submitFailWith },
   );
   const layer = Layer.mergeAll(
@@ -140,6 +146,14 @@ describe("legacy feedback add", () => {
       ]);
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Thanks for the feedback!" }),
+      );
+      // The delete token is shown exactly once, at submit time — the user must
+      // keep it to delete the feedback later.
+      expect(out.messages).toContainEqual(
+        expect.objectContaining({
+          type: "info",
+          message: `To delete this feedback later, run: supabase feedback delete ${MOCK_DELETE_TOKEN}`,
+        }),
       );
     }).pipe(Effect.provide(layer));
   });
@@ -248,18 +262,17 @@ describe("legacy feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("emits a machine-readable acknowledgement in json output format", () => {
+  it.live("emits the delete token in the json acknowledgement", () => {
     const { layer, out, submitter } = setupLegacyFeedback({ output: { format: "json" } });
     return Effect.gen(function* () {
       yield* legacyFeedbackAdd({ message: ["json mode feedback"] });
 
       expect(submitter.submissions).toHaveLength(1);
-      // Fire-and-forget: the ack carries no receipt payload, just the message.
       expect(out.messages).toContainEqual(
         expect.objectContaining({
           type: "success",
           message: "Thanks for the feedback!",
-          data: undefined,
+          data: { delete_token: MOCK_DELETE_TOKEN },
         }),
       );
     }).pipe(Effect.provide(layer));
@@ -287,7 +300,7 @@ describe("legacy feedback add", () => {
       const error = yield* legacyFeedbackAdd({ message: ["doomed message"] }).pipe(Effect.flip);
 
       expect(error).toMatchObject({
-        _tag: "FeedbackSubmitError",
+        _tag: "FeedbackBackendError",
         message: "backend unavailable",
       });
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));

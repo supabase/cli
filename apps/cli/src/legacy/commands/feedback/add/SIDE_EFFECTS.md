@@ -16,17 +16,18 @@
 
 ## API Routes
 
-| Method | Path                                             | Auth                                 | Request body                                                                                                                 | Response (used fields)                                   |
-| ------ | ------------------------------------------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
-| `POST` | `<feedback-env-url>/rest/v1/interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, source: "cli", user_agent, project_ref (or null), metadata: { cli_version, os, arch, is_agent, agent_name? } }` | none (fire-and-forget; only the error status is checked) |
+| Method | Path                                                        | Auth                                 | Request body                                                                                                                               | Response (used fields)                                     |
+| ------ | ----------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
+| `POST` | `<feedback-env-url>/rest/v1/rpc/submit_interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, user_agent, project_ref (omitted when unlinked), metadata: { cli_version, source: "cli", os, arch, is_agent, agent_name? } }` | uuid delete token (issued exactly once, shown to the user) |
 
-`<feedback-env-url>` follows the resolved profile (`add.command.ts`):
+`<feedback-env-url>` follows the resolved profile (`feedback.layers.ts`):
 `supabase-staging` / `supabase-local` → the staging feedback project;
 every other profile (incl. YAML-file profiles) → production. Production
 currently reuses the staging project until a dedicated one is provisioned
 (CLI-1946); connection constants live in
-`src/shared/feedback/feedback-submitter.layer.ts` and are safe to commit
-(publishable key, insert-only RLS). The request times out after 10 s.
+`src/shared/feedback/feedback-client.layer.ts` and are safe to commit
+(publishable key; the SECURITY DEFINER RPC is the only insert path). The
+request times out after 10 s.
 
 ## Environment Variables
 
@@ -68,22 +69,24 @@ the `interfaces_feedback` table via the API route above.
 
 ```
 Thanks for the feedback!
+To delete this feedback later, run: supabase feedback delete <delete-token>
 ```
 
-Rendered as a clack success line after a "Sending feedback..." spinner. When
-no message is passed on an interactive terminal, a "What's on your mind?"
-text prompt collects it first.
+Rendered as a clack success line plus an info line after a "Sending
+feedback..." spinner. The delete token is shown exactly once — it is not
+persisted anywhere by the CLI. When no message is passed on an interactive
+terminal, a "What's on your mind?" text prompt collects it first.
 
 ### `--output-format json`
 
 ```json
-{ "message": "Thanks for the feedback!" }
+{ "delete_token": "<uuid>", "message": "Thanks for the feedback!" }
 ```
 
 ### `--output-format stream-json`
 
 ```ndjson
-{"type":"result","data":{"message":"Thanks for the feedback!"},"timestamp":"…"}
+{"type":"result","data":{"delete_token":"<uuid>","message":"Thanks for the feedback!"},"timestamp":"…"}
 ```
 
 ## Notes
@@ -103,5 +106,8 @@ text prompt collects it first.
   but reads the file directly, so the command has no auth dependency and works
   when the user is not logged in. Note `LegacyCliConfig.projectId` alone is only
   the env var — it is NOT linked-project-aware.
-- Fire-and-forget insert (no `.select()`), matching the docs feedback widget
-  and the table's insert-only RLS: the ack carries no server receipt.
+- Submission goes through the SECURITY DEFINER `submit_interfaces_feedback`
+  RPC (the table has no insert grant), which returns a server-generated
+  `delete_token` exactly once. The token is the only way to delete the
+  feedback later (`supabase feedback delete <token>`), so the ack surfaces it
+  in every output format; the CLI never stores it.

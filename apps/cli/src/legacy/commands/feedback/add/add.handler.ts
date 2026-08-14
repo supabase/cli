@@ -1,12 +1,12 @@
-import { Effect, FileSystem, Option, Path } from "effect";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyReadProjectRefFile } from "../../../shared/legacy-temp-paths.ts";
-import { FeedbackSubmitter } from "../../../../shared/feedback/feedback-submitter.service.ts";
+import { Effect, Option } from "effect";
+import { FeedbackClient } from "../../../../shared/feedback/feedback-client.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
 import { Stdin } from "../../../../shared/runtime/stdin.service.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
+import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
+import { legacyResolveFeedbackProjectRef } from "../feedback-project-ref.ts";
 import type { LegacyFeedbackAddArgs } from "./add.command.ts";
 import { LEGACY_FEEDBACK_EMPTY_MESSAGE, LegacyFeedbackEmptyMessageError } from "./add.errors.ts";
 
@@ -41,25 +41,6 @@ const legacyResolveFeedbackMessage = Effect.fnUntraced(function* (args: LegacyFe
   );
 });
 
-// Mirrors the soft-load half of `LegacyProjectRefResolver.resolveOptional`
-// (`legacy-project-ref.layer.ts`): `SUPABASE_PROJECT_ID` (captured by
-// `LegacyCliConfig`) → `<workdir>/supabase/.temp/project-ref`, the file
-// `supabase link` writes. The file is read directly rather than via the full
-// resolver because that layer requires `LegacyPlatformApiFactory` for its
-// prompt path, and feedback must keep working when the user isn't logged in.
-// A broken ref file degrades to "unlinked" instead of failing the submission.
-const legacyResolveFeedbackProjectRef = Effect.fnUntraced(function* (
-  workdir: string,
-  fromEnv: Option.Option<string>,
-) {
-  if (Option.isSome(fromEnv)) return fromEnv;
-  const fs = yield* FileSystem.FileSystem;
-  const path = yield* Path.Path;
-  return yield* legacyReadProjectRefFile(fs, path, workdir).pipe(
-    Effect.orElseSucceed(() => Option.none<string>()),
-  );
-});
-
 export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
   args: LegacyFeedbackAddArgs,
 ) {
@@ -68,7 +49,7 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
   const runtimeInfo = yield* RuntimeInfo;
   const telemetryRuntime = yield* TelemetryRuntime;
   const aiTool = yield* AiTool;
-  const submitter = yield* FeedbackSubmitter;
+  const client = yield* FeedbackClient;
 
   const message = yield* legacyResolveFeedbackMessage(args);
   const agentName = Option.getOrUndefined(aiTool.name);
@@ -76,7 +57,7 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
 
   const sending = yield* output.task("Sending feedback...");
 
-  yield* submitter
+  const { deleteToken } = yield* client
     .submit({
       message,
       projectRef: Option.getOrUndefined(projectRef),
@@ -92,5 +73,11 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
     .pipe(Effect.tapError(() => sending.fail()));
 
   yield* sending.clear();
+
+  if (output.format !== "text") {
+    yield* output.success("Thanks for the feedback!", { delete_token: deleteToken });
+    return;
+  }
   yield* output.success("Thanks for the feedback!");
+  yield* output.info(`To delete this feedback later, run: supabase feedback delete ${deleteToken}`);
 });

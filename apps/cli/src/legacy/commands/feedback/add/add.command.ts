@@ -1,18 +1,11 @@
-import { Effect, Layer } from "effect";
 import { Argument, Command } from "effect/unstable/cli";
 import type * as CliCommand from "effect/unstable/cli/Command";
-import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { legacyCliConfigLayer } from "../../../config/legacy-cli-config.layer.ts";
-import { legacyDebugLoggerLayer } from "../../../shared/legacy-debug-logger.layer.ts";
-import {
-  feedbackSubmitterLayer,
-  legacyFeedbackEnvironment,
-} from "../../../../shared/feedback/feedback-submitter.layer.ts";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { aiToolLayer } from "../../../../shared/telemetry/ai-tool.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyFeedbackClientLayer, legacyFeedbackCliConfigLayer } from "../feedback.layers.ts";
 import { legacyFeedbackAdd } from "./add.handler.ts";
 
 const config = {
@@ -28,17 +21,6 @@ export type LegacyFeedbackAddArgs = CliCommand.Command.Config.Infer<typeof confi
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const legacyFeedbackAddHandler = (args: LegacyFeedbackAddArgs) =>
   legacyFeedbackAdd(args).pipe(withLegacyCommandInstrumentation(), withJsonErrorHandling);
-
-const legacyFeedbackCliConfigLayer = legacyCliConfigLayer.pipe(
-  Layer.provide(legacyDebugLoggerLayer),
-);
-
-const legacyFeedbackSubmitterLayer = Layer.unwrap(
-  Effect.gen(function* () {
-    const config = yield* LegacyCliConfig;
-    return feedbackSubmitterLayer({ environment: legacyFeedbackEnvironment(config.profile) });
-  }),
-).pipe(Layer.provide(legacyFeedbackCliConfigLayer));
 
 export const legacyFeedbackAddCommand = Command.make("add", config).pipe(
   Command.withDescription("Send quick feedback about the Supabase CLI to the Supabase team."),
@@ -58,8 +40,8 @@ export const legacyFeedbackAddCommand = Command.make("add", config).pipe(
   Command.provide(commandRuntimeLayer(["feedback", "add"])),
   Command.provide(stdinLayer),
   Command.provide(aiToolLayer),
-  // `Layer.provide` does not share to siblings: the handler and the submitter
-  // each get their own cli-config provision (legacy CLAUDE.md item 5).
-  Command.provide(legacyFeedbackSubmitterLayer),
+  // `Layer.provide` does not share to siblings: the handler and the feedback
+  // client each get their own cli-config provision (legacy CLAUDE.md item 5).
+  Command.provide(legacyFeedbackClientLayer),
   Command.provide(legacyFeedbackCliConfigLayer),
 );
