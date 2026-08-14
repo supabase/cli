@@ -686,6 +686,9 @@ export const transitionResourceKeys = (input: {
   } else if (input.kind === "rebind-checkout" || input.kind === "folder-to-git") {
     if (checkoutId !== undefined) keys.push(`checkout:${checkoutId}`);
     if (path !== undefined) keys.push(`path:${path}`);
+    if (input.kind === "folder-to-git" && projectIdentityLocation !== undefined) {
+      keys.push(`project-identity:${projectIdentityLocation}`);
+    }
   } else {
     if (contextId !== undefined) keys.push(`context:${contextId}`);
     if (projectId !== undefined && branch !== undefined) {

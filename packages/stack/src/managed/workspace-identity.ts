@@ -460,6 +460,70 @@ export const makeWorkspaceIdentity = ({
       ),
     );
 
+  const abandonReservedTransition = (transition: ManagedIdentityTransitionRecord, path: string) =>
+    repository.abandonIdentityTransition({
+      id: transition.id,
+      expectedPhase: "reserved",
+      kind: transition.kind,
+      path,
+      projectId: transition.projectId,
+      checkoutId: transition.checkoutId,
+      contextId: transition.contextId,
+      branch: transition.branch,
+      projectIdentityLocation: transition.projectIdentityLocation,
+      expectedGitValue: transition.expectedGitValue,
+      targetGitValue: transition.targetGitValue,
+      expectedOwnerBranch: transition.expectedOwnerBranch,
+    });
+
+  const pathIsDefinitelyMissing = (path: string): Effect.Effect<boolean> =>
+    withWorkspaceServices(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        return yield* fs.stat(path).pipe(
+          Effect.as(false),
+          Effect.catchTag("PlatformError", (error) =>
+            Effect.succeed(error.reason._tag === "NotFound"),
+          ),
+        );
+      }),
+    );
+
+  /**
+   * A reserved Git checkout publishes the shared project key before any
+   * checkout-local marker. If its worktree is now definitely absent and the
+   * shared key is still unpublished, its exact reservation is safe to release
+   * so another worktree can claim the repository.
+   */
+  const releaseMissingSharedNewCheckoutReservation = (
+    report: ManagedWorkspaceDiscovery,
+  ): Effect.Effect<void, ManagedIdentityRecoveryError> =>
+    Effect.gen(function* () {
+      const claims = yield* repository.listIdentityClaims();
+      const stale = claims.transitions.find(
+        (transition) =>
+          transition.kind === "new-checkout" &&
+          transition.phase === "reserved" &&
+          transition.path !== undefined &&
+          transition.path !== report.workspace.workspaceRoot &&
+          transition.projectIdentityLocation === report.workspace.projectIdentityLocation,
+      );
+      if (stale?.path === undefined || !(yield* pathIsDefinitelyMissing(stale.path))) return;
+      const current = yield* discover(report.workspace.workspaceRoot).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      );
+      if (
+        current === undefined ||
+        current.workspace.projectIdentityLocation !== stale.projectIdentityLocation ||
+        current.identity.projectId !== undefined ||
+        current.identity.checkoutId !== undefined ||
+        current.identity.contextId !== undefined
+      ) {
+        return;
+      }
+      yield* abandonReservedTransition(stale, stale.path);
+    });
+
   /**
    * Convert one exact ordinary-folder claim into Git-owned identity.
    * The ordinary marker is deliberately never rewritten or deleted: it
@@ -522,6 +586,14 @@ export const makeWorkspaceIdentity = ({
           }),
         );
       }
+      if (inspection.commonDirectory !== report.workspace.projectIdentityLocation) {
+        return yield* Effect.fail(
+          new InvalidManagedIdentityError({
+            message: "Folder-to-Git migration changed repositories before reservation",
+          }),
+        );
+      }
+      const projectIdentityLocation = inspection.commonDirectory;
       const transition =
         report.activeTransition?.kind === "folder-to-git"
           ? report.activeTransition
@@ -533,6 +605,7 @@ export const makeWorkspaceIdentity = ({
               contextId: claim.contextId,
               branch: report.context.kind === "branch" ? report.context.branch : undefined,
               path,
+              projectIdentityLocation,
               expectedGitValue: "absent",
               targetGitValue: claim.contextId,
               now: now(),
@@ -543,6 +616,7 @@ export const makeWorkspaceIdentity = ({
         transition.checkoutId !== claim.checkoutId ||
         transition.contextId !== claim.contextId ||
         transition.path !== path ||
+        transition.projectIdentityLocation !== projectIdentityLocation ||
         transition.expectedGitValue !== "absent" ||
         transition.targetGitValue !== claim.contextId ||
         transition.branch !== (report.context.kind === "branch" ? report.context.branch : undefined)
@@ -585,6 +659,14 @@ export const makeWorkspaceIdentity = ({
         (gitIdentity.checkoutId !== undefined && gitIdentity.checkoutId !== claim.checkoutId) ||
         (branchContext !== undefined && branchContext !== claim.contextId)
       ) {
+        if (
+          transition.phase === "reserved" &&
+          gitIdentity.checkoutId === undefined &&
+          ((gitIdentity.projectId !== undefined && gitIdentity.projectId !== claim.projectId) ||
+            (branchContext !== undefined && branchContext !== claim.contextId))
+        ) {
+          yield* abandonReservedTransition(transition, path);
+        }
         return yield* Effect.fail(
           new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
         );
@@ -977,6 +1059,9 @@ export const makeWorkspaceIdentity = ({
           }),
         );
       }
+      if (report.activeTransition === undefined) {
+        yield* releaseMissingSharedNewCheckoutReservation(report);
+      }
       const transition =
         report.activeTransition?.kind === "new-checkout"
           ? report.activeTransition
@@ -1021,21 +1106,7 @@ export const makeWorkspaceIdentity = ({
         checkoutId: transition.checkoutId,
         contextId: transition.contextId,
       };
-      const abandonReserved = () =>
-        repository.abandonIdentityTransition({
-          id: transition.id,
-          expectedPhase: "reserved",
-          kind: transition.kind,
-          path,
-          projectId: transition.projectId,
-          checkoutId: transition.checkoutId,
-          contextId: transition.contextId,
-          branch: transition.branch,
-          projectIdentityLocation: transition.projectIdentityLocation,
-          expectedGitValue: transition.expectedGitValue,
-          targetGitValue: transition.targetGitValue,
-          expectedOwnerBranch: transition.expectedOwnerBranch,
-        });
+      const abandonReserved = () => abandonReservedTransition(transition, path);
       if (transition.phase === "reserved") {
         const beforePublication = yield* discover(path);
         const beforeClaims = yield* repository.listIdentityClaims();
@@ -1643,12 +1714,11 @@ export const makeWorkspaceIdentity = ({
         }
       } else if (
         transition.kind === "rebind-checkout" &&
-        (report.workspace.checkoutKind === "ordinary" ||
-          report.locations.some(
-            (location) =>
-              location.state === "active" &&
-              location.canonicalPath === report.workspace.workspaceRoot,
-          ) ||
+        (report.locations.some(
+          (location) =>
+            location.state === "active" &&
+            location.canonicalPath === report.workspace.workspaceRoot,
+        ) ||
           (transition.projectId !== undefined &&
             transition.projectId !== report.identity.projectId) ||
           (transition.checkoutId !== undefined &&

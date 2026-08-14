@@ -685,6 +685,49 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(recovered.identity.projectId).toBe(winnerProject);
   });
 
+  it("reclaims an untouched shared reservation after its linked worktree disappears", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "shared-reservation");
+    const linked = join(root, "removed-linked");
+    git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+    const service = await open(root);
+    openHandles.push(service);
+    let interruptReservation = true;
+    const interruptedRepository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      reserveIdentityTransition: (input) =>
+        Effect.flatMap(service.repository.reserveIdentityTransition(input), (transition) => {
+          if (!interruptReservation) return Effect.succeed(transition);
+          interruptReservation = false;
+          return Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+          );
+        }),
+    };
+    const interrupted = await makeManagedStackService({
+      repository: interruptedRepository,
+      stateRoot: join(root, "removed-linked-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(interrupted);
+
+    await expect(interrupted.newCheckout({ workspacePath: linked })).rejects.toMatchObject({
+      _tag: "ManagedIdentityTransitionOwnershipError",
+    });
+    expect(
+      (await Effect.runPromise(service.repository.listIdentityClaims())).transitions,
+    ).toContainEqual(
+      expect.objectContaining({ kind: "new-checkout", phase: "reserved", path: linked }),
+    );
+    rmSync(linked, { recursive: true, force: true });
+
+    const recovered = await service.newCheckout({ workspacePath: repository });
+    expect(recovered.state).toBe("healthy");
+    expect(recovered.identity.projectId).toBeDefined();
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+  });
+
   it("completes a detached checkout whose context registry row is missing", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
@@ -951,6 +994,39 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     );
     const report = await inspect(service.repository, next);
     expect(report.state).toBe("transitioning");
+    await expect(
+      service.abandonIdentityTransition({
+        transitionId: reserved.id,
+        workspacePath: next,
+        observation: report,
+      }),
+    ).resolves.toEqual({ outcome: "abandoned" });
+    expect((await inspect(service.repository, next)).activeTransition).toBeUndefined();
+  });
+
+  it("releases an untouched ordinary-folder rebind through the guarded service operation", async () => {
+    const root = makeRoot();
+    const previous = makeDirectory(root, "ordinary-before-rebind");
+    const next = join(root, "ordinary-after-rebind");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    const reserved = await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000148",
+        kind: "rebind-checkout",
+        projectId: first.identity.projectId,
+        checkoutId: first.identity.checkoutId,
+        contextId: first.identity.contextId,
+        path: next,
+        now: new Date().toISOString(),
+      }),
+    );
+    const report = await inspect(service.repository, next);
+    expect(report.state).toBe("transitioning");
+    expect(report.workspace.checkoutKind).toBe("ordinary");
+
     await expect(
       service.abandonIdentityTransition({
         transitionId: reserved.id,
@@ -1988,6 +2064,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         contextId: ordinary.identity.contextId,
         branch: "main",
         path: workspace,
+        projectIdentityLocation: join(workspace, ".git"),
         expectedGitValue: "absent",
         targetGitValue: ordinary.identity.contextId,
         now: new Date().toISOString(),
@@ -2053,6 +2130,48 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(await guarded.listStacks()).toEqual(beforeStacks);
   });
 
+  it("releases an untouched folder migration when a sibling publishes the shared project", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "folder-migration-project-race");
+    const service = await open(root);
+    openHandles.push(service);
+    await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    git(workspace, "init", "-q", "-b", "main");
+    git(workspace, "add", ".supabase/identity.json");
+    git(workspace, "commit", "-q", "-m", "track ordinary identity");
+    const linked = join(root, "folder-migration-project-race-linked");
+    git(workspace, "worktree", "add", "-q", linked, "-b", "linked");
+    const base = service.repository;
+    let siblingIdentity: Awaited<ReturnType<typeof service.newCheckout>>["identity"] | undefined;
+    const raced: ManagedStackRepositoryShape = {
+      ...base,
+      reserveIdentityTransition: (input) =>
+        input.kind !== "folder-to-git" || siblingIdentity !== undefined
+          ? base.reserveIdentityTransition(input)
+          : Effect.gen(function* () {
+              siblingIdentity = yield* Effect.promise(() =>
+                service.newCheckout({ workspacePath: linked }),
+              ).pipe(Effect.map((report) => report.identity));
+              return yield* base.reserveIdentityTransition(input);
+            }),
+    };
+    const guarded = await makeManagedStackService({
+      repository: raced,
+      stateRoot: join(root, "folder-migration-project-race-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(guarded);
+
+    await expect(
+      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect(siblingIdentity?.projectId).toBeDefined();
+    expect(git(workspace, "config", GIT_PROJECT_ID_KEY).trim()).toBe(siblingIdentity?.projectId);
+    expect(existsSync(gitCheckoutIdentityPath(join(workspace, ".git")))).toBe(false);
+    const claims = await Effect.runPromise(base.listIdentityClaims());
+    expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+  });
+
   it("does not treat an undefined branch binding as a wildcard", async () => {
     const root = makeRoot();
     const workspace = makeDirectory(root, "branch-binding-mismatch");
@@ -2069,6 +2188,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         checkoutId: ordinary.identity.checkoutId,
         contextId: ordinary.identity.contextId,
         path: workspace,
+        projectIdentityLocation: join(workspace, ".git"),
         expectedGitValue: "absent",
         targetGitValue: ordinary.identity.contextId,
         now: new Date().toISOString(),
@@ -2330,6 +2450,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         contextId: ordinary.identity.contextId,
         branch: "main",
         path: workspace,
+        projectIdentityLocation: join(workspace, ".git"),
         expectedGitValue: "absent",
         targetGitValue: ordinary.identity.contextId,
         now: new Date().toISOString(),
@@ -2384,6 +2505,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         contextId: ordinary.identity.contextId,
         branch: "main",
         path: workspace,
+        projectIdentityLocation: join(workspace, ".git"),
         expectedGitValue: "absent",
         targetGitValue: ordinary.identity.contextId,
         now: new Date().toISOString(),
