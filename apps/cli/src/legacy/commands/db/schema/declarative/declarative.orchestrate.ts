@@ -27,7 +27,15 @@ import {
   LegacyLoadPgDeltaSqlFiles,
   LegacyReadPgDeltaExportManifest,
 } from "../../shared/legacy-pgdelta-files.ts";
-import { LegacyDeclarativeDiffError } from "./declarative.errors.ts";
+import {
+  LegacyDeclarativeCompatibilityError,
+  LegacyDeclarativeDiffError,
+} from "./declarative.errors.ts";
+import {
+  legacyClassifyDeclarativeLoadCompatibility,
+  legacyExtensionDeclaration,
+  type LegacyDeclarativeLoadCompatibilityFinding,
+} from "./declarative.flow.ts";
 
 /** Ambient inputs shared by the orchestration steps. */
 export interface LegacyDeclarativeRunContext {
@@ -54,6 +62,40 @@ export interface LegacyDeclarativeSyncResult {
 }
 
 const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ message });
+
+const formatImplicitExtensionLoadFailure = (
+  findings: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>,
+): string => {
+  const extensions = [...new Set(findings.map((finding) => finding.extension))].sort();
+  const detected = findings.map((finding) => {
+    const location =
+      finding.file === undefined
+        ? "A declarative schema file"
+        : `${finding.file}${finding.line === undefined ? "" : `:${finding.line}`}`;
+    return `${location} uses ${finding.signature}, but the tree does not declare ${finding.extension}.`;
+  });
+  return [
+    "This declarative schema looks like a legacy pg-delta export.",
+    "",
+    ...detected,
+    "",
+    "pg-delta next loads desired state onto a shadow that only has extensions you declare. Legacy generate omitted platform extensions.",
+    "",
+    "Recommended — generate a next-compatible tree, review it, then adopt:",
+    "",
+    "  supabase db schema declarative generate --local --overwrite \\",
+    "    --output supabase/database-next --experimental",
+    "",
+    "  # review supabase/database-next",
+    "  rm -rf supabase/database && mv supabase/database-next supabase/database",
+    "  supabase db schema declarative sync --no-apply --experimental",
+    "",
+    "Alternative — add the missing extension declarations to extension.sql, then re-plan:",
+    ...extensions.map((extension) => legacyExtensionDeclaration(extension)),
+    "",
+    "  supabase db schema declarative sync --no-apply --experimental",
+  ].join("\n");
+};
 
 /**
  * Computes the diff between local migrations state and the declarative schema.
@@ -95,19 +137,36 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
           Effect.mapError((error) => declarativeError(error.message)),
         )
       : undefined;
-  const result = yield* engine.planDeclarativeSchema({
-    context: run.pgDelta,
-    schema: run.schema,
-    formatOptions: run.formatOptions,
-    debug: run.debug,
-    strictCoverage: run.strictCoverage,
-    files,
-    noCache: run.noCache,
-    toml,
-    setupInputs,
-    ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
-    ...(manifest !== undefined ? { manifest } : {}),
-  });
+  const result = yield* engine
+    .planDeclarativeSchema({
+      context: run.pgDelta,
+      schema: run.schema,
+      formatOptions: run.formatOptions,
+      debug: run.debug,
+      strictCoverage: run.strictCoverage,
+      files,
+      noCache: run.noCache,
+      toml,
+      setupInputs,
+      ...(run.linkedProjectRef !== undefined ? { projectRef: run.linkedProjectRef } : {}),
+      ...(manifest !== undefined ? { manifest } : {}),
+    })
+    .pipe(
+      Effect.mapError((error) => {
+        const findings = legacyClassifyDeclarativeLoadCompatibility({
+          implementation: engine.implementation,
+          manifestPresent: manifest !== undefined,
+          diagnostics: error.diagnostics ?? [],
+          files,
+        });
+        return findings.length === 0
+          ? error
+          : new LegacyDeclarativeCompatibilityError({
+              message: formatImplicitExtensionLoadFailure(findings),
+              loadFindings: findings,
+            });
+      }),
+    );
   return {
     diffSQL: result.sql,
     files: result.files,

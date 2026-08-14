@@ -163,10 +163,19 @@ interface LegacyPgDeltaDeclarativePlanResult extends LegacyPgDeltaDiffResult {
   readonly targetRef: string;
 }
 
+/** Engine-neutral diagnostic detail retained when an implementation reports a structured failure. */
+export interface LegacyPgDeltaErrorDiagnostic {
+  readonly code: string;
+  readonly severity: "error" | "warning" | "info";
+  readonly message: string;
+  readonly context?: Readonly<Record<string, unknown>>;
+}
+
 export class LegacyPgDeltaEngineError extends Data.TaggedError("LegacyPgDeltaEngineError")<{
   readonly message: string;
   readonly cause: unknown;
   readonly suggestion?: string;
+  readonly diagnostics?: readonly LegacyPgDeltaErrorDiagnostic[];
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;

@@ -5,6 +5,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../../../../shared/telemetry/error-actionability.ts";
+import type { LegacyDeclarativeLoadCompatibilityFinding } from "./declarative.flow.ts";
 
 /**
  * Declarative commands were invoked without `--experimental` and without
@@ -108,6 +109,8 @@ export class LegacyDeclarativeCompatibilityError extends Data.TaggedError(
   "LegacyDeclarativeCompatibilityError",
 )<{
   readonly message: string;
+  /** Structured only for a known implicit-extension failure during shadow load. */
+  readonly loadFindings?: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.invalidConfig;

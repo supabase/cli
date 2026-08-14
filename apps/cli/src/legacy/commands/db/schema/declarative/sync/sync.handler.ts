@@ -35,7 +35,10 @@ import {
   legacyResolvePgDeltaProjectId,
 } from "../../../../../shared/legacy-pgdelta.ts";
 import { legacyWritePgDeltaMigrations } from "../../../shared/legacy-pgdelta-migrations.write.ts";
-import { legacyResolveSmartTargetEndpoint } from "../declarative.smart-target.ts";
+import {
+  legacyLocalEndpoint,
+  legacyResolveSmartTargetEndpoint,
+} from "../declarative.smart-target.ts";
 import {
   type LegacyDebugBundle,
   legacyCollectMigrationsList,
@@ -304,52 +307,192 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         Option.getOrUndefined(toml.orioledbVersion),
         toml.baseline,
       );
+      const stageNextExport = Effect.fnUntraced(function* () {
+        const stagedDirRel = "supabase/database-next";
+        const stagedDir = path.resolve(cliConfig.workdir, stagedDirRel);
+        if (stagedDir === declarativeDir) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeCompatibilityError({
+              message: `${stagedDirRel} is the active declarative schema directory; choose a different staging directory.`,
+            }),
+          );
+        }
+        const stagedExists = yield* fs.exists(stagedDir).pipe(Effect.orElseSucceed(() => false));
+        if (stagedExists) {
+          const [entries, hasManifest] = yield* Effect.all([
+            fs.readDirectory(stagedDir),
+            fs.exists(path.join(stagedDir, ".pgdelta-export.json")),
+          ]);
+          if (entries.length > 0 && !hasManifest) {
+            return yield* Effect.fail(
+              new LegacyDeclarativeCompatibilityError({
+                message: `${stagedDirRel} already contains files without a pg-delta export manifest. Move or remove that directory, then run sync again so the staged export cannot preserve unrelated SQL.`,
+              }),
+            );
+          }
+        }
+        yield* ensureLocalPostgresImageCurrent;
+        yield* seam.ensureLocalDatabaseStarted();
+        const generated = yield* legacyGenerateDeclarativeOutput(
+          { ...run, declarativeDir: stagedDir },
+          toml,
+          legacyLocalEndpoint({ port: toml.port, password: toml.password }, dnsResolver),
+        );
+        const written = yield* legacyWriteDeclarativeSchemas(fs, path, stagedDir, generated);
+        yield* legacyWarnPreservedUnmanagedDeclarativeFiles(stagedDirRel, written);
+        yield* output.raw(legacyDeclarativeSchemaWrittenLine(stagedDirRel), "stderr");
+        yield* output.raw(
+          [
+            "Review supabase/database-next, then adopt it:",
+            "  rm -rf supabase/database && mv supabase/database-next supabase/database",
+            "  supabase db schema declarative sync --no-apply --experimental",
+            "",
+          ].join("\n"),
+          "stderr",
+        );
+      });
+
       const planDeclarativeSync = () =>
         legacyDiffDeclarativeToMigrations(run, toml, setupInputs).pipe(
           Effect.tapError((error) =>
-            Effect.gen(function* () {
-              const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
-              yield* legacySaveDebugBundle(fs, path, cliConfig.workdir, tempDir, migrationsDir, {
-                id: formatDebugId(yield* Clock.currentTimeMillis),
-                error: error.message,
-                migrations,
-              }).pipe(
-                Effect.matchEffect({
-                  // Go prints nothing when SaveDebugBundle errors on the diff path
-                  // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
-                  onFailure: () => Effect.void,
-                  onSuccess: (debugDir) => output.raw(legacyDebugBundleMessage(debugDir), "stderr"),
+            error instanceof LegacyDeclarativeCompatibilityError
+              ? Effect.void
+              : Effect.gen(function* () {
+                  const migrations = yield* legacyCollectMigrationsList(fs, path, migrationsDir);
+                  yield* legacySaveDebugBundle(
+                    fs,
+                    path,
+                    cliConfig.workdir,
+                    tempDir,
+                    migrationsDir,
+                    {
+                      id: formatDebugId(yield* Clock.currentTimeMillis),
+                      error: error.message,
+                      migrations,
+                    },
+                  ).pipe(
+                    Effect.matchEffect({
+                      // Go prints nothing when SaveDebugBundle errors on the diff path
+                      // (`db_schema_declarative.go:337-340`: `if saveErr == nil`).
+                      onFailure: () => Effect.void,
+                      onSuccess: (debugDir) =>
+                        output.raw(legacyDebugBundleMessage(debugDir), "stderr"),
+                    }),
+                  );
                 }),
-              );
-            }),
           ),
         );
-      let result: LegacyDeclarativeSyncResult = yield* planDeclarativeSync();
 
-      // Resolve manifest-less legacy compatibility before printing or writing a
-      // migration. A repair is always explicit, even when global --yes is set.
-      if (
-        engine.implementation === "next" &&
-        !result.manifestPresent &&
-        !toml.webhooksEnabled &&
-        result.removals.extensions.includes("pg_net")
-      ) {
-        return yield* Effect.fail(
-          new LegacyDeclarativeCompatibilityError({
-            message: [
-              "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
-              "",
-              LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
-            ].join("\n"),
-          }),
-        );
-      }
-      const compatibility = legacyClassifyDeclarativeCompatibilityGap({
-        implementation: engine.implementation,
-        manifestPresent: result.manifestPresent,
-        removals: result.removals,
+      const planWithLoadRecovery = Effect.fnUntraced(function* () {
+        while (true) {
+          const attempt = yield* planDeclarativeSync().pipe(
+            Effect.match({
+              onFailure: (error) => ({ error }),
+              onSuccess: (result) => ({ result }),
+            }),
+          );
+          if ("result" in attempt) return Option.some(attempt.result);
+          const error = attempt.error;
+          if (
+            !(error instanceof LegacyDeclarativeCompatibilityError) ||
+            error.loadFindings === undefined
+          ) {
+            return yield* Effect.fail(error);
+          }
+
+          const missingExtensions = [
+            ...new Set(error.loadFindings.map((finding) => finding.extension)),
+          ].sort();
+          if (missingExtensions.includes("pg_net") && !toml.webhooksEnabled) {
+            return yield* Effect.fail(
+              new LegacyDeclarativeCompatibilityError({
+                message: [
+                  "The declarative schema uses pg_net, but Database Webhooks are not enabled in the local project config.",
+                  "",
+                  LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+                ].join("\n"),
+              }),
+            );
+          }
+          if (!tty.stdinIsTty || yes) return yield* Effect.fail(error);
+
+          yield* output.raw(`${legacyYellow(error.message)}\n`, "stderr");
+          const choice = yield* output.promptSelect("How would you like to continue?", [
+            {
+              value: "stage",
+              label: "Generate next export to supabase/database-next",
+              hint: "recommended",
+            },
+            { value: "repair", label: "Add missing extension declarations and re-plan" },
+            { value: "cancel", label: "Cancel" },
+          ]);
+          if (choice === "cancel") return Option.none<LegacyDeclarativeSyncResult>();
+          if (choice === "stage") {
+            yield* stageNextExport();
+            return Option.none<LegacyDeclarativeSyncResult>();
+          }
+          const repaired = yield* legacyAppendExtensionDeclarations(
+            declarativeDir,
+            missingExtensions,
+          );
+          yield* output.raw(
+            `Updated ${legacyBold(repaired.path)} with:\n${repaired.addedDeclarations.join("\n")}\n`,
+            "stderr",
+          );
+        }
       });
-      if (compatibility.recommendedAction === "repair-extensions") {
+
+      const initialResult = yield* planWithLoadRecovery();
+      if (Option.isNone(initialResult)) return;
+      let result: LegacyDeclarativeSyncResult = initialResult.value;
+
+      // Resolve successful manifest-less plans too. Repairs re-enter planning so a
+      // second, broader legacy gap (for example cron intents) cannot fall through to
+      // migration writing after the first missing extension is declared.
+      while (true) {
+        if (
+          engine.implementation === "next" &&
+          !result.manifestPresent &&
+          !toml.webhooksEnabled &&
+          result.removals.extensions.includes("pg_net")
+        ) {
+          return yield* Effect.fail(
+            new LegacyDeclarativeCompatibilityError({
+              message: [
+                "The migrations state includes pg_net, but Database Webhooks are not enabled in the local project config.",
+                "",
+                LEGACY_ENABLE_LOCAL_WEBHOOKS_SUGGESTION,
+              ].join("\n"),
+            }),
+          );
+        }
+        const compatibility = legacyClassifyDeclarativeCompatibilityGap({
+          implementation: engine.implementation,
+          manifestPresent: result.manifestPresent,
+          removals: result.removals,
+        });
+        if (compatibility.recommendedAction === "none") break;
+
+        if (compatibility.recommendedAction === "stage-next-export") {
+          const explanation = legacyFormatStagedExportRecommendation(compatibility);
+          if (!tty.stdinIsTty || yes) {
+            return yield* Effect.fail(
+              new LegacyDeclarativeCompatibilityError({ message: explanation }),
+            );
+          }
+          yield* output.raw(`${legacyYellow(explanation)}\n`, "stderr");
+          const choice = yield* output.promptSelect("How would you like to continue?", [
+            {
+              value: "stage",
+              label: "Generate next export to supabase/database-next",
+              hint: "recommended",
+            },
+            { value: "cancel", label: "Cancel" },
+          ]);
+          if (choice === "stage") yield* stageNextExport();
+          return;
+        }
+
         const statements = compatibility.repairableExtensions.map(legacyExtensionDeclaration);
         const explanation = [
           "This declarative schema appears to use legacy pg-delta behavior. Legacy pg-delta treated these installed extensions as implicit, while pg-delta next treats their omission as removal:",
@@ -365,8 +508,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
                 "Non-interactive sync will not modify the declarative schema automatically. Add these statements to extension.sql, then run sync again:",
                 ...statements,
                 "",
-                "Or generate a next-compatible schema into a separate directory:",
-                "supabase db schema declarative generate <target> --output supabase/database-next",
+                legacyFormatStagedExportRecommendation(compatibility),
               ].join("\n"),
             }),
           );
@@ -374,46 +516,23 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
 
         yield* output.raw(`${legacyYellow(explanation)}\n`, "stderr");
         const choice = yield* output.promptSelect("How would you like to continue?", [
-          {
-            value: "repair",
-            label: "Add declarations and re-plan",
-            hint: "recommended",
-          },
+          { value: "repair", label: "Add declarations and re-plan", hint: "recommended" },
           { value: "continue", label: "Continue with removals" },
           { value: "cancel", label: "Cancel" },
         ]);
         if (choice === "cancel") return;
-        if (choice === "repair") {
-          const repaired = yield* legacyAppendExtensionDeclarations(
-            declarativeDir,
-            compatibility.repairableExtensions,
-          );
-          yield* output.raw(
-            `Updated ${legacyBold(repaired.path)} with:\n${repaired.addedDeclarations.join("\n")}\n`,
-            "stderr",
-          );
-          result = yield* planDeclarativeSync();
-          const remaining = legacyClassifyDeclarativeCompatibilityGap({
-            implementation: engine.implementation,
-            manifestPresent: result.manifestPresent,
-            removals: result.removals,
-          });
-          if (remaining.recommendedAction !== "none") {
-            return yield* Effect.fail(
-              new LegacyDeclarativeCompatibilityError({
-                message: [
-                  "The compatibility removals remain after adding extension declarations.",
-                  legacyFormatStagedExportRecommendation(remaining),
-                ].join("\n"),
-              }),
-            );
-          }
-        }
-      } else if (compatibility.recommendedAction === "stage-next-export") {
+        if (choice === "continue") break;
+        const repaired = yield* legacyAppendExtensionDeclarations(
+          declarativeDir,
+          compatibility.repairableExtensions,
+        );
         yield* output.raw(
-          `${legacyYellow(legacyFormatStagedExportRecommendation(compatibility))}\n`,
+          `Updated ${legacyBold(repaired.path)} with:\n${repaired.addedDeclarations.join("\n")}\n`,
           "stderr",
         );
+        const replanned = yield* planWithLoadRecovery();
+        if (Option.isNone(replanned)) return;
+        result = replanned.value;
       }
 
       // Step 3: empty diff.

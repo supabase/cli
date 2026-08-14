@@ -883,6 +883,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
       expect(error.operation).toBe("diff");
       expect(error.message).toBe("Database diff failed: connection refused for desired database");
       expect(error.cause).toBe(cause);
+      expect(error.diagnostics).toBeUndefined();
       yield* Effect.promise(() => Promise.all([sourcePool.end(), desiredPool.end()]));
     }).pipe(Effect.provide(failingLayer));
   });
@@ -895,6 +896,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
         code: "stuck_statement",
         severity: "error",
         message: 'extensions/pg_cron.sql: extension "pg_cron" already exists',
+        context: { rounds: 6 },
       },
       {
         code: "stuck_statement",
@@ -945,6 +947,19 @@ describe("LegacyPgDeltaNextAdapter", () => {
       expect(error.message).toBe(
         'Declarative schema planning failed: 2 files cannot apply\n  - extensions/pg_cron.sql: extension "pg_cron" already exists\n  - extensions/pg_net.sql: extension "pg_net" already exists',
       );
+      expect(error.diagnostics).toEqual([
+        {
+          code: "stuck_statement",
+          severity: "error",
+          message: 'extensions/pg_cron.sql: extension "pg_cron" already exists',
+          context: { rounds: 6 },
+        },
+        {
+          code: "stuck_statement",
+          severity: "error",
+          message: 'extensions/pg_net.sql: extension "pg_net" already exists',
+        },
+      ]);
       expect(error.cause).toBe(cause);
       yield* Effect.promise(() => Promise.all([targetPool.end(), shadowPool.end()]));
     }).pipe(Effect.provide(failingLayer));

@@ -8,6 +8,7 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migration-file.ts";
 import type {
+  LegacyPgDeltaErrorDiagnostic,
   LegacyPgDeltaHazardKind,
   LegacyPgDeltaHazardReport,
   LegacyPgDeltaRemovalSummary,
@@ -189,6 +190,7 @@ export class LegacyPgDeltaNextError extends Data.TaggedError("LegacyPgDeltaNextE
   readonly operation: LegacyPgDeltaNextOperation;
   readonly message: string;
   readonly cause: unknown;
+  readonly diagnostics?: readonly LegacyPgDeltaErrorDiagnostic[];
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;

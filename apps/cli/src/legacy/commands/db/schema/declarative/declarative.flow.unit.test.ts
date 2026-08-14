@@ -2,11 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   legacyClassifyDeclarativeCompatibilityGap,
+  legacyClassifyDeclarativeLoadCompatibility,
   legacyExtensionDeclaration,
   legacyFormatStagedExportRecommendation,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
 } from "./declarative.flow.ts";
+
+const stuck = (message: string) => ({
+  code: "stuck_statement",
+  severity: "error",
+  message,
+});
 
 const removals = {
   extensions: ["pgcrypto", "uuid-ossp"],
@@ -53,7 +60,7 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
     });
     expect(gap.recommendedAction).toBe("stage-next-export");
     expect(legacyFormatStagedExportRecommendation(gap)).toContain(
-      "generate <target> --output supabase/database-next",
+      "generate --local --overwrite \\\n    --output supabase/database-next --experimental",
     );
   });
 
@@ -82,6 +89,196 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
         removals: { extensions: [], extensionIntents: [] },
       }),
     ).toMatchObject({ recommendedAction: "none" });
+  });
+});
+
+describe("legacyClassifyDeclarativeLoadCompatibility", () => {
+  it.each([
+    ["extensions.uuid_generate_v4()", "uuid-ossp"],
+    ["extensions.digest(text, text)", "pgcrypto"],
+    ["extensions.crypt(text, text)", "pgcrypto"],
+    ["extensions.gen_random_bytes(integer)", "pgcrypto"],
+    ["extensions.pgp_sym_encrypt(text, text)", "pgcrypto"],
+    ["net.http_post(text, jsonb)", "pg_net"],
+  ])("maps a missing %s routine to %s", (routine, extension) => {
+    const symbol = routine.slice(0, routine.indexOf("("));
+    const findings = legacyClassifyDeclarativeLoadCompatibility({
+      implementation: "next",
+      manifestPresent: false,
+      diagnostics: [
+        stuck(
+          `schemas/app/tables/members.sql: ERROR: function ${routine} does not exist (failed identically in 6 rounds)`,
+        ),
+      ],
+      files: [
+        {
+          name: "schemas/app/tables/members.sql",
+          sql: `create table app.members (\n  id uuid default ${symbol}()\n);`,
+        },
+      ],
+    });
+
+    expect(findings).toEqual([
+      {
+        extension,
+        signature: `${symbol}()`,
+        diagnosticMessage: `schemas/app/tables/members.sql: ERROR: function ${routine} does not exist (failed identically in 6 rounds)`,
+        file: "schemas/app/tables/members.sql",
+        line: 2,
+      },
+    ]);
+  });
+
+  it.each(["uuid-ossp", "pgcrypto", "pg_net"])(
+    "maps a direct missing %s extension diagnostic",
+    (extension) => {
+      expect(
+        legacyClassifyDeclarativeLoadCompatibility({
+          implementation: "next",
+          manifestPresent: false,
+          diagnostics: [
+            stuck(`cluster/config.sql: ERROR: extension "${extension}" does not exist`),
+          ],
+          files: [
+            {
+              name: "cluster/config.sql",
+              sql: `alter extension "${extension}" update;`,
+            },
+          ],
+        }),
+      ).toEqual([
+        expect.objectContaining({
+          extension,
+          signature: `extension "${extension}"`,
+          file: "cluster/config.sql",
+          line: 1,
+        }),
+      ]);
+    },
+  );
+
+  it("reports the authored line from the diagnostic's file and ignores cascades", () => {
+    const findings = legacyClassifyDeclarativeLoadCompatibility({
+      implementation: "next",
+      manifestPresent: false,
+      diagnostics: [
+        stuck(
+          "schemas/app/tables/members.sql: ERROR: function extensions.uuid_generate_v4() does not exist",
+        ),
+        stuck('public.views/members.sql: ERROR: relation "app.members" does not exist'),
+      ],
+      files: [
+        {
+          name: "other.sql",
+          sql: "select extensions.uuid_generate_v4();",
+        },
+        {
+          name: "schemas/app/tables/members.sql",
+          sql: "-- generated table uses extensions.uuid_generate_v4()\r\n\r\ncreate table app.members (\r\n  id uuid default extensions.uuid_generate_v4()\r\n);",
+        },
+        {
+          name: "public.views/members.sql",
+          sql: "create view public.members as select * from app.members;",
+        },
+      ],
+    });
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({
+      extension: "uuid-ossp",
+      file: "schemas/app/tables/members.sql",
+      line: 4,
+    });
+  });
+
+  it("requires next, no manifest, and an error-level non-converging diagnostic", () => {
+    const files = [{ name: "members.sql", sql: "select extensions.uuid_generate_v4();" }];
+    const diagnostic = stuck("members.sql: function extensions.uuid_generate_v4() does not exist");
+    const classify = (
+      implementation: "legacy" | "next",
+      manifestPresent: boolean,
+      diagnostics: ReadonlyArray<{ code: string; severity: string; message: string }>,
+    ) =>
+      legacyClassifyDeclarativeLoadCompatibility({
+        implementation,
+        manifestPresent,
+        diagnostics,
+        files,
+      });
+
+    expect(classify("legacy", false, [diagnostic])).toEqual([]);
+    expect(classify("next", true, [diagnostic])).toEqual([]);
+    expect(classify("next", false, [{ ...diagnostic, severity: "warning" }])).toEqual([]);
+    expect(classify("next", false, [{ ...diagnostic, code: "invalid_routine_body" }])).toEqual([]);
+    expect(classify("next", false, [{ ...diagnostic, code: "max_rounds_exceeded" }])).toHaveLength(
+      1,
+    );
+  });
+
+  it("does not classify an extension already declared anywhere in the tree", () => {
+    expect(
+      legacyClassifyDeclarativeLoadCompatibility({
+        implementation: "next",
+        manifestPresent: false,
+        diagnostics: [stuck("members.sql: function extensions.uuid_generate_v4() does not exist")],
+        files: [
+          { name: "members.sql", sql: "select extensions.uuid_generate_v4();" },
+          {
+            name: "cluster/extensions/uuid-ossp.sql",
+            sql: 'create extension if not exists "uuid-ossp" with schema "extensions";',
+          },
+        ],
+      }),
+    ).toEqual([]);
+  });
+
+  it("does not treat a commented or quoted declaration as an extension declaration", () => {
+    expect(
+      legacyClassifyDeclarativeLoadCompatibility({
+        implementation: "next",
+        manifestPresent: false,
+        diagnostics: [stuck("members.sql: function extensions.uuid_generate_v4() does not exist")],
+        files: [
+          {
+            name: "members.sql",
+            sql: [
+              '-- create extension "uuid-ossp";',
+              "select 'create extension uuid-ossp';",
+              "select extensions.uuid_generate_v4();",
+            ].join("\n"),
+          },
+        ],
+      }),
+    ).toEqual([expect.objectContaining({ extension: "uuid-ossp", file: "members.sql", line: 3 })]);
+  });
+
+  it("returns an unlocated finding when the diagnostic has no authored match", () => {
+    expect(
+      legacyClassifyDeclarativeLoadCompatibility({
+        implementation: "next",
+        manifestPresent: false,
+        diagnostics: [stuck('unknown.sql: extension "pg_net" does not exist')],
+        files: [],
+      }),
+    ).toEqual([
+      {
+        extension: "pg_net",
+        signature: 'extension "pg_net"',
+        diagnosticMessage: 'unknown.sql: extension "pg_net" does not exist',
+      },
+    ]);
+  });
+
+  it("deduplicates identical findings from repeated load diagnostics", () => {
+    const diagnostic = stuck("members.sql: function extensions.uuid_generate_v4() does not exist");
+    expect(
+      legacyClassifyDeclarativeLoadCompatibility({
+        implementation: "next",
+        manifestPresent: false,
+        diagnostics: [diagnostic, diagnostic],
+        files: [{ name: "members.sql", sql: "select extensions.uuid_generate_v4();" }],
+      }),
+    ).toHaveLength(1);
   });
 });
 

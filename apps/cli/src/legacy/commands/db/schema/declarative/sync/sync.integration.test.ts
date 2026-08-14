@@ -50,6 +50,7 @@ import { LegacyPgDeltaSslProbe } from "../../../../../shared/legacy-pgdelta-ssl-
 import { legacyPgDeltaLegacyEngineLayer } from "../../../shared/legacy-pgdelta-engine.legacy.layer.ts";
 import {
   LegacyPgDeltaEngine,
+  LegacyPgDeltaEngineError,
   type LegacyPgDeltaRemovalSummary,
   type LegacyPgDeltaRenderedFile,
 } from "../../../shared/legacy-pgdelta-engine.service.ts";
@@ -95,6 +96,7 @@ interface SetupOpts {
   engineImplementation?: "legacy" | "next";
   renderedFiles?: ReadonlyArray<LegacyPgDeltaRenderedFile>;
   removals?: LegacyPgDeltaRemovalSummary;
+  planErrors?: ReadonlyArray<LegacyPgDeltaEngineError>;
 }
 
 function setup(workdir: string, opts: SetupOpts = {}) {
@@ -265,6 +267,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     child.layer,
   );
   const nextFiles = opts.renderedFiles ?? [];
+  const planErrors = [...(opts.planErrors ?? [])];
+  let planCalls = 0;
+  const declarativeExportCalls: Array<true> = [];
   const engine =
     opts.engineImplementation === "next"
       ? Layer.succeed(
@@ -274,13 +279,19 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             diffExplicit: () => Effect.die("diffExplicit not used in sync tests"),
             diffDatabase: () => Effect.die("diffDatabase not used in sync tests"),
             exportDeclarativeSchema: () =>
-              Effect.succeed({
-                files: [
-                  { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
-                ],
-                manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+              Effect.sync(() => {
+                declarativeExportCalls.push(true);
+                return {
+                  files: [
+                    { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
+                  ],
+                  manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+                };
               }),
             planDeclarativeSchema: () => {
+              planCalls += 1;
+              const planError = planErrors.shift();
+              if (planError !== undefined) return Effect.fail(planError);
               const extensionPath = join(workdir, "supabase", "database", "extension.sql");
               const extensionSql = existsSync(extensionPath)
                 ? readFileSync(extensionPath, "utf8")
@@ -352,6 +363,10 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     telemetry,
     localPostgresImageChecks,
     exportCatalogCalls,
+    declarativeExportCalls,
+    get planCalls() {
+      return planCalls;
+    },
   };
 }
 
@@ -375,6 +390,45 @@ const seedDeclarative = (workdir: string) => {
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "public.sql"), "create table a();");
 };
+
+const seedLegacyUuidDeclarative = (workdir: string) => {
+  const dir = join(workdir, "supabase", "database");
+  mkdirSync(join(dir, "schemas", "app", "tables"), { recursive: true });
+  mkdirSync(join(dir, "schemas", "public", "views"), { recursive: true });
+  writeFileSync(
+    join(dir, "schemas", "app", "tables", "members.sql"),
+    [
+      "create table app.members (",
+      "  email text not null,",
+      "  id uuid not null default extensions.uuid_generate_v4()",
+      ");",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(dir, "schemas", "public", "views", "members.sql"),
+    "create view public.members as select * from app.members;\n",
+  );
+};
+
+const legacyUuidLoadError = () =>
+  new LegacyPgDeltaEngineError({
+    message:
+      "Declarative schema planning failed: shadow load stuck. Tip: split circular REFERENCES clauses.",
+    cause: new Error("shadow load stuck"),
+    diagnostics: [
+      {
+        code: "stuck_statement",
+        severity: "error",
+        message:
+          "0001__schemas/app/tables/members.sql: function extensions.uuid_generate_v4() does not exist (failed identically in 6 rounds)",
+      },
+      {
+        code: "stuck_statement",
+        severity: "error",
+        message: '0002__schemas/public/views/members.sql: relation "app.members" does not exist',
+      },
+    ],
+  });
 
 describe("legacy db schema declarative sync integration", () => {
   const tmp = useLegacyTempWorkdir();
@@ -976,36 +1030,147 @@ describe("legacy db schema declarative sync integration", () => {
     },
   );
 
-  it.effect(
-    "recommends a staged next export before writing for extension-managed legacy gaps",
-    () => {
-      seedDeclarative(tmp.current);
-      const s = setup(tmp.current, {
-        experimental: true,
-        engineImplementation: "next",
-        diffSql:
-          "select cron.unschedule('refresh download metrics');\nDROP EXTENSION \"pgcrypto\";\n",
-        removals: {
-          extensions: ["pgcrypto", "uuid-ossp"],
-          extensionIntents: [
-            { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
-          ],
-        },
+  it.effect("refuses a known implicit-extension load failure under --yes", () => {
+    seedLegacyUuidDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      yes: true,
+      planErrors: [legacyUuidLoadError()],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeCompatibilityError",
+        message: expect.stringContaining("schemas/app/tables/members.sql:3"),
       });
-      return Effect.gen(function* () {
-        yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-        const chunks = s.out.rawChunks.map((chunk) => stripAnsi(chunk.text));
-        const warningAt = chunks.findIndex((chunk) =>
-          chunk.includes("legacy export did not represent"),
-        );
-        const createdAt = chunks.findIndex((chunk) => chunk.includes("Created new migration at"));
-        expect(warningAt).toBeGreaterThan(-1);
-        expect(chunks[warningAt]).toContain("pg_cron job refresh download metrics");
-        expect(chunks[warningAt]).toContain("--output supabase/database-next");
-        expect(warningAt).toBeLessThan(createdAt);
-      }).pipe(Effect.provide(s.layer));
-    },
-  );
+      const error = failError(exit);
+      expect(error).toMatchObject({
+        message: expect.stringContaining("uuid-ossp"),
+      });
+      expect(JSON.stringify(error)).toContain(
+        "supabase db schema declarative generate --local --overwrite",
+      );
+      expect(s.out.promptSelectCalls).toHaveLength(0);
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
+      const output = stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""));
+      expect(output).not.toContain("pg-toolbelt/issues");
+      expect(output).not.toContain("circular REFERENCES");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("offers adopt, repair, or cancel before a load-failure plan exists", () => {
+    seedLegacyUuidDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      planErrors: [legacyUuidLoadError()],
+      promptSelectResponses: ["cancel"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.out.promptSelectCalls[0]?.options).toEqual([
+        expect.objectContaining({ value: "stage", hint: "recommended" }),
+        expect.objectContaining({ value: "repair" }),
+        expect.objectContaining({ value: "cancel" }),
+      ]);
+      expect(
+        s.out.promptSelectCalls[0]?.options.some((option) => option.value === "continue"),
+      ).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("adds a missing load-time extension declaration and re-plans", () => {
+    seedLegacyUuidDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      planErrors: [legacyUuidLoadError()],
+      promptSelectResponses: ["repair"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.planCalls).toBe(2);
+      expect(readFileSync(join(tmp.current, "supabase", "database", "extension.sql"), "utf8")).toBe(
+        'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";\n',
+      );
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(stripAnsi(s.out.rawChunks.map((chunk) => chunk.text).join(""))).toContain(
+        "No schema changes found",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("stages a complete next export without changing the active tree", () => {
+    seedLegacyUuidDeclarative(tmp.current);
+    const activeMember = join(
+      tmp.current,
+      "supabase",
+      "database",
+      "schemas",
+      "app",
+      "tables",
+      "members.sql",
+    );
+    const before = readFileSync(activeMember, "utf8");
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      planErrors: [legacyUuidLoadError()],
+      promptSelectResponses: ["stage"],
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
+      expect(s.declarativeExportCalls).toHaveLength(1);
+      expect(readFileSync(activeMember, "utf8")).toBe(before);
+      expect(
+        readFileSync(
+          join(
+            tmp.current,
+            "supabase",
+            "database-next",
+            "schemas",
+            "public",
+            "tables",
+            "players.sql",
+          ),
+          "utf8",
+        ),
+      ).toBe("create table players ();");
+      expect(
+        existsSync(join(tmp.current, "supabase", "database-next", ".pgdelta-export.json")),
+      ).toBe(true);
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("refuses extension-managed legacy gaps under --yes instead of writing drops", () => {
+    seedDeclarative(tmp.current);
+    const s = setup(tmp.current, {
+      experimental: true,
+      engineImplementation: "next",
+      yes: true,
+      diffSql:
+        "select cron.unschedule('refresh download metrics');\nDROP EXTENSION \"pgcrypto\";\n",
+      removals: {
+        extensions: ["pgcrypto", "uuid-ossp"],
+        extensionIntents: [
+          { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
+        ],
+      },
+    });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbSchemaDeclarativeSync(flags()).pipe(Effect.exit);
+      expect(failError(exit)).toMatchObject({
+        _tag: "LegacyDeclarativeCompatibilityError",
+        message: expect.stringContaining("pg_cron job refresh download metrics"),
+      });
+      expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
+      expect(s.dbExec).toEqual([]);
+    }).pipe(Effect.provide(s.layer));
+  });
 
   it.effect("directs pg_net users to enable Database Webhooks before writing", () => {
     seedDeclarative(tmp.current);

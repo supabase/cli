@@ -39,7 +39,10 @@ import {
   type LegacyPgDeltaNextSqlFile,
   type LegacyPgDeltaNextOperation,
 } from "./legacy-pgdelta-next-adapter.service.ts";
-import type { LegacyPgDeltaRemovalSummary } from "./legacy-pgdelta-engine.service.ts";
+import type {
+  LegacyPgDeltaErrorDiagnostic,
+  LegacyPgDeltaRemovalSummary,
+} from "./legacy-pgdelta-engine.service.ts";
 import { LEGACY_PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE } from "./legacy-pgdelta-next-diagnostics.ts";
 
 interface LegacyPgDeltaNextLibraryDiagnostic<Subject> {
@@ -201,18 +204,33 @@ function legacyPgDeltaNextMessage(operation: LegacyPgDeltaNextOperation, cause: 
   return `${label} failed: ${detail}${renderedDiagnostics === "" ? "" : `\n${renderedDiagnostics}`}`;
 }
 
+function legacyPgDeltaNextErrorDiagnostics(
+  cause: unknown,
+): readonly LegacyPgDeltaErrorDiagnostic[] | undefined {
+  if (!(cause instanceof ShadowLoadError)) return undefined;
+  return cause.details.map((diagnostic) => ({
+    code: diagnostic.code,
+    severity: diagnostic.severity,
+    message: diagnostic.message,
+    ...(diagnostic.context !== undefined ? { context: { ...diagnostic.context } } : {}),
+  }));
+}
+
 function legacyTryPgDeltaNext<Success>(
   operation: LegacyPgDeltaNextOperation,
   run: () => Promise<Success>,
 ) {
   return Effect.tryPromise({
     try: run,
-    catch: (cause) =>
-      new LegacyPgDeltaNextError({
+    catch: (cause) => {
+      const diagnostics = legacyPgDeltaNextErrorDiagnostics(cause);
+      return new LegacyPgDeltaNextError({
         operation,
         message: legacyPgDeltaNextMessage(operation, cause),
         cause,
-      }),
+        ...(diagnostics !== undefined ? { diagnostics } : {}),
+      });
+    },
   });
 }
 

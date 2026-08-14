@@ -37,6 +37,31 @@ describe("pg-delta next engine errors", () => {
     );
   });
 
+  it("preserves structured diagnostics from adapter failures", () => {
+    const diagnostics: NonNullable<LegacyPgDeltaNextError["diagnostics"]> = [
+      {
+        code: "stuck_statement",
+        severity: "error",
+        message: "schemas/app/tables/members.sql: function does not exist",
+        context: { rounds: 6 },
+      },
+    ];
+    const adapterError = new LegacyPgDeltaNextError({
+      operation: "declarativePlan",
+      message: "Declarative schema planning failed",
+      cause: new Error("shadow load failed"),
+      diagnostics,
+    });
+
+    expect(legacyPgDeltaNextEngineError(adapterError)).toEqual(
+      new LegacyPgDeltaEngineError({
+        message: "Declarative schema planning failed",
+        cause: adapterError,
+        diagnostics,
+      }),
+    );
+  });
+
   it("does not wrap an existing engine error again", () => {
     const error = new LegacyPgDeltaEngineError({ message: "blocked", cause: "diagnostic" });
     expect(legacyPgDeltaNextEngineError(error)).toBe(error);

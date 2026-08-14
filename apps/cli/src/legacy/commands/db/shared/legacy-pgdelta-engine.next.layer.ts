@@ -17,6 +17,7 @@ import {
 } from "./legacy-pgdelta-engine.service.ts";
 import {
   LegacyPgDeltaNextAdapter,
+  LegacyPgDeltaNextError,
   type LegacyPgDeltaNextOperation,
 } from "./legacy-pgdelta-next-adapter.service.ts";
 import {
@@ -47,6 +48,7 @@ function legacyPgDeltaNextConnectSuggestion(cause: unknown): string | undefined 
 export const legacyPgDeltaNextEngineError = (cause: unknown) => {
   if (cause instanceof LegacyPgDeltaEngineError) return cause;
   const suggestion = legacyPgDeltaNextConnectSuggestion(cause);
+  const diagnostics = cause instanceof LegacyPgDeltaNextError ? cause.diagnostics : undefined;
   return new LegacyPgDeltaEngineError({
     message:
       typeof cause === "object" &&
@@ -56,6 +58,7 @@ export const legacyPgDeltaNextEngineError = (cause: unknown) => {
         : String(cause),
     cause,
     ...(suggestion !== undefined ? { suggestion } : {}),
+    ...(diagnostics !== undefined ? { diagnostics } : {}),
   });
 };
 
