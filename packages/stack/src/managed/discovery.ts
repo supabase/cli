@@ -542,12 +542,14 @@ export const discoverWorkspace = (
       // A tracked `.supabase/identity.json` can be left behind by a folder
       // becoming a repository. It is read as transition evidence only; its
       // values never populate the active Git identity below.
-      const markerPath = ordinaryWorkspaceIdentityPath(canonicalPath);
+      const markerPath = ordinaryWorkspaceIdentityPath(inspection.workspaceRoot);
       const fs = yield* FileSystem.FileSystem;
       const markerExists = yield* fs
         .exists(markerPath)
         .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
-      const marker = yield* Effect.exit(readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPath));
+      const marker = yield* Effect.exit(
+        readOrdinaryWorkspaceIdentityWithFileSystem(inspection.workspaceRoot),
+      );
       const markerTracked = markerExists
         ? yield* isOrdinaryIdentityMarkerTracked(inspection.workspaceRoot)
         : false;
@@ -590,6 +592,7 @@ export const discoverWorkspace = (
     // so its project scope is intentionally empty. Read the complete transition
     // set when a marker now supplies a project ID; otherwise an interrupted
     // publication would disappear from discovery instead of remaining resumable.
+    const markerIdentity = ordinaryMarker?.identity;
     const folderToGitClaims: ReadonlyArray<ManagedFolderToGitClaim> =
       inspection.kind === "git-checkout"
         ? allClaims.locations
@@ -603,16 +606,23 @@ export const discoverWorkspace = (
                 (candidate) =>
                   candidate.checkoutId === location.checkoutId && candidate.kind === "workspace",
               );
-              return context === undefined
-                ? []
-                : [
-                    {
-                      projectId: context.projectId,
-                      checkoutId: location.checkoutId,
-                      contextId: context.id,
-                      canonicalPath: location.canonicalPath,
-                    },
-                  ];
+              if (
+                context === undefined ||
+                markerIdentity === undefined ||
+                markerIdentity.projectId !== context.projectId ||
+                markerIdentity.checkoutId !== location.checkoutId ||
+                markerIdentity.contextId !== context.id
+              ) {
+                return [];
+              }
+              return [
+                {
+                  projectId: context.projectId,
+                  checkoutId: location.checkoutId,
+                  contextId: context.id,
+                  canonicalPath: location.canonicalPath,
+                },
+              ];
             })
         : [];
     const locations =

@@ -539,6 +539,7 @@ export interface ReserveManagedIdentityTransitionInput {
   readonly path?: string;
   readonly expectedGitValue?: string;
   readonly targetGitValue?: string;
+  readonly expectedOwnerBranch?: string;
   readonly now: string;
 }
 
@@ -566,6 +567,7 @@ export interface AbandonManagedIdentityTransitionInput {
   readonly branch?: string;
   readonly expectedGitValue?: string;
   readonly targetGitValue?: string;
+  readonly expectedOwnerBranch?: string;
 }
 
 export type AbandonManagedIdentityTransitionResult =
@@ -690,6 +692,10 @@ export const decideManagedIdentityTransitionReservation = (input: {
   readonly requested: ReserveManagedIdentityTransitionInput;
   readonly existing?: ManagedIdentityTransitionRecord;
   readonly resourceOwner?: ManagedIdentityTransitionRecord;
+  /** Context owner observed under the adapter's reservation transaction. */
+  readonly contextOwnerBranch?: string;
+  /** Whether the context row was present in that same reservation transaction. */
+  readonly contextPresent?: boolean;
 }): ManagedIdentityTransitionRecord => {
   const requested = input.requested;
   const requestedResources = transitionResourceKeys(requested);
@@ -705,9 +711,21 @@ export const decideManagedIdentityTransitionReservation = (input: {
       input.existing.branch === requested.branch &&
       input.existing.path === requested.path &&
       input.existing.expectedGitValue === requested.expectedGitValue &&
-      input.existing.targetGitValue === requested.targetGitValue;
+      input.existing.targetGitValue === requested.targetGitValue &&
+      input.existing.expectedOwnerBranch === requested.expectedOwnerBranch;
     if (!same) throw new ManagedIdentityTransitionOwnershipError({ transitionId: requested.id });
     return input.existing;
+  }
+  if (requested.kind === "adopt-context") {
+    if (
+      requested.contextId === undefined ||
+      input.contextPresent !== true ||
+      requested.branch === undefined ||
+      requested.branch === requested.expectedOwnerBranch ||
+      input.contextOwnerBranch !== requested.expectedOwnerBranch
+    ) {
+      throw new ManagedIdentityTransitionOwnershipError({ transitionId: requested.id });
+    }
   }
   if (input.resourceOwner !== undefined && input.resourceOwner.id !== requested.id) {
     throw new ManagedIdentityTransitionOwnershipError({
@@ -726,6 +744,7 @@ export const decideManagedIdentityTransitionReservation = (input: {
     path: requested.path,
     expectedGitValue: requested.expectedGitValue,
     targetGitValue: requested.targetGitValue,
+    expectedOwnerBranch: requested.expectedOwnerBranch,
     createdAt: requested.now,
     updatedAt: requested.now,
   };
@@ -800,7 +819,8 @@ export const decideManagedIdentityTransitionAbandon = (
     existing.contextId === input.contextId &&
     existing.branch === input.branch &&
     existing.expectedGitValue === input.expectedGitValue &&
-    existing.targetGitValue === input.targetGitValue;
+    existing.targetGitValue === input.targetGitValue &&
+    existing.expectedOwnerBranch === input.expectedOwnerBranch;
   if (!exact) throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
   return { outcome: "abandoned" };
 };

@@ -682,10 +682,20 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           candidate.phase !== "finalized" &&
           transitionResourceKeys(candidate).some((key) => requestedKeys.includes(key)),
       );
+      const contextOwnerBranch =
+        input.kind === "adopt-context" && input.contextId !== undefined
+          ? contexts.get(input.contextId)?.ownerBranch
+          : undefined;
+      const contextPresent =
+        input.kind === "adopt-context" && input.contextId !== undefined
+          ? contexts.has(input.contextId)
+          : undefined;
       const next = decideManagedIdentityTransitionReservation({
         requested: input,
         existing,
         resourceOwner,
+        contextOwnerBranch,
+        contextPresent,
       });
       transitions.set(next.id, next);
       return copy(next);

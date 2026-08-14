@@ -418,7 +418,7 @@ const createSchema = (database: ManagedSqliteDatabase): void =>
       return;
     }
     if (existingObjects.size !== 0) {
-      throw new Error("Managed registry schema is incomplete");
+      throw sqliteSchemaError("Managed registry schema is incomplete");
     }
     database.exec(`
       CREATE TABLE projects (
@@ -476,6 +476,7 @@ const createSchema = (database: ManagedSqliteDatabase): void =>
         path TEXT,
         expected_git_value TEXT,
         target_git_value TEXT,
+        expected_owner_branch TEXT,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
       );
@@ -562,6 +563,7 @@ const managedSqliteTableColumns: Readonly<Record<string, ReadonlyArray<string>>>
     "path",
     "expected_git_value",
     "target_git_value",
+    "expected_owner_branch",
     "created_at",
     "updated_at",
   ],
@@ -732,8 +734,9 @@ const initializeRegistry = (
       database.exec("PRAGMA foreign_keys = ON");
     });
     yield* enableWriteAheadLogging(database);
-    yield* Effect.sync(() => {
-      createSchema(database);
+    yield* Effect.try({
+      try: () => createSchema(database),
+      catch: failsWith<IncompatibleManagedRegistryError>(IncompatibleManagedRegistryError),
     });
     yield* Effect.try({
       try: () => validateCurrentSchema(database),
@@ -955,6 +958,7 @@ const decodeIdentityTransition = (row: unknown): ManagedIdentityTransitionRecord
   path: getOptionalString(row, "path"),
   expectedGitValue: getOptionalString(row, "expected_git_value"),
   targetGitValue: getOptionalString(row, "target_git_value"),
+  expectedOwnerBranch: getOptionalString(row, "expected_owner_branch"),
   createdAt: getString(row, "created_at"),
   updatedAt: getString(row, "updated_at"),
 });
@@ -1740,18 +1744,26 @@ const reserveIdentityTransition = (
   const resourceOwner = resourceRows.find((candidate) =>
     transitionResourceKeys(candidate).some((key) => requestedKeys.includes(key)),
   );
+  const contextRow =
+    input.kind === "adopt-context" && input.contextId !== undefined
+      ? database.prepare("SELECT owner_branch FROM contexts WHERE id = ?").get([input.contextId])
+      : undefined;
+  const contextOwnerBranch =
+    contextRow === undefined ? undefined : getOptionalString(contextRow, "owner_branch");
   const next = decideManagedIdentityTransitionReservation({
     requested: input,
     existing,
     resourceOwner,
+    contextOwnerBranch,
+    contextPresent: contextRow !== undefined ? true : undefined,
   });
   if (existing === undefined) {
     database
       .prepare(
         `INSERT INTO identity_transitions
           (id, kind, phase, project_id, checkout_id, context_id, branch, path,
-           expected_git_value, target_git_value, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+           expected_git_value, target_git_value, expected_owner_branch, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run([
         next.id,
@@ -1764,6 +1776,7 @@ const reserveIdentityTransition = (
         next.path ?? null,
         next.expectedGitValue ?? null,
         next.targetGitValue ?? null,
+        next.expectedOwnerBranch ?? null,
         next.createdAt,
         next.updatedAt,
       ]);

@@ -41,6 +41,7 @@ export const discoveryObservation = (report: ManagedWorkspaceDiscovery): string 
       observationValue(transition.path),
       observationValue(transition.expectedGitValue),
       observationValue(transition.targetGitValue),
+      observationValue(transition.expectedOwnerBranch),
       observationValue(transition.createdAt),
       observationValue(transition.updatedAt),
     ]);

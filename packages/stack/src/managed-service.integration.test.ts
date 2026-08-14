@@ -2915,6 +2915,22 @@ describe("managed repository and lifecycle", () => {
     });
   });
 
+  it("reports a partially created registry as an incompatible schema", async () => {
+    const root = makeRoot();
+    const stateRoot = join(root, "partial-schema");
+    mkdirSync(stateRoot, { recursive: true });
+    const databasePath = managedRegistryPath(stateRoot);
+    const database = new Database(databasePath);
+    database.exec("CREATE TABLE projects (id TEXT PRIMARY KEY, created_at TEXT NOT NULL)");
+    database.close();
+
+    await expect(openRegistry(databasePath)).rejects.toMatchObject({
+      _tag: "IncompatibleManagedRegistryError",
+      code: "INCOMPATIBLE_MANAGED_REGISTRY",
+      reason: "Managed registry schema is incomplete",
+    });
+  });
+
   it("refuses a registry whose active-location index has the wrong columns", async () => {
     const root = makeRoot();
     const databasePath = managedRegistryPath(join(root, "wrong-index-columns"));

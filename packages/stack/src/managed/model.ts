@@ -194,6 +194,8 @@ export interface ManagedIdentityTransitionRecord {
   readonly path?: string;
   readonly expectedGitValue?: string;
   readonly targetGitValue?: string;
+  /** Previous branch owner that an adopt-context transition is allowed to replace. */
+  readonly expectedOwnerBranch?: string;
   readonly createdAt: string;
   readonly updatedAt: string;
 }

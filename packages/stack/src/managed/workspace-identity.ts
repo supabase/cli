@@ -1412,6 +1412,10 @@ export const makeWorkspaceIdentity = ({
         transition.path === report.workspace.workspaceRoot &&
         transition.expectedGitValue === contextId &&
         transition.targetGitValue === contextId;
+      const expectedOwnerBranch =
+        resuming && transition !== undefined
+          ? transition.expectedOwnerBranch
+          : report.ownerEvidence?.authoritativeOwnerBranch;
       if (operation === undefined && !resuming) {
         return yield* Effect.fail(
           new InvalidManagedIdentityError({
@@ -1433,6 +1437,7 @@ export const makeWorkspaceIdentity = ({
               path,
               expectedGitValue: contextId,
               targetGitValue: contextId,
+              expectedOwnerBranch,
               now: now(),
             });
       if (reserved.phase === "reserved") {
@@ -1448,12 +1453,20 @@ export const makeWorkspaceIdentity = ({
             }),
           );
         }
-        yield* repository.refreshContextOwner({
-          contextId,
-          ownerBranch: branch,
-          locator: branch,
-          now: now(),
-        });
+        const currentOwnerBranch = current.ownerEvidence?.authoritativeOwnerBranch;
+        if (currentOwnerBranch !== expectedOwnerBranch && currentOwnerBranch !== branch) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: reserved.id }),
+          );
+        }
+        if (currentOwnerBranch === expectedOwnerBranch) {
+          yield* repository.refreshContextOwner({
+            contextId,
+            ownerBranch: branch,
+            locator: branch,
+            now: now(),
+          });
+        }
         yield* repository.advanceIdentityTransition({
           id: reserved.id,
           expectedPhase: "reserved",
@@ -1517,7 +1530,8 @@ export const makeWorkspaceIdentity = ({
         report.activeTransition.contextId !== transition.contextId ||
         report.activeTransition.branch !== transition.branch ||
         report.activeTransition.expectedGitValue !== transition.expectedGitValue ||
-        report.activeTransition.targetGitValue !== transition.targetGitValue
+        report.activeTransition.targetGitValue !== transition.targetGitValue ||
+        report.activeTransition.expectedOwnerBranch !== transition.expectedOwnerBranch
       ) {
         return yield* Effect.fail(
           new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
@@ -1566,12 +1580,11 @@ export const makeWorkspaceIdentity = ({
         }
       } else if (transition.kind === "adopt-context") {
         const context = claims.contexts.find((candidate) => candidate.id === transition.contextId);
-        if (context?.ownerBranch === transition.branch) {
-          return yield* Effect.fail(
-            new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
-          );
-        }
-        if (context?.ownerBranch !== undefined) {
+        if (
+          context === undefined ||
+          context.ownerBranch !== transition.expectedOwnerBranch ||
+          context.ownerBranch === transition.branch
+        ) {
           return yield* Effect.fail(
             new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
           );
@@ -1614,6 +1627,7 @@ export const makeWorkspaceIdentity = ({
         branch: transition.branch,
         expectedGitValue: transition.expectedGitValue,
         targetGitValue: transition.targetGitValue,
+        expectedOwnerBranch: transition.expectedOwnerBranch,
       });
     });
 

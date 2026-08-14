@@ -23,6 +23,7 @@ import { discoverWorkspace } from "./managed/discovery.ts";
 import {
   createManagedStackService,
   makeManagedStackService,
+  ManagedCopiedBranchConflictError,
   ManagedIdentityTransitionOwnershipError,
 } from "./managed-bun.ts";
 
@@ -1044,6 +1045,11 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     renameSync(original, path);
     const service = await open(root);
     openHandles.push(service);
+    const started =
+      kind === "adopt-context"
+        ? await service.resolveStack({ workspacePath: path, operation: "start" })
+        : undefined;
+    if (kind === "adopt-context") git(path, "branch", "-m", "renamed");
     const replacement = makeRepository(root, `${kind}-replacement`);
     renameSync(replacement, join(root, `${kind}-replacement-moved`));
     renameSync(path, join(root, `${kind}-original-moved`));
@@ -1052,14 +1058,17 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       service.repository.reserveIdentityTransition({
         id: transitionId,
         kind,
-        projectId: "00000000-0000-7000-8000-000000000128",
-        checkoutId: "00000000-0000-7000-8000-000000000129",
-        contextId: "00000000-0000-7000-8000-000000000130",
-        branch: "main",
+        projectId: started?.identity.projectId ?? "00000000-0000-7000-8000-000000000128",
+        checkoutId: started?.identity.checkoutId ?? "00000000-0000-7000-8000-000000000129",
+        contextId: started?.identity.contextId ?? "00000000-0000-7000-8000-000000000130",
+        branch: kind === "adopt-context" ? "renamed" : "main",
         path,
         expectedGitValue:
-          kind === "branch-copy" ? "00000000-0000-7000-8000-000000000130" : undefined,
+          kind === "branch-copy"
+            ? "00000000-0000-7000-8000-000000000130"
+            : started?.identity.contextId,
         targetGitValue: kind === "branch-copy" ? "00000000-0000-7000-8000-000000000131" : undefined,
+        expectedOwnerBranch: kind === "adopt-context" ? "main" : undefined,
         now: new Date().toISOString(),
       }),
     );
@@ -1689,6 +1698,52 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     );
   });
 
+  it("keeps a stale ordinary claim as a conflict after an unrelated Git checkout replaces the path", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "recycled-folder-to-git");
+    const service = await open(root);
+    openHandles.push(service);
+    await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const beforeStacks = await service.listStacks();
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+
+    rmSync(workspace, { recursive: true, force: true });
+    mkdirSync(workspace, { recursive: true });
+    git(workspace, "init", "-q", "-b", "unrelated");
+
+    const report = await inspect(service.repository, workspace);
+    expect(report.state).toBe("duplicate");
+    expect(report.conflictingLocations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          canonicalPath: workspace,
+          checkoutId: beforeClaims.locations[0]?.checkoutId,
+        }),
+      ]),
+    );
+    await expect(
+      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+    expect(await service.listStacks()).toEqual(beforeStacks);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+  });
+
+  it("migrates an ordinary claim from a nested caller using the Git checkout root marker", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "nested-folder-to-git");
+    const nested = makeDirectory(workspace, "nested");
+    const service = await open(root);
+    openHandles.push(service);
+    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+
+    git(workspace, "init", "-q", "-b", "main");
+    const migrated = await service.resolveStack({ workspacePath: nested, operation: "start" });
+
+    expect(migrated.identity).toEqual(ordinary.identity);
+    expect(migrated.stack.id).toBe(ordinary.stack.id);
+    expect((await inspect(service.repository, nested)).state).toBe("healthy");
+  });
+
   it("resumes detached folder-to-Git migration with the original context and marker", async () => {
     const root = makeRoot();
     const workspace = makeDirectory(root, "detached-folder-to-git");
@@ -2037,7 +2092,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(existsSync(gitCheckoutIdentityPath(join(workspace, ".git")))).toBe(false);
   });
 
-  it("keeps a complete Git identity when a foreign stale folder claim shares its path", async () => {
+  it("refuses a complete Git identity when a foreign ordinary claim shares its path", async () => {
     const root = makeRoot();
     const workspace = makeRepository(root, "complete-git");
     const service = await open(root);
@@ -2087,11 +2142,20 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       publicationPollMs: 1,
     });
     openHandles.push(guarded);
+    const beforeConfig = readFileSync(join(workspace, ".git", "config"), "utf8");
+    const beforeStacks = await guarded.listStacks();
+    const beforeClaims = await Effect.runPromise(guarded.repository.listIdentityClaims());
+    const report = await inspect(wrapped, workspace);
+    expect(report.state).toBe("duplicate");
+    expect(report.conflictingLocations).toEqual([
+      expect.objectContaining({ checkoutId: foreignCheckoutId, canonicalPath: workspace }),
+    ]);
     await expect(
       guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
-    ).resolves.toMatchObject({ outcome: "reuse", identity: started.identity });
-    const report = await inspect(wrapped, workspace);
-    expect(report.state).toBe("healthy");
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+    expect(readFileSync(join(workspace, ".git", "config"), "utf8")).toBe(beforeConfig);
+    expect(await guarded.listStacks()).toEqual(beforeStacks);
+    expect(await Effect.runPromise(guarded.repository.listIdentityClaims())).toEqual(beforeClaims);
     expect(report.identity).toEqual(started.identity);
   });
 
@@ -2310,6 +2374,140 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.warnings.length).toBeGreaterThan(0);
     expect(report.recoveryOperations.length).toBeGreaterThan(0);
   });
+
+  it("abandons an interrupted renamed-branch adoption while the previous owner is still current", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-m", "renamed");
+    let interrupt = true;
+    const wrapped: ManagedStackRepositoryShape = {
+      ...service.repository,
+      refreshContextOwner: (input) =>
+        interrupt
+          ? ((interrupt = false),
+            Effect.fail(new ManagedCopiedBranchConflictError({ branch: input.ownerBranch })))
+          : service.repository.refreshContextOwner(input),
+    };
+    const recovering = await makeManagedStackService({
+      repository: wrapped,
+      stateRoot: join(root, "adopt-abandon-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(recovering);
+    const report = await recovering.discoverWorkspace(repository);
+    expect(report.state).toBe("adoptable");
+    await expect(
+      recovering.adoptContext({ workspacePath: repository, observation: report }),
+    ).rejects.toMatchObject({ _tag: "ManagedCopiedBranchConflictError" });
+
+    const interrupted = await inspect(service.repository, repository);
+    const transition = interrupted.activeTransition;
+    expect(transition).toMatchObject({
+      kind: "adopt-context",
+      phase: "reserved",
+      expectedOwnerBranch: "main",
+      branch: "renamed",
+    });
+    expect(
+      (await Effect.runPromise(service.repository.listIdentityClaims())).contexts.find(
+        (context) => context.id === started.identity.contextId,
+      )?.ownerBranch,
+    ).toBe("main");
+
+    await expect(
+      recovering.abandonIdentityTransition({
+        transitionId: transition?.id ?? "missing-transition",
+        workspacePath: repository,
+      }),
+    ).resolves.toEqual({ outcome: "abandoned" });
+    expect((await inspect(service.repository, repository)).activeTransition).toBeUndefined();
+  });
+
+  it("resumes renamed-branch adoption after owner refresh succeeds but transition advancement is interrupted", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-m", "renamed");
+    let interrupt = true;
+    const wrapped: ManagedStackRepositoryShape = {
+      ...service.repository,
+      advanceIdentityTransition: (input) =>
+        interrupt
+          ? ((interrupt = false),
+            Effect.fail(new ManagedIdentityTransitionOwnershipError({ transitionId: input.id })))
+          : service.repository.advanceIdentityTransition(input),
+    };
+    const recovering = await makeManagedStackService({
+      repository: wrapped,
+      stateRoot: join(root, "adopt-resume-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(recovering);
+    await expect(recovering.adoptContext({ workspacePath: repository })).rejects.toMatchObject({
+      _tag: "ManagedIdentityTransitionOwnershipError",
+    });
+
+    const interrupted = await inspect(service.repository, repository);
+    const transition = interrupted.activeTransition;
+    expect(transition).toMatchObject({
+      kind: "adopt-context",
+      phase: "reserved",
+      expectedOwnerBranch: "main",
+      branch: "renamed",
+    });
+    expect(
+      (await Effect.runPromise(service.repository.listIdentityClaims())).contexts.find(
+        (context) => context.id === started.identity.contextId,
+      )?.ownerBranch,
+    ).toBe("renamed");
+
+    await expect(recovering.adoptContext({ workspacePath: repository })).resolves.toMatchObject({
+      state: "healthy",
+      ownerEvidence: { authoritativeOwnerBranch: "renamed" },
+    });
+    expect((await inspect(service.repository, repository)).activeTransition).toBeUndefined();
+  });
+
+  it.each(["renamed", "foreign"] as const)(
+    "rejects renamed-branch adoption when the context owner changes to %s before reservation",
+    async (ownerBranch) => {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const service = await open(root);
+      openHandles.push(service);
+      const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      git(repository, "branch", "-m", "renamed");
+      const wrapped: ManagedStackRepositoryShape = {
+        ...service.repository,
+        reserveIdentityTransition: (input) =>
+          Effect.gen(function* () {
+            yield* service.repository.refreshContextOwner({
+              contextId: started.identity.contextId,
+              ownerBranch,
+              locator: ownerBranch,
+              now: new Date().toISOString(),
+            });
+            return yield* service.repository.reserveIdentityTransition(input);
+          }),
+      };
+      const recovering = await makeManagedStackService({
+        repository: wrapped,
+        stateRoot: join(root, `adopt-owner-${ownerBranch}-managed`),
+        publicationPollMs: 1,
+      });
+      openHandles.push(recovering);
+      const report = await recovering.discoverWorkspace(repository);
+      await expect(
+        recovering.adoptContext({ workspacePath: repository, observation: report }),
+      ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+      expect((await inspect(service.repository, repository)).activeTransition).toBeUndefined();
+    },
+  );
 
   it("refuses adoption for a branch not advertised by discovery without reserving a transition", async () => {
     const root = makeRoot();
