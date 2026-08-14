@@ -51,12 +51,15 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * running Logflare against an unmigrated database lets Oban die on the
  * missing `public.oban_jobs` table instead.
  */
-// Both `exec`s are load-bearing for stop time (SIGTERM must reach Logflare's BEAM as PID 1, not
-// an intermediate `sh` — without them every `docker stop` burns the full 10s grace period):
-// `exec sh run.sh` replaces the outer wrapper shell, and `exec ./logflare start` replaces
-// `run.sh`'s own shell once the migrate step succeeded. The `migrate && start` sequencing is
-// unchanged and deliberate — see the doc comment above (#6088). Stop timing is outside the
-// Go-parity surface (ADR 0016).
+// Both `exec`s route `docker stop`'s SIGTERM to Logflare's BEAM as PID 1 (`exec sh run.sh`
+// replaces the outer wrapper shell; `exec ./logflare start` replaces `run.sh`'s own shell once
+// the migrate step succeeded) — necessary but, measured, NOT yet sufficient: with beam.smp as
+// PID 1 a `docker stop -t 10` still burns the full grace period (~10.5s), so Logflare's own
+// SIGTERM shutdown hangs upstream, the same class of problem postgres-meta had before
+// postgres-meta#1103. Keep the execs (one less layer between the signal and the BEAM, and they
+// become load-bearing the moment upstream fixes its handler); the remaining ~10s needs an
+// upstream Logflare image fix. The `migrate && start` sequencing is unchanged and deliberate —
+// see the doc comment above (#6088). Stop timing is outside the Go-parity surface (ADR 0016).
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
   "cat <<'EOF' > run.sh && exec sh run.sh\n./logflare eval Logflare.Release.migrate &&\nexec ./logflare start --sname logflare\nEOF\n";
 
