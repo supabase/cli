@@ -889,7 +889,7 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
   const PG_NET_DROP_FINGERPRINT = "drop extension if exists pg_net";
 
   function fakeWebhooksSession(opts: {
-    readonly appliedStatements?: ReadonlyArray<ReadonlyArray<string>>;
+    readonly appliedStatements?: ReadonlyArray<ReadonlyArray<string> | null>;
     readonly historyUnavailable?: boolean;
   }) {
     const execSql: Array<string> = [];
@@ -979,6 +979,23 @@ describe("legacyRunDatabaseWebhooksSetup", () => {
       }),
     );
   });
+
+  it.effect.each([
+    { historyValue: null, description: "NULL" },
+    { historyValue: [], description: "an empty array" },
+  ])(
+    "preserves pg_net when an applied history row records $description for statements",
+    ({ historyValue }) => {
+      // Older volumes store NULL/`{}` in `schema_migrations.statements`. That is
+      // incomplete evidence, not proof the migration did not install pg_net.
+      const { execSql, effect } = converge(false, { appliedStatements: [historyValue] });
+      return effect.pipe(
+        Effect.map(() => {
+          expect(execSql.some((sql) => sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(false);
+        }),
+      );
+    },
+  );
 
   it.effect("preserves pg_net when the migration history cannot be read", () => {
     // Erring toward not dropping: an unreadable history is treated as ownership.

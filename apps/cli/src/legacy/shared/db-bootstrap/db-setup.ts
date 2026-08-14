@@ -1337,7 +1337,13 @@ export const legacyRunDatabaseWebhooksSetup = (input: {
       if (!input.enabled) {
         const pgNetOwnedByMigrations = yield* legacyReadMigrationTable(session).pipe(
           Effect.map((migrations) =>
-            migrations.some((migration) => migration.statements.some(legacyStatementInstallsPgNet)),
+            migrations.some(
+              (migration) =>
+                // NULL/`{}` history rows become `[]`. That is incomplete evidence,
+                // not proof the migration did not install pg_net — preserve.
+                migration.statements.length === 0 ||
+                migration.statements.some(legacyStatementInstallsPgNet),
+            ),
           ),
           Effect.orElseSucceed(() => true),
         );
