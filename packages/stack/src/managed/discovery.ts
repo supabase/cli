@@ -207,6 +207,7 @@ interface WorkspaceClassificationEvidence {
   readonly folderToGitClaims: number;
   readonly gitCheckout: boolean;
   readonly identity: ManagedWorkspaceDiscoveryIdentity;
+  readonly checkoutProjectOwnership: "unknown" | "matching" | "foreign";
   readonly contextPresent: boolean;
   readonly locationCount: number;
   readonly activeLocation?: ManagedCheckoutLocation;
@@ -236,6 +237,7 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     evidence.duplicateLocations ||
     evidence.samePathClaims > 0 ||
     evidence.markerRegistryConflict ||
+    evidence.checkoutProjectOwnership === "foreign" ||
     evidence.sameCheckoutReappeared ||
     evidence.inaccessiblePaths > 0 ||
     evidence.recycledPaths > 0 ||
@@ -254,7 +256,9 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
         ? `Checkout ${evidence.identity.checkoutId} has multiple active locations`
         : evidence.markerRegistryConflict
           ? "Workspace marker context conflicts with registry context"
-          : `Workspace path ${evidence.canonicalPath} is claimed by another checkout`,
+          : evidence.checkoutProjectOwnership === "foreign"
+            ? `Checkout ${evidence.identity.checkoutId} belongs to another project`
+            : `Workspace path ${evidence.canonicalPath} is claimed by another checkout`,
     );
   } else if (
     evidence.authoritativeOwnerBranch === undefined &&
@@ -354,7 +358,7 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     (evidence.locationCount === 0 &&
       evidence.activeLocation === undefined &&
       evidence.anyActiveLocation === undefined &&
-      !evidence.contextPresent)
+      evidence.checkoutProjectOwnership === "unknown")
   ) {
     state = "unregistered";
     recoveryOperations.push({ operation: "newCheckout", path: evidence.workspaceRoot });
@@ -554,6 +558,17 @@ export const discoverWorkspace = (
 
     const allClaims = yield* repository.listIdentityClaims();
     const claims = projectIdentityClaims(allClaims, identity);
+    const claimedCheckoutProject =
+      identity.checkoutId === undefined
+        ? undefined
+        : allClaims.checkoutProjects.find((checkout) => checkout.checkoutId === identity.checkoutId)
+            ?.projectId;
+    const checkoutProjectOwnership =
+      identity.projectId === undefined || claimedCheckoutProject === undefined
+        ? "unknown"
+        : claimedCheckoutProject === identity.projectId
+          ? "matching"
+          : "foreign";
     // A new-checkout transition is reserved before the marker has an identity,
     // so its project scope is intentionally empty. Read the complete transition
     // set when a marker now supplies a project ID; otherwise an interrupted
@@ -702,6 +717,7 @@ export const discoverWorkspace = (
       folderToGitClaims: folderToGitClaims.length,
       gitCheckout: inspection.kind === "git-checkout",
       identity,
+      checkoutProjectOwnership,
       contextPresent: context !== undefined,
       locationCount: locations.length,
       activeLocation,
