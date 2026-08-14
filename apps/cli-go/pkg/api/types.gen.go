@@ -7431,6 +7431,9 @@ type RealtimeConfigResponse struct {
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond nullable.Nullable[int] `json:"max_presence_events_per_second"`
 
+	// PostgresChangesPool Sets connection pool size used to create Postgres Changes subscriptions
+	PostgresChangesPool nullable.Nullable[int] `json:"postgres_changes_pool"`
+
 	// PresenceEnabled Whether to enable presence
 	PresenceEnabled bool `json:"presence_enabled"`
 
@@ -8237,6 +8240,9 @@ type UpdateRealtimeConfigBody struct {
 
 	// MaxPresenceEventsPerSecond Sets maximum number of presence events per second rate limit
 	MaxPresenceEventsPerSecond *int `json:"max_presence_events_per_second,omitempty"`
+
+	// PostgresChangesPool Sets connection pool size used to create Postgres Changes subscriptions
+	PostgresChangesPool *int `json:"postgres_changes_pool,omitempty"`
 
 	// PresenceEnabled Whether to enable presence
 	PresenceEnabled *bool `json:"presence_enabled,omitempty"`
