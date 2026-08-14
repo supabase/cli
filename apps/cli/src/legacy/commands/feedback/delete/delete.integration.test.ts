@@ -14,6 +14,7 @@ import {
   mockContextualAnalytics,
   mockOutput,
   mockProcessControl,
+  mockTelemetryRuntime,
 } from "../../../../../tests/helpers/mocks.ts";
 import {
   LEGACY_VALID_REF,
@@ -59,17 +60,23 @@ interface MockClientOpts {
   deleteFailWith?: string;
 }
 
+interface RecordedCall {
+  token: string;
+  projectRef: string | undefined;
+  userId: string | undefined;
+}
+
 function mockFeedbackClient(opts: MockClientOpts = {}) {
-  const previewCalls: Array<{ token: string; projectRef: string | undefined }> = [];
-  const deleteCalls: Array<{ token: string; projectRef: string | undefined }> = [];
+  const previewCalls: Array<RecordedCall> = [];
+  const deleteCalls: Array<RecordedCall> = [];
   return {
     layer: Layer.succeed(
       FeedbackClient,
       FeedbackClient.of({
         submit: () => Effect.die("submit is not reachable from feedback delete"),
-        preview: (token, projectRef) =>
+        preview: (token, context) =>
           Effect.suspend(() => {
-            previewCalls.push({ token, projectRef });
+            previewCalls.push({ token, projectRef: context?.projectRef, userId: context?.userId });
             return opts.previewFailWith !== undefined
               ? Effect.fail(
                   new FeedbackBackendError({
@@ -79,9 +86,9 @@ function mockFeedbackClient(opts: MockClientOpts = {}) {
                 )
               : Effect.succeed(Option.fromNullishOr(opts.previewText));
           }),
-        delete: (token, projectRef) =>
+        delete: (token, context) =>
           Effect.suspend(() => {
-            deleteCalls.push({ token, projectRef });
+            deleteCalls.push({ token, projectRef: context?.projectRef, userId: context?.userId });
             return opts.deleteFailWith !== undefined
               ? Effect.fail(
                   new FeedbackBackendError({ message: opts.deleteFailWith, operation: "delete" }),
@@ -102,6 +109,9 @@ function setupLegacyFeedbackDelete(
     yes?: boolean;
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `LegacyCliConfig` reads. */
     projectIdEnv?: string;
+    /** Simulates the gotrue user id persisted to telemetry.json at login. */
+    distinctId?: string;
+    consent?: "granted" | "denied";
   } = {},
 ) {
   const out = mockOutput(opts.output ?? { promptConfirmResponses: [true] });
@@ -109,6 +119,11 @@ function setupLegacyFeedbackDelete(
   const layer = Layer.mergeAll(
     out.layer,
     client.layer,
+    mockTelemetryRuntime({
+      cliVersion: "9.9.9",
+      distinctId: opts.distinctId,
+      consent: opts.consent,
+    }),
     mockLegacyCliConfig({
       workdir: tempRoot.current,
       userAgent: "SupabaseCLI/9.9.9",
@@ -270,6 +285,50 @@ describe("legacy feedback delete", () => {
       yield* legacyFeedbackDelete(deleteArgs());
 
       expect(client.previewCalls).toEqual([{ token: TOKEN, projectRef: "envenvenvenvenvenvre" }]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("presents the persisted gotrue user id with the preview and the delete", () => {
+    // Rows submitted while logged in carry a user_id, and the RLS only
+    // matches them when the same id arrives as the x-feedback-user-id header.
+    const { layer, client } = setupLegacyFeedbackDelete({
+      yes: true,
+      distinctId: "11111111-2222-3333-4444-555555555555",
+    });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackDelete(deleteArgs());
+
+      expect(client.previewCalls).toEqual([
+        { token: TOKEN, projectRef: undefined, userId: "11111111-2222-3333-4444-555555555555" },
+      ]);
+      expect(client.deleteCalls).toEqual([
+        { token: TOKEN, projectRef: undefined, userId: "11111111-2222-3333-4444-555555555555" },
+      ]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("still presents the user id when telemetry consent is denied", () => {
+    // Unlike submit-side attribution, the header is functional auth context —
+    // gating it on consent would strand rows submitted before an opt-out.
+    const { layer, client } = setupLegacyFeedbackDelete({
+      yes: true,
+      distinctId: "11111111-2222-3333-4444-555555555555",
+      consent: "denied",
+    });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackDelete(deleteArgs());
+
+      expect(client.deleteCalls[0]?.userId).toBe("11111111-2222-3333-4444-555555555555");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("sends no user id when not logged in", () => {
+    const { layer, client } = setupLegacyFeedbackDelete({ yes: true });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackDelete(deleteArgs());
+
+      expect(client.previewCalls[0]?.userId).toBeUndefined();
+      expect(client.deleteCalls[0]?.userId).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 

@@ -2,11 +2,12 @@
 
 ## Files Read
 
-| Path                                   | Format                              | When                                                                                                                                                                              |
-| -------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/profile`                  | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliConfigLayer`)                                                                                 |
-| `$SUPABASE_PROFILE`                    | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                                                  |
-| `<workdir>/supabase/.temp/project-ref` | plain text (project ref)            | when `--project-ref` and `SUPABASE_PROJECT_ID` are unset — supplies the `x-feedback-project-ref` context. Absent, blank, or unreadable → header omitted (never fails the command) |
+| Path                                            | Format                              | When                                                                                                                                                                                   |
+| ----------------------------------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliConfigLayer`)                                                                                      |
+| `$SUPABASE_PROFILE`                             | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                                                       |
+| `<workdir>/supabase/.temp/project-ref`          | plain text (project ref)            | when `--project-ref` and `SUPABASE_PROJECT_ID` are unset — supplies the `x-feedback-project-ref` context. Absent, blank, or unreadable → header omitted (never fails the command)      |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON (telemetry state)              | read at startup by the shared telemetry runtime — its `distinct_id` (gotrue user id stamped at login) supplies the `x-feedback-user-id` context. Absent or logged-out → header omitted |
 
 ## Files Written
 
@@ -16,19 +17,22 @@
 
 ## API Routes
 
-| Method   | Path                                                                                     | Auth / headers                                                                                                   | Request body | Response (used fields)                                       |
-| -------- | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------ |
-| `GET`    | `<feedback-env-url>/rest/v1/interfaces_feedback?select=feedback&delete_token=eq.<token>` | `apikey` = committed publishable key; `x-feedback-token: <token>`; `x-feedback-project-ref: <ref>` when resolved | —            | `[{ feedback }]` or `[]` — previews the text before deletion |
-| `DELETE` | `<feedback-env-url>/rest/v1/interfaces_feedback?delete_token=eq.<token>`                 | same headers, plus `Prefer: count=exact`                                                                         | —            | `Content-Range: */1` (deleted) vs `*/0` (no row matched)     |
+| Method   | Path                                                                                     | Auth / headers                                                                                                                                                | Request body | Response (used fields)                                       |
+| -------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------ | ------------------------------------------------------------ |
+| `GET`    | `<feedback-env-url>/rest/v1/interfaces_feedback?select=feedback&delete_token=eq.<token>` | `apikey` = committed publishable key; `x-feedback-token: <token>`; `x-feedback-project-ref: <ref>` when resolved; `x-feedback-user-id: <uuid>` when logged in | —            | `[{ feedback }]` or `[]` — previews the text before deletion |
+| `DELETE` | `<feedback-env-url>/rest/v1/interfaces_feedback?delete_token=eq.<token>`                 | same headers, plus `Prefer: count=exact`                                                                                                                      | —            | `Content-Range: */1` (deleted) vs `*/0` (no row matched)     |
 
 `<feedback-env-url>` follows the resolved profile exactly as `feedback add`
 does (`feedback.layers.ts` / `src/shared/feedback/feedback-client.layer.ts`).
 The `delete_token=eq.` URL filter only satisfies PostgREST's filterless-delete
 rejection — the `x-feedback-token` header is the security boundary enforced by
-RLS. Rows submitted with a `project_ref` additionally require the matching
-`x-feedback-project-ref` header on both routes; sending it against a
-context-free row is ignored server-side, so the CLI always sends whatever ref
-resolves. Each request times out after 10 s.
+RLS. Rows submitted with a `project_ref` and/or `user_id` additionally require
+the matching `x-feedback-project-ref` / `x-feedback-user-id` header on both
+routes; extra context against a context-free row is ignored server-side, so
+the CLI always sends whatever resolves. The user-id header is NOT gated on
+telemetry consent (unlike `feedback add`'s submit-side attribution) — it is
+functional auth context, and gating it would strand rows submitted before a
+consent opt-out. Each request times out after 10 s.
 
 ## Environment Variables
 
@@ -48,7 +52,7 @@ Global telemetry consent env applies as with every command.
 | ---- | --------------------------------------------------------------------------------------------- |
 | `0`  | feedback deleted                                                                              |
 | `1`  | token argument is not a UUID                                                                  |
-| `1`  | no feedback matched (wrong token, already deleted, or project-ref context mismatch)           |
+| `1`  | no feedback matched (wrong token, already deleted, or project-ref/user-id context mismatch)   |
 | `1`  | confirmation declined, or prompt unavailable (non-interactive / machine mode without `--yes`) |
 | `1`  | backend failure (PostgREST error, network failure, or 10 s timeout) on preview or delete      |
 
@@ -111,3 +115,11 @@ Also requires `--yes`.
   with that same ref presented — rerun from the linked directory or pass
   `--project-ref`. This mirrors `feedback add`'s resolution and works
   logged-out (no auth dependency).
+- A row submitted while logged in (with telemetry consent) carries a `user_id`
+  and can only be previewed/deleted while logged in as that same user — the
+  persisted `distinct_id` is presented automatically as `x-feedback-user-id`.
+  The lookup is a synchronous in-memory read; logged-out runs simply omit the
+  header, which still matches all anonymous rows. `supabase logout` wipes the
+  persisted identity, so a delete token for an attributed row reports "not
+  found" until the user logs back in as the same account (login re-stamps the
+  same gotrue UUID, restoring delete access).
