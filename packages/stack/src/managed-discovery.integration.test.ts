@@ -922,6 +922,60 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
   });
 
+  it("reclaims a missing linked worktree after Git identity publication is interrupted", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "git-written-shared-reservation");
+    const linked = join(root, "removed-git-written-linked");
+    git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+    const service = await open(root);
+    openHandles.push(service);
+    let interruptRegistration = true;
+    const interruptedRepository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      registerCheckoutIdentity: (input) =>
+        interruptRegistration
+          ? ((interruptRegistration = false),
+            Effect.fail(
+              new ManagedIdentityTransitionOwnershipError({
+                transitionId: "injected-registration-interruption",
+              }),
+            ))
+          : service.repository.registerCheckoutIdentity(input),
+    };
+    const interrupted = await makeManagedStackService({
+      repository: interruptedRepository,
+      stateRoot: join(root, "git-written-shared-reservation-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(interrupted);
+
+    await expect(interrupted.newCheckout({ workspacePath: linked })).rejects.toMatchObject({
+      _tag: "ManagedIdentityTransitionOwnershipError",
+    });
+    const staleClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const staleTransition = staleClaims.transitions.find(
+      (transition) =>
+        transition.kind === "new-checkout" &&
+        transition.path === linked &&
+        transition.phase === "git-written",
+    );
+    expect(staleTransition).toBeDefined();
+    expect(staleClaims.checkoutProjects).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ checkoutId: staleTransition?.checkoutId }),
+      ]),
+    );
+    rmSync(linked, { recursive: true, force: true });
+
+    const recovered = await service.newCheckout({ workspacePath: repository });
+
+    expect(recovered.state).toBe("healthy");
+    expect(recovered.identity.projectId).toBe(staleTransition?.projectId);
+    expect(recovered.identity.checkoutId).not.toBe(staleTransition?.checkoutId);
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+  });
+
   it("completes a detached checkout whose context registry row is missing", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);

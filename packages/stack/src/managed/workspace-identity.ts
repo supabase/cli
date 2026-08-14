@@ -11,6 +11,7 @@ import {
   type ManagedContextDescriptor,
   type ManagedContextKind,
   type ManagedIdentityTriple,
+  type ManagedIdentityClaims,
   type ManagedIdentityTransitionRecord,
 } from "./model.ts";
 import {
@@ -496,11 +497,11 @@ export const makeWorkspaceIdentity = ({
     );
 
   /**
-   * A reserved Git checkout publishes the shared project key before any
-   * checkout-local marker. If its worktree is now definitely absent and the
-   * shared key is either unpublished or contains that reservation's exact
-   * project target, its exact reservation is safe to release so another
-   * worktree can claim the repository.
+   * A stale Git checkout publication can be released only when its original
+   * worktree is definitely gone, its exact shared project is still current,
+   * and no registry claim has consumed the reserved identity. Reserved rows
+   * are abandoned; a git-written row is finalized so its publication remains
+   * historical rather than being mistaken for an active claim.
    */
   const releaseMissingSharedNewCheckoutReservation = (
     report: ManagedWorkspaceDiscovery,
@@ -510,26 +511,66 @@ export const makeWorkspaceIdentity = ({
       const stale = claims.transitions.find(
         (transition) =>
           transition.kind === "new-checkout" &&
-          transition.phase === "reserved" &&
+          (transition.phase === "reserved" || transition.phase === "git-written") &&
           transition.path !== undefined &&
           transition.path !== report.workspace.workspaceRoot &&
           transition.projectIdentityLocation === report.workspace.projectIdentityLocation,
       );
-      if (stale?.path === undefined || !(yield* pathIsDefinitelyMissing(stale.path))) return;
-      const current = yield* discover(report.workspace.workspaceRoot).pipe(
-        Effect.catch(() => Effect.succeed(undefined)),
-      );
       if (
-        current === undefined ||
-        current.workspace.projectIdentityLocation !== stale.projectIdentityLocation ||
-        (current.identity.projectId !== undefined &&
-          current.identity.projectId !== stale.projectId) ||
-        current.identity.checkoutId !== undefined ||
-        current.identity.contextId !== undefined
+        stale?.path === undefined ||
+        stale.projectId === undefined ||
+        stale.checkoutId === undefined ||
+        stale.contextId === undefined ||
+        !(yield* pathIsDefinitelyMissing(stale.path))
       ) {
         return;
       }
-      yield* abandonReservedTransition(stale, stale.path);
+      const hasRegistryClaim = (snapshot: ManagedIdentityClaims): boolean =>
+        snapshot.checkoutProjects.some((checkout) => checkout.checkoutId === stale.checkoutId) ||
+        snapshot.contexts.some(
+          (context) => context.id === stale.contextId || context.checkoutId === stale.checkoutId,
+        ) ||
+        snapshot.locations.some((location) => location.checkoutId === stale.checkoutId);
+      const eligible = (snapshot: ManagedIdentityClaims, current: ManagedWorkspaceDiscovery) =>
+        !hasRegistryClaim(snapshot) &&
+        current.workspace.projectIdentityLocation === stale.projectIdentityLocation &&
+        (stale.phase === "git-written"
+          ? current.identity.projectId === stale.projectId
+          : current.identity.projectId === undefined ||
+            current.identity.projectId === stale.projectId) &&
+        current.identity.checkoutId === undefined &&
+        current.identity.contextId === undefined;
+      const current = yield* discover(report.workspace.workspaceRoot).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      );
+      if (current === undefined || !eligible(claims, current)) return;
+
+      // Re-read both sides immediately before settling so a concurrent winner
+      // or registry claim cannot be released by a stale observation.
+      const latestClaims = yield* repository.listIdentityClaims();
+      const latest = latestClaims.transitions.find((candidate) => candidate.id === stale.id);
+      const latestCurrent = yield* discover(report.workspace.workspaceRoot).pipe(
+        Effect.catch(() => Effect.succeed(undefined)),
+      );
+      if (
+        latest === undefined ||
+        latest.phase !== stale.phase ||
+        latest.path === undefined ||
+        !(yield* pathIsDefinitelyMissing(latest.path)) ||
+        latestCurrent === undefined ||
+        !eligible(latestClaims, latestCurrent)
+      ) {
+        return;
+      }
+      if (latest.phase === "reserved") {
+        yield* abandonReservedTransition(latest, latest.path);
+      } else {
+        yield* repository.finalizeIdentityTransition({
+          id: latest.id,
+          expectedPhase: "git-written",
+          now: now(),
+        });
+      }
     });
 
   /**
