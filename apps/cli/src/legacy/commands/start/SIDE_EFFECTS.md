@@ -103,12 +103,13 @@ directly into each container's entrypoint (a `sh -c '... heredoc ...'` command) 
 never written to the host filesystem, since none of them carries secret content.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
-key, TLS private key material, and the DB password respectively). As of
-supabase/cli#6022 these are delivered via `docker cp` straight into the created (not yet
-started) container, never a host bind
-mount or plaintext host file: `legacyCreateContainer` packs all of one container's
-entries into one in-memory tar archive (mode `0644` — world-readable, since Kong (uid 100) and Postgres's post-privilege-drop `postgres` user read them back as non-root) and
-streams it through `docker cp - <id>:/`, extracting every entry at the exact path its
+key, TLS private key material, and the DB password respectively). Since
+supabase/cli#6022 these have been delivered via `docker cp` straight into the created
+(not yet started) container, never as host bind mounts. As of supabase/cli#6201,
+`legacyCopyStartSecretFilesIntoContainer` also avoids plaintext host files by packing all
+of one container's entries into one in-memory tar archive (mode `0644` — world-readable,
+since Kong (uid 100) and Postgres's post-privilege-drop `postgres` user read them back as
+non-root) and streams it through `docker cp - <id>:/`, extracting every entry at the exact path its
 container's entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s
 `legacyCopyStartSecretFilesIntoContainer` doc comment for the full rationale
 (CWE-214/522: keeping secret content out of the `docker create`/`docker cp` argv the

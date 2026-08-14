@@ -95,6 +95,27 @@ function mockSpawner(
   };
 }
 
+function tarRegularFileModes(archive: Uint8Array): ReadonlyArray<number> {
+  const decoder = new TextDecoder();
+  const parseOctal = (field: Uint8Array) =>
+    Number.parseInt(decoder.decode(field).replaceAll("\0", "").trim() || "0", 8);
+  const modes: Array<number> = [];
+  let offset = 0;
+
+  while (offset + 512 <= archive.byteLength) {
+    const header = archive.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+
+    const type = header[156];
+    if (type === 0 || type === 0x30) modes.push(parseOctal(header.subarray(100, 108)));
+
+    const size = parseOctal(header.subarray(124, 136));
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+
+  return modes;
+}
+
 const baseSpec: LegacyStartContainerSpec = {
   image: "public.ecr.aws/supabase/postgres:15",
   containerName: "supabase_db_proj",
@@ -440,11 +461,7 @@ describe("legacyCreateContainer secretFiles", () => {
       expect(yield* Effect.promise(() => tlsKey.text())).toBe("tls-private-key");
       expect(yield* Effect.promise(() => tlsCert.text())).toBe("");
 
-      const modeField = new TextDecoder()
-        .decode(archiveBytes.subarray(100, 108))
-        .replaceAll("\0", "")
-        .trim();
-      expect(Number.parseInt(modeField, 8)).toBe(0o644);
+      expect(tarRegularFileModes(archiveBytes)).toEqual([0o644, 0o644, 0o644]);
     });
   });
 

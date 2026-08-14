@@ -72,6 +72,7 @@ import {
   legacyEnsureNetwork,
   legacyCreateContainer,
   LEGACY_COMPOSE_PROJECT_LABEL,
+  type LegacyContainerError,
   type LegacyContainerOpts,
 } from "./container-lifecycle.ts";
 import type { LegacyImagePrepullError } from "./image-prepull.ts";
@@ -113,6 +114,7 @@ export class LegacyShadowDbError extends Data.TaggedError("LegacyShadowDbError")
     | "connect"
     | "docker_daemon"
     | "container_configuration"
+    | "internal"
     | "port_conflict"
     | "filesystem"
     | "database";
@@ -123,6 +125,8 @@ export class LegacyShadowDbError extends Data.TaggedError("LegacyShadowDbError")
         return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
       case "docker_daemon":
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "internal":
+        return actionability.internalPanic;
       case "port_conflict":
         return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
       case "filesystem":
@@ -137,13 +141,13 @@ export class LegacyShadowDbError extends Data.TaggedError("LegacyShadowDbError")
 
 /** Carries `container-lifecycle.ts`'s own error classification through the shadow wrapper. */
 const legacyShadowContainerReason = (
-  reason: "runtime" | "configuration" | "filesystem" | "port_conflict",
+  reason: LegacyContainerError["reason"],
 ): LegacyShadowDbError["reason"] => {
   switch (reason) {
     case "runtime":
       return "docker_daemon";
-    case "filesystem":
-      return "filesystem";
+    case "internal":
+      return "internal";
     case "port_conflict":
       return "port_conflict";
     default:

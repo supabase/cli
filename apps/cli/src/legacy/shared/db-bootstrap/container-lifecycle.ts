@@ -65,7 +65,7 @@ type Spawner = ChildProcessSpawner["Service"];
  */
 export const LEGACY_COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
-type LegacyContainerOperationReason = "runtime" | "configuration" | "filesystem" | "port_conflict";
+type LegacyContainerOperationReason = "runtime" | "configuration" | "internal" | "port_conflict";
 
 function legacyContainerOperationActionability(
   reason: LegacyContainerOperationReason | undefined,
@@ -73,8 +73,8 @@ function legacyContainerOperationActionability(
   switch (reason) {
     case "runtime":
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
-    case "filesystem":
-      return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+    case "internal":
+      return actionability.internalPanic;
     case "port_conflict":
       return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
     default:
@@ -108,7 +108,7 @@ export class LegacyVolumeCreateError extends Data.TaggedError("LegacyVolumeCreat
 /** `docker create` failed. */
 export class LegacyContainerCreateError extends Data.TaggedError("LegacyContainerCreateError")<{
   readonly message: string;
-  readonly reason: "runtime" | "configuration" | "filesystem";
+  readonly reason: "runtime" | "configuration" | "internal";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return legacyContainerOperationActionability(this.reason);
@@ -730,11 +730,11 @@ function legacyDockerCopyArchiveIntoContainer(
 }
 
 /**
- * Streams all secret files as one mode-`0644` archive after create and before start. That mode
- * keeps the files readable by non-root Kong/Postgres processes and matches Go's result. Once
- * copied, the files live in the container filesystem, so normal restarts need no host artifact.
- * This mirrors Go's path-independent Engine API delivery without exposing plaintext through host
- * files or argv.
+ * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes no
+ * per-entry mode option, so the unit test pins its `0644` default. That mode keeps the files
+ * readable by non-root Kong/Postgres processes and matches Go's result. Once copied, the files
+ * live in the container filesystem, so normal restarts need no host artifact. This mirrors Go's
+ * path-independent Engine API delivery without exposing plaintext through host files or argv.
  */
 function legacyCopyStartSecretFilesIntoContainer(
   spawner: Spawner,
@@ -756,7 +756,7 @@ function legacyCopyStartSecretFilesIntoContainer(
         message: `failed to create docker container: failed to prepare container secret files: ${
           cause instanceof Error ? cause.message : String(cause)
         }`,
-        reason: "configuration",
+        reason: "internal",
       }),
   }).pipe(
     Effect.flatMap((archive) =>
