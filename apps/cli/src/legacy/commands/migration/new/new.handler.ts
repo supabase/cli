@@ -73,30 +73,30 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
         ? output.raw(`Created new migration at ${legacyBold(relativePath, process.stdout)}\n`)
         : Effect.void;
 
-    // The migration file opens first, then stdin streams into it
-    // via a fixed-size buffer, so a
-    // large `pg_dump | supabase migration new` runs in constant memory. Create
-    // the file (mode 0644, O_CREATE|O_TRUNC), then stream piped stdin into the open
-    // handle rather than buffering the whole pipe. A TTY (char device) writes nothing → empty
-    // file; an empty pipe streams nothing → empty file.
-    yield* Effect.scoped(
-      Effect.gen(function* () {
-        // Fails with "failed to open migration file" if the open fails —
-        // BEFORE the Created-line print, so no line on open failure...
-        const handle = yield* fs.open(migrationPath, { flag: "w", mode: 0o644 }).pipe(
-          Effect.mapError(
-            (cause) =>
-              new LegacyMigrationNewWriteError({
-                message: `failed to open migration file: ${cause.message}`,
-              }),
-          ),
-        );
-        // ...and with "failed to copy from stdin" if the copy fails. A piped
-        // stdin read error must abort here, not silently leave a truncated/empty file — but
-        // the Created-line print is already
-        // scheduled by then, so the Created line still prints (stdout) BEFORE the copy
-        // error surfaces (stderr, exit 1).
-        if (!stdin.isTTY) {
+    // Materialize the empty migration before reporting success instead of relying on an
+    // otherwise-unused open handle. This is the same create-then-append pattern used by
+    // db dump and db pull.
+    yield* fs.writeFile(migrationPath, new Uint8Array(0), { mode: 0o644 }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyMigrationNewWriteError({
+            message: `failed to open migration file: ${cause.message}`,
+          }),
+      ),
+    );
+
+    // Keep the piped-stdin copy scoped and chunked so large dumps use constant memory.
+    if (!stdin.isTTY) {
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const handle = yield* fs.open(migrationPath, { flag: "a" }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new LegacyMigrationNewWriteError({
+                  message: `failed to open migration file: ${cause.message}`,
+                }),
+            ),
+          );
           yield* stdin.pipedBytesStream.pipe(
             Stream.runForEach((chunk) => handle.writeAll(chunk)),
             Effect.mapError(
@@ -107,8 +107,19 @@ export const legacyMigrationNew = Effect.fn("legacy.migration.new")(function* (
             ),
             Effect.tapError(() => printCreated),
           );
-        }
-      }),
+        }),
+      );
+    }
+
+    // Do not emit success solely because a runtime write reported success. This command's
+    // contract is that the returned path exists when it exits zero.
+    yield* fs.stat(migrationPath).pipe(
+      Effect.mapError(
+        (cause) =>
+          new LegacyMigrationNewWriteError({
+            message: `failed to verify migration file: ${cause.message}`,
+          }),
+      ),
     );
 
     if (output.format === "text") {
