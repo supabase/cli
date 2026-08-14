@@ -43,9 +43,6 @@ import { legacyPgDeltaTempPath } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-setup.ts";
-import { LEGACY_START_DB_GLOBALS_SQL } from "./templates/db-globals.sql.ts";
-import { LEGACY_START_DB_INITIAL_SCHEMA_13_SQL } from "./templates/db-initial-schema-13.sql.ts";
-import { LEGACY_START_DB_INITIAL_SCHEMA_14_SQL } from "./templates/db-initial-schema-14.sql.ts";
 import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
@@ -211,12 +208,17 @@ export interface LegacyShadowCacheKeyInputs {
 /**
  * Digest of every CLI-EMBEDDED SQL text baked into the baseline cluster — the inputs that change
  * with a CLI release rather than with the project's config: the PG15+ entrypoint's initdb heredocs
- * (schema/webhook/_supabase — `postgres.service.ts`), the PG<=14 setup path's globals + initial
- * schema, and the API privilege revocation. Without this line, a CLI upgrade that edits a grant,
- * schema statement, or revocation WITHOUT bumping the postgres image would warm-restore the
- * previous release's baseline (review: depthfirst on #6184). Computed once at module load — these
- * are compile-time constants. When adding a new embedded SQL step to the baseline
- * (`legacySetupDatabase`/the entrypoint scripts), add its text here too.
+ * (schema/webhook/_supabase — `postgres.service.ts`) and the API privilege revocation. Without this
+ * line, a CLI upgrade that edits a grant, schema statement, or revocation WITHOUT bumping the
+ * postgres image would warm-restore the previous release's baseline (review: depthfirst on #6184).
+ * Computed once at module load — these are compile-time constants. When adding a new embedded SQL
+ * step to the baseline (`legacySetupDatabase`/the entrypoint scripts), add its text here too.
+ *
+ * Deliberately EXCLUDES PG<=14's own setup SQL (`LEGACY_START_DB_GLOBALS_SQL`,
+ * `LEGACY_START_DB_INITIAL_SCHEMA_13_SQL`/`_14_SQL`): PG<=14 is cache-ineligible —
+ * {@link legacyResolveShadowCacheKeyInputs} returns `Option.none()` for `majorVersion <= 14` before
+ * any key is computed, so no cluster keyed by this digest can ever have run through that SQL. If
+ * PG<=14 ever becomes cache-eligible, those templates must be re-added here.
  */
 const LEGACY_SHADOW_BASELINE_SQL_DIGEST = createHash("sha256")
   .update(
@@ -224,9 +226,6 @@ const LEGACY_SHADOW_BASELINE_SQL_DIGEST = createHash("sha256")
       LEGACY_START_DB_SCHEMA_SQL,
       LEGACY_START_DB_WEBHOOK_SQL,
       LEGACY_START_DB_SUPABASE_SQL,
-      LEGACY_START_DB_GLOBALS_SQL,
-      LEGACY_START_DB_INITIAL_SCHEMA_13_SQL,
-      LEGACY_START_DB_INITIAL_SCHEMA_14_SQL,
       LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
       // The vault upsert's own SQL (`legacyUpsertVaultSecrets`, `legacy-vault.ts`) runs into the
       // baseline right after the privilege pass — same digest rationale as every line above.
@@ -578,6 +577,7 @@ const legacyAwaitShadowReady = <E>(
 ): Effect.Effect<void, LegacyShadowCacheUnavailable, LegacyDbConnection> =>
   legacyWaitForShadowReady(spawner, containerId, legacyShadowConnConfig(input), {
     timeoutSeconds: input.healthTimeoutSeconds,
+    image: input.image,
   }).pipe(
     Effect.mapError((cause) =>
       legacyShadowCacheUnavailable(`${what} never became ready: ${cause.message}`),
