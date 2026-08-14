@@ -13,9 +13,9 @@ const LIVE_TIMEOUT_MS = 300_000;
 
 // A fresh, isolated temp workdir so the CLI writes the dump there and never touches
 // the repo tree. The provisioned project ref is supplied to `--linked` via the
-// `SUPABASE_PROJECT_ID` env var — that is the `--linked` resolver chain in both Go
-// and the legacy port (flag → `SUPABASE_PROJECT_ID` → `supabase/.temp/project-ref`);
-// `config.toml`'s `project_id` is NOT consulted for `--linked`.
+// `SUPABASE_PROJECT_ID` env var — that is the `--linked` resolver chain (flag →
+// `SUPABASE_PROJECT_ID` → `supabase/.temp/project-ref`); `config.toml`'s
+// `project_id` is NOT consulted for `--linked`.
 function tempWorkdir(): string {
   return mkdtempSync(join(tmpdir(), "sb-db-dump-live-"));
 }

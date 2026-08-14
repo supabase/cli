@@ -1,7 +1,7 @@
 import { buildGraph } from "@supabase/process-compose";
 import type { ResolvedGraph, ServiceDef } from "@supabase/process-compose";
 import { Effect, Layer, Context } from "effect";
-import { dockerContainerName, type CleanupTargets } from "./CleanupTargets.ts";
+import type { CleanupTargets } from "./CleanupTargets.ts";
 import { StackBuildError } from "./errors.ts";
 import { generateJwks } from "./JwtGenerator.ts";
 import { detectPlatform, dockerHostAddress } from "./Platform.ts";
@@ -35,7 +35,8 @@ import type { PreparedStackArtifacts, ServiceResolution } from "./StackPreparati
 import type { StackServiceProjectionCatalog } from "./StackStateProjection.ts";
 import { SERVICE_NAMES, serviceMetadata } from "./ServiceCatalog.ts";
 import type { ServiceName } from "./ServiceName.ts";
-import type { ResolvedStackConfig } from "./StackConfig.ts";
+import { INSTANCE_ID_PATTERN, type ResolvedStackConfig } from "./StackConfig.ts";
+import { dockerContainerName, stackIdentity } from "./StackIdentity.ts";
 import type { VersionManifest } from "./versions.ts";
 
 export interface BuildResult {
@@ -100,6 +101,15 @@ export const validateResolvedConfig = (
   config: ResolvedStackConfig,
 ): Effect.Effect<void, StackBuildError> =>
   Effect.gen(function* () {
+    if (config.instanceId !== undefined && !INSTANCE_ID_PATTERN.test(config.instanceId)) {
+      return yield* Effect.fail(
+        new StackBuildError({
+          detail: `Invalid instanceId: must match ${INSTANCE_ID_PATTERN}`,
+          reason: "invalid_config",
+        }),
+      );
+    }
+
     if (config.mode === "native") {
       const enabledDockerOnly = dockerOnlyServices.filter(
         (service) => resolvedConfigForService(config, service) !== false,
@@ -258,6 +268,7 @@ export class StackBuilder extends Context.Service<
           dependencyTimeoutSecondsForServices(analyticsStartupPath) +
           postgresInitCompletionBudgetSeconds;
         const jwtJwks = generateJwks(config.jwtSecret);
+        const identity = stackIdentity(config);
 
         const defs: Array<ServiceDef & { enabled: boolean }> = [
           {
@@ -277,7 +288,7 @@ export class StackBuilder extends Context.Service<
                   platformOs: platform.os,
                   jwtSecret: config.jwtSecret,
                   jwtExpiry: config.auth !== false ? config.auth.jwtExpiry : 3600,
-                  apiPort: config.apiPort,
+                  identity,
                   cleanupDataDirOnExit: hasAutoManagedPath(config, config.postgres.dataDir),
                   dependencies: [],
                 })),
@@ -322,7 +333,7 @@ export class StackBuilder extends Context.Service<
                   maxRows: config.postgrest.maxRows,
                   jwtSecret: config.jwtSecret,
                   platformOs: platform.os,
-                  apiPort: config.apiPort,
+                  identity,
                   dependencies: postgresDeps,
                 })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -361,7 +372,7 @@ export class StackBuilder extends Context.Service<
                   smtpAdminEmail: config.mailpit !== false ? config.mailpit.adminEmail : undefined,
                   smtpSenderName: config.mailpit !== false ? config.mailpit.senderName : undefined,
                   platformOs: platform.os,
-                  apiPort: config.apiPort,
+                  identity,
                   dependencies: postgresDeps,
                 })),
             dependencyTimeoutSeconds: postgresConsumerDependencyTimeoutSeconds,
@@ -383,7 +394,7 @@ export class StackBuilder extends Context.Service<
                 })
               : makeEdgeRuntimeServiceDocker({
                   image: edgeRuntimeResolution.image,
-                  apiPort: config.apiPort,
+                  identity,
                   runtimeRoot: config.runtimeRoot,
                   projectDir,
                   port: config.edgeRuntime.port,
@@ -403,7 +414,7 @@ export class StackBuilder extends Context.Service<
           defs.push({
             ...makeMailpitServiceDocker({
               image: mailpitImage,
-              apiPort: config.apiPort,
+              identity,
               webPort: config.mailpit.port,
               smtpPort: config.mailpit.smtpPort,
               pop3Port: config.mailpit.pop3Port,
@@ -420,7 +431,7 @@ export class StackBuilder extends Context.Service<
             ...makeRealtimeServiceDocker({
               image: realtimeImage,
               port: config.realtime.port,
-              apiPort: config.apiPort,
+              identity,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               jwtSecret: config.jwtSecret,
@@ -443,7 +454,7 @@ export class StackBuilder extends Context.Service<
             ...makeStorageServiceDocker({
               image: storageImage,
               port: config.storage.port,
-              apiPort: config.apiPort,
+              identity,
               dbHost: serviceHost,
               dbPort: config.dbPort,
               dataDir: config.storage.dataDir,
@@ -472,7 +483,7 @@ export class StackBuilder extends Context.Service<
             ...makeImgproxyServiceDocker({
               image: imgproxyImage,
               port: config.imgproxy.port,
-              apiPort: config.apiPort,
+              identity,
               dataDir: storageConfig === false ? "" : storageConfig.dataDir,
               platformOs: platform.os,
               dependencies: [{ service: "storage", condition: "healthy" }],
@@ -487,7 +498,7 @@ export class StackBuilder extends Context.Service<
           defs.push({
             ...makePgmetaServiceDocker({
               image: pgmetaImage,
-              apiPort: config.apiPort,
+              identity,
               port: config.pgmeta.port,
               dbHost: serviceHost,
               dbPort: config.dbPort,
@@ -504,7 +515,7 @@ export class StackBuilder extends Context.Service<
           defs.push({
             ...makeAnalyticsServiceDocker({
               image: analyticsImage,
-              apiPort: config.apiPort,
+              identity,
               hostPort: config.analytics.port,
               platformOs: platform.os,
               dbHost: serviceHost,
@@ -524,7 +535,7 @@ export class StackBuilder extends Context.Service<
           defs.push({
             ...makeVectorServiceDocker({
               image: vectorImage,
-              apiPort: config.apiPort,
+              identity,
               serviceHost,
               analyticsPort: analyticsConfig === false ? 0 : analyticsConfig.port,
               analyticsApiKey: analyticsConfig === false ? "api-key" : analyticsConfig.apiKey,
@@ -541,7 +552,7 @@ export class StackBuilder extends Context.Service<
           defs.push({
             ...makePoolerServiceDocker({
               image: poolerImage,
-              apiPort: config.apiPort,
+              identity,
               hostAdminPort: config.pooler.apiPort,
               hostPort: config.pooler.port,
               platformOs: platform.os,
@@ -567,7 +578,7 @@ export class StackBuilder extends Context.Service<
           defs.push({
             ...makeStudioServiceDocker({
               image: studioImage,
-              apiPort: config.apiPort,
+              identity,
               port: config.studio.port,
               apiUrl: config.studio.apiUrl,
               publicApiUrl: `http://127.0.0.1:${config.apiPort}`,
@@ -598,7 +609,7 @@ export class StackBuilder extends Context.Service<
 
         const dockerContainerNames = SERVICE_NAMES.filter((service) =>
           defs.some((def) => def.name === service && def.command === "docker"),
-        ).map((service) => dockerContainerName(service, config.apiPort));
+        ).map((service) => dockerContainerName(service, identity.key));
 
         const graph = yield* buildGraph(defs).pipe(
           Effect.mapError(

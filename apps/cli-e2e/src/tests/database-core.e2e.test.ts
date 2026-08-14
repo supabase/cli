@@ -1,8 +1,7 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
-import { PROJECT_REF } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 // ---------------------------------------------------------------------------
 // Workspace helpers
@@ -115,15 +114,6 @@ describe("db advisors", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["db", "advisors", "--linked", "--type", "security"], {
-      workspaceSetup: (dir) => linkProject(dir, PROJECT_REF),
-    });
-
-    testParity(["db", "advisors", "--linked", "--type", "security"], {
-      failureType: "NON_AUTH",
-      workspaceSetup: (dir) => linkProject(dir, PROJECT_REF),
-    });
   });
 
   describe("db advisors:performance", () => {
@@ -138,10 +128,6 @@ describe("db advisors", () => {
         expect(result.stderr).toContain("No issues found");
       }
     });
-
-    testParity(["db", "advisors", "--linked", "--type", "performance"], {
-      workspaceSetup: (dir) => linkProject(dir, PROJECT_REF),
-    });
   });
 
   describe("db advisors:all", () => {
@@ -149,10 +135,6 @@ describe("db advisors", () => {
       linkProject(workspace.path, projectRef);
       const result = await run(["db", "advisors", "--linked", "--type", "all"]);
       expect(result.exitCode).toBe(0);
-    });
-
-    testParity(["db", "advisors", "--linked", "--type", "all"], {
-      workspaceSetup: (dir) => linkProject(dir, PROJECT_REF),
     });
   });
 });
@@ -208,15 +190,6 @@ describe("db query", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Forbidden");
     });
-
-    testParity(["db", "query", "--linked", "SELECT 1"], {
-      workspaceSetup: (dir) => linkProject(dir, PROJECT_REF),
-    });
-
-    testParity(["db", "query", "--linked", "SELECT 1"], {
-      failureType: "NON_AUTH",
-      workspaceSetup: (dir) => linkProject(dir, PROJECT_REF),
-    });
   });
 });
 
@@ -236,13 +209,6 @@ describe("db push", () => {
         expect(result.stderr).toContain("connect");
       },
     );
-
-    testParity(["db", "push", "--dry-run"], {
-      workspaceSetup: (dir) => {
-        linkProject(dir, PROJECT_REF);
-        seedMigration(dir);
-      },
-    });
   });
 
   describe("db push:local", () => {
@@ -250,18 +216,6 @@ describe("db push", () => {
       const result = await run(["db", "push", "--local"]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("connect");
-    });
-
-    // Known parity divergence: Go never emits the Docker-start hint for --local (CLI-1995).
-    testParity(["db", "push", "--local"], {
-      normalize: {
-        stderr: {
-          stripPatterns: [
-            /\nMake sure your local IP is allowed in Network Restrictions and Network Bans\.\n[^\n]*/g, // Expected from Go
-            /\nMake sure Docker is running, then run: supabase start/g, // Expected from TS
-          ],
-        },
-      },
     });
   });
 
@@ -288,25 +242,6 @@ describe("db pull", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("connect");
   });
-
-  // No testParity for `db pull --local`: like `db lint --local` and `test db --local`,
-  // pull connects via the shared utils.ConnectByConfig → pgxv5.Connect path on Go and
-  // the same LegacyDbConnection sql-pg layer on TS. With no local Postgres listening in
-  // the harness, the only reachable path is the connection-failure path, and its stderr
-  // diverges by driver in ways that aren't cosmetic and can't be normalized away.
-  // Both emit Go's leading diagnostic to stderr:
-  //   Connecting to local database...
-  // but the connect-error body and trailing hint still differ by driver. Go (pgx):
-  //   failed to connect to postgres: failed to connect to `host=… user=… database=…`: dial error (dial tcp …: connect: connection refused)
-  //   Make sure your local IP is allowed in Network Restrictions and Network Bans.
-  //   http://…/project/_/database/settings
-  // The TS port (@effect/sql-pg) prints the effect SqlError and the --debug hint:
-  //   failed to connect to postgres: effect/sql/SqlError: PgClient: Failed to connect
-  //   Try rerunning the command with --debug to troubleshoot the error.
-  // The meaningful contract (non-zero exit + a connect error on stderr) is covered by
-  // the behaviour test above. A real connect-path parity test would need a live local
-  // database in the harness. (db dump --local keeps its testParity because it connects
-  // through the pg_dump Docker container, so its stderr matches on both runtimes.)
 });
 
 // ---------------------------------------------------------------------------
@@ -319,24 +254,6 @@ describe("db lint", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("connect");
   });
-
-  // No testParity for `db lint --local`: like `test db --local`, lint connects via
-  // the shared utils.ConnectByConfig → pgxv5.Connect path on Go and the same
-  // LegacyDbConnection sql-pg layer on TS. With no local Postgres listening in the
-  // harness, the only reachable path is the connection-failure path, and its stderr
-  // diverges by driver in ways that aren't cosmetic and can't be normalized away.
-  // Both emit Go's leading diagnostic to stderr:
-  //   Connecting to local database...
-  // but the connect-error body and trailing hint still differ by driver. Go (pgx):
-  //   failed to connect to postgres: failed to connect to `host=… user=… database=…`: dial error (dial tcp …: connect: connection refused)
-  //   Make sure your local IP is allowed in Network Restrictions and Network Bans.
-  //   http://…/project/_/database/settings
-  // The TS port (@effect/sql-pg) prints the effect SqlError and the --debug hint:
-  //   failed to connect to postgres: effect/sql/SqlError: PgClient: Failed to connect
-  //   Try rerunning the command with --debug to troubleshoot the error.
-  // The meaningful contract (non-zero exit + a connect error on stderr) is covered
-  // by the behaviour test above. A real connect-path parity test would need a live
-  // local database in the harness.
 });
 
 // ---------------------------------------------------------------------------
@@ -355,9 +272,6 @@ describe("db dump", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr.toLowerCase()).toMatch(/role.only|data.only|mutually exclusive/);
   });
-
-  testParity(["db", "dump", "--local"]);
-  testParity(["db", "dump", "--local", "--role-only", "--data-only"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -370,8 +284,6 @@ describe("db reset", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toMatch(/connect|not running/i);
   });
-
-  testParity(["db", "reset", "--local"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -393,8 +305,6 @@ describe("test new", () => {
     const result = await run(["test", "new"]);
     expect(result.exitCode).not.toBe(0);
   });
-
-  testParity(["test", "new", "parity_test"]);
 });
 
 // ---------------------------------------------------------------------------
@@ -407,20 +317,4 @@ describe("test db", () => {
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).toContain("connect");
   });
-
-  // No testParity for `test db --local`: with no local Postgres listening in the
-  // harness, the only reachable path is the connection-failure path, and its
-  // stderr diverges by driver in ways that aren't cosmetic and can't be
-  // normalized away. Both now emit Go's leading diagnostic to stderr:
-  //   Connecting to local database...
-  // but the connect-error body and trailing hint still differ by driver. Go (pgx):
-  //   failed to connect to postgres: failed to connect to `host=… user=… database=…`: dial error (dial tcp …: connect: connection refused)
-  //   Make sure your local IP is allowed in Network Restrictions and Network Bans.
-  //   http://…/project/_/database/settings
-  // The TS port (@effect/sql-pg) prints the effect SqlError and the --debug hint:
-  //   failed to connect to postgres: effect/sql/SqlError: PgClient: Failed to connect
-  //   Try rerunning the command with --debug to troubleshoot the error.
-  // The meaningful contract (non-zero exit + a connect error on stderr) is
-  // covered by the behaviour test above. A real connect-path parity test would
-  // need a live local database in the harness.
 });

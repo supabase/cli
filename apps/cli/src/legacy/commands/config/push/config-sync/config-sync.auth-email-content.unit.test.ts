@@ -1,6 +1,5 @@
 /**
- * Unit tests for config-sync.auth-email-content.ts — parity with Go
- * `(*email).validate` and `(*baseConfig).resolve` path rules.
+ * Unit tests for config-sync.auth-email-content.ts.
  */
 
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -8,10 +7,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { afterEach, describe, expect, it } from "vitest";
 
-import {
-  loadAuthEmailContent,
-  projectDirsFromConfigPath,
-} from "./config-sync.auth-email-content.ts";
+import { loadAuthEmailContent } from "./config-sync.auth-email-content.ts";
 
 const emptyEmail = {
   enable_signup: true,
@@ -24,15 +20,6 @@ const emptyEmail = {
   template: {},
   notification: {},
 };
-
-describe("projectDirsFromConfigPath", () => {
-  it("derives project root and supabase dir from a config file path", () => {
-    expect(projectDirsFromConfigPath("/home/user/myapp/supabase/config.toml")).toEqual({
-      projectRoot: "/home/user/myapp",
-      supabaseDir: "/home/user/myapp/supabase",
-    });
-  });
-});
 
 describe("loadAuthEmailContent", () => {
   let workdir = "";
@@ -51,50 +38,99 @@ describe("loadAuthEmailContent", () => {
     return { cwd: workdir, supabaseDir };
   }
 
-  it("loads transactional templates relative to the project root", () => {
+  it("loads templates and notifications from the same project-root base", () => {
     const { cwd, supabaseDir } = setup();
-    const templateDir = join(cwd, "templates");
+    const templateDir = join(supabaseDir, "templates");
     mkdirSync(templateDir, { recursive: true });
     writeFileSync(join(templateDir, "invite.html"), "<h1>Invite</h1>");
+    writeFileSync(join(templateDir, "password_changed.html"), "<p>Changed</p>");
 
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
           subject: "You are invited",
-          content_path: "./templates/invite.html",
+          content_path: "./supabase/templates/invite.html",
+        },
+      },
+      notification: {
+        password_changed: {
+          enabled: true,
+          subject: "Password changed",
+          content_path: "./supabase/templates/password_changed.html",
         },
       },
     });
 
     expect(content.template["invite"]).toBe("<h1>Invite</h1>");
-    expect(content.notification).toEqual({});
+    expect(content.notification["password_changed"]).toBe("<p>Changed</p>");
   });
 
-  it("loads notification templates relative to supabase/", () => {
+  it("falls back to the legacy supabase-relative notification path", () => {
     const { cwd, supabaseDir } = setup();
-    writeFileSync(join(supabaseDir, "password_changed.html"), "<p>Changed</p>");
+    const templateDir = join(supabaseDir, "templates");
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, "password_changed.html"), "<p>Legacy location</p>");
 
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
           enabled: true,
           subject: "Password changed",
-          content_path: "./password_changed.html",
+          content_path: "./templates/password_changed.html",
         },
       },
     });
 
-    expect(content.notification["password_changed"]).toBe("<p>Changed</p>");
-    expect(content.template).toEqual({});
+    expect(content.notification["password_changed"]).toBe("<p>Legacy location</p>");
+  });
+
+  it("falls back when the root-resolved path is a directory, not a file", () => {
+    const { cwd, supabaseDir } = setup();
+    mkdirSync(join(cwd, "templates", "n.html"), { recursive: true });
+    mkdirSync(join(supabaseDir, "templates"), { recursive: true });
+    writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy file</p>");
+
+    const content = loadAuthEmailContent(cwd, {
+      ...emptyEmail,
+      notification: {
+        password_changed: {
+          enabled: true,
+          subject: "s",
+          content_path: "./templates/n.html",
+        },
+      },
+    });
+
+    expect(content.notification["password_changed"]).toBe("<p>Legacy file</p>");
+  });
+
+  it("prefers the project-root notification path over the legacy fallback", () => {
+    const { cwd, supabaseDir } = setup();
+    mkdirSync(join(cwd, "templates"), { recursive: true });
+    mkdirSync(join(supabaseDir, "templates"), { recursive: true });
+    writeFileSync(join(cwd, "templates", "n.html"), "<p>Root</p>");
+    writeFileSync(join(supabaseDir, "templates", "n.html"), "<p>Legacy</p>");
+
+    const content = loadAuthEmailContent(cwd, {
+      ...emptyEmail,
+      notification: {
+        password_changed: {
+          enabled: true,
+          subject: "s",
+          content_path: "./templates/n.html",
+        },
+      },
+    });
+
+    expect(content.notification["password_changed"]).toBe("<p>Root</p>");
   });
 
   it("skips notification templates when disabled", () => {
-    const { cwd, supabaseDir } = setup();
-    writeFileSync(join(supabaseDir, "password_changed.html"), "<p>Changed</p>");
+    const { cwd } = setup();
 
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       notification: {
         password_changed: {
@@ -109,9 +145,9 @@ describe("loadAuthEmailContent", () => {
   });
 
   it("skips entries with an empty content_path", () => {
-    const { cwd, supabaseDir } = setup();
+    const { cwd } = setup();
 
-    const content = loadAuthEmailContent(cwd, supabaseDir, {
+    const content = loadAuthEmailContent(cwd, {
       ...emptyEmail,
       template: {
         invite: {
@@ -126,10 +162,10 @@ describe("loadAuthEmailContent", () => {
   });
 
   it("throws a Go-shaped error when a template file is missing", () => {
-    const { cwd, supabaseDir } = setup();
+    const { cwd } = setup();
 
     expect(() =>
-      loadAuthEmailContent(cwd, supabaseDir, {
+      loadAuthEmailContent(cwd, {
         ...emptyEmail,
         template: {
           invite: {

@@ -2,14 +2,14 @@
 
 ## Files Read
 
-Same auth and project-ref resolution chain as every Management-API legacy command.
+Same auth fallback chain as every Management-API legacy command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -17,11 +17,11 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 | -------- | ------------------------------------ | ------------ | -------------------------------------------------------------- | ------------------- |
 | `GET`    | `/v1/projects/{ref}/branches/{name}` | Bearer token | branch input is not a UUID and not a `^[a-z]{20}$` ref pattern | `{project_ref}`     |
 | `GET`    | `/v1/branches/{branch_id_or_ref}`    | Bearer token | branch input is a UUID                                         | `{ref}`             |
-| `DELETE` | `/v1/branches/{branch_id_or_ref}`    | Bearer token | always — `force` query param omitted (Go passes nil)           | `{ message: "ok" }` |
+| `DELETE` | `/v1/branches/{branch_id_or_ref}`    | Bearer token | always — `force` query param omitted                           | `{ message: "ok" }` |
 
 ## Environment Variables
 
-`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list`.
+`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list` (including the CLI-2167 PARENT-scoped resolution chain).
 
 ## Exit Codes
 
@@ -40,9 +40,9 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-`Deleted preview branch: <ref>` written to **stderr** (Go `fmt.Fprintln(os.Stderr, …)`).
+`Deleted preview branch: <ref>` written to **stderr**.
 
 ### `--output-format json` / `stream-json`
 

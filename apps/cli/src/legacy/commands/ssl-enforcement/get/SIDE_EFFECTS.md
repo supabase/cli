@@ -45,11 +45,9 @@
 | ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/sslenforcement/get/`. Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-### `--output-format text` (default) — Go CLI compatible
+### `--output-format text` (default)
 
 Single status line to stdout:
 
@@ -66,19 +64,17 @@ SSL is *NOT* being enforced.
 The "_NOT_" form is emitted when `currentConfig.database` is `false` **or** when
 `appliedSuccessfully` is `false` (i.e. the requested config has not yet propagated).
 
-### Go `--output {json,yaml,toml,env}`
-
-Byte-identical to the Go CLI's encoders (`apps/cli-go/internal/utils/output.go`).
+### `--output {json,yaml,toml,env}`
 
 - `json` — alphabetical struct-field order with trailing newline.
 - `yaml` — `stringifyYaml(response)`.
 - `toml` — `stringifyToml(response)` with trailing newline.
-- `env` — Viper-flattened SCREAMING_SNAKE_CASE keys (e.g.
+- `env` — flattened SCREAMING_SNAKE_CASE keys (e.g.
   `APPLIEDSUCCESSFULLY="true"\nCURRENTCONFIG_DATABASE="true"\n`).
 
-### Go `--output pretty`
+### `--output pretty`
 
-Same as `text` mode (Go's default).
+Same as `text` mode (the default).
 
 ### `--output-format json`
 
@@ -98,13 +94,12 @@ One `result` event:
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- The `--output` flag wins over `--output-format` when both are provided.
 - `linked-project.json` is written **after** the project ref is resolved, regardless of
-  whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
+  whether the subsequent API call succeeds.
 - `telemetry.json` is written on every invocation, including failures, but only once the
   `--experimental` gate is open.
-- `ssl-enforcement` is an experimental command (Go `root.go:63`): `get` requires `--experimental`
-  (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE` gate (`root.go:91-96`),
-  which runs before the `IsManagementAPI` login check (`root.go:105-109`). A closed gate exits 1
+- `ssl-enforcement` is an experimental command: `get` requires `--experimental`
+  (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API call, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.

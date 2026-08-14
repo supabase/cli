@@ -15,7 +15,6 @@ const config = {
   ),
   linked: Flag.boolean("linked").pipe(
     Flag.withDescription("Lists migrations applied to the linked project."),
-    // Go: `listFlags.Bool("linked", true, …)`.
     Flag.withDefault(true),
   ),
   local: Flag.boolean("local").pipe(

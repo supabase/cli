@@ -21,7 +21,7 @@
 | `GET`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | none                                                            | full JSON object       |
 | `PUT`  | `/v1/projects/{ref}/config/database/postgres` | Bearer token | current config minus deleted keys (`restart_database` optional) | full JSON object       |
 
-This command does not call a delete endpoint. It mirrors Go: fetch current config, remove the specified keys locally, then send the remaining object back via `PUT`.
+This command does not call a delete endpoint: it fetches the current config, removes the specified keys locally, then sends the remaining object back via `PUT`.
 
 ## Environment Variables
 
@@ -34,18 +34,18 @@ This command does not call a delete endpoint. It mirrors Go: fetch current confi
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                                                                                           |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success - Postgres config updated with the deleted keys removed                                                                                                                                                                                                                                                                                                     |
-| `1`  | malformed CSV in a `--config` value — fails during flag parsing, before the `--experimental` gate, the handler, and telemetry, with pflag's exact diagnostic on stderr (e.g. `invalid argument "\"max_connections" for "--config" flag: parse error on line 1, column 17: extraneous or missing " in quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                                                                                                                                                                     |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                                                                                                                                                                                                                                             |
-| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                |
-| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                                               |
-| `1`  | PUT non-2xx (`LegacyPostgresConfigDeleteUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                     |
-| `1`  | PUT transport failure (`LegacyPostgresConfigDeleteNetworkError`)                                                                                                                                                                                                                                                                                                    |
-| `1`  | request serialization failure (`LegacyPostgresConfigDeleteSerializeError`)                                                                                                                                                                                                                                                                                          |
-| `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigDeleteUnmarshalError`)                                                                                                                                                                                                                                                        |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                                            |
+| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success - Postgres config updated with the deleted keys removed                                                                                                                                                                                                                                                                                                      |
+| `1`  | malformed CSV in a `--config` value — fails during flag parsing, before the `--experimental` gate, the handler, and telemetry, with the exact diagnostic text on stderr (e.g. `invalid argument "\"max_connections" for "--config" flag: parse error on line 1, column 17: extraneous or missing " in quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                                                                                                                                                                      |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                                                                                                                                                                                                                                              |
+| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                 |
+| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                                                |
+| `1`  | PUT non-2xx (`LegacyPostgresConfigDeleteUnexpectedStatusError`)                                                                                                                                                                                                                                                                                                      |
+| `1`  | PUT transport failure (`LegacyPostgresConfigDeleteNetworkError`)                                                                                                                                                                                                                                                                                                     |
+| `1`  | request serialization failure (`LegacyPostgresConfigDeleteSerializeError`)                                                                                                                                                                                                                                                                                           |
+| `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigDeleteUnmarshalError`)                                                                                                                                                                                                                                                         |
 
 ## Telemetry Events Fired
 
@@ -57,27 +57,27 @@ This command does not call a delete endpoint. It mirrors Go: fetch current confi
 
 Matches `get` on success: stderr headings plus the Glamour-rendered table for the remaining config.
 
-### `--output-format text` (default) - Go CLI compatible
+### `--output-format text` (default)
 
 Renders the remaining config map as a Glamour ASCII table.
 
-### Go `--output pretty`
+### `--output pretty`
 
 Identical to text mode.
 
-### Go `--output json`
+### `--output json`
 
-Go-compatible indented JSON of the remaining config object.
+Indented JSON of the remaining config object.
 
-### Go `--output yaml`
+### `--output yaml`
 
 YAML representation of the remaining config object.
 
-### Go `--output toml`
+### `--output toml`
 
 TOML representation of the remaining config object.
 
-### Go `--output env`
+### `--output env`
 
 Flat `KEY="value"` lines for the remaining config object.
 
@@ -95,15 +95,14 @@ One `result` event on success.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
+- The `--output` flag wins over `--output-format` when both are provided.
 - Flags: `--config` (repeatable, config keys to delete), `--no-restart`.
 - Requires `--project-ref` or a linked project (`.supabase/config.json`).
-- Each config key is trimmed with `strings.TrimSpace` before deletion, matching Go.
+- Each config key is trimmed of whitespace before deletion.
 - `--no-restart` injects `restart_database = false` into the final `PUT` body.
 - `linked-project.json` is written after the project ref resolves, regardless of whether the fetch or update succeeds.
 - `telemetry.json` is written on every invocation, including failures, but only once the `--experimental` gate is open.
-- `postgres-config` is an experimental command (Go `root.go:63`): `delete` requires `--experimental`
-  (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE` gate (`root.go:91-96`),
-  which runs before the `IsManagementAPI` login check (`root.go:105-109`). A closed gate exits 1
+- `postgres-config` is an experimental command: `delete` requires `--experimental`
+  (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API calls, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.

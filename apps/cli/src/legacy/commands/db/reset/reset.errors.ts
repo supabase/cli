@@ -7,8 +7,8 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Conflicting database-target flags. Reproduces cobra's
- * `MarkFlagsMutuallyExclusive("db-url", "linked", "local")` (`cmd/db.go:573`).
+ * Conflicting database-target flags (`db-url`/`linked`/`local`); message text
+ * is an established output contract.
  */
 export class LegacyDbResetTargetFlagsError extends Data.TaggedError(
   "LegacyDbResetTargetFlagsError",
@@ -21,8 +21,8 @@ export class LegacyDbResetTargetFlagsError extends Data.TaggedError(
 }
 
 /**
- * `--version` and `--last` together. Reproduces cobra's
- * `MarkFlagsMutuallyExclusive("version", "last")` (`cmd/db.go:576`).
+ * `--version` and `--last` together; message text is an established output
+ * contract.
  */
 export class LegacyDbResetVersionFlagsError extends Data.TaggedError(
   "LegacyDbResetVersionFlagsError",
@@ -35,10 +35,9 @@ export class LegacyDbResetVersionFlagsError extends Data.TaggedError(
 }
 
 /**
- * `--version` is not a valid integer. Byte-matches Go's bare
- * `repair.ErrInvalidVersion` = `invalid version number`, returned unwrapped by
- * `reset.Run` (`reset.go:35-36`) — the `failed to parse <v>:` wrapper is the
- * `migration repair` path only (`repair.go:29`).
+ * `--version` is not a valid integer; message text (`invalid version number`,
+ * returned unwrapped) is an established output contract — the
+ * `failed to parse <v>:` wrapper is the `migration repair` path only.
  */
 export class LegacyDbResetInvalidVersionError extends Data.TaggedError(
   "LegacyDbResetInvalidVersionError",
@@ -51,9 +50,9 @@ export class LegacyDbResetInvalidVersionError extends Data.TaggedError(
 }
 
 /**
- * No migration file matches `--version`. Byte-matches Go's
- * `glob supabase/migrations/<version>_*.sql: file does not exist`
- * (`repair.GetMigrationFile`).
+ * No migration file matches `--version`; message text
+ * (`glob supabase/migrations/<version>_*.sql: file does not exist`) is an
+ * established output contract.
  */
 export class LegacyDbResetMigrationFileError extends Data.TaggedError(
   "LegacyDbResetMigrationFileError",
@@ -66,8 +65,8 @@ export class LegacyDbResetMigrationFileError extends Data.TaggedError(
 }
 
 /**
- * The user declined the reset confirmation. Go returns
- * `errors.New(context.Canceled)` (`internal/db/reset/reset.go:248`).
+ * The user declined the reset confirmation; message text (`context canceled`)
+ * is an established output contract.
  */
 export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbResetCancelledError")<{
   readonly message: string;
@@ -78,10 +77,10 @@ export class LegacyDbResetCancelledError extends Data.TaggedError("LegacyDbReset
 }
 
 /**
- * A drop / migrate / seed / vault statement failed during the remote reset. `suggestion`
- * is Go's `CmdSuggestion` — set only by the `--experimental` schema-files apply branch
- * (`"See schema file: <Bold(fp)>"`, `apply.go:63`); every other apply failure on this
- * command leaves it unset, matching Go.
+ * A drop / migrate / seed / vault statement failed during the remote reset.
+ * `suggestion` is set only by the `--experimental` schema-files apply branch
+ * (`"See schema file: <Bold(fp)>"`); every other apply failure on this command
+ * leaves it unset.
  */
 export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetApplyError")<{
   readonly message: string;
@@ -93,9 +92,9 @@ export class LegacyDbResetApplyError extends Data.TaggedError("LegacyDbResetAppl
 }
 
 /**
- * `--last` was given a negative value. Go declares `--last` as an unsigned flag
- * (`UintVar`, `cmd/db.go`), so cobra rejects a negative at parse time. Byte-matches
- * cobra's parse error for `strconv.ParseUint`.
+ * `--last` was given a negative value; `--last` is an unsigned flag, so a
+ * negative value is rejected at parse time. Message text is an established
+ * output contract.
  */
 export class LegacyDbResetLastFlagError extends Data.TaggedError("LegacyDbResetLastFlagError")<{
   readonly message: string;
@@ -106,16 +105,14 @@ export class LegacyDbResetLastFlagError extends Data.TaggedError("LegacyDbResetL
 }
 
 /**
- * Invalid `--sql-paths` usage. Byte-matches Go's `validateDbResetSeedFlags`
- * (`cmd/db.go`): `"--no-seed cannot be used with --sql-paths"` and
- * `"--sql-paths requires a non-empty path or glob pattern"`.
+ * Invalid `--sql-paths` usage; message text
+ * (`"--no-seed cannot be used with --sql-paths"` and
+ * `"--sql-paths requires a non-empty path or glob pattern"`) is an
+ * established output contract.
  */
 export class LegacyDbResetSeedFlagsError extends Data.TaggedError("LegacyDbResetSeedFlagsError")<{
   readonly message: string;
-  /**
-   * Actionable hint rendered as a `Suggestion:` line, mirroring Go's
-   * `validateDbResetSeedFlags` `utils.CmdSuggestion` (`cmd/db.go`).
-   */
+  /** Actionable hint rendered as a `Suggestion:` line. */
   readonly suggestion?: string;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {

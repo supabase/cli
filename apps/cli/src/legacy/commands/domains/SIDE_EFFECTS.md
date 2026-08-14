@@ -51,7 +51,7 @@ Cloudflare DNS-over-HTTPS CNAME pre-check.
 
 | Event                   | When                                                                                  | Notable properties / groups                                                                                        |
 | ----------------------- | ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — Go marks no `domains` flag telemetry-safe)                     |
+| `cli_command_executed`  | post-run, success or failure (via wrapper)                                            | `exit_code`, `duration_ms`, `flags` (all redacted — no `domains` flag is telemetry-safe)                           |
 | `cli_upgrade_suggested` | `create`/`get`/`activate`/`reverify` 4xx carrying the `entitlement_required` envelope | `feature_key` (from the envelope), `org_slug` (parsed from `upgrade_url`); envelope-only, no entitlements fallback |
 
 ## Output
@@ -62,7 +62,7 @@ response goes to **stdout** and the human status is suppressed on stderr (see th
 divergence note below). `delete` only prints a fixed success line to stderr and
 ignores `-o`.
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 stderr carries the status message for the hostname's current state, e.g.:
 
@@ -81,9 +81,9 @@ Single JSON object (the full custom-hostname response) emitted via `output.succe
 
 A `result` event carrying the custom-hostname response object.
 
-### Go `-o {json,yaml,toml,env}`
+### `-o {json,yaml,toml,env}`
 
-When the Go `--output`/`-o` flag is set (or `--include-raw-output` forces `json`),
+When the `--output`/`-o` flag is set (or `--include-raw-output` forces `json`),
 the full response is encoded to stdout in that format and the human status is
 suppressed on stderr. `delete` ignores `-o`.
 
@@ -91,11 +91,11 @@ suppressed on stderr. `delete` ignores `-o`.
 
 - `--custom-hostname` is required for `create`.
 - `create` validates the CNAME via Cloudflare DNS-over-HTTPS (`https://1.1.1.1`, 10s timeout) before initializing; on failure it short-circuits before any POST.
-- All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → linked-project file, matching Go.
-- The project-ref fallback env var is `SUPABASE_PROJECT_ID`, matching Go (Go calls `viper.GetString("PROJECT_ID")` under `viper.SetEnvPrefix("SUPABASE")`, which resolves to the `SUPABASE_PROJECT_ID` environment variable).
-- **Documented divergences from Go (intentional):**
-  - `--include-raw-output` is declared as a normal boolean **on each subcommand** (Go declares it as a persistent flag on the `domains` group). Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it cannot reproduce Cobra's help-hiding or the `Flag --include-raw-output has been deprecated` stderr warning, which Effect CLI has no hook for. It still reproduces the behavioral effect (forces `-o json` when `-o` is unset/pretty); on `delete` it is inert, matching Go.
-  - The degenerate `validation_records != 1` status message approximates Go's `%+v` struct dump (which embeds a non-deterministic pointer address).
-  - Text-mode status output is newline-terminated even for Go's `Fprintf` branches. Without the final newline, interactive shell prompts can redraw over the last status line, hiding the ACME TXT record.
-  - In a structured `-o` mode the human status is suppressed on stderr. Go technically still writes `PrintStatus` to stderr, but the `5_*`/`4_*` messages carry no trailing newline, so they fuse with Go's version-update notice and are stripped together by the e2e normalizer — making Go's observable machine-output stderr empty. Suppressing keeps stdout clean and matches the parity contract.
-  - The CNAME pre-check's "failed to locate" error text embeds a readable, 1024-byte-capped JSON dump of the DNS answers. Go's `ResolveCNAME` (`apps/cli-go/internal/utils/api.go:73-78`) embeds an uncapped decimal byte-value array instead (`%+v` on a `[]byte`, a formatting footgun rather than an intended format) — see `domains.cname.ts`'s comment at the failure site for detail.
+- All subcommands resolve the ref via `--project-ref` → `SUPABASE_PROJECT_ID` env → linked-project file.
+- The project-ref fallback env var is `SUPABASE_PROJECT_ID`.
+- **Documented divergences from the old Go CLI (intentional):**
+  - `--include-raw-output` is declared as a normal boolean **on each subcommand** (the old Go CLI declared it as a persistent flag on the `domains` group). Two consequences: (a) it must appear after the subcommand name (`domains get --include-raw-output`) rather than before it (`domains --include-raw-output get`), matching how `--project-ref` is already handled shell-wide; (b) it cannot reproduce the old help-hiding or the `Flag --include-raw-output has been deprecated` stderr warning, which Effect CLI has no hook for. It still reproduces the behavioral effect (forces `-o json` when `-o` is unset/pretty); on `delete` it is inert.
+  - The degenerate `validation_records != 1` status message approximates a Go-style `%+v` struct dump (which embeds a non-deterministic pointer address).
+  - Text-mode status output is newline-terminated even where the old CLI's output wasn't. Without the final newline, interactive shell prompts can redraw over the last status line, hiding the ACME TXT record.
+  - In a structured `-o` mode the human status is suppressed on stderr, keeping stdout clean and matching the parity contract.
+  - The CNAME pre-check's "failed to locate" error text embeds a readable, 1024-byte-capped JSON dump of the DNS answers, rather than an uncapped decimal byte-value array — see `domains.cname.ts`'s comment at the failure site for detail.

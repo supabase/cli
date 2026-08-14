@@ -1,15 +1,9 @@
 /**
- * Transcribed verbatim from the former `apps/cli-go/internal/start/templates/vector.yaml`
- * (Go `//go:embed templates/vector.yaml`, parsed as a `text/template` named
- * `vectorConfig`, `apps/cli-go/internal/start/start.go:138-141`). `internal/start`
- * (including this template) was deleted outright as unreachable from the TS CLI
- * (CLI-1966); the last commit with it intact is a253ccba25c21356ccd33044c4474aecb77d1ae4
- * (https://github.com/supabase/cli/blob/a253ccba25c21356ccd33044c4474aecb77d1ae4/apps/cli-go/internal/start/templates/vector.yaml).
- * Do not hand-edit the YAML body — this is now the sole source of truth.
+ * The canonical `vector.yaml` template — this is the sole source of truth;
+ * do not hand-edit the YAML body.
  *
- * Placeholders (`{{ .Field }}`) were Go's `vectorConfig` struct fields
- * (`start.go:118-129`): ApiKey, VectorId, LogflareId, KongId, GotrueId,
- * RestId, RealtimeId, StorageId, EdgeRuntimeId, DbId. Rendered by
+ * Placeholders (`{{ .Field }}`): ApiKey, VectorId, LogflareId, KongId,
+ * GotrueId, RestId, RealtimeId, StorageId, EdgeRuntimeId, DbId. Rendered by
  * `lib/template-render.ts`.
  */
 export const LEGACY_START_VECTOR_YAML_TEMPLATE = `api:

@@ -1,4 +1,4 @@
-// Go's `fmt.Printf("%+v", x)` produces different bytes depending on whether `x`
+// `fmt.Printf("%+v", x)` produces different bytes depending on whether `x`
 // is a nil `*[]string` (the API field is absent) or a non-nil pointer to a
 // possibly-empty slice. Specifically:
 //
@@ -24,8 +24,7 @@ function formatGoSlice(value: readonly string[] | undefined): string {
 }
 
 /**
- * Reproduces the three-line `fmt.Printf` block emitted by Go's
- * `apps/cli-go/internal/restrictions/{get,update}/*.go` byte-for-byte.
+ * Reproduces the three-line `fmt.Printf` block byte-for-byte.
  */
 export function printNetworkRestrictionsStatus(input: PrintableStatus): string {
   return (

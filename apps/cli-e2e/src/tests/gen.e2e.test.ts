@@ -1,6 +1,6 @@
 import { describe, expect } from "vitest";
 import { isRecording, PROJECT_REF } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 function decodeJwtPart(part: string): Record<string, unknown> {
   const padded = part + "=".repeat((4 - (part.length % 4)) % 4);
@@ -71,9 +71,6 @@ describe("gen", () => {
       const result = await runNoProjectId(["gen", "types"]);
       expect(result.exitCode).not.toBe(0);
     });
-
-    testParity(["gen", "types", "--project-id", PROJECT_REF]);
-    testParity(["gen", "types", "--project-id", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("gen:signing-key", () => {
@@ -99,9 +96,6 @@ describe("gen", () => {
       expect(typeof key["n"]).toBe("string");
       expect((key["n"] as string).length).toBeGreaterThan(0);
     });
-
-    testParity(["gen", "signing-key"]);
-    testParity(["gen", "signing-key", "--algorithm", "RS256"]);
   });
 
   describe("gen:bearer-jwt", () => {
@@ -154,8 +148,5 @@ describe("gen", () => {
         expect(payload["sub"]).toBe("user-123");
       },
     );
-
-    testParity(["gen", "bearer-jwt"]);
-    testParity(["gen", "bearer-jwt", "--role", "anon"]);
   });
 });

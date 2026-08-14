@@ -1,6 +1,7 @@
 /**
  * Pure control-flow helpers ported 1:1 from
- * `apps/cli-go/cmd/db_schema_declarative.go`. Kept free of Effect/services so
+ * `apps/cli-go/cmd/db_schema_declarative.go` (deleted in CLI-1970; last
+ * present at commit 7b469f5b3). Kept free of Effect/services so
  * the precedence rules are unit-testable in isolation; the handlers run the
  * actual TTY prompt for the `"prompt"` decision.
  */

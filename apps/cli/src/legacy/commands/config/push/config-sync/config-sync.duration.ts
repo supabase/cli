@@ -1,9 +1,8 @@
 /**
- * Go `time.Duration` string formatting and parsing, parity with Go's
- * `src/time/time.go` `Duration.String()` and `time.ParseDuration()`.
+ * `time.Duration`-style string formatting and parsing.
  *
- * Duration is stored as nanoseconds (number). The formatter matches Go's output
- * exactly: "0s", "300ms", "5s", "1m0s", "1h0m0s", etc.
+ * Duration is stored as nanoseconds (number). The formatter's output is
+ * exact: "0s", "300ms", "5s", "1m0s", "1h0m0s", etc.
  */
 
 /**
@@ -82,7 +81,6 @@ export function durationString(ns: number): string {
   return result;
 }
 
-/** Nanoseconds per unit. */
 const NS_PER_SECOND = 1_000_000_000;
 const NS_PER_MINUTE = 60 * NS_PER_SECOND;
 const NS_PER_HOUR = 60 * NS_PER_MINUTE;

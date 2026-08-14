@@ -2,7 +2,6 @@ import type { V1UpdateABranchConfigInput, V1UpdateABranchConfigOutput } from "@s
 import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -14,6 +13,7 @@ import {
   encodeLegacyGoYaml,
 } from "../../../shared/legacy-go-struct-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { legacyResolveParentScopedProjectRef } from "../../../shared/legacy-parent-project-ref.ts";
 import { legacyGateMapError } from "../../../shared/legacy-upgrade-suggest.ts";
 import { LEGACY_GO_BRANCH_RESPONSE } from "../branches.go-payload.ts";
 import {
@@ -42,14 +42,16 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   // Force `Tty` into the handler's R channel so `legacyPromptBranchId` (which
   // requires it) resolves. The yielded value itself is unused.
   void (yield* Tty);
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  // `branches` is PARENT-scoped: after `supabase link <branch>`,
+  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
+  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
     const branchInput = yield* legacyPromptBranchId(flags.branchId, ref);
@@ -69,8 +71,8 @@ export const legacyBranchesUpdate = Effect.fn("legacy.branches.update")(function
       })
       .pipe(
         Effect.tapError(() => patching?.fail() ?? Effect.void),
-        // Mirrors Go's `update.go:26` — pass the resolved branch's project
-        // ref so the entitlements check is scoped to the branch's org.
+        // Pass the resolved branch's project ref so the entitlements check
+        // is scoped to the branch's org.
         Effect.catch(
           legacyGateMapError(
             { projectRef: branchRef, featureKey: "branching_persistent" },

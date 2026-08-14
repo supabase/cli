@@ -36,7 +36,7 @@ describe("legacyResolveLocalProjectId", () => {
 
 describe("legacyServiceContainerIds", () => {
   it("returns the 13 service container ids in Go's GetDockerIds() order", () => {
-    // apps/cli-go/internal/utils/config.go:82-98 — kong, auth, inbucket, realtime,
+    // kong, auth, inbucket, realtime,
     // rest, storage, imgproxy, pg_meta, studio, edge_runtime, analytics, vector, pooler.
     expect(legacyServiceContainerIds("my-app")).toEqual([
       "supabase_kong_my-app",

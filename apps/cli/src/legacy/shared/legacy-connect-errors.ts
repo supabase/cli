@@ -1,10 +1,10 @@
 /**
- * Connection-error classification and rendering ported from Go's
- * `internal/utils/connect.go` and pgconn's `connectError` (`errors.go:60-77`).
+ * Connection-error classification and rendering ported from the established
+ * connect helpers and pgconn's `connectError`.
  * Used by the container-level pooler fallback (`db dump --linked`) to decide
  * whether a failed pg_dump/pg container was an IPv6 connectivity failure that
  * warrants retrying through the IPv4 transaction pooler, and by the connection
- * layer to render connect failures with Go's `host=… user=… database=…` detail.
+ * layer to render connect failures with `host=… user=… database=…` detail.
  */
 
 import { isIPv6 } from "node:net";
@@ -12,7 +12,7 @@ import { isIPv6 } from "node:net";
 import { legacyAqua } from "./legacy-colors.ts";
 
 /**
- * Go's generic `ipv6Suggestion()` (`internal/utils/connect.go:223-231`): the
+ * Go's generic `ipv6Suggestion()`: the
  * command-agnostic hint shown when a direct connection fails because the host is
  * IPv6-only, pointing users at the IPv4 transaction pooler via `--db-url`. Go's
  * `SetConnectSuggestion` sets this on the dump failure when the captured container
@@ -28,7 +28,7 @@ export function legacyIpv6Suggestion(): string {
   );
 }
 
-// Go's `ipv6LiteralPattern` (`connect.go:181`): an IPv6 address in brackets
+// `ipv6LiteralPattern`: an IPv6 address in brackets
 // (Go dial form) or parens (libpq form). Run against the original-case message.
 const IPV6_LITERAL_PATTERN = /(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))/;
 // Node's dial-failure shape (`connect ENETUNREACH 2600:…:5432`). The port may be
@@ -37,7 +37,7 @@ const IPV6_LITERAL_PATTERN = /(?:\[[0-9a-fA-F:]+\]|\([0-9a-fA-F:]+\))/;
 const NODE_ENETUNREACH_PATTERN = /\benetunreach\s+([0-9a-fA-F:]+):\d+(?:[\s)]|$)/i;
 
 /**
- * Port of Go's `isIPv6ConnectivityError` (`connect.go:189-208`). Lower-cases the
+ * Port of `isIPv6ConnectivityError`. Lower-cases the
  * message and matches the getaddrinfo / dial failures that mean the host is
  * IPv6-only and unreachable from this environment. "no route to host" and
  * "cannot assign requested address" only count when an IPv6 literal is present
@@ -57,7 +57,7 @@ export function legacyIsIPv6ConnectivityError(message: string): boolean {
 }
 
 /**
- * Go's `utils.SuggestEnvVar` (`internal/utils/connect.go:191`): the hint shown when
+ * `utils.SuggestEnvVar`: the hint shown when
  * a connection fails on password authentication, pointing users at the
  * `SUPABASE_DB_PASSWORD` env var.
  */
@@ -65,7 +65,7 @@ export const LEGACY_SUGGEST_ENV_VAR =
   "Connect to your database by setting the env var correctly: SUPABASE_DB_PASSWORD";
 
 /**
- * TS-only addition — Go's `SetConnectSuggestion` has no local/remote distinction,
+ * TS-only addition — `SetConnectSuggestion` has no local/remote distinction,
  * so a refused `--local` connection (Docker/Postgres not running) got the same
  * remote-only "Network Restrictions" dashboard hint as an actual network-restricted
  * connection, which is a dead end locally. Shown instead of that hint when
@@ -74,8 +74,8 @@ export const LEGACY_SUGGEST_ENV_VAR =
 export const LEGACY_SUGGEST_LOCAL_STACK = "Make sure Docker is running, then run: supabase start";
 
 /**
- * Go's `SetConnectSuggestion` remote-only "Network Restrictions" hint
- * (`internal/utils/connect.go:319-321`), shown for a connection refused/blocked
+ * `SetConnectSuggestion` remote-only "Network Restrictions" hint,
+ * shown for a connection refused/blocked
  * by IP allow-listing. Shared by both the always-remote `Address not in tenant
  * allow_list` branch and the non-local `ECONNREFUSED`/`connection refused`
  * branch in `legacyConnectSuggestion`.
@@ -86,9 +86,9 @@ function legacySuggestNetworkRestrictions(dashboardUrl: string): string {
 
 /** Context the connect-suggestion needs but cannot derive from the error alone. */
 export interface LegacyConnectSuggestionContext {
-  /** Active profile's dashboard URL (Go's `CurrentProfile.DashboardURL`). */
+  /** Active profile's dashboard URL (`CurrentProfile.DashboardURL`). */
   readonly dashboardUrl: string;
-  /** Active profile name (Go's `CurrentProfile.Name`). */
+  /** Active profile name (`CurrentProfile.Name`). */
   readonly profileName: string;
 }
 
@@ -100,8 +100,8 @@ export interface LegacyConnectSuggestionContext {
  * `ENETUNREACH` system errors — an aggregate node contributes NOTHING itself
  * and only its LAST child is visited, because that is the attempt pgconn
  * surfaces: its fallback loop overwrites the error on every attempt so only the
- * last one survives (`pgconn.go:171-203`), and Go's `SetConnectSuggestion`
- * classifies exactly that `err.Error()` string (`connect.go:317`). The parent's
+ * last one survives, and `SetConnectSuggestion`
+ * classifies exactly that `err.Error()` string. The parent's
  * own fields must be skipped: node's `aggregateErrors` copies `errors[0].code`
  * onto the aggregate itself (`lib/internal/errors.js`, Bun matches), so reading
  * them would blame an abandoned first attempt. Including the `code` strings of
@@ -130,8 +130,8 @@ function legacyCollectConnectErrorText(error: unknown): string {
 }
 
 /**
- * The connection identity pgconn embeds in its `connectError` text
- * (`errors.go:66-68`): the config-level (primary) host, user, and database —
+ * The connection identity pgconn embeds in its `connectError` text:
+ * the config-level (primary) host, user, and database —
  * never the password.
  */
 export interface LegacyConnectFailureTarget {
@@ -145,8 +145,7 @@ export interface LegacyConnectFailureTarget {
  * `@effect/sql` `SqlError` exposes its `ConnectionError` reason as `cause`, and
  * the reason exposes the node-postgres error the same way) and descend into the
  * LAST entry of an `AggregateError`'s `errors[]` — pgconn's multi-address
- * fallback loop likewise surfaces the last attempt's error
- * (`pgconn.go:159-192`).
+ * fallback loop likewise surfaces the last attempt's error.
  */
 function legacyDeepestConnectCause(error: unknown): unknown {
   let current: unknown = error;
@@ -167,7 +166,7 @@ function legacyDeepestConnectCause(error: unknown): unknown {
 }
 
 // Node/Bun errno codes raised while dialing the server — pgconn wraps the
-// equivalent net.Dial failures as `dial error (…)` (`pgconn.go:276`).
+// equivalent net.Dial failures as `dial error (…)`.
 const LEGACY_DIAL_ERROR_CODES = new Set([
   "ECONNREFUSED",
   "ETIMEDOUT",
@@ -178,7 +177,7 @@ const LEGACY_DIAL_ERROR_CODES = new Set([
 // Connect-timeout failures that carry no errno `code`, matched by their exact
 // driver text: node-postgres' client connect timeout (`pg/lib/client.js`), its
 // pool acquire timeout (`pg/lib/pool.js`), and this layer's own probe timeout
-// (`legacyAcquireProbedPool`). All three are the port of Go's `connect_timeout`
+// (`legacyAcquireProbedPool`). All three are the port of `connect_timeout`
 // firing — a `context.DeadlineExceeded`, which satisfies `net.Error`.
 const LEGACY_CONNECT_TIMEOUT_MESSAGES = new Set([
   "Connection timed out",
@@ -202,7 +201,7 @@ export function legacyIsDialFailure(error: unknown): boolean {
 // family (Node tls docs "X509 certificate error codes", OpenSSL's
 // `X509_verify_cert_error` set), complemented by node's ERR_TLS_*/ERR_SSL_*
 // prefixes at the use site. pgconn stages by connection PHASE — ANY `startTLS`
-// failure becomes `tls error (…)` (`pgconn.go:283-289`) — but node exposes no
+// failure becomes `tls error (…)` — but node exposes no
 // phase marker, so the full code family is the proxy. These strings are unique
 // to TLS-layer verification: server SQLSTATEs and dial/DNS `E…` errnos are
 // classified by earlier branches.
@@ -243,7 +242,7 @@ const LEGACY_SERVER_REFUSED_SSL = "The server does not support SSL connections";
 // the socket before the handshake completes (node `lib/_tls_wrap.js`
 // `onConnectEnd`; Bun emits the same text for both FIN and RST). Phase-specific
 // by construction — only ever raised pre-secure-connection — so it maps to
-// pgconn's startTLS stage (`tls error (…)`, `pgconn.go:283-289`). Its code is
+// pgconn's startTLS stage (`tls error (…)`). Its code is
 // ECONNRESET, deliberately absent from LEGACY_DIAL_ERROR_CODES: a raw
 // post-handshake `read ECONNRESET` is not phase-specific and stays verbatim.
 const LEGACY_TLS_DISCONNECT_MESSAGE =
@@ -264,21 +263,21 @@ export const legacyIsSqlState = (code: string): boolean => SQLSTATE_PATTERN.test
 /**
  * Render the underlying driver failure the way pgconn stages its
  * `connectError.msg` (`server error` / `hostname resolving error` /
- * `dial error` / `tls error`, each with the cause parenthesized —
- * `errors.go:66-72`). A server ErrorResponse reproduces pgconn's `PgError`
- * rendering byte-for-byte (`Severity: Message (SQLSTATE Code)`, `errors.go:51`);
+ * `dial error` / `tls error`, each with the cause parenthesized).
+ * A server ErrorResponse reproduces pgconn's `PgError`
+ * rendering byte-for-byte (`Severity: Message (SQLSTATE Code)`);
  * for the other stages the parenthesized text is the node driver's own message,
  * which cannot byte-match libpq/pgconn wording (e.g. node's
- * `connect ECONNREFUSED 1.2.3.4:5432` vs Go's
+ * `connect ECONNREFUSED 1.2.3.4:5432` vs
  * `dial tcp 1.2.3.4:5432: connect: connection refused`). An unrecognized cause
  * (e.g. node-postgres' `Connection terminated unexpectedly`, where pgconn would
  * say `failed to receive message (unexpected EOF)`) is rendered verbatim rather
  * than guessing a stage.
  *
  * Known stage-label caveat: pgconn labels by auth PHASE, which node-postgres
- * does not expose — a wrong password over SCRAM arrives mid-SASL, so Go renders
+ * does not expose — a wrong password over SCRAM arrives mid-SASL, so pgconn renders
  * `failed SASL auth (FATAL: password authentication failed … (SQLSTATE 28P01))`
- * (`pgconn.go:359`) where this renders `server error (…)` with the identical
+ * where this renders `server error (…)` with the identical
  * inner `PgError` bytes. The suggestion classifier keys off the inner text, so
  * the `SUPABASE_DB_PASSWORD` hint fires identically either way.
  */
@@ -317,11 +316,11 @@ function legacyConnectCauseDetail(cause: unknown): string {
 }
 
 /**
- * Port of pgconn's `connectError.Error()` (`errors.go:66-72`), the inner text of
- * Go's `failed to connect to postgres: %w` wrap (`pkg/pgxv5/connect.go:33`):
+ * Port of pgconn's `connectError.Error()`, the inner text of
+ * `failed to connect to postgres: %w` wrap:
  * `` failed to connect to `host=… user=… database=…`: <staged driver cause> ``.
- * Callers pass the connection config (pgconn embeds the config-level identity,
- * `errors.go:66-68`) and the raw failure — either the `@effect/sql` `SqlError`
+ * Callers pass the connection config (pgconn embeds the config-level identity)
+ * and the raw failure — either the `@effect/sql` `SqlError`
  * from the pooled connect probe or the bare node-postgres error from the raw
  * client, both unwrapped by {@link legacyDeepestConnectCause}.
  */
@@ -336,7 +335,7 @@ export function legacyConnectFailureMessage(
 // Dial errno codes that mean the target address itself is unreachable. Combined
 // with an IPv6 `address` they are node's equivalents of Go's IPv6-connectivity
 // texts: ENETUNREACH → `network is unreachable`, EHOSTUNREACH → `no route to
-// host`, EADDRNOTAVAIL → `cannot assign requested address` (`connect.go:204-223`).
+// host`, EADDRNOTAVAIL → `cannot assign requested address`.
 const LEGACY_IPV6_DIAL_CODES = new Set(["ENETUNREACH", "EHOSTUNREACH", "EADDRNOTAVAIL"]);
 
 /**
@@ -351,8 +350,8 @@ const LEGACY_IPV6_DIAL_CODES = new Set(["ENETUNREACH", "EHOSTUNREACH", "EADDRNOT
  * suggestion. Use THIS one for the connect suggestion; the container-level
  * pooler fallback keeps the broader `legacyIsIPv6ConnectivityErrorCause`.
  * Like {@link legacyDeepestConnectCause}, an `AggregateError` descends into its
- * LAST child only — the attempt pgconn surfaces (`pgconn.go:171-203`) and the
- * one Go's classifier reads (`connect.go:317`). Depth-bounded recursion (no
+ * LAST child only — the attempt pgconn surfaces and the
+ * one Go's classifier reads. Depth-bounded recursion (no
  * `seen` set): a pathological cause cycle re-walks at most 8 levels, which is
  * cheap and cannot loop.
  */
@@ -376,20 +375,20 @@ function legacyHasIPv6DialCause(error: unknown, depth = 0): boolean {
 }
 
 /**
- * Port of Go's `SetConnectSuggestion` (`internal/utils/connect.go:313-335`): map a
+ * Port of `SetConnectSuggestion`: map a
  * Postgres connect failure to an actionable hint that replaces the generic
  * "Try rerunning the command with --debug" suggestion. Go matches `pgconn`'s
  * error text; this matches the equivalent node-postgres / node `net` driver text
  * and codes (e.g. `ECONNREFUSED` for `connect: connection refused`) gathered from
- * the `SqlError` cause/aggregate chain. The branch order mirrors Go's `if/else if`.
+ * the `SqlError` cause/aggregate chain. The branch order mirrors `if/else if`.
  * Returns `undefined` when no specific suggestion applies (the caller then falls
  * back to the generic suggestion, like Go leaving `CmdSuggestion` empty).
  *
  * Sourcing note: the rendered message ({@link legacyConnectFailureMessage}) and
  * this classifier inspect the SAME surfaced attempt, as Go guarantees by
  * construction — pgconn's fallback loop overwrites its error on every attempt so
- * only the last one survives (`pgconn.go:171-203`), and `SetConnectSuggestion`
- * classifies exactly that rendered `err.Error()` string (`connect.go:317`). The
+ * only the last one survives, and `SetConnectSuggestion`
+ * classifies exactly that rendered `err.Error()` string. The
  * collectors above therefore descend into only the LAST aggregate child, the
  * same attempt {@link legacyDeepestConnectCause} surfaces for rendering, so the
  * displayed cause and the suggestion can never disagree.

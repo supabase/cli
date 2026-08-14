@@ -1,0 +1,149 @@
+# Go CLI Divergences
+
+Ledger of deliberate TypeScript divergences from the old Go CLI (pre-`7b469f5b3`) on the legacy
+shell: TS-only commands, flags, and behavior with no Go counterpart. When you add a TS-only flag or
+a deliberate behavioral change to an already-ported legacy command, add an entry here in the same
+change. This document exists to answer support and migration questions about why the TS CLI does
+something the old Go CLI didn't — it is not a compatibility promise.
+
+## TS-only Commands
+
+These commands exist in the TS CLI today but have no direct top-level equivalent in the old Go CLI reference.
+
+| TS command        | TS path                                                                                                                | Notes                                                                                                                                                                                                                                                                                                |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`             | `planned`                                                                                                              | Reserved for a TS-native long-running local development workflow command that watches files and orchestrates subcommands. Track this as TS-only unless a direct Go equivalent emerges.                                                                                                               |
+| `feedback add`    | [`../src/legacy/commands/feedback/add/add.command.ts`](../src/legacy/commands/feedback/add/add.command.ts)             | Quick feedback submission, legacy shell only (CLI-1946). Submits through the `submit_interfaces_feedback` RPC via supabase-js with a committed publishable key and prints the server-issued delete token once; profile-driven staging/production environments (production currently reuses staging). |
+| `feedback delete` | [`../src/legacy/commands/feedback/delete/delete.command.ts`](../src/legacy/commands/feedback/delete/delete.command.ts) | Deletes previously submitted feedback using the token printed by `feedback add` (CLI-2188). Previews the feedback text, then hard-deletes via the token-gated RLS policy (`x-feedback-token` + optional `x-feedback-project-ref` headers).                                                           |
+| `logs`            | [`../src/next/commands/logs/logs.command.ts`](../src/next/commands/logs/logs.command.ts)                               | Streams local stack logs. No top-level `logs` command exists in the old Go CLI reference.                                                                                                                                                                                                            |
+| `api`             | [`../src/next/commands/platform/api.command.ts`](../src/next/commands/platform/api.command.ts)                         | Low-level Management API client. It supersedes the old generated tree with explicit discovery via `supabase api routes` and execution via `supabase api request <route> [--method <METHOD>]`.                                                                                                        |
+| `stack`           | [`../src/next/cli/root.ts`](../src/next/cli/root.ts)                                                                   | TS-only local runtime namespace exposing `stack start`, `stack stop`, `stack status`, `stack list`, and `stack update`. Top-level `start`, `stop`, and `status` remain aliases.                                                                                                                      |
+| `branches switch` | [`../src/next/commands/branches/switch/switch.command.ts`](../src/next/commands/branches/switch/switch.command.ts)     | No direct Go equivalent. Updates local active-branch state so subsequent commands target the selected branch.                                                                                                                                                                                        |
+
+## Flag divergences from the Go reference
+
+- `db push` has a TS-only `--skip-vault` flag. It applies migrations without
+  resolving or updating `[db.vault]` secrets; default behavior still matches Go.
+- Every legacy command that resolves a linked project ref for its own database
+  connection has a TS-only `--project-ref` flag (no Go equivalent on any
+  user-facing command — only the `SUPABASE_PROJECT_ID` env var could override
+  the linked ref; the sole Go registration is a hidden, non-user-facing seam,
+  `db declarative __catalog --project-ref`, `cmd/pgdelta_catalog.go:44`). This
+  covers: `db push`, `db pull`, `db diff`, `db dump`, `db reset`, `db lint`,
+  `db advisors`, `db query`; `migration list`/`up`/`down`/`repair`/`fetch`/`squash`;
+  `seed buckets`; `storage ls`/`cp`/`mv`/`rm`; every `inspect db` subcommand and
+  `inspect report`; and `test db` (and its hidden `db test` alias, which shares
+  `test db`'s flag config verbatim). It feeds
+  `LegacyProjectRefResolver.loadProjectRef`, keeping Go's precedence (flag >
+  `SUPABASE_PROJECT_ID` > `supabase/.temp/project-ref`) and taking effect only on
+  the linked path. It shares ONLY that ref-resolution precedence with
+  `SUPABASE_PROJECT_ID` — unlike the env var, it does not affect the local
+  container id or the pg-delta project id, and it does not imply `--linked`:
+  passing it alongside `--local`/`--db-url` (or, for `db diff`, in explicit mode
+  without `--from`/`--to linked`) is a hard error rather than a silently ignored
+  flag, since Go's env var going unused on a non-linked target has no TS-only
+  flag counterpart to accidentally discard. Default behavior (omitted flag)
+  matches Go exactly.
+- `projects api-keys` has a TS-only `--reveal` flag (no Go equivalent). It sends
+  `reveal=true` so the Management API returns the full secret keys (`sb_secret_...`) in
+  full instead of redacting them, addressing issue #4775. Default behavior (omitted flag)
+  matches Go exactly.
+- `projects create` has a TS-only `--high-availability` flag (no Go equivalent). It sets
+  `high_availability` in the create request body. Default behavior (omitted flag) matches
+  Go exactly.
+- `link` has a TS-only `[ref-or-branch]` positional argument (no Go equivalent), and its
+  `--project-ref` flag additionally accepts a branch name. A value matching the 20-lowercase-letter
+  project ref shape is always treated as a ref; any other non-empty value is resolved to its
+  parent-project's branch project ref via the Management API before linking proceeds exactly as
+  today (CLI-2167). On the 404 (branch) link path, `link` also best-effort maintains
+  `linked-project.json`'s PARENT evidence (PR #6168 review, TS-only, no Go equivalent — Go never
+  writes this cache for a branch ref at all): a name/UUID-resolved branch link persists its known
+  parent ref (a ref-only record when no richer cache exists yet); a raw ref-shaped branch link
+  whose existing cache names a different project best-effort correlates the two via one extra
+  `listAllBranches` call and deletes the cache on EVERY unverified result — a verified mismatch,
+  a timeout, or any transport/status/decode failure (fail-safe: an unverifiable divergent cache is
+  untrustworthy). Both are best-effort and never affect `link`'s own outcome — see
+  `link/SIDE_EFFECTS.md`.
+
+## Behavioral divergences from the Go reference
+
+- `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
+  `supabase/functions/<function-name>/.env` overrides matching values from the shared
+  `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the
+  highest-priority source and disables both automatic reads. TS-only feature — the old Go
+  command read only the shared fallback.
+- `functions deploy`/`functions serve` import-map resolution follows the import-maps spec
+  (implemented by Deno): a key matches exactly, or as a prefix only when it ends with `/`. The
+  old Go walker prefix-matched every key (`pkg/function/deno.go:150-155`, still in-tree), which
+  fabricated paths the runtime could never resolve — the ENOTDIR crash family fixed in
+  PR #6164 (CLI-2179). Intentional divergence: the spec behavior is the correct one.
+- `config push`/`start` auth email `content_path` resolution: every relative
+  `[auth.email.template.*]` AND `[auth.email.notification.*]` path resolves from the discovered
+  project root, with notifications additionally falling back to the legacy `supabase/`-relative
+  location when the root-resolved file is missing. Go resolves notifications from `supabase/` only
+  (`(*baseConfig).resolve`'s own `// FIXME`-flagged asymmetry). Config validation, `config push`
+  content loading, and Kong's template mount builder all share one resolver
+  (`legacyResolveNotificationContentPath`), so every consumer reads the SAME file — the drift the
+  asymmetry caused (validated against `<root>/supabase/...`, mounted from `<root>/...`) is gone.
+  The `init` scaffold ejects the root-relative form, which is incompatible with Go if uncommented
+  (#6159/#6160).
+- `db remote changes|commit --password <p>`: since CLI-1970, an explicit
+  `--password` beats the `SUPABASE_DB_PASSWORD` env var. Before the trim, Go's
+  package-wide "last `viper.BindPFlag("DB_PASSWORD", …)` wins" behavior bound
+  the key to `projects create --db-password` (lexically last `cmd/*.go` file),
+  so `db remote`'s own `--password` flag was never the bound instance and env
+  silently won over it — a latent bug. With `projects.go` deleted, the bind
+  lands on `db remote`'s persistent `--password` and flag-beats-env applies as
+  intended. Accepted (not restored) in the CLI-1970 parity audit; `db pull`
+  keeps the old precedence (env wins over its `--password`) unchanged.
+- `branches {list,create,get,update,delete,pause,unpause,disable}` resolve their project ref
+  through a PARENT-scoped chain instead of plain `--project-ref` flag/env/file resolution: an
+  explicit `--project-ref` still wins outright, but the fallback is env `SUPABASE_PROJECT_ID` →
+  `supabase/.temp/linked-project.json`'s `ref` → `supabase/.temp/project-ref`, first ref-shaped
+  candidate wins. This is a direct consequence of the `link` branch-name divergence above: after
+  `supabase link <branch>`, `project-ref` holds the branch's own ref, and the Management API
+  returns 403 for a branch ref on every branches-management endpoint. No-op when linked to a real
+  (non-branch) project — the cache and the file hold the same ref — so this only changes behavior
+  in the previously-403ing branch-linked state (CLI-2167 follow-up, no Go equivalent).
+- `branches list`'s pretty table (not `-o json|yaml|toml`, not `--output-format json|stream-json`)
+  marks the row matching the CURRENTLY linked ref with a `<name> (active)` NAME cell, mirroring
+  `next/`'s convention. TS-only QoL, no Go equivalent (CLI-2167 follow-up).
+- `status` prints the current linked project/branch as a "Linked Project:" block on stdout in
+  human text mode (Neon-style — `Org:`/`Project:`/`Branch:` lines, each omitted when unknown),
+  before any daemon/stack work begins, and folds the same linked state into its machine-readable
+  outputs — additive `linked_project: {...} | null` (with `org_slug`/`org_id`) in the TS
+  `--output-format json`/`stream-json` payload, and additive `linked_project_ref`/
+  `linked_project_name`/`linked_org_slug`/`linked_org_id`/`linked_branch`/
+  `linked_parent_project_ref` keys (absent entirely when not linked) appended after the existing
+  keys in `-o env|json|yaml|toml`. A confirmed branch-linked state (from `linked-project.json`)
+  keeps showing the parent/org fields even when the branch-name lookup itself degrades (no
+  token, offline, API error) — only the branch's own name is ever missing, so the user always
+  sees they're on a branch. The Management API client for that lookup is acquired lazily
+  (`LegacyPlatformApiFactory`, not the eager `LegacyPlatformApi`) so `status` stays fully
+  functional offline/token-less. Intent: let an agent driving `status` discover which
+  project/branch it's on without a separate `link`/`branches` call. Read-only, never affects
+  `status`'s exit code, and never alters any of its existing failure behavior — a Docker/daemon
+  connection failure still fails exactly as today, with the linked block already printed above it
+  in text mode (CLI-2167 follow-up, no Go equivalent). The same `linked_project` object is also
+  carried on the `--output-format json`/`stream-json` FAILURE envelope (top-level, next to
+  `_tag`/`error` or `type`/`error`/`timestamp`) — the agent-discovery use case matters most when
+  `status` fails to reach a stopped stack — via a new opt-in, shared mechanism
+  (`shared/output/machine-error-context.service.ts`'s `MachineErrorContext`, read by
+  `jsonOutputLayer`/`streamJsonOutputLayer`'s `fail`); `-o env|json|yaml|toml`'s failure output is
+  deliberately unchanged (still no payload, matching Go). See `status/SIDE_EFFECTS.md`.
+- `projects list`'s `LINKED` marker (the `linked` boolean, rendered as the pretty table's `●`
+  bullet) now falls back to the PARENT chain when the linked ref matches no row exactly — the same
+  scenario as above, since a branch-linked ref never matches a real project row. **This changes
+  the `linked` field in the `-o json|yaml|toml` Go-struct payloads too**: in the branch-linked
+  state it was previously `false` on every row; it can now be `true` on the parent project's row.
+  The truthful fix IS the behavior change (CLI-2167 follow-up, no Go equivalent).
+- `services` warns on a malformed linked project ref (matching Go's
+  `flags.LoadProjectRef` validation message) but, unlike Go, does not then use
+  that ref for the remote lookup. Go's `cmd/services.go` (deleted in CLI-1970;
+  last present at commit 7b469f5b3) treats the validation failure as
+  non-fatal and still calls `listRemoteImages` with the malformed
+  value; TS skips the remote lookup instead, since the ref is embedded
+  unescaped into the tenant gateway hostname and a malformed value could
+  redirect the service-role key to an attacker-controlled host. Intentional
+  TS-only hardening, not a parity bug — see
+  [`services/SIDE_EFFECTS.md`](../src/legacy/commands/services/SIDE_EFFECTS.md).

@@ -10,7 +10,7 @@ import {
   legacyRenderPgAdminDiff,
 } from "./legacy-pgadmin-diff.ts";
 
-/** Go's `DiffEntry` (`container_output.go:127-134`) shape, defaulting to a kept entry. */
+/** `DiffEntry` shape, defaulting to a kept entry. */
 function entry(overrides: Record<string, unknown> = {}) {
   return {
     type: "table",
@@ -337,9 +337,8 @@ describe("legacyProcessPgAdminDiffProgress", () => {
     // updates, none of them `\n`-terminated, so `legacyScanLines` treats the whole
     // thing as ONE line. With the `s` flag, `.` matches `\r` too, so the greedy
     // `(.*)` consumes across every embedded `\r` and the match is anchored on the
-    // LAST `%`-suffixed run, same as Go's RE2 (verified against Go 1.26 `regexp`)
-    // — not the first, which is what this pattern would wrongly match without `s`
-    // (JS's `.` excludes `\r` by default).
+    // LAST `%`-suffixed run — not the first, which is what this pattern would
+    // wrongly match without `s` (JS's `.` excludes `\r` by default).
     const input = "Comparing 10%\rComparing 20%\rComparing 30%";
     expect(legacyProcessPgAdminDiffProgress(input)).toEqual([
       "Comparing 10%\rComparing 20%\rComparing ",

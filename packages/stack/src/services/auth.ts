@@ -1,5 +1,6 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerNetworkArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 
@@ -25,7 +26,7 @@ interface DockerAuthOptions extends AuthServiceOptions {
   readonly image: string;
   readonly dbHost: string;
   readonly platformOs: string;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
 }
 
 const authEnv = (opts: AuthServiceOptions, dbHost = "127.0.0.1"): Record<string, string> => ({
@@ -82,7 +83,7 @@ export const makeAuthServiceDocker = (opts: DockerAuthOptions): ServiceDef => {
   const env = authEnv(opts, opts.dbHost);
   return dockerRunService({
     name: "auth",
-    apiPort: opts.apiPort,
+    identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.authPort]),
     env,

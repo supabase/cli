@@ -21,8 +21,8 @@ export const legacyEncryptionGetRootKey = Effect.fn("legacy.encryption.get-root-
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Mirror Go's PersistentPostRun: write the linked-project cache and persist
-  // the telemetry state file on success and failure.
+  // Write the linked-project cache and persist the telemetry state file on
+  // success and failure.
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text" ? yield* output.task("Fetching root key...") : undefined;

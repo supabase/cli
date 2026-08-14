@@ -4,7 +4,6 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/outliers/outliers.sql`.
 const SQL = `SELECT
   (interval '1 millisecond' * total_exec_time)::text AS total_exec_time,
   to_char((total_exec_time/sum(total_exec_time) OVER()) * 100, 'FM90D0') || '%'  AS prop_exec_time,
@@ -34,8 +33,7 @@ LIMIT 10`;
 
 /**
  * `inspect db outliers` — pg_stat_statements ordered by total execution time.
- * Port of `apps/cli-go/internal/inspect/outliers/outliers.go`. The `query`
- * column is whitespace-collapsed and rendered first.
+ * The `query` column is whitespace-collapsed and rendered first.
  */
 export const legacyOutliersSpec: LegacyInspectQuerySpec = {
   name: "outliers",

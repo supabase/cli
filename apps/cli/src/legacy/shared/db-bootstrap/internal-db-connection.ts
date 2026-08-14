@@ -3,8 +3,8 @@
  * container (Realtime, PostgREST, Storage) reaches Postgres at, ported from
  * Go's `dbConfig := pgconn.Config{Host: utils.DbId, Port: 5432, User:
  * "postgres", Password: utils.Config.Db.Password, Database: "postgres"}`
- * (`apps/cli-go/internal/start/start.go:66-72`, threaded through `run()` as
- * `dbConfig`).
+ * (`apps/cli-go/internal/start/start.go:66-72`, deleted in CLI-1966; last
+ * present at commit a253ccba2 — threaded through `run()` as `dbConfig`).
  *
  * This is deliberately NOT the same value as
  * `LegacyLocalConfigValues.dbUrl` (`legacy-local-config-values.ts`): that

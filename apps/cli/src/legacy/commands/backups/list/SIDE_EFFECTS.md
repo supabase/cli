@@ -25,12 +25,12 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                                                                                                                                                                                                              | Required?                                                                  |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                                 | no (falls back to keyring → `~/.supabase/access-token`)                    |
-| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (Go parity — used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
-| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                                   | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
-| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                                    | no (walks up from CWD looking for `supabase/config.toml`)                  |
+| Variable                | Purpose                                                                                                                                                                                                                                                                                  | Required?                                                                  |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                                                                                                                                                                                     | no (falls back to keyring → `~/.supabase/access-token`)                    |
+| `SUPABASE_PROFILE`      | selects API base URL: `supabase` → `api.supabase.com`, `supabase-staging` → `api.supabase.green`, `supabase-local` → `http://localhost:8080`. May alternatively be a filesystem path to a YAML profile with at least `api_url:` and optional `name:` (used by the cli-e2e test harness). | no (defaults to `supabase`)                                                |
+| `SUPABASE_PROJECT_ID`   | project ref fallback when `--project-ref` is unset                                                                                                                                                                                                                                       | no (also reads `<workdir>/supabase/.temp/project-ref` then prompts on TTY) |
+| `SUPABASE_WORKDIR`      | base directory for the `.temp/project-ref` lookup                                                                                                                                                                                                                                        | no (walks up from CWD looking for `supabase/config.toml`)                  |
 
 ## Exit Codes
 
@@ -50,34 +50,30 @@
 | ---------------------- | ------------------------------------------ | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/backups/list/`. Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-The legacy `--output {pretty,json,yaml,toml,env}` flag (Go-compatible) and the new global `--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the same render path.
+The `--output {pretty,json,yaml,toml,env}` flag and the `--output-format {text,json,stream-json}` flag are both honored. `--output` wins when both are supplied. `pretty` and `text` map to the same render path.
 
-### `--output pretty` (Go default) / `--output-format text`
+### `--output pretty` (default) / `--output-format text`
 
-For PITR-only projects, prints a Glamour-styled markdown table with columns: `REGION`, `WALG`, `PITR`, `EARLIEST TIMESTAMP`, `LATEST TIMESTAMP`. For projects with logical/physical backups, prints columns: `REGION`, `BACKUP TYPE`, `STATUS`, `CREATED AT (UTC)`. The table is rendered byte-for-byte to match Go's `glamour.WithStandardStyle(styles.AsciiStyle)` output.
+For PITR-only projects, prints a Glamour-styled markdown table with columns: `REGION`, `WALG`, `PITR`, `EARLIEST TIMESTAMP`, `LATEST TIMESTAMP`. For projects with logical/physical backups, prints columns: `REGION`, `BACKUP TYPE`, `STATUS`, `CREATED AT (UTC)`. The table is rendered byte-for-byte using `glamour.WithStandardStyle(styles.AsciiStyle)`.
 
-### `--output json` (Go-compat)
+### `--output json`
 
 Indented JSON (`json.MarshalIndent(resp, "", "  ")` equivalent) of the full backup response, terminated by a newline.
 
 ### `--output yaml`
 
-YAML document matching Go's `yaml.v3` output byte-for-byte (CLI-1975): keys are
-the lowercased Go struct field names (`walgenabled`, `physicalbackupdata`), nil
-pointers render as explicit `null`, and nested mappings use yaml.v3's 4-column
-indentation.
+YAML document (CLI-1975): keys are lowercased field names (`walgenabled`,
+`physicalbackupdata`), nil values render as explicit `null`, and nested
+mappings use 4-column indentation.
 
 ### `--output toml`
 
-TOML document matching Go's `BurntSushi/toml` output byte-for-byte (CLI-1975):
-keys are the PascalCase Go struct field names (`WalgEnabled`,
-`[PhysicalBackupData]`), nil pointer fields are omitted, and sub-tables follow
+TOML document (CLI-1975): keys are PascalCase field names (`WalgEnabled`,
+`[PhysicalBackupData]`), absent fields are omitted, and sub-tables follow
 the primitive keys with 2-space indentation. An empty `backups` array is
-treated as Go's nil slice (omitted).
+omitted entirely.
 
 ### `--output env`
 
@@ -94,5 +90,5 @@ One `result` NDJSON event on success containing the backup response object.
 ## Notes
 
 - Requires `--project-ref`, `SUPABASE_PROJECT_ID`, a populated `<workdir>/supabase/.temp/project-ref` file, or a TTY for the interactive project picker.
-- The interactive picker calls `GET /v1/projects` and writes `"Selected project: <ref>"` to stderr in text mode (matches Go `project_ref.go:50`). It does **not** persist the choice; only `supabase link` and `supabase bootstrap` write the temp file.
-- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers — Go parity.
+- The interactive picker calls `GET /v1/projects` and writes `"Selected project: <ref>"` to stderr in text mode. It does **not** persist the choice; only `supabase link` and `supabase bootstrap` write the temp file.
+- Sends `User-Agent: SupabaseCLI/<version>` and Bearer auth. No `X-Supabase-Command` headers.

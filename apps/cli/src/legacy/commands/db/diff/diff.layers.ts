@@ -21,12 +21,11 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * runner, the SSL probe, and `HttpClient` (the native shadow's health-check wait).
  * Shadow provisioning (`db diff`'s own — migra/pg-delta AND pgadmin alike — plus
  * the explicit `--from migrations`/`--to migrations` catalog shadow) is fully
- * native (CLI-1956/CLI-1959/CLI-1968) — see `commands/db/shared/
- * legacy-shadow-source.ts` and `shared/legacy-pgdelta.cache.ts` — so no
- * `LegacyDeclarativeSeam` layer is needed here. `--use-pg-schema` is now the
- * only engine that delegates through `LegacyGoProxy` (CLI-1960's keep-in-Go
- * exception); `--use-pgadmin` uses `LegacyDockerRun` natively instead, the same
- * service the migra OOM bash fallback already needed.
+ * native — see `commands/db/shared/legacy-shadow-source.ts` and
+ * `shared/legacy-pgdelta.cache.ts` — so no `LegacyDeclarativeSeam` layer is
+ * needed here. `--use-pg-schema` is the only engine that delegates through
+ * `LegacyGoProxy`; `--use-pgadmin` uses `LegacyDockerRun` natively instead, the
+ * same service the migra OOM bash fallback already needed.
  * `LegacyDockerRun` is exposed in the merge (not just provided to the
  * edge-runtime layer) because both the migra OOM bash fallback and the pgadmin
  * differ container run their own container directly.
@@ -39,9 +38,9 @@ const dbConfig = legacyDbConfigLayer.pipe(
   Layer.provide(cliConfig),
   Layer.provide(legacyDbConnectionLayer),
   Layer.provide(legacyDebugLoggerLayer),
-  // The linked db-config resolver snapshots the single `LegacyIdentityStitch`
-  // (Go's one `sync.Once`); the command runtime must provide it or the bundled
-  // binary panics with a missing-service error (legacy CLAUDE.md rule 5).
+  // The linked db-config resolver snapshots the single `LegacyIdentityStitch`;
+  // the command runtime must provide it or the bundled binary panics with a
+  // missing-service error (legacy CLAUDE.md rule 5).
   Layer.provide(legacyIdentityStitchLayer),
 );
 
@@ -62,9 +61,9 @@ export const legacyDbDiffRuntimeLayer = Layer.mergeAll(
   cliConfig,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
-  // Go's PersistentPostRun writes the linked-project cache for `--linked`; this
-  // bundle supplies `LegacyLinkedProjectCache` (+ the lazy Management-API runtime
-  // it needs), mirroring `db schema declarative generate`.
+  // Writes the linked-project cache for `--linked`; this bundle supplies
+  // `LegacyLinkedProjectCache` (+ the lazy Management-API runtime it needs),
+  // mirroring `db schema declarative generate`.
   legacyLinkedDbResolverRuntimeLayer(["db", "diff"]).pipe(Layer.provide(legacyIdentityStitchLayer)),
   commandRuntimeLayer(["db", "diff"]),
 );

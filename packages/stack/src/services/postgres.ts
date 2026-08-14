@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import type { ServiceDef } from "@supabase/process-compose";
-import { dockerContainerName } from "../CleanupTargets.ts";
 import { dockerNetworkArgs } from "../Platform.ts";
+import { dockerContainerName, type StackIdentity } from "../StackIdentity.ts";
 import { removePathOnOrphanCleanup } from "./docker-cleanup.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 import {
@@ -28,7 +28,7 @@ interface DockerPostgresOptions extends PostgresServiceOptions {
   readonly platformOs: string;
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly cleanupDataDirOnExit?: boolean;
 }
 
@@ -174,10 +174,10 @@ export const makePostgresService = (opts: NativePostgresOptions): ServiceDef => 
 
 export const makePostgresServiceDocker = (opts: DockerPostgresOptions): ServiceDef => {
   const env = postgresDockerEnv(opts);
-  const containerName = dockerContainerName("postgres", opts.apiPort);
+  const containerName = dockerContainerName("postgres", opts.identity.key);
   return dockerRunService({
     name: "postgres",
-    apiPort: opts.apiPort,
+    identity: opts.identity,
     image: opts.image,
     networkArgs: dockerNetworkArgs(opts.platformOs, [opts.port]),
     volumes: [`${opts.dataDir}:/var/lib/postgresql/data`],

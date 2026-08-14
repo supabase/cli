@@ -11,14 +11,13 @@ import { LegacyMigrationSquashDumpError } from "./squash.errors.ts";
 
 /**
  * Input to {@link legacySquashDumpSchema} — squash's own thin wrapper over one
- * `migration.DumpSchema` call (`pkg/migration/dump.go`).
+ * schema-dump call.
  */
 export interface LegacySquashDumpParams<E> {
   /**
-   * `utils.Config.Db.Image` — the pin-resolved (not yet registry-mapped) Postgres
+   * The pin-resolved (not yet registry-mapped) Postgres
    * image (`localInputs.bootstrapConfig.postgresImage`); {@link legacyStreamPgDump}
-   * applies the registry mirror itself, mirroring Go's `DockerStart` ->
-   * `GetRegistryImageUrl`.
+   * applies the registry mirror itself.
    */
   readonly image: string;
   /** The shadow's own connect target (host / shadow port / `postgres` / password / `postgres`). */
@@ -32,10 +31,8 @@ export interface LegacySquashDumpParams<E> {
 }
 
 /**
- * Port of Go's `migration.DumpSchema(ctx, cfg, w, dump.DockerExec, opts...)`
- * (`pkg/migration/dump.go`): a schema-only `pg_dump`, streamed to `onStdout` at
- * constant memory. `squashMigrations` calls this exactly three times
- * (`apps/cli-go/internal/migration/squash/squash.go:109,116,126`): before/after
+ * A schema-only `pg_dump`, streamed to `onStdout` at
+ * constant memory. `squashMigrations` calls this exactly three times: before/after
  * with `WithSchema("auth","storage")`, and a third, unrestricted call for the final
  * full dump written straight to the target migration file.
  */
@@ -64,7 +61,7 @@ export const legacySquashDumpSchema = Effect.fnUntraced(function* <E>(
   }
 });
 
-/** Concatenates stdout chunks into one buffer, mirroring Go's `bytes.Buffer` sink. */
+/** Concatenates stdout chunks into one buffer. */
 const concatChunks = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
   const total = chunks.reduce((size, chunk) => size + chunk.length, 0);
   const bytes = new Uint8Array(total);
@@ -78,8 +75,7 @@ const concatChunks = (chunks: ReadonlyArray<Uint8Array>): Uint8Array => {
 
 /**
  * Buffered convenience over {@link legacySquashDumpSchema} for the before/after
- * diff dumps — mirrors Go's own `bytes.Buffer` sink (`squash.go:108`), which is
- * inherently in-memory too: an `auth`/`storage` schema-only dump is tens of KB, not
+ * diff dumps — an `auth`/`storage` schema-only dump is tens of KB, not
  * a streaming-scale payload. The FULL dump never goes through this — it streams
  * straight to the target migration file's own handle at constant memory
  * (`squash.handler.ts`'s `squashMigrations`).

@@ -37,7 +37,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 When repairing specific versions, prints `Repaired migration history: [<versions>]
 => <status>` to stderr, then `Finished supabase migration repair.` to stdout and
@@ -46,13 +46,13 @@ to stderr. The DB mutation is one transaction: create the history table, then (f
 repair-all) `TRUNCATE`, plus `applied` → per-version `UPSERT` from the local file,
 `reverted` → `DELETE ... WHERE version = ANY($1)`.
 
-> **Atomicity note:** Go runs the TRUNCATE/UPSERT/DELETE via `pgx.Batch` (a
-> pipeline, not an explicit transaction), so a partial failure mid-batch (e.g.
-> TRUNCATE commits but a later UPSERT fails) can leave the history table in a
+> **Atomicity note:** the old Go CLI ran the TRUNCATE/UPSERT/DELETE via a batched
+> pipeline (not an explicit transaction), so a partial failure mid-batch (e.g.
+> TRUNCATE commits but a later UPSERT fails) could leave the history table in a
 > half-updated state. The TS port wraps the same statements in an explicit
 > `BEGIN`/`COMMIT` with `ROLLBACK` on error, so a partial failure leaves the table
 > unchanged. This is a deliberate, safer divergence (`LegacyDbSession` has no batch
-> primitive); the success path is byte-identical to Go.
+> primitive); the success path produces the same output as before.
 
 ### `--output-format json`
 

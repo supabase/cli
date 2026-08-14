@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { Schema } from "effect";
 import {
   DEFAULT_STACK_READINESS_POLICY,
+  InstanceIdSchema,
   ReadyOptionsSchema,
   resolveReadinessPolicy,
   type ReadinessPolicy,
@@ -76,5 +77,19 @@ describe("ReadyOptionsSchema", () => {
     expect(() => decode({ mode: "finite", timeoutMs: 0 })).toThrow();
     expect(() => decode({ mode: "finite", timeoutMs: -1 })).toThrow();
     expect(() => decode({ mode: "forever" })).toThrow();
+  });
+});
+
+describe("InstanceIdSchema", () => {
+  const decode = Schema.decodeUnknownSync(InstanceIdSchema);
+
+  it("accepts a Docker-name-safe token, such as a managed stack's UUID", () => {
+    expect(decode("0f9d2b3c-4a5e-4c7d-8e9f-1a2b3c4d5e6f")).toBe(
+      "0f9d2b3c-4a5e-4c7d-8e9f-1a2b3c4d5e6f",
+    );
+  });
+
+  it("rejects a value that would break Docker container name interpolation", () => {
+    expect(() => decode("../bad:id")).toThrow();
   });
 });

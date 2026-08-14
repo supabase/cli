@@ -10,7 +10,7 @@ import { withJsonErrorHandling } from "../../../shared/output/json-error-handlin
 import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command-instrumentation.ts";
 import { legacyUnlink } from "./unlink.handler.ts";
 
-// `unlink` makes no Management API calls (Go's unlink needs no access token), so it
+// `unlink` makes no Management API calls (no access token is needed), so it
 // deliberately avoids `legacyManagementApiRuntimeLayer` — that layer eagerly resolves
 // an access token and would fail with "Access token not provided" for a token-less
 // `unlink`. It provides only the services the handler + instrumentation consume.

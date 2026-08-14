@@ -195,7 +195,7 @@ describe("legacyResolveMigrationFile (byte-ordered match, Go's sort.Strings via 
     // A supplementary-plane character (U+1F600, a UTF-16 surrogate pair) alongside a BMP
     // private-use character (U+E000): JS's default `.sort()` (no comparator) ranks the
     // surrogate pair FIRST — its leading high-surrogate code unit (0xD83D) is less than
-    // the private-use code unit (0xE000). Go's `sort.Strings` (UTF-8 byte order) ranks the
+    // the private-use code unit (0xE000). `sort.Strings` (UTF-8 byte order) ranks the
     // private-use character first instead (0xEE... < 0xF0... in its UTF-8 encoding).
     const surrogatePair = "20240101000000_a\u{1f600}.sql";
     const privateUse = "20240101000000_a\u{e000}.sql";

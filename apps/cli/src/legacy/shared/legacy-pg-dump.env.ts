@@ -1,7 +1,7 @@
 import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
 
 /**
- * Pure pg_dump environment builders, ported 1:1 from Go's `pkg/migration/dump.go`.
+ * Pure pg_dump environment builders, ported 1:1 from `pkg/migration/dump.go`.
  * No Effect or service dependencies, so the schema/role/config lists and the
  * `os.Expand` dry-run expansion stay unit-testable in isolation. Shared by `db
  * dump`, `db pull`'s initial-migra schema dump, and (CLI-1969) `migration
@@ -9,7 +9,7 @@ import type { LegacyPgConnInput } from "./legacy-db-connection.service.ts";
  * lives in `legacy/shared/` rather than `commands/db/shared/`.
  */
 
-/** `migration.InternalSchemas` (`pkg/migration/dump.go:18-49`). Used by schema dumps. */
+/** `migration.InternalSchemas`. Used by schema dumps. */
 export const LEGACY_INTERNAL_SCHEMAS: ReadonlyArray<string> = [
   "information_schema",
   "pg_*", // Wildcard pattern follows pg_dump
@@ -44,7 +44,7 @@ export const LEGACY_INTERNAL_SCHEMAS: ReadonlyArray<string> = [
   "vault",
 ];
 
-/** `migration.excludedSchemas` (`pkg/migration/dump.go:51-85`). Used by data dumps. */
+/** `migration.excludedSchemas`. Used by data dumps. */
 export const LEGACY_EXCLUDED_SCHEMAS: ReadonlyArray<string> = [
   "information_schema",
   "pg_*", // Wildcard pattern follows pg_dump
@@ -79,7 +79,7 @@ export const LEGACY_EXCLUDED_SCHEMAS: ReadonlyArray<string> = [
   "_supavisor",
 ];
 
-/** `migration.reservedRoles` (`pkg/migration/dump.go:86-101`). Used by role dumps. */
+/** `migration.reservedRoles`. Used by role dumps. */
 export const LEGACY_RESERVED_ROLES: ReadonlyArray<string> = [
   "anon",
   "authenticated",
@@ -97,7 +97,7 @@ export const LEGACY_RESERVED_ROLES: ReadonlyArray<string> = [
   "pgtle_admin",
 ];
 
-/** `migration.allowedConfigs` (`pkg/migration/dump.go:102-110`). Used by role dumps. */
+/** `migration.allowedConfigs`. Used by role dumps. */
 export const LEGACY_ALLOWED_CONFIGS: ReadonlyArray<string> = [
   // Ref: https://github.com/supabase/postgres/blob/develop/ansible/files/postgresql_config/supautils.conf.j2#L10
   "pgaudit.*",
@@ -107,7 +107,7 @@ export const LEGACY_ALLOWED_CONFIGS: ReadonlyArray<string> = [
   "track_io_timing",
 ];
 
-/** Options controlling a pg_dump invocation (`pkg/migration/dump.go:112-117`). */
+/** Options controlling a pg_dump invocation. */
 export interface LegacyDumpOptions {
   readonly schema: ReadonlyArray<string>;
   readonly keepComments: boolean;
@@ -116,7 +116,7 @@ export interface LegacyDumpOptions {
   readonly columnInsert: boolean;
 }
 
-/** `migration.toEnv` (`pkg/migration/dump.go:140-148`). */
+/** `migration.toEnv`. */
 export function legacyToDumpEnv(conn: LegacyPgConnInput): Record<string, string> {
   return {
     PGHOST: conn.host,
@@ -127,7 +127,7 @@ export function legacyToDumpEnv(conn: LegacyPgConnInput): Record<string, string>
   };
 }
 
-/** `migration.DumpSchema` env assembly (`pkg/migration/dump.go:152-166`). */
+/** `migration.DumpSchema` env assembly. */
 export function legacyBuildSchemaDumpEnv(
   conn: LegacyPgConnInput,
   opt: LegacyDumpOptions,
@@ -145,7 +145,7 @@ export function legacyBuildSchemaDumpEnv(
   return env;
 }
 
-/** `migration.DumpData` env assembly (`pkg/migration/dump.go:168-189`). */
+/** `migration.DumpData` env assembly. */
 export function legacyBuildDataDumpEnv(
   conn: LegacyPgConnInput,
   opt: LegacyDumpOptions,
@@ -172,13 +172,13 @@ export function legacyBuildDataDumpEnv(
   return env;
 }
 
-/** `migration.quoteUpperCase` (`pkg/migration/dump.go:191-194`). */
+/** `migration.quoteUpperCase`. */
 export function legacyQuoteUpperCase(table: string): string {
   const escaped = table.replaceAll(".", `"."`);
   return `"${escaped}"`;
 }
 
-/** `migration.DumpRole` env assembly (`pkg/migration/dump.go:196-209`). */
+/** `migration.DumpRole` env assembly. */
 export function legacyBuildRoleDumpEnv(
   conn: LegacyPgConnInput,
   opt: LegacyDumpOptions,
@@ -195,11 +195,11 @@ export function legacyBuildRoleDumpEnv(
 const isAlphaNum = (c: string): boolean =>
   c === "_" || (c >= "0" && c <= "9") || (c >= "a" && c <= "z") || (c >= "A" && c <= "Z");
 
-// Go's `os.isShellSpecialVar`: `*#$@!?-` and the single digits 0-9.
+// `os.isShellSpecialVar`: `*#$@!?-` and the single digits 0-9.
 const isShellSpecialVar = (c: string): boolean => "*#$@!?-0123456789".includes(c);
 
 /**
- * Port of Go's `os.getShellName` (`src/os/env.go`): returns the variable name
+ * Port of `os.getShellName` (`src/os/env.go`): returns the variable name
  * referenced by `$`-syntax at the start of `s`, plus the number of bytes
  * consumed.
  */
@@ -227,7 +227,7 @@ function getShellName(s: string): { name: string; width: number } {
 }
 
 /**
- * Port of Go's `dump.noExec` expansion (`internal/db/dump/dump.go:59-77`): expands
+ * Port of `dump.noExec` expansion: expands
  * `$VAR` / `${VAR}` references in `script` from `env`, ignoring bash default
  * syntax (`${VAR:-x}` resolves `VAR` only) and escaping double quotes in the
  * substituted values. Used to render the `--dry-run` script byte-for-byte.

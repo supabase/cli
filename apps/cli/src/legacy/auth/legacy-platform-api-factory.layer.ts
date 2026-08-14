@@ -16,7 +16,7 @@ type LegacyPlatformApiDeps =
  *
  * `legacyDohFetchLayer` overrides `FetchHttpClient.Fetch` so that when the
  * factory's `make` resolves on the `--linked` path, the typed API client
- * honours `--dns-resolver https` — mirroring Go's `withFallbackDNS` hook.
+ * honours `--dns-resolver https`.
  */
 export const legacyPlatformApiFactoryLayer = Layer.effect(
   LegacyPlatformApiFactory,

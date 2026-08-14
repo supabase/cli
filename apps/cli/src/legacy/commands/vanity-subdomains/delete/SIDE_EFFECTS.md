@@ -57,7 +57,7 @@ Deleted vanity subdomain successfully.
 
 ### Legacy `--output {json,yaml,toml,env}`
 
-Ignored, matching the old Go command. The same stderr success line is printed.
+Ignored. The same stderr success line is printed.
 
 ### `--output-format json`
 
@@ -71,5 +71,4 @@ One `result` event when the legacy `--output` flag is unset.
 
 - The legacy `--output` flag wins over TS `--output-format` when both are provided.
 - `linked-project.json` is written after ref resolution (once the `--experimental` gate is open),
-  even when the API call fails. A closed gate writes nothing (Go's `PersistentPreRunE` fails
-  before `PersistentPostRun` runs).
+  even when the API call fails. A closed gate writes nothing.

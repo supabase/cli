@@ -1,8 +1,6 @@
 import { mkdirSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, inject, test } from "vitest";
-import { ACCESS_TOKEN, isRecording } from "./env.ts";
-import { runParity } from "@supabase/cli-test-helpers";
+import { describe, expect } from "vitest";
 import { testBehaviour } from "./test-context.ts";
 
 // ---------------------------------------------------------------------------
@@ -24,29 +22,6 @@ async function setPgFixture(apiUrl: string, key: string): Promise<void> {
     body: JSON.stringify({ key }),
   });
   if (!res.ok) throw new Error(`Failed to set PG fixture "${key}": ${await res.text()}`);
-}
-
-/** Parity test that sets a PG fixture before running both CLIs. */
-function testInspectDbParity(subcmd: string, fixtureKey: string): void {
-  test.skipIf(isRecording)(`parity: inspect db ${subcmd}`, async () => {
-    const serverUrl = inject("replayServerUrl") as string;
-    const pgMockPort = inject("pgMockPort") as number;
-
-    await setPgFixture(serverUrl, fixtureKey);
-
-    try {
-      await runParity(
-        {
-          apiUrl: serverUrl,
-          accessToken: ACCESS_TOKEN,
-          workspaceSetup: (dir) => setupInspectWorkspace(dir, pgMockPort),
-        },
-        ["inspect", "db", subcmd, "--local"],
-      );
-    } finally {
-      await fetch(`${serverUrl}/_ctrl/overrides`, { method: "DELETE" });
-    }
-  });
 }
 
 // ---------------------------------------------------------------------------
@@ -86,26 +61,6 @@ describe("inspect:flags", () => {
     ]);
     expect(result.exitCode).not.toBe(0);
   });
-
-  test.skipIf(isRecording)("parity: inspect db db-stats [mutually exclusive flags]", async () => {
-    const serverUrl = inject("replayServerUrl") as string;
-    const pgMockPort = inject("pgMockPort") as number;
-    await runParity(
-      {
-        apiUrl: serverUrl,
-        accessToken: ACCESS_TOKEN,
-        workspaceSetup: (dir) => setupInspectWorkspace(dir, pgMockPort),
-      },
-      [
-        "inspect",
-        "db",
-        "db-stats",
-        "--db-url",
-        "postgresql://postgres:postgres@localhost:5432/postgres",
-        "--local",
-      ],
-    );
-  });
 });
 
 for (const { name, fixtureKey, assertValue } of SUBCOMMANDS) {
@@ -132,8 +87,6 @@ for (const { name, fixtureKey, assertValue } of SUBCOMMANDS) {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).not.toBe("");
     });
-
-    testInspectDbParity(name, fixtureKey);
   });
 }
 
@@ -161,27 +114,5 @@ describe("inspect:report", () => {
     ]);
     expect(result.exitCode).not.toBe(0);
     expect(result.stderr).not.toBe("");
-  });
-
-  test.skipIf(isRecording)("parity: inspect report", async () => {
-    const serverUrl = inject("replayServerUrl") as string;
-    const pgMockPort = inject("pgMockPort") as number;
-    await runParity(
-      {
-        apiUrl: serverUrl,
-        accessToken: ACCESS_TOKEN,
-        workspaceSetup: (dir) => setupInspectWorkspace(dir, pgMockPort),
-        // The rules summary table is computed by csvq over the COPY CSV content,
-        // which the pg-mock cannot emit (it returns an empty, header-less COPY for
-        // every query). On those empty CSVs Go's csvq panics with an "index out of
-        // range" fatal error that it prints into each STATUS cell, while the native
-        // TS evaluator reports a clean "unknown column" — so stdout is not faithfully
-        // comparable here. Exit code, stderr (progress lines), request log, and the
-        // 14 written CSV files ARE still compared; the rules-table rendering is
-        // covered by the apps/cli unit + integration tests against real fixtures.
-        compareStdout: false,
-      },
-      ["inspect", "report", "--local"],
-    );
   });
 });

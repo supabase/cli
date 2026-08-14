@@ -257,9 +257,9 @@ function setup(opts: SetupOpts = {}) {
       workdir: opts.workdir ?? "/work/project",
       accessToken: opts.accessToken,
     }),
-    // The linked token check routes through `credentials.getAccessToken`, which Go's
-    // `LoadAccessTokenFS` mirrors by validating the resolved token (env/keyring/file)
-    // against `sbp_`. `accessTokenInvalid` exercises that via the real validator.
+    // The linked token check routes through `credentials.getAccessToken`,
+    // which validates the resolved token (env/keyring/file) against `sbp_`.
+    // `accessTokenInvalid` exercises that via the real validator.
     Layer.succeed(LegacyCredentials, {
       getAccessToken:
         opts.accessTokenInvalid === true
@@ -370,8 +370,8 @@ describe("legacy db query integration", () => {
   });
 
   it.live("resolves a relative --file against the workdir", () => {
-    // Go chdir's into the workdir before ResolveSQL reads --file, so a relative
-    // path resolves against the workdir, not the original process cwd.
+    // A relative `--file` path resolves against the workdir, not the
+    // original process cwd.
     const dir = mkdtempSync(join(tmpdir(), "supabase-query-wd-"));
     writeFileSync(join(dir, "q.sql"), "select * from users");
     const { layer, out } = setup({ result: SELECT_RESULT, workdir: dir });
@@ -508,8 +508,8 @@ describe("legacy db query integration", () => {
   });
 
   it.live("fails JSON output on a non-finite float (Go's json.Encoder error), no stdout", () => {
-    // select 'NaN'::float8 -o json — Go fails to encode and exits non-zero with empty
-    // stdout, rather than emitting `null` like JSON.stringify.
+    // select 'NaN'::float8 -o json — encoding fails and exits non-zero with
+    // empty stdout, rather than emitting `null` like JSON.stringify.
     const { layer, out } = setup({
       result: { fields: ["f"], fieldTypeIds: [701], rows: [[Number.NaN]], commandTag: "SELECT 1" },
       agent: "no",
@@ -526,8 +526,8 @@ describe("legacy db query integration", () => {
   });
 
   it.live("records the resolved -o as the telemetry output_format (Go parity)", () => {
-    // Go mirrors db query's resolved local -o onto the telemetry global: table for
-    // humans, json for agents, and the explicit -o otherwise.
+    // db query's resolved local -o mirrors onto the telemetry global: table
+    // for humans, json for agents, and the explicit -o otherwise.
     const human = setup({ result: SELECT_RESULT, agent: "no" });
     const agent = setup({ result: SELECT_RESULT, agent: "yes" });
     const csv = setup({ result: SELECT_RESULT, agent: "no", goOutput: "csv" });
@@ -593,9 +593,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("resolves the --db-url/config before reading SQL (Go root PreRun order)", () => {
-    // db query --db-url 'bad' -f missing.sql: Go's ParseDatabaseConfig parses the
-    // connection string in PreRunE before ResolveSQL, so the connection-string error
-    // wins over the missing-file error.
+    // db query --db-url 'bad' -f missing.sql: the connection string is parsed
+    // before SQL is resolved, so the connection-string error wins over the
+    // missing-file error.
     const { layer } = setup({ resolveFails: true });
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
@@ -617,7 +617,7 @@ describe("legacy db query integration", () => {
   });
 
   it.live("rejects conflicting targets (--linked --local) before running any SQL", () => {
-    // cobra MarkFlagsMutuallyExclusive("db-url", "linked", "local") fails before RunE.
+    // Mutually-exclusive db-url/linked/local group fails before the query runs.
     const { layer, cache } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
@@ -637,8 +637,8 @@ describe("legacy db query integration", () => {
   });
 
   it.live("rejects --local=false --linked=false as a target conflict (Go flag.Changed)", () => {
-    // cobra keys the mutex off flag.Changed, so the explicit-false forms still count
-    // as set and conflict — even though both values are false.
+    // The mutex keys off explicit presence, so the explicit-false forms
+    // still count as set and conflict — even though both values are false.
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
@@ -656,7 +656,7 @@ describe("legacy db query integration", () => {
   });
 
   it.live("fails an unlinked --linked query without prompting for a project", () => {
-    // Go's --linked PreRun loads the ref or fails (ErrNotLinked); it never prompts.
+    // The --linked preflight loads the ref or fails; it never prompts.
     const { layer } = setup({ unlinked: true });
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
@@ -668,9 +668,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("surfaces a project-ref read failure instead of reporting not-linked", () => {
-    // Go's --linked PreRun uses the hard LoadProjectRef, which returns
-    // `failed to load project ref` on an unreadable .temp/project-ref (project_ref.go:72)
-    // rather than the not-linked message. The handler must surface that, not mask it.
+    // The --linked preflight uses the hard `loadProjectRef`, which returns
+    // `failed to load project ref` on an unreadable .temp/project-ref rather
+    // than the not-linked message. The handler must surface that, not mask it.
     const { layer } = setup({ refReadFails: true });
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
@@ -692,7 +692,7 @@ describe("legacy db query integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbQuery(flags({ sql: Option.some("select 1"), linked: Option.some(true) }));
       expect(out.stdoutText).toContain("│ name  │ id │");
-      // Go's PersistentPostRun caches the linked project after a --linked run.
+      // The linked-project cache is refreshed after a --linked run.
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
@@ -762,8 +762,6 @@ describe("legacy db query integration", () => {
       expect(failMessage(exit)).toBe(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
       );
-      // The guard fires before any local connection/query, linked API call, or
-      // cache write — no query result is ever rendered.
       expect(out.stdoutText).toBe("");
       expect(httpClient.requests).toEqual([]);
       expect(cache.cached).toBe(false);
@@ -771,9 +769,9 @@ describe("legacy db query integration", () => {
   });
 
   it.live("treats --linked=false as an explicit linked target (Go gates on flag.Changed)", () => {
-    // pflag marks `--linked=false` as Changed, and Go's PreRun/RunE gate the linked
-    // path on flag.Changed (not the value), so this still runs the linked HTTP path
-    // rather than falling through to local.
+    // `--linked=false` counts as explicitly set, and the preflight/handler
+    // gate the linked path on that (not the value), so this still runs the
+    // linked HTTP path rather than falling through to local.
     const { layer, out, cache } = setup({
       linkedStatus: 201,
       linkedBody: '[{"name":"alice","id":1}]',
@@ -786,12 +784,12 @@ describe("legacy db query integration", () => {
   });
 
   it.live("resolves the linked DB config before the API call (Go root PreRun order)", () => {
-    // Go's root ParseDatabaseConfig runs NewDbConfigWithPassword for --linked before
-    // ResolveSQL/the Management API call: it loads+validates the remote-merged config
-    // AND resolves the live DB connection (TCP probe / pooler / temp login-role), any
-    // of which can fail early. A resolver failure must stop the query before the API.
-    // (The config-validation-before-network parity is covered at the resolver level in
-    // legacy-db-config.integration.test.ts.)
+    // For --linked, the DB config is resolved before SQL is resolved / the
+    // Management API call: it loads+validates the remote-merged config AND
+    // resolves the live DB connection (TCP probe / pooler / temp login-role),
+    // any of which can fail early. A resolver failure must stop the query
+    // before the API. (The config-validation-before-network behavior is
+    // covered at the resolver level in legacy-db-config.integration.test.ts.)
     const { layer, out, cache } = setup({
       resolveFails: true,
       linkedStatus: 201,
@@ -804,18 +802,18 @@ describe("legacy db query integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       expect(failMessage(exit)).toContain("failed to parse connection string");
       expect(out.stdoutText).toBe(""); // failed before emitting any query result
-      // Go loads the ref (LoadProjectRef) before NewDbConfigWithPassword, and
-      // ensureProjectGroupsCached runs on failure too, so a resolve-step failure
-      // still refreshes the linked-project cache.
+      // The ref is loaded before the DB config, and the cache refresh runs on
+      // failure too, so a resolve-step failure still refreshes the
+      // linked-project cache.
       expect(cache.cached).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("caches the linked project even when SQL resolution fails (Go PostRun)", () => {
-    // The ref resolves and the DB config validates, but no SQL is provided on a TTY
-    // (no --file / no stdin), so the query fails at ResolveSQL — before runLinked.
-    // Go records flags.ProjectRef in the pre-run and ensureProjectGroupsCached runs
-    // after the command returns even on a RunE error (cmd/root.go:176), so the
+    // The ref resolves and the DB config validates, but no SQL is provided on
+    // a TTY (no --file / no stdin), so the query fails while resolving SQL —
+    // before runLinked. The ref is recorded in the pre-run and the cache
+    // refresh runs after the command returns even on a failure, so the
     // linked-project cache must still refresh.
     const { layer, cache } = setup({ stdinTTY: true });
     return Effect.gen(function* () {
@@ -838,7 +836,7 @@ describe("legacy db query integration", () => {
           flags({ sql: Option.some("bad"), linked: Option.some(true) }),
         ).pipe(Effect.exit);
         expect(failMessage(exit)).toContain("unexpected status 400");
-        // Go runs the cache write in PersistentPostRun, so it fires on failure too.
+        // The cache write runs unconditionally, so it fires on failure too.
         expect(cache.cached).toBe(true);
       }).pipe(Effect.provide(layer));
     },
@@ -927,10 +925,10 @@ describe("legacy db query integration", () => {
   it.live(
     "rejects an invalid env access token before the linked query (Go LoadAccessTokenFS)",
     () => {
-      // Go's linked PreRun calls LoadAccessTokenFS, which validates the resolved token
-      // (env/keyring/file) against `sbp_...` and fails with ErrInvalidToken before any
-      // API request (cmd/db.go:303, access_token.go:24-33). So an invalid env token must
-      // fail with the invalid-token error, not make the query and surface unexpected status.
+      // The linked preflight validates the resolved token (env/keyring/file)
+      // against `sbp_...` and fails before any API request. So an invalid
+      // env token must fail with the invalid-token error, not make the
+      // query and surface unexpected status.
       const { layer, out } = setup({ accessTokenInvalid: true, linkedStatus: 201 });
       return Effect.gen(function* () {
         const exit = yield* legacyDbQuery(
@@ -945,8 +943,9 @@ describe("legacy db query integration", () => {
   );
 
   it.live("runs the --linked login preflight before reading --file (Go PreRun order)", () => {
-    // `db query --linked -f missing.sql` without a token must surface the login error,
-    // not a file-read failure — Go checks the token in PreRun, before RunE's ResolveSQL.
+    // `db query --linked -f missing.sql` without a token must surface the
+    // login error, not a file-read failure — the token is checked in the
+    // preflight, before SQL is resolved.
     const { layer } = setup({ accessToken: Option.none() });
     return Effect.gen(function* () {
       const exit = yield* legacyDbQuery(
@@ -958,8 +957,8 @@ describe("legacy db query integration", () => {
   });
 
   it.live("surfaces a linked config/connection failure before the missing-token error", () => {
-    // Go's root ParseDatabaseConfig (config + ref + NewDbConfigWithPassword) runs
-    // before the query command's token check, so an unresolvable linked config must
+    // The linked config (config + ref + DB config) is resolved before the
+    // query command's token check, so an unresolvable linked config must
     // surface ahead of the generic "supabase login" error — not be masked by it.
     const { layer } = setup({ accessToken: Option.none(), resolveFails: true });
     return Effect.gen(function* () {

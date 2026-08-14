@@ -98,8 +98,8 @@ describe("LEGACY_CLERK_DOMAIN_PATTERN", () => {
 
 /**
  * A trivially-passing full input. Every test below spreads/overrides only the field(s) its
- * check cares about, matching the fixture-building style of `legacy-local-config-values.unit
- * .test.ts`'s own `baseConfig()` helper.
+ * check cares about, matching the fixture-building style of `legacy-local-config-values.unit.
+ * test.ts`'s own `baseConfig()` helper.
  */
 function minimalInput(
   overrides: Partial<LegacyConfigValidationInput> = {},
@@ -139,7 +139,7 @@ function minimalAuthInput(overrides: Partial<LegacyAuthInput> = {}): LegacyAuthI
 // one of those (value derivation, env-override mechanics, the 3 I/O checks' actual file reads)
 // stays in `legacy-local-config-values.unit.test.ts`.
 describe("legacyValidateResolvedConfig", () => {
-  // config.go:1034-1062 — db.major_version switch. The env-override
+  // db.major_version switch. The env-override
   // (SUPABASE_DB_MAJOR_VERSION) variants stay in legacy-local-config-values.unit.test.ts.
   describe("db.major_version", () => {
     it("rejects a configured major_version of 0", () => {
@@ -167,7 +167,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1064-1068, pattern @ 1549-1554 — unconditional, no storage.enabled-style gate.
+  // unconditional, no storage.enabled-style gate.
   describe("storage.buckets", () => {
     it("rejects a bucket name Go's ValidateBucketName refuses", () => {
       expect(() =>
@@ -186,7 +186,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1164-1173 — edge_runtime.deno_version switch, unconditional, not gated on
+  // edge_runtime.deno_version switch, unconditional, not gated on
   // edge_runtime.enabled (there is no such field on LegacyConfigValidationInput at all). The
   // env-override (SUPABASE_EDGE_RUNTIME_DENO_VERSION) variants stay in
   // legacy-local-config-values.unit.test.ts.
@@ -219,7 +219,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1174-1187 — analytics.gcp_*, gated on enabled && backend === "bigquery". The
+  // analytics.gcp_*, gated on enabled && backend === "bigquery". The
   // env-override (SUPABASE_ANALYTICS_*) variants stay in legacy-local-config-values.unit.test.ts.
   describe("analytics (BigQuery backend required fields)", () => {
     it("rejects an enabled bigquery backend without gcp_project_id", () => {
@@ -321,7 +321,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1846-1854 — experimental.validate(), unconditional, internally gated.
+  // experimental.validate(), unconditional, internally gated.
   describe("experimental.*", () => {
     it("rejects a present [experimental.webhooks] section with enabled omitted", () => {
       expect(() =>
@@ -390,7 +390,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1088-1090 — auth.site_url, checked first inside `if c.Auth.Enabled`. An absent
+  // auth.site_url, checked first inside `if c.Auth.Enabled`. An absent
   // `auth` section on `LegacyConfigValidationInput` IS "auth disabled" from this function's
   // perspective. The SUPABASE_AUTH_ENABLED/SUPABASE_AUTH_SITE_URL env-override variants stay in
   // legacy-local-config-values.unit.test.ts.
@@ -414,7 +414,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1099-1109 + auth.go:58-71 — auth.captcha, checked right after auth.site_url.
+  // auth.captcha, checked right after auth.site_url.
   describe("auth.captcha", () => {
     it("rejects an enabled captcha without a provider", () => {
       expect(() =>
@@ -469,7 +469,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1117-1134 — auth.passkey/auth.webauthn, right after the (caller-side) signing-keys
+  // auth.passkey/auth.webauthn, right after the (caller-side) signing-keys
   // read.
   describe("auth.passkey / auth.webauthn", () => {
     it("rejects passkey.enabled without an [auth.webauthn] section", () => {
@@ -552,7 +552,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1325-1344 — auth.email.smtp, gated on the raw table being present AND enabled.
+  // auth.email.smtp, gated on the raw table being present AND enabled.
   describe("auth.email.smtp", () => {
     it("rejects a present [auth.email.smtp] table with no fields", () => {
       expect(() =>
@@ -641,7 +641,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1136-1138, checks @ 1453-1521 — auth.hook.*, caller pre-filters to enabled-only.
+  // auth.hook.*, caller pre-filters to enabled-only.
   describe("auth.hook.*", () => {
     it("rejects an enabled hook without a uri", () => {
       expect(() =>
@@ -755,7 +755,7 @@ describe("legacyValidateResolvedConfig", () => {
       ).toThrow("auth.hook.custom_access_token.uri should be a HTTP, HTTPS, or pg-functions URI");
     });
 
-    // Go calls `url.Parse` before the scheme switch (config.go:1497-1499) and fails the whole
+    // Parses with `url.Parse` semantics before the scheme switch and fails the whole
     // load on a malformed URI, rather than treating any `http:`/`https:` prefix as valid.
     it("rejects a hook uri that fails Go's url.Parse (malformed IPv6 host)", () => {
       expect(() =>
@@ -782,7 +782,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1139-1141, checks @ 1523-1534 — auth.mfa.*, fixed totp/phone/web_authn order.
+  // auth.mfa.*, fixed totp/phone/web_authn order.
   describe("auth.mfa.*", () => {
     it.each([
       ["totp", "auth.mfa.totp.enroll_enabled requires verify_enabled"],
@@ -817,7 +817,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1151-1153, checks @ 1635-1683 — auth.third_party.*, fixed provider order, caller
+  // auth.third_party.*, fixed provider order, caller
   // pre-filters to enabled-only.
   describe("auth.third_party.*", () => {
     it("rejects firebase enabled without a project_id", () => {
@@ -936,7 +936,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1159-1163, pattern @ 1539-1544 — every [functions.*] key, unconditional, not
+  // every [functions.*] key, unconditional, not
   // gated on auth.enabled.
   describe("functions.*", () => {
     it("rejects a function slug Go's ValidateFunctionSlug refuses", () => {
@@ -962,7 +962,7 @@ describe("legacyValidateResolvedConfig", () => {
     });
   });
 
-  // config.go:1006-1027 — only the "exactly one of cert/key set" presence rule; the actual
+  // only the "exactly one of cert/key set" presence rule; the actual
   // file reads and the disabled-skip/env-override tests stay in
   // legacy-local-config-values.unit.test.ts.
   describe("api.tls", () => {

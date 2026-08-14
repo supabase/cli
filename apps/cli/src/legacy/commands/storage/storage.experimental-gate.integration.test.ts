@@ -21,11 +21,9 @@ import { LegacyExperimentalRequiredError } from "../../shared/legacy-experimenta
 import { legacyStorageCommand } from "./storage.command.ts";
 import { LegacyStorageMutuallyExclusiveFlagsError } from "./storage.errors.ts";
 
-// Go gates `storageCmd` behind `--experimental` in `PersistentPreRunE`
-// (`apps/cli-go/cmd/root.go:91-96`), which cobra runs BEFORE
-// `ValidateFlagGroups()` (mutual-exclusivity checks, `cobra@v1.10.2/command.go:985,1010`).
-// So `supabase storage ls --linked --local` without `--experimental` must
-// surface the experimental-gate error in Go, not the mutex error — this suite
+// The experimental gate runs before mutual-exclusivity checks. So
+// `supabase storage ls --linked --local` without `--experimental` must
+// surface the experimental-gate error, not the mutex error — this suite
 // proves that ordering is wired into the actual `.command.ts` handler
 // pipeline for all four leaves, not just the shared helper in isolation.
 

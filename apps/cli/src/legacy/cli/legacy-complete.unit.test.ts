@@ -68,9 +68,8 @@ describe("legacyRespondToComplete", () => {
 
   it("offers a non-root command's own declared global flags from a nested subcommand (Command.withGlobalFlags)", () => {
     // seed.command.ts declares --linked/--local as scoped global flags via
-    // Command.withGlobalFlags on the `seed` group itself (Go's
-    // seedCmd.PersistentFlags()), not at legacyRoot — a collector that only
-    // reads root.globalFlags misses these entirely (CLI-1965 review finding).
+    // Command.withGlobalFlags on the `seed` group itself, not at legacyRoot
+    // — a collector that only reads root.globalFlags misses these entirely.
     const atGroup = legacyRespondToComplete(legacyRoot, ["__complete", "seed", "--l"]);
     expect(atGroup?.candidates.map((c) => c.name)).toEqual(
       expect.arrayContaining(["--linked", "--local"]),
@@ -99,9 +98,7 @@ describe("legacyRespondToComplete", () => {
       // `--debug ""` used to return zero candidates entirely: the leftover-args
       // computation counted `--debug` itself as "positional leftover," gating
       // out subcommand-name completion the way cobra never does for a
-      // persistent flag (CLI-1965 review finding, empirically confirmed
-      // against a real apps/cli-go build: `__complete --debug ''` lists all 36
-      // root commands there).
+      // persistent flag: `__complete --debug ''` lists all 36 root commands.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "--debug", ""]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toContain("branches");
@@ -125,7 +122,7 @@ describe("legacyRespondToComplete", () => {
   it("does not offer --version on any command other than the root", () => {
     // Cobra's InitDefaultVersionFlag registers --version non-persistently on
     // the root command only — it is never inherited by subcommands the way
-    // --help is (CLI-1965 review finding).
+    // --help is.
     const atRoot = legacyRespondToComplete(legacyRoot, ["__complete", "--v"]);
     expect(atRoot?.candidates.map((c) => c.name)).toContain("--version");
 
@@ -138,8 +135,7 @@ describe("legacyRespondToComplete", () => {
     // `len(finalArgs) == 0` gate, alongside the subcommand loop — a bogus
     // trailing token (which becomes non-empty leftover) must leave the
     // directive at Default, not force NoFileComp just because `db` itself has
-    // subcommands (CLI-1965 review finding; verified against a real
-    // apps/cli-go build: `__complete db bogus ''` → `:0`).
+    // subcommands: `__complete db bogus ''` → `:0`.
     const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "bogus", ""]);
     expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
   });
@@ -171,8 +167,7 @@ describe("legacyRespondToComplete", () => {
       // (a target migration version string) — unrelated to cobra's built-in
       // root-only version flag. Typing it while completing a *different*
       // flag on the same command must behave like normal flag-name
-      // completion, not trip the root-only help/version short-circuit
-      // (CLI-1965 review finding).
+      // completion, not trip the root-only help/version short-circuit.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "migration",
@@ -187,11 +182,9 @@ describe("legacyRespondToComplete", () => {
     it("does not short-circuit on --help positioned after a genuine `--` terminator (it is positional, not a flag)", () => {
       // A raw token scan for the literal string "--help" over-triggers once
       // `--help` appears anywhere, even past an unconsumed `--` sentinel,
-      // where pflag never parses it as a flag at all (verified empirically
-      // against a real apps/cli-go build: `db dump -- --help ""` returns
-      // zero candidates with the DEFAULT directive — `db dump`'s own file
-      // completion — not the help short-circuit's NoFileComp — CLI-1965
-      // review finding).
+      // where pflag never parses it as a flag at all: `db dump -- --help ""`
+      // returns zero candidates with the DEFAULT directive — `db dump`'s own
+      // file completion — not the help short-circuit's NoFileComp.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "db",
@@ -207,9 +200,8 @@ describe("legacyRespondToComplete", () => {
       // `--workdir` is a value-taking global flag; pflag consumes the very
       // next token as its value regardless of what that token looks like,
       // so `--version` here is `--workdir`'s value, never parsed as a flag
-      // occurrence (verified empirically against a real apps/cli-go build:
-      // `--workdir --version br` still completes `branches`, not the
-      // version short-circuit — CLI-1965 review finding).
+      // occurrence: `--workdir --version br` still completes `branches`,
+      // not the version short-circuit.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "--workdir",
@@ -227,11 +219,10 @@ describe("legacyRespondToComplete", () => {
       // to root itself (no descent at all) with a leftover positional is an
       // "unknown command" error there, wins even over the --help/--version
       // short-circuit, and is stricter than the same situation under any
-      // OTHER resolved command (verified empirically against a real
-      // apps/cli-go build: `nosuch --d` and `nosuch --help` both return zero
-      // candidates with the Default directive, while `db bogus --d` — `db`
-      // itself resolves — still offers `db`'s own --debug/--dns-resolver
-      // normally — CLI-1965 review finding).
+      // OTHER resolved command: `nosuch --d` and `nosuch --help` both return
+      // zero candidates with the Default directive, while `db bogus --d` —
+      // `db` itself resolves — still offers `db`'s own --debug/--dns-resolver
+      // normally.
       const unknownRoot = legacyRespondToComplete(legacyRoot, ["__complete", "nosuch", "--d"]);
       expect(unknownRoot).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
 
@@ -260,9 +251,8 @@ describe("legacyRespondToComplete", () => {
       // cobra's own stripFlags (command.go:674-710) — which legacyArgs' error
       // check runs against — drops a lone `-` from its leftover count
       // entirely, unlike legacyResolveCommandPath's own leftoverArgs (which
-      // deliberately keeps it for other purposes) (verified empirically
-      // against a real apps/cli-go build: `__complete - --d` still offers
-      // root's own --debug/--dns-resolver — CLI-1965 review finding).
+      // deliberately keeps it for other purposes): `__complete - --d` still
+      // offers root's own --debug/--dns-resolver.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "-", "--d"]);
       expect(result?.candidates.map((c) => c.name)).toEqual(
         expect.arrayContaining(["--debug", "--dns-resolver"]),
@@ -307,10 +297,10 @@ describe("legacyRespondToComplete", () => {
       // first) — but cobra's completion-time required-flag annotation
       // (`MarkFlagRequired`, `cmd/vanitySubdomains.go:67`) is independent of
       // TS's parse-time validation ordering, so completion must still offer
-      // exactly this flag, matching real cobra (CLI-1965 review finding:
-      // structural inference from `Flag.optional` is not a faithful proxy for
-      // "does cobra mark it required" — `LEGACY_COMPLETION_REQUIRED_FLAGS` is
-      // the explicit table that fixes this).
+      // exactly this flag, matching real cobra: structural inference from
+      // `Flag.optional` is not a faithful proxy for "does cobra mark it
+      // required" — `LEGACY_COMPLETION_REQUIRED_FLAGS` is the explicit table
+      // that fixes this.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "vanity-subdomains",
@@ -359,8 +349,8 @@ describe("legacyRespondToComplete", () => {
       "restricts $flag on sso $command to the $extension file extension",
       ({ command, flag, extension }) => {
         // sso/add/add.command.ts and sso/update/update.command.ts both declare
-        // --metadata-file/--attribute-mapping-file; the Go CLI's cmd/sso.go
-        // MarkFlagFilename calls are ported as a small lookup table
+        // --metadata-file/--attribute-mapping-file; cobra's MarkFlagFilename
+        // calls for these are captured as a small lookup table
         // (LEGACY_COMPLETION_FLAG_FILE_EXTENSIONS) rather than derived generically.
         const result = legacyRespondToComplete(legacyRoot, [
           "__complete",
@@ -426,7 +416,7 @@ describe("legacyRespondToComplete", () => {
 
     it("keeps offering a variadic flag's own name even after it has already been supplied", () => {
       // sso/add/add.command.ts: `domains: legacySsoAddDomainsFlag` is built on
-      // `Flag.atLeast(0)` (repeatable) — Go's real doCompleteFlags keeps a
+      // `Flag.atLeast(0)` (repeatable) — cobra's real doCompleteFlags keeps a
       // Slice/Array-typed flag in the completion list even once `flag.Changed`.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
@@ -445,9 +435,8 @@ describe("legacyRespondToComplete", () => {
       // Cobra's flagCompletion gate goes false once a `--` is already present
       // in the args (completions.go:364-381), so a positional operand that
       // happens to start with `-` after the terminator must not be treated as
-      // a flag-name completion (verified empirically against a real
-      // apps/cli-go build: `db dump -- --s` returns zero candidates with the
-      // Default directive, not `--schema`).
+      // a flag-name completion: `db dump -- --s` returns zero candidates with
+      // the Default directive, not `--schema`.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "dump", "--", "--s"]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
     });
@@ -456,9 +445,8 @@ describe("legacyRespondToComplete", () => {
       // completeRequireFlags is called unconditionally in cobra's noun-
       // completion branch, even past the terminator — and a token past `--`
       // is never parsed as a flag at all, so it must not be marked "changed"
-      // either (verified empirically against a real apps/cli-go build: `sso
-      // add -- --type --typ` still offers `--type` with the Default
-      // directive).
+      // either: `sso add -- --type --typ` still offers `--type` with the
+      // Default directive.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "sso",
@@ -479,9 +467,8 @@ describe("legacyRespondToComplete", () => {
       // pflag's parseSingleShortArg resolves a shorthand cluster's value by
       // its FIRST character, not its last — `-j4` is a fully valid,
       // already-resolved `--jobs=4`, so it must not suppress completion of a
-      // later flag name (verified empirically against a real apps/cli-go
-      // build: `functions deploy -j4 --p` still offers
-      // --profile/--project-ref/--prune).
+      // later flag name: `functions deploy -j4 --p` still offers
+      // --profile/--project-ref/--prune.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "functions",
@@ -501,10 +488,9 @@ describe("legacyRespondToComplete", () => {
       // Cobra's checkIfFlagCompletion only rescues a trailing incomplete flag
       // from ParseFlags() when toComplete is empty or not flag-shaped
       // (completions.go:666-687); `-o --d` leaves `-o` dangling with no
-      // rescue, so the real ParseFlags() call fails outright (verified
-      // empirically against a real apps/cli-go build: zero candidates with
-      // the Default directive — Go's error is "flag needs an argument: 'o'
-      // in -o").
+      // rescue, so the real ParseFlags() call fails outright: zero
+      // candidates with the Default directive — the error is "flag needs an
+      // argument: 'o' in -o".
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "-o", "--d"]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
     });
@@ -524,12 +510,11 @@ describe("legacyRespondToComplete", () => {
       // A `toComplete` containing `=` still identifies its OWN flag name
       // (checkIfFlagCompletion's flagWithEqual branch) — that never rescues
       // an earlier, different dangling flag out of finalArgs, so
-      // ParseFlags() still fails on it (verified empirically against a real
-      // apps/cli-go build: `sso add --type saml --metadata-file
+      // ParseFlags() still fails on it: `sso add --type saml --metadata-file
       // --attribute-mapping-file=` returns zero candidates with the Default
-      // directive — Go's error is "flag needs an argument: --metadata-file"
+      // directive — the error is "flag needs an argument: --metadata-file"
       // — even though `--attribute-mapping-file` is itself a real flag with
-      // a registered file-extension completion).
+      // a registered file-extension completion.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "sso",
@@ -548,10 +533,9 @@ describe("legacyRespondToComplete", () => {
       // pflag's parseLongArg consumes the immediately following token as a
       // non-boolean flag's value regardless of its shape — `--domains` (a
       // string flag) consumes `--type` here, so `--type` itself was never
-      // parsed as a flag and must still be offered as required (verified
-      // empirically against a real apps/cli-go build: `sso add --domains
-      // --type foo --typ` still offers `--type` with the NoFileComp
-      // directive).
+      // parsed as a flag and must still be offered as required: `sso add
+      // --domains --type foo --typ` still offers `--type` with the
+      // NoFileComp directive.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "sso",
@@ -573,9 +557,8 @@ describe("legacyRespondToComplete", () => {
       // Cobra's checkIfFlagCompletion only resets a boolean flag back to noun
       // completion in the no-`=` two-token case (`!flagWithEqual` guard);
       // `--debug=maybe` keeps `flag` set and goes to flag-VALUE completion,
-      // which resolves to zero candidates (verified empirically against a
-      // real apps/cli-go build: the Default directive, not the root command
-      // list).
+      // which resolves to zero candidates: the Default directive, not the
+      // root command list.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "--debug=maybe"]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
     });
@@ -588,8 +571,7 @@ describe("legacyRespondToComplete", () => {
         // Cobra's InitDefaultCompletionCmd registers ValidArgsFunction:
         // NoFileCompletions on the completion group and each of its shell
         // leaves; getCompletions always calls a resolved command's own
-        // ValidArgsFunction, overwriting the directive outright (verified
-        // empirically against a real apps/cli-go build).
+        // ValidArgsFunction, overwriting the directive outright.
         const result = legacyRespondToComplete(legacyRoot, ["__complete", "completion", shell, ""]);
         expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
       },
@@ -601,8 +583,7 @@ describe("legacyRespondToComplete", () => {
       // Cobra's auto-registered help command has its own ValidArgsFunction
       // (command.go:1274-1290) that re-resolves everything after `help` from
       // root — `help d` completes as if `d` were being completed at the
-      // root itself, not as an argument to `help` (verified empirically
-      // against a real apps/cli-go build: `db`, `domains`).
+      // root itself, not as an argument to `help`: `db`, `domains`.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "d"]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toEqual(
@@ -612,8 +593,7 @@ describe("legacyRespondToComplete", () => {
 
     it("completes a resolved subcommand's own children after `help <command>`", () => {
       // `help db d` completes as `db d` would — db's own subcommands, not
-      // help's (verified empirically against a real apps/cli-go build:
-      // `diff`, `dump`).
+      // help's: `diff`, `dump`.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "db", "d"]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toEqual(
@@ -623,8 +603,7 @@ describe("legacyRespondToComplete", () => {
 
     it("returns no candidates for a leaf command with no subcommands of its own", () => {
       // `db dump` is a leaf; cobra's ValidArgsFunction loops over its empty
-      // Commands() and finds nothing, but still sets NoFileComp (verified
-      // empirically against a real apps/cli-go build).
+      // Commands() and finds nothing, but still sets NoFileComp.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "db", "dump", "s"]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
     });
@@ -632,8 +611,7 @@ describe("legacyRespondToComplete", () => {
     it("returns no candidates for an unresolved token directly under root", () => {
       // Cobra's legacyArgs validator (args.go:28-37) only errors the
       // "unknown command" case when the resolved command IS root and a
-      // token is left over (verified empirically against a real
-      // apps/cli-go build: `help bogus d` -> zero candidates).
+      // token is left over: `help bogus d` -> zero candidates.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "bogus", "d"]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
     });
@@ -641,9 +619,8 @@ describe("legacyRespondToComplete", () => {
     it("still lists a resolved non-root command's subcommands past an unresolved token", () => {
       // The same legacyArgs validator never errors for a non-root resolved
       // command, even with leftover args — subcommands "will always accept
-      // arbitrary arguments" (verified empirically against a real
-      // apps/cli-go build: `help db bogus d` still offers db's own
-      // subcommands).
+      // arbitrary arguments": `help db bogus d` still offers db's own
+      // subcommands.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "help",
@@ -659,8 +636,7 @@ describe("legacyRespondToComplete", () => {
 
     it("includes the synthetic `help` candidate itself when resolved back to root", () => {
       // Cobra's help command is one of root's own Commands(), so completing
-      // help's arguments back at root re-lists help too (verified
-      // empirically against a real apps/cli-go build: `help h` -> `help`).
+      // help's arguments back at root re-lists help too: `help h` -> `help`.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "h"]);
       expect(result).toEqual({
         candidates: [{ name: "help", description: "Help about any command" }],
@@ -675,11 +651,10 @@ describe("legacyRespondToComplete", () => {
       { path: ["migration", "down"], flag: "last" },
       { path: ["db", "reset"], flag: "last" },
     ])("rejects a negative value for $path --$flag", ({ path, flag }) => {
-      // Go registers these as UintVarP/UintVar (strconv.ParseUint(s, 0, 64)),
-      // which rejects any sign prefix outright — unlike this tree's plain
-      // signed Flag.integer, whose generic regex accepts one (verified
-      // empirically against a real apps/cli-go build: zero candidates with
-      // the Default directive for all three).
+      // These flags are validated as strconv.ParseUint(s, 0, 64) values,
+      // which reject any sign prefix outright — unlike this tree's plain
+      // signed Flag.integer, whose generic regex accepts one: zero
+      // candidates with the Default directive for all three.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         ...path,
@@ -691,9 +666,9 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("still accepts a valid uint value, including the zero boundary", () => {
-      // Regression guard: the stricter check must not reject what real Go
-      // accepts (verified empirically against a real apps/cli-go build:
-      // `db reset --last 0 --d` still offers --debug/--dns-resolver/--db-url).
+      // Regression guard: the stricter check must not reject what real pflag
+      // accepts: `db reset --last 0 --d` still offers
+      // --debug/--dns-resolver/--db-url.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "db",
@@ -713,20 +688,18 @@ describe("legacyRespondToComplete", () => {
     it("rejects db query's own local values (table/csv) everywhere else", () => {
       // The global LegacyOutputFlag's choiceKeys is the UNION of root's
       // 5-value enum and db query's own 3-value enum (legacy-go-output-
-      // flag.ts), but real Go's root persistent --output only accepts
-      // env|pretty|json|toml|yaml (verified empirically against a real
-      // apps/cli-go build: `--output table ""` -> zero candidates with the
-      // Default directive).
+      // flag.ts), but the root persistent --output only accepts
+      // env|pretty|json|toml|yaml: `--output table ""` -> zero candidates
+      // with the Default directive.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "--output", "table", ""]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
     });
 
     it("rejects the resource-command values (env/pretty/toml/yaml) under db query", () => {
-      // The reverse direction of the same defect: db query's own Go enum is
-      // json|table|csv only (verified empirically against a real
-      // apps/cli-go build: `db query --output env ""` -> zero candidates
+      // The reverse direction of the same defect: db query's own enum is
+      // json|table|csv only: `db query --output env ""` -> zero candidates
       // with the Default directive, even though `env` is valid everywhere
-      // else).
+      // else.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "db",
@@ -765,10 +738,10 @@ describe("legacyRespondToComplete", () => {
 
   describe("flag values are validated the way real pflag parses them (CLI-1965 review)", () => {
     it("accepts a base-0 hex value for a plain (non-uint) integer flag", () => {
-      // Go's plain int64 flags parse via strconv.ParseInt(s, 0, 64) — base 0,
-      // so a `0x`-prefixed value is valid, unlike a decimal-only regex
-      // (verified empirically against a real apps/cli-go build: `backups
-      // restore --timestamp 0x10 --p` still offers --profile/--project-ref).
+      // Plain int64 flags are validated as strconv.ParseInt(s, 0, 64) — base
+      // 0, so a `0x`-prefixed value is valid, unlike a decimal-only regex:
+      // `backups restore --timestamp 0x10 --p` still offers
+      // --profile/--project-ref.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "backups",
@@ -784,14 +757,13 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("rejects a value one past int64 max for a plain (non-uint) integer flag", () => {
-      // Go's plain int64 flags parse via strconv.ParseInt(s, 0, 64), a
+      // Plain int64 flags are validated as strconv.ParseInt(s, 0, 64), a
       // NARROWER signed range than the uint64 bound `Flag.integer` alone
       // would suggest — 9223372036854775808 is a syntactically valid uint64
-      // but exceeds int64 max by one (verified empirically against a real
-      // apps/cli-go build: `backups restore --timestamp 9223372036854775808
-      // --p` returns zero candidates with the Default directive, while
-      // int64's real bounds, 9223372036854775807 and -9223372036854775808,
-      // both still offer --profile/--project-ref — CLI-1965 review finding).
+      // but exceeds int64 max by one: `backups restore --timestamp
+      // 9223372036854775808 --p` returns zero candidates with the Default
+      // directive, while int64's real bounds, 9223372036854775807 and
+      // -9223372036854775808, both still offer --profile/--project-ref.
       const overflow = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "backups",
@@ -824,12 +796,11 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("rejects a malformed value for Go's DurationVar flags (gen types --query-timeout, gen bearer-jwt --valid-for)", () => {
-      // Both are declared Flag.string in TS but DurationVar in Go
-      // (cmd/gen.go:161,179), parsed via time.ParseDuration before Cobra
-      // generates completions (verified empirically against a real
-      // apps/cli-go build: both `bogus` values return zero candidates with
-      // the Default directive, while `5s`/`1h` still complete normally —
-      // CLI-1965 review finding).
+      // Both are declared Flag.string in TS but validated as DurationVar
+      // values (cmd/gen.go:161,179), parsed via time.ParseDuration before
+      // Cobra generates completions: both `bogus` values return zero
+      // candidates with the Default directive, while `5s`/`1h` still
+      // complete normally.
       const queryTimeout = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "gen",
@@ -879,14 +850,13 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("rejects a duration one unit past Go's int64 nanosecond range for Go's DurationVar flags", () => {
-      // Go's DurationVar parses via time.ParseDuration, which accumulates
+      // DurationVar values parse via time.ParseDuration, which accumulates
       // into an int64 nanosecond count — a syntactically well-formed
-      // duration can still overflow that range (verified empirically
-      // against a real apps/cli-go build: `gen types --query-timeout
+      // duration can still overflow that range: `gen types --query-timeout
       // 2562048h --l` — one hour past the real max — returns zero
       // candidates with the Default directive, matching `bogus`, while the
       // exact int64 max, `2562047h47m16.854775807s`, still completes
-      // normally — CLI-1965 review finding).
+      // normally.
       const overflow = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "gen",
@@ -909,11 +879,10 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("rejects a malformed value for Go's TimeVar flag (gen bearer-jwt --exp, RFC3339 only)", () => {
-      // Declared Flag.string in TS but a TimeVar constrained to time.RFC3339
-      // in Go (cmd/gen.go:178) (verified empirically against a real
-      // apps/cli-go build: `bogus` returns zero candidates with the Default
-      // directive, while a real RFC3339 timestamp still completes normally
-      // — CLI-1965 review finding).
+      // Declared Flag.string in TS but validated as a TimeVar constrained
+      // to time.RFC3339 (cmd/gen.go:178): `bogus` returns zero candidates
+      // with the Default directive, while a real RFC3339 timestamp still
+      // completes normally.
       const invalid = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "gen",
@@ -940,11 +909,10 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("rejects an out-of-range RFC3339 zone offset for gen bearer-jwt --exp", () => {
-      // Go's time.Parse(time.RFC3339, s) independently caps the offset hour
-      // at 24 (not 23) and the offset minute at 60 (not 59) — verified
-      // empirically against go1.26 time.Parse: "+24:00" and "+00:60" parse
-      // successfully, while "+25:00" and "+00:61" both fail with "time zone
-      // offset hour/minute out of range" (CLI-1965 review finding).
+      // time.Parse(time.RFC3339, s) independently caps the offset hour
+      // at 24 (not 23) and the offset minute at 60 (not 59): "+24:00" and
+      // "+00:60" parse successfully, while "+25:00" and "+00:61" both fail
+      // with "time zone offset hour/minute out of range".
       const outOfRangeHour = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "gen",
@@ -989,12 +957,10 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("accepts a comma-separated fractional second for gen bearer-jwt --exp", () => {
-      // Go's time.Parse(time.RFC3339, s) accepts either `.` or `,` before the
-      // fractional-seconds digits (verified empirically against go1.26
-      // time.Parse: "2024-01-02T15:04:05,5Z" parses identically to
-      // "...05.5Z"; a bare "," with no following digit, or mixing both
-      // separators in one timestamp, both still fail — CLI-1965 review
-      // finding).
+      // time.Parse(time.RFC3339, s) accepts either `.` or `,` before the
+      // fractional-seconds digits: "2024-01-02T15:04:05,5Z" parses
+      // identically to "...05.5Z"; a bare "," with no following digit, or
+      // mixing both separators in one timestamp, both still fail.
       const commaFraction = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "gen",
@@ -1039,12 +1005,12 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("rejects a negative value for storage cp --jobs even though it's a string-typed flag in TS", () => {
-      // Go registers --jobs as a UintVarP (cmd/storage.go:107), the same as
-      // functions deploy/migration down/db reset above — but storage cp
-      // models it as Flag.string in TS, so the uint override must be
-      // consulted regardless of primitiveTag (verified empirically against
-      // a real apps/cli-go build: `storage cp --jobs -1 --r` returns zero
-      // candidates with the Default directive, not --recursive).
+      // --jobs is validated as a UintVarP value (cmd/storage.go:107), the
+      // same as functions deploy/migration down/db reset above — but
+      // storage cp models it as Flag.string in TS, so the uint override
+      // must be consulted regardless of primitiveTag: `storage cp --jobs
+      // -1 --r` returns zero candidates with the Default directive, not
+      // --recursive.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "storage",
@@ -1057,11 +1023,10 @@ describe("legacyRespondToComplete", () => {
     });
 
     it("rejects malformed CSV for a StringSliceVar-backed flag", () => {
-      // Go's --domains is a StringSliceVarP (cmd/sso.go:158), CSV-split via
-      // encoding/csv at parse time; an unterminated quote fails that parse
-      // (verified empirically against a real apps/cli-go build: `sso add
-      // --domains 'a,"b' --type` returns zero candidates with the Default
-      // directive, not --type).
+      // --domains is validated as a StringSliceVarP value (cmd/sso.go:158),
+      // CSV-split via encoding/csv at parse time; an unterminated quote
+      // fails that parse: `sso add --domains 'a,"b' --type` returns zero
+      // candidates with the Default directive, not --type.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "sso",
@@ -1108,10 +1073,9 @@ describe("legacyRespondToComplete", () => {
     it("rejects an invalid boolean value attached via `=` to a boolean shorthand", () => {
       // pflag treats `-f=value` as an explicit value for a boolean shorthand
       // too (pflag@v1.0.10/flag.go:1005-1033) — an owning flag being boolean
-      // does not, on its own, mean there is nothing to validate (verified
-      // empirically against a real apps/cli-go build: `storage cp -r=maybe
-      // --j` returns zero candidates with the Default directive, not
-      // --jobs).
+      // does not, on its own, mean there is nothing to validate: `storage
+      // cp -r=maybe --j` returns zero candidates with the Default
+      // directive, not --jobs.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "storage",
@@ -1141,8 +1105,7 @@ describe("legacyRespondToComplete", () => {
       (token) => {
         // pflag's boolValue.Set marks the flag Changed on either spelling,
         // and cobra's helpOrVersionFlagPresent checks .Changed, not the
-        // parsed value (completions.go:530-537) — verified empirically
-        // against a real apps/cli-go build: `--help=false --d` and
+        // parsed value (completions.go:530-537): `--help=false --d` and
         // `--help=true --d` both return zero candidates with the
         // NoFileComp directive.
         const result = legacyRespondToComplete(legacyRoot, ["__complete", token, "--d"]);
@@ -1151,9 +1114,8 @@ describe("legacyRespondToComplete", () => {
     );
 
     it("treats --version=false the same as a bare --version, at the root", () => {
-      // verified empirically against a real apps/cli-go build: `--version=false
-      // br` returns zero candidates with the NoFileComp directive, not
-      // `branches`.
+      // `--version=false br` returns zero candidates with the NoFileComp
+      // directive, not `branches`.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "--version=false", "br"]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.NoFileComp });
     });
@@ -1172,9 +1134,8 @@ describe("legacyRespondToComplete", () => {
       // pflag's parseLongArg consumes the very next token unconditionally as
       // a non-boolean flag's value — including a literal `--` — so it never
       // reaches pflag's own end-of-flags sentinel check (pflag@v1.0.10/
-      // flag.go:949-952) (verified empirically against a real apps/cli-go
-      // build: `db dump --file -- --s` still offers --schema, not zero
-      // candidates).
+      // flag.go:949-952): `db dump --file -- --s` still offers --schema,
+      // not zero candidates.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "db",
@@ -1189,9 +1150,8 @@ describe("legacyRespondToComplete", () => {
 
     it("still disables flag completion for a genuine, unconsumed `--` sentinel", () => {
       // Regression guard: only a `--` that isn't claimed as a preceding
-      // flag's value is a real terminator (verified empirically against a
-      // real apps/cli-go build: `db dump -- --s` returns zero candidates
-      // with the Default directive).
+      // flag's value is a real terminator: `db dump -- --s` returns zero
+      // candidates with the Default directive.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "dump", "--", "--s"]);
       expect(result).toEqual({ candidates: [], directive: LegacyCompletionDirective.Default });
     });
@@ -1202,9 +1162,9 @@ describe("legacyRespondToComplete", () => {
       // pflag's isFlagArg requires at least 2 characters, so a bare `-` is
       // never flag-shaped — but it also never removes itself from cobra's
       // leftover finalArgs the way a matched command name does, so it keeps
-      // the `len(finalArgs) == 0` subcommand-listing gate closed (verified
-      // empirically against a real apps/cli-go build: `sso - --debug a`
-      // returns zero candidates with the Default directive, not `add`).
+      // the `len(finalArgs) == 0` subcommand-listing gate closed: `sso -
+      // --debug a` returns zero candidates with the Default directive, not
+      // `add`.
       const result = legacyRespondToComplete(legacyRoot, [
         "__complete",
         "sso",
@@ -1217,8 +1177,8 @@ describe("legacyRespondToComplete", () => {
 
     it("still lets the descent continue past a bare `-` to a real subcommand match", () => {
       // Regression guard: a bare `-` must not stop the descent the way an
-      // unmatched real token does (verified empirically against a real
-      // apps/cli-go build: `db - dump --da` still offers --data-only).
+      // unmatched real token does: `db - dump --da` still offers
+      // --data-only.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "db", "-", "dump", "--da"]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toContain("--data-only");
@@ -1226,9 +1186,8 @@ describe("legacyRespondToComplete", () => {
 
     it("still resolves help's own second command-path lookup past a bare `-`", () => {
       // The Case-2 "preceding token is flag-shaped" check must also exclude
-      // a bare `-`, or it hard-stops before ever reaching help's dispatch
-      // (verified empirically against a real apps/cli-go build: `help db -
-      // d` still lists db's own subcommands diff/dump).
+      // a bare `-`, or it hard-stops before ever reaching help's dispatch:
+      // `help db - d` still lists db's own subcommands diff/dump.
       const result = legacyRespondToComplete(legacyRoot, ["__complete", "help", "db", "-", "d"]);
       expect(result?.directive).toBe(LegacyCompletionDirective.NoFileComp);
       expect(result?.candidates.map((c) => c.name)).toEqual(
@@ -1361,10 +1320,9 @@ describe("legacyCollectInScopeFlags", () => {
     // pflag's VisitAll sorts by canonical (long) flag name; cobra's
     // completion path walks the inherited (ancestor) set first, then the
     // resolved command's own set — TWO separately-sorted runs, not one
-    // merged alphabetical list (verified empirically against a real
-    // apps/cli-go build: `db dump -` lists --agent, --create-ticket,
+    // merged alphabetical list: `db dump -` lists --agent, --create-ticket,
     // --debug, ... alphabetically, THEN a second alphabetical run starting
-    // --data-only, --db-url, --dry-run, ... — CLI-1965 review finding).
+    // --data-only, --db-url, --dry-run, ....
     const { commandChain } = legacyResolveCommandPath(legacyRoot, ["db", "dump"]);
     const names = legacyCollectInScopeFlags(legacyRoot, commandChain).map((flag) => flag.name);
 
@@ -1535,8 +1493,8 @@ describe("legacyTryComplete", () => {
     return { deps, stdoutWrites, exits };
   }
 
-  // `legacyTryComplete` returns `Promise<boolean>` (CLI-1965 review finding —
-  // it now awaits `deps.captureTelemetry` before calling `deps.exit`).
+  // `legacyTryComplete` returns `Promise<boolean>` — it awaits
+  // `deps.captureTelemetry` before calling `deps.exit`.
   it("returns false and does nothing for non-__complete argv", async () => {
     const { deps, stdoutWrites, exits } = makeDeps({ argv: ["migration", "list"] });
     expect(await legacyTryComplete(deps)).toBe(false);

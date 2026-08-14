@@ -2,9 +2,8 @@ import { Option } from "effect";
 import type { LegacyAdvisory } from "./query.format.ts";
 
 /**
- * RLS advisory, ported 1:1 from `apps/cli-go/internal/db/query/advisory.go`.
- * Agent mode only: a best-effort check for user-schema tables with Row Level
- * Security disabled, surfaced inside the JSON envelope.
+ * RLS advisory. Agent mode only: a best-effort check for user-schema tables
+ * with Row Level Security disabled, surfaced inside the JSON envelope.
  */
 
 /** `rlsCheckSQL` — user-schema tables with RLS disabled (mirrors `lints.sql`). */
@@ -31,8 +30,8 @@ ORDER BY n.nspname, c.relname
 
 /**
  * Build the RLS advisory from the list of unprotected table names. Returns
- * `None` when the list is empty (no advisory), matching Go's `checkRLSAdvisory`,
- * which also returns `nil` on query failure (the caller treats both the same).
+ * `None` when the list is empty (no advisory) — the caller treats a query
+ * failure the same way.
  */
 export function legacyBuildRlsAdvisory(
   tables: ReadonlyArray<string>,

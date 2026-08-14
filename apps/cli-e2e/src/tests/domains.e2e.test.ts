@@ -1,12 +1,8 @@
 import { describe, expect } from "vitest";
-import { testBehaviour, testParity } from "./test-context";
+import { testBehaviour } from "./test-context";
 import { isRecording, PROJECT_REF } from "./env";
 
 const CONFIGURED_CNAME = "www.urgsimurksi.xyz";
-const GO_CUSTOM_HOSTNAME_MACHINE_STATUS_PATTERNS = [
-  /^Custom hostname setup completed\. Project is now accessible at [^\n]+\.\n?/gm,
-  /^Custom hostname configuration complete, and ready for activation\.\n\nPlease ensure that your custom domain is set up as a CNAME record to your Supabase subdomain:\n[^\n]+ CNAME -> [^\n]+\n?/gm,
-];
 
 describe("domains", () => {
   describe.todo("domains:create — requires mocking of 1.1.1.1 for DNS queries");
@@ -165,15 +161,9 @@ describe("domains", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("502");
     });
-
-    testParity(["domains", "get", "--project-ref", PROJECT_REF, "--output", "json"], {
-      normalize: { stderr: { stripPatterns: GO_CUSTOM_HOSTNAME_MACHINE_STATUS_PATTERNS } },
-    });
   });
 
   describe("domains:reverify", () => {
-    testParity(["domains", "reverify", "--project-ref", PROJECT_REF]);
-
     testBehaviour("custom domain disabled", async ({ run }) => {
       const result = await run(["domains", "reverify", "--project-ref", PROJECT_REF]);
 
@@ -205,8 +195,6 @@ describe("domains", () => {
     });
   });
   describe("domains:activate", () => {
-    testParity(["domains", "activate", "--project-ref", PROJECT_REF]);
-
     testBehaviour("custom domain disabled", async ({ run }) => {
       const result = await run(["domains", "activate", "--project-ref", PROJECT_REF]);
 
@@ -253,8 +241,6 @@ describe("domains", () => {
   });
 
   describe("domains:delete", () => {
-    testParity(["domains", "delete", "--project-ref", PROJECT_REF]);
-
     testBehaviour("custom domain disabled", async ({ run }) => {
       const result = await run(["domains", "delete", "--project-ref", PROJECT_REF]);
 

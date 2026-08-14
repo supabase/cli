@@ -5,7 +5,6 @@ import {
 } from "../legacy-inspect-query.ts";
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/vacuum_stats/vacuum_stats.sql`.
 const SQL = `WITH table_opts AS (
   SELECT
     pg_class.oid, relname, nspname, array_to_string(reloptions, '') AS relopts
@@ -71,11 +70,10 @@ ORDER BY
   1`;
 
 /**
- * `inspect db vacuum-stats` — per-table vacuum statistics.
- * Port of `apps/cli-go/internal/inspect/vacuum_stats/vacuum_stats.go`. The query
- * returns 11 columns but only 9 are rendered (Go drops `autovacuum_threshold`
- * and `autoanalyze_threshold`). The `rowcount` cell has a one-shot `-1` → `No
- * stats` replacement (Go's `strings.Replace(..., 1)`).
+ * `inspect db vacuum-stats` — per-table vacuum statistics. The query
+ * returns 11 columns but only 9 are rendered (`autovacuum_threshold`
+ * and `autoanalyze_threshold` are dropped). The `rowcount` cell has a one-shot `-1` → `No
+ * stats` replacement.
  */
 export const legacyVacuumStatsSpec: LegacyInspectQuerySpec = {
   name: "vacuum-stats",
@@ -94,14 +92,14 @@ export const legacyVacuumStatsSpec: LegacyInspectQuerySpec = {
   ],
   project: (row) => [
     legacyInspectText(row["name"]),
-    // Go writes these four timestamp columns as bare `%s|` (no backtick code span,
-    // `vacuum_stats.go:53`), so an empty value stays empty rather than `` `` ``.
+    // These four timestamp columns render as bare text (no backtick code span),
+    // so an empty value stays empty rather than `` `` ``.
     legacyInspectPlainText(row["last_vacuum"]),
     legacyInspectPlainText(row["last_autovacuum"]),
     legacyInspectPlainText(row["last_analyze"]),
     legacyInspectPlainText(row["last_autoanalyze"]),
     // One-shot `-1` → `No stats` (JS String.replace with a string replaces only
-    // the first occurrence, matching Go's `strings.Replace(..., 1)`).
+    // the first occurrence).
     legacyInspectText(row["rowcount"]).replace("-1", "No stats"),
     legacyInspectText(row["dead_rowcount"]),
     legacyInspectText(row["expect_autovacuum"]),

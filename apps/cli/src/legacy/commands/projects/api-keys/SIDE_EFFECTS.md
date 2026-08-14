@@ -55,11 +55,11 @@ Management API to return the full secret keys (`sb_secret_...`) in `api_key` ins
 
 ## Output
 
-Two-axis: Go's `--output {pretty|json|yaml|toml|env}` wins when set; otherwise the TS
-`--output-format`. go toml/env encode a `SUPABASE_<NAME>_KEY` env map; go json/yaml
-encode the raw `ApiKeyResponse[]`.
+Two-axis: `--output {pretty|json|yaml|toml|env}` wins when set; otherwise
+`--output-format`. `--output toml/env` encode a `SUPABASE_<NAME>_KEY` env map;
+`--output json/yaml` encode the raw `ApiKeyResponse[]`.
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Glamour ASCII table. Column order: `NAME`, `KEY VALUE`. A null api key renders as `******`.
 

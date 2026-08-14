@@ -33,8 +33,7 @@ export const legacyBackupsRestore = Effect.fn("legacy.backups.restore")(function
   const ref = yield* resolver.resolve(flags.projectRef);
   const recoveryTimeTargetUnix = Option.getOrElse(flags.timestamp, () => 0);
 
-  // Mirror Go's PersistentPostRun — cache + telemetry flush whether the main
-  // call succeeds or fails.
+  // Cache + telemetry flush whether the main call succeeds or fails.
   yield* Effect.gen(function* () {
     // Spinner only in human-facing text mode — see list.handler.ts.
     const restoring =

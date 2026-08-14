@@ -1,5 +1,6 @@
 /**
- * Port of Go's `ensureImagesCached` (`apps/cli-go/internal/start/start.go:225-262`):
+ * Port of Go's `ensureImagesCached` (`apps/cli-go/internal/start/start.go:225-262`,
+ * deleted in CLI-1966; last present at commit a253ccba2):
  * guarantees every image `supabase start` needs is resolved/pulled into the
  * local Docker cache BEFORE any container is created, using the same
  * multi-registry fallback as the per-container start path

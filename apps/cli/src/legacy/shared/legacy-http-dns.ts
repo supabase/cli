@@ -9,8 +9,7 @@ import { legacyResolveHostsOverHttps } from "./legacy-db-dns.ts";
 /**
  * The result of transforming an original HTTPS request URL so the TCP
  * connection dials the resolved IP directly while TLS still targets the
- * original hostname — mirroring Go's `withFallbackDNS` dial-context hook
- * (`apps/cli-go/internal/utils/api.go:85-104`).
+ * original hostname — mirroring `withFallbackDNS` dial-context hook.
  */
 export interface LegacyDohRequestShape {
   /** The rewritten URL with the IP literal as authority. */
@@ -33,7 +32,7 @@ export interface LegacyDohRequestShape {
  * which already enforces `net.isIP !== 0`.
  *
  * @param originalUrl - Fully qualified HTTPS URL, e.g. `https://api.supabase.com/v1/projects`.
- * @param resolvedIp  - IPv4 or IPv6 address from a DoH resolution.
+ * @param resolvedIp - IPv4 or IPv6 address from a DoH resolution.
  * @returns `{ url, serverName, hostHeader }` for building the rewritten fetch call.
  */
 export function buildDohRequest(originalUrl: string, resolvedIp: string): LegacyDohRequestShape {
@@ -92,9 +91,9 @@ export interface LegacyDohFetchOptions {
  * request hostname before dialing, then passes `tls.serverName` so Bun
  * validates the TLS certificate against the original hostname — not the IP.
  *
- * Mirrors Go's `withFallbackDNS` transport hook
- * (`apps/cli-go/internal/utils/api.go:85-104`): use the first resolved IP
- * (Go's `ip[0]`), keep the Host header, keep TLS targeting the original name.
+ * Mirrors `withFallbackDNS` transport hook:
+ * use the first resolved IP
+ * (`ip[0]`), keep the Host header, keep TLS targeting the original name.
  *
  * Returns a standard `fetch` function suitable for use as
  * `FetchHttpClient.Fetch`'s context value.

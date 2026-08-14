@@ -18,11 +18,11 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
   const cliConfig = yield* LegacyCliConfig;
   const credentials = yield* LegacyCredentials;
   const debugLogger = yield* LegacyDebugLogger;
-  // Go wraps every Management API response in identityTransport for session
-  // identity stitching. Consume the single per-command stitcher service rather
-  // than building one here, so the typed client shares the one `stitchAttempted`
-  // guard with the raw advisor GETs and the linked-project cache (Go's single
-  // root-context `sync.Once`); otherwise each transport would re-alias/re-persist.
+  // Every Management API response is passed through the per-command identity
+  // stitcher for session identity stitching. Consume the single per-command
+  // stitcher service rather than building one here, so the typed client shares
+  // the one `stitchAttempted` guard with the raw advisor GETs and the
+  // linked-project cache; otherwise each transport would re-alias/re-persist.
   const { stitch: stitchIdentityFromResponse } = yield* LegacyIdentityStitch;
 
   const transformClient = (client: HttpClient.HttpClient) => {
@@ -41,12 +41,9 @@ export const legacyMakePlatformApi = Effect.gen(function* () {
   const resolveAccessToken = Effect.gen(function* () {
     if (Option.isSome(configuredToken)) {
       yield* debugLogger.debug("Using access token from env var...");
-      // Go's GetSupabase() → LoadAccessTokenFS validates the token — including the
-      // env value — against the sbp_ pattern before any API call
-      // (internal/utils/api.go:121, access_token.go:24-41). credentials.getAccessToken
-      // already validates the keyring/file paths; validate the env token here too so
-      // a malformed SUPABASE_ACCESS_TOKEN fails with the invalid-token error rather
-      // than being sent to the API.
+      // credentials.getAccessToken already validates the keyring/file paths;
+      // validate the env token here too so a malformed SUPABASE_ACCESS_TOKEN
+      // fails with the invalid-token error rather than being sent to the API.
       yield* validateLegacyAccessToken(Redacted.value(configuredToken.value), "env");
       return configuredToken;
     }

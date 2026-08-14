@@ -2,10 +2,11 @@
 
 ## Files Read
 
-| Path                                   | Format                    | When                                                       |
-| -------------------------------------- | ------------------------- | ---------------------------------------------------------- |
-| `~/.supabase/access-token`             | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
-| `<workdir>/supabase/.temp/project-ref` | plain text (ref string)   | always (soft) — used only to flag the linked project       |
+| Path                                           | Format                    | When                                                                                                                                           |
+| ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                     |
+| `<workdir>/supabase/.temp/project-ref`         | plain text (ref string)   | always (soft) — used only to flag the linked project                                                                                           |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON (`ref` field)        | only when the linked ref doesn't match any fetched project row — PARENT-chain fallback for the marker (CLI-2167 follow-up, TS-only, see Notes) |
 
 ## Files Written
 
@@ -43,11 +44,11 @@
 
 ## Output
 
-Two-axis: Go's `--output {pretty|json|yaml|toml|env}` wins when set; otherwise the TS
-`--output-format`. `--output env` is **unsupported** (errors). go json/yaml encode the
-`linkedProject[]`; go toml wraps them as `{projects=[...]}`.
+Two-axis: `--output {pretty|json|yaml|toml|env}` wins when set; otherwise
+`--output-format`. `--output env` is **unsupported** (errors). `--output json/yaml`
+encode the `linkedProject[]`; `--output toml` wraps them as `{projects=[...]}`.
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Glamour ASCII table. Column order: `LINKED`, `ORG ID`, `REFERENCE ID`, `NAME`, `REGION`,
 `CREATED AT (UTC)`. The `LINKED` cell shows `  ●` for the linked project (else blank),
@@ -98,3 +99,13 @@ On failure, an `error` event is emitted instead:
 - No `--project-ref` flag. `projects list` is a user-level command — it lists all projects
   the authenticated user has access to.
 - The result set is determined entirely by the access token's scope.
+- CLI-2167 follow-up (TS-only, no Go counterpart): after `supabase link <branch>`, the linked ref
+  is the BRANCH's own ref, which never matches an `id` in this endpoint's response (it only
+  returns real projects), so the `LINKED` marker used to silently disappear. Fix: when the linked
+  ref matches no row exactly, fall back to the PARENT chain (env `SUPABASE_PROJECT_ID` →
+  `linked-project.json`'s `ref` → `project-ref` file, first ref-shaped candidate wins — same
+  helper as `link`/`branches`) and mark THAT ref's row instead. An exact match always wins and
+  skips the chain entirely; when nothing is linked at all, behavior is unchanged (no marker).
+  **This also changes the `linked` boolean in the `-o json|yaml|toml` Go-struct payloads**: in the
+  branch-linked state it was previously `false` on every row (the linked ref matched nothing) and
+  can now be `true` on the parent project's row — the truthful fix IS the behavior change.

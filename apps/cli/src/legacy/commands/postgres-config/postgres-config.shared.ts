@@ -51,18 +51,18 @@ function encodeTomlScalar(value: unknown): string {
   if (typeof value === "string") return JSON.stringify(value);
   if (typeof value === "boolean") return value ? "true" : "false";
   if (typeof value === "number") {
-    // Go decodes the API response with `json.Unmarshal` into `map[string]any`,
-    // so every JSON number becomes a `float64`. Go's TOML marshaller then prints
+    // The reference decoder unmarshals the API response into `map[string]any`,
+    // so every JSON number becomes a `float64`. Its TOML marshaller then prints
     // integral floats with a `.0` suffix (e.g. `max_connections = 100.0`). The
     // shared `encodeToml` (smol-toml) would emit `100` instead, so this command
-    // cannot use it without breaking byte-for-byte parity with the Go CLI.
+    // cannot use it without breaking byte-for-byte compatibility.
     return Number.isInteger(value) ? `${value}.0` : String(value);
   }
   if (value === null) return JSON.stringify("<nil>");
   return JSON.stringify(JSON.stringify(value));
 }
 
-// Hand-rolled to reproduce Go's `float64` TOML rendering (see `encodeTomlScalar`).
+// Hand-rolled to reproduce `float64` TOML rendering (see `encodeTomlScalar`).
 // Intentionally does not delegate to the shared `encodeToml`/smol-toml encoder.
 function encodePostgresConfigToml(config: LegacyPostgresConfigMap): string {
   const lines = sortConfigEntries(config).map(
@@ -71,28 +71,28 @@ function encodePostgresConfigToml(config: LegacyPostgresConfigMap): string {
   return lines.length === 0 ? "" : lines.join("\n") + "\n";
 }
 
-// Go's `strconv.Atoi` parses into a 64-bit int (`update.go:43`).
+// `strconv.Atoi` parses into a 64-bit int (`update.go:43`).
 const INT64_MIN = -(2n ** 63n);
 const INT64_MAX = 2n ** 63n - 1n;
 
 // Exactly `strconv.ParseBool`'s accepted sets. `1`/`0` are also in them, but
-// the integer branch below wins first — in Go too, where `Atoi` runs before
-// `ParseBool` (`update.go:43-48`).
+// the integer branch below wins first, since `Atoi` runs before `ParseBool`
+// (`update.go:43-48`).
 const GO_TRUE_LITERALS = new Set(["1", "t", "T", "TRUE", "true", "True"]);
 const GO_FALSE_LITERALS = new Set(["0", "f", "F", "FALSE", "false", "False"]);
 
 /**
- * Go's coercion chain for `--config key=value` (`update.go:41-49`):
+ * Coercion chain for `--config key=value` (`update.go:41-49`):
  * `strconv.Atoi` → `strconv.ParseBool` → keep as string. `Atoi` fails with
  * `ErrRange` on digits beyond int64, and a pure digit string is not a
  * `ParseBool` literal (only bare `1`/`0` are, and those fit in int64), so an
  * overflowing integer falls through to the verbatim string. `ParseBool` is
- * case-SENSITIVE over a fixed set — `tRuE` stays a string in Go.
+ * case-SENSITIVE over a fixed set — `tRuE` stays a string.
  *
- * Residual divergence: digits in `(2^53, 2^63)` fit int64, so Go sends an
- * exact JSON integer, while JS `Number` loses precision there —
- * `encodeGoStructJsonBody` is `JSON.stringify`, which cannot emit exact
- * int64 tokens beyond `Number.MAX_SAFE_INTEGER`.
+ * Residual divergence: digits in `(2^53, 2^63)` fit int64, so the reference
+ * implementation sends an exact JSON integer, while JS `Number` loses
+ * precision there — `encodeGoStructJsonBody` is `JSON.stringify`, which
+ * cannot emit exact int64 tokens beyond `Number.MAX_SAFE_INTEGER`.
  */
 export function parseConfigValue(value: string): string | number | boolean {
   if (/^[+-]?\d+$/.test(value)) {
@@ -267,7 +267,7 @@ export const writePostgresConfigOutput = Effect.fn("legacy.postgres-config.write
     const legacyOutputFlag = yield* LegacyOutputFlag;
     const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
 
-    // Go's `--output` flag takes priority over the TS `--output-format` flag.
+    // The `--output` flag takes priority over the TS `--output-format` flag.
     // `pretty` (and an unset flag) fall through to the human-readable table /
     // structured-success path below.
     if (legacyOutput === "json") {

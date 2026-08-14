@@ -1,20 +1,19 @@
 # `supabase config push`
 
 Pushes the local `supabase/config.toml` to the linked project's Management API.
-Native Effect port of Go `internal/config/push` + `pkg/config` (api, db, auth,
-storage, experimental). For each diffable service: GET remote → diff against
-local → if changed, print the unified diff and confirm → PATCH/PUT/POST.
+For each diffable service: GET remote → diff against local → if changed, print
+the unified diff and confirm → PATCH/PUT/POST.
 
 ## Files Read
 
-| Path                                           | Format                    | When                                                                                                                                                                               |
-| ---------------------------------------------- | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (parse error aborts, exit 1)                                                                                                                       |
-| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml` and to collect `DOTENV_PRIVATE_KEY`(`_*`) values for decrypting `encrypted:` secrets                                 |
-| Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per Go rules (see below)                                                                                                                       |
-| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file)                                                                                                                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, to decide whether the cache write below is skipped (mirrors Go's `ensureProjectGroupsCached` telemetry cache — see `db/lint`'s Notes for the full mechanism) |
-| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                                         |
+| Path                                           | Format                    | When                                                                                                                                                                  |
+| ---------------------------------------------- | ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/config.toml`               | TOML                      | always, before any network call (parse error aborts, exit 1)                                                                                                          |
+| `<workdir>/supabase/.env`, `.env.local`        | dotenv                    | always, to resolve `env(VAR)` references inside `config.toml` and to collect `DOTENV_PRIVATE_KEY`(`_*`) values for decrypting `encrypted:` secrets                    |
+| Auth email template HTML (`content_path`)      | HTML                      | when `auth.enabled`; paths resolved per the rules below                                                                                                               |
+| `<workdir>/supabase/.temp/project-ref`         | plain text                | project-ref fallback (flag → `SUPABASE_PROJECT_ID` → this file)                                                                                                       |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON                      | existence check only, to decide whether the cache write below is skipped (`ensureProjectGroupsCached` telemetry cache — see `db/lint`'s Notes for the full mechanism) |
+| `~/.supabase/access-token`                     | plain text (token string) | when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable                                                                                                            |
 
 ## Files Written
 
@@ -64,7 +63,7 @@ when its local gate is off.
 
 | Code | Condition                                                                                  |
 | ---- | ------------------------------------------------------------------------------------------ |
-| `0`  | success, **including** declining a confirmation prompt (Go returns nil and continues)      |
+| `0`  | success, **including** declining a confirmation prompt                                     |
 | `1`  | malformed `config.toml`                                                                    |
 | `1`  | an `encrypted:` (dotenvx) secret anywhere in the document cannot be decrypted (see below)  |
 | `1`  | invalid `auth.email.*.content_path` (missing/unreadable template file when `auth.enabled`) |
@@ -74,7 +73,7 @@ when its local gate is off.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 All diagnostics on **stderr**, no stdout. When a `[remotes.<name>]` block matches the
 target ref, `Loading config override: [remotes.<name>]` prints first. Then
@@ -113,12 +112,12 @@ keys mirror `config.toml` paths.
 ## Notes
 
 - Run from the project root (or pass `--workdir`); `config.toml` is read relative to it.
-- Auth email `content_path` resolution (Go parity): `[auth.email.template.*]` paths are relative to the discovered project root; `[auth.email.notification.*]` paths are relative to `supabase/`. Notification HTML is read only when `enabled = true`.
-- Diff bytes are byte-for-byte identical to the Go CLI (BurntSushi TOML encoder + anchored diff ports).
-- Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw (merged) config document so they are skipped when absent, matching Go's nil-pointer behaviour.
-- **`[remotes.*]` overrides are merged before push.** When a `[remotes.<name>]` block declares `project_id == <ref>`, `@supabase/config` merges that block's subtree over the base config at the raw (pre-decode) level — Go's `mergeRemoteConfig` (`apps/cli-go/pkg/config/config.go:550`) — so only the keys the block declares override the base. `Loading config override: [remotes.<name>]` prints to stderr. Two remotes sharing the target `project_id` abort with Go's `duplicate project_id for [remotes.<b>] and [remotes.<a>]` message.
-- **`encrypted:` (dotenvx) secrets are decrypted, hashed, and pushed as plaintext**, matching Go's `Secret.Decrypt`/`DecryptSecretHookFunc`. `DOTENV_PRIVATE_KEY`(`_*`) values from the shell + `supabase/.env` decrypt the ciphertext; the decrypted plaintext is what gets hashed for the diff and sent as `Secret.Value` in the update body. The ciphertext itself is never pushed.
-- **An undecryptable secret aborts before any network call.** Before the cost-matrix list-addons request or any other service call, every `config.Secret`-typed value in the document is asserted decryptable — not just `auth.*` (the only fields `config push` actually sends), matching Go's document-wide decode hook, which runs the same check regardless of which fields a given command reads. This covers `[db.vault]` (a `map[string]Secret` in Go too, not just an `auth.*` field). An undecryptable value aborts with Go's `failed to parse config: <cause>` message, exit code `1`.
-- **Deprecated `[auth.external.{linkedin,slack}]` secrets are checked before they're stripped.** `@supabase/config` strips these deprecated blocks from the decoded document before returning it, but Go's decrypt hook runs at decode time — before its own later `external.validate()` deletes them — so `config push` re-checks the stripped-out sub-objects separately, matching Go's decode-before-delete order rather than missing a secret hiding in one of them.
+- Auth email `content_path` resolution: `[auth.email.template.*]` and `[auth.email.notification.*]` paths are relative to the discovered project root; notification paths fall back to the legacy `supabase/`-relative location when the root-resolved file is missing. Notification HTML is read only when `enabled = true`.
+- Diff bytes use the BurntSushi TOML encoder + anchored diff ports.
+- Optional `*pointer` sections (`db.ssl_enforcement`, `storage.image_transformation`, `storage.s3_protocol`) are decoded as defaulted-present by `@supabase/config`; their true presence is recovered from the raw (merged) config document so they are skipped when absent.
+- **`[remotes.*]` overrides are merged before push.** When a `[remotes.<name>]` block declares `project_id == <ref>`, `@supabase/config` merges that block's subtree over the base config at the raw (pre-decode) level — `mergeRemoteConfig` — so only the keys the block declares override the base. `Loading config override: [remotes.<name>]` prints to stderr. Two remotes sharing the target `project_id` abort with a `duplicate project_id for [remotes.<b>] and [remotes.<a>]` message.
+- **`encrypted:` (dotenvx) secrets are decrypted, hashed, and pushed as plaintext**. `DOTENV_PRIVATE_KEY`(`_*`) values from the shell + `supabase/.env` decrypt the ciphertext; the decrypted plaintext is what gets hashed for the diff and sent as `Secret.Value` in the update body. The ciphertext itself is never pushed.
+- **An undecryptable secret aborts before any network call.** Before the cost-matrix list-addons request or any other service call, every `config.Secret`-typed value in the document is asserted decryptable — not just `auth.*` (the only fields `config push` actually sends), via a document-wide decode hook that runs the same check regardless of which fields a given command reads. This covers `[db.vault]` (a `map[string]Secret`, not just an `auth.*` field). An undecryptable value aborts with a `failed to parse config: <cause>` message, exit code `1`.
+- **Deprecated `[auth.external.{linkedin,slack}]` secrets are checked before they're stripped.** `@supabase/config` strips these deprecated blocks from the decoded document before returning it, but the decrypt hook runs at decode time — before validation later deletes them — so `config push` re-checks the stripped-out sub-objects separately, following the decode-before-delete order rather than missing a secret hiding in one of them.
 - KNOWN GAPS:
-  - The document-wide decrypt-or-abort pre-check scans the config document `@supabase/config` hands back, which has the _matched_ `[remotes.<name>]` block already merged in and its `remotes` key removed. An `encrypted:` secret that's undecryptable inside a **different, non-matching** `[remotes.*]` block is therefore not caught here (Go's decode hook runs over the whole parsed document, including every remote, so it would abort in that case too). Narrow edge case: it only matters when a project declares multiple remotes and the _unused_ one has a broken secret.
+  - The document-wide decrypt-or-abort pre-check scans the config document `@supabase/config` hands back, which has the _matched_ `[remotes.<name>]` block already merged in and its `remotes` key removed. An `encrypted:` secret that's undecryptable inside a **different, non-matching** `[remotes.*]` block is therefore not caught here. Narrow edge case: it only matters when a project declares multiple remotes and the _unused_ one has a broken secret.

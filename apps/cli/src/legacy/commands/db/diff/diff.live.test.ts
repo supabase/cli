@@ -51,7 +51,7 @@ describeLive("supabase db diff (live, pg-delta declarative privileges)", () => {
       // `init`'s template already enables pg-delta by default (CLI-1877/#5511), but
       // point `[db.migrations] schema_paths` at a declarative schema directory so
       // `db diff --local` diffs against it instead of the (empty) local migration
-      // history. Go's `db.go:426` docs the exact syntax: paths relative to `supabase/`.
+      // history. Paths are relative to `supabase/`.
       const configPath = path.join(projectDir, "supabase", "config.toml");
       const config = readFileSync(configPath, "utf8");
       expect(config).toContain("schema_paths = []");
@@ -111,34 +111,32 @@ revoke execute on function public.probe_fn() from public;
   );
 });
 
-// CLI-1968: `--use-pgadmin` is a native `docker run` of the differ container, no
+// `--use-pgadmin` is a native `docker run` of the differ container, no
 // edge-runtime and no Go delegation involved. Golden-path smoke coverage only — the
 // pure filtering/progress logic and the docker-run argv are covered exhaustively by
 // `legacy-pgadmin-diff.unit.test.ts` and `diff.integration.test.ts`; this just proves
 // the real container actually runs against a real local stack and cleans up after
 // itself either way.
 //
-// The real, reachable outcome here is a FAILURE, not a golden diff, and by design in
-// BOTH CLIs: the differ container joins the project's own bridge network
-// (`supabase_network_<projectId>`, `docker.go:378-382`), and Go hardcodes both diff
-// endpoints as loopback URLs from that container's own point of view — `source`
-// (`utils.ToPostgresURL`, resolving `GetHostname()` to `127.0.0.1` for a local target)
-// and `target` (`postgresql://postgres:postgres@127.0.0.1:<shadowPort>/postgres`,
-// `pgadmin.go:85-86`). Inside a bridge-attached container, `127.0.0.1` is the
-// container's OWN loopback, not the host's — so neither the local db nor the shadow is
-// reachable from inside the differ, and the container exits non-zero. This holds
-// identically for the real Go CLI (identical argv, identical network, identical
-// hardcoded hosts), so there is no live A/B needed to establish it — see
-// `SIDE_EFFECTS.md`'s "Network reachability" entry for the full static ruling. (The
-// `DiffStream` value-receiver divergence documented there — the real Go CLI always
-// reporting "No schema changes found" regardless of the differ's actual output — only
-// ever engages when the differ container exits 0; it plays no role in this failure
-// path.) Note that a plain `--network-id host` does NOT rescue a golden run here: it
-// also rewires the SHADOW container onto host networking, discarding its own
-// `54320->5432` port publish that `target` depends on — so `source` would become
-// reachable but `target` would not, still failing the diff. This suite therefore
-// verifies the real, always-reachable failure mode end-to-end, plus that both the
-// differ AND the shadow container it provisions are still cleaned up.
+// The real, reachable outcome here is a FAILURE, not a golden diff, by design: the
+// differ container joins the project's own bridge network
+// (`supabase_network_<projectId>`), and both diff endpoints are hardcoded loopback
+// URLs from that container's own point of view — `source` (resolving to `127.0.0.1`
+// for a local target) and `target`
+// (`postgresql://postgres:postgres@127.0.0.1:<shadowPort>/postgres`). Inside a
+// bridge-attached container, `127.0.0.1` is the container's OWN loopback, not the
+// host's — so neither the local db nor the shadow is reachable from inside the
+// differ, and the container exits non-zero. See `SIDE_EFFECTS.md`'s "Network
+// reachability" entry for the full static ruling. (The historical value-receiver bug
+// documented there — always reporting "No schema changes found" regardless of the
+// differ's actual output — only ever engages when the differ container exits 0; it
+// plays no role in this failure path.) Note that a plain `--network-id host` does NOT
+// rescue a golden run here: it also rewires the SHADOW container onto host
+// networking, discarding its own `54320->5432` port publish that `target` depends on
+// — so `source` would become reachable but `target` would not, still failing the
+// diff. This suite therefore verifies the real, always-reachable failure mode
+// end-to-end, plus that both the differ AND the shadow container it provisions are
+// still cleaned up.
 describeLive("supabase db diff (live, --use-pgadmin native differ container)", () => {
   let projectDir: string | undefined;
   let projectId: string | undefined;
@@ -158,9 +156,8 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
     { timeout: START_TIMEOUT_MS * 2 + LIFECYCLE_OVERHEAD_MS },
     async () => {
       projectDir = await mkdtemp(path.join(tmpdir(), "sb-db-diff-pgadmin-live-"));
-      // No `project_id` override, so the cli resolves it from the workdir basename —
-      // matching Go's precedence exactly (see legacy-docker-ids.ts), same as
-      // `stop.live.test.ts`.
+      // No `project_id` override, so the cli resolves it from the workdir basename
+      // (see legacy-docker-ids.ts), same as `stop.live.test.ts`.
       projectId = path.basename(projectDir);
 
       const init = await runSupabaseLive(["init"], { cwd: projectDir });
@@ -180,7 +177,7 @@ describeLive("supabase db diff (live, --use-pgadmin native differ container)", (
       });
       // Both hardcoded loopback endpoints are unreachable from inside the
       // bridge-attached differ container (see this suite's own header comment for the
-      // full, static ruling) — the differ exits non-zero and the CLI surfaces Go's own
+      // full, static ruling) — the differ exits non-zero and the CLI surfaces its own
       // wrapper message. The differ's own exit code isn't pinned: only that the differ
       // ran and failed, not the shadow/connection machinery around it.
       expect(diff.exitCode, `stdout:\n${diff.stdout}\nstderr:\n${diff.stderr}`).toBe(1);

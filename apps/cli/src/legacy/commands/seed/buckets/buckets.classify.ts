@@ -3,7 +3,7 @@
  * and `isLocalVectorBucketsUnavailable` (`apps/cli-go/internal/seed/buckets/buckets.go:71-84`).
  *
  * Both inspect the error message string. The Storage gateway client raises
- * status errors whose message reproduces Go's `Error status <d>: <body>`, so the
+ * status errors whose message reproduces `Error status <d>: <body>`, so the
  * same substring checks apply.
  */
 

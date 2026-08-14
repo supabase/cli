@@ -19,12 +19,12 @@ import { legacySqlFilesGlob } from "./legacy-sql-files-glob.ts";
 import { legacySplitAndTrim, legacySplitSqlTokens } from "./legacy-sql-split.ts";
 
 /**
- * Applying a migration file failed (Go's `ApplyMigrations` / `ExecBatch` error).
+ * Applying a migration file failed (`ApplyMigrations` / `ExecBatch` error).
  * Used by `migration up` and `migration down`'s migrate-and-seed step. The
  * declarative sync handler maps its own error type instead.
  *
- * `suggestion` carries Go's `utils.CmdSuggestion` when a caller sets one — currently
- * only `legacyApplySchemaFiles`'s "See schema file: <fp>" (`apply.go:57`); every other
+ * `suggestion` carries `utils.CmdSuggestion` when a caller sets one — currently
+ * only `legacyApplySchemaFiles`'s "See schema file: <fp>"; every other
  * caller leaves it unset, matching Go leaving `CmdSuggestion` empty on those paths.
  */
 export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigrationApplyError")<{
@@ -40,24 +40,19 @@ export class LegacyMigrationApplyError extends Data.TaggedError("LegacyMigration
 const BOM_CODE_POINT = 0xfeff;
 
 // Statements that PostgreSQL refuses to run inside a transaction block / extended-query
-// pipeline (SQLSTATE 25001). Ports of Go's pattern set in `pkg/migration/file.go`
-// (supabase/cli#5156). Matched against the upper-cased, comment-stripped statement.
+// pipeline (SQLSTATE 25001). Matched against the upper-cased, comment-stripped statement.
 //
-// Provenance (CLI-1989, parity ruling 2026-07-30): the intended reference for this
-// behaviour is the Go fix proposed for supabase/cli#5139 in PR supabase/cli#5156
-// (`isPipelineIncompatible` / `trimLeadingSQLComments` in `pkg/migration/file.go`).
-// That PR was closed WITHOUT merging — its design was adopted directly into this TS
-// apply instead in PR supabase/cli#5671 (squash-merged to develop as b48fad60; the
-// #5156 closing comment cites the PR-branch commit 29d3fb0e) because the Go path was
-// being retired for the migration commands. The pinned Go oracle (`apps/cli-go`) therefore
-// predated the fix; it now carries the same port of the closed PR (applied alongside
-// this note) so TS-vs-Go parity audits compare like for like.
+// Provenance (CLI-1989): the design for this behaviour is the fix proposed for
+// supabase/cli#5139 in PR supabase/cli#5156 (`isPipelineIncompatible` /
+// `trimLeadingSQLComments`). That PR was closed WITHOUT merging — its design was adopted
+// directly into this TS apply instead in PR supabase/cli#5671 (squash-merged to develop
+// as b48fad60; the #5156 closing comment cites the PR-branch commit 29d3fb0e).
 //
 // Known residual delta: JS `\s` matches `\v` (vertical tab), but Go RE2 `\s` is
 // `[\t\n\f\r ]` and does not. PostgreSQL >= 14 treats `\v` as SQL whitespace, so a
 // statement separated only by `\v` (e.g. `VACUUM\v(FULL)`) classifies as
-// pipeline-incompatible here but not under the Go oracle. Not worth changing
-// behaviour over — flagging so a future parity sweep doesn't rediscover it.
+// pipeline-incompatible here but wouldn't under that narrower definition. Not worth
+// changing behaviour over — flagging so a future review doesn't rediscover it.
 const CREATE_INDEX_CONCURRENTLY_PATTERN = /^CREATE\s+(?:UNIQUE\s+)?INDEX\s+CONCURRENTLY(?:\s|$)/u;
 const REINDEX_CONCURRENTLY_PATTERN = /^REINDEX(?:\s|\().*\sCONCURRENTLY(?:\s|$)/u;
 const VACUUM_PATTERN = /^VACUUM(?:\s|\(|$)/u;
@@ -67,10 +62,10 @@ const CLUSTER_PATTERN = /^CLUSTER(?:\s|$)/u;
 /**
  * Strips a leading BOM, whitespace, and SQL line (`--`) and block comments from the
  * front of a statement so the keyword check below sees the real first token.
- * Port of Go's `trimLeadingSQLComments` (`pkg/migration/file.go`, supabase/cli#5156).
+ * Port of `trimLeadingSQLComments` (`pkg/migration/file.go`, supabase/cli#5156).
  */
 const legacyTrimLeadingSqlComments = (sql: string): string => {
-  // Go's `TrimLeftFunc` drops a leading BOM together with whitespace; strip the BOM
+  // `TrimLeftFunc` drops a leading BOM together with whitespace; strip the BOM
   // via its code point so no irregular whitespace lands in the source.
   let trimmed = sql.replace(/^[ \t\n\r]+/u, "");
   while (trimmed.charCodeAt(0) === BOM_CODE_POINT) {
@@ -96,7 +91,7 @@ const legacyTrimLeadingSqlComments = (sql: string): string => {
  * [UNIQUE] INDEX CONCURRENTLY`, `REINDEX … CONCURRENTLY`, `VACUUM`, `ALTER SYSTEM`,
  * `CLUSTER`. Such statements fail with SQLSTATE 25001 inside the `BEGIN`/`COMMIT`
  * that wraps a migration, so `execMigrationBatch` runs them standalone.
- * Port of Go's `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
+ * Port of `isPipelineIncompatible` (`pkg/migration/file.go`, supabase/cli#5156).
  */
 export const legacyIsPipelineIncompatible = (sql: string): boolean => {
   const upper = legacyTrimLeadingSqlComments(sql).toUpperCase();
@@ -116,31 +111,29 @@ type LegacyBatchItem =
 
 const utf8ByteLength = (value: string): number => new TextEncoder().encode(value).length;
 
-// Go's `startBufSize` (`pkg/parser/token.go:15`) — the fixed initial `bufio.Scanner`
-// buffer `parser.Split` pre-allocates before applying the configured/default max
-// (`scanner.Buffer(buf, maxbuf)` where `buf := make([]byte, startBufSize)`). The
+// `startBufSize` — the fixed initial scanner
+// buffer size pre-allocated before applying the configured/default max. The
 // scanner's buffer therefore starts at exactly this size regardless of how small
-// `SUPABASE_SCANNER_BUFFER_SIZE` is set, and `bufio.Scanner`'s too-long check
-// (`len(s.buf) >= s.maxTokenSize`, `$GOROOT/src/bufio/scan.go:200`) only fires once
+// `SUPABASE_SCANNER_BUFFER_SIZE` is set, and the too-long check only fires once
 // the buffer is full — so a statement must reach at least this many raw bytes
-// before Go can ever raise `bufio.ErrTooLong`, no matter how small the override.
-// Verified empirically against `apps/cli-go/pkg/parser` (`parser.SplitAndTrim`): a
+// before an oversized-token error can ever be raised, no matter how small the override.
+// Verified empirically: a
 // single-statement probe of exactly 4096 raw bytes always succeeds — even with
 // `SUPABASE_SCANNER_BUFFER_SIZE` set to 10 bytes — while 4097 bytes always fails;
 // with the override set above this floor (e.g. 5000 bytes), the exact same
 // pattern repeats at the override's own value (5000 succeeds, 5001 fails).
 const GO_SCANNER_START_BUF_SIZE = 4096;
 
-// Go's `parser.MaxScannerCapacity` (`pkg/parser/token.go:19`) — the hardcoded default
-// `parser.Split` falls back to when `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")`
-// returns `0`. Reached whenever the env var is SET but resolves to a non-positive size
-// — including a value `legacyParseScannerBufferSize` can't parse at all. Verified
-// empirically against `apps/cli-go/pkg/parser` + vendored `viper@v1.21.0`:
+// The hardcoded default scanner capacity
+// fallen back to when `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")`
+// returns `0`. Reached whenever the env var is SET but resolves to a non-positive size —
+// including a value `legacyParseScannerBufferSize` can't parse at all. Verified
+// empirically:
 // `SUPABASE_SCANNER_BUFFER_SIZE=5M` (a bare multiplier suffix with NO trailing `b`/`B`)
 // behaves byte-for-byte identically to the var being completely unset from the default
 // cap's own first-failure point on — because `parseSizeInBytes` only ever recognizes a
-// `k`/`m`/`g` multiplier when it immediately precedes a trailing `b`/`B`
-// (`util.go:156-174`); "5M" never strips a suffix, so it falls through to
+// `k`/`m`/`g` multiplier when it immediately precedes a trailing `b`/`B`;
+// "5M" never strips a suffix, so it falls through to
 // `cast.ToInt("5M")`, which fails whole (not a leading-digits prefix parse — unlike
 // JS's lenient `Number.parseInt`) and returns `0`. This is NOT the same as truly unset,
 // though: `viper.IsSet("SCANNER_BUFFER_SIZE")` is still `true` (the var IS present, just
@@ -150,11 +143,11 @@ const GO_SCANNER_START_BUF_SIZE = 4096;
 const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
 
 /**
- * Go's `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")` (env-prefixed
- * `SUPABASE_SCANNER_BUFFER_SIZE`, `pkg/parser/token.go:87`): an integer byte count,
+ * `viper.GetSizeInBytes("SCANNER_BUFFER_SIZE")` (env-prefixed
+ * `SUPABASE_SCANNER_BUFFER_SIZE`): an integer byte count,
  * optionally suffixed `k`/`K`/`m`/`M`/`g`/`G` (× 1024/1024²/1024³) plus a trailing
  * `b`/`B` (e.g. `"5MB"`, `"256KB"`, or a bare byte count). Ported 1:1 from viper's
- * own parser (`parseSizeInBytes`, `github.com/spf13/viper@v1.21.0/util.go:151-179`):
+ * own parser (`parseSizeInBytes`):
  * an unparseable or non-positive result is treated as unset (`0`).
  *
  * The multiplier is recognized ONLY when the string's LAST character is literally
@@ -164,7 +157,7 @@ const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
  * special-case a bare `k`/`m`/`g` suffix here; that would make this port accept a value
  * real Go rejects.
  *
- * Go's inner `lastChar > 1` gate (`util.go:158`) means the trailing-`B`-strip ALSO never
+ * Go's inner `lastChar > 1` gate means the trailing-`B`-strip ALSO never
  * runs for a 2-character value like `"5B"`/`"5b"` — only 3+ characters (an actual
  * multiplier letter, or at least one digit, before the `B`) reach the switch at all — so
  * `"5B"` is unstripped, `cast.ToInt("5B")` fails, and the whole thing is `0` too, same as
@@ -174,15 +167,14 @@ const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
  * prefix it found (`Number.parseInt("5M", 10) === 5`, silently discarding the "M", where
  * Go's parse rejects the string outright). `cast.ToInt` does tolerate one decimal point
  * via its own `trimDecimal` (keeps only the integer part, e.g. `"5.5"` → `"5"`), so allow
- * exactly that one exception. All of the above verified empirically against
- * `apps/cli-go/pkg/parser` + vendored `viper@v1.21.0`
+ * exactly that one exception. All of the above verified empirically
  * (`"5"→5, "5B"→0, "50B"→50, "5KB"→5120, "5M"→0, "0"→0, "5.5"→5, "5.5MB"→5242880`).
  *
  * `cast.ToInt`'s underlying `strconv.ParseInt(s, 0, 0)` (review CLI-1958) uses base
  * `0`, so the remaining (post multiplier-strip) string is ALSO accepted as a
  * `0x`/`0X`-prefixed hex literal, an `0o`/`0O`-prefixed OR bare-leading-zero octal
  * literal, or a `0b`/`0B`-prefixed binary literal — handled below by
- * {@link parseGoBaseZeroInt}. Verified empirically against vendored `viper@v1.21.0`
+ * {@link parseGoBaseZeroInt}. Verified empirically
  * (via `viper.GetSizeInBytes`, since `cast.ToInt` is itself unexported call
  * plumbing): `"0x100000"→1048576`, `"0o40000"→16384`,
  * `"0b100000000000000000000"→2097152`, `"0755"` (legacy octal, no `"o"`)`→493`,
@@ -207,19 +199,18 @@ const GO_DEFAULT_MAX_SCANNER_CAPACITY = 256 * 1024;
  * or between later octal digits); while `"_1048576"`, `"1048576_"`,
  * `"1__048576"`, `"0x100000_"`, and `"0_x100000"` (underscore splitting the
  * leading `"0"` from the `"x"` — not a real prefix, so it's parsed as legacy
- * octal digits `"x100000"`) all fail, matching Go exactly.
+ * octal digits `"x100000"`) all fail.
  */
-// `strconv.ParseInt(s, 0, 0)`'s bitSize-0 mode requires the result to fit in Go's `int`
-// — 64 bits on every platform this CLI ships for (amd64/arm64). A magnitude outside
-// this range is a range error (`strconv.ErrRange`), and `cast.ToInt` (`spf13/cast@v1.10.0
-// /number.go:407-414`'s `parseInt[T]`) discards ANY `parseFn` error — range or
+// `strconv.ParseInt(s, 0, 0)`'s bitSize-0 mode requires the result to fit in `int` —
+// 64 bits on every platform this CLI ships for (amd64/arm64). A magnitude outside
+// this range is a range error, and `cast.ToInt` discards ANY parse error — range or
 // syntax — and returns exactly `0`, not the (possibly huge, saturated-to-max-magnitude)
-// value `strconv.ParseInt` itself returns alongside that error. Verified empirically
-// against the pinned `spf13/cast@v1.10.0`: `cast.ToInt("9223372036854775808")` (one over
+// value `strconv.ParseInt` itself returns alongside that error. Verified empirically:
+// `cast.ToInt("9223372036854775808")` (one over
 // `math.MaxInt64`) → `0`. `Number.parseInt` has no such range check (it silently rounds
-// via IEEE-754 double precision instead), so this port must reject the same magnitudes
-// Go does, or it would treat an out-of-range override as an enormous-but-finite limit
-// instead of falling back to the 256KiB default like Go (review CLI-1958 round 18).
+// via IEEE-754 double precision instead), so this must reject the same magnitudes,
+// or it would treat an out-of-range override as an enormous-but-finite limit
+// instead of falling back to the 256KiB default (review CLI-1958 round 18).
 const GO_MAX_INT64 = 9223372036854775807n;
 const GO_MIN_INT64 = -9223372036854775808n;
 
@@ -269,7 +260,7 @@ const parseGoBaseZeroInt = (value: string): number | undefined => {
   return negative ? -n : n;
 };
 
-// `cast.ToInt`'s `trimDecimal` (`spf13/cast@v1.10.0/number.go:507-525`) runs BEFORE
+// `cast.ToInt`'s `trimDecimal` runs BEFORE
 // `strconv.ParseInt`: when the whole string is a sign + plain decimal digits + an
 // optional ".digits" tail (`stringNumberRe`, `^([-+]?\d*)(\.\d*)?$` — never matches
 // a `0x`/`0o`/`0b` literal, which contains letters), it drops the fractional part
@@ -313,9 +304,9 @@ const legacyParseScannerBufferSize = (raw: string): number => {
 };
 
 /**
- * Go's `parser.Split`/`SplitAndTrim` (`pkg/parser/token.go:81-119`) enforces
+ * `parser.Split`/`SplitAndTrim` enforces
  * `SUPABASE_SCANNER_BUFFER_SIZE` as the `bufio.Scanner`'s max token size — but only
- * when the env var is actually SET: `parseFile` (`pkg/migration/file.go:55-70`)
+ * when the env var is actually SET: `parseFile`
  * otherwise grows the package-level `parser.MaxScannerCapacity` to the real file's
  * byte length before the scan even starts (`viper.IsSet("SCANNER_BUFFER_SIZE")`
  * gates the auto-growth), so the DEFAULT (unset) path can never hit
@@ -325,20 +316,19 @@ const legacyParseScannerBufferSize = (raw: string): number => {
  * file via `NewMigrationFromFile`/`parseFile`), so this is the correct single home
  * for the check (CLI-1958 review) rather than duplicating it per caller.
  *
- * Fails the same way `parser.Split` does on the FIRST raw (pre-trim) statement
+ * Fails on the FIRST raw (pre-trim) statement
  * whose byte length exceeds the effective limit (`Math.max(configured,
  * GO_SCANNER_START_BUF_SIZE)` — see that constant's comment). `"After statement
  * <n>: …"` reports the count and RAW text of the last statement successfully
- * scanned BEFORE the oversized one: Go's loop body (`token = scanner.Text()`)
- * never runs for the failing `Scan()` call, so `token` still holds whatever the
+ * scanned BEFORE the oversized one: the scan loop body
+ * never runs for the failing scan, so the last token still holds whatever the
  * previous iteration left it as (`""` if the very first statement is already
- * oversized) — verified empirically against the same `apps/cli-go/pkg/parser`
- * probe. This is a "read"-phase failure (`NewMigrationFromFile`/`parseFile`
- * returns before `apply.go`'s `CmdSuggestion` is ever set), so it carries no
+ * oversized) — verified empirically. This is a "read"-phase failure (returns
+ * before a suggestion is ever set), so it carries no
  * suggestion, same as the file-open failure above.
  *
  * `projectEnv`, when given, is the caller's already-loaded `legacyLoadProjectEnv` map:
- * Go's `loadNestedEnv` (`pkg/config/config.go:1220`) `os.Setenv`s every project-`.env`
+ * `loadNestedEnv` `os.Setenv`s every project-`.env`
  * key that isn't already in the shell env BEFORE `ParseDatabaseConfig` returns — i.e.
  * before ANY command body (including this scan) runs — so `viper.AutomaticEnv()` sees a
  * `supabase/.env`-only `SUPABASE_SCANNER_BUFFER_SIZE` exactly like a real shell-exported
@@ -363,7 +353,7 @@ export const checkScannerBufferSize = <E>(
       ? Math.max(configuredLimit, GO_SCANNER_START_BUF_SIZE)
       : GO_DEFAULT_MAX_SCANNER_CAPACITY;
   // Go's suggestion reports `maxbuf>>10` — the EFFECTIVE cap actually passed to
-  // `scanner.Buffer` (`pkg/parser/token.go:110`), which is the raw configured value
+  // `scanner.Buffer`, which is the raw configured value
   // (even below the `GO_SCANNER_START_BUF_SIZE` floor — the floor only affects when
   // `bufio.ErrTooLong` can fire, never the number Go prints) when positive, or the
   // hardcoded default once Go has fallen back to it.
@@ -391,13 +381,13 @@ export const checkScannerBufferSize = <E>(
         ),
       );
     }
-    // Go's `token = scanner.Text()` (`pkg/parser/token.go:96`) runs on EVERY successful
+    // `token = scanner.Text()` runs on EVERY successful
     // `Scan()` — unconditionally, before the `len(trim) > 0` gate that decides whether to
     // `append` to `stats` — so `token` (and therefore the eventual `bufio.ErrTooLong`
     // message) reflects the last RAW text scanned even when that statement trimmed to
     // empty and was never appended (e.g. a lone `;` immediately before an oversized
     // statement reports "After statement N: ;", not a blank token). `emitted` mirrors
-    // Go's `len(stats)` (append-gated); `lastRaw` must NOT share that gate — verified
+    // `len(stats)` (append-gated); `lastRaw` must NOT share that gate — verified
     // against the Go source directly (review CLI-1958 round 18).
     lastRaw = token.raw;
     if (token.trimmed.length > 0) {
@@ -408,13 +398,13 @@ export const checkScannerBufferSize = <E>(
 };
 
 /**
- * Port of Go's `markError` (`pkg/migration/file.go:117-132`): renders a `^` caret
+ * Port of `markError`: renders a `^` caret
  * line under the error position of the failing statement. `pos` is the server's
  * 1-based error cursor (`pgErr.Position`); Go consumes it against **byte**
  * lengths (`len(line)` on a Go string counts UTF-8 bytes) and pads the caret with
  * `pos-1` space bytes, so multibyte statements shift the caret exactly as Go does
  * (verified empirically against the Go implementation). The caret line REPLACES
- * every line after the error line (Go's `append(lines[:j+1], caret)` truncates
+ * every line after the error line (`append(lines[:j+1], caret)` truncates
  * the tail). Position 0 (absent), a position past the end of the statement, or
  * one landing exactly on a line break leave the statement untouched.
  */
@@ -435,23 +425,22 @@ export const legacyMarkError = (stat: string, pos: number): string => {
   return stat;
 };
 
-// Go's `typeNamePattern` (`pkg/migration/file.go:31`): extracts the type name from
+// `typeNamePattern`: extracts the type name from
 // PostgreSQL error messages like `type "ltree" does not exist`. Unanchored, so it
 // matches identically inside the rendered `ERROR: … (SQLSTATE …)` head line.
 const TYPE_NAME_PATTERN = /type "([^"]+)" does not exist/;
 
 /**
- * Mirrors Go's `MigrationFile.ExecBatch` error context (`pkg/migration/file.go:88-113`):
+ * Mirrors `MigrationFile.ExecBatch` error context:
  * on a failed statement, render the `^` caret under the server-reported error
  * position, the `Detail` line when present, the SQLSTATE-42704 extension hint,
  * then `At statement: <index>` and the (caret-marked) statement text. The
  * structured `detail`/`position` fields are only set by the driver for server
- * ErrorResponses, mirroring Go's `errors.As(err, &pgErr)` gate.
+ * ErrorResponses, mirroring `errors.As(err, &pgErr)` gate.
  *
- * Exported so any caller that runs a raw `migration.MigrationFile{Statements:
- * [...]}.ExecBatch(...)`-equivalent batch outside a real migration file (e.g.
- * `legacyResetRecreateDatabases`'s PG14 `DROP`/`CREATE DATABASE` statements,
- * `reset.go:169-172`, which Go itself routes through this exact formatter) gets
+ * Exported so any caller that runs a raw batch-equivalent statement set outside a real
+ * migration file (e.g. `legacyResetRecreateDatabases`'s PG14 `DROP`/`CREATE DATABASE`
+ * statements, which are also routed through this exact formatter) gets
  * the same rich error context instead of the bare driver error.
  */
 export const legacyFormatExecBatchError = (
@@ -479,7 +468,7 @@ export const legacyFormatExecBatchError = (
 
 /**
  * Runs a single migration/seed file's statements (plus the optional history insert).
- * Mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`): statements run
+ * Statements run
  * inside a `BEGIN`/`COMMIT` batch, except pipeline-incompatible ones
  * (`legacyIsPipelineIncompatible` — `CREATE INDEX CONCURRENTLY`, `VACUUM`, …) which
  * cannot run in a transaction block: the open batch is flushed (committed), the
@@ -487,11 +476,10 @@ export const legacyFormatExecBatchError = (
  * insert goes in the final batch, so the migration is recorded only after every
  * statement succeeds. A file with no such statements is a single `BEGIN`/`COMMIT`.
  *
- * Does NOT create the history table and does NOT `RESET ALL` — Go's `ExecBatch` does
- * neither; those are the migration-apply path's responsibility (`ApplyMigrations`,
- * apply.go:65-69), so role/globals files (`legacySeedGlobals`) stay reset-free like Go.
- * When `forceNoVersion` is set the history insert is skipped regardless of filename
- * (Go's `SeedGlobals` clears `Version`).
+ * Does NOT create the history table and does NOT `RESET ALL` — this function does
+ * neither; those are the migration-apply path's responsibility, so role/globals files
+ * (`legacySeedGlobals`) stay reset-free.
+ * When `forceNoVersion` is set the history insert is skipped regardless of filename.
  *
  * `projectEnv` is forwarded to {@link checkScannerBufferSize} — see its own doc comment
  * for why a project-`.env`-only `SUPABASE_SCANNER_BUFFER_SIZE` must be visible here too.
@@ -507,28 +495,28 @@ const execMigrationBatch = <E>(
   projectEnv: Readonly<Record<string, string>> = {},
 ): Effect.Effect<void, E> =>
   Effect.gen(function* () {
-    // Go's `MigrationFile.ExecBatch` receives an already-read/parsed file (the read
-    // happens earlier, in `NewMigrationFromFile`/`parseFile`, which wraps the open
-    // failure as `"failed to open migration file: %w"`, `pkg/migration/file.go:57-58`)
-    // — so a read failure here is a DIFFERENT error class than a statement-execution
-    // failure below, and needs the same Go prefix so stderr/JSON errors don't surface
+    // Receives an already-read/parsed file (the read
+    // happens earlier, which wraps the open
+    // failure as `"failed to open migration file: %w"`) —
+    // so a read failure here is a DIFFERENT error class than a statement-execution
+    // failure below, and needs the same prefix so stderr/JSON errors don't surface
     // the bare platform error text. Tagged "read" so callers that attach a suggestion
-    // only around execution failures (`apply.go:61-63`) can tell the two apart.
+    // only around execution failures can tell the two apart.
     //
-    // Go opens `fp` — the workdir-RELATIVE form `[db.migrations].schema_paths`/
-    // `[db.seed].sql_paths` already resolved to at config-load time — because Go's
-    // process cwd is always the workdir (`ChangeWorkDir`, `cmd/root.go:104`). This
+    // The workdir-RELATIVE form `[db.migrations].schema_paths`/
+    // `[db.seed].sql_paths` already resolved to at config-load time is what should be
+    // reported. This
     // module deliberately never `process.chdir`s (only `bootstrap` does, as its own
     // documented one-off), so callers must pass an ABSOLUTE `migrationPath` for the
     // real read to work — but that means the platform error's embedded path is
-    // absolute too. When it differs from `displayPath` (the caller's Go-equivalent
-    // relative path), substitute it in so the wrapped message still reports the
-    // relative form Go would, not a leaked local temp/absolute path.
+    // absolute too. When it differs from `displayPath` (the caller's relative
+    // path), substitute it in so the wrapped message still reports the
+    // relative form, not a leaked local temp/absolute path.
     //
     // Known residual delta (CLI-1958 review): `readFileString` decodes via `TextDecoder`
     // with `fatal: false` (the Effect `FileSystem` default), so an invalid-UTF-8 byte
     // sequence in the file is lossily replaced with U+FFFD before it ever reaches
-    // `legacySplitAndTrim`/`session.exec`. Go's `parseFile` instead scans the raw byte
+    // `legacySplitAndTrim`/`session.exec`. `parseFile` instead scans the raw byte
     // stream and preserves those bytes verbatim into the statement strings it sends to
     // PostgreSQL. Reading raw bytes here (`fs.readFile`) and mapping them 1:1 into a
     // "binary string" would fix the split/parse stage, but the fix dies at the wire: the
@@ -550,7 +538,7 @@ const execMigrationBatch = <E>(
       }),
     );
 
-    // Still `NewMigrationFromFile`/`parseFile`'s territory (`pkg/migration/file.go:55-70`) —
+    // Still `NewMigrationFromFile`/`parseFile`'s territory —
     // `parser.SplitAndTrim` runs INSIDE `parseFile`, before `ExecBatch` ever sees the
     // statements, so a `SUPABASE_SCANNER_BUFFER_SIZE` violation is a "read"-phase
     // failure like the open failure above, not an "exec"-phase one. See
@@ -558,11 +546,11 @@ const execMigrationBatch = <E>(
     // is explicitly set.
     yield* checkScannerBufferSize(content, mapError, projectEnv);
 
-    // Everything below mirrors Go's `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
+    // Everything below mirrors `(*MigrationFile).ExecBatch` (`pkg/migration/file.go`),
     // which runs against an already-read file — so every failure from here on is an
     // execution failure, tagged "exec" (as opposed to the "read" failure above, which
-    // mirrors `NewMigrationFromFile`). Only execution failures get `CmdSuggestion`
-    // (`apply.go:61-63`); callers rely on this tag to replicate that split.
+    // mirrors `NewMigrationFromFile`). Only execution failures get `CmdSuggestion`;
+    // callers rely on this tag to replicate that split.
     yield* Effect.gen(function* () {
       const statements = legacySplitAndTrim(content);
       const filename = path.basename(migrationPath);
@@ -630,7 +618,7 @@ const execMigrationBatch = <E>(
   });
 
 /**
- * Go's per-migration connection reset (`apply.go:65-69`): `RESET ALL` clears any
+ * Go's per-migration connection reset: `RESET ALL` clears any
  * connection settings a prior statement on the same session may have changed
  * (e.g. `set_config('search_path', …)`), run before each migration's `ExecBatch`.
  * Only the migration-apply path does this — `SeedGlobals` (role/globals files)
@@ -644,7 +632,7 @@ const resetConnectionState = <E>(
 
 /**
  * Applies a single migration file to the connected database and records it in
- * `supabase_migrations.schema_migrations`. Mirrors Go's `migration.ApplyMigrations`
+ * `supabase_migrations.schema_migrations`. Mirrors `migration.ApplyMigrations`
  * for one file (`pkg/migration/apply.go` + `(*MigrationFile).ExecBatch`): `RESET ALL`
  * first to clear any session state leaked by a prior file (e.g.
  * `SET default_transaction_read_only = on`) before the history-table DDL, then create
@@ -669,7 +657,7 @@ export const legacyApplyMigrationFile = <E>(
 
 /**
  * Applies a list of pending migration files, mirroring Go's
- * `migration.ApplyMigrations` (`pkg/migration/apply.go:56-77`): create the
+ * `migration.ApplyMigrations`: create the
  * history table once when there is anything to apply, then for each file emit
  * `Applying migration <name>...` to stderr, `RESET ALL`, and run it transactionally.
  */
@@ -688,18 +676,18 @@ export const legacyApplyMigrations = <E>(
     );
     for (const migrationPath of pending) {
       yield* output.raw(`Applying migration ${path.basename(migrationPath)}...\n`, "stderr");
-      // Go resets connection state per migration (apply.go:65-69) before ExecBatch.
+      // Reset connection state per migration before running the batch.
       yield* resetConnectionState(session, mapError);
       yield* execMigrationBatch(session, fs, path, migrationPath, mapError, false);
     }
   });
 
 /**
- * Applies custom-role / globals files, mirroring Go's `migration.SeedGlobals`
- * (`pkg/migration/seed.go:85-100`): for each file emit `Seeding globals from
+ * Applies custom-role / globals files:
+ * for each file emit `Seeding globals from
  * <name>...` to stderr and run it transactionally WITHOUT inserting a migration
- * history row (Go clears `Version`), WITHOUT creating the history table, and WITHOUT
- * `RESET ALL` (Go's `SeedGlobals` → `ExecBatch` never resets).
+ * history row, WITHOUT creating the history table, and WITHOUT
+ * `RESET ALL`.
  */
 export const legacySeedGlobals = <E>(
   session: LegacyDbSession,
@@ -721,11 +709,10 @@ export const legacySeedGlobals = <E>(
  * per-file `Seeding globals from <name>...` stderr message, WITHOUT inserting a
  * migration history row, WITHOUT creating the history table, and WITHOUT `RESET
  * ALL` (same batching semantics as `legacySeedGlobals`, `forceNoVersion: true`,
- * just silent). Go's `initSchema`/`InitSchema14`/`ApplyApiPrivileges`
- * (`apps/cli-go/internal/db/start/start.go`) each call
- * `(*MigrationFile).ExecBatch` DIRECTLY on an in-memory SQL constant — bypassing
- * `migration.SeedGlobals`'s message — so reusing `legacySeedGlobals` for those
- * would print an extra line Go never prints. Callers write the in-memory SQL
+ * just silent). `initSchema`/`InitSchema14`/`ApplyApiPrivileges`-equivalent callers
+ * run a batch DIRECTLY on an in-memory SQL constant — bypassing
+ * `legacySeedGlobals`'s message — so reusing `legacySeedGlobals` for those
+ * would print an extra, unwanted line. Callers write the in-memory SQL
  * constant to a temp file first (this module only reads files, like
  * `execMigrationBatch`'s other callers).
  *
@@ -748,42 +735,40 @@ export const legacyExecSqlFile = <E>(
   execMigrationBatch(session, fs, path, filePath, mapError, true, displayPath, projectEnv);
 
 /**
- * Applies Go's EXPERIMENTAL declarative schema-files branch of `apply.MigrateAndSeed`
- * (`apps/cli-go/internal/migration/apply/apply.go:19,51-68`). Reads `[db.migrations]
- * schema_paths` (already resolved to Go's config-load form — supabase-joined when
- * relative, verbatim when absolute) via the shared `Glob.SQLFiles` port
+ * Applies the EXPERIMENTAL declarative schema-files branch.
+ * Reads `[db.migrations]
+ * schema_paths` (already resolved to its config-load form — supabase-joined when
+ * relative, verbatim when absolute) via the shared glob
  * ({@link legacySqlFilesGlob}), then runs each matched file's statements with
  * {@link legacyExecSqlFile} in glob order — no history table, no history row, and no
- * `RESET ALL` between files, matching Go's `schema.Version = ""` discard (`apply.go:61`)
- * and the fact that `ExecBatch` (unlike `ApplyMigrations`) never resets connection state.
+ * `RESET ALL` between files: connection state is never reset here.
  *
- * Callers gate the call on Go's three-conjunct condition (`--experimental` + no resolved
- * version + pg-delta NOT enabled, `apply.go:19`) themselves — this function only performs
+ * Callers gate the call on the three-conjunct condition (`--experimental` + no resolved
+ * version + pg-delta NOT enabled) themselves — this function only performs
  * the branch's body, mirroring `applySchemaFiles`'s own signature (it never re-checks the
  * gate). It is the caller's responsibility to skip `legacyApplyMigrations` entirely when
- * this is called (Go's `if`/`else if` is mutually exclusive, `apply.go:19-27`).
+ * this is called (`if`/`else if` is mutually exclusive).
  *
- * Faithfully reproduces two undocumented, unfixed-upstream Go quirks that are load-bearing
+ * Faithfully reproduces two undocumented, unfixed-upstream quirks that are load-bearing
  * for the strict 1:1 contract (CLI-1958):
- *  - **Empty `schema_paths` (the `supabase init` default) silently applies nothing** and
- *    returns success — `Config.Db.Migrations.SchemaPaths.SQLFiles` returns a `nil` error
- *    when there are zero patterns to glob (`errors.Join()` with no arguments is `nil`), so
- *    `applySchemaFiles` returns `nil` too (`apply.go:53-54`).
- *  - **A PARTIAL glob failure is silently dropped**: per-pattern warnings are only
- *    surfaced (as the returned failure) when NO pattern matched anything at all
- *    (`declared` empty, `apply.go:53-55`); once at least one file is found, every other
- *    pattern's warning is discarded — unlike the seed path's `WARN:` line.
+ * - **Empty `schema_paths` (the `supabase init` default) silently applies nothing** and
+ * returns success — globbing zero patterns returns no error, so
+ * `applySchemaFiles` returns success too.
+ * - **A PARTIAL glob failure is silently dropped**: per-pattern warnings are only
+ * surfaced (as the returned failure) when NO pattern matched anything at all;
+ * once at least one file is found, every other
+ * pattern's warning is discarded — unlike the seed path's `WARN:` line.
  *
- * On a per-file EXECUTION failure only, attaches Go's `CmdSuggestion = "See schema file:
- * <Bold(fp)>"` (`apply.go:63`) via the optional second argument of `mapError`. A file-READ
- * failure (Go's `NewMigrationFromFile`, `apply.go:57-59`) returns before `CmdSuggestion` is
+ * On a per-file EXECUTION failure only, attaches a `CmdSuggestion = "See schema file:
+ * <Bold(fp)>"` via the optional second argument of `mapError`. A file-READ
+ * failure returns before the suggestion is
  * ever set, so it must NOT carry the suggestion — {@link legacyExecSqlFile}'s `mapError`
  * receives the `"read"`/`"exec"` phase precisely so this call site can tell them apart.
  *
  * `projectEnv` is the caller's already-loaded `legacyLoadProjectEnv` map, forwarded to
  * {@link checkScannerBufferSize} (via `legacyExecSqlFile`/`execMigrationBatch`) so a
- * `SUPABASE_SCANNER_BUFFER_SIZE` set only in `supabase/.env` is honored here exactly like
- * a real Go run — see that helper's doc comment.
+ * `SUPABASE_SCANNER_BUFFER_SIZE` set only in `supabase/.env` is honored here too —
+ * see that helper's doc comment.
  */
 export const legacyApplySchemaFiles = <E>(
   session: LegacyDbSession,
@@ -806,7 +791,7 @@ export const legacyApplySchemaFiles = <E>(
     }
     for (const file of files) {
       const absolutePath = path.isAbsolute(file) ? file : path.join(workdir, file);
-      // `file` is already Go's `fp` form (workdir-relative when the declared pattern
+      // `file` is already `fp` form (workdir-relative when the declared pattern
       // was relative, verbatim when absolute) — pass it through as the display path so
       // a read failure reports it instead of the `absolutePath` the real read needs.
       yield* legacyExecSqlFile(

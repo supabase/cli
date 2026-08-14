@@ -11,9 +11,7 @@ import { LegacyDebugLogger } from "../shared/legacy-debug-logger.service.ts";
  * guard and byte-for-byte line formatting.
  *
  * `legacyDohFetchLayer` overrides `FetchHttpClient.Fetch` with a
- * DNS-over-HTTPS-aware fetch when `--dns-resolver https` is set, mirroring
- * Go's `withFallbackDNS` transport hook
- * (`apps/cli-go/internal/utils/api.go:85-104`).
+ * DNS-over-HTTPS-aware fetch when `--dns-resolver https` is set.
  */
 export const legacyHttpClientLayer = Layer.effect(
   HttpClient.HttpClient,

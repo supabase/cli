@@ -14,7 +14,8 @@
  * Exposed separately (not fused into one monolithic function) because the composed shapes
  * Go itself has are NOT all the same: `migration squash` (a future port, CLI-1969) only ever
  * needs create -> health-wait -> connect -> `SetupDatabase` (no `CREATE_TEMPLATE`, no
- * migrations at that point — `apps/cli-go/internal/migration/squash/squash.go:83-96`), while
+ * migrations at that point — `apps/cli-go/internal/migration/squash/squash.go:83-96`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3), while
  * `db diff --use-pgadmin` (CLI-1968, realized: see `diff.handler.ts`'s pgadmin branch) needs
  * create -> health-wait -> `MigrateShadowDatabase` (`apps/cli-go/internal/db/diff/
  * pgadmin.go:70-78`). Exposing every primitive individually lets each future caller compose

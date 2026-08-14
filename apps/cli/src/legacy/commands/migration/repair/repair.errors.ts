@@ -6,9 +6,8 @@ import {
 } from "../../../../shared/telemetry/error-actionability.ts";
 
 /**
- * Applying the repair batch (TRUNCATE / UPSERT / DELETE) failed. Byte-matches
- * Go's `failed to update migration table: %w`
- * (`internal/migration/repair/repair.go:80`).
+ * Applying the repair batch (TRUNCATE / UPSERT / DELETE) failed. Matches the
+ * established `failed to update migration table: %w` text.
  */
 export class LegacyMigrationRepairUpdateError extends Data.TaggedError(
   "LegacyMigrationRepairUpdateError",

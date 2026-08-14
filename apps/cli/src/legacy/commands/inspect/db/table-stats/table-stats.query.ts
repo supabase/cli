@@ -5,7 +5,6 @@ import {
 } from "../legacy-inspect-query.ts";
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/table_stats/table_stats.sql`.
 const SQL = `SELECT
   ts.name,
   pg_size_pretty(ts.table_size_bytes) AS table_size,
@@ -36,9 +35,8 @@ ORDER BY ts.total_size_bytes DESC`;
 
 /**
  * `inspect db table-stats` — combined table size, index size, and row count.
- * Port of `apps/cli-go/internal/inspect/table_stats/table_stats.go`. Also the
- * routed query for the deprecated `table-sizes` / `table-index-sizes` /
- * `total-table-sizes` aliases (but NOT `table-record-counts`, which Go routes to
+ * Also the routed query for the deprecated `table-sizes` / `table-index-sizes` /
+ * `total-table-sizes` aliases (but NOT `table-record-counts`, which routes to
  * index-stats — preserved in that alias's handler).
  */
 export const legacyTableStatsSpec: LegacyInspectQuerySpec = {

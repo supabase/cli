@@ -1,11 +1,12 @@
 import type { ServiceDef } from "@supabase/process-compose";
 import { dockerPortMapArgs } from "../Platform.ts";
+import type { StackIdentity } from "../StackIdentity.ts";
 import { dockerRunService, type ServiceDependency } from "./service-utils.ts";
 import { stackHealthBudgets } from "./health-budgets.ts";
 
 interface DockerAnalyticsOptions {
   readonly image: string;
-  readonly apiPort: number;
+  readonly identity: StackIdentity;
   readonly hostPort: number;
   readonly platformOs: string;
   readonly dbHost: string;
@@ -69,7 +70,7 @@ export const makeAnalyticsServiceDocker = (opts: DockerAnalyticsOptions): Servic
 
   return dockerRunService({
     name: "analytics",
-    apiPort: opts.apiPort,
+    identity: opts.identity,
     image: opts.image,
     networkArgs: dockerPortMapArgs(opts.platformOs, [
       { host: opts.hostPort, container: ANALYTICS_CONTAINER_PORT },

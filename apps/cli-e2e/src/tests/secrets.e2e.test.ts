@@ -2,7 +2,7 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect } from "vitest";
 import { PROJECT_REF } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 describe("secrets", () => {
   describe("secrets:list", () => {
@@ -81,9 +81,6 @@ describe("secrets", () => {
       const result = await run(["secrets", "list", "--debug", "--project-ref", projectRef]);
       expect(result.exitCode).toBe(0);
     });
-
-    testParity(["secrets", "list", "--project-ref", PROJECT_REF]);
-    testParity(["secrets", "list", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("secrets:set", () => {
@@ -154,11 +151,6 @@ describe("secrets", () => {
       const result = await run(["secrets", "set", "FOO=bar", "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
     });
-
-    testParity(["secrets", "set", "FOO=bar", "--project-ref", PROJECT_REF]);
-    testParity(["secrets", "set", "FOO=bar", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
-    });
   });
 
   describe("secrets:unset", () => {
@@ -218,11 +210,6 @@ describe("secrets", () => {
       });
       const result = await run(["secrets", "unset", "FOO", "--project-ref", PROJECT_REF, "--yes"]);
       expect(result.exitCode).not.toBe(0);
-    });
-
-    testParity(["secrets", "unset", "FOO", "--project-ref", PROJECT_REF, "--yes"]);
-    testParity(["secrets", "unset", "FOO", "--project-ref", PROJECT_REF, "--yes"], {
-      failureType: "NON_AUTH",
     });
   });
 });

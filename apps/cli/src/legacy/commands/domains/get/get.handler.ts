@@ -23,8 +23,8 @@ export const legacyDomainsGet = Effect.fn("legacy.domains.get")(function* (
 
   const ref = yield* resolver.resolve(flags.projectRef);
 
-  // Mirror Go's PersistentPostRun: write the linked-project cache and persist
-  // the telemetry state file on success and failure.
+  // Write the linked-project cache and persist the telemetry state file on
+  // success and failure.
   yield* Effect.gen(function* () {
     const fetching =
       output.format === "text"
