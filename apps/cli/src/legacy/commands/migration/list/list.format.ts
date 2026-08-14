@@ -1,3 +1,4 @@
+import { legacySortMigrationVersions } from "../../../shared/legacy-migration-history.ts";
 import {
   LEGACY_MIGRATION_VERSION_MAX,
   legacyFormatTimestampVersion,
@@ -20,10 +21,14 @@ export function legacyMakeMigrationListRows(
   remote: ReadonlyArray<string>,
   local: ReadonlyArray<string>,
 ): ReadonlyArray<LegacyMigrationListRow> {
+  // `legacyLoadLocalVersions` yields versions in file-name order, which reverses
+  // `ORDER BY version` whenever one version is a prefix of another
+  // (supabase/cli#6036), desynchronising the walk into duplicate half-empty rows.
+  const sortedLocal = legacySortMigrationVersions(local);
   const rows: Array<LegacyMigrationListRow> = [];
   let i = 0;
   let j = 0;
-  while (i < remote.length || j < local.length) {
+  while (i < remote.length || j < sortedLocal.length) {
     let remoteTs = LEGACY_MIGRATION_VERSION_MAX;
     if (i < remote.length) {
       const parsed = legacyParseMigrationVersion(remote[i]!);
@@ -34,8 +39,8 @@ export function legacyMakeMigrationListRows(
       remoteTs = parsed;
     }
     let localTs = LEGACY_MIGRATION_VERSION_MAX;
-    if (j < local.length) {
-      const parsed = legacyParseMigrationVersion(local[j]!);
+    if (j < sortedLocal.length) {
+      const parsed = legacyParseMigrationVersion(sortedLocal[j]!);
       if (parsed === undefined) {
         j++;
         continue;
@@ -43,14 +48,18 @@ export function legacyMakeMigrationListRows(
       localTs = parsed;
     }
     if (localTs < remoteTs) {
-      rows.push({ local: local[j]!, remote: "", time: legacyFormatTimestampVersion(local[j]!) });
+      rows.push({
+        local: sortedLocal[j]!,
+        remote: "",
+        time: legacyFormatTimestampVersion(sortedLocal[j]!),
+      });
       j++;
     } else if (remoteTs < localTs) {
       rows.push({ local: "", remote: remote[i]!, time: legacyFormatTimestampVersion(remote[i]!) });
       i++;
     } else {
       rows.push({
-        local: local[j]!,
+        local: sortedLocal[j]!,
         remote: remote[i]!,
         time: legacyFormatTimestampVersion(remote[i]!),
       });
