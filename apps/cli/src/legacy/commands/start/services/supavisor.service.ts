@@ -23,13 +23,13 @@
  * directly, so that `Cmd` string never becomes a subprocess's own argv.
  * THIS PORT SHELLS OUT to a real `docker create`, where that would leak, so
  * it deliberately diverges: the rendered script travels via
- * {@link LegacyStartContainerSpec.secretFiles} instead (a short-lived HOST
- * temp file, mode `0644`, `docker cp`'d straight into the container at
+ * {@link LegacyStartContainerSpec.secretFiles} instead (an in-memory tar
+ * entry, mode `0644`, streamed via `docker cp - <id>:/` into the container at
  * {@link LEGACY_SUPAVISOR_POOLER_TENANT_CONTAINER_PATH}) — Supavisor itself
  * runs fully as root in its image, so it is unaffected by the non-root read
  * issue that motivates `0644` for Kong/Postgres (see
- * `legacyCopyStartSecretFileIntoContainer`'s doc comment); the file mode is
- * simply widened here for consistency with the other staged secrets, and
+ * `legacyCopyStartSecretFilesIntoContainer`'s doc comment); the file mode is
+ * simply widened here for consistency with the other secrets, and
  * {@link legacyBuildSupavisorStartCmd} only ever references that FIXED path
  * — never the secret content itself (CWE-214/522). See that function's doc
  * comment for the resulting quoting nuance. {@link legacyBuildSupavisorStartCmd}

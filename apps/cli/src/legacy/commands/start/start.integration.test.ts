@@ -114,6 +114,23 @@ type RouteResult = {
   readonly stderr?: ReadonlyArray<string>;
 };
 
+function concatByteChunks(chunks: ReadonlyArray<unknown>): Uint8Array | undefined {
+  let byteLength = 0;
+  for (const chunk of chunks) {
+    if (!(chunk instanceof Uint8Array)) return undefined;
+    byteLength += chunk.byteLength;
+  }
+
+  const bytes = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    if (!(chunk instanceof Uint8Array)) return undefined;
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
+}
+
 /**
  * Resolves each spawned invocation immediately (no fake async delay) — unlike
  * `stop.integration.test.ts`'s `mockRoutedContainerCliSpawner`, `start`'s own
@@ -126,7 +143,10 @@ type RouteResult = {
  */
 function mockStartContainerCliSpawner(
   route: (args: ReadonlyArray<string>) => RouteResult,
-  opts: { readonly failSpawn?: boolean } = {},
+  opts: {
+    readonly failSpawn?: boolean;
+    readonly onSecretCopy?: (containerPath: string, content: string) => void;
+  } = {},
 ) {
   const spawned: Array<SpawnRecord> = [];
   const encoder = new TextEncoder();
@@ -138,6 +158,8 @@ function mockStartContainerCliSpawner(
         const cmd = command._tag === "StandardCommand" ? command.command : "";
         const args = command._tag === "StandardCommand" ? command.args : [];
         const env = command._tag === "StandardCommand" ? (command.options?.env ?? {}) : {};
+        const stdin = command._tag === "StandardCommand" ? command.options.stdin : undefined;
+        const onSecretCopy = opts.onSecretCopy;
         spawned.push({ command: cmd, args, env });
 
         if (opts.failSpawn === true) {
@@ -149,6 +171,20 @@ function mockStartContainerCliSpawner(
               description: "spawn failed",
             }),
           );
+        }
+
+        if (onSecretCopy !== undefined && args[0] === "cp" && args[1] === "-") {
+          if (!Stream.isStream(stdin)) {
+            return yield* Effect.die("docker cp - was spawned without an input stream");
+          }
+          const archiveBytes = concatByteChunks(yield* Stream.runCollect(stdin));
+          if (archiveBytes === undefined) {
+            return yield* Effect.die("docker cp stdin did not contain archive bytes");
+          }
+          const archiveFiles = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
+          for (const [path, file] of archiveFiles) {
+            onSecretCopy(`/${path}`, yield* Effect.promise(() => file.text()));
+          }
         }
 
         const result = route(args);
@@ -206,29 +242,6 @@ function createdContainerNames(spawned: ReadonlyArray<SpawnRecord>): ReadonlyArr
   return spawned
     .filter((s) => s.args[0] === "create")
     .map((s) => containerNameFromCreateArgs(s.args));
-}
-
-/**
- * Wraps `base` to also intercept every `docker cp <hostPath> <containerId>:<containerPath>` call
- * `legacyCreateContainer`'s `secretFiles` delivery issues (`legacyCopyStartSecretFileIntoContainer`,
- * `container-lifecycle.ts` — supabase/cli#6022): synchronously reads the host-side temp file's
- * content while it's still on disk (its own cleanup only runs once THIS spawn's effect resolves)
- * and records it against the destination `containerPath`, so a test can assert on delivered secret
- * content without any host-persisted staging directory left behind to inspect afterward.
- */
-function capturingSecretCopyRoute(
-  base: (args: ReadonlyArray<string>) => RouteResult,
-  onCopy: (containerPath: string, content: string) => void,
-): (args: ReadonlyArray<string>) => RouteResult {
-  return (args) => {
-    if (args[0] === "cp") {
-      const hostPath = args[1] ?? "";
-      const dest = args[2] ?? "";
-      const containerPath = dest.slice(dest.indexOf(":") + 1);
-      onCopy(containerPath, readFileSync(hostPath, "utf8"));
-    }
-    return base(args);
-  };
 }
 
 function rollbackWasAttempted(spawned: ReadonlyArray<SpawnRecord>): boolean {
@@ -375,6 +388,8 @@ function fakeDbSession() {
 interface SetupOpts {
   readonly format?: "text" | "json" | "stream-json";
   readonly route?: (args: ReadonlyArray<string>) => RouteResult;
+  /** Observes files decoded from the in-memory tar stream passed to `docker cp -`. */
+  readonly onSecretCopy?: (containerPath: string, content: string) => void;
   readonly httpClientLayer?: Layer.Layer<HttpClient.HttpClient>;
   readonly configuredProjectId?: string;
   /** Raw `config.toml` contents — overrides `configuredProjectId`'s single-line default. */
@@ -409,6 +424,7 @@ function setup(opts: SetupOpts = {}) {
   const cliConfig = mockLegacyCliConfig({ workdir });
   const child = mockStartContainerCliSpawner(opts.route ?? defaultRoute(), {
     failSpawn: opts.failSpawn,
+    onSecretCopy: opts.onSecretCopy,
   });
   const dbSession = fakeDbSession();
   const edgeRunCalls: Array<LegacyEdgeRuntimeRunOpts> = [];
@@ -3760,9 +3776,9 @@ content_path = "./supabase/templates/custom_notice.html"
         const copied = new Map<string, string>();
         const { layer, child } = setup({
           configContents: 'project_id = "demo"\n[db]\nroot_key = "custom-root-key-value"\n',
-          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+          onSecretCopy: (containerPath, content) => {
             copied.set(containerPath, content);
-          }),
+          },
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -3771,17 +3787,10 @@ content_path = "./supabase/templates/custom_notice.html"
             "custom-root-key-value",
           );
           const dbCp = child.spawned.find(
-            (s) =>
-              s.args[0] === "cp" &&
-              s.args[2] ===
-                `${fakeContainerId(containerName)}:/etc/postgresql-custom/pgsodium_root.key`,
+            (s) => s.args[0] === "cp" && s.args[2] === `${fakeContainerId(containerName)}:/`,
           );
-          expect(dbCp).toBeDefined();
-          // Delivered straight into the container — the host-side temp file is removed
-          // immediately after the copy, so nothing persists on host disk afterward.
-          const dbCpHostPath = dbCp?.args[1] ?? "";
-          expect(dbCpHostPath.length > 0).toBe(true);
-          expect(existsSync(dbCpHostPath)).toBe(false);
+          expect(dbCp?.args).toEqual(["cp", "-", `${fakeContainerId(containerName)}:/`]);
+          expect(dbCp?.args.some((arg) => arg.includes("custom-root-key-value"))).toBe(false);
           expect(child.spawned.some((s) => s.args[0] === "create")).toBe(true);
         }).pipe(Effect.provide(layer));
       },
@@ -4542,9 +4551,9 @@ content_path = "./supabase/templates/custom_notice.html"
       () => {
         const copied = new Map<string, string>();
         const { layer, child } = setup({
-          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+          onSecretCopy: (containerPath, content) => {
             copied.set(containerPath, content);
-          }),
+          },
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -4564,9 +4573,9 @@ content_path = "./supabase/templates/custom_notice.html"
         const { layer, child } = setup({
           configContents:
             'project_id = "demo"\n[api.tls]\nenabled = true\ncert_path = ""\nkey_path = ""\n',
-          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+          onSecretCopy: (containerPath, content) => {
             copied.set(containerPath, content);
-          }),
+          },
         });
         return Effect.gen(function* () {
           yield* legacyStart(flags());
@@ -4587,9 +4596,9 @@ content_path = "./supabase/templates/custom_notice.html"
         const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
-          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+          onSecretCopy: (containerPath, content) => {
             copied.set(containerPath, content);
-          }),
+          },
         });
         mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
         writeFileSync(
@@ -4636,9 +4645,9 @@ content_path = "./supabase/templates/custom_notice.html"
         const copied = new Map<string, string>();
         const { layer, workdir, child } = setup({
           configContents: 'project_id = "demo"\n[api.tls]\nenabled = true\n',
-          route: capturingSecretCopyRoute(defaultRoute(), (containerPath, content) => {
+          onSecretCopy: (containerPath, content) => {
             copied.set(containerPath, content);
-          }),
+          },
         });
         mkdirSync(join(workdir, "supabase", "certs"), { recursive: true });
         writeFileSync(

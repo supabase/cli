@@ -13,11 +13,7 @@
  * comment for why it is hoisted to run once instead of once per container.
  */
 
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { Data, Effect } from "effect";
+import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -680,25 +676,19 @@ function legacyDockerStartContainer(
 }
 
 /**
- * `docker cp <hostPath> <containerId>:<containerPath>` — copies an already-written HOST file
- * straight into the container's own filesystem over the same Docker CLI/Engine API connection as
- * `docker create`/`docker start`, so it works identically against a local or remote
- * (`DOCKER_HOST`/Docker-context) daemon. Unlike a bind mount, which Docker resolves against the
- * DAEMON's own filesystem
- * (https://docs.docker.com/engine/storage/bind-mounts/#considerations-and-constraints), `docker
- * cp` never depends on the source path being visible to anything other than the CLI process
- * issuing it — see {@link legacyCopyStartSecretFilesIntoContainer}'s doc comment for the full
- * rationale (supabase/cli#6022).
+ * Extracts an in-memory tar archive through the same Docker CLI/Engine connection used by create
+ * and start. Stdin requires no daemon-visible bind source or client-visible host path, so the flow
+ * works with local, remote-context, and confined container clients.
  */
-function legacyDockerCopyIntoContainer(
+function legacyDockerCopyArchiveIntoContainer(
   spawner: Spawner,
-  hostPath: string,
+  archive: Uint8Array,
   containerDest: string,
 ): Effect.Effect<void, LegacyContainerCreateError> {
   return Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawnContainerCli(spawner, ["cp", hostPath, containerDest], {
-        stdin: "ignore",
+      const child = yield* spawnContainerCli(spawner, ["cp", "-", containerDest], {
+        stdin: Stream.make(archive),
         stdout: "ignore",
         stderr: "pipe",
       }).pipe(
@@ -740,96 +730,39 @@ function legacyDockerCopyIntoContainer(
 }
 
 /**
- * Writes one {@link LegacyStartContainerSpec.secretFiles} entry's `content` to a SHORT-LIVED
- * local temp file (`fs.mkdtemp`'d under `os.tmpdir()`, one file per entry in its own directory so
- * sibling entries never collide), force-`chmod`'d to mode `0644` after writing (a creation-time
- * `writeFile({ mode })` is only ever the argument to the underlying `open()`/`creat()` syscall,
- * which the kernel ANDs with `~umask` — under a restrictive shell umask like `077`/`027` the file
- * would otherwise land at `0600`, unlike `chmod`, which sets the mode unconditionally), then
- * `docker cp`s it into `containerId` at `secretFile.containerPath`
- * ({@link legacyDockerCopyIntoContainer}).
- *
- * `0644` (world-readable) still matters here even though this is no longer a bind mount: `docker
- * cp`'s underlying tar transfer preserves the source file's permission bits verbatim inside the
- * container, exactly like a Linux/Podman bind mount did, and the container reads this file back as
- * a NON-ROOT in-container user (Kong's image runs as uid 100 `kong`; Postgres's entrypoint drops
- * root and reads `pgsodium_root.key` as the `postgres` user) — a `0600` file would still be
- * `EACCES` there. Go's own equivalent (heredoc'd directly into the container by a root-authored
- * entrypoint script) already lands at world-readable `0644`, matching this exactly.
- *
- * The temp file (and its enclosing directory) is removed immediately after this ONE entry's own
- * `docker cp` call returns — success, failure, or interruption alike, via `Effect.ensuring` (built
- * on `onExit`, so it fires on every exit, not just a `Fail`). Unlike the old host-staged bind
- * mount (which had to persist for the container's whole lifetime so a `restartPolicy:
- * "unless-stopped"` restart could re-attach it — Go's own heredoc'd-into-`Entrypoint`/`Cmd`
- * content survives a restart via dockerd's own persisted container metadata instead), the secret
- * content is already INSIDE the container's own filesystem the moment `docker cp` returns, so
- * nothing depends on this host temp file surviving a moment longer — a dockerd restart re-attaches
- * whatever bind mounts/volumes the container has, but never needs to re-run this copy.
- */
-function legacyCopyStartSecretFileIntoContainer(
-  spawner: Spawner,
-  containerId: string,
-  secretFile: LegacyStartSecretFileSpec,
-): Effect.Effect<void, LegacyContainerCreateError> {
-  return Effect.tryPromise({
-    try: () => mkdtemp(join(tmpdir(), "supabase-start-secret-")),
-    catch: (cause) =>
-      new LegacyContainerCreateError({
-        message: `failed to create docker container: failed to stage container secret file: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-        reason: "filesystem",
-      }),
-  }).pipe(
-    Effect.flatMap((dir) => {
-      const hostPath = join(dir, "secret");
-      return Effect.tryPromise({
-        try: async () => {
-          await writeFile(hostPath, secretFile.content, { mode: 0o644 });
-          // See this function's doc comment — a creation-time `mode` alone isn't enough
-          // under a restrictive umask.
-          await chmod(hostPath, 0o644);
-        },
-        catch: (cause) =>
-          new LegacyContainerCreateError({
-            message: `failed to create docker container: failed to stage container secret file: ${
-              cause instanceof Error ? cause.message : String(cause)
-            }`,
-            reason: "filesystem",
-          }),
-      }).pipe(
-        Effect.flatMap(() =>
-          legacyDockerCopyIntoContainer(
-            spawner,
-            hostPath,
-            `${containerId}:${secretFile.containerPath}`,
-          ),
-        ),
-        Effect.ensuring(Effect.promise(() => rm(dir, { recursive: true, force: true }))),
-      );
-    }),
-  );
-}
-
-/**
- * Delivers every {@link LegacyStartContainerSpec.secretFiles} entry into `containerId` — the
- * container `legacyCreateContainer` just created via `docker create`, but has NOT yet started —
- * via `docker cp` ({@link legacyCopyStartSecretFileIntoContainer}, one call per entry, run
- * concurrently). No Go struct equivalent — see `docker-create-args.ts`'s `secretFiles` doc
- * comment for why this port needs it at all, and this function's own doc comment for why `docker
- * cp` (not a host bind mount) is how it delivers that content.
+ * Streams all secret files as one mode-`0644` archive after create and before start. That mode
+ * keeps the files readable by non-root Kong/Postgres processes and matches Go's result. Once
+ * copied, the files live in the container filesystem, so normal restarts need no host artifact.
+ * This mirrors Go's path-independent Engine API delivery without exposing plaintext through host
+ * files or argv.
  */
 function legacyCopyStartSecretFilesIntoContainer(
   spawner: Spawner,
   containerId: string,
   secretFiles: ReadonlyArray<LegacyStartSecretFileSpec>,
 ): Effect.Effect<void, LegacyContainerCreateError> {
-  return Effect.forEach(
-    secretFiles,
-    (secretFile) => legacyCopyStartSecretFileIntoContainer(spawner, containerId, secretFile),
-    { concurrency: "unbounded" },
-  ).pipe(Effect.asVoid);
+  if (secretFiles.length === 0) return Effect.void;
+
+  const entries = Object.fromEntries(
+    secretFiles.map((secretFile) => [
+      secretFile.containerPath.replace(/^\/+/, ""),
+      secretFile.content,
+    ]),
+  );
+  return Effect.tryPromise({
+    try: () => new Bun.Archive(entries).bytes(),
+    catch: (cause) =>
+      new LegacyContainerCreateError({
+        message: `failed to create docker container: failed to prepare container secret files: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        reason: "configuration",
+      }),
+  }).pipe(
+    Effect.flatMap((archive) =>
+      legacyDockerCopyArchiveIntoContainer(spawner, archive, `${containerId}:/`),
+    ),
+  );
 }
 
 /**
@@ -844,12 +777,12 @@ function legacyCopyStartSecretFilesIntoContainer(
  *    (`legacyApplyBitbucketStartContainerFilter`, already ported).
  * 4. `docker create`.
  * 5. Copy any `secretFiles` into the just-created (not yet started) container
- *    via `docker cp` (`legacyCopyStartSecretFilesIntoContainer`) — a
- *    TS-port-only step with no Go equivalent, see `docker-create-args.ts`'s
- *    `secretFiles` doc comment. Runs strictly between `docker create` and
- *    `docker start`: the container must already exist for `docker cp` to have
- *    a target, and must not be running yet so its entrypoint never races the
- *    copy.
+ *    as one stdin tar archive via `docker cp`
+ *    (`legacyCopyStartSecretFilesIntoContainer`) — a TS-port-only step with no
+ *    Go equivalent, see `docker-create-args.ts`'s `secretFiles` doc comment.
+ *    Runs strictly between `docker create` and `docker start`: the container
+ *    must already exist for `docker cp` to have a target, and must not be
+ *    running yet so its entrypoint never races the copy.
  * 6. `docker start`.
  *
  * Resolves to the created container's id/name on success.

@@ -94,7 +94,6 @@ command.
 | Path                                                                                          | Format | When                                                                                                                                                                                                            |
 | --------------------------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/.branches/_current_branch`                                                | text   | on every start, only if absent — writes `"main"`                                                                                                                                                                |
-| `<tmpdir>/supabase-start-secret-<random>/secret` (short-lived, `docker cp`'d away)            | varies | for Kong (`kong.yml`, TLS cert, TLS key), Postgres (`pgsodium_root.key`), and Supavisor (`pooler_tenant.exs`) — see below                                                                                       |
 | `<workdir>/supabase/.temp/start-secrets/<edgeRuntimeContainerName>/{env,multiline-env,main}/` | varies | Edge Runtime's own JWT/service-role-key/secret env artifacts and bootstrap template — see below                                                                                                                 |
 | `<workdir>/supabase/.temp/pgdelta/catalog-local-migrations-<hash>-<ts>.json`                  | JSON   | best-effort, on a fresh volume, after `MigrateAndSeed`, when pg-delta is enabled (`[experimental.pgdelta] enabled` or `SUPABASE_EXPERIMENTAL_PG_DELTA`); a failure only warns on stderr and never fails `start` |
 
@@ -105,35 +104,32 @@ never written to the host filesystem, since none of them carries secret content.
 Kong's `kong.yml`/TLS cert/TLS key, Postgres's `pgsodium_root.key`, and Supavisor's
 `pooler_tenant.exs` DO carry secret content (a service-role-key-derived bearer/query
 key, TLS private key material, and the DB password respectively). As of
-supabase/cli#6022 these are delivered via `docker cp` straight into the created (not
-yet started) container, never a host bind mount: each one is written to a SHORT-LIVED
-`os.tmpdir()` temp file (mode `0644` — world-readable, since Kong (uid 100) and
-Postgres's post-privilege-drop `postgres` user read them back as non-root, and
-`docker cp`'s tar transfer preserves the host file's mode verbatim), `docker cp`'d into
-the container at the exact path each container's entrypoint/`Cmd` expects, then removed
-immediately — see `container-lifecycle.ts`'s `legacyCopyStartSecretFileIntoContainer`
-doc comment for the full rationale (CWE-214/522: keeping secret content out of the
-`docker create`/`docker cp` argv the host can see via `ps`/`/proc/<pid>/cmdline`; and why
-`docker cp`, unlike a bind mount, works identically against a remote `DOCKER_HOST`/
-Docker-context daemon). Nothing from this delivery persists on host disk beyond the
-brief window between writing the temp file and the matching `docker cp` call returning —
-unlike the bind-mount approach this replaced, these containers' `restartPolicy:
-"unless-stopped"` restarts need nothing re-attached, since the content already lives
-inside the container's own filesystem.
+supabase/cli#6022 these are delivered via `docker cp` straight into the created (not yet
+started) container, never a host bind
+mount or plaintext host file: `legacyCreateContainer` packs all of one container's
+entries into one in-memory tar archive (mode `0644` — world-readable, since Kong (uid 100) and Postgres's post-privilege-drop `postgres` user read them back as non-root) and
+streams it through `docker cp - <id>:/`, extracting every entry at the exact path its
+container's entrypoint/`Cmd` expects — see `container-lifecycle.ts`'s
+`legacyCopyStartSecretFilesIntoContainer` doc comment for the full rationale
+(CWE-214/522: keeping secret content out of the `docker create`/`docker cp` argv the
+host can see via `ps`/`/proc/<pid>/cmdline`; and why `docker cp`, unlike a bind mount,
+works identically against a remote `DOCKER_HOST`/Docker-context daemon). Nothing from
+this delivery persists on host disk — unlike the bind-mount approach this replaced,
+these containers' `restartPolicy: "unless-stopped"` restarts need nothing re-attached,
+since the content already lives inside the container's own filesystem.
 Studio reads/writes SQL snippets under `<workdir>/supabase/snippets/` at its own
 runtime — that's Studio's behavior, not something `start` itself writes.
 
 Edge Runtime's own JWT/service-role-key/configured-secret env file, multiline-env
 script + value files, and bootstrap `index.ts` template (`shared/functions/serve.ts`'s
 `writeDockerEnvFile`/`writeDockerMultilineEnvScript`/`writeServeMainTemplateFile`) are
-staged the same way, under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
+staged on host disk under `<workdir>/supabase/.temp/start-secrets/<edgeRuntime
 containerName>/{env,multiline-env,main}/` (directory mode `0700`, files mode `0600`),
 bind-mounted `:ro,Z` into the container — a deterministic, persistent path rather than
 `os.tmpdir()` (which is frequently tmpfs and gets wiped on reboot) so
 `legacyCleanupStartSecrets` (see the Exit Codes/rollback section below) can reclaim
-them on `stop` or a failed-start rollback, exactly like the Kong/Postgres/Supavisor
-directories above. Each of the three writers removes and recreates its own
-subdirectory fresh on every call (self-healing, same as the directory above), so a
+them on `stop` or a failed-start rollback. Each of the three writers removes and
+recreates its own subdirectory fresh on every call (self-healing), so a
 shrinking env set never leaves stale files behind.
 
 ## API Routes
