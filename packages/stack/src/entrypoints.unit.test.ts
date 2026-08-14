@@ -7,6 +7,7 @@ import * as bunRoot from "./bun.ts";
 import * as bunEffect from "./effect-bun.ts";
 import * as nodeEffect from "./effect-node.ts";
 import * as nodeRoot from "./node.ts";
+import * as managed from "./managed-bun.ts";
 import type { StackHandle } from "./createStack.ts";
 import type { Stack } from "./Stack.ts";
 import * as testing from "./testing.ts";
@@ -40,6 +41,11 @@ describe("@supabase/stack entrypoints", () => {
         bun: "./src/effect-bun.ts",
         default: "./src/effect-node.ts",
       },
+      "./managed": {
+        bun: "./src/managed-bun.ts",
+        default: "./src/managed-node.ts",
+      },
+      "./managed-model": "./src/managed/model.ts",
       "./testing": "./src/testing.ts",
       "./daemon-bun": "./src/daemon-bun.ts",
     });
@@ -53,6 +59,77 @@ describe("@supabase/stack entrypoints", () => {
     expect(Object.keys(bunRoot).sort()).toEqual(["createStack", "prefetch"]);
     expectTypeOf(nodeRoot.createStack).returns.toEqualTypeOf<Promise<StackHandle>>();
     expectTypeOf(bunRoot.createStack).returns.toEqualTypeOf<Promise<StackHandle>>();
+  });
+
+  it("exposes managed policy through its own entrypoint", () => {
+    expect(managed).toHaveProperty("createManagedStackService");
+    expect(managed).toHaveProperty("makeManagedStackService");
+    expect(managed).toHaveProperty("ManagedStackService");
+    expect(managed).toHaveProperty("managedStackLayer");
+    expect(managed).toHaveProperty("bunSqliteManagedStackRepositoryLayer");
+    expect(nodeRoot).not.toHaveProperty("createManagedStackService");
+  });
+
+  it("pins the managed runtime surface so internals cannot leak into it", () => {
+    // The in-memory repository is a test seam and belongs to `./testing` only;
+    // the adapters' shared port and update guards stay module-internal.
+    expect(Object.keys(managed).sort()).toEqual([
+      "DEFAULT_MANAGED_STACK_NAME",
+      "DuplicateManagedIdentityError",
+      "DuplicateManagedPortKeyError",
+      "GIT_CHECKOUT_IDENTITY_VERSION",
+      "GIT_PROJECT_ID_KEY",
+      "GitConfigStore",
+      "InvalidManagedIdentityError",
+      "InvalidManagedOwnerPidError",
+      "InvalidManagedPortError",
+      "InvalidManagedStackNameError",
+      "MANAGED_ERROR_CODES",
+      "MANAGED_ERROR_TAG_BY_CODE",
+      "MANAGED_REGISTRY_SCHEMA_VERSION",
+      "ManagedAbandonedOperationError",
+      "ManagedOperationInProgressError",
+      "ManagedOperationOwnershipError",
+      "ManagedPendingStackUpdateError",
+      "ManagedPortReservationError",
+      "ManagedRunningStackPortChangeError",
+      "ManagedStackInitializationError",
+      "ManagedStackNotFoundError",
+      "ManagedStackNotStoppedError",
+      "ManagedStackPublicationTimeoutError",
+      "ManagedStackRepository",
+      "ManagedStackService",
+      "ORDINARY_WORKSPACE_IDENTITY_VERSION",
+      "UnsafeManagedStackPathError",
+      "UnsupportedGitWorkspaceError",
+      "UnsupportedManagedRegistryVersionError",
+      "assertManagedStackRoot",
+      "assertManagedUuid",
+      "bunSqliteManagedStackRepositoryLayer",
+      "canonicalizeManagedWorkspacePath",
+      "createManagedStackService",
+      "createManagedUuid",
+      "ensureBranchContextId",
+      "ensureGitCheckoutIdentity",
+      "ensureOrdinaryWorkspaceIdentity",
+      "gitBranchContextIdKey",
+      "gitCheckoutIdentityPath",
+      "gitConfigPath",
+      "gitConfigStoreLayer",
+      "gitWorktreeConfigPath",
+      "inspectWorkspace",
+      "isManagedStackError",
+      "makeManagedStackService",
+      "managedRegistryPath",
+      "managedStackLayer",
+      "managedStackPaths",
+      "ordinaryWorkspaceIdentityPath",
+      "readBranchContextId",
+      "readGitCheckoutIdentity",
+      "readOrdinaryWorkspaceIdentity",
+      "requireExplicitManagedStateRoot",
+      "resolveManagedStateRoot",
+    ]);
   });
 
   it("binds consumer Effect layers without exposing implementation tags", () => {
@@ -74,6 +151,7 @@ describe("@supabase/stack entrypoints", () => {
     expect(Object.keys(testing).sort()).toEqual([
       "DaemonServer",
       "UnixHttpClient",
+      "createInMemoryManagedStackRepository",
       "managedNativePlatformByNodeTarget",
       "managedNativePlatformFromNode",
       "managedNativeServiceMatrix",

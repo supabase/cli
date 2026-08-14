@@ -35,6 +35,7 @@ import { LegacyStorageConfigError } from "../../../shared/legacy-storage-credent
 import {
   LegacyStorageCopyBetweenBucketsError,
   LegacyStorageFileError,
+  LegacyStorageMutuallyExclusiveFlagsError,
   LegacyStorageObjectNotFoundError,
   LegacyStorageUnsupportedOperationError,
   LegacyStorageUrlParseError,
@@ -49,10 +50,10 @@ interface CpSummary {
 }
 
 /**
- * `supabase storage cp <src> <dst>` — copy objects between local paths and the
- * Storage service. Port of `apps/cli-go/internal/storage/cp/cp.go`. The scheme of
- * `src`/`dst` selects the operation: `ss://`→local download, local→`ss://`
- * upload, both `ss://` → error, both local → unsupported.
+ * `supabase storage cp <src> <dst>` — copy objects between local paths and
+ * the Storage service. The scheme of `src`/`dst` selects the operation:
+ * `ss://`→local download, local→`ss://` upload, both `ss://` → error, both
+ * local → unsupported.
  */
 export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
   flags: LegacyStorageCpFlags,
@@ -68,28 +69,39 @@ export const legacyStorageCp = Effect.fn("legacy.storage.cp")(function* (
 
   const jobsFlag = Option.getOrElse(flags.jobs, () => 1);
   // A non-uint `--jobs` is already rejected in `cp.command.ts` with pflag's
-  // uint parse error (Go: `UintVarP`, `cmd/storage.go:107`). The remaining clamp is
-  // an intentional deviation from Go for `--jobs 0` only: Go accepts 0 and
-  // reaches NewJobQueue(0) (apps/cli-go/pkg/queue/queue.go), whose unbuffered
-  // channel + zero-run priming loop deadlocks the first Put. We clamp `0 → 1`
-  // to avoid that hang — do not "restore parity" by removing it.
+  // uint parse error. The remaining clamp handles `--jobs 0` specifically: a
+  // zero-sized job queue with an unbuffered channel and a zero-run priming
+  // loop deadlocks the first Put. We clamp `0 → 1` to avoid that hang — do
+  // not remove it.
   const jobs = jobsFlag < 1 ? 1 : jobsFlag;
   const contentTypeFlag = Option.getOrElse(flags.contentType, () => "");
   const cacheControlRaw = Option.getOrElse(flags.cacheControl, () => "max-age=3600");
-  // Go's ParseFileOptions resets an empty Cache-Control to the storage-js default.
+  // An empty Cache-Control resets to the storage-js default.
   const cacheControl = cacheControlRaw.length === 0 ? "max-age=3600" : cacheControlRaw;
 
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && flags.local) {
+      return yield* Effect.fail(
+        new LegacyStorageMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
+    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
 
-    // Parse both URLs with Go's lenient url.Parse (NOT ParseStorageURL), BEFORE
+    // Parse both URLs leniently (NOT the strict storage-URL parser), BEFORE
     // building the client — an invalid url fails without an api-keys lookup.
     const srcUrl = yield* parseCpUrl(flags.src, "src");
     const dstUrl = yield* parseCpUrl(flags.dst, "dst");
@@ -160,7 +172,7 @@ const parseCpUrl = (raw: string, which: "src" | "dst") =>
       }),
   });
 
-/** Resolve a local path against the original cwd (Go's `utils.CurrentDirAbs`). */
+/** Resolve a local path against the original cwd. */
 function absLocal(path: Path.Path, cwd: string, p: string): string {
   return path.isAbsolute(p) ? p : path.join(cwd, p);
 }
@@ -168,9 +180,7 @@ function absLocal(path: Path.Path, cwd: string, p: string): string {
 /** Write a stream chunk fully to the open file handle. */
 const writeChunk = (handle: FileSystem.File, chunk: Uint8Array) => handle.writeAll(chunk);
 
-// ---------------------------------------------------------------------------
 // Download (remote → local)
-// ---------------------------------------------------------------------------
 
 /** Go `api.DownloadObject` (`objects.go:135-142`): O_EXCL create, then stream. */
 const downloadSingle = (
@@ -294,9 +304,7 @@ const makeDirIfNotExist = (fs: FileSystem.FileSystem, dir: string) =>
     ),
   );
 
-// ---------------------------------------------------------------------------
 // Upload (local → remote)
-// ---------------------------------------------------------------------------
 
 interface UploadCtx {
   readonly gateway: LegacyStorageGateway;
@@ -441,10 +449,9 @@ interface UploadFile {
 }
 
 /**
- * Lexically-ordered regular files under `root`, mirroring `afero.Walk` +
- * `info.Mode().IsRegular()` (`cp.go:124-130`): directories are descended,
- * symlinks and other non-regular files are skipped. A single-file root yields one
- * entry with `relPath === "."` (Go's `filepath.Rel(localPath, localPath)`).
+ * Lexically-ordered regular files under `root`: directories are descended,
+ * symlinks and other non-regular files are skipped. A single-file root
+ * yields one entry with `relPath === "."`.
  */
 const collectUploadFiles = (
   fs: FileSystem.FileSystem,

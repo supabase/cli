@@ -34,19 +34,19 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 
 ## Exit Codes
 
-| Code | Condition                                                                                                                                                                                                                                                                                                                                |
-| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `0`  | success - Postgres config updated                                                                                                                                                                                                                                                                                                        |
-| `1`  | malformed CSV in a `--config` value — fails during flag parsing, before the `--experimental` gate, the handler, and telemetry, with pflag's exact diagnostic on stderr (e.g. `invalid argument "a\"b" for "--config" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
-| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                                                                                                                                          |
-| `1`  | malformed `--config` (`LegacyPostgresConfigInvalidConfigValueError`)                                                                                                                                                                                                                                                                     |
-| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                                                                                                                                                                                                                  |
-| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                     |
-| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                    |
-| `1`  | PUT non-2xx (`LegacyPostgresConfigUpdateUnexpectedStatusError`)                                                                                                                                                                                                                                                                          |
-| `1`  | PUT transport failure (`LegacyPostgresConfigUpdateNetworkError`)                                                                                                                                                                                                                                                                         |
-| `1`  | request serialization failure (`LegacyPostgresConfigUpdateSerializeError`)                                                                                                                                                                                                                                                               |
-| `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigUpdateUnmarshalError`)                                                                                                                                                                                                                             |
+| Code | Condition                                                                                                                                                                                                                                                                                                                                 |
+| ---- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `0`  | success - Postgres config updated                                                                                                                                                                                                                                                                                                         |
+| `1`  | malformed CSV in a `--config` value — fails during flag parsing, before the `--experimental` gate, the handler, and telemetry, with the exact diagnostic text on stderr (e.g. `invalid argument "a\"b" for "--config" flag: parse error on line 1, column 2: bare " in non-quoted-field`; a blank-only value fails with `EOF`) — CLI-2005 |
+| `1`  | `--experimental` not passed and `SUPABASE_EXPERIMENTAL` unset (`LegacyExperimentalRequiredError`) - checked before ref resolution/API/telemetry                                                                                                                                                                                           |
+| `1`  | malformed `--config` (`LegacyPostgresConfigInvalidConfigValueError`)                                                                                                                                                                                                                                                                      |
+| `1`  | project ref unresolved (`LegacyProjectNotLinkedError` / `LegacyInvalidProjectRefError`)                                                                                                                                                                                                                                                   |
+| `1`  | initial GET non-2xx (`LegacyPostgresConfigGetUnexpectedStatusError`)                                                                                                                                                                                                                                                                      |
+| `1`  | initial GET transport failure (`LegacyPostgresConfigGetNetworkError`)                                                                                                                                                                                                                                                                     |
+| `1`  | PUT non-2xx (`LegacyPostgresConfigUpdateUnexpectedStatusError`)                                                                                                                                                                                                                                                                           |
+| `1`  | PUT transport failure (`LegacyPostgresConfigUpdateNetworkError`)                                                                                                                                                                                                                                                                          |
+| `1`  | request serialization failure (`LegacyPostgresConfigUpdateSerializeError`)                                                                                                                                                                                                                                                                |
+| `1`  | invalid JSON response (`LegacyPostgresConfigGetUnmarshalError` / `LegacyPostgresConfigUpdateUnmarshalError`)                                                                                                                                                                                                                              |
 
 ## Telemetry Events Fired
 
@@ -58,27 +58,27 @@ The initial `GET` is skipped when `--replace-existing-overrides` is set. Otherwi
 
 Matches `get` on success: stderr headings plus the Glamour-rendered table.
 
-### `--output-format text` (default) - Go CLI compatible
+### `--output-format text` (default)
 
 Renders the updated config map as a Glamour ASCII table.
 
-### Go `--output pretty`
+### `--output pretty`
 
 Identical to text mode.
 
-### Go `--output json`
+### `--output json`
 
-Go-compatible indented JSON of the updated config object.
+Indented JSON of the updated config object.
 
-### Go `--output yaml`
+### `--output yaml`
 
 YAML representation of the updated config object.
 
-### Go `--output toml`
+### `--output toml`
 
 TOML representation of the updated config object.
 
-### Go `--output env`
+### `--output env`
 
 Flat `KEY="value"` lines for the updated config object.
 
@@ -96,16 +96,15 @@ One `result` event on success.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided.
-- Flags: `--config` (repeatable, parsed with the same `strings.Split(value, "=")` rule as Go), `--replace-existing-overrides`, `--no-restart`.
+- The `--output` flag wins over `--output-format` when both are provided.
+- Flags: `--config` (repeatable, parsed by splitting on the first `=`), `--replace-existing-overrides`, `--no-restart`.
 - Requires `--project-ref` or a linked project (`.supabase/config.json`).
 - Integer-like values are coerced to integers, boolean-like values are coerced to booleans, and everything else stays stringly typed before the final JSON body is serialized.
-- Keys ending in `_timeout` are always stringified before the `PUT`, matching the Go timeout-normalization branch.
+- Keys ending in `_timeout` are always stringified before the `PUT`.
 - `--no-restart` injects `restart_database = false` into the final request body.
 - `linked-project.json` is written after the project ref resolves, regardless of whether the fetch or update succeeds.
 - `telemetry.json` is written on every invocation, including failures, but only once the `--experimental` gate is open.
-- `postgres-config` is an experimental command (Go `root.go:63`): `update` requires `--experimental`
-  (or `SUPABASE_EXPERIMENTAL`), matching Go's root-level `PersistentPreRunE` gate (`root.go:91-96`),
-  which runs before the `IsManagementAPI` login check (`root.go:105-109`). A closed gate exits 1
+- `postgres-config` is an experimental command: `update` requires `--experimental`
+  (or `SUPABASE_EXPERIMENTAL`), checked before the login check. A closed gate exits 1
   before project-ref resolution, the API calls, the `linked-project.json` write, the
   `telemetry.json` write, and the `cli_command_executed` event.

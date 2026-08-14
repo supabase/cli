@@ -61,7 +61,8 @@ export function legacyIsUnhealthyStartError(
 
 /**
  * Port of Go's rollback-on-failure step in `start.Run`
- * (`apps/cli-go/internal/start/start.go:76-81`):
+ * (`apps/cli-go/internal/start/start.go:76-81`, deleted in CLI-1966; last
+ * present at commit a253ccba2):
  *
  * ```go
  * if err := utils.DockerRemoveAll(context.Background(), os.Stderr, utils.Config.ProjectId); err != nil {

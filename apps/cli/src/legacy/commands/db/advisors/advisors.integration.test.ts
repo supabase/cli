@@ -143,10 +143,15 @@ function mockProjectRef() {
       }),
     resolveForLink: () => Effect.succeed(LEGACY_VALID_REF),
     resolveOptional: () => Effect.succeed(Option.some(LEGACY_VALID_REF)),
-    loadProjectRef: () =>
+    // Gives an explicit `--project-ref` flag top precedence, same as Go's
+    // `flags.LoadProjectRef` — mirrors the real resolver so a test can prove the
+    // flag (not just the hardcoded fallback) drives the linked ref.
+    loadProjectRef: (flagValue: Option.Option<string>) =>
       Effect.sync(() => {
         calls.push("loadProjectRef");
-        return LEGACY_VALID_REF;
+        return Option.isSome(flagValue) && flagValue.value.length > 0
+          ? flagValue.value
+          : LEGACY_VALID_REF;
       }),
     promptProjectRef: () => Effect.succeed(LEGACY_VALID_REF),
   });
@@ -159,8 +164,8 @@ function mockProjectRef() {
 }
 
 /** Validating credentials mock — the advisors `--linked` token gate calls
- *  `LegacyCredentials.getAccessToken` (Go's `LoadAccessTokenFS`), which fails
- *  hard on a malformed token and returns None when no token is present. */
+ *  `LegacyCredentials.getAccessToken`, which fails hard on a malformed token
+ *  and returns None when no token is present. */
 function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
   const state = opts.token ?? "valid";
   const getAccessToken =
@@ -184,7 +189,7 @@ function mockCredentials(opts: { token?: "valid" | "none" | "invalid" } = {}) {
   return { layer };
 }
 
-/** Tracks the raw-HTTP advisor path running Go's identityTransport stitch. */
+/** Tracks the raw-HTTP advisor path running the identity stitch. */
 function mockIdentityStitch() {
   let calls = 0;
   const layer = Layer.succeed(LegacyIdentityStitch, {
@@ -306,6 +311,7 @@ const flags = (over: Partial<LegacyDbAdvisorsFlags> = {}): LegacyDbAdvisorsFlags
   dbUrl: over.dbUrl ?? Option.none<string>(),
   linked: over.linked ?? false,
   local: over.local ?? false,
+  projectRef: over.projectRef ?? Option.none<string>(),
   type: over.type ?? Option.none<"all" | "security" | "performance">(),
   level: over.level ?? Option.none<"info" | "warn" | "error">(),
   failOn: over.failOn ?? Option.none<"none" | "info" | "warn" | "error">(),
@@ -388,8 +394,8 @@ describe("legacy db advisors — local", () => {
   });
 
   it.live("echoes the raw --fail-on value in the message (warn, not warning)", () => {
-    // advisors uses the raw flag value (advisors.go:257), unlike lint which uses
-    // the canonical level name — guard that asymmetry.
+    // advisors uses the raw flag value, unlike lint which uses the canonical
+    // level name — guard that asymmetry.
     const { layer } = setup({ rows: [lintRow({ level: "WARN" })] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -455,11 +461,11 @@ describe("legacy db advisors — local", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // ── Changed-based routing parity (Go pflag.Changed semantics) ────────────
+  // ── Changed-based routing (explicitly-set flag, not its value) ───────────
 
   it.live("--linked=false routes to the linked branch (Changed, not value)", () => {
-    // cobra's Changed fires when the flag appears on the command line regardless
-    // of its value: `--linked=false` is still "explicitly set" → linked branch.
+    // "Changed" fires when the flag appears on the command line regardless of
+    // its value: `--linked=false` is still "explicitly set" → linked branch.
     const { layer, projectRef, cache } = setup({
       args: ["--linked=false"],
       securityLints: [],
@@ -541,17 +547,66 @@ describe("legacy db advisors — linked", () => {
       expect(urls.some((u) => u.includes("/advisors/performance"))).toBe(true);
       expect(out.stdoutText).toContain("rls_disabled_in_public");
       expect(out.stdoutText).toContain("unindexed_foreign_keys");
-      // Linked runs write the linked-project cache (Go PersistentPostRun).
+      // Linked runs write the linked-project cache.
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "fetches advisors for the project given via --project-ref, overriding the workdir's own ref",
+    () => {
+      // The fake resolver's own fallback (LEGACY_VALID_REF) represents whatever
+      // the workdir would resolve to absent the flag (e.g. .temp/project-ref) —
+      // the flag must win over it and drive both the API path and the cache.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, api, cache } = setup({
+        securityLints: [securityLint],
+        args: ["--linked"],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbAdvisors(
+          flags({ type: Option.some("security"), projectRef: Option.some(FLAG_REF) }),
+        );
+        // The request path itself must be scoped to the FLAG ref, not merely
+        // any /advisors/security hit — proving the flag (not the fallback)
+        // drove the API call the same way it drove the cache below.
+        expect(
+          api.requests.some((r) => r.url.includes(`/v1/projects/${FLAG_REF}/advisors/security`)),
+        ).toBe(true);
+        expect(cache.cached).toBe(true);
+        expect(cache.cachedRef).toBe(FLAG_REF);
+        expect(cache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("rejects --project-ref on the default local target", () => {
+    // advisors defaults to the local path when --linked isn't set — the guard
+    // must fire from the flag alone, with no explicit --local/--db-url needed.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, connection, api, cache } = setup({ rows: [] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(
+        legacyDbAdvisors(flags({ projectRef: Option.some(FLAG_REF) })),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        );
+      }
+      expect(connection.execs).toEqual([]);
+      expect(api.requests).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live(
     "resolves the linked DB config before fetching advisors (Go root PersistentPreRunE)",
     () => {
-      // Go's root PersistentPreRunE runs ParseDatabaseConfig for db advisors too,
-      // resolving (and on failure aborting) the linked DB config before RunLinked
-      // hits the Management API — even though RunLinked discards the connection.
+      // The linked DB config is resolved (and on failure aborts) before the
+      // linked lint-gathering path hits the Management API — even though that
+      // path discards the connection.
       const { layer, resolver, api } = setup({
         securityLints: [securityLint],
         args: ["--linked"],
@@ -566,10 +621,11 @@ describe("legacy db advisors — linked", () => {
   );
 
   it.live("fails on the linked DB-config error before any advisor API call", () => {
-    // Unreachable direct host + no pooler: Go's ParseDatabaseConfig fails with the
-    // IPv6 error before RunLinked, so the advisors API is never reached. But the
-    // ref was already loaded, and Go's Execute runs ensureProjectGroupsCached on
-    // the error path — so the linked-project cache is still written.
+    // Unreachable direct host + no pooler: the DB-config resolve fails with the
+    // IPv6 error before the linked lint-gathering path runs, so the advisors
+    // API is never reached. But the ref was already loaded and cached
+    // unconditionally on the error path — so the linked-project cache is
+    // still written.
     const { layer, api, cache } = setup({ ipv6Error: true, args: ["--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags()));
@@ -584,9 +640,9 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("runs the identity stitch on each advisor response (Go identityTransport)", () => {
-    // Go wraps every Management API response in identityTransport → OnGotrueID →
-    // StitchLogin. The raw-HTTP advisor path must run the same stitch (once per
-    // response) rather than silently skipping session-identity stitching.
+    // Every Management API response is wrapped in identity stitching. The
+    // raw-HTTP advisor path must run the same stitch (once per response)
+    // rather than silently skipping session-identity stitching.
     const { layer, identityStitch } = setup({
       securityLints: [securityLint],
       performanceLints: [performanceLint],
@@ -599,9 +655,8 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("resolves the linked ref via the non-prompting load (Go LoadProjectRef)", () => {
-    // Go's advisors PreRunE uses `flags.LoadProjectRef`, not the prompting
-    // `ParseProjectRef`, so `--linked` must take the fail-fast/non-interactive
-    // path rather than `resolve` (which opens a project picker on a TTY).
+    // `--linked` must take the fail-fast/non-interactive path (`loadProjectRef`)
+    // rather than `resolve` (which opens a project picker on a TTY).
     const { layer, projectRef } = setup({
       securityLints: [securityLint],
       args: ["--linked"],
@@ -670,8 +725,8 @@ describe("legacy db advisors — linked", () => {
   });
 
   it.live("fails on a 200 with a non-JSON content type (Go requires json header)", () => {
-    // Go's generated parser only decodes when Content-Type contains "json";
-    // otherwise JSON200 is nil and the fetcher returns the status-200 error.
+    // The body is only decoded when Content-Type contains "json"; otherwise
+    // the fetcher returns the status-200 error.
     const { layer } = setup({ securityNonJson: true, args: ["--linked"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyDbAdvisors(flags({ type: Option.some("security") })));

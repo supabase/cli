@@ -192,7 +192,7 @@ describe("legacy vanity-subdomains get", () => {
     return Effect.gen(function* () {
       yield* legacyVanitySubdomainsGet({ projectRef: Option.none() });
       expect(out.stdoutText).toContain("status: custom-domain-used");
-      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name (CLI-1975).
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });
@@ -506,7 +506,7 @@ describe("legacy vanity-subdomains activate", () => {
         projectRef: Option.none(),
         desiredSubdomain: Option.some("example.com"),
       });
-      // yaml.v3 lowercases the whole Go field name (CLI-1975).
+      // yaml.v3 lowercases the whole field name (CLI-1975).
       expect(out.stdoutText).toContain("customdomain: example.com");
     }).pipe(Effect.provide(layer));
   });

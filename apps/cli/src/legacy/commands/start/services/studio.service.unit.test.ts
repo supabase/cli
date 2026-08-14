@@ -6,11 +6,6 @@ import {
   type LegacyBuildStudioEnvInput,
 } from "./studio.service.ts";
 
-// Mirrors the fixture Go's `TestBuildStudioEnv` builds via `config.NewConfig()`
-// plus its explicit field overrides (formerly `apps/cli-go/internal/start/start_test.go:522-564`,
-// deleted along with the rest of `internal/start` as unreachable in CLI-1966;
-// last present at commit a253ccba25c21356ccd33044c4474aecb77d1ae4),
-// translated into this pure function's explicit input shape.
 const baseEnvInput: LegacyBuildStudioEnvInput = {
   dbPassword: "postgres",
   workdir: "/project",
@@ -39,7 +34,7 @@ describe("legacyBuildStudioEnv", () => {
   test("mirrors Go's TestBuildStudioEnv fixture", () => {
     const env = legacyBuildStudioEnv(baseEnvInput);
 
-    // The exact 8 assertions `TestBuildStudioEnv` makes.
+    // The exact 8 assertions this fixture makes.
     expect(env["SUPABASE_ANON_KEY"]).toBe("anon-key");
     expect(env["SUPABASE_SERVICE_KEY"]).toBe("service-role-key");
     expect(env["SUPABASE_PUBLISHABLE_KEY"]).toBe("sb_publishable_test");
@@ -49,8 +44,8 @@ describe("legacyBuildStudioEnv", () => {
     expect(env["SUPABASE_URL"]).toBe("http://test-kong:8000");
     expect(env["STUDIO_PG_META_URL"]).toBe("http://test-pgmeta:8080");
 
-    // Every other key `buildStudioEnv` emits (`start.go:1319-1347`), not
-    // asserted by the Go test but covered here for full parity.
+    // Every other key `legacyBuildStudioEnv` emits, covered here for full
+    // parity.
     expect(env).toEqual({
       CURRENT_CLI_VERSION: "test-version",
       STUDIO_PG_META_URL: "http://test-pgmeta:8080",
@@ -80,8 +75,8 @@ describe("legacyBuildStudioEnv", () => {
   });
 
   test("LOGFLARE_PRIVATE_ACCESS_TOKEN is always Go's hardcoded 'api-key', regardless of input", () => {
-    // `analytics.api_key` isn't a `config.toml`-configurable field in Go
-    // (`toml:"-"`) — there is no input field for it at all.
+    // `analytics.api_key` isn't a `config.toml`-configurable field —
+    // there is no input field for it at all.
     const env = legacyBuildStudioEnv(baseEnvInput);
     expect(env["LOGFLARE_PRIVATE_ACCESS_TOKEN"]).toBe("api-key");
   });
@@ -145,9 +140,10 @@ describe("legacyBuildStudioContainerSpec", () => {
       retries: 3,
     });
 
-    // pg-meta URL wiring: a distinct `pgMetaContainerName` (Go's `utils.PgmetaId`,
-    // resolved by the caller via `legacyServiceContainerName("pg_meta", projectId)`)
-    // flows through to STUDIO_PG_META_URL exactly like it does in `legacyBuildStudioEnv`.
+    // pg-meta URL wiring: a distinct `pgMetaContainerName` (resolved by the
+    // caller via `legacyServiceContainerName("pg_meta", projectId)`) flows
+    // through to STUDIO_PG_META_URL exactly like it does in
+    // `legacyBuildStudioEnv`.
     expect(spec.env["STUDIO_PG_META_URL"]).toBe("http://test-pgmeta:8080");
   });
 

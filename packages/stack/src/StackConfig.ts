@@ -27,6 +27,18 @@ export const ReadyOptionsSchema = Schema.Union([
 
 export const inheritReadyOptions: ReadyOptions = { mode: "inherit" };
 
+/**
+ * What a Docker container name segment tolerates: this is used in the
+ * namespaced `supabase-<service>-id-<instanceId>` form, so anything Docker
+ * itself rejects there (path separators, colons, whitespace, …) must be
+ * rejected here first. A managed caller's stack UUID always matches; a
+ * hand-supplied `instanceId` must be shaped the same way.
+ */
+export const INSTANCE_ID_PATTERN = /^[a-z0-9][a-z0-9-]{0,63}$/i;
+
+/** Validates {@link StackConfig.instanceId} against {@link INSTANCE_ID_PATTERN}. */
+export const InstanceIdSchema = Schema.String.check(Schema.isPattern(INSTANCE_ID_PATTERN));
+
 /** Default readiness deadline; lazy activation expands it for longer transitive startup budgets. */
 export const DEFAULT_STACK_READINESS_POLICY: ReadinessPolicy = {
   mode: "finite",
@@ -146,6 +158,17 @@ export interface PoolerConfig {
 }
 
 export interface StackConfig {
+  /**
+   * An opaque identity for this stack, namespaced in the names and preserved
+   * verbatim in the labels of the Docker resources it owns so two stacks never
+   * collide on them — which is exactly why it must itself be a Docker-name-safe
+   * token: see {@link INSTANCE_ID_PATTERN}.
+   *
+   * The runtime never interprets its structure beyond that — a managed caller
+   * passes its stack id (a UUID, which already matches), and a caller that
+   * passes nothing keeps the port-derived names it always had.
+   */
+  readonly instanceId?: string;
   readonly cacheRoot?: string;
   readonly stackRoot?: string;
   readonly runtimeRoot?: string;
@@ -274,6 +297,8 @@ export interface ResolvedPoolerConfig {
 }
 
 export interface ResolvedStackConfig {
+  /** The opaque identity this stack's Docker resources are keyed by, if any. */
+  readonly instanceId?: string;
   readonly cacheRoot: string;
   readonly stackRoot: string;
   readonly runtimeRoot: string;

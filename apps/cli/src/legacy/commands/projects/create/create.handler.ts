@@ -39,8 +39,8 @@ export const legacyProjectsCreate = Effect.fn("legacy.projects.create")(function
     const releaseChannel = Option.getOrUndefined(flags.releaseChannel);
     const postgresEngine = Option.getOrUndefined(flags.postgresEngine);
 
-    // Non-interactive: Go's PreRunE marks `--org-id`, `--db-password`,
-    // `--region` required and the project name positional `ExactArgs(1)`.
+    // Non-interactive: `--org-id`, `--db-password`, `--region` are required,
+    // plus exactly 1 positional arg for the project name.
     if (!effectiveInteractive) {
       const missing: Array<string> = [];
       if (name.length === 0) missing.push("project name");

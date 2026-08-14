@@ -1,17 +1,17 @@
 # `supabase branches disable`
 
-Hidden subcommand (`Hidden: true` in Go). Operates on the entire linked project rather than a single branch.
+Hidden subcommand. Operates on the entire linked project rather than a single branch.
 
 ## Files Read
 
-Same auth and project-ref resolution chain as every Management-API legacy command.
+Same auth fallback chain as every Management-API legacy command. Project-ref discovery (for the PARENT) is PARENT-scoped (CLI-2167 follow-up, TS-only): env `SUPABASE_PROJECT_ID` → `<workdir>/supabase/.temp/linked-project.json`'s `ref` → `<workdir>/supabase/.temp/project-ref`, first ref-shaped candidate wins — see `branches list/SIDE_EFFECTS.md` for the full chain and rationale.
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -21,7 +21,7 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Environment Variables
 
-`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list`.
+`SUPABASE_ACCESS_TOKEN`, `SUPABASE_PROFILE`, `SUPABASE_PROJECT_ID`, `SUPABASE_WORKDIR` — same semantics as `branches list` (including the CLI-2167 PARENT-scoped resolution chain).
 
 ## Exit Codes
 
@@ -39,9 +39,9 @@ Same auth and project-ref resolution chain as every Management-API legacy comman
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-`Disabled preview branching for project: <ref>` written to **stdout** (Go `fmt.Println`).
+`Disabled preview branching for project: <ref>` written to **stdout**.
 
 ### `--output-format json` / `stream-json`
 

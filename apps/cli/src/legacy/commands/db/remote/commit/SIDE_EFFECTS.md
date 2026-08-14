@@ -35,7 +35,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints `Schema written to <path>` to stderr on success (from the shared
 `pull.Run`, `internal/db/pull/pull.go:72`); no stdout confirmation message is
@@ -52,6 +52,6 @@ Not applicable.
 
 ## Notes
 
-- Deprecated in the Go CLI: use `db pull` instead.
+- Deprecated: use `db pull` instead.
 - `--schema` / `-s` restricts the commit to specific schemas.
 - `--db-url` and `--linked` (default true) are mutually exclusive.

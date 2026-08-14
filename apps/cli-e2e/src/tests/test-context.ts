@@ -3,36 +3,10 @@ import {
   createHarness,
   exec,
   makeTempDir,
-  runParity,
   type CLIResult,
   type TempDir,
 } from "@supabase/cli-test-helpers";
-import { ACCESS_TOKEN, isRecording, TARGET } from "./env.ts";
-
-type ParityNormalizeOptions = NonNullable<Parameters<typeof runParity>[0]["normalize"]>;
-type ParityChannelNormalizeOptions = Extract<
-  ParityNormalizeOptions,
-  { stdout?: unknown; stderr?: unknown }
->;
-
-function isChannelNormalizeOptions(
-  options: ParityNormalizeOptions | undefined,
-): options is ParityChannelNormalizeOptions {
-  return options !== undefined && ("stdout" in options || "stderr" in options);
-}
-
-function withNormalizeVersions(
-  normalize: ParityNormalizeOptions | undefined,
-  versions: boolean | undefined,
-): ParityNormalizeOptions | undefined {
-  if (versions === undefined) return normalize;
-  if (normalize === undefined) return { versions };
-  if (!isChannelNormalizeOptions(normalize)) return { ...normalize, versions };
-  return {
-    stdout: { ...normalize.stdout, versions },
-    stderr: { ...normalize.stderr, versions },
-  };
-}
+import { ACCESS_TOKEN, TARGET } from "./env.ts";
 
 function slugify(name: string): string {
   return name
@@ -146,65 +120,3 @@ export const testBehaviour = test.extend<BehaviourFixtures>({
     await use(inject("pgMockPort") as number);
   },
 });
-
-const FAILURE_PRESETS = {
-  NON_AUTH: { status: 401, body: { message: "Invalid token" } },
-  RATE_LIMIT: { status: 429, body: { message: "Too Many Requests" } },
-} as const;
-
-type FailureType = keyof typeof FAILURE_PRESETS;
-
-/** Register a parity test — always skipped in record mode.
- *
- *  Runs the command against both Go and ts-legacy CLIs and asserts parity
- *  across stdout, stderr, exit code, API request log, and filesystem changes.
- *
- *  `failureType` injects a named error preset (e.g. 401, 429) before running,
- *  so tests don't need to know the underlying HTTP details.
- *
- *  `workspaceSetup` is called on each temp dir before running either binary —
- *  use it to write config files (e.g. `.supabase/.temp/project-ref`). */
-export function testParity(
-  cmd: string[],
-  opts?: {
-    failureType?: FailureType;
-    workspaceSetup?: (dir: string) => void;
-    sortStdoutRows?: boolean;
-    normalizeVersions?: boolean;
-    normalize?: ParityNormalizeOptions;
-  },
-): void {
-  const label = opts?.failureType
-    ? `parity: ${cmd.join(" ")} [${opts.failureType}]`
-    : `parity: ${cmd.join(" ")}`;
-
-  test.skipIf(isRecording)(label, async () => {
-    const serverUrl = inject("replayServerUrl");
-
-    if (opts?.failureType) {
-      await fetch(`${serverUrl}/_ctrl/error-all`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(FAILURE_PRESETS[opts.failureType]),
-      });
-    }
-
-    try {
-      const normalize = withNormalizeVersions(opts?.normalize, opts?.normalizeVersions);
-      await runParity(
-        {
-          apiUrl: serverUrl,
-          accessToken: ACCESS_TOKEN,
-          workspaceSetup: opts?.workspaceSetup,
-          sortStdoutRows: opts?.sortStdoutRows,
-          normalize,
-        },
-        cmd,
-      );
-    } finally {
-      if (opts?.failureType) {
-        await fetch(`${serverUrl}/_ctrl/overrides`, { method: "DELETE" });
-      }
-    }
-  });
-}

@@ -9,7 +9,7 @@ import {
 } from "./legacy-local-config-values.ts";
 
 /**
- * Port of Go's `status.CustomName` + `toValues()` (`internal/status/status.go:29-97`).
+ * Port of `status.CustomName` + `toValues()`.
  * Each field's Go `env:"..."` tag carries two things: the dotted key
  * `--override-name <key>=<name>` matches against (`fieldKey` below), and the
  * default output env-var name (`defaultName`). `deprecated` fields (`inbucket`,
@@ -177,7 +177,7 @@ export function legacyStatusContainerIds(projectId: string): LegacyStatusContain
 }
 
 /**
- * Port of Go's `utils.ShortContainerImageName` (`internal/utils/misc.go:33-39,75`):
+ * Port of `utils.ShortContainerImageName`:
  * extracts the repo name between the (first) `/` and the (last) `:`, falling back to
  * the full string when the image ref doesn't match (no slash, or no tag).
  */
@@ -186,8 +186,8 @@ export function legacyShortContainerImageName(imageName: string): string {
   return match?.[1] ?? imageName;
 }
 
-// Default image short names Go's `--exclude` also matches against
-// (`internal/status/status.go:55-61`), one per gated service. Sourced from the same
+// Default image short names `--exclude` also matches against,
+// one per gated service. Sourced from the same
 // embedded Dockerfile manifest Go parses (`dockerfileServiceImage`), so a version bump
 // there is picked up automatically. Pinned-version substitution
 // (`legacy-db-image.ts`'s `replaceImageTag`) only ever rewrites the portion after the
@@ -213,8 +213,8 @@ export interface LegacyStatusValuesResult {
  * Everything `toValues()` needs that does NOT depend on `--override-name` —
  * i.e. every field except the output KEY remapping. Resolving this once and
  * reusing it for both the env/json/toml/yaml values (real overrides) and the
- * pretty-table values (Go always recomputes with an empty override map,
- * `status.go:236-243`) avoids re-reading `auth.signing_keys_path` and
+ * pretty-table values (always recomputed with an empty override map)
+ * avoids re-reading `auth.signing_keys_path` and
  * re-signing the anon/service_role JWTs a second time per invocation.
  */
 export interface LegacyStatusState {
@@ -234,10 +234,9 @@ export interface LegacyStatusState {
  * The config-load/`Validate`-equivalent half of {@link LegacyStatusState} —
  * everything that can THROW, and none of it depends on `excluded`/
  * `containerIds`. Split out so `status.handler.ts` can resolve and validate
- * this before any Docker call, matching Go's `flags.LoadConfig` (config load
- * + `Validate`, `internal/utils/flags/config_path.go:12` ->
- * `pkg/config/config.go:882`) running entirely before `assertContainerHealthy`/
- * container listing (`internal/status/status.go:101-116`) — a bad
+ * this before any Docker call, matching `flags.LoadConfig` (config load
+ * + `Validate`) running entirely before `assertContainerHealthy`/
+ * container listing — a bad
  * `auth.jwt_secret` or malformed `SUPABASE_*_PORT`/`SUPABASE_*_ENABLED`
  * override must fail here, not be masked by a Docker/DB error when the local
  * stack happens to be unavailable.
@@ -255,8 +254,8 @@ export interface LegacyStatusLocalState {
 }
 
 /**
- * Port of the throwing, non-Docker-dependent half of Go's
- * `(*CustomName).toValues(exclude...)` (`internal/status/status.go:50-97`):
+ * Port of the throwing, non-Docker-dependent half of
+ * `(*CustomName).toValues(exclude...)`:
  * resolves local config values (URLs, keys — can throw, see
  * {@link legacyResolveLocalConfigValues}) and the per-service `.enabled` gates,
  * with NO reference to `excluded`/`containerIds` — see {@link legacyGateStatusState}
@@ -265,12 +264,11 @@ export interface LegacyStatusLocalState {
  * don't need to run validation before Docker calls).
  *
  * Each `.enabled` gate is read through {@link legacyEnvOverrideBool}, not the
- * raw decoded `config.<section>.enabled`, because Go's `status.toValues()`
- * (`status.go:55-61`) reads `utils.Config.*.Enabled` — a package-level struct
- * Viper has already applied any `SUPABASE_<SECTION>_ENABLED` env/dotenv
- * override to (`SetEnvPrefix("SUPABASE")` + `AutomaticEnv()` +
- * `ExperimentalBindStruct()`, `pkg/config/config.go:580-586`) — generically,
- * not just for `auth.enabled`. Skipping this would mean a stack Go started
+ * raw decoded `config.<section>.enabled`, because `status.toValues()`
+ * reads `utils.Config.*.Enabled` — a package-level struct
+ * that already has any `SUPABASE_<SECTION>_ENABLED` env/dotenv
+ * override applied — generically,
+ * not just for `auth.enabled`. Skipping this would mean a stack started
  * with e.g. `SUPABASE_API_ENABLED=true` over a `false` TOML value has Kong/
  * PostgREST running while native `status` omits them entirely.
  *
@@ -298,9 +296,9 @@ export function legacyResolveStatusLocalState(
    * {@link legacyResolveLocalConfigValues} again — a second call re-mints a
    * time-dependent asymmetric JWT (`auth.signing_keys_path` +
    * {@link legacyGenerateAsymmetricGoJwt}'s `exp` claim) with a DIFFERENT
-   * signature than the one baked into the already-running containers. Go
-   * never has this problem: `c.Auth.generateAPIKeys()` runs exactly once per
-   * process (`Config.Validate()`, `pkg/config/config.go:1155`), mutating the
+   * signature than the one baked into the already-running containers. The
+   * reference implementation never has this problem: `c.Auth.generateAPIKeys()` runs exactly once per
+   * process (`Config.Validate()`), mutating the
    * config in place, so every later read — including its own status print —
    * sees the same value.
    */
@@ -367,7 +365,7 @@ export function legacyResolveStatusLocalState(
 }
 
 /**
- * The Docker-dependent, non-throwing half of Go's `toValues()`: applies
+ * The Docker-dependent, non-throwing half of `toValues()`: applies
  * `excluded` (matching each gated service by its container id
  * (`legacyStatusContainerIds`) OR its default Docker image short name
  * (`legacyShortContainerImageName` above) — the 6 relevant Go config fields
@@ -431,7 +429,7 @@ export function legacyStatusValuesFromState(
   const { inbucketEnabled, storageEnabled, functionsEnabled, storageS3ProtocolEnabled } = state;
   const names = resolveOutputNames(overrides);
 
-  // Go always sets db.url unconditionally, before any gating (status.go:52).
+  // `db.url` is always set unconditionally, before any gating.
   const values: Record<string, string> = {
     [names.dbUrl]: local.dbUrl,
   };

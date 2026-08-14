@@ -10,7 +10,7 @@ import type { LegacyEdgeRuntimeScriptError } from "./legacy-edge-runtime-script.
  * stderr contains `"main worker has been destroyed"`. Without a distinct marker
  * a crashed script is indistinguishable from a successful empty diff, so
  * `db pull` reports "No schema changes found" while the real error is swallowed.
- * Byte-for-byte mirror of Go's `EdgeRuntimeScriptErrorSentinel`
+ * Byte-for-byte mirror of `EdgeRuntimeScriptErrorSentinel`
  * (`apps/cli-go/internal/utils/edgeruntime.go`). See supabase/cli#5826.
  */
 export const LEGACY_EDGE_RUNTIME_SCRIPT_ERROR_SENTINEL = "PGDELTA_SCRIPT_ERROR";
@@ -28,11 +28,11 @@ export interface LegacyEdgeRuntimeRunOpts {
   readonly env: Readonly<Record<string, string>>;
   /** Volume binds (e.g. the Deno cache volume + `cwd:/workspace`). */
   readonly binds: ReadonlyArray<string>;
-  /** Prefix for the failure message, matching Go's `errPrefix`. */
+  /** Prefix for the failure message, matching `errPrefix`. */
   readonly errPrefix: string;
   /** Extra files written next to `index.ts` (e.g. `.npmrc`). */
   readonly extraFiles?: ReadonlyArray<LegacyEdgeRuntimeFile>;
-  /** Extra container env appended after `env` (Go's `WithExtraEnv`). */
+  /** Extra container env appended after `env` (`WithExtraEnv`). */
   readonly extraEnv?: Readonly<Record<string, string>>;
   /**
    * Effective `edge_runtime.deno_version` for this run, used to pick the image tag
@@ -60,7 +60,7 @@ export interface LegacyEdgeRuntimeRunResult {
 interface LegacyEdgeRuntimeScriptShape {
   /**
    * Runs a Deno program in the edge-runtime container and returns its captured
-   * stdout/stderr. Mirrors Go's `RunEdgeRuntimeScript`
+   * stdout/stderr. Mirrors `RunEdgeRuntimeScript`
    * (`apps/cli-go/internal/utils/edgeruntime.go`): writes the files via a
    * here-document entrypoint, starts `edge-runtime start --main-service=.` on a
    * free host port over the host network, and ignores a non-zero exit whose
@@ -77,7 +77,7 @@ export class LegacyEdgeRuntimeScript extends Context.Service<
 >()("supabase/legacy/EdgeRuntimeScript") {}
 
 /**
- * Builds the `edge-runtime start` argv. Mirrors Go's `EdgeRuntimeStartCmd` +
+ * Builds the `edge-runtime start` argv. Mirrors `EdgeRuntimeStartCmd` +
  * the `--verbose` append in `RunEdgeRuntimeScript`: the HTTP listener binds a
  * free host port so concurrent/leftover host-network containers don't collide
  * on the default port (supabase/cli#5407). `--verbose` is added under `--debug`.
@@ -96,7 +96,7 @@ export function legacyBuildEdgeRuntimeStartCmd(opts: {
 /**
  * Builds the `sh -c` entrypoint body that writes each file via a here-document
  * (so contents may contain `EOF`) and then runs `cmd`. Byte-for-byte port of
- * Go's `buildEdgeRuntimeEntrypoint` (`apps/cli-go/internal/utils/edgeruntime.go`):
+ * `buildEdgeRuntimeEntrypoint` (`apps/cli-go/internal/utils/edgeruntime.go`):
  * all heredoc openers are joined with `&&` before the bodies so the shell stacks
  * them in declaration order; each body ends with a unique sentinel.
  */

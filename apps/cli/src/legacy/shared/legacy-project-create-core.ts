@@ -71,7 +71,8 @@ function printKeyValue(key: string, value: string): string {
 }
 
 /**
- * Ports Go's `create.Run` (`apps/cli-go/internal/projects/create/create.go:16-50`):
+ * Ports Go's `create.Run` (`apps/cli-go/internal/projects/create/create.go:16-50`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * `promptMissingParams` (prompt for / echo each empty field), `POST /v1/projects`,
  * and the project echo (`Created a new project at …` plus the `-o`/pretty render).
  *

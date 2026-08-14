@@ -22,7 +22,7 @@ describe("supabase migration fetch (legacy)", () => {
     rmSync(workdir, { recursive: true, force: true });
   });
 
-  // Real-subprocess guard for the production Stdin wiring + Go-style prompt: a piped
+  // Real-subprocess guard for the production Stdin wiring + confirm prompt: a piped
   // answer to the overwrite prompt must actually be read, not auto-defaulted. A declined
   // `n` cancels before connecting, so no DB is required. This is the boundary in-process
   // tests cannot cover — they inject a mock Stdin, which masked a missing-service bug
@@ -37,11 +37,10 @@ describe("supabase migration fetch (legacy)", () => {
         stdin: "n\n",
       });
 
-      // Declined → cancelled (exit 1), and the Go-style prompt label reached stderr.
+      // Declined → cancelled (exit 1), and the prompt label reached stderr.
       expect(exitCode).toBe(1);
       expect(stripAnsi(stderr)).toContain("[Y/n]");
-      // Byte-parity with Go's `recoverAndExit` (apps/cli-go/cmd/root.go:287-303):
-      // a declined prompt renders a lone `context canceled` line, with NO
+      // A declined prompt renders a lone `context canceled` line, with NO
       // `SuggestDebugFlag` troubleshooting hint appended. CLI-1973.
       const lines = stripAnsi(stderr).trimEnd().split("\n");
       expect(lines.at(-1)).toBe("context canceled");

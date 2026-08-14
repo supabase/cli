@@ -1,7 +1,6 @@
 import { legacyInspectText, type LegacyInspectQuerySpec } from "../legacy-inspect-query.ts";
 import { LEGACY_INTERNAL_SCHEMAS, legacyLikeEscapeSchema } from "../legacy-inspect-schemas.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/db_stats/db_stats.sql`.
 const SQL = `WITH total_objects AS (
   SELECT c.relkind, pg_size_pretty(SUM(pg_relation_size(c.oid))) AS size
   FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -62,8 +61,7 @@ SELECT
   COALESCE((SELECT pg_size_pretty(SUM(size)) FROM pg_ls_waldir()), '0 bytes') AS wal_size`;
 
 /**
- * `inspect db db-stats` — cache hit rates, total sizes, and WAL size.
- * Port of `apps/cli-go/internal/inspect/db_stats/db_stats.go`. The leading
+ * `inspect db db-stats` — cache hit rates, total sizes, and WAL size. The leading
  * `Name` column is the resolved database name, injected per row (not a query
  * column); the query takes `$1` = escaped internal schemas, `$2` = database name.
  */

@@ -4,10 +4,9 @@ import { runSupabase } from "../../../../tests/helpers/cli.ts";
 const E2E_TIMEOUT_MS = 30_000;
 
 describe("supabase completion (legacy)", () => {
-  // Golden-path e2e for CLI-1858 / CLI-1965: `--no-descriptions` used to be
-  // rejected by Effect's argv parser (`UnrecognizedOption`) before the flag
-  // reached the completion command at all. As of CLI-1965 the script is
-  // generated natively in TS (no Go binary involved) — only a real
+  // Golden-path e2e: `--no-descriptions` used to be rejected by Effect's argv
+  // parser (`UnrecognizedOption`) before the flag reached the completion
+  // command at all. The script is generated natively in TS — only a real
   // subprocess run proves the TS parser accepts the flag AND that the
   // handler actually selects the no-desc variant of the native template.
   test(

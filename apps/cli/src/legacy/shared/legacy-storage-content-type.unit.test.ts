@@ -13,8 +13,8 @@ function bytes(s: string): Uint8Array {
 }
 
 describe("legacyContentTypeForUpload", () => {
-  // Go: http.DetectContentType (bytes win) then refine only generic text/plain
-  // by extension via mime.TypeByExtension (objects.go:77-108).
+  // `http.DetectContentType` (bytes win) then refine only generic text/plain
+  // by extension via `mime.TypeByExtension`.
   it("lets the sniffed bytes win over the extension (PNG named .txt)", () => {
     const png = bytes("\x89PNG\x0D\x0A\x1A\x0A\x00\x00");
     expect(legacyContentTypeForUpload(png, "/x/a.txt")).toBe("image/png");

@@ -71,6 +71,11 @@ export const legacyTestDbConfig = {
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Runs pgTAP tests on the local database."),
   ),
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
 } as const;
 
 export interface LegacyTestDbFlags {
@@ -78,6 +83,7 @@ export interface LegacyTestDbFlags {
   readonly dbUrl: Option.Option<string>;
   readonly linked: boolean;
   readonly local: boolean;
+  readonly projectRef: Option.Option<string>;
 }
 
 /**
@@ -95,9 +101,18 @@ export function legacyRunTestDbCommand(
     dbUrl: flags.dbUrl,
     linked: flags.linked,
     local: flags.local,
+    projectRef: flags.projectRef,
   }).pipe(
     withLegacyCommandInstrumentation({
-      flags: { "db-url": flags.dbUrl, linked: flags.linked, local: flags.local },
+      flags: {
+        "db-url": flags.dbUrl,
+        linked: flags.linked,
+        local: flags.local,
+        "project-ref": flags.projectRef,
+      },
+      // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+      // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+      // others) are unmarked, so it stays redacted.
     }),
     // Run failures (failing tests) must not corrupt the TAP stream on stdout in
     // machine modes; other errors (pre-stream) still get the JSON envelope.

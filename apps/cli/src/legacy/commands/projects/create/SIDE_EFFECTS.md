@@ -21,11 +21,11 @@
 
 ## Environment Variables
 
-| Variable                | Purpose                                                                                                               | Required?                                               |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
-| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup)                                                                  | no (falls back to keyring → `~/.supabase/access-token`) |
-| `SUPABASE_PROFILE`      | built-in profile name or YAML file path                                                                               | no (falls back to `~/.supabase/profile` -> `supabase`)  |
-| `DB_PASSWORD`           | **not consumed** — Go only mirrors `--db-password` into viper for local-stack reuse; `projects create` never reads it | n/a                                                     |
+| Variable                | Purpose                                              | Required?                                               |
+| ----------------------- | ---------------------------------------------------- | ------------------------------------------------------- |
+| `SUPABASE_ACCESS_TOKEN` | auth token (bypasses credential file/keyring lookup) | no (falls back to keyring → `~/.supabase/access-token`) |
+| `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)  |
+| `DB_PASSWORD`           | **not consumed** by `projects create`                | n/a                                                     |
 
 ## Exit Codes
 
@@ -41,9 +41,9 @@
 
 ## Telemetry Events Fired
 
-| Event                  | When                                       | Notable properties / groups                                                     |
-| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------------------- |
-| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe, matching Go) |
+| Event                  | When                                       | Notable properties / groups                                        |
+| ---------------------- | ------------------------------------------ | ------------------------------------------------------------------ |
+| `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` (`--org-id` is telemetry-safe) |
 
 ## Flags
 
@@ -62,7 +62,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Displays a confirmation message and project details after successful creation.
 
@@ -96,10 +96,9 @@ One `result` event on success.
   flags and the positional project name argument are required.
 - The `--size` flag, when provided, sets the `desired_instance_size` field in the request body.
 - The `--high-availability` flag, when provided, sets the `high_availability` field in the request body.
-  This is a TS-only flag with no Go CLI equivalent: `apps/cli-go/cmd/projects.go`'s `init()` (~line 133)
-  never registers a `high-availability` flag, and the create command's `RunE` closure (~line 74) never sets
-  `HighAvailability` on the request body, even though the underlying API field exists — matching how
-  `--reveal` is disclosed on `projects api-keys`.
+  This is a TS-only flag with no Go CLI equivalent — the old Go CLI never exposed a `high-availability`
+  flag or set it on the request body, even though the underlying API field exists — similar to how
+  `--reveal` is a TS-only addition on `projects api-keys`.
 - The `--release-channel` and `--postgres-engine` flags, when provided, set `release_channel` and
   `postgres_engine` respectively in the request body. Both are TS-only, no Go CLI equivalent, and target
   fields that the upstream Management API OpenAPI spec deliberately hides (typed as

@@ -48,15 +48,15 @@ const UPLOAD_CONCURRENCY = 5;
 const osJunkFileNames = new Set([".DS_Store", "Thumbs.db", "desktop.ini"]);
 
 /**
- * Mirrors Go's `ValidateBucketName` regex (`apps/cli-go/pkg/config/config.go:1382`).
+ * Mirrors `ValidateBucketName` regex.
  * Used to validate `[storage.buckets]` names before any Storage API call, matching
- * Go's config-load-time check (`config.go:899-903`). Vector and analytics names are
+ * Go's config-load-time check. Vector and analytics names are
  * NOT validated here — Go only validates `[storage.buckets]`.
  */
 const LEGACY_BUCKET_NAME_PATTERN = /^(?:[0-9A-Za-z_]|!|-|\.|\*|'|\(|\)| |&|\$|@|=|;|:|\+|,|\?)*$/;
 
 /**
- * Verbatim Go regex literal (`config.go:1382`) — used in the error message so it
+ * Verbatim Go regex literal — used in the error message so it
  * is byte-identical to Go's output. Do NOT derive from `LEGACY_BUCKET_NAME_PATTERN.source`.
  */
 const LEGACY_BUCKET_NAME_PATTERN_SOURCE =
@@ -105,7 +105,7 @@ function emptySummary(): SeedSummary {
 /**
  * Embedded-default project config, decoded from an empty object — the same
  * `decodeUnknownSync(ProjectConfigSchema)({})` the loader uses internally
- * (`packages/config/src/io.ts:54-56`). Go's `seed buckets` never aborts on a
+ * (`packages/config/src/io.ts:54-56`). `seed buckets` never aborts on a
  * missing `config.toml`: it reads the package-global `utils.Config`, initialized
  * to embedded defaults, and `config.Load` no-ops on a missing file. So "no
  * config file" behaves like the embedded-default config.
@@ -117,7 +117,7 @@ const legacyDecodeDefaultProjectConfig = Schema.decodeUnknownSync(ProjectConfigS
  * `projectRef`), validate bucket config, then upsert/seed buckets + objects against
  * the Storage service gateway. Hoisted to `legacy/shared/` so both the `seed
  * buckets` command and `db reset --local` can reuse the exact local-seed path Go
- * invokes via `buckets.Run(ctx, "", false, fsys)` (`internal/db/reset/reset.go:71`).
+ * invokes via `buckets.Run(ctx, "", false, fsys)`.
  *
  * `emitSummary` controls whether the machine-readable summary is written to stdout:
  * the `seed buckets` command emits it; `db reset` does NOT (it emits its own
@@ -136,20 +136,20 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   readonly interactive?: boolean;
   /**
    * Pre-resolved auto-confirm value. `db reset` resolves `yes` with the nested project
-   * `.env` loaded (Go's `loadNestedEnv` runs before `buckets.Run`), so pass it through here
-   * — the internal fallback below only loads whatever THIS command's own project would
+   * `.env` loaded (`loadNestedEnv` runs before `buckets.Run`), so pass it through here —
+   * the internal fallback below only loads whatever THIS command's own project would
    * supply. When omitted (the standalone `seed buckets` command), fall back to
    * `legacyResolveYesWithProjectEnv`, loading the project env ourselves — `seed buckets`
-   * defaults to `--local` (Go's `seedFlags.Bool("local", true, ...)`, `cmd/seed.go:31`),
-   * and root's `ParseDatabaseConfig` calls `LoadConfig` — loading the project `.env` files
-   * — before `buckets.Run`'s overwrite/prune prompts (`root.go:118`), so a `SUPABASE_YES`
+   * defaults to `--local` (`seedFlags.Bool("local", true, ...)`),
+   * and root's `ParseDatabaseConfig` calls `LoadConfig` — loading the project `.env` files —
+   * before `buckets.Run`'s overwrite/prune prompts, so a `SUPABASE_YES`
    * set only in `supabase/.env` must auto-confirm here too.
    */
   readonly yes?: boolean;
   /**
    * Skips this function's own `loadProjectConfig` reload in favor of a config
    * the caller already resolved (and may have folded env overrides into —
-   * see `start.handler.ts`'s `effectiveLocalStorageConfig`). Go's `buckets.Run`
+   * see `start.handler.ts`'s `effectiveLocalStorageConfig`). `buckets.Run`
    * never reloads config itself: it reads the single process-wide `utils.Config`
    * populated once by `Config.Load()` at CLI startup, so any `SUPABASE_*`
    * override already in effect for the rest of that process (e.g. an
@@ -159,7 +159,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
    * that SAME resolution for bucket seeding to match — an independent reload
    * from disk would silently drop any override that exists only in the
    * shell/dotenv, not literally in config.toml. Only `start` passes this;
-   * the standalone `seed buckets` command's own single load already IS Go's
+   * the standalone `seed buckets` command's own single load already IS the
    * one-shot `Config.Load()` for that process, so it keeps reloading below.
    */
   readonly resolvedConfig?: {
@@ -171,7 +171,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   const cliConfig = yield* LegacyCliConfig;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320).
+  // `--yes` OR `SUPABASE_YES`.
   const yes =
     opts.yes ??
     (yield* legacyResolveYesWithProjectEnv(
@@ -208,7 +208,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
     (loaded === null ? legacyDecodeDefaultProjectConfig({}) : loaded.config);
   const document = opts.resolvedConfig?.document ?? (loaded === null ? undefined : loaded.document);
 
-  // Go prints this from inside config load (`config.go:513`) whenever a
+  // Go prints this from inside config load whenever a
   // `[remotes.*]` block matched the linked ref. stderr in all output modes.
   if (loaded !== null && loaded.appliedRemote !== undefined) {
     yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
@@ -224,7 +224,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // during config.Load — before `buckets.Run` can take its no-op path — so an
   // invalid value fails even when there's nothing to seed.
   //
-  // Bucket names (Go ValidateBucketName, config.go:899-903).
+  // Bucket names (`ValidateBucketName`).
   for (const name of bucketNames) {
     yield* legacyValidateBucketName(name);
   }
@@ -255,7 +255,7 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
   // All gateway operations run with an explicit non-DoH fetch (CA-trusting for
   // local + https, plain `globalThis.fetch` otherwise). The api-keys lookup inside
   // `legacyResolveStorageCredentials` runs BEFORE this scope, so it still honors
-  // `--dns-resolver https`, matching Go's `tenant.GetApiKeys`.
+  // `--dns-resolver https`, matching `tenant.GetApiKeys`.
   const gatewayOps = Effect.gen(function* () {
     const gateway = yield* legacyMakeStorageGateway({
       baseUrl: credentials.baseUrl,
@@ -265,7 +265,6 @@ export const legacySeedBucketsRun = Effect.fnUntraced(function* (opts: {
 
     const summary = emptySummary();
 
-    // Upsert configured buckets.
     yield* upsertBuckets(output, yes, interactive, gateway, bucketPropsByName, summary);
 
     // Upsert analytics buckets (remote --linked only).
@@ -471,7 +470,7 @@ const upsertAnalyticsBuckets = Effect.fnUntraced(function* (
 });
 
 /**
- * Vector graceful-skip (`buckets.go:57-66`): on `FeatureNotEnabled` /
+ * Vector graceful-skip: on `FeatureNotEnabled` /
  * local-unavailable errors, print the matching WARNING and continue (object
  * upload still runs). Any other error propagates.
  */
@@ -515,7 +514,7 @@ const uploadObjects = Effect.fnUntraced(function* (
       continue;
     }
     // Go resolves a relative bucket objects_path against SupabaseDirPath at
-    // config-resolve time (`pkg/config/config.go:757-759`); absolute paths are
+    // config-resolve time; absolute paths are
     // left untouched. `displayRoot` (workdir-relative) drives the `Uploading:`
     // stderr and the destination key so both stay byte-identical to Go.
     const displayRoot = path.isAbsolute(objectsPath)
@@ -533,7 +532,7 @@ const uploadObjects = Effect.fnUntraced(function* (
           yield* output.raw(`Uploading: ${file.displayPath} => ${dstPath}\n`, "stderr");
           // Content-type is byte-driven: Go sniffs the first 512 bytes with
           // http.DetectContentType, refining only a generic text/plain by
-          // extension (`pkg/storage/objects.go:77-108`).
+          // extension.
           const sniff = yield* legacyReadSniffBytes(fs, file.absPath);
           // Go's seed upload always sets Cache-Control max-age=3600 and x-upsert
           // (Overwrite) true (`pkg/storage/batch.go`).
@@ -551,15 +550,15 @@ const uploadObjects = Effect.fnUntraced(function* (
 
 /**
  * Collect uploadable files under `absRoot`, lexically ordered, mirroring Go's
- * `fs.WalkDir` + `isUploadableEntry` (`pkg/storage/batch.go:65-131`).
+ * `fs.WalkDir` + `isUploadableEntry`.
  *
  * Parity details:
- *  - The **root** is resolved with a following stat (Go's `fs.Stat`), so a
- *    symlinked `objects_path` is followed; a missing/dangling root fails.
- *  - **Nested** entries use no-follow detection: real directories are descended;
- *    symlinks are NOT descended — Go's `isUploadableEntry` OPENS the symlink
- *    target then stats the handle, uploading only a regular file and skipping
- *    dangling symlinks / symlinks-to-directories / unreadable targets.
+ * - The **root** is resolved with a following stat (`fs.Stat`), so a
+ * symlinked `objects_path` is followed; a missing/dangling root fails.
+ * - **Nested** entries use no-follow detection: real directories are descended;
+ * symlinks are NOT descended — `isUploadableEntry` OPENS the symlink
+ * target then stats the handle, uploading only a regular file and skipping
+ * dangling symlinks / symlinks-to-directories / unreadable targets.
  */
 const collectFiles = (
   fs: FileSystem.FileSystem,
@@ -608,9 +607,9 @@ const collectDir = (
         Effect.catch(() => Effect.succeed(false)),
       );
       if (isSymlink) {
-        // Go `isUploadableEntry` (batch.go:73-84) OPENS the target then stats the
+        // `isUploadableEntry` OPENS the target then stats the
         // handle; it uploads only a regular file. `stat` alone would queue an
-        // unreadable target and abort later at upload, so mirror Go: open + stat.
+        // unreadable target and abort later at upload, so mirror that: open + stat.
         const targetType = yield* Effect.scoped(
           Effect.gen(function* () {
             const handle = yield* fs.open(absChild, { flag: "r" });

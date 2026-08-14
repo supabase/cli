@@ -1,10 +1,10 @@
 /**
- * Port of Go's `utils.SuggestClaudePlugin` (`apps/cli-go/internal/utils/misc.go:43-57`).
+ * Port of `utils.SuggestClaudePlugin` (`apps/cli-go/internal/utils/misc.go:43-57`).
  *
  * Returns the Claude Code plugin-install hint **only** when both:
  *   1. the CLI is running inside Claude Code (`CLAUDECODE` / `CLAUDE_CODE` env —
- *      Go's `agent.IsClaudeCode`), and
- *   2. stdout is an interactive terminal (Go's `term.IsTerminal(stdout)`).
+ *      `agent.IsClaudeCode`), and
+ *   2. stdout is an interactive terminal (`term.IsTerminal(stdout)`).
  *
  * Otherwise returns `""`. Pure: env + TTY state are passed in so the helper is
  * trivially unit-testable and free of service dependencies.

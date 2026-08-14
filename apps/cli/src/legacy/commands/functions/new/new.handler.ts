@@ -35,12 +35,13 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// Go's `appendConfigFile` checks the *parsed* config map (`utils.Config.Functions[slug]`)
-// after a best-effort `flags.LoadConfig`. We intentionally scan the raw TOML text instead:
-// config loading here is non-fatal (a malformed `config.toml` must still allow scaffolding,
-// matching Go), so a raw-text section scan is the deterministic fallback that does not depend
-// on a successful parse. The strict `^\s*\[functions\.<slug>\]\s*$` anchoring keeps this in
-// practical lock-step with the parsed-map check for all well-formed configs.
+// Established behavior checks the *parsed* config map after a best-effort
+// config load. This intentionally scans the raw TOML text instead:
+// config loading here is non-fatal (a malformed `config.toml` must still
+// allow scaffolding), so a raw-text section scan is the deterministic
+// fallback that does not depend on a successful parse. The strict
+// `^\s*\[functions\.<slug>\]\s*$` anchoring keeps this in practical
+// lock-step with the parsed-map check for all well-formed configs.
 function readDeclaredFunctionSlugs(contents: string): ReadonlySet<string> {
   const slugs = new Set<string>();
   const pattern = /^\s*\[functions\.([^\]\s]+)\]\s*$/gm;
@@ -101,20 +102,19 @@ const resolveTemplateInputs = Effect.fnUntraced(function* (workdir: string, slug
   };
 });
 
-// Mirrors Go's `_init.PromptForIDESettings` (console-driven). Only invoked in text mode — the
+// Console-driven IDE-settings prompt. Only invoked in text mode — the
 // caller gates on `output.format === "text"` so json / stream-json runs stay payload-only and
 // never scaffold IDE settings as an undisclosed side effect.
 const promptForIdeSettings = Effect.fnUntraced(function* (workdir: string) {
   const output = yield* Output;
-  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320).
+  // `--yes` OR `SUPABASE_YES`.
   const yes = yield* legacyResolveYes;
 
-  // Both questions route through `legacyPromptYesNo`, mirroring Go's
-  // `PromptForIDESettings` (`init.go:61-75`, `console.go:64-82`): `--yes`/
+  // Both questions route through `legacyPromptYesNo`: `--yes`/
   // `SUPABASE_YES` auto-accepts VS Code with the `[Y/n] y` stderr echo; a
   // non-TTY stdin prints the label and scans one piped line (100ms), so
   // `echo n | supabase functions new` declines VS Code and falls through to
-  // the IntelliJ question instead of hardcoding the default (CLI-1974).
+  // the IntelliJ question instead of hardcoding the default.
   if (yield* legacyPromptYesNo(output, yes, "Generate VS Code settings for Deno?", true)) {
     yield* writeVscodeConfig(workdir).pipe(
       Effect.mapError(mapLegacyFunctionsNewWriteError(".vscode")),

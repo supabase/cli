@@ -25,7 +25,11 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyPlatformApiFactory } from "../../../auth/legacy-platform-api-factory.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
+import { LegacyProjectNotLinkedError } from "../../../config/legacy-project-ref.errors.ts";
+import {
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+} from "../../../config/legacy-project-ref.service.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
 import {
   LegacyDebugFlag,
@@ -74,6 +78,7 @@ const DEFAULT_FLAGS: LegacyDbResetFlags = {
   dbUrl: Option.none(),
   linked: false,
   local: false,
+  projectRef: Option.none(),
   noSeed: false,
   sqlPaths: [],
   version: Option.none(),
@@ -93,8 +98,16 @@ function mockResolver(opts: {
 }) {
   let calls = 0;
   const layer = Layer.succeed(LegacyDbConfigResolver, {
-    resolve: (_flags: LegacyDbConfigFlags) => {
+    resolve: (flags: LegacyDbConfigFlags) => {
       calls++;
+      // A threaded `--project-ref` flag takes the same top precedence a real
+      // resolver would give it, so a test can prove the flag (not just the
+      // fixed `opts.ref`) drives the resolved (and later cached) ref.
+      const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
+      const resolvedRef =
+        Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
+          ? linkedProjectRef.value
+          : opts.ref;
       return opts.resolveFails === true
         ? Effect.fail(
             new LegacyDbConfigConnectTempRoleError({
@@ -107,7 +120,7 @@ function mockResolver(opts: {
               : {
                   conn: CONN,
                   isLocal: opts.isLocal,
-                  ref: opts.ref !== undefined ? Option.some(opts.ref) : Option.none(),
+                  ref: resolvedRef !== undefined ? Option.some(resolvedRef) : Option.none(),
                 }) satisfies LegacyResolvedDbConfig,
           );
     },
@@ -418,10 +431,14 @@ function setup(
     replicationSlotCounts?: ReadonlyArray<number>;
     replicationSlotQueryFails?: boolean;
     failStatement?: { readonly sql: string; readonly code?: string; readonly message: string };
-    // pg-delta migrations-catalog cache (Go's `down.ResetAll` → `pgcache.TryCacheMigrationsCatalog`,
-    // wired into the remote-reset path after a successful migrate/schema-files + seed).
+    // pg-delta migrations-catalog cache, wired into the remote-reset path
+    // after a successful migrate/schema-files + seed.
     catalogStdout?: string;
     catalogExportFailWith?: string;
+    // Simulates a genuinely unlinked workdir: `loadProjectRef` fails with
+    // `LegacyProjectNotLinkedError` absent an explicit `--project-ref` flag,
+    // instead of silently falling back to `opts.ref ?? LEGACY_VALID_REF`.
+    linkedFails?: boolean;
   },
 ) {
   if (opts.toml !== undefined) {
@@ -496,13 +513,20 @@ function setup(
     // be present to satisfy the effect's requirements.
     mockTty({ stdinIsTty: true }),
     mockStdin(true),
-    // The linked ref is pre-loaded (for the post-run cache) before resolve,
-    // mirroring Go's LoadProjectRef-before-NewDbConfigWithPassword order.
+    // The linked ref is pre-loaded (for the post-run cache) before the DB
+    // config is resolved. `loadProjectRef` gives an explicit `--project-ref`
+    // flag top precedence — mirror that so a test can prove the flag (not just
+    // `opts.ref`) drives the linked ref.
     Layer.succeed(LegacyProjectRefResolver, {
       resolve: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
       resolveForLink: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
       resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? LEGACY_VALID_REF)),
-      loadProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+      loadProjectRef: (flagValue: Option.Option<string>) =>
+        Option.isSome(flagValue) && flagValue.value.length > 0
+          ? Effect.succeed(flagValue.value)
+          : opts.linkedFails === true
+            ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+            : Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
       promptProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
     }),
     Layer.succeed(LegacyPlatformApiFactory, {
@@ -706,8 +730,9 @@ describe("legacy db reset", () => {
         isLocal: true,
       });
       return Effect.gen(function* () {
-        // No buckets configured -> the seed-buckets core short-circuits, but the
-        // storage gate is still consulted (Go inspects storage before buckets.Run).
+        // No buckets configured -> the seed-buckets core short-circuits, but
+        // the storage gate is still consulted (storage is inspected before
+        // buckets are seeded).
         yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
         expect(
           child.spawned.some(
@@ -802,8 +827,7 @@ describe("legacy db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           const error = Cause.squash(exit.cause) as { message: string; suggestion?: string };
-          // Byte-matches Go's `DockerExecOnceWithStream` fixed error text (`docker.go:646-648`),
-          // not the raw exit code.
+          // Message text is an established output contract, not the raw exit code.
           expect(error.message).toContain("failed to reload kong: error executing command");
           expect(error.suggestion).toContain(
             "Local services restarted, but API routes may return 502",
@@ -904,10 +928,10 @@ describe("legacy db reset", () => {
     it.live(
       "attaches Go's ExecBatch error context to a failed DROP/CREATE DATABASE statement",
       () => {
-        // Go builds these four statements as a `migration.MigrationFile` and runs them
-        // through `.ExecBatch` (`reset.go:165-173`), so a failure gets the same rich
-        // context (`At statement: <index>` + the statement text) a real migration file
-        // failure would — not the bare driver error (review CLI-1958).
+        // These four statements are built as a migration file and run through
+        // a batch executor, so a failure gets the same rich context
+        // (`At statement: <index>` + the statement text) a real migration
+        // file failure would — not the bare driver error (review CLI-1958).
         const { layer } = setup(tmp.current, {
           toml: PG14_TOML,
           args: ["db", "reset", "--local"],
@@ -997,8 +1021,8 @@ describe("legacy db reset", () => {
         // `legacyToExecError`'s fallback (`legacy-db-connection.sql-pg.layer.ts`) sets `code`
         // from `legacyExtractSqlState`, which returns ANY string `code` found in the cause
         // chain — including a bare node system errno like `ECONNRESET`/`ETIMEDOUT`, which is
-        // NOT a Postgres SQLSTATE. Go's `errors.As(err, &pgErr)` never matches a socket error,
-        // so Go swallows this too — the discriminator must check `legacyIsSqlState(code)`
+        // NOT a Postgres SQLSTATE. A socket error should never match as a real
+        // SQLSTATE either, so the discriminator must check `legacyIsSqlState(code)`
         // before comparing against `3D000`, not just `code !== undefined`.
         const { layer, conn } = setup(tmp.current, {
           toml: PG14_TOML,
@@ -1155,7 +1179,7 @@ describe("legacy db reset", () => {
         });
         return Effect.gen(function* () {
           yield* legacyDbReset(DEFAULT_FLAGS).pipe(Effect.provide(layer));
-          // Go's reset.go `initDatabase` calls the EXPORTED `InitSchema14` directly — unlike
+          // PG14 reset's own init calls the schema-init step directly — unlike
           // `db start`'s own PG14 path, which execs globals.sql first. A fingerprint unique
           // to `LEGACY_START_DB_GLOBALS_SQL` (see `templates/db-globals.sql.ts`) must never
           // appear in this reset's execs.
@@ -1215,17 +1239,18 @@ describe("legacy db reset", () => {
         );
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
-          // Config now loads through the Go-parity reader (`legacyCheckDbToml`), so a malformed
-          // config aborts with Go's `failed to load config` message, same as the other db
-          // commands (diff/dump/pull/migration).
+          // Config loads through the established reader (`legacyCheckDbToml`),
+          // so a malformed config aborts with `failed to load config`, same
+          // as the other db commands (diff/dump/pull/migration).
           expect(JSON.stringify(exit.cause)).toContain("failed to load config");
         }
       });
     });
 
     it.live("loads a Go-style env() boolean in config for a remote reset", () => {
-      // Regression: `enabled = "env(VAR)"` must load via Go's env-expansion + ParseBool
-      // (`legacyCheckDbToml`) instead of the strict @supabase/config loader rejecting it.
+      // Regression: `enabled = "env(VAR)"` must load via env-expansion + boolean
+      // parsing (`legacyCheckDbToml`) instead of the strict @supabase/config
+      // loader rejecting it.
       const previous = process.env["MIGRATIONS_ENABLED"];
       process.env["MIGRATIONS_ENABLED"] = "true";
       const { layer, out } = setup(tmp.current, {
@@ -1285,8 +1310,8 @@ describe("legacy db reset", () => {
           expect(Option.isSome(failure) && failure.value._tag).toBe(
             "LegacyDbResetInvalidVersionError",
           );
-          // Go's reset.Run returns the bare repair.ErrInvalidVersion (reset.go:35-36) —
-          // no `failed to parse <v>:` wrapper (that belongs to `migration repair`).
+          // The bare "invalid version number" is returned unwrapped — no
+          // `failed to parse <v>:` wrapper (that belongs to `migration repair`).
           expect(Option.isSome(failure) && failure.value.message).toBe("invalid version number");
         }
       });
@@ -1310,9 +1335,9 @@ describe("legacy db reset", () => {
     });
 
     it.live("rejects an out-of-int64-range --version", () => {
-      // Go's `strconv.Atoi` == `ParseInt(s, 10, 0)`, which rejects magnitudes outside the
-      // int64 range even though the text is all digits. `INTEGER_PATTERN` alone would have
-      // accepted this and fallen through to the glob check instead.
+      // Rejects magnitudes outside the int64 range even though the text is
+      // all digits. `INTEGER_PATTERN` alone would have accepted this and
+      // fallen through to the glob check instead.
       const { layer } = setup(tmp.current, { toml: 'project_id = "test"\n' });
       return Effect.gen(function* () {
         const exit = yield* legacyDbReset({
@@ -1332,9 +1357,9 @@ describe("legacy db reset", () => {
     });
 
     it.live("treats an empty --version like no version at all", () => {
-      // Go's `len(version) > 0` guard (reset.go:34) skips validation entirely for an empty
-      // --version, so it must fall through to a full reset rather than glob-checking "" or
-      // rejecting it as an invalid version.
+      // An empty --version skips validation entirely, so it must fall through
+      // to a full reset rather than glob-checking "" or rejecting it as an
+      // invalid version.
       const { layer, out, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         confirm: [true],
@@ -1378,7 +1403,7 @@ describe("legacy db reset", () => {
       return Effect.gen(function* () {
         yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
         expect(out.stderrText).toContain("Resetting remote database...");
-        // No "Connecting to ... database..." line (Go uses io.Discard).
+        // No "Connecting to ... database..." line (established output contract).
         expect(out.stderrText).not.toContain("Connecting to");
         // Drop block ran, then the migration applied.
         expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
@@ -1390,9 +1415,10 @@ describe("legacy db reset", () => {
 
     it.live("fails a remote reset before dropping schemas on an undecryptable secret", () => {
       // Regression: the old point-of-use vault decryption ran AFTER `legacyDropUserSchemas`,
-      // so an undecryptable `encrypted:` secret dropped the schemas before failing. Go runs
-      // `flags.LoadConfig` (which decrypts every secret) before ResetAll, so the reset must
-      // abort before any destructive work — matched here by `legacyCheckDbToml` at load time.
+      // so an undecryptable `encrypted:` secret dropped the schemas before failing.
+      // Every secret is decrypted while loading config before the reset runs,
+      // so the reset must abort before any destructive work — matched here by
+      // `legacyCheckDbToml` at load time.
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.vault]\nmy_secret = "encrypted:anything"\n',
         confirm: [true],
@@ -1414,8 +1440,9 @@ describe("legacy db reset", () => {
     });
 
     it.live("fails a remote reset before dropping schemas on an empty project_id", () => {
-      // Go's config.Validate rejects an explicit `project_id = ""` before the reset prompt, so
-      // the native remote reset must abort before `legacyDropUserSchemas`.
+      // Config validation rejects an explicit `project_id = ""` before the
+      // reset prompt, so the native remote reset must abort before
+      // `legacyDropUserSchemas`.
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = ""\n',
         confirm: [true],
@@ -1436,8 +1463,9 @@ describe("legacy db reset", () => {
     });
 
     it.live("auto-confirms a remote reset via SUPABASE_YES set only in the project .env", () => {
-      // Go's loadNestedEnv sets project-.env keys before the reset prompt reads viper YES, so
-      // a `SUPABASE_YES` in supabase/.env auto-confirms the destructive prompt (default false).
+      // The project `.env` is applied before the reset prompt reads `yes`,
+      // so a `SUPABASE_YES` in supabase/.env auto-confirms the destructive
+      // prompt (default false).
       const { layer, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         files: { "supabase/.env": "SUPABASE_YES=true\n" },
@@ -1450,10 +1478,10 @@ describe("legacy db reset", () => {
     });
 
     it.live("still caches the linked ref when DB-config resolution fails", () => {
-      // Go's Execute() runs ensureProjectGroupsCached after ExecuteC returns even on
-      // error (root.go:171-181), and ParseDatabaseConfig sets ProjectRef via
-      // LoadProjectRef BEFORE the fallible temp-role/connection step — so a failed
-      // linked resolve must not skip the post-run linked-project cache write.
+      // The linked-project cache is refreshed unconditionally after the
+      // command returns even on error, and the project ref is loaded BEFORE
+      // the fallible temp-role/connection step — so a failed linked resolve
+      // must not skip the post-run linked-project cache write.
       const { layer, linkedCache } = setup(tmp.current, {
         toml: 'project_id = "test"\n',
         resolveFails: true,
@@ -1466,6 +1494,73 @@ describe("legacy db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         expect(linkedCache.cached).toBe(true);
         expect(linkedCache.cachedRef).toBe(LEGACY_VALID_REF);
+      });
+    });
+
+    it.live("resets the project given via --project-ref without a linked workdir", () => {
+      // The fake resolver fails as "unlinked" (`LegacyProjectNotLinkedError`)
+      // absent the flag — only the flag can resolve a ref here.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, conn, linkedCache } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        confirm: [true],
+        linkedFails: true,
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({
+          ...DEFAULT_FLAGS,
+          linked: true,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer));
+        expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
+        expect(linkedCache.cached).toBe(true);
+        expect(linkedCache.cachedRef).toBe(FLAG_REF);
+      });
+    });
+
+    it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+      const FLAG_REF = "flagflagflagflagflag";
+      // The workdir already resolves to LEGACY_VALID_REF (e.g. via
+      // .temp/project-ref) — the flag must win over it.
+      const { layer, linkedCache } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        ref: LEGACY_VALID_REF,
+        confirm: [true],
+      });
+      return Effect.gen(function* () {
+        yield* legacyDbReset({
+          ...DEFAULT_FLAGS,
+          linked: true,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer));
+        expect(linkedCache.cached).toBe(true);
+        expect(linkedCache.cachedRef).toBe(FLAG_REF);
+        expect(linkedCache.cachedRef).not.toBe(LEGACY_VALID_REF);
+      });
+    });
+
+    it.live("rejects --project-ref on the default local target", () => {
+      // reset defaults to local when no target flag is set — the guard must
+      // fire from the flag alone, with no explicit --local/--db-url needed.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, conn, resolver, linkedCache } = setup(tmp.current, {
+        toml: 'project_id = "test"\n',
+        args: ["db", "reset"],
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbReset({
+          ...DEFAULT_FLAGS,
+          projectRef: Option.some(FLAG_REF),
+        }).pipe(Effect.provide(layer), Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        if (Exit.isFailure(exit)) {
+          expect(JSON.stringify(exit.cause)).toContain(
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+          );
+        }
+        expect(conn.execs).toEqual([]);
+        expect(resolver.calls).toBe(0);
+        expect(linkedCache.cached).toBe(false);
       });
     });
 
@@ -1544,11 +1639,10 @@ describe("legacy db reset", () => {
     it.live(
       "caches the migrations catalog after a successful remote reset with SUPABASE_EXPERIMENTAL_PG_DELTA set",
       () => {
-        // Go's `down.ResetAll` (`internal/migration/down/down.go:48-61`, the function
-        // `resetRemote` delegates to) best-effort caches the pg-delta migrations
-        // catalog right after `apply.MigrateAndSeed` succeeds — gated on
-        // `pgcache.ShouldCacheMigrationsCatalog()` (`experimental.pgdelta.enabled` OR
-        // the legacy `SUPABASE_EXPERIMENTAL_PG_DELTA` env switch), independent of
+        // Best-effort caches the pg-delta migrations catalog right after the
+        // migrate-and-seed step succeeds — gated on
+        // `experimental.pgdelta.enabled` OR the legacy
+        // `SUPABASE_EXPERIMENTAL_PG_DELTA` env switch, independent of
         // `--experimental`'s own schema-files gate.
         const { layer, out, edgeRunCalls } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
@@ -1569,13 +1663,14 @@ describe("legacy db reset", () => {
     it.live(
       "resolves the pg-delta cache export image via SUPABASE_INTERNAL_IMAGE_REGISTRY from supabase/.env",
       () => {
-        // Go's `loadNestedEnv` (`os.Setenv`) makes a `supabase/.env`-only
-        // `SUPABASE_INTERNAL_IMAGE_REGISTRY` visible to the WHOLE reset run, including
-        // the pg-delta catalog export the reset handler triggers after a successful
-        // remote reset (review CLI-1958 round 18) — mirroring `db push`'s own
-        // `legacyApplyProjectEnv(projectEnv)` scoping (same-named test in
-        // `push.integration.test.ts`). Without that scoping, this reads only real
-        // `process.env` and falls back to the default registry instead.
+        // The project `.env` is applied to make a `supabase/.env`-only
+        // `SUPABASE_INTERNAL_IMAGE_REGISTRY` visible to the WHOLE reset run,
+        // including the pg-delta catalog export the reset handler triggers
+        // after a successful remote reset (review CLI-1958 round 18) —
+        // mirroring `db push`'s own `legacyApplyProjectEnv(projectEnv)`
+        // scoping (same-named test in `push.integration.test.ts`). Without
+        // that scoping, this reads only real `process.env` and falls back to
+        // the default registry instead.
         const prev = process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         delete process.env["SUPABASE_INTERNAL_IMAGE_REGISTRY"];
         const { layer, registryEnvAtRunTime } = setup(tmp.current, {
@@ -1624,9 +1719,9 @@ describe("legacy db reset", () => {
     it.live(
       "falls back to the linked project ref for the pg-delta cache when config.toml has no project_id",
       () => {
-        // Go's `flags.LoadConfig` seeds `Config.ProjectId = ProjectRef` BEFORE
-        // `Config.Load` runs, so on the linked remote path an absent `project_id`
-        // retains the linked ref rather than falling to the workdir basename.
+        // The project id seeds from the ref BEFORE the config loads, so on
+        // the linked remote path an absent `project_id` retains the linked
+        // ref rather than falling to the workdir basename.
         const { layer, out, edgeRunCalls } = setup(tmp.current, {
           toml: "[experimental.pgdelta]\nenabled = true\n",
           ref: LEGACY_VALID_REF,
@@ -1688,13 +1783,12 @@ describe("legacy db reset", () => {
           yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: false }).pipe(Effect.provide(layer));
           // The configured schema file ran...
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(true);
-          // ...but the timestamped migration did NOT — Go's `if`/`else if` is mutually
-          // exclusive (`apply.go:19-27`); taking the schema-files branch means migrations
-          // never run at all.
+          // ...but the timestamped migration did NOT — the if/else-if is
+          // mutually exclusive; taking the schema-files branch means
+          // migrations never run at all.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(false);
           expect(out.stderrText).not.toContain("Applying migration");
-          // Seeding still runs afterward — Go's `applySeedFiles` sits outside the
-          // if/else if (`apply.go:26`).
+          // Seeding still runs afterward — it sits outside the if/else-if.
           expect(out.stderrText).toContain("Seeding data from supabase/seed.sql...");
           // A real connection is resolved now — this is a fully native path, not a
           // delegated one that discarded the resolve (CLI-1958 removed the delegate).
@@ -1708,9 +1802,9 @@ describe("legacy db reset", () => {
     it.live(
       "applies schema files across multiple schema_paths patterns in declaration order, sorted within each pattern",
       () => {
-        // Go sorts matches WITHIN each pattern (`sort.Strings`, `config.go:155`) but
-        // preserves DECLARATION order ACROSS patterns (no global re-sort) — `zz/*.sql`'s
-        // files must all run before `aa/*.sql`'s, even though "aa" sorts before "zz".
+        // Matches are sorted WITHIN each pattern but preserve DECLARATION
+        // order ACROSS patterns (no global re-sort) — `zz/*.sql`'s files
+        // must all run before `aa/*.sql`'s, even though "aa" sorts before "zz".
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["zz/*.sql", "aa/*.sql"]\n',
           files: {
@@ -1735,9 +1829,9 @@ describe("legacy db reset", () => {
     it.live(
       "expands a schema_paths directory entry to its nested .sql files on an experimental remote reset",
       () => {
-        // `[db.migrations].schema_paths` resolves through Go's `Glob.SQLFiles` (not
-        // `Glob.Files`), which expands a directory match to its regular `.sql` files,
-        // recursively — unlike a plain glob pattern.
+        // `[db.migrations].schema_paths` resolves through the SQL-files glob
+        // (not a plain-files glob), which expands a directory match to its
+        // regular `.sql` files, recursively — unlike a plain glob pattern.
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["some-dir"]\n',
           files: {
@@ -1758,10 +1852,9 @@ describe("legacy db reset", () => {
     it.live(
       "silently applies nothing when schema_paths is unset on an experimental remote reset (Go's undocumented default-config behavior)",
       () => {
-        // Go's `schema_paths` default is `[]` (`pkg/config/templates/config.toml:64`).
-        // With no patterns to glob, `SQLFiles` returns a nil error, so `applySchemaFiles`
-        // is a silent no-op — Go does NOT fall back to replaying migrations (`apply.go:
-        // 19-27` is a hard `if`/`else if`).
+        // `schema_paths` defaults to `[]`. With no patterns to glob, the
+        // schema-files apply is a silent no-op — it does NOT fall back to
+        // replaying migrations (a hard if/else-if).
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n',
           files: migrationFile("20240101000000", "create table migrated_table ();"),
@@ -1793,7 +1886,7 @@ describe("legacy db reset", () => {
         });
         return Effect.gen(function* () {
           yield* legacyDbReset({ ...DEFAULT_FLAGS, linked: true }).pipe(Effect.provide(layer));
-          // `IsPgDeltaEnabled()` disables the schema-files branch (`apply.go:19`) even
+          // pg-delta being enabled disables the schema-files branch even
           // though `--experimental` and `schema_paths` are both set.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
@@ -1820,8 +1913,8 @@ describe("legacy db reset", () => {
             linked: true,
             version: Option.some("20240101000000"),
           }).pipe(Effect.provide(layer));
-          // A resolved --version disables the schema-files branch (`apply.go:19` requires
-          // `len(version) == 0`), even with `--experimental` set.
+          // A resolved --version disables the schema-files branch (it
+          // requires an empty version), even with `--experimental` set.
           expect(conn.execs.some((s) => s.includes("create table migrated_table"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
         });
@@ -1848,15 +1941,15 @@ describe("legacy db reset", () => {
             // No CmdSuggestion on this failure mode — only a per-file exec failure sets one.
             expect(cause).not.toContain("See schema file");
           }
-          // Schemas were already dropped before the failed apply step (Go's ResetAll order).
+          // Schemas were already dropped before the failed apply step (drop-then-apply order).
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
         });
       },
     );
 
     it.live("ignores a partial schema_paths glob failure once at least one pattern matches", () => {
-      // Go's `applySchemaFiles` only surfaces the joined glob error when NO pattern
-      // matched anything at all (`apply.go:53-55`); a partial failure is silently dropped.
+      // The joined glob error only surfaces when NO pattern matched anything
+      // at all; a partial failure is silently dropped.
       const { layer, out, conn } = setup(tmp.current, {
         toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql", "typo/*.sql"]\n',
         files: {
@@ -1895,7 +1988,7 @@ describe("legacy db reset", () => {
           if (Exit.isFailure(exit)) {
             const cause = JSON.stringify(exit.cause);
             expect(cause).toContain("syntax error at or near");
-            // Go's `CmdSuggestion = "See schema file: <Bold(fp)>"` (`apply.go:63`).
+            // The suggestion is `"See schema file: <Bold(fp)>"` (established output contract).
             expect(cause).toContain("See schema file:");
             expect(cause).toContain("supabase/schemas/01_users.sql");
           }
@@ -1908,11 +2001,10 @@ describe("legacy db reset", () => {
     it.live.skipIf(isRoot)(
       "does not attach the schema-file suggestion when a schema file cannot be READ on an experimental remote reset",
       () => {
-        // Go's `NewMigrationFromFile` (the file-read/parse step, `apply.go:57-59`) returns
-        // BEFORE `CmdSuggestion` is ever set — only a later `ExecBatch` (statement
-        // execution) failure attaches it (`apply.go:61-63`). A file that glob-matches but
-        // can't be read (permissions changed after the glob) must fail WITHOUT the
-        // suggestion, unlike the exec-failure case above.
+        // The file-read/parse step returns BEFORE the suggestion is ever set —
+        // only a later statement-execution failure attaches it. A file that
+        // glob-matches but can't be read (permissions changed after the glob)
+        // must fail WITHOUT the suggestion, unlike the exec-failure case above.
         const schemaFile = join(tmp.current, "supabase", "schemas", "01_users.sql");
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
@@ -1940,11 +2032,11 @@ describe("legacy db reset", () => {
     it.live.skipIf(isRoot)(
       "fails an experimental remote reset (without silently succeeding) when a matched schema_paths directory cannot be walked",
       () => {
-        // Go's `fs.WalkDir` stops on the first `ReadDir` failure and `applySchemaFiles`
-        // only silently drops that error when at least one OTHER file was still found
-        // (`apply.go:53-55`); with a single pattern matching only the unreadable
-        // directory, `declared` stays empty and Go aborts the command — it must not
-        // report success having applied nothing. Verified empirically against `apps/cli-go`.
+        // Directory walking stops on the first read failure and only silently
+        // drops that error when at least one OTHER file was still found; with
+        // a single pattern matching only the unreadable directory, `declared`
+        // stays empty and the command aborts — it must not report success
+        // having applied nothing.
         const schemasDir = join(tmp.current, "supabase", "schemas");
         const { layer, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas"]\n',
@@ -1964,7 +2056,7 @@ describe("legacy db reset", () => {
             expect(cause).toContain("failed to walk matched directory");
             expect(cause).not.toContain("See schema file");
           }
-          // Schemas were already dropped before the failed apply step (Go's ResetAll order).
+          // Schemas were already dropped before the failed apply step (drop-then-apply order).
           expect(conn.execs.some((s) => s.includes("drop schema if exists"))).toBe(true);
           expect(conn.execs.some((s) => s.includes("create table schema_users"))).toBe(false);
         }).pipe(Effect.ensuring(Effect.sync(() => chmodSync(schemasDir, 0o755))));
@@ -1974,9 +2066,9 @@ describe("legacy db reset", () => {
     it.live(
       "takes the native experimental schema-files path via SUPABASE_EXPERIMENTAL in the project .env",
       () => {
-        // Go loads nested env before `reset.Run` reads viper's EXPERIMENTAL, so a
-        // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` reaches the native
-        // three-conjunct gate the same way an explicit `--experimental` does.
+        // The project `.env` is applied before EXPERIMENTAL is read, so a
+        // `SUPABASE_EXPERIMENTAL` set only in `supabase/.env` reaches the
+        // native three-conjunct gate the same way an explicit `--experimental` does.
         const previous = process.env["SUPABASE_EXPERIMENTAL"];
         delete process.env["SUPABASE_EXPERIMENTAL"];
         const { layer, out, conn } = setup(tmp.current, {
@@ -2016,7 +2108,7 @@ describe("legacy db reset", () => {
         expect(Exit.isFailure(exit)).toBe(true);
         if (Exit.isFailure(exit)) {
           expect(JSON.stringify(exit.cause)).toContain("--no-seed cannot be used with --sql-paths");
-          // Go's validateDbResetSeedFlags CmdSuggestion, rendered as a Suggestion: line.
+          // The established suggestion, rendered as a Suggestion: line.
           expect(JSON.stringify(exit.cause)).toContain("Use either");
         }
       });
@@ -2239,9 +2331,9 @@ describe("legacy db reset", () => {
     it.live(
       "seeds from --sql-paths on an experimental remote reset, independently of the schema-files apply",
       () => {
-        // `--sql-paths` overrides `[db.seed].sql_paths` regardless of which branch of
-        // `apply.MigrateAndSeed` ran — Go's `applySeedFiles` sits outside the if/else if
-        // (`apply.go:26`), and the seed override is resolved entirely upstream of it.
+        // `--sql-paths` overrides `[db.seed].sql_paths` regardless of which
+        // branch of the migrate-and-seed step ran — seeding sits outside the
+        // if/else-if, and the seed override is resolved entirely upstream of it.
         const { layer, out, conn } = setup(tmp.current, {
           toml: 'project_id = "test"\n\n[db.migrations]\nschema_paths = ["schemas/*.sql"]\n',
           files: {

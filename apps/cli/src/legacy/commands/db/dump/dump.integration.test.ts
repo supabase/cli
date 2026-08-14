@@ -6,6 +6,7 @@ import { Cause, Effect, Exit, Layer, Option } from "effect";
 
 import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import {
+  LEGACY_VALID_REF,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
   mockLegacyTelemetryStateTracked,
@@ -16,6 +17,16 @@ import {
   LegacyNetworkIdFlag,
 } from "../../../../shared/legacy/global-flags.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import {
+  LegacyInvalidProjectRefError,
+  LegacyProjectNotLinkedError,
+} from "../../../config/legacy-project-ref.errors.ts";
+import {
+  INVALID_PROJECT_REF_MESSAGE,
+  LegacyProjectRefResolver,
+  PROJECT_NOT_LINKED_MESSAGE,
+  PROJECT_REF_PATTERN,
+} from "../../../config/legacy-project-ref.service.ts";
 import { LegacyDbConfigResolver } from "../../../shared/legacy-db-config.service.ts";
 import type { LegacyDbConfigFlags } from "../../../shared/legacy-db-config.types.ts";
 import type { LegacyPgConnInput } from "../../../shared/legacy-db-connection.service.ts";
@@ -56,17 +67,26 @@ function mockResolver(opts: {
   const layer = Layer.succeed(LegacyDbConfigResolver, {
     resolve: (flags) => {
       calls.push(flags);
-      // Simulate Go's NewDbConfigWithPassword failing during connection resolution
-      // (IPv6 probe / pooler / temp login-role) after the ref is already loaded.
+      // Simulate connection resolution failing (IPv6 probe / pooler / temp
+      // login-role) after the ref is already loaded.
       if (opts.resolveFails === true) {
         return Effect.fail(
           new LegacyDbConfigConnectTempRoleError({ message: "failed to create temp role" }),
         );
       }
+      // A threaded `--project-ref` flag wins over the fixed `opts.ref` test
+      // fixture, same top precedence a real resolver would give it — lets a
+      // test prove the flag (not just `opts.ref`) drives the resolved (and
+      // later cached) ref.
+      const linkedProjectRef = flags.linkedProjectRef ?? Option.none();
+      const ref =
+        Option.isSome(linkedProjectRef) && linkedProjectRef.value.length > 0
+          ? linkedProjectRef.value
+          : opts.ref;
       return Effect.succeed({
         conn: opts.conn ?? LOCAL_CONN,
         isLocal: opts.isLocal ?? true,
-        ref: opts.ref === undefined ? undefined : Option.some(opts.ref),
+        ref: ref === undefined ? undefined : Option.some(ref),
       });
     },
     resolvePoolerFallback: (flags) => {
@@ -87,6 +107,49 @@ function mockResolver(opts: {
       return fallbackCalls;
     },
   };
+}
+
+/**
+ * Mocks `LegacyProjectRefResolver` for the up-front `loadProjectRef` pre-capture
+ * (`dump.handler.ts`), mirroring push/diff's identical mock (`push.integration.test.ts`,
+ * `diff.integration.test.ts`): `loadProjectRef` gives an explicit `--project-ref` flag
+ * top precedence, same as Go's `flags.LoadProjectRef` — a real (non-empty) ref pattern
+ * is validated so a malformed flag surfaces `LegacyInvalidProjectRefError`, matching the
+ * real service. `opts.projectId` stands in for `LegacyCliConfig.projectId`
+ * (`SUPABASE_PROJECT_ID`/`project_id`), which `loadProjectRef` consults before falling
+ * back to `opts.ref` (the SAME ref `mockResolver`'s own mock embeds in its resolved
+ * `ref`, so both stay consistent regardless of which fixture a test sets).
+ * `opts.linkedFails` simulates a genuinely unlinked workdir absent an explicit flag.
+ */
+function mockProjectRefResolver(opts: {
+  projectId: Option.Option<string>;
+  ref?: string;
+  linkedFails?: boolean;
+}) {
+  const validate = (ref: string) =>
+    PROJECT_REF_PATTERN.test(ref)
+      ? Effect.succeed(ref)
+      : Effect.fail(
+          new LegacyInvalidProjectRefError({ ref, message: INVALID_PROJECT_REF_MESSAGE }),
+        );
+  const layer = Layer.succeed(LegacyProjectRefResolver, {
+    resolve: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+    resolveForLink: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+    resolveOptional: () => Effect.succeed(Option.some(opts.ref ?? LEGACY_VALID_REF)),
+    loadProjectRef: (flagValue: Option.Option<string>) => {
+      if (Option.isSome(flagValue) && flagValue.value.length > 0) {
+        return validate(flagValue.value);
+      }
+      if (Option.isSome(opts.projectId)) {
+        return validate(opts.projectId.value);
+      }
+      return opts.linkedFails === true
+        ? Effect.fail(new LegacyProjectNotLinkedError({ message: PROJECT_NOT_LINKED_MESSAGE }))
+        : Effect.succeed(opts.ref ?? LEGACY_VALID_REF);
+    },
+    promptProjectRef: () => Effect.succeed(opts.ref ?? LEGACY_VALID_REF),
+  });
+  return { layer };
 }
 
 interface DockerResult {
@@ -127,8 +190,8 @@ function mockDockerRun(opts: {
         stderr: r.stderr ?? "",
       });
     },
-    // db dump now streams stdout: deliver the configured bytes to `onStdout` (as Go's
-    // StdCopy would), then report the exit code + stderr.
+    // db dump now streams stdout: deliver the configured bytes to `onStdout`,
+    // then report the exit code + stderr.
     runStream: (runOpts, streamOpts) =>
       Effect.gen(function* () {
         allOpts.push(runOpts);
@@ -184,6 +247,7 @@ interface SetupOpts {
   projectId?: Option.Option<string>;
   resolveFails?: boolean;
   ref?: string;
+  linkedFails?: boolean;
 }
 
 function setup(opts: SetupOpts = {}) {
@@ -198,10 +262,16 @@ function setup(opts: SetupOpts = {}) {
     resolveFails: opts.resolveFails,
     ref: opts.ref,
   });
+  const projectRef = mockProjectRefResolver({
+    projectId: opts.projectId ?? Option.none(),
+    ref: opts.ref,
+    linkedFails: opts.linkedFails,
+  });
   const docker = mockDockerRun(opts);
   const layer = Layer.mergeAll(
     out.layer,
     resolver.layer,
+    projectRef.layer,
     docker.layer,
     mockLegacyCliConfig({
       workdir: opts.workdir ?? "/work/project",
@@ -231,6 +301,7 @@ const flags = (over: Partial<LegacyDbDumpFlags> = {}): LegacyDbDumpFlags => ({
   dbUrl: over.dbUrl ?? Option.none(),
   linked: over.linked ?? Option.none(),
   local: over.local ?? Option.none(),
+  projectRef: over.projectRef ?? Option.none(),
   password: over.password ?? Option.none(),
   schema: over.schema ?? [],
 });
@@ -260,8 +331,8 @@ describe("legacy db dump integration", () => {
   it.live(
     "allows --use-copy with an explicit --data-only=false (Go required check is presence)",
     () => {
-      // cobra's required-flag check keys off flag.Changed, so `--data-only=false`
-      // satisfies it; Go proceeds and runs the schema dump with dataOnly=false.
+      // The required-flag check keys off explicit presence, so `--data-only=false`
+      // satisfies it; the command proceeds and runs the schema dump with dataOnly=false.
       const { layer } = setup({ isLocal: true, stdout: "SELECT 1;\n" });
       return Effect.gen(function* () {
         const exit = yield* legacyDbDump(
@@ -336,8 +407,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("rejects --linked=false --local as a target conflict (Go flag.Changed)", () => {
-    // cobra keys the target mutex off flag.Changed, so the explicit-false `--linked`
-    // still counts as set and conflicts with `--local`.
+    // The target mutex keys off explicit presence, so the explicit-false
+    // `--linked` still counts as set and conflicts with `--local`.
     const { layer } = setup();
     return Effect.gen(function* () {
       const exit = yield* legacyDbDump(
@@ -364,8 +435,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("treats --local=false as an explicit local target (Go ParseDatabaseConfig)", () => {
-    // Go selects local on Changed("local") before the linked default, so `--local=false`
-    // resolves the local target, not the linked one.
+    // Local is selected on explicit presence of `--local` before the linked
+    // default, so `--local=false` resolves the local target, not the linked one.
     const { layer, resolver } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ local: Option.some(false), dryRun: true }));
@@ -386,9 +457,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("prints the post-run Dumped-schema message on --dry-run --file without writing", () => {
-    // Go's dump.Run skips opening the file on dry-run but returns success, so cobra's
-    // PostRun still prints `Dumped schema to <abs>.` (cmd/db.go:148-156), with no
-    // dry-run guard and without touching the file (dump.go:23-32).
+    // The file is never opened on dry-run, but `Dumped schema to <abs>.` is
+    // still printed, with no dry-run guard and without touching the file.
     const filePath = join(tmp.current, "dry.sql");
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
@@ -398,16 +468,15 @@ describe("legacy db dump integration", () => {
       expect(out.stderrText).toContain("DRY RUN: *only* printing the pg_dump script to console.");
       expect(out.stderrText).toContain(`Dumped schema to`);
       expect(out.stderrText).toContain(filePath);
-      // No container ran and the file was never created/truncated on dry-run.
       expect(docker.lastOpts).toBeUndefined();
       expect(existsSync(filePath)).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
   it.live("treats an explicit --file '' as stdout on --dry-run (Go: len(path) > 0)", () => {
-    // Go keys every --file branch off len(path) > 0, not flag presence
-    // (internal/db/dump/dump.go:20-32); an explicit empty --file means stdout, with
-    // no "Dumped schema to …" line and no file ever touched.
+    // Every --file branch keys off len(path) > 0, not flag presence; an
+    // explicit empty --file means stdout, with no "Dumped schema to …" line
+    // and no file ever touched.
     const { layer, out, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ dryRun: true, local: Option.some(true), file: Option.some("") }));
@@ -418,8 +487,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("validates the merged config before the --dry-run print (Go root PreRun order)", () => {
-    // Go runs ParseDatabaseConfig (→ config.Load → Validate) in the root PreRunE
-    // before dump.Run, even for --dry-run, so an invalid config fails without printing.
+    // The merged config is validated before the dump runs, even for
+    // --dry-run, so an invalid config fails without printing.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -494,9 +563,9 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("joins a multi-schema selection into EXTRA_FLAGS with pipes", () => {
-    // CSV-splitting of `--schema` now happens at the flag level via
-    // `legacyParseSchemaFlags` (Go's cobra StringSlice / `cmd/db.go:444`), so the
-    // handler receives the already-split array and the env builder pipe-joins it.
+    // CSV-splitting of `--schema` happens at the flag level via
+    // `legacyParseSchemaFlags`, so the handler receives the already-split
+    // array and the env builder pipe-joins it.
     const { layer, docker } = setup({ isLocal: true });
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ schema: ["public", "auth"], local: Option.some(true) }));
@@ -505,8 +574,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("resolves a relative --file against the workdir", () => {
-    // Go chdir's into the workdir before opening --file, so a relative path is
-    // written under the workdir, not the original cwd.
+    // A relative `--file` is resolved against the workdir, so it is written
+    // under the workdir, not the original cwd.
     const { layer } = setup({
       isLocal: true,
       stdout: "CREATE SCHEMA public;\n",
@@ -526,6 +595,32 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "resolves the pg_dump network via SUPABASE_NETWORK_ID from supabase/.env when neither the flag nor the ambient env is set",
+    () => {
+      // Host networking is the default, but a resolved `--network-id`/`SUPABASE_NETWORK_ID`
+      // value overrides it whenever non-empty — a value sourced only from `supabase/.env`
+      // still wins over host.
+      const prev = process.env["SUPABASE_NETWORK_ID"];
+      delete process.env["SUPABASE_NETWORK_ID"];
+      mkdirSync(join(tmp.current, "supabase"), { recursive: true });
+      writeFileSync(join(tmp.current, "supabase", ".env"), "SUPABASE_NETWORK_ID=dotenv-net\n");
+      const { layer, docker } = setup({ isLocal: true, workdir: tmp.current });
+      return Effect.gen(function* () {
+        yield* legacyDbDump(flags({ local: Option.some(true) }));
+        expect(docker.lastOpts?.network).toEqual({ _tag: "named", name: "dotenv-net" });
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            if (prev === undefined) delete process.env["SUPABASE_NETWORK_ID"];
+            else process.env["SUPABASE_NETWORK_ID"] = prev;
+          }),
+        ),
+        Effect.provide(layer),
+      );
+    },
+  );
+
   it.live("defaults to the linked connection when neither --local nor --db-url is set", () => {
     const { layer, resolver } = setup({ conn: REMOTE_CONN, isLocal: false });
     return Effect.gen(function* () {
@@ -535,11 +630,11 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("caches the linked project even when connection resolution fails (Go PostRun)", () => {
-    // Go's LoadProjectRef sets flags.ProjectRef BEFORE NewDbConfigWithPassword
-    // (flags/db_url.go:88 vs :95), and ensureProjectGroupsCached runs on failure too
-    // (cmd/root.go:176). So an IPv6/pooler/login-role failure during resolution still
-    // refreshes the linked-project cache, because the ref was already loaded — here
-    // from config.toml project_id.
+    // The project ref is resolved before the connection is built, and the
+    // linked-project cache is refreshed unconditionally afterward. So an
+    // IPv6/pooler/login-role failure during resolution still refreshes the
+    // linked-project cache, because the ref was already loaded — here from
+    // config.toml project_id.
     const { layer, cache, resolver } = setup({
       projectId: Option.some("abcdefghijklmnopqrst"),
       resolveFails: true,
@@ -552,11 +647,38 @@ describe("legacy db dump integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live(
+    "caches the flag ref, not the workdir's own config ref, when resolution fails (regression)",
+    () => {
+      // The pre-connect `linkedRefForCache` chain must check `flags.projectRef`
+      // FIRST — before config.toml's `project_id` and the `.temp/project-ref`
+      // file — so a `--project-ref` override still wins even when `resolve()`
+      // fails before ever returning its own `ref`. `opts.projectId` here stands
+      // in for the workdir's own linked ref (e.g. config.toml `project_id`);
+      // it must lose to the flag.
+      const FLAG_REF = "flagflagflagflagflag";
+      const { layer, cache } = setup({
+        projectId: Option.some("abcdefghijklmnopqrst"),
+        resolveFails: true,
+      });
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbDump(
+          flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(cache.cached).toBe(true);
+        expect(cache.cachedRef).toBe(FLAG_REF);
+        expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
   it.live("does not cache when the linked ref is unknown and resolution fails", () => {
     // No config project_id and no .temp/project-ref file (workdir is a throwaway
-    // path), so the ref is never loaded; Go gates ensureProjectGroupsCached on
-    // flags.ProjectRef != "", so nothing is cached.
-    const { layer, cache } = setup({ resolveFails: true });
+    // path), so the up-front `loadProjectRef` pre-capture itself fails "not linked"
+    // (linkedFails) before `resolve()` is ever reached; the cache is only written
+    // when a ref is known, so nothing is cached.
+    const { layer, cache } = setup({ resolveFails: true, linkedFails: true });
     return Effect.gen(function* () {
       const exit = yield* legacyDbDump(flags({ linked: Option.some(true) })).pipe(Effect.exit);
       expect(Exit.isFailure(exit)).toBe(true);
@@ -574,6 +696,78 @@ describe("legacy db dump integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbDump(flags({ linked: Option.some(true) }));
       expect(cache.cached).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("dumps the project given via --project-ref without a linked workdir", () => {
+    // No fixed `opts.ref` fixture — only the flag can resolve a ref for the
+    // resolver call and the linked-project cache.
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, cache, resolver } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      stdout: "CREATE SCHEMA public;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      expect(resolver.calls[0]?.linkedProjectRef).toEqual(Option.some(FLAG_REF));
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("--project-ref overrides an already-linked workdir's project ref", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    // The workdir already resolves to a fixed ref (e.g. via .temp/project-ref) —
+    // the flag must win over it.
+    const { layer, cache } = setup({
+      conn: REMOTE_CONN,
+      isLocal: false,
+      ref: "abcdefghijklmnopqrst",
+      stdout: "CREATE SCHEMA public;\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDump(flags({ linked: Option.some(true), projectRef: Option.some(FLAG_REF) }));
+      expect(cache.cached).toBe(true);
+      expect(cache.cachedRef).toBe(FLAG_REF);
+      expect(cache.cachedRef).not.toBe("abcdefghijklmnopqrst");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live(
+    "rejects a malformed --project-ref on the linked path before resolving or caching",
+    () => {
+      // The pre-capture now runs the SAME validated `loadProjectRef` the resolver
+      // would raise right after (codex review on dump.handler.ts:182), so a malformed
+      // flag value must fail fast — never reaching `resolver.resolve()` (no
+      // connection/API work) and never writing the linked-project cache (no
+      // `GET /v1/projects/*`).
+      const { layer, cache, resolver } = setup();
+      return Effect.gen(function* () {
+        const exit = yield* legacyDbDump(
+          flags({ linked: Option.some(true), projectRef: Option.some("BADREF") }),
+        ).pipe(Effect.exit);
+        expect(Exit.isFailure(exit)).toBe(true);
+        expect(failMessage(exit)).toBe(INVALID_PROJECT_REF_MESSAGE);
+        expect(resolver.calls).toEqual([]);
+        expect(cache.cached).toBe(false);
+      }).pipe(Effect.provide(layer));
+    },
+  );
+
+  it.live("rejects --project-ref combined with an explicit --local target", () => {
+    const FLAG_REF = "flagflagflagflagflag";
+    const { layer, resolver, cache } = setup({ isLocal: true });
+    return Effect.gen(function* () {
+      const exit = yield* legacyDbDump(
+        flags({ local: Option.some(true), projectRef: Option.some(FLAG_REF) }),
+      ).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(failMessage(exit)).toBe(
+        "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+      );
+      expect(resolver.calls).toEqual([]);
+      expect(cache.cached).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 
@@ -635,8 +829,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("linked: preserves the original dump error when the pooler fallback fails", () => {
-    // Go's PoolerFallbackConfig returns ok=false on any fallback-resolution error and
-    // reports the original pg_dump failure — the optional retry must not replace it.
+    // Any fallback-resolution error reports the original pg_dump failure — the
+    // optional retry must not replace it.
     const { layer, resolver, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,
@@ -683,8 +877,8 @@ describe("legacy db dump integration", () => {
       // The fallback was attempted (classified IPv6) but returned no pooler.
       expect(resolver.fallbackCalls).toHaveLength(1);
       expect(docker.allOpts).toHaveLength(1);
-      // Go's SetConnectSuggestion attaches the IPv6 pooler guidance on the no-fallback
-      // path (pooler_fallback.go:60-64); the bare container error must carry it.
+      // The IPv6 pooler guidance is attached on the no-fallback path; the bare
+      // container error must carry it.
       expect(failSuggestion(exit)).toContain(
         "Your network does not support IPv6, which is required for direct connections",
       );
@@ -693,9 +887,8 @@ describe("legacy db dump integration", () => {
   });
 
   it.live("linked: attaches the IPv6 suggestion when the pooler retry also fails", () => {
-    // Go's RunWithPoolerFallback calls SetConnectSuggestion on the retry's stderr when
-    // the pooler retry also fails (pooler_fallback.go:52-55); an IPv6 retry failure
-    // surfaces the same guidance.
+    // The IPv6 pooler guidance is also attached to the retry's stderr when the
+    // pooler retry also fails; an IPv6 retry failure surfaces the same guidance.
     const { layer, docker } = setup({
       conn: REMOTE_CONN,
       isLocal: false,

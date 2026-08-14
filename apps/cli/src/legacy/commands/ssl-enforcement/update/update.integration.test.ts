@@ -19,10 +19,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySslEnforcementUpdate } from "./update.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const SSL_ENFORCED: typeof V1GetSslEnforcementConfigOutput.Type = {
   currentConfig: { database: true },
   appliedSuccessfully: true,
@@ -37,10 +33,6 @@ const SSL_DESIRED_BUT_NOT_APPLIED: typeof V1GetSslEnforcementConfigOutput.Type =
   currentConfig: { database: true },
   appliedSuccessfully: false,
 };
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -87,14 +79,8 @@ function setupTracked(opts: SetupOpts = {}) {
   return { layer, out, api, telemetry, cache };
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 describe("legacy ssl-enforcement update integration", () => {
-  // -------------------------------------------------------------------------
   // Flag validation
-  // -------------------------------------------------------------------------
 
   it.live(
     "fails with LegacySslEnforcementNoEnableDisableFlagError when neither flag is set",
@@ -171,9 +157,7 @@ describe("legacy ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Request body
-  // -------------------------------------------------------------------------
 
   it.live("sends requestedConfig.database = true when --enable-db-ssl-enforcement is set", () => {
     const { layer, api } = setup({ response: SSL_ENFORCED });
@@ -205,9 +189,7 @@ describe("legacy ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Text output modes (mirroring get scenarios with enable flag)
-  // -------------------------------------------------------------------------
 
   it.live('prints "SSL is being enforced." when database=true and appliedSuccessfully=true', () => {
     const { layer, out } = setup({ response: SSL_ENFORCED });
@@ -248,9 +230,7 @@ describe("legacy ssl-enforcement update integration", () => {
     },
   );
 
-  // -------------------------------------------------------------------------
   // Go output encoders
-  // -------------------------------------------------------------------------
 
   it.live("emits Go-compatible env output for --output env (exact bytes)", () => {
     const { layer, out } = setup({ goOutput: "env", response: SSL_ENFORCED });
@@ -322,9 +302,7 @@ describe("legacy ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // TS output-format modes
-  // -------------------------------------------------------------------------
 
   it.live("emits a JSON success event when --output-format=json", () => {
     const { layer, out } = setup({ format: "json", response: SSL_ENFORCED });
@@ -370,9 +348,7 @@ describe("legacy ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Project ref resolution
-  // -------------------------------------------------------------------------
 
   it.live("passes the resolved project ref into the updateSslEnforcementConfig URL", () => {
     const { layer, api } = setup({ response: SSL_ENFORCED });
@@ -471,9 +447,7 @@ describe("legacy ssl-enforcement update integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  // -------------------------------------------------------------------------
   // Error cases
-  // -------------------------------------------------------------------------
 
   it.live("fails with LegacySslEnforcementUpdateUnexpectedStatusError on HTTP 503", () => {
     const { layer } = setup({ status: 503, response: SSL_ENFORCED });

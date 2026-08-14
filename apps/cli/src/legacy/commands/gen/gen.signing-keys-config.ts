@@ -25,19 +25,17 @@ interface LegacyGenSigningKeysConfigPaths {
   /** CWD-relative `supabase/config.toml` (or the resolved config file's own display path). */
   readonly configDisplayPath: string;
   /**
-   * `[auth].enabled` from the resolved config (default `true`). Go's `Config.Validate`
-   * only reads `[auth].signing_keys_path`'s file INSIDE `if c.Auth.Enabled`
-   * (`config.go:1087-1116`) — EVERY caller that reaches this file's read through Go's
-   * `flags.LoadConfig` (both `gen bearer-jwt`'s `bearerjwt.Run` and `gen signing-key`'s
-   * `signingkeys.Run` call it, `bearerjwt.go:20` / `signingkeys.go:111`) is subject to the
-   * SAME gate — there is no separate, ungated Go code path for `gen signing-key`. Verified
-   * against the real binary (CLI-1961 Codex review finding): with `auth.enabled = false`
-   * and a configured `signing_keys_path` file, `gen signing-key --append` never reads that
-   * file's real content at all — it appends to (and a subsequent write clobbers) Go's own
-   * `NewConfig()` default single-key array instead, discarding whatever was actually on
-   * disk. Both `gen bearer-jwt`'s `getSigningKey` ({@link legacyResolveBearerJwtSigningKey})
-   * and `gen signing-key` ({@link legacyGenSigningKey}) branch on this field for exactly that
-   * reason.
+   * `[auth].enabled` from the resolved config (default `true`). The
+   * `[auth].signing_keys_path` file is only read when auth is enabled —
+   * every caller that reaches this file's read through the shared config
+   * load is subject to the SAME gate. With `auth.enabled = false` and a
+   * configured `signing_keys_path` file, `gen signing-key --append` never
+   * reads that file's real content at all — it appends to (and a
+   * subsequent write clobbers) the default single-key array instead,
+   * discarding whatever was actually on disk. Both `gen bearer-jwt`'s
+   * `getSigningKey` ({@link legacyResolveBearerJwtSigningKey}) and `gen
+   * signing-key` ({@link legacyGenSigningKey}) branch on this field for
+   * exactly that reason.
    */
   readonly authEnabled: boolean;
   /** `Option.some` when `[auth].signing_keys_path` is configured (non-empty). */
@@ -50,24 +48,23 @@ interface LegacyGenSigningKeysConfigPaths {
 /**
  * `typeof value === "object"` is also `true` for a JSON array — without excluding
  * `Array.isArray(value)`, a `signing_keys_path` entry shaped like `[]` (or any nested
- * array) would pass this check and be accepted as a JWK-shaped record. Go's own decode
- * (`fetcher.ParseJSON[[]JWK]`, straight into `[]config.JWK`) genuinely rejects an
- * array-shaped element with `"json: cannot unmarshal array into Go value of type
- * config.JWK"` — verified directly against `encoding/json` (CLI-1961 Codex review
- * finding): `[[], {"kty":"EC","kid":"k2"}]` fails Go's decode outright, it does not
- * partially accept `k2` the way this check would without the array exclusion.
+ * array) would pass this check and be accepted as a JWK-shaped record. An
+ * array-shaped element must be rejected with `"json: cannot unmarshal array
+ * into Go value of type config.JWK"`: `[[], {"kty":"EC","kid":"k2"}]` fails
+ * decoding outright, it does not partially accept `k2` the way this check
+ * would without the array exclusion.
  */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 /**
- * Go's own `legacyGoJsonKindName` (`legacy-go-json.ts`) is deliberately scoped to
+ * `legacyGoJsonKindName` (`legacy-go-json.ts`) is deliberately scoped to
  * scalars only — every one of its existing call sites already excludes null/array/
  * object before reaching it. This file's per-field JWK checks below DO need to name a
  * bare JSON object (`key_ops`'s elements, or a nested value under any field, can be an
- * object — verified against the real binary: `--payload`-style `{}` inside `key_ops`
- * reports `"...into Go struct field JWK.key_ops of type string"` with kind `object`),
+ * object — a `--payload`-style `{}` inside `key_ops` must report
+ * `"...into Go struct field JWK.key_ops of type string"` with kind `object`),
  * so this is a local superset rather than a change to that shared, narrower contract.
  */
 function jwkFieldKindName(value: unknown): string {
@@ -78,20 +75,20 @@ function jwkFieldKindName(value: unknown): string {
 }
 
 /**
- * Go's exact `encoding/json` struct-field type-mismatch text: `"json: cannot unmarshal
- * <kind> into Go struct field JWK.<field> of type <goType>"` — verified against the
- * real binary (CLI-1961) for every field this file reads: `kty`/`kid`/`use`/`alg`/`n`/
- * `e`/`d`/`p`/`q`/`dp`/`dq`/`qi`/`crv`/`x`/`y` (`goType: "string"`), `key_ops` as a
- * whole (`goType: "[]string"`) vs. one of its elements (`goType: "string"`, the same as
- * any other string field), and `ext` (`goType: "bool"`).
+ * Established `encoding/json` struct-field type-mismatch text: `"json: cannot
+ * unmarshal <kind> into Go struct field JWK.<field> of type <goType>"` — for
+ * every field this file reads: `kty`/`kid`/`use`/`alg`/`n`/`e`/`d`/`p`/`q`/
+ * `dp`/`dq`/`qi`/`crv`/`x`/`y` (`goType: "string"`), `key_ops` as a whole
+ * (`goType: "[]string"`) vs. one of its elements (`goType: "string"`, the same
+ * as any other string field), and `ext` (`goType: "bool"`).
  */
 function jwkStructFieldTypeMismatch(field: string, value: unknown, goType: string): string {
   return `json: cannot unmarshal ${jwkFieldKindName(value)} into Go struct field JWK.${field} of type ${goType}`;
 }
 
 /**
- * A JSON `null` for any `config.JWK` field is a documented Go `encoding/json` no-op —
- * same as a `null` for the whole JWK (see `bearer-jwt.signing-key.ts`'s
+ * A JSON `null` for any `config.JWK` field is a documented `encoding/json`
+ * no-op — same as a `null` for the whole JWK (see `bearer-jwt.signing-key.ts`'s
  * `resolveSigningKeyFromStdinJwk` doc comment) — so `null` must NOT be treated as a type
  * mismatch here, only as "absent".
  */
@@ -100,26 +97,28 @@ function isAbsentJwkField(value: unknown): boolean {
 }
 
 /**
- * Go's `encoding/json` struct-field matching is case-insensitive — the decoder
- * "match[es] incoming object keys to the keys used by Marshal (either the struct field
- * name or its tag), preferring an exact match but also accepting a case-insensitive
- * match" — and `config.JWK` gets NO field-specific exemption from this: verified
- * directly against the real `config.JWK` struct for every field this file reads
- * (`kty`, `kid`, `use`, `key_ops`, `alg`, `ext`, `n`, `e`, `d`, `p`, `q`, `dp`, `dq`,
- * `qi`, `crv`, `x`, `y`), including `alg` despite its extra `encoding.TextUnmarshaler`
- * hook — `{"KTY":"EC","ALG":"ES256"}` decodes identically to the all-lowercase
- * spelling. A plain `record[field]` index (JS property access is always exact-case)
- * would otherwise treat `"KTY"`/`"ALG"`/etc. as absent instead of decoding them,
- * incorrectly rejecting keys Go's real decoder accepts (CLI-1961 Codex review finding).
+ * `encoding/json`-style struct-field matching is case-insensitive — the
+ * decoder "match[es] incoming object keys to the keys used by Marshal
+ * (either the struct field name or its tag), preferring an exact match but
+ * also accepting a case-insensitive match" — and `config.JWK` gets NO
+ * field-specific exemption from this: every field this file reads (`kty`,
+ * `kid`, `use`, `key_ops`, `alg`, `ext`, `n`, `e`, `d`, `p`, `q`, `dp`, `dq`,
+ * `qi`, `crv`, `x`, `y`), including `alg` despite its extra
+ * `encoding.TextUnmarshaler` hook — `{"KTY":"EC","ALG":"ES256"}` decodes
+ * identically to the all-lowercase spelling. A plain `record[field]` index
+ * (JS property access is always exact-case) would otherwise treat
+ * `"KTY"`/`"ALG"`/etc. as absent instead of decoding them, incorrectly
+ * rejecting keys the established decoder accepts.
  *
- * When MULTIPLE case-variant spellings of the same field are present, Go's decoder
- * processes JSON keys strictly in SOURCE order and overwrites the struct field on
- * each match, so whichever case-variant key comes LAST in the object wins — verified
- * directly: `{"KTY":"EC","kty":"RSA"}` decodes to `kty:"RSA"`, and `{"kty":"EC",
- * "KTY":"RSA"}` also decodes to `kty:"RSA"` (the later key, regardless of casing,
- * always wins). This only GENERALIZES `JSON.parse`'s own already-relied-on
- * last-value-wins behavior for a same-case duplicate key to cross-case duplicates
- * too — it never changes the answer for an object with no case-variant duplicates.
+ * When MULTIPLE case-variant spellings of the same field are present, the
+ * decoder processes JSON keys strictly in SOURCE order and overwrites the
+ * struct field on each match, so whichever case-variant key comes LAST in
+ * the object wins: `{"KTY":"EC","kty":"RSA"}` decodes to `kty:"RSA"`, and
+ * `{"kty":"EC","KTY":"RSA"}` also decodes to `kty:"RSA"` (the later key,
+ * regardless of casing, always wins). This only GENERALIZES `JSON.parse`'s
+ * own already-relied-on last-value-wins behavior for a same-case duplicate
+ * key to cross-case duplicates too — it never changes the answer for an
+ * object with no case-variant duplicates.
  */
 export function resolveJwkFieldValue(record: Record<string, unknown>, field: string): unknown {
   let value: unknown;
@@ -134,17 +133,18 @@ export function resolveJwkFieldValue(record: Record<string, unknown>, field: str
 }
 
 /**
- * Reads an optional STRING field, throwing Go's exact struct-field type-mismatch text
- * (see {@link jwkStructFieldTypeMismatch}) when the field is PRESENT with a non-string
- * value — e.g. `{"kid":123}` or `{"ext":"true"}` — rather than silently treating a
- * malformed field as absent. Go's `json.Unmarshal` into `config.JWK` fails outright on
- * any such field, so a mistyped optional field must never let a caller mint a token as
- * if the field had simply been omitted. Hoisted here (rather than living only in
+ * Reads an optional STRING field, throwing the established struct-field
+ * type-mismatch text (see {@link jwkStructFieldTypeMismatch}) when the field
+ * is PRESENT with a non-string value — e.g. `{"kid":123}` or `{"ext":"true"}`
+ * — rather than silently treating a malformed field as absent. Decoding into
+ * `config.JWK` fails outright on any such field, so a mistyped optional
+ * field must never let a caller mint a token as if the field had simply
+ * been omitted. Hoisted here (rather than living only in
  * `bearer-jwt.signing-key.ts`) because {@link assertNoMalformedDuplicateJwkField} — used
  * by BOTH `gen signing-key` and `gen bearer-jwt` via {@link legacyReadSigningKeysFile} —
- * needs the exact same per-field check (CLI-1961 Codex review finding). Looks the field
- * up case-insensitively via {@link resolveJwkFieldValue} to match Go's own
- * case-insensitive struct-field matching (CLI-1961 Codex review finding).
+ * needs the exact same per-field check. Looks the field up case-insensitively
+ * via {@link resolveJwkFieldValue} to match the established case-insensitive
+ * struct-field matching.
  */
 export function readOptionalString(
   record: Record<string, unknown>,
@@ -161,23 +161,24 @@ export function readOptionalString(
 }
 
 /**
- * Reads the optional `key_ops` STRING ARRAY field, throwing Go's exact struct-field
- * type-mismatch text (see {@link jwkStructFieldTypeMismatch}) when the field is
- * PRESENT but is not an array (`goType: "[]string"`) or contains a non-string,
- * non-null element (`goType: "string"`, Go decodes each element individually into
- * the slice's element type) — same "never silently treat malformed as absent" rule as
- * {@link readOptionalString}. See that function's doc comment for why this is exported
- * from the family root rather than kept local to `bearer-jwt.signing-key.ts`.
+ * Reads the optional `key_ops` STRING ARRAY field, throwing the established
+ * struct-field type-mismatch text (see {@link jwkStructFieldTypeMismatch})
+ * when the field is PRESENT but is not an array (`goType: "[]string"`) or
+ * contains a non-string, non-null element (`goType: "string"`, each element
+ * is decoded individually into the slice's element type) — same "never
+ * silently treat malformed as absent" rule as {@link readOptionalString}.
+ * See that function's doc comment for why this is exported from the family
+ * root rather than kept local to `bearer-jwt.signing-key.ts`.
  *
- * A `null` ELEMENT (e.g. `"key_ops":["sign",null]`) is its own separate zero-value
- * case, one level deeper than {@link isAbsentJwkField}'s "the whole field is absent":
- * Go's `encoding/json` decodes a `null` slice element into `[]string` as that
- * element's zero value (`""`), not a type mismatch. Verified against the real binary
- * (CLI-1961 Codex review finding): `json.Unmarshal(["sign", null], &[]string{})`
- * yields `["sign", ""]` with no error — and `key_ops` is never even READ by
- * `GenerateAsymmetricJWT` (it only inspects `kty`/`Algorithm`/the key-material
- * fields), so a JWK with a `null` `key_ops` element still signs successfully in Go,
- * where this function previously rejected it outright.
+ * A `null` ELEMENT (e.g. `"key_ops":["sign",null]`) is its own separate
+ * zero-value case, one level deeper than {@link isAbsentJwkField}'s "the
+ * whole field is absent": a `null` slice element decodes into `[]string` as
+ * that element's zero value (`""`), not a type mismatch —
+ * `json.Unmarshal(["sign", null], &[]string{})` yields `["sign", ""]` with
+ * no error — and `key_ops` is never even READ by signing (it only inspects
+ * `kty`/`Algorithm`/the key-material fields), so a JWK with a `null`
+ * `key_ops` element still signs successfully, where this function
+ * previously rejected it outright.
  */
 export function readOptionalStringArray(
   record: Record<string, unknown>,
@@ -202,7 +203,7 @@ export function readOptionalStringArray(
 }
 
 /**
- * Reads the optional `ext` BOOLEAN field (Go's `*bool`), throwing Go's exact
+ * Reads the optional `ext` BOOLEAN field (`*bool`), throwing the established
  * struct-field type-mismatch text (see {@link jwkStructFieldTypeMismatch}) when the
  * field is PRESENT with a non-boolean value — e.g. `{"ext":"true"}` or `{"ext":1}` —
  * same "never silently treat malformed as absent" rule as {@link readOptionalString}.
@@ -309,8 +310,7 @@ function skipJsonValue(text: string, start: number): number {
  * recover each `signing_keys_path` entry's OWN untouched text for
  * {@link assertNoMalformedDuplicateJwkField} — `JSON.parse`, which the array as a WHOLE
  * already went through for the ordinary shape checks in that function, has by that
- * point already discarded the very duplicate-key evidence that check exists to find
- * (CLI-1961 Codex review finding).
+ * point already discarded the very duplicate-key evidence that check exists to find.
  */
 function splitJsonArrayElementTexts(arrayText: string): ReadonlyArray<string> {
   const result: Array<string> = [];
@@ -340,14 +340,13 @@ function splitJsonArrayElementTexts(arrayText: string): ReadonlyArray<string> {
  * LOWERCASED, with ALL occurrences' raw source substrings preserved in true source
  * order — including duplicates `JSON.parse` would silently collapse down to just the
  * last one, AND case-variant "duplicates" of the same `config.JWK` field (e.g. `{"KID":
- * 1,"kid":"k"}`) that a same-case-only grouping would otherwise miss entirely: Go's
- * `encoding/json` matches struct fields case-insensitively (see
+ * 1,"kid":"k"}`) that a same-case-only grouping would otherwise miss entirely:
+ * `encoding/json`-style matching resolves struct fields case-insensitively (see
  * {@link resolveJwkFieldValue}'s doc comment), so `KID` and `kid` here both feed the
  * SAME struct field and must be checked together, in true relative source order, for
  * {@link assertNoMalformedDuplicateJwkField} to catch a malformed earlier occurrence
- * regardless of which case variant it used (verified against the real binary,
- * CLI-1961 Codex review finding: `{"KID":123,"kid":"validkid"}` still errors
- * `"...JWK.kid..."` in Go, even though `kid`'s own final, valid occurrence comes
+ * regardless of which case variant it used (`{"KID":123,"kid":"validkid"}` still
+ * errors `"...JWK.kid..."`, even though `kid`'s own final, valid occurrence comes
  * later). Grouping by lowercase here — rather than post-hoc merging per-key arrays
  * after the fact — keeps every occurrence in exactly the order it appeared in the
  * source, regardless of which case variant it used.
@@ -388,45 +387,45 @@ function findTopLevelObjectFieldOccurrences(
 
 /**
  * Detects a JWK-shaped object literal's raw source text having a KNOWN `config.JWK`
- * field repeated with an EARLIER occurrence Go's real decode would reject, even when the
+ * field repeated with an EARLIER occurrence that must be rejected, even when the
  * LAST occurrence — the only one `JSON.parse` actually keeps, per plain JS
  * object-literal semantics — is perfectly valid on its own. `JSON.parse` collapsing
  * `{"kid":1,"kid":"k"}` down to `{kid: "k"}` erases the very evidence
  * `readOptionalString`/etc. would need to catch the earlier `1`.
  *
- * Verified against the real binary (CLI-1961 Codex review finding) with two genuinely
- * different mechanics depending on the field:
+ * Two genuinely different mechanics depending on the field:
  *
- * - **Plain `string`/`[]string`/`*bool` fields** (every field here except `alg`): Go's
- *   `encoding/json` decodes duplicate occurrences in source order and ALWAYS continues
- *   past a type-mismatched occurrence to try the next one (a later valid occurrence DOES
- *   get written into the struct) — but `Unmarshal`'s own returned error is always the
- *   FIRST mismatch found, regardless of what a later occurrence does. Net effect: if ANY
- *   occurrence of a plain field mismatches, `Unmarshal` errors, full stop — which is
- *   exactly what iterating every occurrence through the same {@link readOptionalString}/
- *   {@link readOptionalStringArray}/{@link readOptionalBoolean} the merged value already
- *   goes through, in source order, reproduces (first thrown wins, same as Go's first
- *   saved error).
+ * - **Plain `string`/`[]string`/`*bool` fields** (every field here except `alg`):
+ *   `encoding/json`-style decoding processes duplicate occurrences in source order and
+ *   ALWAYS continues past a type-mismatched occurrence to try the next one (a later
+ *   valid occurrence DOES get written into the struct) — but the decode's own
+ *   returned error is always the FIRST mismatch found, regardless of what a later
+ *   occurrence does. Net effect: if ANY occurrence of a plain field mismatches,
+ *   decoding errors, full stop — which is exactly what iterating every occurrence
+ *   through the same {@link readOptionalString}/{@link readOptionalStringArray}/
+ *   {@link readOptionalBoolean} the merged value already goes through, in source
+ *   order, reproduces (first thrown wins, same as the established first-saved
+ *   error).
  * - **`alg`**: `config.Algorithm` additionally implements `encoding.TextUnmarshaler`
  *   (the RS256/ES256 allowlist). Once an EARLIER occurrence's `UnmarshalText` itself
  *   returns a non-nil error (i.e. a validly-typed but disallowed string, like `"HS256"`),
- *   Go's decoder never even ATTEMPTS a later occurrence of `alg` — confirmed directly:
+ *   the decoder never even ATTEMPTS a later occurrence of `alg`:
  *   `json.Unmarshal` of `{"alg":"HS256","alg":"ES256"}` into a `config.JWK`-shaped struct
  *   still errors `"must be one of [RS256 ES256]"`, and the field never advances past the
  *   first, disallowed value, even though `"ES256"` alone would have been fine and is the
  *   value `JSON.parse` alone would have kept. A bare JSON-type mismatch on `alg` (e.g. a
- *   number) behaves like the plain-field case above instead — Go's outer struct-field
+ *   number) behaves like the plain-field case above instead — the outer struct-field
  *   type check runs BEFORE `UnmarshalText` is ever reached, and does not block later
  *   occurrences the way `UnmarshalText`'s OWN error does. So `alg` needs both checks, in
  *   order, per occurrence: {@link readOptionalString} (type) then
  *   {@link legacyAssertDecodableJwkAlgorithm} (allowlist) — first thrown wins, matching
- *   Go's first-saved-error exactly for this field too.
+ *   the established first-saved-error behavior exactly for this field too.
  *
  * Checks known fields in a fixed order (not the object's own source order) — an accepted
  * gap already documented on `bearer-jwt.signing-key.ts`'s `normalizeStoredJwk` for the
  * analogous "multiple simultaneously-malformed DISTINCT fields" case, which this
  * inherits: every genuinely malformed duplicate is still rejected, just not always
- * attributed to Go's exact first field when more than one is wrong at once.
+ * attributed to the established first field when more than one is wrong at once.
  *
  * A no-op (never throws, never even builds `findTopLevelObjectFieldOccurrences`'s full
  * map unnecessarily) for an object with no duplicated known field — the overwhelmingly
@@ -470,27 +469,26 @@ export function assertNoMalformedDuplicateJwkField(objectText: string): void {
 /**
  * Resolves `supabase/config.toml`'s display path and `[auth].signing_keys_path`'s
  * actual/display path — no file I/O on the keys path itself (see
- * {@link legacyReadSigningKeysFile} for that). Mirrors Go's `flags.LoadConfig` +
- * `Config.Validate`'s path resolution (`apps/cli-go/pkg/config/config.go:928-930`).
+ * {@link legacyReadSigningKeysFile} for that).
  */
 export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <E>(
   cwd: string,
   onConfigParseError: (message: string) => E,
 ) {
   const path = yield* Path.Path;
-  // Go's `Config.Load` runs its `loadNestedEnv` dotenv cascade (`config.go:786-793`)
-  // BEFORE `loadFromFile` ever decodes `env(...)` TOML references (`LoadEnvHook`,
-  // `config.go:735-738`) — and that cascade reaches `.env.<SUPABASE_ENV>[.local]` files
-  // AND the project-root directory (`<workdir>/.env`), not just `supabase/.env`/
-  // `.env.local`. `loadProjectConfig`'s OWN internal env resolution (used whenever
-  // `options.projectEnv` is omitted, `@supabase/config`'s `loadProjectEnvironment`) only
-  // covers that narrower `supabase/`-dir, env-agnostic half — so `[auth].signing_keys_path
-  // = "env(KEYS_PATH)"` with `KEYS_PATH` set only in `.env.development`/`<workdir>/.env`
-  // would otherwise stay literally unexpanded here even though Go's CLI resolves and
-  // signs with it fine (verified against the real Go source: CLI-1961 Codex review
-  // finding). Fills the exact same gap `legacy-local-project-context.ts`'s
-  // `legacyLoadLocalProjectContext` already fills for `stop`/`status`, via the same
-  // two-step resolution.
+  // The dotenv cascade must run BEFORE `loadFromFile` ever decodes `env(...)`
+  // TOML references — and that cascade reaches `.env.<SUPABASE_ENV>[.local]`
+  // files AND the project-root directory (`<workdir>/.env`), not just
+  // `supabase/.env`/`.env.local`. `loadProjectConfig`'s OWN internal env
+  // resolution (used whenever `options.projectEnv` is omitted,
+  // `@supabase/config`'s `loadProjectEnvironment`) only covers that narrower
+  // `supabase/`-dir, env-agnostic half — so `[auth].signing_keys_path =
+  // "env(KEYS_PATH)"` with `KEYS_PATH` set only in
+  // `.env.development`/`<workdir>/.env` would otherwise stay literally
+  // unexpanded here even though the established behavior resolves and signs
+  // with it fine. Fills the exact same gap `legacy-local-project-context.ts`'s
+  // `legacyLoadLocalProjectContext` already fills for `stop`/`status`, via the
+  // same two-step resolution.
   const projectEnv = yield* loadProjectEnvironment({
     cwd,
     baseEnv: process.env,
@@ -506,21 +504,21 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
   const loaded = yield* loadProjectConfig(cwd, {
     projectEnv: projectEnv !== null ? { ...projectEnv, values: projectEnvValues } : undefined,
     goViperCompat: true,
-    // `cwd` here is the ALREADY-resolved `LegacyCliConfig.workdir` (Go's own ancestor
-    // climb, `ChangeWorkDir`/`getProjectRoot`, already ran once to produce it — see
+    // `cwd` here is the ALREADY-resolved `LegacyCliConfig.workdir` (the
+    // ancestor climb already ran once to produce it — see
     // `legacy-cli-config.layer.ts`'s `resolveWorkdir`). Without `search: false`, this
-    // call would climb AGAIN from `cwd`, which diverges from Go's real
-    // `Config.Load("")` (`pkg/config/utils.go:43-48`) whenever an explicit `--workdir`
-    // points at a subdirectory below another project's root: Go changes directly into
-    // that exact subdirectory (no climb once `--workdir`/`SUPABASE_WORKDIR` is set —
-    // `internal/utils/misc.go:246-249`) and finds no `supabase/config.toml` there,
-    // while this call would otherwise still find the ANCESTOR project's config —
-    // verified against the real binary (Codex review finding, CLI-1961): the ancestor's
-    // `signing_keys_path` leaked into the picker prompt in the TS port but not in Go.
-    // `tomlOnly: true` matches the same `Config.Load` — Go has no concept of a JSON
-    // project config file, so a stray `supabase/config.json` must never win over
-    // `config.toml` here either (`legacy-local-project-context.ts` establishes this
-    // exact pair of options for the same underlying reason).
+    // call would climb AGAIN from `cwd`, which diverges from the established
+    // behavior whenever an explicit `--workdir` points at a subdirectory
+    // below another project's root: the established behavior changes
+    // directly into that exact subdirectory (no climb once
+    // `--workdir`/`SUPABASE_WORKDIR` is set) and finds no
+    // `supabase/config.toml` there, while this call would otherwise still
+    // find the ANCESTOR project's config — regressing to the ancestor's
+    // `signing_keys_path` leaking into the picker prompt.
+    // `tomlOnly: true`: there is no concept of a JSON project config file, so
+    // a stray `supabase/config.json` must never win over `config.toml` here
+    // either (`legacy-local-project-context.ts` establishes this exact pair
+    // of options for the same underlying reason).
     search: false,
     tomlOnly: true,
   }).pipe(
@@ -536,9 +534,9 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
     } satisfies LegacyGenSigningKeysConfigPaths;
   }
 
-  // Go displays the CWD-relative `supabase/config.toml` (utils.ConfigPath), never an absolute
-  // path. `@supabase/config` always resolves `loaded.path` to an absolute path, so relativize it
-  // back against the project root to match Go's output.
+  // The CWD-relative `supabase/config.toml` is displayed, never an absolute
+  // path. `@supabase/config` always resolves `loaded.path` to an absolute
+  // path, so relativize it back against the project root.
   const projectRoot = path.dirname(path.dirname(loaded.path));
   const configDisplayPath = path.relative(projectRoot, loaded.path);
   const authEnabled = loaded.config.auth.enabled;
@@ -567,22 +565,23 @@ export const legacyResolveSigningKeysConfigPaths = Effect.fnUntraced(function* <
 
 /**
  * Reads and JSON-decodes a `[auth].signing_keys_path` file at `actualPath` into an array of
- * JWK-shaped records. Mirrors Go's `Config.Validate` read (`config.go:1110-1116`, wrapped
- * `"failed to read signing keys: %w"` / `"failed to decode signing keys: %w"`) — the
- * "expected a JSON array [of objects]" shape check matches this package's own pre-existing
- * `gen signing-key` behavior (not a literal Go error string; Go's decode failures come from
- * `encoding/json`'s own type-mismatch errors, which `readJwkArray`'s two checks approximate).
+ * JWK-shaped records. Established error wrapping (`"failed to read signing keys: %w"` /
+ * `"failed to decode signing keys: %w"`) — the "expected a JSON array [of
+ * objects]" shape check matches this package's own pre-existing `gen
+ * signing-key` behavior (not a literal error string; decode failures come
+ * from `encoding/json`-style type-mismatch errors, which `readJwkArray`'s two
+ * checks approximate).
  *
- * The `alg` allowlist check and the duplicate-field check below ARE literal Go error strings
- * (or reproductions of Go's exact struct-field type-mismatch text), unlike the shape checks
- * above: Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) decodes straight
- * into `[]config.JWK`, running the full `encoding/json` struct decode — including
- * `config.Algorithm.UnmarshalText` (`pkg/config/auth.go:80-86`) — for every element, wrapped
- * here as `"failed to decode signing keys: failed to parse response body: %w"`, matching
- * `ParseJSON`'s own wrap on top of `Config.Validate`'s. {@link assertNoMalformedDuplicateJwkField}
- * closes the gap where an element has a duplicate top-level field whose earlier occurrence
- * `JSON.parse` alone would have discarded before either check ever saw it (CLI-1961 Codex
- * review finding).
+ * The `alg` allowlist check and the duplicate-field check below ARE literal
+ * established error strings (or reproductions of the established
+ * struct-field type-mismatch text), unlike the shape checks above: decoding
+ * straight into `[]config.JWK` runs the full `encoding/json` struct decode —
+ * including `config.Algorithm.UnmarshalText` (the RS256/ES256 allowlist) —
+ * for every element, wrapped here as `"failed to decode signing keys: failed
+ * to parse response body: %w"`. {@link assertNoMalformedDuplicateJwkField}
+ * closes the gap where an element has a duplicate top-level field whose
+ * earlier occurrence `JSON.parse` alone would have discarded before either
+ * check ever saw it.
  */
 export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
   actualPath: string,
@@ -594,17 +593,17 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     .readFileString(actualPath)
     .pipe(Effect.mapError((cause) => onReadError(`failed to read signing keys: ${String(cause)}`)));
   const decoded = yield* Effect.try({
-    // Go's `fetcher.ParseJSON[[]JWK]` (`pkg/fetcher/http.go:144-151`) is a single
-    // `json.Decoder.Decode` call, which reads exactly ONE JSON value and never checks
-    // for trailing bytes — content after that first value (even further
-    // syntactically-valid JSON, e.g. a `signing_keys_path` file containing
-    // `"[validKey] []"`) is silently ignored, not an error. Plain `JSON.parse`
-    // requires the ENTIRE string to be exactly one value and throws on anything left
-    // over, so parse only the first value's own source span — reusing the same
-    // {@link skipJsonValue} span-scanner {@link splitJsonArrayElementTexts} already
-    // uses below — to match Go's decode-once-ignore-the-rest behavior. Verified
-    // against the real binary (CLI-1961 Codex review finding): Go still signs with
-    // `validKey` from a `signing_keys_path` file containing `[validKey] []`.
+    // Decoding is a single `json.Decoder.Decode`-style call, which reads
+    // exactly ONE JSON value and never checks for trailing bytes — content
+    // after that first value (even further syntactically-valid JSON, e.g. a
+    // `signing_keys_path` file containing `"[validKey] []"`) is silently
+    // ignored, not an error. Plain `JSON.parse` requires the ENTIRE string to
+    // be exactly one value and throws on anything left over, so parse only
+    // the first value's own source span — reusing the same
+    // {@link skipJsonValue} span-scanner {@link splitJsonArrayElementTexts}
+    // already uses below — to match the established decode-once-ignore-the-rest
+    // behavior: signing still succeeds with `validKey` from a
+    // `signing_keys_path` file containing `[validKey] []`.
     try: () => JSON.parse(raw.slice(0, skipJsonValue(raw, 0))),
     catch: (cause) => onDecodeError(`failed to decode signing keys: ${String(cause)}`),
   });
@@ -614,21 +613,22 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     );
   }
   // A bare `null` ARRAY ELEMENT (as opposed to `isAbsentJwkField`'s "a FIELD is
-  // absent") is Go's own `encoding/json` zero-value case, not a type mismatch: a
+  // absent") is an `encoding/json`-style zero-value case, not a type mismatch: a
   // `null` decoded into `config.JWK` (a struct, not a pointer) leaves every field at
   // its zero value, same as `bearer-jwt.signing-key.ts`'s `resolveSigningKeyFromStdinJwk`
   // already documents for a pasted `null` JWK. So `null` must normalize to `{}`
   // (an empty record — {@link readOptionalString}/etc. treat every field as absent)
   // rather than fail this shape check outright, regardless of WHERE in the array it
-  // appears. Verified against the real binary (CLI-1961 Codex review finding): with
-  // `signing_keys_path` decoding to `[validKey, null]`, `Config.Validate` succeeds
-  // (`generateAPIKeys` signs with `SigningKeys[0]`, which is `validKey`), and a
-  // non-TTY `gen bearer-jwt` can still select `validKey` by kid or blank-input
-  // fallback — a `[null, validKey]` ordering is different (already adjudicated on
-  // this PR): `SigningKeys[0]` there is the null-decoded zero-value JWK, so
-  // `generateAPIKeys` itself fails signing before selection is ever reached — but
-  // that later, ALREADY-REJECTED failure is Go's own downstream signing behavior, not
-  // a reason for this decode step to reject either ordering up front.
+  // appears. With `signing_keys_path` decoding to `[validKey, null]`, config
+  // validation succeeds (`generateAPIKeys` signs with `SigningKeys[0]`, which
+  // is `validKey`), and a non-TTY `gen bearer-jwt` can still select
+  // `validKey` by kid or blank-input fallback — a `[null, validKey]`
+  // ordering is different (already adjudicated on this PR):
+  // `SigningKeys[0]` there is the null-decoded zero-value JWK, so
+  // `generateAPIKeys` itself fails signing before selection is ever reached
+  // — but that later, ALREADY-REJECTED failure is the established downstream
+  // signing behavior, not a reason for this decode step to reject either
+  // ordering up front.
   for (const item of decoded) {
     if (item !== null && !isRecord(item)) {
       return yield* Effect.fail(
@@ -644,9 +644,10 @@ export const legacyReadSigningKeysFile = Effect.fnUntraced(function* <E1, E2>(
     const record = item === null ? {} : item;
     const elementText = elementTexts[index];
     try {
-      // Case-insensitive lookup (`resolveJwkFieldValue`) — Go's `alg` allowlist check
-      // (`config.Algorithm.UnmarshalText`) runs at JSON-decode time regardless of the
-      // key's casing (CLI-1961 Codex review finding); see that function's doc comment.
+      // Case-insensitive lookup (`resolveJwkFieldValue`) — the `alg`
+      // allowlist check (`config.Algorithm.UnmarshalText`) runs at
+      // JSON-decode time regardless of the key's casing; see that
+      // function's doc comment.
       const alg = resolveJwkFieldValue(record, "alg");
       legacyAssertDecodableJwkAlgorithm(typeof alg === "string" ? alg : undefined);
       if (elementText !== undefined) {

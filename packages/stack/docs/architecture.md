@@ -7,18 +7,25 @@ delegated to [`@supabase/process-compose`](../../process-compose/docs/architectu
 
 ## Public entrypoints
 
-The package exposes two levels of Interface:
+The package exposes three levels of Interface:
 
 - `@supabase/stack` selects `bun.ts` or `node.ts` through export conditions and exposes the
   Promise-oriented `createStack()` / `StackHandle` Interface plus prefetch helpers.
 - `@supabase/stack/effect` selects a runtime Adapter through the same export conditions and exposes
   Effect Interfaces plus platform-bound layer factories used by the CLI and advanced callers.
+- `@supabase/stack/managed` selects the Node or Bun SQLite Adapter and exposes managed identity,
+  discovery, persistence, and lifecycle coordination. Its repository can be replaced by a caller.
 - `@supabase/stack/testing` exposes only the service tags needed to replace daemon transport in
   consumer tests. Runtime implementation tags do not leak through the root or Effect barrels.
 
 Internal runtime Adapters provide Effect filesystem, path, child-process, HTTP-server, and Unix
 socket HTTP implementations. `createStack.ts` and the layer factories remain platform-agnostic;
 the conditional root and Effect entries bind them to their selected runtime.
+
+The direct and managed surfaces compose in one direction only: managed policy resolves one opaque
+stack identity and concrete roots, ports, and runtime selection, then a caller may pass those
+resolved values to the core runtime. The core runtime never discovers workspaces or opens the
+global registry.
 
 ```mermaid
 flowchart LR
@@ -232,7 +239,14 @@ Every Docker definition has ordinary in-process cleanup and supervisor-owned orp
 local Implementation captures these targets before persistence or orchestrator setup, persists
 them for managed daemons, and uses them as a force-removal safety net after graceful stop. Launch,
 exact cleanup, and candidate cleanup all derive container identity through the same naming
-function. Auto-created PostgreSQL, Storage, and runtime paths are also removed.
+function, which is keyed by a namespaced form of the stack's `instanceId` when the caller supplied
+one and by its api port otherwise. The Docker service builder can also attach the raw identity as a
+`com.supabase.stack-id` label when a caller supplies one. The current CLI managed callers do not yet
+pass the managed stack UUID through this contract, and cleanup does not sweep by that label; wiring
+identity-keyed names, labels, and cleanup into those callers is the forward-looking CLI-2108
+contract. Once that caller wiring lands, identity-keyed names and labels will keep two stacks that
+share a port — a crashed one's leftovers and the sibling that reused its ports — from colliding.
+Auto-created PostgreSQL, Storage, and runtime paths are also removed.
 
 Cleanup is intentionally defensive:
 
@@ -267,9 +281,333 @@ Unix-socket transport, not the public Supabase API proxy.
 
 See [detach mode](./detach-mode.md) for paths, process startup, and compiled executable dispatch.
 
-## Managed paths
+## Managed identity and state
 
-With the default cache root (`~/.supabase`), durable data is project-keyed:
+Here, **managed state** means the centralized registry API exposed from
+`@supabase/stack/managed`. It is distinct from the older `ManagedStack` daemon-discovery record in
+`managed-stack.ts`, which remains part of the legacy Effect daemon surface. The registry API is
+Effect-native: its services are `Context.Service` tags, its failures live in the effect error
+channel, and its resources are owned by scopes. A Promise facade sits at the edge for callers that
+do not run an Effect runtime; see "Managed service composition" below.
+
+Managed errors are `Data.TaggedError` classes carrying stable `code` fields, and there is no shared
+base class: `ManagedStackError` is a union type over every managed failure class, with
+`isManagedStackError` as the runtime guard. `_tag` is the Effect-native discriminant, so a consumer
+can `catchTag` them directly against the union a given method declares; `code` is the wire-level
+contract that survives identifier minification, so Node and Bun callers — and the CLI's telemetry
+classifier — can branch on failures without requiring an Effect runtime at this persistence
+boundary. `MANAGED_ERROR_TAG_BY_CODE` links the two so a consumer keying a table by one and
+dispatching on the other cannot drift.
+
+The managed surface owns a versioned SQLite registry with separate records for projects,
+checkouts, checkout locations, development contexts, stacks, port reservations, and operations. A
+checkout records what it physically is — a primary git checkout, a linked worktree, a bare
+repository's worktree, or an ordinary folder — and has exactly one canonical location, which is its
+top-level directory: a start run from any subdirectory of a checkout resolves that same checkout.
+A context records what it is keyed by, which decides its scope: a `branch` context is project-scoped, because a
+branch is shared by every checkout of the repository and two worktrees on one branch resolve one
+context; a `detached` context is checkout-scoped, one per checkout, reused for every commit that
+checkout is parked on; a `workspace` context is the ordinary-folder case, also checkout-scoped. A
+live stack is unique per `(checkout, context, name)`, which is the whole isolation guarantee: sibling
+worktrees, the same branch forced into two worktrees, and several named stacks in one context all
+get their own stack, keyed only by opaque UUIDs.
+
+The public repository contract contains no SQLite types, so the same service runs with the
+in-memory test repository and the Node or Bun persistent Adapter. Both adapters owe identical
+observable semantics, so record ordering — port assignments by key, active operations by start time
+then operation token — and input validation such as refusing an operation owner PID that could never
+be probed live in shared helpers rather than in either adapter.
+
+For an ordinary non-Git folder, the first mutating managed operation atomically publishes:
+
+```text
+<workspace>/.supabase/identity.json
+  version
+  projectId
+  checkoutId
+  contextId
+```
+
+That marker protocol is the one place in the managed surface that uses raw `node:fs/promises` instead
+of the `FileSystem` service the policy layer reclaims stack state through: writing a temporary file,
+hardlinking it into place, re-reading the winning marker on `EEXIST`, and removing the temporary path
+is a single indivisible claim, and the hardlink with that `EEXIST` contract is not part of the platform
+service's surface. The claim itself is `claimFileAtomically` in `managed/atomic-claim.ts`, shared with
+`StateManager`'s single-stack state claim so both settle a race the same way; a filesystem without
+hardlinks (`EPERM` or `ENOTSUP`) falls back to an exclusive create, which still decides the race but
+publishes without the hardlink's all-or-nothing guarantee. The marker protocol owns what a lost race
+means: the identity claim adopts the winning marker, while a claimed stack state is a failure.
+
+A git checkout keeps its identities where git keeps its own state instead, so git's lifecycle rules
+apply to them: the project identity is `supabase.projectId` in the shared repository config, which
+every linked worktree reads and `git clone` never copies; a branch context is
+`branch.<name>.supabaseContextId` in that same config, so `git branch -m` renames it and deleting the
+branch deletes it; and the checkout identity is a file in the checkout's own git directory, which is
+per-worktree by construction. A detached `HEAD` names nothing git could key a context by, so that one
+context per checkout is minted and owned by the registry. Discovery reads that topology out of git's
+metadata without the git binary, so a repository whose refs are stored in a reftable — whose `HEAD` is
+only a compat stub — is refused with `UnsupportedGitWorkspaceError` rather than resolved to a context
+derived from that stub.
+
+No mutable runtime state or credential value is stored in any of those markers. Read-only discovery
+creates none of them. The registry stores only an opaque credential reference, never resolved
+plaintext credentials.
+
+`resolveStack` is the one path from a workspace path to a stack, for every workspace shape and for
+both operations, so a read-only `status` and the `start` after it cannot disagree about which stack
+they mean: they classify the same topology, derive the same context from the same `HEAD`, and differ
+only in whether an absent identity is minted or reported. A `status` resolve is strictly read-only —
+no marker, no git-config key, no registry row, no directory — and reports the identity, the context,
+and the stacks that already exist, with a `state` of `unregistered` when the named stack does not
+exist yet. A `start` resolve claims what is missing and registers the stack, reporting `create` or
+`reuse`. `inspectStack` and `listStacks` report stacks joined to their checkout and context, so a
+reader can tell every sibling instance apart — by canonical path, checkout kind, context kind, and
+branch locator — without resolving any workspace. Those joined fields are reported rather than
+authoritative: a canonical path disappears when its location is pruned, and a branch locator is only
+whatever the branch was called when the context was last resolved.
+
+The managed state root is explicitly injectable. Otherwise it resolves from `SUPABASE_HOME` or
+the platform application-state directory. Every physical stack path is keyed only by its opaque
+stack UUID:
+
+```text
+<managedStateRoot>/
+  registry-v4.sqlite3
+  stacks/<stackId>/
+    data/
+    logs/
+    runtime/
+```
+
+Schema v4 intentionally has no migration path for this unreleased POC. Before first use of v4,
+developers holding any earlier `registry-v*.sqlite3` must remove the old managed state root,
+including its shared `stacks/` directory; registry generations must not be kept side by side.
+The state root is required to be a non-empty path wherever it is passed explicitly, so a blank
+value fails instead of silently anchoring managed state to the process' working directory. An
+explicit root is a decision and a blank one is a caller bug; a blank environment value is instead
+treated as unset and falls through to the next source.
+Recovery can also leave an
+unregistered UUID stack root when a provisioner writes after its pending row was concurrently
+aborted. The provision error reports the failed ownership cleanup, but there is no automatic orphan
+garbage collection; remove that root only after independently confirming its runtime is stopped.
+
+Stack publication and operation claims are transactional; "Managed service composition" below
+describes how that transaction boundary and the wait for a concurrent publisher are expressed. A new
+stack remains `pending` while its
+directories and caller-supplied initialization are validated, then becomes `active` atomically.
+Concurrent callers resolve the published record rather than creating aliases. Recovery first
+retains claims whose owner process is still alive. Once an owner is gone, runtime inspection either
+publishes a running pending stack or aborts a stopped pending stack so the same identity can retry.
+An abandoned claim over an already tombstoned row is a deletion that died before releasing it:
+recovery finishes that deletion instead of reconciling a lifecycle, without consulting runtime
+inspection at all. Tombstoning already zeroed the runtime metadata an inspector would read, so
+requiring an answer there would retain every crashed deletion forever. It never revives the row and
+never drops the tombstone, since idempotent deletion depends on it; it releases the claim and
+reclaims the leaked stack directory, reporting a failed removal like any other reclamation failure.
+Reconciliation is therefore repeatable: a second pass over the same crashed deletion is a no-op.
+Ownership races are isolated per operation so one completed claim does not stop the recovery pass.
+PID liveness is deliberately conservative and assumes the managed root stays within one host PID
+namespace. A stored PID that is not a probeable PID counts as no owner at all, both when recovery
+walks abandoned claims and when provision decides whether to wait for a publisher, since probing it
+could report a dead owner as alive. Because a PID is not a permanent process identity, callers can request forced recovery
+after trustworthy runtime inspection; this is also the required integration path for a state root
+shared across PID namespaces. Forced recovery requires an exact stack ID and operation token and
+processes only that claim. It bypasses the PID gate, and tombstoned rows are reclaimed without
+runtime inspection because tombstoning already cleared the runtime metadata an inspector would
+read; forcing a claim whose owner is genuinely still finishing a delete can therefore race it—the
+delete still completes and reports success, but the two processes may both attempt the same
+directory removal. Forced recovery and the `startedBefore` age filter are mutually exclusive.
+Recovery results distinguish live owners, unknown or failed liveness/runtime inspection, concurrent
+skips, reconciliation failures, reclaimed tombstones from finished deletions, and post-abort
+data-reclamation failures. An aborted or reclaimed stack ID is reported only after its leaked
+directory is actually removed, so the two lists never claim data is gone while it is still on disk.
+A failed removal is reported as a data-reclamation failure either way, but the two cases diverge
+afterward: a reclaimed (tombstoned) stack's row survives in the registry, so its removal stays
+retryable through ordinary `deleteStack` idempotency, while a discarded pending stack's row is
+already gone by the time removal is attempted, so a failed removal leaves an orphaned directory
+that is reported once and never revisited automatically—like any other orphan root, there is no
+automatic garbage collection, so it requires manual cleanup. A failed reconciliation of an active
+stack marks its lifecycle
+`failed` before best-effort claim release, preserving the requirement for an explicit stop path
+before deletion. A failed pending-stack adoption retains its claim so a later pass can retry without
+losing potentially live unpublished data. That claim blocks other mutations, including deletion,
+until normal reconciliation succeeds or the caller obtains its stack ID and token from
+`repository.listActiveOperations()` and performs a scoped forced recovery after trustworthy runtime
+inspection.
+
+Port assignments are sticky metadata, while port ownership is a lifecycle lease. Stopped stacks
+retain their assigned numbers without blocking other stopped stacks. Entering `starting`,
+`running`, or `stopping` claims those ports host-wide; a collision fails without relocating a
+sticky automatic assignment. On a stopped stack, exact configuration replaces persisted automatic
+state, while an automatic request reuses the current number and changes only its intent. Failed
+stacks follow the same non-occupying rules. Intent-only changes are accepted, and a lifecycle update
+can release a lease and change ports atomically; port-number drift is rejected only while a stack
+continues to occupy its ports.
+
+Explicit deletion re-reads lifecycle after claiming the operation, safely stops when needed,
+tombstones, and removes only the UUID-derived selected stack root. Repeating deletion retries any
+leftover tombstoned data reclamation. Once tombstoned, unsafe or failed filesystem cleanup is
+reported as retained data rather than making future deletion non-idempotent. Prune removes checkout
+location metadata only. The delete outcome describes the registry tombstone, not guaranteed disk
+reclamation: callers must inspect `dataReclamation`, surface retained errors, and arrange a later
+retry. Lifecycle transitions likewise trust the caller to stop the real runtime before declaring a
+port-occupying stack stopped and releasing its lease. Runtime qualification, legacy bootstrap
+selection, and credential resolution remain outside this persistence boundary and are composed by
+later CLI slices.
+
+## Managed service composition
+
+The managed surface is two `Context.Service` tags, each with layer factories:
+
+- `ManagedStackRepository` is the storage contract. It is provided by
+  `bunSqliteManagedStackRepositoryLayer(path)` or `nodeSqliteManagedStackRepositoryLayer(path)` —
+  re-exported from `managed-bun.ts` and `managed-node.ts` respectively — or, in tests, by
+  `Layer.succeed(ManagedStackRepository, createInMemoryManagedStackRepository())`, since the
+  in-memory factory from `@supabase/stack/testing` returns the Effect-shaped service object directly.
+  The contract contains no SQLite types, so the adapter is swappable without the policy layer
+  noticing. Opening a registry whose schema version is neither zero nor the supported version fails
+  the layer with `UnsupportedManagedRegistryVersionError`.
+- `ManagedStackService` is the policy layer described above: workspace classification, identity
+  ownership, provisioning order, publication waiting, deletion, and recovery.
+  `ManagedStackService.make(options)` returns a layer requiring
+  `FileSystem.FileSystem | GitConfigStore | ManagedStackRepository` and failing with
+  `InvalidManagedOwnerPidError | UnsafeManagedStackPathError`, so a blank state root or an owner PID
+  that could never be probed is refused while the layer is being built rather than at whichever call
+  first touches a path.
+
+`managedStackLayer(options)` — exported from `managed-bun.ts` and `managed-node.ts` — is those two
+composed with the platform filesystem and the state root resolved by the one resolver that owns that
+policy. It is the assembly an Effect consumer provides _and_ the one the Promise facade runs behind its
+handle, so the two cannot drift apart. It fails with `ManagedStackLayerFailure`: the state-root and
+owner-PID refusals above plus `UnsupportedManagedRegistryVersionError`. Nothing on that path is turned
+into a defect, so the one registry failure a caller can act on — the registry was written by a newer
+CLI — stays recoverable with `catchTag` instead of being unreachable behind an `orDie`.
+
+Each method declares only the failures it can actually raise, rather than one service-wide union:
+`resolveStack` carries `ResolveManagedStackFailure`, `updateStack` carries
+`UpdateManagedStackConfigurationFailure`, `deleteStack` carries `DeleteManagedStackFailure`, and
+`inspectStack` and `listStacks` cannot fail at all. `deleteStack` and `pruneCheckoutLocations` are additionally generic
+in their callback's error type, so a `stop` callback's own failure reaches the caller unchanged — a
+stack that refused to stop was not deleted. Recovery reports rather than fails: only a forced target
+that is not a pair of managed UUIDs refuses a whole pass, so `reconcileAbandonedOperations` declares
+just `InvalidManagedIdentityError` and returns retained claims, skips, and failures in its result.
+
+Registry decisions are transactions that run as one synchronous block: `Effect.try` wraps a closure
+that issues `BEGIN IMMEDIATE` (or `BEGIN` for read paths), runs the decision, and commits, rolling
+back and rethrowing the original cause if any statement refuses. Atomicity rests on the drivers being
+synchronous and the handle being single-threaded, so that boundary must never be split across
+effects: the fiber scheduler preempts at its operation budget, and a fiber parked between `BEGIN` and
+`COMMIT` would let another fiber `BEGIN IMMEDIATE` on the same connection — SQLite refuses the nested
+transaction, and either fiber's `COMMIT` could publish the other's writes. Keeping the whole
+transaction in one JavaScript turn is therefore what makes a partially applied decision
+unobservable and keeps interruption from ever landing inside a transaction. Synchrony cannot rule out
+the other way two transactions could meet, a decision that re-enters the repository, so the handles
+currently inside a transaction are tracked and a re-entering `BEGIN` is refused before it runs:
+SQLite has no nested transactions, and unwinding the inner attempt would roll back the outer
+decision's writes.
+
+The database handle's lifetime is a scope. `sqliteManagedStackRepositoryLayer` acquires the handle
+with `Effect.acquireRelease`, so opening the file and registering its close are one step nothing can
+land between, including on the path where schema initialization refuses the registry: no failure path
+leaks an open handle. Closing the scope that built the layer closes the registry.
+
+Waiting for a concurrent publisher is `Schedule`-driven. One look at the pending row is a retryable
+step — a still-pending row asks for another look, while a vanished or tombstoned row is a final
+answer — repeated on `Schedule.exponential` from `publicationPollMs` with a 250 ms ceiling, so a slow
+publisher is not polled hundreds of times per second for the whole window. The ceiling only ever
+slows polling down, so a caller asking for a slower interval keeps its own. `publicationTimeoutMs` is
+the caller's bound on the entire wait and is applied as a timeout around the repeat, so it interrupts
+the poll instead of being checked between polls. Both shipped adapters answer synchronously, so a look
+at the pending row always completes; with an embedder-supplied asynchronous repository that timeout can
+preempt a look that is still in flight. That is safe — a look has no side effects — but it means the
+option bounds the wait, not the number of looks that finish. The answer the repeat stops on is checked
+rather than asserted through a type refinement: a recurrence bound added to that schedule later would
+hand back the final still-pending answer, and the check turns that into a defect instead of an
+unpublished stack presented as a published one.
+
+Interruption is part of the contract, not an afterthought. Provisioning owns a pending row, an
+operation claim, and the directories it created, so its create path runs under
+`Effect.uninterruptibleMask`: only the provisioning steps themselves are interruptible, and the
+compensation that aborts the pending row and removes the leaked directory always runs. Deletion
+releases its claim the same way. An interrupted call stays interrupted rather than being reported as a
+failure of the work — a caller's own timeout is not a `ManagedStackInitializationError` — and recovery
+re-raises interruption instead of recording a retained claim or a reconciliation failure that never
+happened, so the operation the next pass should still recover does not look like one recovery already
+gave up on. That rule covers the steps whose exits recovery absorbs one at a time — the liveness probe,
+the runtime inspection, the state reclamation — not just the pass as a whole.
+
+The single deliberate exception is the claim release on a failed operation's way out: it discards
+whatever it raises, its own interruption included, because the caller's outcome is the failure the
+operation actually suffered and a release reporting interruption would replace it. The mask itself
+begins after the pending row and its claim exist, which is sound only because both shipped adapters
+decide synchronously and offer no suspension point during that write. An asynchronous embedder
+repository interrupted mid-prepare would leave a pending row and a claim nothing compensates, so the
+mask has to be extended over row creation before asynchronous repositories become real.
+
+An Effect consumer provides the composed layer, which is the primary API:
+
+```typescript
+import { Effect } from "effect";
+import { managedStackLayer, ManagedStackService } from "@supabase/stack/managed";
+
+// The policy service, the registry adapter it decides over, and the platform
+// filesystem it reclaims stack state through. It fails with
+// `ManagedStackLayerFailure`, so a registry written by a newer CLI is a typed
+// failure an embedder can recover from rather than a defect.
+const managedLayer = managedStackLayer({ stateRoot });
+
+const program = Effect.gen(function* () {
+  const managed = yield* ManagedStackService;
+  return yield* managed.resolveStack({ workspacePath, operation: "start" });
+}).pipe(
+  Effect.catchTag("ManagedStackPublicationTimeoutError", (error) =>
+    Effect.fail(`another process never published ${error.stackId}`),
+  ),
+);
+```
+
+`createManagedStackService()` — and `makeManagedStackService()` over a repository the caller already
+has — is a thin `ManagedRuntime` edge over exactly that layer, for consumers that do not run an
+Effect runtime. It exists to serve the Promise-oriented `createStack()` boundary; the runtime
+lifecycle beneath it is Effect-based either way. Three properties of that edge are contracts rather
+than incidental:
+
+- **Acquisition is asynchronous.** Both factories return a `Promise<ManagedStackServiceHandle>` and
+  build the runtime's context through `runtime.context()`, because opening the registry is I/O: a
+  file is created and hardened, its schema read, and a cold start may have to wait out another
+  process' WAL conversion. Everything that can refuse the acquisition arrives as a rejection — a
+  blank state root, an owner PID that could never be probed, and a registry written by an
+  unsupported schema version all reject with the same typed error instances, so a caller has one
+  failure channel instead of a throw plus a rejection.
+- **Reads are Promises too.** `inspectStack` and `listStacks` return Promises rather than answering
+  inline. A handle that read synchronously would only be hiding the registry's I/O from its caller,
+  and it is what forced the cold-start retry below to block. The `repository` accessor stays a plain
+  property: the context is already resolved by the time a caller holds the handle.
+- **The cold-start WAL retry is a schedule, not a blocking wait.** Converting a fresh registry to
+  WAL can lose a race with another process doing the same thing, so `enableWriteAheadLogging`
+  retries exactly the `SQLITE_BUSY`/`SQLITE_LOCKED` classification on `Schedule.exponential` from
+  10 ms, capped at 100 ms per wait and bounded to a total ~4 s budget. Contention that never clears
+  surfaces the driver's own busy error, as an immediate non-busy failure of that pragma always has.
+  Because the retry suspends the fiber instead of spinning on `Atomics.wait`, a process opening the
+  registry no longer stalls the event loop that every other caller in it depends on.
+
+`close()` disposes the `ManagedRuntime`, which interrupts whatever is still in flight and closes the
+scope that owns the database handle. Outstanding calls therefore reject, and because that scope closes
+alongside those interruptions rather than after them, a statement already on its way to the driver can
+race the close and fail against a closed handle: a caller that closes while work is outstanding must
+read those rejections as "did not complete", not as evidence about the registry. A call made after
+`close()` rejects with an `Error` saying the handle is closed, rather than with the runtime's own bare
+internal string. That diagnosis comes from the handle's own closed state, never from what a rejection
+says, so a caller's callback that refuses with a string mentioning disposal still reaches the caller
+as itself. The handle is also an `AsyncDisposable`, so
+`await using service = await createManagedStackService()` closes it on every path out of the block. The
+facade hands back the very repository the service uses, so an embedder can read the registry without
+opening a second handle on it.
+
+## Legacy daemon paths
+
+The pre-managed daemon implementation still reads its project-keyed state as a legacy/bootstrap
+input for later CLI integration:
 
 ```text
 <cacheRoot>/projects/<sha256(projectDir)[0:16]>/stacks/<name>/
@@ -292,11 +630,23 @@ Callers may explicitly supply `projectStateRoot`, in which case durable stacks l
 `<projectStateRoot>/stacks/`; managed daemon callers may not directly override individual
 `stackRoot` or `runtimeRoot` values.
 
+These path hashes and stack-name directories are not identities in the new managed model and must
+not be used for new managed records.
+
 ## Runtime entrypoints and exports
 
 - `bun.ts` and `node.ts` are root export-condition targets.
 - `effect-bun.ts` and `effect-node.ts` are Effect export-condition targets. They bind foreground,
   daemon, and Unix-socket layers without exposing raw platform factories or bootstrap paths.
+- `managed-bun.ts` and `managed-node.ts` bind the same storage-independent managed service to the
+  runtime's built-in SQLite implementation. Both delegate to one shared factory
+  (`managed/create-service.ts`) parameterized by how a registry file is opened, so their option
+  surfaces cannot drift apart. The in-memory repository is not part of this entrypoint; it is a test
+  seam published through `@supabase/stack/testing`.
+- `managed/model.ts` is exported as `@supabase/stack/managed-model` because it has no runtime
+  imports: consumers can read `MANAGED_ERROR_CODES` under either runtime without pulling in a SQLite
+  driver. The CLI's telemetry classifier types its managed dispatch table against that union, so a
+  new managed error code cannot be added without classifying it.
 - `daemon-bun.ts` is exported as `@supabase/stack/daemon-bun` so the compiled CLI can dispatch to
   it in-process.
 - `daemon-node.ts` is intentionally not a package export. The internal Node platform Adapter
@@ -311,6 +661,11 @@ Callers may explicitly supply `projectStateRoot`, in which case durable stacks l
   factories, topology, projection, cleanup metadata, and protocol schemas.
 - Integration tests exercise binary publication, lifecycle coordination, daemon HTTP/SSE, remote
   stack behavior, state persistence, and Unix socket streaming with stateful Effect Adapters.
+- The managed registry is covered from both of its surfaces. `managed-service.integration.test.ts`
+  carries the behavioral load through the Promise facade against the in-memory and both SQLite
+  adapters, while `managed-effect.integration.test.ts` uses `@effect/vitest` to hold the Effect
+  surface itself to account: the tags composed as layers, typed failures recovered with `catchTag`,
+  and the scoped registry handle released when its scope closes.
 - Targeted e2e tests own the expensive process/container Seam for full stack startup, parallel
   stacks, daemon lifecycle, and cleanup behavior.
 

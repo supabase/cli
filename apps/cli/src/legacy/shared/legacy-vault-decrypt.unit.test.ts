@@ -6,7 +6,7 @@ import {
   legacyIsEncryptedSecret,
 } from "./legacy-vault-decrypt.ts";
 
-// Go's test vector — `apps/cli-go/pkg/config/secret_test.go:9-19`. The same
+// A known-good test vector. The same
 // keypair/ciphertext must decrypt identically here, proving `eciesjs`
 // cross-decrypts `github.com/ecies/go/v2`'s output.
 const PRIVATE_KEY = "7fd7210cef8f331ee8c55897996aaaafd853a2b20a4dc73d6d75759f65d2a7eb";

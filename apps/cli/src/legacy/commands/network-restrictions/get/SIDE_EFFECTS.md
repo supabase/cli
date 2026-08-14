@@ -45,14 +45,11 @@
 | ---------------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper); not fired when the `--experimental` gate is closed | `exit_code`, `duration_ms`, `flags` (`--project-ref` → `<redacted>`) |
 
-Matches `apps/cli-go/internal/restrictions/get/`. Go does not fire any custom telemetry event for this command.
-
 ## Output
 
-### `--output-format text` (default) — Go CLI compatible
+### `--output-format text` (default)
 
-Three hardcoded lines using Go's `fmt.Printf` slice rendering. The IPv4 and IPv6 fields
-are emitted byte-for-byte from Go's `%+v` on `*[]string`:
+Three hardcoded lines. The IPv4 and IPv6 fields render as:
 
 - field absent in the API response → `<nil>`
 - field present, empty array → `&[]`
@@ -66,14 +63,12 @@ Restrictions applied successfully: true
 
 `applied successfully` is `true` iff `status === "applied"` in the response.
 
-### `--output {json,yaml,toml,env}` (Go flag, TS-only behavior here)
+### `--output {json,yaml,toml,env}`
 
-Go's `restrictions/get` (`apps/cli-go/internal/restrictions/get/get.go:21-23`) never
-reads `OutputFormat` — it always prints the three `fmt.Printf` lines above, whatever
-`-o` says, so there is no Go output here to be byte-identical to (and therefore no
-Go casing convention to match either — TS uses the generic map-shaped
-`encodeYaml`/`encodeToml` helpers here, not the CLI-1975 struct-spec ones, since
-there is no real Go struct output for this command to mirror):
+This command's own text-mode output ignores `-o` entirely and always prints the
+three lines above; there is no real struct output for these formats to mirror, so
+they use the generic map-shaped `encodeYaml`/`encodeToml` helpers (not the
+CLI-1975 struct-spec ones):
 
 - `json` — alphabetical struct-field order with trailing newline.
 - `yaml` — `stringifyYaml(response)`.
@@ -82,8 +77,8 @@ there is no real Go struct output for this command to mirror):
 
 ### `--output pretty`
 
-`pretty` is Go's default `--output` value; TS renders it identically to
-`--output-format text` above — the only output Go's `restrictions get` ever produces.
+`pretty` is the default `--output` value; it renders identically to
+`--output-format text` above — the only output this command ever produces.
 
 ### `--output-format json`
 
@@ -95,10 +90,9 @@ One `result` event whose `data` is the full response object.
 
 ## Notes
 
-- The Go `--output` flag wins over the TS `--output-format` flag when both are provided
-  (a TS-internal precedence rule between the port's two flags — see `--output` above).
+- The `--output` flag wins over `--output-format` when both are provided
+  (see `--output` above).
 - `linked-project.json` is written **after** the project ref is resolved, regardless of
-  whether the subsequent API call succeeds (mirrors Go's `PersistentPostRun`).
+  whether the subsequent API call succeeds.
 - `telemetry.json` is written on every invocation past the `--experimental` gate, including
-  failures. A closed gate writes nothing (Go's `PersistentPreRunE` fails before
-  `PersistentPostRun` runs).
+  failures. A closed gate writes nothing.

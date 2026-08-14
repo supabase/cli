@@ -17,13 +17,13 @@ subcommand's own `SIDE_EFFECTS.md`.
 | --------------------------- | ------- | ---------------------------------------------------------------- |
 | `<workdir>/supabase/.temp/` | removed | `delete` only — when the deleted ref matches the linked ref file |
 
-> Go best-effort deletes the per-ref keyring credential on `delete`, but Go only
-> ever stores the profile-scoped access token in the keyring (never a per-ref
-> entry), so that delete always targets a non-existent entry — a no-op for both
-> CLIs. Go's only observable output there is its keyring-backend _availability_
-> error (`Keyring is not supported on WSL`, emitted when the system keyring is
-> down, e.g. on headless CI); that environment noise is normalized away in the
-> cli-e2e parity harness.
+> This command best-effort deletes the per-ref keyring credential on `delete`,
+> but the CLI only ever stores the profile-scoped access token in the keyring
+> (never a per-ref entry), so that delete always targets a non-existent entry
+> — a no-op. The only observable output there is a keyring-backend
+> _availability_ error (`Keyring is not supported on WSL`, emitted when the
+> system keyring is down, e.g. on headless CI); that environment noise is
+> normalized away in the cli-e2e parity harness.
 
 ## API Routes
 
@@ -43,8 +43,7 @@ subcommand's own `SIDE_EFFECTS.md`.
 | `SUPABASE_PROJECT_REF`  | linked project ref (via the config layer)            | no (used by `list` marker / `api-keys` ref / `delete` unlink) |
 | `SUPABASE_PROFILE`      | built-in profile name or YAML file path              | no (falls back to `~/.supabase/profile` -> `supabase`)        |
 
-> `DB_PASSWORD` is **not** consumed. In Go it only mirrors `--db-password` via a
-> viper binding for downstream local-stack use; `projects create` never reads it.
+> `DB_PASSWORD` is **not** consumed by `projects create`.
 
 ## Exit Codes
 
@@ -62,37 +61,36 @@ subcommand's own `SIDE_EFFECTS.md`.
 | ---------------------- | ------------------------------------------ | ----------------------------------- |
 | `cli_command_executed` | post-run, success or failure (via wrapper) | `exit_code`, `duration_ms`, `flags` |
 
-`safeFlags` (Go `markFlagTelemetrySafe`): `--org-id` (`create`), `--project-ref`
+`safeFlags`: `--org-id` (`create`), `--project-ref`
 (`api-keys`). No custom events beyond `cli_command_executed`.
 
-## Output (two-axis: Go `--output` × TS `--output-format`)
+## Output (two-axis: `--output` × `--output-format`)
 
-Go's `--output {pretty|json|yaml|toml|env}` takes priority when set; otherwise the
-TS `--output-format {text|json|stream-json}` applies.
+`--output {pretty|json|yaml|toml|env}` takes priority when set; otherwise
+`--output-format {text|json|stream-json}` applies.
 
-- **list** — pretty/text: Glamour table `LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; go json/yaml/toml encode the `linkedProject[]` (`{projects=[...]}` for toml); go `env` is an error; TS json/stream-json `success("", {projects})`.
-- **create** — stderr `Created a new project at <dashboard>/project/<id>` for all formats; pretty/text: table `ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; go json/yaml/toml/env encode the created project (env supported here); TS json/stream-json `success("Created project", {...project})`.
-- **delete** — text: confirmation prompt (default No, honours `--yes`) then stdout `Deleted project: <name>`; TS json/stream-json `success("Deleted project", {name})`.
-- **api-keys** — pretty/text: Glamour table `NAME | KEY VALUE` (`******` masks null keys); go toml/env encode the `SUPABASE_<NAME>_KEY` map; go json/yaml encode `ApiKeyResponse[]`; TS json/stream-json `success("", {keys})`.
+- **list** — pretty/text: Glamour table `LINKED | ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml` encode the `linkedProject[]` (`{projects=[...]}` for toml); `--output env` is an error; `--output-format json/stream-json` `success("", {projects})`.
+- **create** — stderr `Created a new project at <dashboard>/project/<id>` for all formats; pretty/text: table `ORG ID | REFERENCE ID | NAME | REGION | CREATED AT (UTC)`; `--output json/yaml/toml/env` encode the created project (env supported here); `--output-format json/stream-json` `success("Created project", {...project})`.
+- **delete** — text: confirmation prompt (default No, honours `--yes`) then stdout `Deleted project: <name>`; `--output-format json/stream-json` `success("Deleted project", {name})`.
+- **api-keys** — pretty/text: Glamour table `NAME | KEY VALUE` (`******` masks null keys); `--output toml/env` encode the `SUPABASE_<NAME>_KEY` map; `--output json/yaml` encode `ApiKeyResponse[]`; `--output-format json/stream-json` `success("", {keys})`.
 
 ## Notes
 
-- **Terminal color:** Go wraps refs / project names / dashboard URLs in ANSI
-  (`utils.Aqua`, `utils.Bold`); the TS port emits plain text. Go's lipgloss
-  renderer disables color when stdout/stderr is not a TTY, so piped / CI output
-  matches byte-for-byte; only the interactive-terminal appearance differs.
+- **Terminal color:** the old Go CLI wrapped refs / project names / dashboard URLs
+  in ANSI; this port emits plain text. The old renderer disabled color when
+  stdout/stderr was not a TTY, so piped / CI output matches byte-for-byte; only
+  the interactive-terminal appearance differs.
 - **`create` linked cache:** the new project ref is cached on success;
-  `delete` also caches the resolved ref (Go's `PersistentPostRun` parity), even
-  though the project is gone — the cache is a telemetry-group record, separate
-  from the `supabase/.temp` link removed during unlink.
-- **`create` non-interactive errors:** TS consolidates cobra's per-flag
+  `delete` also caches the resolved ref, even though the project is gone — the
+  cache is a telemetry-group record, separate from the `supabase/.temp` link
+  removed during unlink.
+- **`create` non-interactive errors:** consolidates what used to be per-flag
   "required flag(s) … not set" errors into a single `LegacyProjectsCreateMissingArgError`
-  that lists every missing item at once (a deliberate UX improvement over Go's
-  fail-on-first behavior).
-- `--plan` on `create` is accepted but ignored (no-op, hidden) — vestigial in Go too.
+  that lists every missing item at once (a deliberate UX improvement over the
+  old fail-on-first behavior).
+- `--plan` on `create` is accepted but ignored (no-op, hidden) — a vestigial flag.
 - `create` interactivity is gated on `--interactive` (default true) **and** a TTY stdin
   **and** an interactive (text-mode) `Output`.
 - `delete` confirmation defaults to **No** and honours the global `--yes`.
 - `api-keys` resolves `--project-ref` via the shared resolver (flag → env →
-  `.temp/project-ref` → prompt on a TTY → error when unlinked), matching Go's root
-  `ParseProjectRef`.
+  `.temp/project-ref` → prompt on a TTY → error when unlinked).

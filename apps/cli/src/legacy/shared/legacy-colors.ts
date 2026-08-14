@@ -11,18 +11,17 @@ export interface LegacyColorStream {
 }
 
 /**
- * Port of termenv's colour-profile gate, which is what Go's lipgloss default
- * renderer consults (`lipgloss/renderer.go` → `termenv.EnvColorProfile`,
- * `termenv@v0.16.0` `termenv.go:68-115`):
+ * Port of termenv's colour-profile gate, which is what the established lipgloss default
+ * renderer consults (`lipgloss/renderer.go` → `termenv.EnvColorProfile`):
  *
- *  1. `NO_COLOR` non-empty → no colour, beats everything (`EnvNoColor`).
- *  2. `CLICOLOR=0` → no colour, unless forced (`EnvNoColor`).
- *  3. `CLICOLOR_FORCE` set and not `"0"` → colour even when piped (the
- *     Ascii→ANSI promotion, `termenv.go:104-106`).
- *  4. `CI` non-empty → treated as non-TTY (`termenv.go:31-33`).
- *  5. Otherwise: the stream must be a colour-capable TTY. `hasColors()` is
- *     faithful on Bun TTYs (it also covers `TERM=dumb`) and absent on piped
- *     streams.
+ * 1. `NO_COLOR` non-empty → no colour, beats everything (`EnvNoColor`).
+ * 2. `CLICOLOR=0` → no colour, unless forced (`EnvNoColor`).
+ * 3. `CLICOLOR_FORCE` set and not `"0"` → colour even when piped (the
+ * Ascii→ANSI promotion).
+ * 4. `CI` non-empty → treated as non-TTY.
+ * 5. Otherwise: the stream must be a colour-capable TTY. `hasColors()` is
+ * faithful on Bun TTYs (it also covers `TERM=dumb`) and absent on piped
+ * streams.
  *
  * termenv does NOT honor Node's `FORCE_COLOR` — only the `CLICOLOR*` pair —
  * so neither does this gate.
@@ -39,9 +38,9 @@ function legacySupportsColor(stream: LegacyColorStream): boolean {
 }
 
 /**
- * Ports of Go's `utils.Aqua` / `utils.Bold` (`apps/cli-go/internal/utils/colors.go`).
+ * Ports of `utils.Aqua` / `utils.Bold`.
  *
- * Go uses lipgloss, which auto-detects the output profile and renders **plain**
+ * The established behavior uses lipgloss, which auto-detects the output profile and renders **plain**
  * text when the stream is not a TTY (piped output, CI, tests). Node's
  * `styleText` would mirror that via `validateStream`, but Bun (1.3.14, the
  * only runtime the CLI ships on) does not implement `validateStream`: it
@@ -70,17 +69,17 @@ export function legacyBold(text: string, stream: LegacyColorStream = process.std
   return legacySupportsColor(stream) ? styleText("bold", text, { validateStream: false }) : text;
 }
 
-/** Port of Go's `utils.Yellow` — lipgloss colour "11" (bright yellow). */
+/** Port of `utils.Yellow` — lipgloss colour "11" (bright yellow). */
 export function legacyYellow(text: string, stream: LegacyColorStream = process.stderr): string {
   return legacySupportsColor(stream) ? styleText("yellow", text, { validateStream: false }) : text;
 }
 
-/** Port of Go's `utils.Red` — lipgloss colour "9" (bright red). */
+/** Port of `utils.Red` — lipgloss colour "9" (bright red). */
 export function legacyRed(text: string, stream: LegacyColorStream = process.stderr): string {
   return legacySupportsColor(stream) ? styleText("red", text, { validateStream: false }) : text;
 }
 
-/** Port of Go's `utils.Green` — lipgloss colour "10" (bright green). */
+/** Port of `utils.Green` — lipgloss colour "10" (bright green). */
 export function legacyGreen(text: string, stream: LegacyColorStream = process.stderr): string {
   return legacySupportsColor(stream) ? styleText("green", text, { validateStream: false }) : text;
 }

@@ -21,19 +21,18 @@ function unknownMessage(error: unknown): string {
 }
 
 /**
- * Mirrors Go's `getProfileName` precedence (`profile.go:121-136`) — explicit
- * `--profile` flag → `SUPABASE_PROFILE` env → persisted `~/.supabase/profile`
- * file → `supabase` — then loads the token via `legacyLoadProfile`, failing
- * like Go's `LoadProfile` (`profile.go:94-118`) instead of falling back to
- * the built-in `supabase` profile, which silently targeted the wrong keyring
- * token and API (supabase/cli#6091).
+ * Profile resolution precedence: explicit `--profile` flag →
+ * `SUPABASE_PROFILE` env → persisted `~/.supabase/profile` file →
+ * `supabase` — then loads the token via `legacyLoadProfile`, failing instead
+ * of falling back to the built-in `supabase` profile, which silently
+ * targeted the wrong keyring token and API (supabase/cli#6091).
  *
  * `explicitFlagValue` mirrors pflag: the LAST explicit `--profile` occurrence
  * wins (the Effect parser is first-wins), and an explicit `--profile supabase`
  * shadows env and file even at the default value, which the parsed value
  * alone cannot detect. The persisted file's content is trimmed — a deliberate
- * divergence from Go's raw bytes, compensated by the sso pflag reconciliation
- * (`legacy-pflag-reconcile.ts`).
+ * divergence from the raw file bytes, compensated by the sso pflag
+ * reconciliation (`legacy-pflag-reconcile.ts`).
  */
 function resolveProfile(
   flagValue: string,
@@ -56,8 +55,7 @@ function resolveProfile(
       yield* debugLogger.debug(`Loading profile from flag: ${envValue}`);
       token = envValue;
     } else {
-      // Lowest precedence: the persisted `~/.supabase/profile` file (Go's
-      // `getProfileName` file fallback, `profile.go:129-131`).
+      // Lowest precedence: the persisted `~/.supabase/profile` file.
       const filePath = legacyProfileFilePath(path, homeDir);
       const content = yield* fs.readFileString(filePath).pipe(
         Effect.tap(() => debugLogger.debug(`Loading profile from file: ${filePath}`)),
@@ -80,20 +78,16 @@ function resolveProfile(
 }
 
 /**
- * Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`) always
- * `os.Chdir(workdir)`s using the raw `--workdir`/`SUPABASE_WORKDIR` string,
- * which can be relative (e.g. `.`) — but every later reader of the resolved
- * workdir (including the `Config.ProjectId` cwd-basename default, `Eject`,
- * `pkg/config/config.go:561-570`, run on every `Config.Load()` via
- * `mergeDefaultValues`, `config.go:690-699`) reads `os.Getwd()`, the real
- * ABSOLUTE directory, never the raw configured string. `os.Chdir(".")` is a
- * no-op syscall-wise, so Go's `cwd` is unaffected by the flag/env value being
- * relative. This resolves the flag/env value against the real process `cwd`
- * the same way, so `LegacyCliConfig.workdir` is always absolute — matching
- * Go's invariant that basename-ing it (e.g. `legacyResolveLocalProjectId`'s
- * workdir-basename fallback) operates on a real directory name, not a
- * relative-path fragment like `.` (which would sanitize to an empty project
- * id and build a bare, all-projects-matching Docker label filter).
+ * `--workdir`/`SUPABASE_WORKDIR` can be a relative string (e.g. `.`), but
+ * every later reader of the resolved workdir (including the
+ * `Config.ProjectId` cwd-basename default, run on every config load) must
+ * see the real ABSOLUTE directory, never the raw configured string. This
+ * resolves the flag/env value against the real process `cwd`, so
+ * `LegacyCliConfig.workdir` is always absolute — the invariant that
+ * basename-ing it (e.g. `legacyResolveLocalProjectId`'s workdir-basename
+ * fallback) operates on a real directory name, not a relative-path fragment
+ * like `.` (which would sanitize to an empty project id and build a bare,
+ * all-projects-matching Docker label filter).
  */
 function resolveWorkdir(
   flagValue: Option.Option<string>,

@@ -7,16 +7,16 @@ import type { LegacyDbConnType } from "./legacy-db-target-flags.ts";
  * (and later `db reset` / `db dump`).
  *
  * `connType` encodes which selector flag was explicitly set by the user, derived
- * from raw argv via `resolveLegacyDbTargetFlags` (Changed-first, matching Go's
- * `ParseDatabaseConfig` at `apps/cli-go/internal/utils/flags/db_url.go:46-63`):
- *   - "db-url"  → `--db-url` was changed (read `dbUrl.value`)
- *   - "linked"  → `--linked` was changed (Management API path)
- *   - "local"   → `--local` was changed (explicit local path)
- *   - undefined → no selector was changed; resolver defaults to local
+ * from raw argv via `resolveLegacyDbTargetFlags` (Changed-first, matching
+ * `ParseDatabaseConfig`'s precedence):
+ * - "db-url" → `--db-url` was changed (read `dbUrl.value`)
+ * - "linked" → `--linked` was changed (Management API path)
+ * - "local" → `--local` was changed (explicit local path)
+ * - undefined → no selector was changed; resolver defaults to local
  *
- * `--db-url` / `--linked` / `--local` are mutually exclusive
- * (`apps/cli-go/cmd/db.go:482-485`).  `dnsResolver` carries the global
- * `--dns-resolver` value (Go's `utils.DNSResolver.Value`), used when the
+ * `--db-url` / `--linked` / `--local` are mutually exclusive.
+ * `dnsResolver` carries the global
+ * `--dns-resolver` value (`utils.DNSResolver.Value`), used when the
  * resolver opens its own remote connection (the linked pooler temp-role probe);
  * the handler passes the same value to its primary `connect`.
  */
@@ -30,10 +30,9 @@ export interface LegacyDbConfigFlags {
    */
   readonly resolveVaultSecrets?: boolean;
   /**
-   * The `--password` / `-p` flag value (Go's `viper.GetString("DB_PASSWORD")`,
-   * bound via `viper.BindPFlag` in `apps/cli-go/cmd/db.go`). When `Some`, it
+   * The `--password` / `-p` flag value. When `Some`, it
    * takes precedence over the `SUPABASE_DB_PASSWORD` env var on the linked path,
-   * matching viper's flag-over-env precedence. Commands without a `--password`
+   * matching the established flag-over-env precedence. Commands without a `--password`
    * flag (e.g. `test db`) omit it; the resolver then falls back to env only.
    */
   readonly password?: Option.Option<string>;
@@ -41,7 +40,22 @@ export interface LegacyDbConfigFlags {
    * Optional explicit linked project ref override. Commands such as
    * `gen types --project-id <ref>` need the linked DB resolver's temp-role and
    * pooler fallback behavior without requiring the current workdir to be linked.
-   * Absent for the normal `--linked` path, which still reads `.temp/project-ref`.
+   * The eight `db` commands that resolve a project ref (`push`, `pull`, `diff`,
+   * `dump`, `reset`, `lint`, `advisors`, `query`) also thread their own
+   * `--project-ref` flag value through here, taking effect only on the linked
+   * path (it does NOT imply `--linked` — those handlers reject the flag
+   * outright on a non-linked target instead of silently discarding it, unlike
+   * the env var below). `None` when the flag is unset, which preserves the
+   * normal `--linked` path's fallback to `.temp/project-ref`.
+   *
+   * This shares ONLY the `SUPABASE_PROJECT_ID` env var's linked-ref-resolution
+   * precedence (flag > env > `.temp/project-ref` file, via
+   * `LegacyProjectRefResolver.loadProjectRef`) — it is NOT a full substitute for
+   * that env var. `SUPABASE_PROJECT_ID` also drives the LOCAL container id and
+   * the pg-delta project id (`legacyResolvePgDeltaProjectId`, read from
+   * `cliConfig.projectId` in `db diff`/`db pull`/`db reset`), which this flag
+   * deliberately does NOT touch — the `db` commands' `--project-ref` only ever
+   * feeds the resolver above, never the local-side id derivation.
    */
   readonly linkedProjectRef?: Option.Option<string>;
   /**
@@ -49,15 +63,41 @@ export interface LegacyDbConfigFlags {
    * (e.g. `gen types --project-id <ref>`) rather than the current linked
    * workdir. The ref may belong to a different project than the cwd, so the
    * resolver must NOT inherit workdir-scoped credentials or cached state:
-   *   - it ignores the ambient `SUPABASE_DB_PASSWORD` (shell / `.env*`) so it
-   *     always mints a temporary login role instead of handing pg-meta an
-   *     unrelated password, and
-   *   - on an IPv4-only network it skips the saved `.temp/pooler-url` (which
-   *     belongs to the linked workdir) and fetches the primary pooler config
-   *     for `ref` from the Management API instead of failing with the IPv6
-   *     "run supabase link" suggestion.
+   * - it ignores the ambient `SUPABASE_DB_PASSWORD` (shell / `.env*`) so it
+   * always mints a temporary login role instead of handing pg-meta an
+   * unrelated password, and
+   * - on an IPv4-only network it skips the saved `.temp/pooler-url` (which
+   * belongs to the linked workdir) and fetches the primary pooler config
+   * for `ref` from the Management API instead of failing with the IPv6
+   * "run supabase link" suggestion.
    * Absent / false for the normal `--linked` path, which is the workdir's own
    * project and may legitimately reuse those env vars and saved files.
+   *
+   * The eight `db` commands' `--project-ref` deliberately leave this unset:
+   * unlike `gen types --project-id`'s genuinely ad-hoc target, `db`'s
+   * `--project-ref` is meant to have identical workdir credential semantics to
+   * `SUPABASE_PROJECT_ID` — it may still reuse the ambient `SUPABASE_DB_PASSWORD`
+   * / `--password`, since forcing ad-hoc would silently break existing
+   * password-based workflows that already set `--project-ref` expecting
+   * `SUPABASE_PROJECT_ID`-equivalent behavior. The mismatched-pooler-url risk
+   * `adHocProjectRef` guards against for a genuinely different project is
+   * already rejected independently: `legacyPoolerConfigFromConnectionString`
+   * (`legacy-db-config.parse.ts`) verifies the saved `.temp/pooler-url`'s
+   * tenant ref matches the resolved ref before reusing it, so a stale pooler
+   * URL for a DIFFERENT project than the one `--project-ref` now selects fails
+   * loudly instead of silently connecting to the wrong project.
+   *
+   * Leaving this unset does NOT, however, confine the eight `db` commands to
+   * the workdir's saved `.temp/pooler-url` on an IPv4-only network: any
+   * explicit `linkedProjectRef` (this flag's own presence, independent of
+   * `adHocProjectRef`) additionally unlocks the Management API pooler-config
+   * fetch (`resolvePoolerConn`'s `fetchFromApi`) whenever that saved URL is
+   * absent or fails the tenant-ref check above — so `--project-ref` against an
+   * unlinked workdir (no saved pooler URL at all) still resolves an IPv4
+   * pooler connection instead of dead-ending in the "run supabase link" IPv6
+   * error. `ignoreSavedUrl` (skip a matching saved URL outright) stays keyed to
+   * `adHocProjectRef` alone, so a `db` command's own linked workdir's saved URL
+   * for the SAME ref is still reused with no API call.
    */
   readonly adHocProjectRef?: boolean;
 }

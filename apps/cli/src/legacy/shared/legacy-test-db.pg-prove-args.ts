@@ -14,7 +14,8 @@ export interface LegacyPgProveArgs {
 
 /**
  * Build the `pg_prove` command, volume binds, and working directory for a
- * `test db` run. Pure port of the loop in `apps/cli-go/internal/db/test/test.go:29-56`.
+ * `test db` run. Pure port of the loop in `apps/cli-go/internal/db/test/test.go:29-56`
+ * (deleted in CLI-1970; last present at commit 7b469f5b3).
  *
  * - No paths → default to `<workdir>/supabase/tests` (Go's `filepath.Abs(DbTestsDir)`
  *   after chdir to the project root).

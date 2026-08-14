@@ -7,11 +7,11 @@ import { makeTempHome, runSupabase } from "../../../../../tests/helpers/cli.ts";
 // Argument-validation negatives for `functions deploy`. Both checks below are
 // native TS today (deployFunctions in shared/functions/deploy.ts) — the
 // bundler-mutex message byte-matches cobra's validateExclusiveFlagGroups
-// template, and --jobs mirrors Go's own top-of-RunE guard (`if useApi { ... }
-// else if maxJobs > 1 { error }`). A black-box subprocess test still earns its
-// keep here: asserting the SPECIFIC error text avoids a false pass from an
-// unrelated non-zero exit (e.g. a missing build artifact), and exercises the
-// real CLI entrypoint end to end.
+// template, and --jobs mirrors the established top-of-handler guard
+// (`if useApi { ... } else if maxJobs > 1 { error }`). A black-box subprocess
+// test still earns its keep here: asserting the SPECIFIC error text avoids a
+// false pass from an unrelated non-zero exit (e.g. a missing build
+// artifact), and exercises the real CLI entrypoint end to end.
 //
 // All cases fail before any network call (flag-group validation / the jobs
 // check both run before project-ref resolution), so no auth or linked

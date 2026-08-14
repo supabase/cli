@@ -1,5 +1,18 @@
 import type { Effect } from "effect";
-import { Context } from "effect";
+import { Context, Data } from "effect";
+import {
+  actionability,
+  type CliErrorActionabilityDeclaration,
+  ErrorActionabilityId,
+} from "../../shared/telemetry/error-actionability.ts";
+
+export class ProjectHomeNotDirectoryError extends Data.TaggedError("ProjectHomeNotDirectoryError")<{
+  readonly message: string;
+}> {
+  get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
+    return actionability.invalidInput;
+  }
+}
 
 interface ProjectHomeShape {
   readonly projectRoot: string;

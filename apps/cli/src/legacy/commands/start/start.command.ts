@@ -17,8 +17,8 @@ import { withLegacyCommandInstrumentation } from "../../telemetry/legacy-command
 import { LEGACY_START_EXCLUDABLE_KEYS } from "./start.exclude.ts";
 import { legacyStart } from "./start.handler.ts";
 
-// Go registers `--exclude`/`-x` as a pflag `StringSliceVarP` (`cmd/start.go:58`), which
-// CSV-splits each occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
+// `--exclude`/`-x` is a pflag-style string-slice flag, which CSV-splits each
+// occurrence (`--exclude gotrue,realtime` -> two values) and accumulates
 // across repeats — matching `status`'s own `--exclude`/`--override-name` handling.
 // Malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005); the
 // shorthand makes pflag frame it as `"-x, --exclude"` (see `legacyStringSliceFlag`).
@@ -41,8 +41,8 @@ const config = {
 
 export type LegacyStartFlags = CliCommand.Command.Config.Infer<typeof config>;
 
-// `start` makes no Management API calls (Go's start needs no access token) and talks
-// directly to Docker, so it deliberately avoids `legacyManagementApiRuntimeLayer` —
+// `start` makes no Management API calls and talks directly to Docker, so it
+// deliberately avoids `legacyManagementApiRuntimeLayer` —
 // it provides only the services the handler + instrumentation consume, mirroring
 // `stop`/`status`'s runtime shape. `ChildProcessSpawner`/`ProcessControl`/`RuntimeInfo`
 // are not listed here: they come from `BunServices`/`processControlLayer`/

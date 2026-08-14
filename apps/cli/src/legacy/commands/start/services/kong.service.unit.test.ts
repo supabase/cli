@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, test } from "vitest";
 
 import {
@@ -62,6 +65,35 @@ describe("legacyBuildKongEmailTemplateBind", () => {
     expect(
       legacyBuildKongEmailTemplateBind({ id: "invite", contentPath: "invite.html" }, "/work"),
     ).toBe("/work/invite.html:/home/kong/templates/email/invite.html:rw");
+  });
+
+  test("notification mounts fall back to the legacy supabase-relative file", () => {
+    const workdir = mkdtempSync(join(tmpdir(), "kong-email-bind-"));
+    try {
+      mkdirSync(join(workdir, "supabase", "templates"), { recursive: true });
+      writeFileSync(join(workdir, "supabase", "templates", "n.html"), "<p>x</p>");
+      expect(
+        legacyBuildKongEmailTemplateBind(
+          {
+            id: "password_changed_notification",
+            contentPath: "./templates/n.html",
+            notification: true,
+          },
+          workdir,
+        ),
+      ).toBe(
+        `${join(workdir, "supabase", "templates", "n.html")}:/home/kong/templates/email/password_changed_notification.html:rw`,
+      );
+      // template mounts keep plain workdir resolution even when the file is absent
+      expect(
+        legacyBuildKongEmailTemplateBind(
+          { id: "invite", contentPath: "./templates/n.html" },
+          workdir,
+        ),
+      ).toBe(`${join(workdir, "templates", "n.html")}:/home/kong/templates/email/invite.html:rw`);
+    } finally {
+      rmSync(workdir, { recursive: true, force: true });
+    }
   });
 
   test("leaves an absolute contentPath untouched", () => {

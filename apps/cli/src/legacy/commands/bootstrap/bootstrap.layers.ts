@@ -81,7 +81,7 @@ export const legacyBootstrapRuntimeLayer = Layer.mergeAll(
   // file) because `bootstrap.handler.ts` now calls `legacyResolveLinkedConn`
   // (CLI-1953's IPv4-pooler-fallback push connection) directly, which reads it.
   debugLogger,
-  // The one per-command identity stitcher (Go's single root-context `sync.Once`),
+  // The one per-command identity stitcher (a single root-context `sync.Once`),
   // exposed at top level so `withLegacyCommandInstrumentation` can read
   // `stitchedDistinctId()` and attribute the cli_command_executed event to the
   // gotrue id. The SAME reference is provided to platformApi / linkedProjectCache

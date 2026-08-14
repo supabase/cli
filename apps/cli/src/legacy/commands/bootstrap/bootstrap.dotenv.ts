@@ -5,8 +5,7 @@ import { type LegacyDbConfig, toPostgresUrl } from "./bootstrap.pgconfig.ts";
 
 type ApiKey = typeof ApiKeyResponse.Type;
 
-// Env-var keys bootstrap writes / derives. Mirrors the constants in
-// `apps/cli-go/internal/bootstrap/bootstrap.go:131-150`.
+// Env-var keys bootstrap writes / derives.
 const SUPABASE_SERVICE_ROLE_KEY = "SUPABASE_SERVICE_ROLE_KEY";
 const SUPABASE_ANON_KEY = "SUPABASE_ANON_KEY";
 const SUPABASE_URL = "SUPABASE_URL";
@@ -24,14 +23,12 @@ const EXPO_PUBLIC_SUPABASE_ANON_KEY = "EXPO_PUBLIC_SUPABASE_ANON_KEY";
 const EXPO_PUBLIC_SUPABASE_URL = "EXPO_PUBLIC_SUPABASE_URL";
 
 /**
- * Reproduces Go's `writeDotEnv` env-map construction (`bootstrap.go:166-243`).
- *
- * Seeds the api-key env vars (`SUPABASE_<NAME>_KEY`), the project `SUPABASE_URL`,
- * and the pooled `POSTGRES_URL` (transaction mode, port 6543). When a `.env.example`
- * map is supplied, each of its keys is merged via Go's switch: the four seeded keys
- * are preserved, the derived `POSTGRES_*` / `NEXT_PUBLIC_*` / `EXPO_PUBLIC_*` keys are
- * computed from the db config + seeded values, and any other key copies its example
- * value verbatim.
+ * Env-map construction: seeds the api-key env vars (`SUPABASE_<NAME>_KEY`),
+ * the project `SUPABASE_URL`, and the pooled `POSTGRES_URL` (transaction
+ * mode, port 6543). When a `.env.example` map is supplied, each of its keys
+ * is merged: the four seeded keys are preserved, the derived `POSTGRES_*` /
+ * `NEXT_PUBLIC_*` / `EXPO_PUBLIC_*` keys are computed from the db config +
+ * seeded values, and any other key copies its example value verbatim.
  */
 export function buildDotEnv(
   keys: ReadonlyArray<ApiKey>,
@@ -106,9 +103,9 @@ const INTEGER_PATTERN = /^[+-]?\d+$/;
 
 /**
  * Reproduces `godotenv.Marshal`: each entry renders as `KEY=<int>` when the value
- * parses as an integer (Go's `strconv.Atoi` + `%d`), otherwise `KEY="<escaped>"`.
- * Lines are sorted lexicographically (Go sorts the rendered lines, which orders
- * by key) and joined with `\n` (no trailing newline).
+ * parses as an integer (`strconv.Atoi` + `%d`), otherwise `KEY="<escaped>"`.
+ * Lines are sorted lexicographically (`godotenv.Marshal` sorts the rendered
+ * lines, which orders by key) and joined with `\n` (no trailing newline).
  */
 export function marshalDotEnv(env: Readonly<Record<string, string>>): string {
   const lines: Array<string> = [];

@@ -42,10 +42,9 @@ const gatedNotFoundActionability = (
 ): CliErrorActionabilityDeclaration =>
   upgradeSuggested === true ? planLimitGatedActionability : actionability.invalidInput;
 
-// Shared across show / update / remove: Go's `uuid.Parse` failure.
-// Message intentionally diverges from Go's verbose `failed to parse provider ID: invalid UUID …`
-// — the legacy/sso port consolidates to a single short string `identity provider ID %q is not a UUID`
-// that's directly user-actionable and tested in e2e.
+// Shared across show / update / remove: invalid identity provider ID.
+// Message is a short, directly user-actionable string —
+// `identity provider ID %q is not a UUID` — tested in e2e.
 export class LegacySsoInvalidUuidError extends Data.TaggedError("LegacySsoInvalidUuidError")<{
   readonly providerId: string;
   readonly message: string;
@@ -55,10 +54,9 @@ export class LegacySsoInvalidUuidError extends Data.TaggedError("LegacySsoInvali
   }
 }
 
-// Shared across list / show: mirrors Go's `utils.EncodeOutput` TOML failure
-// ("failed to output toml: %w") — reachable when an `attribute_mapping`
-// `default` value cannot be encoded by BurntSushi (e.g. an array with a nil
-// element).
+// Shared across list / show: TOML encode failure ("failed to output toml: %w")
+// — reachable when an `attribute_mapping` `default` value cannot be encoded
+// (e.g. an array with a nil element).
 export class LegacySsoTomlEncodeError extends Data.TaggedError("LegacySsoTomlEncodeError")<{
   readonly message: string;
 }> {
@@ -201,10 +199,10 @@ export class LegacySsoInvalidFlagValueError extends Data.TaggedError(
   }
 }
 
-// cobra's `ValidateRequiredFlags` (`command.go:1007`), emulated for the case
-// the Effect parser cannot see: pflag consumed the required flag's own token
-// as another flag's value, so pflag never marks it `Changed` and Go exits
-// before `RunE` (CLI-1982). Message byte-matches cobra's template.
+// Emulates an edge case the flag parser cannot see directly: a required
+// flag's own token gets consumed as another flag's value, so the flag is
+// never marked as present and validation fails before any request is made.
+// Message text is an established output contract.
 export class LegacySsoAddRequiredFlagError extends Data.TaggedError(
   "LegacySsoAddRequiredFlagError",
 )<{
@@ -293,11 +291,10 @@ export class LegacySsoShowEnvNotSupportedError extends Data.TaggedError(
 }
 
 // `sso update`
-// cobra's `ValidateArgs` / `ExactArgs(1)` (`command.go:968`, `cmd/sso.go:87`),
-// emulated for the case the Effect parser cannot see: pflag consumed a flag
-// token as a value, shifting what the parser read as a flag's value into the
-// positional list, so Go rejects the arg count before any hook or request
-// (CLI-1982). Message byte-matches cobra's `ExactArgs` template.
+// Emulates an edge case the flag parser cannot see directly: a flag token
+// gets consumed as another flag's value, shifting what the parser read as a
+// flag's value into the positional list, so the arg count is rejected before
+// any hook or request. Message text is an established output contract.
 export class LegacySsoUpdateArityError extends Data.TaggedError("LegacySsoUpdateArityError")<{
   readonly message: string;
 }> {
@@ -399,10 +396,9 @@ export class LegacySsoRemoveUnexpectedStatusError extends Data.TaggedError(
 }
 
 /**
- * Go's `GetSupabase` token gate (`internal/utils/api.go:119-124`):
- * `log.Fatalln(utils.ErrMissingToken)` when the reconciled profile's token
- * lookup finds nothing — fired at first client use inside `RunE`, AFTER
- * required/mutex/workdir validation (PR #5974 review round 10).
+ * Token gate: fired when the reconciled profile's token lookup finds
+ * nothing — at first client use, AFTER required/mutex/workdir validation
+ * (PR #5974 review round 10).
  */
 export class LegacySsoAccessTokenError extends Data.TaggedError("LegacySsoAccessTokenError")<{
   readonly message: string;

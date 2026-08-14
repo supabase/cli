@@ -57,6 +57,11 @@ const config = {
     Flag.withDescription("Pulls from the local database."),
     Flag.optional,
   ),
+  // TS-only override of the linked project ref — see push.command.ts.
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   password: Flag.string("password").pipe(
     Flag.withAlias("p"),
     Flag.withDescription("Password to your remote Postgres database."),
@@ -80,9 +85,13 @@ export const legacyDbPullCommand = Command.make("pull", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           // `password` is a credential — always reaches telemetry as `<redacted>`.
           password: flags.password,
         },
+        // TS-only flag with no Go telemetry-safety baseline; Go's nearest
+        // --project-ref registrations (cmd/pgdelta_catalog.go:44 and most
+        // others) are unmarked, so it stays redacted.
         aliases: { s: "schema", p: "password" },
         config,
       }),

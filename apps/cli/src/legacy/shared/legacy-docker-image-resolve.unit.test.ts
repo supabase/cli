@@ -133,7 +133,7 @@ describe("legacyMakeDockerImageResolver", () => {
           // Mirrors Go's own `docker_test.go` "throws error on failure to pull
           // image" case: a bare, non-pattern-matching message (no
           // "toomanyrequests"/"rate exceeded"/etc.) still exhausts every
-          // retry, because Go's `DockerImagePullWithRetry` retries on any
+          // retry, because `DockerImagePullWithRetry` retries on any
           // non-nil error, with no message classification at all.
           const mock = mockSpawner([
             { exitCode: 1, stderr: "no space left on device" },
@@ -163,8 +163,8 @@ describe("legacyMakeDockerImageResolver", () => {
           for (const options of mock.imageInspectOptions) {
             expect(options).toMatchObject({ stdin: "ignore", stdout: "ignore", stderr: "pipe" });
           }
-          // Go's per-retry banner (`docker.go:314`): `Fprintf(os.Stderr, "Retrying after %v: %s\n", …)`
-          // — one banner before each of the 2 retries, escalating 4s then 8s, naming the exact
+          // Go's per-retry banner: `Fprintf(os.Stderr, "Retrying after %v: %s\n", …)` —
+          // one banner before each of the 2 retries, escalating 4s then 8s, naming the exact
           // candidate this resolver pinned to (see the comment above on `REGISTRY_ENV`).
           const retryBanners = stderrChunks.filter(
             (chunk): chunk is string =>
@@ -174,7 +174,7 @@ describe("legacyMakeDockerImageResolver", () => {
             "Retrying after 4s: supabase/postgres:17.6.1.138\n",
             "Retrying after 8s: supabase/postgres:17.6.1.138\n",
           ]);
-          // Go `Fprintln`s the failed error before the banner (`docker.go:312`),
+          // Go `Fprintln`s the failed error before the banner,
           // so the banner always starts on a fresh line. The child's error here
           // has no trailing newline, so the resolver must add one — never the
           // glued `…deviceRetrying after …`.
@@ -262,7 +262,7 @@ describe("legacyMakeDockerImageResolver", () => {
           const image = yield* Fiber.join(fiber);
 
           expect(image).toBe("supabase/postgres:17.6.1.138");
-          // The child already terminated its own line — Go's `Fprintln`
+          // The child already terminated its own line — `Fprintln`
           // output shape is exactly one newline between error and banner, so
           // the resolver must not add a second one.
           const transcript = stderrTranscript(stderrChunks);
@@ -375,10 +375,10 @@ describe("legacyMakeDockerImageResolver", () => {
         process.env[REGISTRY_ENV] = "docker.io";
 
         try {
-          // Go's `DockerResolveImageIfNotCached` treats ONLY a confirmed `errdefs.IsNotFound`
+          // `DockerResolveImageIfNotCached` treats ONLY a confirmed `errdefs.IsNotFound`
           // as a cache miss; every other inspect error — this is neither a "no such image" nor
           // a daemon-unreachable message — returns immediately instead of falling through to
-          // the pull loop (`internal/utils/docker.go:326-334`).
+          // the pull loop.
           const authPluginDenialStderr =
             "Error response from daemon: authorization denied by plugin AuthZPlugin: no policy matched";
           const mock = mockSpawner([], { exitCode: 1, stderr: authPluginDenialStderr });

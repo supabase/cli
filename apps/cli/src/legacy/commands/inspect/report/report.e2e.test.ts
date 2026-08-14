@@ -10,8 +10,8 @@ const E2E_TIMEOUT_MS = 30_000;
 // A definitely-closed local port: the `--db-url` is parsed directly (no config.toml
 // / running stack needed), so the native handler creates the dated output directory,
 // prints the connect diagnostic, then fails fast dialing. This exercises the real
-// subprocess path — flag parse → resolution → mkdir → native connect — without the
-// Go binary and without depending on a live database in CI.
+// subprocess path — flag parse → resolution → mkdir → native connect — without
+// depending on a live database in CI.
 const DEAD_DB_URL = "postgres://postgres:postgres@127.0.0.1:1/postgres";
 
 // `--agent no` forces text-mode output deterministically (the CLI otherwise
@@ -30,7 +30,7 @@ describe("supabase inspect report (legacy)", () => {
         { entrypoint: "legacy", home: home.dir, env: { HOME: home.dir } },
       );
       expect(exitCode).toBe(1);
-      // The native handler writes the connect diagnostic to stderr (Go parity).
+      // The native handler writes the connect diagnostic to stderr.
       expect(stderr).toContain("Connecting to remote database...");
       expect(stderr).toMatch(/failed to connect to postgres|connection refused|ECONNREFUSED/i);
       // mkdir runs before the connection, so the dated folder exists even on failure.

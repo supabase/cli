@@ -8,6 +8,7 @@ import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { encodeGoJson } from "../../../shared/legacy-go-output.encoders.ts";
+import { legacyResolveLinkedParentRef } from "../../../shared/legacy-parent-project-ref.ts";
 import {
   type LegacyGoType,
   encodeLegacyGoToml,
@@ -32,9 +33,9 @@ import {
 import type { LegacyProjectsListFlags } from "./list.command.ts";
 
 /**
- * Mirror of Go's `linkedProject` (`apps/cli-go/internal/projects/list/list.go`):
- * an embedded `api.V1ProjectWithDatabaseResponse` (fields inlined first, in
- * declaration order) plus the CLI-added `Linked bool` (CLI-1975).
+ * Struct spec for the linked-project projection: an embedded project
+ * response (fields inlined first, in declaration order) plus the
+ * CLI-added `Linked bool`.
  */
 const LEGACY_GO_LINKED_PROJECT: LegacyGoType = legacyGoStruct([
   ["created_at", legacyGoString],
@@ -74,8 +75,8 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
 
-  // Go's `list.go:31-33` loads the linked ref purely as a marker — `ErrNotLinked`
-  // is ignored, no prompt fires. `resolveOptional` never fails or prompts.
+  // The linked ref is loaded purely as a marker — a not-linked error is
+  // ignored, no prompt fires. `resolveOptional` never fails or prompts.
   const linkedRef = yield* resolver.resolveOptional(Option.none());
 
   yield* Effect.gen(function* () {
@@ -129,18 +130,36 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
     }
     yield* fetching?.clear() ?? Effect.void;
 
-    // Go's `list.go:31-33` prints the `LoadProjectRef` error to stderr when no
-    // ref resolves (the `errors.New(ErrNotLinked)` wrapper is never `==` the
-    // sentinel, so the guard always fires), then renders the table anyway.
-    // `ErrNotLinked` colours "supabase link" via `Aqua` — plain on a non-TTY —
-    // and uses no backticks, unlike the resolver's hard-fail message.
+    // Established behavior: prints the not-linked message to stderr when no
+    // ref resolves, then renders the table anyway. "supabase link" is
+    // colored via `Aqua` — plain on a non-TTY — and uses no backticks,
+    // unlike the resolver's hard-fail message.
     if (Option.isNone(linkedRef)) {
       yield* output.raw("Cannot find project ref. Have you run supabase link?\n", "stderr");
     }
 
+    // CLI-2167 follow-up: after `link <branch>`, `linkedRef` is the BRANCH's
+    // own ref, which never matches a row here (this endpoint only returns
+    // real projects), so the "you are here" marker silently vanished. An
+    // exact match always wins outright; only when it misses do we fall back
+    // to the PARENT chain (env → `linked-project.json` → `project-ref` file)
+    // and mark that ref's row instead. `linkedRef` itself (used below for the
+    // stderr message and the linked-project-cache write) is untouched — only
+    // the marker comparison changes. TS-only QoL, no Go counterpart.
+    let markerRef = linkedRef;
+    if (Option.isSome(linkedRef)) {
+      const hasExactMatch = parsed.some(
+        (project) => readProjectField(project, "id") === linkedRef.value,
+      );
+      if (!hasExactMatch) {
+        const parent = yield* legacyResolveLinkedParentRef();
+        markerRef = parent.kind === "resolved" ? Option.some(parent.ref) : Option.none();
+      }
+    }
+
     const projects: ReadonlyArray<LegacyLinkedProject> = parsed.map((project) => ({
       ...(typeof project === "object" && project !== null ? project : {}),
-      linked: Option.isSome(linkedRef) && readProjectField(project, "id") === linkedRef.value,
+      linked: Option.isSome(markerRef) && readProjectField(project, "id") === markerRef.value,
     }));
 
     const goFmt = Option.getOrUndefined(goOutputFlag);
@@ -159,8 +178,8 @@ export const legacyProjectsList = Effect.fn("legacy.projects.list")(function* (
       return;
     }
     if (goFmt === "toml") {
-      // Go builds the list with `append` (`list.go:36-42`), so an empty list
-      // stays a nil slice and BurntSushi emits nothing for the wrapper.
+      // The list is built with `append`, so an empty list stays a nil slice
+      // and BurntSushi emits nothing for the wrapper.
       yield* output.raw(
         encodeLegacyGoToml(
           { projects: projects.length > 0 ? projects : undefined },

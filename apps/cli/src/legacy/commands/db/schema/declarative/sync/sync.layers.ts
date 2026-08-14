@@ -2,6 +2,7 @@ import { Layer } from "effect";
 
 import { commandRuntimeLayer } from "../../../../../../shared/runtime/command-runtime.layer.ts";
 import { stdinLayer } from "../../../../../../shared/runtime/stdin.layer.ts";
+import { legacyHttpClientLayer } from "../../../../../auth/legacy-http-debug.layer.ts";
 import { legacyCliConfigLayer } from "../../../../../config/legacy-cli-config.layer.ts";
 import { legacyDbConfigLayer } from "../../../../../shared/legacy-db-config.layer.ts";
 import { legacyDbConnectionLayer } from "../../../../../shared/legacy-db-connection.layer.ts";
@@ -17,11 +18,16 @@ import { legacyDeclarativeSeamLayer } from "../../../shared/legacy-pgdelta.seam.
 /**
  * Runtime layer for `supabase db schema declarative sync`. Sync diffs against the
  * local database, but its no-declarative-files bootstrap delegates to the shared
- * smart-generate flow (Go's `runDeclarativeGenerate`), which can target local /
- * linked / custom — so it needs the db-config resolver too. `Output` /
- * `LegacyGoProxy` / global flags + the Bun platform come from the legacy root /
- * `runCli`. `legacyDockerRunLayer` is ALSO exposed directly (not just provided to
- * `edgeRuntime`): both the smart-target bootstrap's local-reset prompt and the
+ * smart-generate flow, which can target local / linked / custom — so it needs the
+ * db-config resolver too. `Output` / global flags and the Bun platform come from the
+ * legacy root / `runCli`. Per the "provide doesn't share to siblings" rule,
+ * `LegacyCliConfig` is provided to every layer that needs it — including `seam`,
+ * which (as of the fully-native shadow provisioning) also needs `LegacyDbConnection`/
+ * `LegacyDockerRun`/`LegacyEdgeRuntimeScript`/`LegacyPgDeltaSslProbe`/`HttpClient` (the
+ * native shadow's health-check wait, mirroring `db diff`'s own `diff.layers.ts`)
+ * explicitly provided, not just exposed as sibling entries in the merge below.
+ * `legacyDockerRunLayer` is ALSO exposed directly (not just provided to
+ * `edgeRuntime`/`seam`): both the smart-target bootstrap's local-reset prompt and the
  * failed-apply recovery reset now call `legacyResetLocalDatabase` in-process
  * (CLI-2062), whose PG15+ recreate reuses the same one-shot migrate jobs `db
  * start`/`db reset` back with this same layer (see those commands' own
@@ -44,13 +50,23 @@ const edgeRuntime = legacyEdgeRuntimeScriptLayer.pipe(
   Layer.provide(cliConfig),
 );
 
-const seam = legacyDeclarativeSeamLayer.pipe(Layer.provide(cliConfig));
+const httpClient = legacyHttpClientLayer.pipe(Layer.provide(legacyDebugLoggerLayer));
+
+const seam = legacyDeclarativeSeamLayer.pipe(
+  Layer.provide(cliConfig),
+  Layer.provide(legacyDbConnectionLayer),
+  Layer.provide(legacyDockerRunLayer),
+  Layer.provide(edgeRuntime),
+  Layer.provide(legacyPgDeltaSslProbeLayer),
+  Layer.provide(httpClient),
+);
 
 export const legacyDbSchemaDeclarativeSyncRuntimeLayer = Layer.mergeAll(
   dbConfig,
   legacyDockerRunLayer,
   edgeRuntime,
   legacyPgDeltaSslProbeLayer,
+  httpClient,
   seam,
   legacyDbConnectionLayer,
   cliConfig,

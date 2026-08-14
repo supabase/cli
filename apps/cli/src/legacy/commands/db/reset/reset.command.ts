@@ -21,6 +21,11 @@ const config = {
   local: Flag.boolean("local").pipe(
     Flag.withDescription("Resets the local database with local migrations."),
   ),
+  // TS-only override of the linked project ref — see push.command.ts.
+  projectRef: Flag.string("project-ref").pipe(
+    Flag.withDescription("Project ref of the Supabase project."),
+    Flag.optional,
+  ),
   noSeed: Flag.boolean("no-seed").pipe(
     Flag.withDescription("Skip running the seed script after reset."),
   ),
@@ -53,14 +58,17 @@ export const legacyDbResetCommand = Command.make("reset", config).pipe(
           "db-url": flags.dbUrl,
           linked: flags.linked,
           local: flags.local,
+          "project-ref": flags.projectRef,
           "no-seed": flags.noSeed,
           "sql-paths": flags.sqlPaths,
           version: flags.version,
           last: flags.last,
         },
-        // NO safeFlags: `markFlagTelemetrySafe` is per flag INSTANCE, and Go only
-        // marks migration squash's `--version` (cmd/migration.go:134). db reset's
-        // `--version` (cmd/db.go) is unmarked, so Go redacts it — match that.
+        // NO safeFlags: telemetry-safe marking is per flag INSTANCE — migration
+        // squash's `--version` is marked safe, but db reset's `--version` is
+        // unmarked, so it stays redacted here. `--project-ref` has no
+        // established telemetry-safety baseline either, so it stays redacted
+        // as well.
       }),
       withJsonErrorHandling,
     ),

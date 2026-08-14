@@ -5,18 +5,18 @@ import type { LegacyUpsertBucketProps } from "./legacy-storage-gateway.ts";
  * Pure helpers that turn a `[storage.buckets.*]` config entry into the
  * create/update bucket props the Storage gateway sends. Shared by `seed buckets`
  * (which seeds every configured bucket) and `storage cp` (which auto-creates a
- * bucket on a `Bucket not found` upload, reading the same config —
- * `internal/storage/cp/cp.go:154-160`). Kept free of Effect/services so the
- * Go-parity rules (size parsing, storage-level inheritance, `public` tri-state)
+ * bucket on a `Bucket not found` upload, reading the same config). Kept free of
+ * Effect/services so the
+ * established rules (size parsing, storage-level inheritance, `public` tri-state)
  * stay unit-testable.
  */
 
 /**
  * Parse a `file_size_limit` config string (e.g. `"50MiB"`) to the int64 byte
- * count Go sends in the create/update bucket body (`int64(bucket.FileSizeLimit)`,
- * `pkg/storage/batch.go:38/49`). `@supabase/config` keeps the field as the raw
- * human-readable string, so the conversion Go performs at config-load happens
- * here. Throws on an unparseable value (Go aborts config load), which the caller
+ * count sent in the create/update bucket body. `@supabase/config` keeps the
+ * field as the raw
+ * human-readable string, so the conversion normally done at config-load happens
+ * here. Throws on an unparseable value (aborts config load), which the caller
  * maps to a config-load error.
  */
 export function legacyParseFileSizeLimit(sizeStr: string): number {
@@ -56,12 +56,12 @@ interface LegacyBucketConfigEntry {
 }
 
 /**
- * Resolve a bucket's create/update props, mirroring Go's `config.resolve()`
- * (`pkg/config/config.go:753-756`) + the `sizeInBytes` decode at config-load:
- *  - an omitted or zero `file_size_limit` inherits the (already-parsed)
- *    storage-level limit;
- *  - `public` is the explicit value only when the TOML declares it, else
- *    `undefined` (Go's `*bool` nil → omitted from the request body).
+ * Resolve a bucket's create/update props, mirroring `config.resolve()`
+ * + the `sizeInBytes` decode at config-load:
+ * - an omitted or zero `file_size_limit` inherits the (already-parsed)
+ * storage-level limit;
+ * - `public` is the explicit value only when the TOML declares it, else
+ * `undefined` (`*bool` nil → omitted from the request body).
  *
  * Throws on an unparseable bucket `file_size_limit` (the caller maps it to a
  * config-load error). `storageFileSizeLimitBytes` must already be parsed.

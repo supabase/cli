@@ -17,6 +17,7 @@ import {
 } from "../storage.frame.ts";
 import {
   LegacyStorageMissingPathError,
+  LegacyStorageMutuallyExclusiveFlagsError,
   LegacyStorageObjectNotFoundError,
   LegacyStorageUnsupportedMoveError,
 } from "../storage.errors.ts";
@@ -24,10 +25,10 @@ import { legacyListStoragePaths } from "../storage.iterate.ts";
 import type { LegacyStorageMvFlags } from "./mv.command.ts";
 
 /**
- * `supabase storage mv <src> <dst>` — move objects within a bucket. Port of
- * `apps/cli-go/internal/storage/mv/mv.go`. Both paths must be `ss://` and in the
- * same bucket. A direct move that returns `not_found` falls back to a recursive
- * per-object move when `--recursive` is set.
+ * `supabase storage mv <src> <dst>` — move objects within a bucket. Both
+ * paths must be `ss://` and in the same bucket. A direct move that returns
+ * `not_found` falls back to a recursive per-object move when `--recursive`
+ * is set.
  */
 export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
   flags: LegacyStorageMvFlags,
@@ -41,7 +42,19 @@ export const legacyStorageMv = Effect.fn("legacy.storage.mv")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && flags.local) {
+      return yield* Effect.fail(
+        new LegacyStorageMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
+    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);
     if (loaded.appliedRemote !== undefined) {

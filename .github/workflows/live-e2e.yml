@@ -81,8 +81,8 @@ jobs:
     if: needs.gate.outputs.should_run == 'true'
     name: Live e2e (${{ matrix.target }})
     runs-on: blacksmith-8vcpu-ubuntu-2404
-    # Serialize a target against itself across runs; go and ts-legacy run in
-    # parallel. Per-job-scoped project names mean this is mostly belt-and-braces.
+    # Serialize a target against itself across runs. Per-job-scoped project names
+    # mean this is mostly belt-and-braces.
     concurrency:
       group: live-e2e-${{ matrix.target }}-${{ github.ref }}
       cancel-in-progress: true
@@ -90,11 +90,11 @@ jobs:
       # Each target is an independent green/red signal.
       fail-fast: false
       matrix:
-        # go = source-of-truth Go binary; ts-legacy = the TS rewrite (shells out
-        # to Go for most commands). Authoring target is go; ts-legacy proves the
-        # shim matches. ts-next is a later axis.
+        # ts-legacy is the only shipped CLI shell, so it's the sole live-e2e
+        # target. It still shells out to the Go binary for the handful of
+        # commands the TS port proxies (db diff, db pull, db branch *, db
+        # remote *, gen keys, functions download). ts-next is a later axis.
         target:
-          - go
           - ts-legacy
     # Non-secret config is job-level; the staging token is scoped to only the two
     # steps that need it (run + cleanup) so build/checkout/docker never see it.
@@ -113,8 +113,9 @@ jobs:
       - name: Setup
         uses: ./.github/actions/setup
 
-      # Build the Go binary for every target: `go` runs it directly and
-      # `ts-legacy` shells out to it for most commands.
+      # ts-legacy shells out to the Go binary for the commands the TS port
+      # still proxies (db diff, db pull, db branch *, db remote *, gen keys,
+      # functions download).
       - name: Build Go CLI
         working-directory: apps/cli-go
         run: go build -o supabase-go .
@@ -124,7 +125,6 @@ jobs:
 
       # The ts-legacy harness runs the compiled supabase binary from apps/cli/dist.
       - name: Build CLI
-        if: matrix.target == 'ts-legacy'
         run: pnpm exec nx run supabase:build
 
       # Docker is a hard requirement for the --use-docker bundler cell.
@@ -161,8 +161,8 @@ jobs:
         run: bash .github/scripts/sweep-live-projects.sh "cli-e2e-live-${CLI_HARNESS_TARGET}-${GITHUB_RUN_ID}-"
 
   # Record that this beta tested green so the next scheduled run skips it. Needs
-  # the whole matrix: the marker is saved only if BOTH go and ts-legacy passed
-  # (a red leg leaves no marker, so the next day re-runs the same beta).
+  # the whole matrix: the marker is saved only if the ts-legacy leg passed (a
+  # red leg leaves no marker, so the next day re-runs the same beta).
   finalize:
     needs: [gate, live-e2e]
     if: github.event_name == 'schedule' && needs.live-e2e.result == 'success'

@@ -25,7 +25,8 @@ import {
 } from "./legacy-test-db.errors.ts";
 import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
 
-// Go: `apps/cli-go/internal/db/test/test.go:24-25`.
+// Go: `apps/cli-go/internal/db/test/test.go:24-25` (deleted in CLI-1970; last
+// present at commit 7b469f5b3).
 const ENABLE_PGTAP = "create extension if not exists pgtap with schema extensions";
 const DISABLE_PGTAP = "drop extension if exists pgtap";
 // Go bakes this default into the Dockerfile (`pkg/config/templates/Dockerfile:20`).
@@ -74,10 +75,25 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
       );
     }
 
+    const connType = target.connType ?? "local";
+
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on a non-linked target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && connType !== "linked") {
+      return yield* Effect.fail(
+        new LegacyTestDbMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local or --db-url)",
+        }),
+      );
+    }
+
     const { conn, isLocal } = yield* resolver.resolve({
       dbUrl: flags.dbUrl,
-      connType: target.connType ?? "local",
+      connType,
       dnsResolver,
+      linkedProjectRef: flags.projectRef,
     });
 
     const args = buildLegacyPgProveArgs({

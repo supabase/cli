@@ -15,10 +15,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacyNetworkRestrictionsGet } from "./get.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const APPLIED_WITH_CIDRS: typeof V1GetNetworkRestrictionsOutput.Type = {
   entitlement: "allowed",
   config: {
@@ -39,10 +35,6 @@ const STORED_WITH_OMITTED_CIDRS: typeof V1GetNetworkRestrictionsOutput.Type = {
   config: {},
   status: "stored",
 };
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -88,10 +80,6 @@ function setupTracked(opts: SetupOpts = {}) {
   });
   return { layer, out, api, telemetry, cache };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy network-restrictions get integration", () => {
   it.live("prints the Go-format text block when the response has v4 and v6 entries", () => {
@@ -310,8 +298,8 @@ describe("legacy network-restrictions get integration", () => {
       );
       expect(Exit.isFailure(exit)).toBe(true);
       expect(telemetry.flushed).toBe(true);
-      // Linked-project cache wraps the inner effect, so it still fires after ref
-      // resolution succeeded — matches Go's PersistentPostRun once ref is known.
+      // Linked-project cache wraps the inner effect, so it still fires after
+      // ref resolution succeeded, once ref is known.
       expect(cache.cached).toBe(true);
     });
   });

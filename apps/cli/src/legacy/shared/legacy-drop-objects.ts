@@ -7,7 +7,7 @@ import {
 } from "../../shared/telemetry/error-actionability.ts";
 import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
 
-/** Dropping the user schemas failed (Go's `DropUserSchemas` error). */
+/** Dropping the user schemas failed (`DropUserSchemas` error). */
 export class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationDropError")<{
   readonly message: string;
 }> {
@@ -17,7 +17,7 @@ export class LegacyMigrationDropError extends Data.TaggedError("LegacyMigrationD
 }
 
 /**
- * The embedded `DO $$ ... $$` block from Go's `pkg/migration/queries/drop.sql`,
+ * The embedded `DO $$ ... $$` block from `pkg/migration/queries/drop.sql`,
  * bundled verbatim. `migration.DropUserSchemas` runs this single statement to
  * drop every user-created schema/extension/object in `public` and truncate the
  * managed `auth` / `supabase_functions` / `supabase_migrations` tables.
@@ -161,8 +161,8 @@ end $$;
 `;
 
 /**
- * Drops every user-created object, matching Go's `migration.DropUserSchemas`
- * (`pkg/migration/drop.go:34`): one batched DO-block statement (a single
+ * Drops every user-created object, matching `migration.DropUserSchemas`:
+ * one batched DO-block statement (a single
  * statement is atomic in Postgres, so no explicit transaction is needed).
  */
 export const legacyDropUserSchemas = (session: LegacyDbSession) =>

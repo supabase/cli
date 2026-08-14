@@ -7,8 +7,8 @@ import type {
 } from "./legacy-db-connection.errors.ts";
 
 /**
- * Plain Postgres connection parameters, mirroring Go's `pgconn.Config`
- * (`apps/cli-go/internal/utils/flags/db_url.go`). The password is plain here;
+ * Plain Postgres connection parameters, mirroring pgconn's `pgconn.Config`.
+ * The password is plain here;
  * driver layers wrap it (e.g. `Redacted`) at the boundary.
  */
 export interface LegacyPgConnInput {
@@ -21,7 +21,7 @@ export interface LegacyPgConnInput {
    * Additional HA failover hosts beyond the primary `host`/`port`, in order.
    * pgconn accepts libpq multi-host connection strings
    * (`postgres://h1:5432,h2:5433/db` or `host=h1,h2 port=5432,5433`) and dials
-   * each in turn (`config.go:326-362`). `host`/`port` are the *primary*
+   * each in turn. `host`/`port` are the *primary*
    * (`config.Host`/`config.Port`, used for `IsLocalDatabase` and `.pgpass`); these
    * are the remaining `config.Fallbacks`. Absent for the common single-host case.
    */
@@ -59,8 +59,8 @@ export interface LegacyPgConnInput {
    * libpq client-certificate auth (Go's `pgconn.Config` `TLSConfig.Certificates`,
    * from the DSN or `PGSSLCERT`/`PGSSLKEY`/`PGSSLPASSWORD`). `sslcert`/`sslkey` are
    * file paths loaded by the driver layer into the client cert; `sslpassword`
-   * decrypts an encrypted key. pgconn requires both `sslcert` and `sslkey` together
-   * (`config.go:710-711`), so the parser only ever sets them as a pair.
+   * decrypts an encrypted key. pgconn requires both `sslcert` and `sslkey` together,
+   * so the parser only ever sets them as a pair.
    */
   readonly sslcert?: string;
   readonly sslkey?: string;
@@ -73,7 +73,7 @@ export interface LegacyPgConnInput {
    */
   readonly connectTimeoutSeconds?: number;
   /**
-   * Profile context for the connect-failure suggestion (Go's `SetConnectSuggestion`,
+   * Profile context for the connect-failure suggestion (`SetConnectSuggestion`,
    * which reads the ambient `CurrentProfile` in `ConnectByUrl`). The resolver attaches
    * it so the driver layer can map a refused/auth/IPv6 connect error to Go's actionable
    * hint. Absent → the driver omits the suggestion (callers fall back to the generic one).
@@ -91,11 +91,11 @@ export interface LegacyDbSession {
   /**
    * Run a parameterized SQL query and return the result rows as plain objects
    * keyed by the query's column names (snake_case is preserved — the driver
-   * layer applies no row-name transform, mirroring Go's `pgxv5.CollectRows`).
+   * layer applies no row-name transform, mirroring `pgxv5.CollectRows`).
    *
    * Used by the `inspect db` subcommands, which each embed a SQL file and render
    * the rows as a Glamour table. `params` are bound positionally (`$1`, `$2`, …),
-   * matching Go's `conn.Query(ctx, sql, args...)`.
+   * matching `conn.Query(ctx, sql, args...)`.
    */
   readonly query: (
     sql: string,
@@ -105,20 +105,19 @@ export interface LegacyDbSession {
    * Whether an extension named `name` already exists in `pg_extension`,
    * **regardless of which schema it lives in**.
    *
-   * Go keys "did pgTAP already exist?" off a `pgx` `OnNotice` callback (notice
+   * The established behavior keys "did pgTAP already exist?" off a `pgx` `OnNotice` callback (notice
    * code `42710`, `duplicate_object`). That notice fires whenever
    * `CREATE EXTENSION IF NOT EXISTS pgtap ...` finds the extension already
    * installed — extensions are global per-database, so the schema is irrelevant.
    * `@effect/sql-pg`'s `PgClient` exposes no notice hook, so the legacy port
    * detects pre-existence with this query before enabling. Querying by `extname`
-   * only (not `extname` + `nspname`) matches Go: it must not drop a pgTAP the user
+   * only (not `extname` + `nspname`) matches that behavior: it must not drop a pgTAP the user
    * pre-installed in another schema such as `public`.
-   * See `apps/cli-go/internal/db/test/test.go:57-78`.
    */
   readonly extensionExists: (name: string) => Effect.Effect<boolean, LegacyDbExecError>;
   /**
    * Run a server-side `COPY (...) TO STDOUT` and return its raw bytes. Mirrors
-   * Go's `copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`), which
+   * `copyToCSV`, which
    * streams `pgconn.CopyTo` into a file. `sql` is the already-wrapped COPY
    * statement (e.g. `COPY (<query>) TO STDOUT WITH CSV HEADER`); the driver does
    * not wrap it. Used by `inspect report` to produce byte-identical CSVs by
@@ -127,18 +126,18 @@ export interface LegacyDbSession {
    * The driver opens ONE dedicated raw connection (node-postgres' COPY protocol
    * needs the raw client, which `@effect/sql-pg` does not expose) against the same
    * resolved dial target the primary connection won — so TLS / fallback / DoH
-   * parity is preserved — and reuses it for every copy, matching Go's single
+   * parity is preserved — and reuses it for every copy, matching the established single
    * `pgconn` for all report queries. The connection is opened lazily on the first
    * copy and closed when the owning session's scope closes. Failing to establish
-   * that connection raises `LegacyDbConnectError` (a connection-setup failure,
-   * matching Go); only the COPY stream itself raises `LegacyDbCopyError`.
+   * that connection raises `LegacyDbConnectError` (a connection-setup failure); only
+   * the COPY stream itself raises `LegacyDbCopyError`.
    */
   readonly copyToCsv: (
     sql: string,
   ) => Effect.Effect<Uint8Array, LegacyDbCopyError | LegacyDbConnectError>;
   /**
-   * Run a SQL statement and return its full result metadata, mirroring Go's
-   * `pgx.Rows` surface used by `db query` (`apps/cli-go/internal/db/query/query.go`):
+   * Run a SQL statement and return its full result metadata, mirroring
+   * `pgx.Rows` surface used by `db query`:
    * the ordered column names (`fields`), the row values **positionally** (so
    * duplicate column names survive — node-postgres `rowMode: "array"`), and the
    * raw command tag (`rows.CommandTag()`, e.g. `INSERT 0 1`, `CREATE TABLE`).
@@ -177,8 +176,8 @@ export interface LegacyQueryResult {
 /** Per-connection options the driver layer cannot infer from `cfg` alone. */
 export interface LegacyDbConnectOptions {
   /**
-   * Whether the target is the local stack (Go's `utils.IsLocalDatabase`). Drives
-   * TLS, mirroring Go (`apps/cli-go/internal/utils/connect.go`): local connections
+   * Whether the target is the local stack (`utils.IsLocalDatabase`). Drives
+   * TLS: local connections
    * set `cc.TLSConfig = nil` (`ConnectLocalPostgres`) → no TLS, while remote
    * connections go through `ConnectByUrl`, where pgx defaults to `sslmode=prefer`
    * and every non-TLS fallback is stripped → TLS is required (without certificate
@@ -186,10 +185,10 @@ export interface LegacyDbConnectOptions {
    */
   readonly isLocal: boolean;
   /**
-   * The active `--dns-resolver` value (Go's `utils.DNSResolver.Value`). When
+   * The active `--dns-resolver` value (`utils.DNSResolver.Value`). When
    * `"https"` and the connection is remote, the driver resolves the host via
    * Cloudflare DNS-over-HTTPS before dialing, mirroring Go's
-   * `cc.LookupFunc = FallbackLookupIP` (`connect.go:211-213`). `"native"` (the
+   * `cc.LookupFunc = FallbackLookupIP`. `"native"` (the
    * default) uses the OS resolver. Ignored for local connections, matching Go.
    */
   readonly dnsResolver: "native" | "https";

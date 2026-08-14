@@ -23,6 +23,7 @@ import {
 import {
   LegacyStorageMissingBucketError,
   LegacyStorageMissingFlagError,
+  LegacyStorageMutuallyExclusiveFlagsError,
   LegacyStorageObjectNotFoundError,
 } from "../storage.errors.ts";
 import { legacyListStoragePaths } from "../storage.iterate.ts";
@@ -34,6 +35,8 @@ export interface LegacyStorageRmFlags {
   // reads only `local` (Go `storage.go:21-32` reads `GetBool("local")`).
   readonly linked: boolean;
   readonly local: boolean;
+  // TS-only override of the linked project ref — see push.command.ts (db push).
+  readonly projectRef: Option.Option<string>;
 }
 
 interface RmSummary {
@@ -42,10 +45,10 @@ interface RmSummary {
 }
 
 /**
- * `supabase storage rm <file>...` — remove objects by path. Port of
- * `apps/cli-go/internal/storage/rm/rm.go`. Paths are grouped by bucket; each
- * bucket is confirmed, its explicit prefixes are deleted (chunked at 1000), and
- * any prefix that resolved to a directory is removed recursively when `-r` is set.
+ * `supabase storage rm <file>...` — remove objects by path. Paths are
+ * grouped by bucket; each bucket is confirmed, its explicit prefixes are
+ * deleted (chunked at 1000), and any prefix that resolved to a directory is
+ * removed recursively when `-r` is set.
  */
 export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
   flags: LegacyStorageRmFlags,
@@ -61,19 +64,29 @@ export const legacyStorageRm = Effect.fn("legacy.storage.rm")(function* (
   let linkedRef = "";
 
   yield* Effect.gen(function* () {
-    // Resolve the project ref BEFORE reading the project `.env`, matching Go's
-    // `ParseDatabaseConfig` `case linked:` (`db_url.go:87-93`), which calls
-    // `LoadProjectRef` strictly before `LoadConfig` (the `.env`/`loadNestedEnv`
-    // work). An unlinked workdir must fail fast with the not-linked guidance
-    // before a malformed/unreadable `supabase/.env` gets a chance to mask it
-    // with an env-parse error.
-    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(Option.none());
+    // Resolve the project ref BEFORE reading the project `.env`: the
+    // linked-project ref must be resolved strictly before the config load
+    // (the `.env` work). An unlinked workdir must fail fast with the
+    // not-linked guidance before a malformed/unreadable `supabase/.env` gets
+    // a chance to mask it with an env-parse error.
+    // `--project-ref` never implies `--linked` and must not be silently
+    // discarded on the local target — see push.handler.ts's identical guard
+    // (db push) for the full TS-only rationale.
+    if (Option.isSome(flags.projectRef) && flags.local) {
+      return yield* Effect.fail(
+        new LegacyStorageMutuallyExclusiveFlagsError({
+          message:
+            "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
+        }),
+      );
+    }
+
+    const projectRef = flags.local ? "" : yield* resolver.loadProjectRef(flags.projectRef);
     linkedRef = projectRef;
-    // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320). Both the
-    // `--local` and (default) `--linked` branches of `ParseDatabaseConfig` call
-    // `LoadConfig` — which loads the project `.env` files — before `rm.Run`'s
-    // confirmation prompt (`root.go:118` → `db_url.go:78` (`local`) / `:91` (`linked`)),
-    // so a `SUPABASE_YES` set only in `supabase/.env` must auto-confirm here too.
+    // `--yes` OR `SUPABASE_YES`. Both the `--local` and (default) `--linked`
+    // branches load the project `.env` files before the confirmation
+    // prompt, so a `SUPABASE_YES` set only in `supabase/.env` must
+    // auto-confirm here too.
     const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
     const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
     const loaded = yield* legacyLoadStorageConfig(cliConfig.workdir, projectRef);

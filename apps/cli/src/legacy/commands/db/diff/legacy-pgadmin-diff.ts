@@ -1,43 +1,32 @@
 /**
- * Native port of Go's pgAdmin schema-diff engine
- * (`apps/cli-go/internal/db/diff/pgadmin.go`, `apps/cli-go/internal/utils/container_output.go`)
- * — CLI-1968. `db diff` is the only caller in Go (`cmd/db.go:115` is the sole `RunPgAdmin` call
- * site), so this stays colocated with the command rather than under `commands/db/shared/`; move
- * it there (and split the error into its own `legacy-pgadmin-diff.errors.ts`, mirroring
- * `legacy-migra.ts`/`legacy-migra.errors.ts`) if a second command ever needs it.
+ * Native pgAdmin schema-diff engine. `db diff` is the only caller, so this stays
+ * colocated with the command rather than under `commands/db/shared/`; move it
+ * there (and split the error into its own `legacy-pgadmin-diff.errors.ts`,
+ * mirroring `legacy-migra.ts`/`legacy-migra.errors.ts`) if a second command ever
+ * needs it.
  *
- * Covers the two pure halves — `ProcessDiffProgress`/`ProcessDiffOutput`
- * (`container_output.go:94-201`, split here into `legacyParsePgAdminDiffEntries` +
- * `legacyRenderPgAdminDiff`, recomposed as `legacyProcessPgAdminDiffOutput` for a single
- * whole buffer) — and the container-invocation loop, `DiffSchemaPgAdmin` (`pgadmin.go:91-121`).
- * Shadow provisioning, the `Creating shadow database...`/`Diffing local database with
- * current migrations...` status lines, and `SaveDiff` all stay in `diff.handler.ts`,
- * matching Go's own module boundary.
+ * Covers the two pure halves — parsing (`legacyParsePgAdminDiffEntries`) and
+ * rendering (`legacyRenderPgAdminDiff`), recomposed as
+ * `legacyProcessPgAdminDiffOutput` for a single whole buffer — and the
+ * container-invocation loop, `legacyDiffSchemaPgAdmin`. Shadow provisioning, the
+ * `Creating shadow database...`/`Diffing local database with current
+ * migrations...` status lines, and the file write all stay in `diff.handler.ts`.
  *
- * **Deliberate divergence, not bug-for-bug parity (`container_output.go:79,87`):** Go's
- * `DiffStream` declares `Stdout()`/`Collect()` on a VALUE receiver (`func (c DiffStream)
- * ...`, not `*DiffStream`), so every call runs against its OWN COPY of the struct's `o
- * bytes.Buffer` field. `Stdout()` returns `&c.o` of the copy made for THAT call, and the
- * differ's stdout is written into it — a buffer `Collect()` (called later, on a DIFFERENT
- * copy) never sees. `Collect()`'s own `c.o` is therefore always the zero-value empty buffer,
- * so `ProcessDiffOutput` always receives zero bytes — the real Go CLI's `--use-pgadmin`
- * ALWAYS reports "No schema changes found" (exit 0), regardless of the differ's actual
- * output: it never writes a migration file and never hits a JSON-parse error, on ANY schema
- * count. (`Stderr()`/progress DOES work: `c.w` is a `*io.PipeWriter`, a reference type, so
- * every copy shares the same pipe.) This port implements the INTENDED algorithm — the one
- * `NewDiffStream`'s own comments and `Collect`'s call to `ProcessDiffOutput` clearly intend
- * — but completes it by parsing EACH run's own real stdout separately and aggregating the
- * kept DDLs across runs, rather than gluing every run's raw bytes into one buffer and parsing
- * that once: a shared *byte* buffer was never the intent behind `NewDiffStream`'s design, only
- * a means to see every run's output at all, and concatenating raw JSON arrays before parsing
- * turns a multi-`--schema` diff whose every run individually parses fine into a spurious
- * `JSON.parse` "trailing data" failure — the worst of both worlds, matching neither Go-as-
- * shipped (always an empty, successful diff) nor this algorithm's own evident purpose. So
- * where the real Go binary silently reports an empty diff no matter what the differ produced,
- * this port produces the actual, aggregated diff across every run (or a real per-run
- * JSON-parse error — see `legacyParsePgAdminDiffEntries`'s own doc comment). Ruling: keep this
- * port's (correct) implementation rather than reproducing the empty-buffer bug; see
- * `SIDE_EFFECTS.md`'s "Deliberate divergence" entry for the user-facing framing.
+ * **Deliberate divergence from the historical Go implementation:** the differ
+ * container's stdout was, in the original Go CLI, never actually collected — a
+ * struct-copy bug meant `--use-pgadmin` always reported "No schema changes found"
+ * (exit 0) regardless of the differ's real output, on any schema count. This port
+ * implements the algorithm the surrounding code clearly intended: it parses EACH
+ * run's own real stdout separately and aggregates the kept DDLs across runs,
+ * rather than gluing every run's raw bytes into one buffer and parsing that once
+ * (which would turn a multi-`--schema` diff whose every run individually parses
+ * fine into a spurious `JSON.parse` "trailing data" failure — the worst of both
+ * worlds). So where the historical implementation silently reported an empty diff
+ * no matter what the differ produced, this port produces the actual, aggregated
+ * diff across every run (or a real per-run JSON-parse error — see
+ * `legacyParsePgAdminDiffEntries`'s own doc comment). Ruling: keep this port's
+ * (correct) implementation; see `SIDE_EFFECTS.md`'s "Deliberate divergence" entry
+ * for the user-facing framing.
  */
 
 import { Effect, Option, Result } from "effect";
@@ -47,30 +36,28 @@ import { LEGACY_COMPOSE_PROJECT_LABEL } from "../../../shared/db-bootstrap/conta
 import { LEGACY_CLI_PROJECT_LABEL } from "../../../shared/legacy-docker-ids.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
 import { legacyTrimGoSpace } from "../shared/legacy-go-string.ts";
-import { LEGACY_INTERNAL_SCHEMAS } from "../shared/legacy-pg-dump.env.ts";
+import { LEGACY_INTERNAL_SCHEMAS } from "../../../shared/legacy-pg-dump.env.ts";
 import { LegacyDbDiffPgAdminError } from "./diff.errors.ts";
 
-/** Go's `config.Images.Differ` (`pkg/config/templates/Dockerfile:18`, `FROM … AS differ`). */
 const LEGACY_DIFFER_IMAGE = dockerfileServiceImage("differ");
 
 /**
- * Go's `ProcessDiffOutput` (`container_output.go:142-143`) trims this front-anchored only
- * (`bytes.TrimPrefix`, not a global strip). `legacyParsePgAdminDiffEntries` runs once per
- * differ run now, so each run's OWN copy of this note (a real pgAdmin4 quirk,
- * `supabase/pgadmin4#24`) is trimmed off the front of that run's own buffer —
- * `legacyProcessPgAdminDiffOutput`, applied to a single whole buffer, still only strips the
- * very front of whatever string it's given.
+ * Trimmed front-anchored only (not a global strip) — a real pgAdmin4 output quirk
+ * (`supabase/pgadmin4#24`). `legacyParsePgAdminDiffEntries` runs once per differ
+ * run, so each run's OWN copy of this note is trimmed off the front of that run's
+ * own buffer; `legacyProcessPgAdminDiffOutput`, applied to a single whole buffer,
+ * still only strips the very front of whatever string it's given.
  */
 export const LEGACY_PGADMIN_DESKTOP_NOTE_PREFIX =
   "NOTE: Configuring authentication for DESKTOP mode.\n";
 
-/** Go's `diffHeader` (`container_output.go:136-139`), verbatim. */
+/** Prepended verbatim to every rendered diff (established output contract). */
 export const LEGACY_PGADMIN_DIFF_HEADER = `-- This script was generated by the Schema Diff utility in pgAdmin 4
 -- For the circular dependencies, the order in which Schema Diff writes the objects is not very sophisticated
 -- and may require manual changes to the script to ensure changes are applied in the correct order.
 -- Please report an issue for any failure with the reproduction steps.`;
 
-/** Go's `switch diffEntry.Type` allow-list (`container_output.go:160-165`). */
+/** Allow-list of `DiffEntry.type` values kept in the diff. */
 const LEGACY_PGADMIN_DIFF_TYPES = new Set([
   "extension",
   "function",
@@ -82,49 +69,37 @@ const LEGACY_PGADMIN_DIFF_TYPES = new Set([
 ]);
 
 /**
- * Go's `(.*)([[:digit:]]{2,3})%` (`container_output.go:96`), compiled with the `s`
- * (dotAll) flag: Go's RE2 `.` matches every character except `\n` — INCLUDING `\r`
- * — when no `(?s)` flag is set, but JS's `.` excludes every line-terminator code
- * point (`\r`, `\n`, U+2028, U+2029) unless `s` is set. `legacyScanLines` only splits
- * on `\n` (matching `bufio.ScanLines`), so a line can still carry embedded `\r`s from
- * a `\r`-driven progress bar (multiple updates overwriting the same terminal line);
- * without `s`, this pattern would stop matching at the first embedded `\r` in JS but
- * not in Go. No alternation, so RE2's leftmost-longest overall match still coincides
- * with JS's leftmost-first greedy backtracking for the digit/percent suffix —
- * verified empirically against the real Go binary (`go run` with this exact
- * pattern): both engines pick the SAME (surprising, greedy) submatch, e.g.
- * `"Diffing 100%"` → group 1 `"Diffing 1"`, group 2 `"00"`.
+ * Compiled with the `s` (dotAll) flag: JS's `.` excludes every line-terminator code
+ * point (`\r`, `\n`, U+2028, U+2029) unless `s` is set, and `legacyScanLines` only
+ * splits on `\n`, so a line can still carry embedded `\r`s from a `\r`-driven
+ * progress bar (multiple updates overwriting the same terminal line) — without `s`,
+ * this pattern would stop matching at the first embedded `\r`. No alternation, so
+ * the match is greedy on the digit/percent suffix, e.g. `"Diffing 100%"` → group 1
+ * `"Diffing 1"`, group 2 `"00"`.
  */
 const LEGACY_PGADMIN_PROGRESS_RE = /(.*)([0-9]{2,3})%/s;
 
 /**
- * Splits `stderr` the way Go's `bufio.NewScanner(out).Scan()` does with the default
- * `ScanLines` split function: `\r\n`/`\n`-terminated lines with the trailing `\r` (if any)
- * stripped, and a final, non-newline-terminated fragment still emitted as its own line. An
- * empty input yields zero lines (Go's scanner returns `false` on the very first `Scan()`).
- * One known divergence: Go's scanner aborts (`bufio.Scanner: token too long`) on any line
- * exceeding `bufio.MaxScanTokenSize` (64KiB) — this function has no such limit, so an
- * abnormally long differ progress line is still scanned here where Go would give up.
+ * Splits `stderr` into lines: `\r\n`/`\n`-terminated lines with the trailing `\r`
+ * (if any) stripped, and a final, non-newline-terminated fragment still emitted as
+ * its own line. An empty input yields zero lines. Deliberately has no line-length
+ * limit, so an abnormally long differ progress line is still scanned in full.
  */
 function legacyScanLines(text: string): ReadonlyArray<string> {
   if (text.length === 0) return [];
   const lines = text.split("\n");
-  // A trailing `\n` produces one trailing empty element from `split` that Go's scanner never
-  // emits as a token of its own — the `\n` itself already terminated the prior line.
+  // A trailing `\n` produces one trailing empty element from `split` that isn't a
+  // real line of its own — the `\n` itself already terminated the prior line.
   const withoutTrailingNewline = text.endsWith("\n") ? lines.slice(0, -1) : lines;
   return withoutTrailingNewline.map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
 }
 
 /**
- * Port of Go's `ProcessDiffProgress` (`container_output.go:94-124`) — the StatusMsg lines
- * `fakeProgram`/`tea.Program` would print (progress percentages themselves are dropped:
- * `ProgressMsg` never prints in either program mode). `"Starting schema diff..."` and any
- * non-matching line (Go's `// TODO: emit actual error statements`) produce nothing, matching
- * Go's `continue`. Only Go's NON-TTY `fakeProgram` actually prints a StatusMsg via
- * `fmt.Println` (`tea.go:57-70`) — on a TTY Go instead runs the real `bubbletea` renderer,
- * which repaints ephemeral frames rather than appending printed lines. This port's stdout
- * emission (`diff.handler.ts`'s `emitStatus`) targets the non-TTY `fakeProgram` behavior; a
- * TTY session's frame-by-frame rendering has no TS equivalent and isn't a parity target.
+ * Extracts the status lines from the differ's stderr progress stream (progress
+ * percentages themselves are dropped). `"Starting schema diff..."` and any
+ * non-matching line produce nothing. This port's stdout emission
+ * (`diff.handler.ts`'s `emitStatus`) targets non-TTY status-line output; a TTY
+ * session's frame-by-frame progress rendering has no TS equivalent.
  */
 export function legacyProcessPgAdminDiffProgress(stderr: string): ReadonlyArray<string> {
   const statuses: Array<string> = [];
@@ -137,14 +112,14 @@ export function legacyProcessPgAdminDiffProgress(stderr: string): ReadonlyArray<
 }
 
 /**
- * Go's `DiffDependencies` (`container_output.go:123-125`). Field kept snake_case (the literal
- * wire key), not camelCased, so the guard below reads the parsed JSON 1:1.
+ * Field kept snake_case (the literal wire key), not camelCased, so the guard
+ * below reads the parsed JSON 1:1.
  */
 interface LegacyPgAdminDiffDependency {
   readonly type?: string | null;
 }
 
-/** Go's `DiffEntry` (`container_output.go:127-134`) — one `--json-diff` array element. */
+/** One `--json-diff` array element. */
 interface LegacyPgAdminDiffEntry {
   readonly type?: string | null;
   readonly status?: string | null;
@@ -155,9 +130,9 @@ interface LegacyPgAdminDiffEntry {
 }
 
 /**
- * Go's `DiffDependencies` has no custom unmarshaler, so a present field's type is checked
- * exactly like every other `DiffEntry` scalar below — see {@link legacyIsPgAdminDiffEntryElement}'s
- * own doc comment for the shared "null tolerated per field" rule and its empirical verification.
+ * A present field's type is checked exactly like every other `DiffEntry` scalar
+ * below — see {@link legacyIsPgAdminDiffEntryElement}'s own doc comment for the
+ * shared "null tolerated per field" rule.
  */
 function legacyIsPgAdminDiffDependencyElement(
   value: unknown,
@@ -169,19 +144,18 @@ function legacyIsPgAdminDiffDependencyElement(
 }
 
 /**
- * Structural guard for Go's `DiffEntry` JSON shape, applied to an untrusted `JSON.parse` of
- * the differ's stdout. Verified empirically against the real Go struct (`encoding/json`),
- * one throwaway `go run` per row:
- * - a bare `null` array element unmarshals into the zero-valued struct (every field absent/""),
- *   so it is accepted here too — the caller normalizes it away before this guard ever sees it;
- * - a non-null, non-object element (`{}`/`"x"`/`1`/`true`/an array) always fails Go's whole
- *   `[]DiffEntry` unmarshal, not just that one entry — rejected here the same way;
- * - `null` for an individual DECLARED scalar field (`type`/`status`/`diff_ddl`/`group_name`/
- *   `source_schema_name`, all plain `string`/`*string`, no custom unmarshaler) is tolerated
- *   with no error, leaving the zero value — so `{"status":null}` is accepted, not rejected;
- * - a MISTYPED declared field (`{"type":123}`, `{"dependencies":{}}`, `{"dependencies":[1]}`,
- *   a `dependencies[].type` that isn't a string) fails the whole unmarshal, so every array
- *   field's own elements are validated too, not just its own top-level shape.
+ * Structural guard for the differ's `DiffEntry` JSON shape, applied to an
+ * untrusted `JSON.parse` of the differ's stdout:
+ * - a bare `null` array element is accepted — the caller normalizes it away
+ *   before this guard ever sees it;
+ * - a non-null, non-object element (`{}`/`"x"`/`1`/`true`/an array) is rejected;
+ * - `null` for an individual DECLARED scalar field (`type`/`status`/`diff_ddl`/
+ *   `group_name`/`source_schema_name`) is tolerated with no error, leaving the
+ *   zero value — so `{"status":null}` is accepted, not rejected;
+ * - a MISTYPED declared field (`{"type":123}`, `{"dependencies":{}}`,
+ *   `{"dependencies":[1]}`, a `dependencies[].type` that isn't a string) is
+ *   rejected, so every array field's own elements are validated too, not just
+ *   its own top-level shape.
  */
 function legacyIsPgAdminDiffEntryElement(value: unknown): value is LegacyPgAdminDiffEntry | null {
   if (value === null) return true;
@@ -213,17 +187,16 @@ function legacyIsPgAdminDiffEntryElement(value: unknown): value is LegacyPgAdmin
 }
 
 /**
- * Port of the parse/filter half of Go's `ProcessDiffOutput` (`container_output.go:141-201`)
- * — pure, no Effect. Trims the DESKTOP-mode NOTE prefix off the FRONT of `stdout` (a real
- * pgAdmin4 quirk, `supabase/pgadmin4#24`), then parses and filters it into the ordered list
- * of kept, trimmed DDL strings (Go's `[]DiffEntry` unmarshal + the `switch diffEntry.Type`
- * allow-list + internal-schema/extension-dependency filtering). Rendering the header and
- * joining is `legacyRenderPgAdminDiff`'s job, kept separate so `legacyDiffSchemaPgAdmin`'s
- * run loop can parse EACH run's own buffer (trimming that run's own DESKTOP-mode note, if
- * any) and aggregate every run's DDLs before rendering once — completing the intended
- * shared-buffer algorithm's purpose (see this module's own header comment) without the
- * round-1 regression of gluing raw bytes together first, which turned a multi-`--schema`
- * diff where every run individually parsed fine into one spurious `JSON.parse` "trailing
+ * Parse/filter half of the differ output pipeline — pure, no Effect. Trims the
+ * DESKTOP-mode NOTE prefix off the FRONT of `stdout` (a real pgAdmin4 quirk,
+ * `supabase/pgadmin4#24`), then parses and filters it into the ordered list of
+ * kept, trimmed DDL strings (allow-listed entry types + internal-schema/
+ * extension-dependency filtering). Rendering the header and joining is
+ * `legacyRenderPgAdminDiff`'s job, kept separate so `legacyDiffSchemaPgAdmin`'s
+ * run loop can parse EACH run's own buffer (trimming that run's own DESKTOP-mode
+ * note, if any) and aggregate every run's DDLs before rendering once — avoiding
+ * gluing raw bytes together first, which would turn a multi-`--schema` diff where
+ * every run individually parses fine into one spurious `JSON.parse` "trailing
  * data" failure.
  */
 export function legacyParsePgAdminDiffEntries(
@@ -276,20 +249,21 @@ export function legacyParsePgAdminDiffEntries(
   return Result.succeed(filteredDdls);
 }
 
-/** Go's `diffHeader`-plus-join half of `ProcessDiffOutput` (`container_output.go:196-200`). */
+/** Header-plus-join half of the differ output pipeline. */
 export function legacyRenderPgAdminDiff(ddls: ReadonlyArray<string>): string {
   if (ddls.length === 0) return "";
   return `${LEGACY_PGADMIN_DIFF_HEADER}\n\n${ddls.join("\n\n")}\n`;
 }
 
 /**
- * Parse-then-render composition of the two halves above, applied to a SINGLE, whole buffer
- * — kept for callers (and this file's own unit tests) that want Go's `ProcessDiffOutput` as
- * one function over one buffer. `legacyDiffSchemaPgAdmin`'s run loop calls
- * `legacyParsePgAdminDiffEntries`/`legacyRenderPgAdminDiff` directly instead, once per run,
- * so this function's own single-buffer semantics (including the multi-JSON-array
- * "trailing data" failure on a buffer that concatenates >=1 complete arrays) are unchanged
- * but no longer reachable from a multi-`--schema` diff.
+ * Parse-then-render composition of the two halves above, applied to a SINGLE,
+ * whole buffer — kept for callers (and this file's own unit tests) that want the
+ * whole pipeline as one function over one buffer. `legacyDiffSchemaPgAdmin`'s run
+ * loop calls `legacyParsePgAdminDiffEntries`/`legacyRenderPgAdminDiff` directly
+ * instead, once per run, so this function's own single-buffer semantics
+ * (including the multi-JSON-array "trailing data" failure on a buffer that
+ * concatenates >=1 complete arrays) are unchanged but no longer reachable from a
+ * multi-`--schema` diff.
  */
 export function legacyProcessPgAdminDiffOutput(
   stdout: string,
@@ -316,9 +290,9 @@ function legacyPgAdminDockerReason(
 }
 
 export interface LegacyDiffSchemaPgAdminParams {
-  /** Go's `source` — the USER'S db (`ToPostgresURL(flags.DbConfig)`, `pgadmin.go:85`). */
+  /** The USER'S db. */
   readonly source: string;
-  /** Go's `target` — the SHADOW, a raw `Sprintf` (`pgadmin.go:86`), not `ToPostgresURL`. */
+  /** The SHADOW — a raw connection string, not built via `legacyToPostgresURL`. */
   readonly target: string;
   readonly schema: ReadonlyArray<string>;
   /** Merged onto both docker labels, matching every other container this codebase creates. */
@@ -327,40 +301,39 @@ export interface LegacyDiffSchemaPgAdminParams {
    * Already `--network-id`/`SUPABASE_NETWORK_ID`/`supabase_network_<projectId>`-resolved by
    * the caller (`legacyResolveNetworkId`, via `legacyBuildLocalDbContainerInputs`'s
    * `localInputs.networkId`) — never empty, so this function does no second resolution and,
-   * unlike `legacy-migra.ts`'s `diffMigraBash`, never falls back to a host network: Go's
-   * differ always joins a user-defined bridge (`docker.go:379-383`).
+   * unlike `legacy-migra.ts`'s `diffMigraBash`, never falls back to a host network: the
+   * differ always joins a user-defined bridge network.
    */
   readonly networkId: string;
-  /** Linux-only `host.docker.internal:host-gateway` (`docker_linux.go`); empty elsewhere. */
+  /** Linux-only `host.docker.internal:host-gateway`; empty elsewhere. */
   readonly extraHosts: ReadonlyArray<string>;
   /** Text-mode stdout sink for the `Diffing schema: <s>` / progress status lines; no-op in machine output modes. */
   readonly emitStatus: (line: string) => Effect.Effect<void>;
 }
 
 /**
- * Port of Go's `DiffSchemaPgAdmin` (`pgadmin.go:91-121`) — one differ container run when no
- * `--schema` is given, else one run per `--schema` (in flag order), each preceded by its own
- * `Diffing schema: <s>` status. `runCapture`, not `runStream`, because the differ's progress
- * lines arrive on STDERR, and `LegacyDockerRun.runStream` only exposes an `onStdout` streaming
- * hook — there is no `onStderr` equivalent to observe stderr incrementally through this
- * service today. Go, by contrast, DOES live-stream: `NewDiffStream` pipes the container's
- * stderr through an `io.Pipe`, with a goroutine scanning `ProcessDiffProgress` off the read end
- * WHILE the container is still running, so a status line prints the instant its underlying
- * stderr line arrives. This port instead buffers each run's stderr in full via `runCapture` and
- * only filters/flushes it (`legacyProcessPgAdminDiffProgress` + `emitStatus`, below) once that
- * run's container has already exited — so a multi-`--schema` diff still gets one status batch
- * per run, but within a single run every one of its status lines appears together, after the
- * fact, instead of as the differ actually emits them. A real fix would add an `onStderr`
- * streaming hook to `runStream`, mirroring `onStdout`, and switch this function to it.
- * `teeStderr` stays off regardless (Go never tees the differ's raw stderr to the parent
- * terminal). The image is passed raw (not pre-resolved via `legacyGetRegistryImageUrl`, unlike
- * `diffMigraBash`): `legacyDockerRunLayer`'s own resolver builds the ECR→GHCR→docker.io
- * candidate ladder from it — reading `SUPABASE_INTERNAL_IMAGE_REGISTRY` straight off
- * `process.env` at call time (no `projectEnvValues` passed through). It is the caller's
- * (`diff.handler.ts`) own `legacyApplyProjectEnv` scope, applied right after the config
- * load, that makes a registry override set only in the project's `supabase/.env` (not
- * the ambient shell) visible to that resolver by the time this function's `runCapture`
- * call reaches it.
+ * One differ container run when no `--schema` is given, else one run per
+ * `--schema` (in flag order), each preceded by its own `Diffing schema: <s>`
+ * status. `runCapture`, not `runStream`, because the differ's progress lines
+ * arrive on STDERR, and `LegacyDockerRun.runStream` only exposes an `onStdout`
+ * streaming hook — there is no `onStderr` equivalent to observe stderr
+ * incrementally through this service today. This means status lines aren't
+ * live-streamed: this function buffers each run's stderr in full via
+ * `runCapture` and only filters/flushes it (`legacyProcessPgAdminDiffProgress` +
+ * `emitStatus`, below) once that run's container has already exited — so a
+ * multi-`--schema` diff still gets one status batch per run, but within a single
+ * run every one of its status lines appears together, after the fact, instead
+ * of as the differ actually emits them. A real fix would add an `onStderr`
+ * streaming hook to `runStream`, mirroring `onStdout`, and switch this function
+ * to it. `teeStderr` stays off regardless. The image is passed raw (not
+ * pre-resolved via `legacyGetRegistryImageUrl`, unlike `diffMigraBash`):
+ * `legacyDockerRunLayer`'s own resolver builds the ECR→GHCR→docker.io candidate
+ * ladder from it — reading `SUPABASE_INTERNAL_IMAGE_REGISTRY` straight off
+ * `process.env` at call time (no `projectEnvValues` passed through). It is the
+ * caller's (`diff.handler.ts`) own `legacyApplyProjectEnv` scope, applied right
+ * after the config load, that makes a registry override set only in the
+ * project's `supabase/.env` (not the ambient shell) visible to that resolver by
+ * the time this function's `runCapture` call reaches it.
  */
 export const legacyDiffSchemaPgAdmin = (
   params: LegacyDiffSchemaPgAdminParams,
@@ -403,18 +376,17 @@ export const legacyDiffSchemaPgAdmin = (
               }),
           ),
         );
-      // Emitted BEFORE the exit-code check below, matching Go's stderr goroutine: it scans
-      // `ProcessDiffProgress` off the container's stderr concurrently with the container
-      // still running (`NewDiffStream`'s `io.Pipe`), so a failed run's own status lines still
-      // print ahead of the container error surfacing. Returning early on a nonzero exit
-      // before reaching this would silently drop that run's already-captured statuses.
+      // Emitted BEFORE the exit-code check below: a failed run's own status lines
+      // should still print ahead of the container error surfacing. Returning early
+      // on a nonzero exit before reaching this would silently drop that run's
+      // already-captured statuses.
       for (const line of legacyProcessPgAdminDiffProgress(result.stderr)) {
         yield* params.emitStatus(line);
       }
       if (result.exitCode !== 0) {
-        // Go's `error running container: exit %d` (`docker.go:582-590`) — the differ's own
-        // stderr is never surfaced beyond the progress-line filter above; any non-matching
-        // line is silently dropped, even under `--debug`.
+        // The differ's own stderr is never surfaced beyond the progress-line
+        // filter above; any non-matching line is silently dropped, even under
+        // `--debug`.
         return yield* Effect.fail(
           new LegacyDbDiffPgAdminError({
             message: `error running container: exit ${result.exitCode}`,
@@ -423,10 +395,10 @@ export const legacyDiffSchemaPgAdmin = (
         );
       }
       const stdout = new TextDecoder().decode(result.stdout);
-      // Parsed per run — completing the intended shared-buffer algorithm's actual purpose
-      // (see this module's own header comment) rather than round 1's literal-minded
-      // concatenate-then-parse-once, which turned a multi-`--schema` diff whose every run
-      // individually parsed fine into a spurious "trailing data" `JSON.parse` failure.
+      // Parsed per run rather than concatenated across runs and parsed once,
+      // which would turn a multi-`--schema` diff whose every run individually
+      // parses fine into a spurious "trailing data" `JSON.parse` failure — see
+      // this module's own header comment.
       const parsed = legacyParsePgAdminDiffEntries(stdout);
       if (Result.isFailure(parsed)) {
         return yield* Effect.fail(

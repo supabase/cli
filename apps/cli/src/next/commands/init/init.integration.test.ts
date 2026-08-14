@@ -496,7 +496,8 @@ describe("init handler", () => {
       }).pipe(Effect.provide(layer));
 
       // Go appends `\n` + template to any pre-existing file, even an empty one
-      // (`apps/cli-go/internal/init/init.go:80-96`).
+      // (`apps/cli-go/internal/init/init.go:80-96`, deleted in CLI-1970; last
+      // present at commit 7b469f5b3).
       expect(yield* Effect.tryPromise(() => readFile(gitignorePath, "utf8"))).toBe(
         `\n${INIT_GITIGNORE_TEMPLATE}`,
       );

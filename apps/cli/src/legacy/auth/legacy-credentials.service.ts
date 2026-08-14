@@ -15,8 +15,7 @@ interface LegacyCredentialsShape {
   >;
   readonly saveAccessToken: (token: string) => Effect.Effect<void, LegacyInvalidAccessTokenError>;
   /**
-   * Deletes the access token, reproducing Go's `utils.DeleteAccessToken`
-   * (`apps/cli-go/internal/utils/access_token.go:100-119`) exactly:
+   * Deletes the access token, in this exact order:
    *
    *   1. Remove `<SUPABASE_HOME or ~/.supabase>/access-token` first. A non-`ENOENT` removal error
    *      fails `LegacyDeleteTokenError`; a missing file is ignored.
@@ -29,7 +28,7 @@ interface LegacyCredentialsShape {
    *      - a real delete error → `LegacyDeleteTokenError`;
    *      - success → `void`.
    *
-   * The deliberate Go quirk this preserves: on a no-keyring host the file is
+   * Deliberate quirk this preserves: on a no-keyring host the file is
    * still removed, yet the call fails `LegacyNotLoggedInError` because the
    * profile-keyring delete reports not-supported.
    */
@@ -37,9 +36,8 @@ interface LegacyCredentialsShape {
   /**
    * Deletes **every** entry in the `"Supabase CLI"` keyring namespace (project
    * database passwords stored by `link`). Best-effort: never fails, and is a
-   * no-op when the keyring is unavailable. Mirrors Go's
-   * `credentials.StoreProvider.DeleteAll()` (`store.go:67-78`), used by
-   * `supabase logout` after the access token is removed.
+   * no-op when the keyring is unavailable. Used by `supabase logout` after
+   * the access token is removed.
    */
   readonly deleteAllProjectCredentials: Effect.Effect<void>;
   /**
@@ -49,8 +47,8 @@ interface LegacyCredentialsShape {
    *
    * Returns `true` when an entry was removed, `false` when none existed or the
    * keyring is unavailable (WSL). Fails with `LegacyCredentialDeleteError` only
-   * for real keyring errors (e.g. permission denied), mirroring Go's unlink
-   * which ignores `ErrNotFound` / `ErrNotSupported` but surfaces everything else.
+   * for real keyring errors (e.g. permission denied); "not found" and
+   * "not supported" outcomes are not treated as failures.
    */
   readonly deleteProjectCredential: (
     projectRef: string,

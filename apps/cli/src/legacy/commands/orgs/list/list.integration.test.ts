@@ -139,7 +139,7 @@ describe("legacy orgs list integration", () => {
     return Effect.gen(function* () {
       yield* legacyOrgsList({});
       expect(out.stdoutText).toContain("[[organizations]]");
-      // Go field names (PascalCase) with BurntSushi's 2-space indent (CLI-1975).
+      // PascalCase field names with BurntSushi's 2-space indent (CLI-1975).
       expect(out.stdoutText).toContain('  Name = "Test Org"');
     }).pipe(Effect.provide(layer));
   });

@@ -8,9 +8,8 @@ import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-comm
 import { LEGACY_SSO_NAME_ID_FORMATS } from "../sso.saml.ts";
 import { legacySsoAdd } from "./add.handler.ts";
 
-// Go declares `--domains` with pflag's `StringSliceVar` (`cmd/sso.go:158`);
-// malformed CSV fails at parse time with pflag's exact diagnostic (CLI-2005,
-// see `legacyStringSliceFlag`).
+// `--domains` is a CSV string-slice flag; malformed CSV fails at parse time
+// with pflag's exact diagnostic (see `legacyStringSliceFlag`).
 export const legacySsoAddDomainsFlag = legacyStringSliceFlag(
   "domains",
   "Comma separated list of email domains to associate with the added identity provider.",
@@ -21,8 +20,8 @@ const config = {
     Flag.withDescription("Project ref of the Supabase project."),
     Flag.optional,
   ),
-  // Required per Go's `MarkFlagRequired("type")` in `cmd/sso.go:65` — leave
-  // off `Flag.optional` so the CLI parser enforces presence at parse time.
+  // `--type` is required — leave off `Flag.optional` so the CLI parser
+  // enforces presence at parse time.
   type: Flag.choice("type", ["saml"] as const).pipe(
     Flag.withAlias("t"),
     Flag.withDescription("Type of identity provider (according to supported protocol)."),
@@ -80,8 +79,8 @@ export const legacySsoAddCommand = Command.make("add", config).pipe(
         config,
         // `--type` registers `-t` (Flag.withAlias above); without this, `-t saml`
         // never resolves to the canonical `type` name in extractChangedFlagNames,
-        // so it wouldn't appear in telemetry at all (Go's pflag.Visit reports the
-        // canonical name regardless of shorthand — cmd/root_analytics.go:53-76).
+        // so it wouldn't appear in telemetry at all — the canonical name must be
+        // reported regardless of shorthand.
         aliases: { t: "type" },
       }),
       withJsonErrorHandling,

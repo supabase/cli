@@ -9,7 +9,6 @@ import { Effect, Option } from "effect";
 
 import { LegacyPlatformApi } from "../../../auth/legacy-platform-api.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
-import { LegacyProjectRefResolver } from "../../../config/legacy-project-ref.service.ts";
 import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-project-cache.service.ts";
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import { LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
@@ -22,6 +21,7 @@ import {
   encodeYaml,
 } from "../../../shared/legacy-go-output.encoders.ts";
 import { mapLegacyHttpError } from "../../../shared/legacy-http-errors.ts";
+import { legacyResolveParentScopedProjectRef } from "../../../shared/legacy-parent-project-ref.ts";
 import {
   LegacyBranchesApiKeysNetworkError,
   LegacyBranchesApiKeysUnexpectedStatusError,
@@ -80,13 +80,15 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
   const output = yield* Output;
   const goOutputFlag = yield* LegacyOutputFlag;
   const api = yield* LegacyPlatformApi;
-  const resolver = yield* LegacyProjectRefResolver;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;
   const cliConfig = yield* LegacyCliConfig;
   void (yield* Tty); // ensures Tty is in handler R so legacyPromptBranchId resolves
 
-  const ref = yield* resolver.resolve(flags.projectRef);
+  // `branches` is PARENT-scoped: after `supabase link <branch>`,
+  // `supabase/.temp/project-ref` holds the branch's own ref, and the platform
+  // 403s on that ref for every branches-management endpoint (CLI-2167 follow-up).
+  const ref = yield* legacyResolveParentScopedProjectRef(flags.projectRef);
 
   yield* Effect.gen(function* () {
     // Branch-id resolution. Empty input goes through the prompt helper.
@@ -155,9 +157,8 @@ export const legacyBranchesGet = Effect.fn("legacy.branches.get")(function* (
     const projectHost = legacyProjectHost(cliConfig.profile);
     const projected = toStandardEnvs(detail, primary, keys, projectHost);
     if (projected.poolerWarning !== undefined && output.format === "text") {
-      // Mirror Go's `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`
-      // (`apps/cli-go/internal/branches/get/get.go:94`). The "WARNING:" prefix
-      // is yellow, then a space, then the parse error message.
+      // Established output: `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)`.
+      // The "WARNING:" prefix is yellow, then a space, then the parse error message.
       yield* output.raw(
         `${styleText("yellow", "WARNING:")} ${projected.poolerWarning}\n`,
         "stderr",

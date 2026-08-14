@@ -1,11 +1,11 @@
 /**
  * BurntSushi-parity TOML encoder for `supabase config push`.
  *
- * Go serialises each push-subset struct with `github.com/BurntSushi/toml`
- * (`Indent = ""`) and diffs the resulting bytes. This module reproduces that
- * encoder's exact output for the value kinds the push subset uses, driven by an
- * explicit per-service **ordered field descriptor** so field order is data, not
- * incidental.
+ * Each push-subset struct is serialised to match `github.com/BurntSushi/toml`'s
+ * (`Indent = ""`) output byte-for-byte, and the diff is computed against those
+ * bytes. This module reproduces that encoder's exact output for the value kinds
+ * the push subset uses, driven by an explicit per-service **ordered field
+ * descriptor** so field order is data, not incidental.
  *
  * Faithful to `BurntSushi/toml@v1.6.0/encode.go`:
  *   - Struct/table fields are emitted in two passes — non-table fields first,
@@ -23,8 +23,6 @@
  *
  * We do NOT use smol-toml for serialisation — it normalises/sorts keys and
  * would not match BurntSushi's ordering / omitempty / int formatting.
- *
- * @see apps/cli-go/pkg/config/config.go (`ToTomlBytes`)
  */
 
 type TomlNode =
@@ -44,7 +42,7 @@ type TomlNode =
 export interface TomlField {
   readonly key: string;
   readonly node: TomlNode;
-  /** Mirrors the Go `,omitempty` struct tag (zero-valued fields are dropped). */
+  /** BurntSushi's `,omitempty` struct tag semantics (zero-valued fields are dropped). */
   readonly omitempty?: boolean;
 }
 

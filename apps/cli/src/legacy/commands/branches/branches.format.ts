@@ -11,7 +11,8 @@ import { formatLegacyTimestamp } from "../../shared/legacy-timestamp.format.ts";
 
 // ---------------------------------------------------------------------------
 // Pure formatters — no Effect / no service dependencies, kept unit-testable.
-// Match Go's byte output for `branches list`, `branches create`, `branches get`.
+// Match the established byte output for `branches list`, `branches create`,
+// `branches get`.
 // ---------------------------------------------------------------------------
 
 const LIST_HEADERS = [
@@ -38,18 +39,26 @@ const GET_HEADERS = [
 type Branch = typeof BranchResponse.Type;
 
 /**
- * Reproduces Go's `branches/list/list.go:ToMarkdown` + glamour pipeline.
+ * Established markdown-table-to-glamour render pipeline: the markdown
+ * intermediate wraps each cell in backticks and escapes `|` with `\|`;
+ * glamour decodes the escape sequence back to a literal `|` and strips the
+ * backticks. `renderGlamourTable` lays out cells directly, so raw values are
+ * passed through — including any literal `|` in the name / git branch — and
+ * the byte output matches the established fixture.
  *
- * Go's markdown intermediate wraps each cell in backticks and escapes `|`
- * with `\|`; glamour decodes the escape sequence back to a literal `|` and
- * strips the backticks. Our `renderGlamourTable` lays out cells directly,
- * so we pass raw values — including any literal `|` in the name / git branch
- * — and the byte output matches the Go binary fixture.
+ * `activeRef`, when given, marks the row whose `project_ref` matches by
+ * rendering its NAME cell as `<name> (active)` — mirroring the `next/` shell's
+ * convention (`next/commands/branches/list/list.handler.ts`). TS-only QoL
+ * (CLI-2167 follow-up, no Go counterpart): the pretty table only, never the
+ * `-o json|yaml|toml` / `--output-format json|stream-json` payloads.
  */
-export function renderBranchesListTable(branches: ReadonlyArray<Branch>): string {
+export function renderBranchesListTable(
+  branches: ReadonlyArray<Branch>,
+  activeRef?: string,
+): string {
   const rows = branches.map((b) => [
     b.project_ref,
-    b.name,
+    b.project_ref === activeRef ? `${b.name} (active)` : b.name,
     b.is_default ? "true" : "false",
     b.git_branch ?? " ",
     b.with_data ? "true" : "false",
@@ -61,10 +70,8 @@ export function renderBranchesListTable(branches: ReadonlyArray<Branch>): string
 }
 
 /**
- * Reproduces Go's `branches/get/get.go:38-51` pretty-table render: one row
- * with 7 columns. `db_user` / `db_pass` / `jwt_secret` render as `******`
- * when the API returns nil/undefined (matches Go's `if x == nil { x = &"******" }`
- * mutation in `get.go:71-80`).
+ * Pretty-table render: one row with 7 columns. `db_user` / `db_pass` /
+ * `jwt_secret` render as `******` when the API returns nil/undefined.
  */
 export function renderBranchGetTable(detail: typeof V1GetABranchConfigOutput.Type): string {
   const rows = [
@@ -81,11 +88,7 @@ export function renderBranchGetTable(detail: typeof V1GetABranchConfigOutput.Typ
   return renderGlamourTable(GET_HEADERS, rows);
 }
 
-// ---------------------------------------------------------------------------
 // Standard-env projection for `branches get` non-pretty modes.
-// Mirrors Go's `toStandardEnvs` + `apiKeys.ToEnv` (`get.go:84-105`,
-// `api_keys.go:51-66`).
-// ---------------------------------------------------------------------------
 
 const POOLER_PASSWORD_PLACEHOLDER = "[YOUR-PASSWORD]";
 
@@ -102,15 +105,14 @@ export type PoolerParseResult =
   | { readonly ok: false; readonly error: string };
 
 /**
- * Reproduces Go's `utils.ParsePoolerURL` (`apps/cli-go/internal/utils/connect.go:103`):
- * remove the `[YOUR-PASSWORD]` placeholder text from the connection string
- * (it confuses pgconn's strict URL parser) and then parse the host/port/user.
+ * Removes the `[YOUR-PASSWORD]` placeholder text from the connection string
+ * (it confuses pgconn's strict URL parser) and then parses the host/port/user.
  *
  * On failure, returns a structured result with the parse error description —
- * not the raw connection string. Go's WARNING line carries the pgconn parse
- * error message (e.g. `failed to parse pooler URL: parse "...": invalid port`),
- * never the URL itself. Returning the URL would leak the pooler username,
- * host, and port into stderr logs.
+ * not the raw connection string. The established WARNING line carries the
+ * pgconn parse error message (e.g. `failed to parse pooler URL: parse "...":
+ * invalid port`), never the URL itself. Returning the URL would leak the
+ * pooler username, host, and port into stderr logs.
  *
  * This display-only parser intentionally does not enforce the profile-domain or
  * tenant-ref guards used by `legacyPoolerConfigFromConnectionString`.
@@ -160,7 +162,7 @@ interface PgConfig {
 }
 
 /**
- * Reproduces Go's `utils.ToPostgresURL` (`apps/cli-go/internal/utils/connect.go:23`):
+ * Established URL shape:
  *
  *   postgresql://<urlencode(user):urlencode(pass)>@<host>:<port>/<pathEscape(db)>?connect_timeout=10[&k=urlencode(v)]
  *
@@ -190,14 +192,14 @@ type Detail = typeof V1GetABranchConfigOutput.Type;
 export interface StandardEnvsResult {
   readonly envs: Record<string, string>;
   /**
-   * Set when the pooler URL failed to parse, so the caller can mirror Go's
-   * `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)` line.
+   * Set when the pooler URL failed to parse, so the caller can print the
+   * established `fmt.Fprintln(os.Stderr, utils.Yellow("WARNING:"), err)` line.
    */
   readonly poolerWarning?: string;
 }
 
 /**
- * Reproduces Go's `toStandardEnvs` (`apps/cli-go/internal/branches/get/get.go:84-105`):
+ * Standard-env projection:
  *
  *   - `POSTGRES_URL`: pooled URL on success, falls back to the direct URL with
  *     a stderr warning on parse failure.

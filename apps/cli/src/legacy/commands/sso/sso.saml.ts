@@ -29,10 +29,9 @@ export const LEGACY_SSO_NAME_ID_FORMATS = [
 ] as const;
 
 /**
- * Validates that raw bytes decode as strict UTF-8. Mirrors Go's
- * `unicode/utf8.Valid(data)` check inside `saml.ValidateMetadata`. Using
+ * Validates that raw bytes decode as strict UTF-8. Using
  * `TextDecoder("utf-8", { fatal: true })` makes any malformed surrogate or
- * unexpected continuation byte throw, matching Go's strict semantics.
+ * unexpected continuation byte throw.
  *
  * The `source` argument is the path or URL the bytes came from; it's
  * embedded in the rendered error message so users can locate the bad file.

@@ -11,10 +11,10 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves (Go `PersistentPostRun`) |
+| Path                                           | Format | When                                             |
+| ---------------------------------------------- | ------ | ------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
 
 ## API Routes
 
@@ -23,7 +23,7 @@
 | `GET`  | `/v1/projects/{ref}/config/auth/sso/providers/{provider_id}` | Bearer token | none         | `{id, saml?, domains?, created_at?, updated_at?}` |
 
 Note: Unlike `list`/`add`/`update`/`remove`, `show` does **not** make upgrade-gate
-side-calls — matches Go's `get.go`.
+side-calls.
 
 ## Environment Variables
 
@@ -55,17 +55,17 @@ side-calls — matches Go's `get.go`.
 
 Raw `response.saml.metadata_xml` (or empty string) followed by a single newline. Ignores `--output`.
 
-### `--output-format text` / Go `--output pretty`
+### `--output-format text` / `--output pretty`
 
 Glamour-styled property/value markdown table plus optional `## Attribute Mapping` and `## SAML 2.0 Metadata XML` sections.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Response re-encoded per format, matching the Go binary byte-for-byte (CLI-1975): JSON keeps the snake_case JSON tags with alphabetised keys and Go's HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses yaml.v3's lowercased Go struct field names (`metadataxml`, explicit `null` for nil pointers); TOML uses BurntSushi's PascalCase Go struct field names (`MetadataXml`) with nil pointers omitted.
+Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with Go's HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.
 
 ### `--output env`
 
-**Not supported** — fails with `--output env flag is not supported` (matches Go's `utils.ErrEnvNotSupported` in `apps/cli-go/internal/utils/output.go:41` verbatim).
+**Not supported** — fails with `--output env flag is not supported`.
 
 ### `--output-format json` / `stream-json`
 
@@ -73,6 +73,6 @@ Single `success` event with the response as data.
 
 ## Notes
 
-- The `<provider-id>` argument must be a valid UUID; invalid input produces `identity provider ID "<input>" is not a UUID`. UUIDs are accepted case-insensitively (matches Go's `uuid.Parse`).
+- The `<provider-id>` argument must be a valid UUID; invalid input produces `identity provider ID "<input>" is not a UUID`. UUIDs are accepted case-insensitively.
 - `--metadata` short-circuits any `--output` selection.
-- The `## SAML 2.0 Metadata XML` fenced block is pretty-printed via a Go-xmlfmt-equivalent (`formatSsoMetadataXml` in `sso.format.ts`) — byte-parity with `xmlfmt.FormatXML(..., "  ", "  ")` at `apps/cli-go/internal/sso/internal/render/render.go:155`.
+- The `## SAML 2.0 Metadata XML` fenced block is pretty-printed via `formatSsoMetadataXml` (`sso.format.ts`), matching a 2-space-indented XML pretty-printer's output byte-for-byte.

@@ -34,7 +34,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints the schema diff (changes on the remote database since the last migration) to stdout.
 
@@ -48,6 +48,6 @@ Not applicable.
 
 ## Notes
 
-- Deprecated in the Go CLI: use `db diff --use-migra --linked` instead.
+- Deprecated: use `db diff --use-migra --linked` instead.
 - `--schema` / `-s` restricts the diff to specific schemas.
 - `--db-url` and `--linked` (default true) are mutually exclusive.
