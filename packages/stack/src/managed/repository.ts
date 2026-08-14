@@ -358,6 +358,15 @@ export const decideManagedCheckoutLocation = (
       },
     };
   }
+  if (
+    input.requested.expectedActiveLocationId !== undefined &&
+    input.requested.expectedActiveLocationId !== active.id
+  ) {
+    throw new ManagedCheckoutConflictError({
+      checkoutId: input.requested.checkoutId,
+      canonicalPath: input.requested.canonicalPath,
+    });
+  }
   return {
     outcome: "rebound",
     supersededLocationId: active.id,

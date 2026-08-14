@@ -104,6 +104,11 @@ export interface ResolvedWorkspacePlan {
   readonly identityMarkerCreated: boolean;
 }
 
+interface FirstStartClaim {
+  readonly plan: ResolvedWorkspacePlan;
+  readonly transition?: ManagedIdentityTransitionRecord;
+}
+
 /**
  * The identity a mutating resolve must have ended up with. Every claim
  * produces all three parts or fails, so a gap here is a bug in the identity
@@ -382,7 +387,7 @@ export const makeWorkspaceIdentity = ({
             }),
           );
         yield* exactConfig(GIT_PROJECT_ID_KEY, targetIdentity.projectId);
-        yield* withWorkspaceServices(
+        const checkoutIdentityCreated = yield* withWorkspaceServices(
           publishGitCheckoutIdentity(
             inspection.gitDirectory,
             targetIdentity.checkoutId,
@@ -413,7 +418,7 @@ export const makeWorkspaceIdentity = ({
               ? { kind: "detached" }
               : { kind: "branch", locator: head.branch },
           identity: targetIdentity,
-          identityMarkerCreated: true,
+          identityMarkerCreated: checkoutIdentityCreated,
         };
       }
       const claimed = yield* withWorkspaceServices(
@@ -596,6 +601,14 @@ export const makeWorkspaceIdentity = ({
           }),
         );
       }
+      if (claim.canonicalPath !== path && !(yield* pathIsDefinitelyMissing(claim.canonicalPath))) {
+        return yield* Effect.fail(
+          new ManagedCheckoutConflictError({
+            checkoutId: claim.checkoutId,
+            canonicalPath: claim.canonicalPath,
+          }),
+        );
+      }
       const projectIdentityLocation = inspection.commonDirectory;
       const transition =
         report.activeTransition?.kind === "folder-to-git"
@@ -642,9 +655,21 @@ export const makeWorkspaceIdentity = ({
             new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
           );
         }
+        if (
+          claim.canonicalPath !== path &&
+          !(yield* pathIsDefinitelyMissing(claim.canonicalPath))
+        ) {
+          return yield* Effect.fail(
+            new ManagedCheckoutConflictError({
+              checkoutId: claim.checkoutId,
+              canonicalPath: claim.canonicalPath,
+            }),
+          );
+        }
         const claimsAfterReserve = yield* repository.listIdentityClaims();
         const exactLocationClaims = claimsAfterReserve.locations.filter(
-          (location) => location.state === "active" && location.canonicalPath === path,
+          (location) =>
+            location.state === "active" && location.canonicalPath === claim.canonicalPath,
         );
         const exactContext = claimsAfterReserve.contexts.find(
           (context) => context.id === claim.contextId,
@@ -741,6 +766,41 @@ export const makeWorkspaceIdentity = ({
           phase: "git-written",
           now: now(),
         });
+      }
+
+      const claimsBeforeLocation = yield* repository.listIdentityClaims();
+      const activeLocation = claimsBeforeLocation.locations.find(
+        (location) => location.checkoutId === claim.checkoutId && location.state === "active",
+      );
+      if (activeLocation === undefined) {
+        return yield* Effect.fail(
+          new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+        );
+      }
+      if (activeLocation.canonicalPath !== path) {
+        if (!(yield* pathIsDefinitelyMissing(activeLocation.canonicalPath))) {
+          return yield* Effect.fail(
+            new ManagedCheckoutConflictError({
+              checkoutId: claim.checkoutId,
+              canonicalPath: activeLocation.canonicalPath,
+            }),
+          );
+        }
+        const decision = yield* repository.applyCheckoutLocation({
+          checkoutId: claim.checkoutId,
+          locationId: yield* managedUuid("checkout location"),
+          canonicalPath: path,
+          now: now(),
+          expectedActiveLocationId: activeLocation.id,
+        });
+        if (decision.outcome === "blocked") {
+          return yield* Effect.fail(
+            new ManagedCheckoutConflictError({
+              checkoutId: claim.checkoutId,
+              canonicalPath: path,
+            }),
+          );
+        }
       }
 
       if (inspection.head.kind !== "detached") {
@@ -1048,17 +1108,20 @@ export const makeWorkspaceIdentity = ({
       return yield* discover(path);
     });
 
-  const newCheckout = (
-    options: ManagedCheckoutRecoveryRequest,
+  const publishNewCheckout = (
+    report: ManagedWorkspaceDiscovery,
   ): Effect.Effect<
-    ManagedWorkspaceDiscovery,
+    {
+      readonly published: ManagedWorkspaceDiscovery;
+      readonly transition?: ManagedIdentityTransitionRecord;
+      readonly identityMarkerCreated: boolean;
+    },
     | InvalidManagedIdentityError
     | DuplicateManagedIdentityError
     | UnsupportedGitWorkspaceError
     | ManagedIdentityRecoveryError
   > =>
     Effect.gen(function* () {
-      const report = yield* recoveryReport(options);
       const path = report.workspace.workspaceRoot;
       if (
         report.state !== "unregistered" &&
@@ -1122,6 +1185,7 @@ export const makeWorkspaceIdentity = ({
         contextId: transition.contextId,
       };
       const abandonReserved = () => abandonReservedTransition(transition, path);
+      let identityMarkerCreated = false;
       if (transition.phase === "reserved") {
         const beforePublication = yield* discover(path);
         const beforeClaims = yield* repository.listIdentityClaims();
@@ -1184,6 +1248,7 @@ export const makeWorkspaceIdentity = ({
             }),
           ),
         );
+        identityMarkerCreated = claimed.identityMarkerCreated;
         const identity = yield* requireResolvedIdentity(claimed);
         if (
           identity.projectId !== targetIdentity.projectId ||
@@ -1231,12 +1296,40 @@ export const makeWorkspaceIdentity = ({
         (yield* repository.listIdentityClaims()).transitions.find(
           (candidate) => candidate.id === transition.id,
         ) ?? transition;
-      if (latestTransition.phase === "git-written") {
+      return {
+        published,
+        transition: latestTransition.phase === "git-written" ? latestTransition : undefined,
+        identityMarkerCreated,
+      };
+    });
+
+  const newCheckout = (
+    options: ManagedCheckoutRecoveryRequest,
+  ): Effect.Effect<
+    ManagedWorkspaceDiscovery,
+    | InvalidManagedIdentityError
+    | DuplicateManagedIdentityError
+    | UnsupportedGitWorkspaceError
+    | ManagedIdentityRecoveryError
+  > =>
+    Effect.gen(function* () {
+      const report = yield* recoveryReport(options);
+      const { published, transition } = yield* publishNewCheckout(report);
+      if (transition !== undefined) {
+        if (
+          transition.projectId === undefined ||
+          transition.checkoutId === undefined ||
+          transition.contextId === undefined
+        ) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+          );
+        }
         yield* repository.registerCheckoutIdentity({
           identity: {
-            projectId: targetIdentity.projectId,
-            checkoutId: targetIdentity.checkoutId,
-            contextId: targetIdentity.contextId,
+            projectId: transition.projectId,
+            checkoutId: transition.checkoutId,
+            contextId: transition.contextId,
           },
           checkoutKind: published.workspace.checkoutKind,
           checkoutRootPath: published.workspace.workspaceRoot,
@@ -1245,13 +1338,92 @@ export const makeWorkspaceIdentity = ({
           now: now(),
         });
         yield* repository.finalizeIdentityTransition({
-          id: latestTransition.id,
+          id: transition.id,
           expectedPhase: "git-written",
           now: now(),
         });
       }
-      return yield* discover(path);
+      return yield* discover(published.workspace.workspaceRoot);
     });
+
+  const claimFirstStart = (
+    report: ManagedWorkspaceDiscovery,
+  ): Effect.Effect<
+    FirstStartClaim,
+    | InvalidManagedIdentityError
+    | DuplicateManagedIdentityError
+    | UnsupportedGitWorkspaceError
+    | ManagedIdentityRecoveryError
+  > =>
+    Effect.gen(function* () {
+      const fresh = yield* discover(report.workspace.workspaceRoot);
+      if (
+        fresh.state === "healthy" &&
+        fresh.conflicts.length === 0 &&
+        fresh.activeTransition === undefined &&
+        fresh.identity.projectId !== undefined &&
+        fresh.identity.checkoutId !== undefined &&
+        fresh.identity.contextId !== undefined
+      ) {
+        return {
+          plan: {
+            workspace: fresh.workspace,
+            context: fresh.context,
+            contextDescriptor: fresh.contextDescriptor,
+            identity: fresh.identity,
+            identityMarkerCreated: false,
+          },
+        };
+      }
+      if (
+        fresh.state !== "unregistered" &&
+        !(
+          fresh.state === "transitioning" &&
+          fresh.activeTransition?.kind === "new-checkout" &&
+          fresh.activeTransition.path === fresh.workspace.workspaceRoot
+        )
+      ) {
+        return yield* Effect.fail(
+          new InvalidManagedIdentityError({
+            message: `Managed workspace ${fresh.workspace.canonicalPath} is ${fresh.state}, not unregistered`,
+          }),
+        );
+      }
+      const { published, transition, identityMarkerCreated } = yield* publishNewCheckout(fresh);
+      const identity =
+        transition?.projectId !== undefined &&
+        transition.checkoutId !== undefined &&
+        transition.contextId !== undefined
+          ? {
+              projectId: transition.projectId,
+              checkoutId: transition.checkoutId,
+              contextId: transition.contextId,
+            }
+          : published.identity;
+      return {
+        plan: {
+          workspace: published.workspace,
+          context: published.context,
+          contextDescriptor: published.contextDescriptor,
+          identity,
+          identityMarkerCreated,
+        },
+        transition,
+      };
+    });
+
+  const finalizeFirstStart = (
+    transition: ManagedIdentityTransitionRecord,
+  ): Effect.Effect<void, ManagedIdentityTransitionOwnershipError | ManagedIdentityRecoveryError> =>
+    transition.kind !== "new-checkout" || transition.phase !== "git-written"
+      ? Effect.fail(new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }))
+      : repository
+          .finalizeIdentityTransition({
+            id: transition.id,
+            expectedPhase: "git-written",
+            now: now(),
+          })
+          .pipe(Effect.asVoid);
 
   const recoverCheckout = (
     operation: "rebind-checkout",
@@ -1771,7 +1943,8 @@ export const makeWorkspaceIdentity = ({
 
   return {
     discover,
-    claimUnregisteredWorkspace,
+    claimFirstStart,
+    finalizeFirstStart,
     migrateFolderToGit,
     newCheckout,
     rebindCheckout,

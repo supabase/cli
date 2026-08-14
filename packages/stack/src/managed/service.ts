@@ -492,15 +492,24 @@ export class ManagedStackService extends Context.Service<
               settledReport.identity.projectId !== undefined &&
               settledReport.identity.checkoutId !== undefined &&
               settledReport.identity.contextId !== undefined;
+            const settledNewCheckoutReservation =
+              report.state === "unregistered" &&
+              settledReport.state === "transitioning" &&
+              settledReport.activeTransition?.kind === "new-checkout" &&
+              settledReport.activeTransition.path === settledReport.workspace.workspaceRoot &&
+              settledReport.activeTransition.projectIdentityLocation ===
+                settledReport.workspace.projectIdentityLocation &&
+              settledReport.conflicts.length === 0;
             const benignConcurrentRegistration =
               report.state === "unregistered" &&
               sameWorkspaceTopology &&
               settledIdentityIsMonotonic &&
-              settledReport.activeTransition === undefined &&
-              ((settledReport.state === "healthy" &&
-                settledIdentityPublished &&
-                settledReport.conflicts.length === 0) ||
-                workspaceIdentity.concurrentIdentityPublication(report, settledReport));
+              ((settledReport.activeTransition === undefined &&
+                ((settledReport.state === "healthy" &&
+                  settledIdentityPublished &&
+                  settledReport.conflicts.length === 0) ||
+                  workspaceIdentity.concurrentIdentityPublication(report, settledReport))) ||
+                settledNewCheckoutReservation);
             if (
               resolveOptions.operation === "start" &&
               discoveryObservation(report) !== discoveryObservation(settledReport) &&
@@ -591,16 +600,20 @@ export class ManagedStackService extends Context.Service<
                 }),
               );
             }
-            const settledPlan =
-              recoveryReportForStart.state === "unregistered"
-                ? yield* workspaceIdentity.claimUnregisteredWorkspace(recoveryReportForStart)
+            const firstStartResolution =
+              recoveryReportForStart.state === "unregistered" ||
+              (recoveryReportForStart.state === "transitioning" &&
+                recoveryReportForStart.activeTransition?.kind === "new-checkout")
+                ? yield* workspaceIdentity.claimFirstStart(recoveryReportForStart)
                 : recoveryReportForStart.state === "healthy"
-                  ? plan
+                  ? { plan, transition: undefined }
                   : yield* Effect.fail(
                       new InvalidManagedIdentityError({
                         message: `Managed workspace ${recoveryReportForStart.workspace.canonicalPath} is ${recoveryReportForStart.state}`,
                       }),
                     );
+            const settledPlan = firstStartResolution.plan;
+            const firstStartTransition = firstStartResolution.transition;
             const registrationInput: RegisterManagedStackInput = {
               identity: yield* requireResolvedIdentity(settledPlan),
               checkoutKind: settledPlan.workspace.checkoutKind,
@@ -613,6 +626,9 @@ export class ManagedStackService extends Context.Service<
             };
             const registered: RegisterManagedStackResult =
               yield* stackLifecycle.registerStack(registrationInput);
+            if (firstStartTransition !== undefined) {
+              yield* workspaceIdentity.finalizeFirstStart(firstStartTransition);
+            }
             return yield* startedResolution(
               settledPlan,
               registered.outcome,

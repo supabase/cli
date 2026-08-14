@@ -236,8 +236,8 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
   const warnings: string[] = [];
   const recoveryOperations: ManagedRecoveryOperation[] = [];
   const identityComplete = completeIdentity(evidence.identity);
-  const knownCheckoutActiveElsewhere =
-    evidence.identity.projectId === undefined &&
+  const incompleteKnownCheckoutActiveElsewhere =
+    !identityComplete &&
     evidence.checkoutProjectKnown &&
     evidence.activeLocation === undefined &&
     evidence.anyActiveLocation !== undefined;
@@ -255,7 +255,7 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     evidence.duplicateLocations ||
     evidence.samePathClaims > 0 ||
     evidence.markerRegistryConflict ||
-    knownCheckoutActiveElsewhere ||
+    incompleteKnownCheckoutActiveElsewhere ||
     knownCheckoutMissingProjectAtActivePath ||
     evidence.checkoutProjectOwnership === "foreign" ||
     evidence.sameCheckoutReappeared ||
@@ -277,7 +277,7 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
         ? `Checkout ${evidence.identity.checkoutId} has multiple active locations`
         : evidence.markerRegistryConflict
           ? "Workspace marker context conflicts with registry context"
-          : knownCheckoutActiveElsewhere
+          : incompleteKnownCheckoutActiveElsewhere
             ? `Checkout ${evidence.identity.checkoutId} is already active at another path`
             : knownCheckoutMissingProjectAtActivePath
               ? `Checkout ${evidence.identity.checkoutId} is missing its registered project marker`
@@ -595,13 +595,12 @@ export const discoverWorkspace = (
     const markerIdentity = ordinaryMarker?.identity;
     const folderToGitClaims: ReadonlyArray<ManagedFolderToGitClaim> =
       inspection.kind === "git-checkout"
-        ? allClaims.locations
-            .filter(
-              (location) =>
-                location.state === "active" &&
-                location.canonicalPath === metadata.workspace.workspaceRoot,
-            )
-            .flatMap((location) => {
+        ? yield* Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const eligible: ManagedFolderToGitClaim[] = [];
+            for (const location of allClaims.locations.filter(
+              (candidate) => candidate.state === "active",
+            )) {
               const context = allClaims.contexts.find(
                 (candidate) =>
                   candidate.checkoutId === location.checkoutId && candidate.kind === "workspace",
@@ -613,17 +612,36 @@ export const discoverWorkspace = (
                 markerIdentity.checkoutId !== location.checkoutId ||
                 markerIdentity.contextId !== context.id
               ) {
-                return [];
+                continue;
               }
-              return [
-                {
+              const pathStatus =
+                location.canonicalPath === metadata.workspace.workspaceRoot
+                  ? "present"
+                  : yield* fs.stat(location.canonicalPath).pipe(
+                      Effect.as<"present" | "missing" | "inaccessible">("present"),
+                      Effect.catchTag("PlatformError", (error) =>
+                        Effect.succeed<"missing" | "inaccessible">(
+                          error.reason._tag === "NotFound" ? "missing" : "inaccessible",
+                        ),
+                      ),
+                    );
+              // An inaccessible historical path is still adoption evidence, but
+              // migration's fresh proof-of-missing check must reject it. A live
+              // path is excluded so a clone cannot steal a source checkout.
+              const eligiblePath =
+                location.canonicalPath === metadata.workspace.workspaceRoot ||
+                pathStatus !== "present";
+              if (eligiblePath) {
+                eligible.push({
                   projectId: context.projectId,
                   checkoutId: location.checkoutId,
                   contextId: context.id,
                   canonicalPath: location.canonicalPath,
-                },
-              ];
-            })
+                });
+              }
+            }
+            return eligible;
+          })
         : [];
     const locations =
       identity.checkoutId === undefined

@@ -23,6 +23,7 @@ import { discoverWorkspace } from "./managed/discovery.ts";
 import {
   createManagedStackService,
   makeManagedStackService,
+  ManagedCheckoutConflictError,
   ManagedCopiedBranchConflictError,
   ManagedIdentityTransitionOwnershipError,
 } from "./managed-bun.ts";
@@ -482,6 +483,82 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(started.identity).toEqual(published.identity);
   });
 
+  it("does not retain checkout registry rows when first-start preparation fails", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "first-start-preparation-failure");
+    const base = await open(root);
+    openHandles.push(base);
+    const failingRepository: ManagedStackRepositoryShape = {
+      ...base.repository,
+      prepareStack: () =>
+        Effect.fail(
+          new ManagedCheckoutConflictError({
+            checkoutId: "injected-checkout",
+            canonicalPath: workspace,
+          }),
+        ),
+    };
+    const service = await makeManagedStackService({
+      repository: failingRepository,
+      stateRoot: join(root, "first-start-preparation-failure-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(service);
+    const before = await Effect.runPromise(base.repository.listIdentityClaims());
+
+    await expect(
+      service.resolveStack({
+        workspacePath: workspace,
+        operation: "start",
+      }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+
+    const after = await Effect.runPromise(base.repository.listIdentityClaims());
+    expect(after.locations).toEqual(before.locations);
+    expect(after.contexts).toEqual(before.contexts);
+    expect(after.transitions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "new-checkout", phase: "git-written", path: workspace }),
+      ]),
+    );
+  });
+
+  it("resumes first start when transition finalization is interrupted after stack commit", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "first-start-finalize-interruption");
+    const base = await open(root);
+    openHandles.push(base);
+    let interrupt = true;
+    const recoveringRepository: ManagedStackRepositoryShape = {
+      ...base.repository,
+      finalizeIdentityTransition: (input) =>
+        interrupt
+          ? ((interrupt = false),
+            Effect.fail(new ManagedIdentityTransitionOwnershipError({ transitionId: input.id })))
+          : base.repository.finalizeIdentityTransition(input),
+    };
+    const recovering = await makeManagedStackService({
+      repository: recoveringRepository,
+      stateRoot: join(root, "first-start-finalize-interruption-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(recovering);
+
+    await expect(
+      recovering.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect((await inspect(base.repository, workspace)).activeTransition).toMatchObject({
+      kind: "new-checkout",
+      phase: "git-written",
+      path: workspace,
+    });
+
+    await expect(
+      recovering.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).resolves.toMatchObject({ outcome: "reuse" });
+    expect((await inspect(base.repository, workspace)).activeTransition).toBeUndefined();
+  });
+
   it("completes an explicitly requested new checkout from partial Git identity", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
@@ -580,6 +657,85 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(recovered.identity.checkoutId).not.toBe(winner.value.identity.checkoutId);
     const claims = await Effect.runPromise(repositoryA.listIdentityClaims());
     expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+  });
+
+  it("serializes first start with an explicit new-checkout reservation", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "concurrent-first-start");
+    const base = await open(root);
+    openHandles.push(base);
+    let releaseStartDiscovery: () => void = () => undefined;
+    const startDiscoveryGate = new Promise<void>((resolve) => {
+      releaseStartDiscovery = resolve;
+    });
+    let notifyStartDiscovery: () => void = () => undefined;
+    const startDiscoveryPaused = new Promise<void>((resolve) => {
+      notifyStartDiscovery = resolve;
+    });
+    let discoveryCalls = 0;
+    const startRepository: ManagedStackRepositoryShape = {
+      ...base.repository,
+      listIdentityClaims: (projectId) =>
+        Effect.gen(function* () {
+          const claims = yield* base.repository.listIdentityClaims(projectId);
+          discoveryCalls += 1;
+          if (discoveryCalls === 3) {
+            notifyStartDiscovery();
+            yield* Effect.promise(() => startDiscoveryGate);
+          }
+          return claims;
+        }),
+    };
+    let releaseExplicitReservation: () => void = () => undefined;
+    const explicitReservationGate = new Promise<void>((resolve) => {
+      releaseExplicitReservation = resolve;
+    });
+    let notifyExplicitReservation: () => void = () => undefined;
+    const explicitReservationMade = new Promise<void>((resolve) => {
+      notifyExplicitReservation = resolve;
+    });
+    const explicitRepository: ManagedStackRepositoryShape = {
+      ...base.repository,
+      reserveIdentityTransition: (input) =>
+        Effect.gen(function* () {
+          const transition = yield* base.repository.reserveIdentityTransition(input);
+          notifyExplicitReservation();
+          yield* Effect.promise(() => explicitReservationGate);
+          return transition;
+        }),
+    };
+    const starting = await makeManagedStackService({
+      repository: startRepository,
+      stateRoot: join(root, "concurrent-first-start-managed"),
+      publicationPollMs: 1,
+    });
+    const explicit = await makeManagedStackService({
+      repository: explicitRepository,
+      stateRoot: join(root, "concurrent-first-start-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(starting, explicit);
+
+    const startAttempt = starting.resolveStack({ workspacePath: repository, operation: "start" });
+    await startDiscoveryPaused;
+    const explicitAttempt = explicit.newCheckout({ workspacePath: repository });
+    await explicitReservationMade;
+    releaseStartDiscovery();
+    const [startResult] = await Promise.allSettled([startAttempt]);
+    releaseExplicitReservation();
+    const [explicitResult] = await Promise.allSettled([explicitAttempt]);
+
+    expect(startResult).toMatchObject({
+      status: "rejected",
+      reason: { _tag: "ManagedIdentityTransitionOwnershipError" },
+    });
+    expect(explicitResult).toMatchObject({ status: "fulfilled", value: { state: "healthy" } });
+    const claims = await Effect.runPromise(base.repository.listIdentityClaims());
+    expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+    const retry = await starting.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(retry.identity).toEqual(
+      explicitResult.status === "fulfilled" ? explicitResult.value.identity : undefined,
+    );
   });
 
   it("refuses a reserved new checkout after the observed branch changes", async () => {
@@ -863,6 +1019,32 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       beforeOperations,
     );
     expect(snapshotTree(root)).toEqual(beforeTree);
+  });
+
+  it("refuses a detached copy with a partial identity while the original remains live", async () => {
+    const root = makeRoot();
+    const ownerWorkspace = makeRepository(root, "partial-detached-owner");
+    const copiedWorkspace = join(root, "partial-detached-copy");
+    const service = await open(root);
+    openHandles.push(service);
+    const owner = await service.resolveStack({
+      workspacePath: ownerWorkspace,
+      operation: "start",
+    });
+    cpSync(ownerWorkspace, copiedWorkspace, { recursive: true });
+    git(copiedWorkspace, "checkout", "-q", "--detach", "HEAD");
+    const claimsBefore = await Effect.runPromise(service.repository.listIdentityClaims());
+
+    const report = await inspect(service.repository, copiedWorkspace);
+    expect(report.identity).toEqual({
+      projectId: owner.identity.projectId,
+      checkoutId: owner.identity.checkoutId,
+    });
+    expect(report.state).toBe("duplicate");
+    await expect(
+      service.resolveStack({ workspacePath: copiedWorkspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(claimsBefore);
   });
 
   it("does not advertise recovery when the active checkout project key is missing", async () => {
@@ -1409,7 +1591,8 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
 
     const claims = await Effect.runPromise(service.repository.listIdentityClaims());
     const transition = claims.transitions.find(
-      (candidate) => candidate.checkoutId === first.identity.checkoutId,
+      (candidate) =>
+        candidate.kind === "rebind-checkout" && candidate.checkoutId === first.identity.checkoutId,
     );
     expect(transition?.phase).toBe("git-written");
     expect(claims.locations).toEqual(
@@ -1882,6 +2065,37 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.folderToGitClaims).toEqual([]);
     expect(git(workspace, "config", "--get", "supabase.projectId").trim()).toBe(
       ordinary.identity.projectId,
+    );
+  });
+
+  it("moves and migrates an ordinary folder initialized as Git at its new path", async () => {
+    const root = makeRoot();
+    const previous = makeDirectory(root, "moved-folder-to-git");
+    const next = join(root, "moved-folder-to-git-next");
+    const service = await open(root);
+    openHandles.push(service);
+    const ordinary = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    git(next, "init", "-q", "-b", "main");
+
+    const migrated = await service.resolveStack({ workspacePath: next, operation: "start" });
+
+    expect(migrated.identity).toEqual(ordinary.identity);
+    expect(migrated.stack.id).toBe(ordinary.stack.id);
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.locations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkoutId: ordinary.identity.checkoutId,
+          canonicalPath: previous,
+          state: "superseded",
+        }),
+        expect.objectContaining({
+          checkoutId: ordinary.identity.checkoutId,
+          canonicalPath: next,
+          state: "active",
+        }),
+      ]),
     );
   });
 

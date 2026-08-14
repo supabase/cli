@@ -291,7 +291,7 @@ export const publishGitCheckoutIdentity = (
   gitDirectory: string,
   checkoutId: string,
   temporaryId: string = randomUUID(),
-): Effect.Effect<void, InvalidManagedIdentityError, FileSystem.FileSystem> =>
+): Effect.Effect<boolean, InvalidManagedIdentityError, FileSystem.FileSystem> =>
   failsWithIdentity(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -325,7 +325,7 @@ export const publishGitCheckoutIdentity = (
             }),
           );
         }
-        return;
+        return false;
       }
       const outcome = yield* Effect.tryPromise({
         try: () =>
@@ -335,7 +335,7 @@ export const publishGitCheckoutIdentity = (
           }),
         catch: asRaised,
       });
-      if (outcome === "claimed") return;
+      if (outcome === "claimed") return true;
       const winner = yield* fs.readFileString(markerPath).pipe(
         Effect.flatMap((content) =>
           Effect.try({
@@ -352,5 +352,6 @@ export const publishGitCheckoutIdentity = (
           }),
         );
       }
+      return false;
     }),
   );
