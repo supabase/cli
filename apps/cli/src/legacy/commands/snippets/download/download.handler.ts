@@ -25,7 +25,7 @@ function canonicalFromHex(hex32: string): string {
 
 /**
  * Reads `[start, end)` of `s` as lowercase hex, or `undefined` on the first
- * non-hex byte — the byte-wise equivalent of Go's `xtob` loop.
+ * non-hex byte — the byte-wise equivalent of google/uuid's `xtob` loop.
  */
 function readHexRange(s: Uint8Array, start: number, end: number): string | undefined {
   let out = "";
@@ -60,28 +60,27 @@ function isUrnUuidPrefix(bytes: Uint8Array): boolean {
 }
 
 /**
- * Faithful port of Go's `uuid.Parse` (google/uuid v1.6.0, `uuid.go:68-117`),
- * which `download.Run` uses to validate the snippet id
- * (`apps/cli-go/internal/snippets/download/download.go:15-17`). Accepts the
- * same 4 forms Go does — hyphenated (36), `urn:uuid:`-prefixed (45), braced
+ * Faithful port of `uuid.Parse` (google/uuid v1.6.0, `uuid.go:68-117`), used
+ * to validate the snippet id before it reaches the Management API. Accepts
+ * the same 4 forms — hyphenated (36), `urn:uuid:`-prefixed (45), braced
  * `{…}` (38, where only the middle 36 bytes are examined — the trailing byte
  * is never validated, mirroring `s = s[1:]`), and raw 32-hex — and returns
- * the CANONICAL lowercase hyphenated form (Go interpolates the parsed
- * `uuid.UUID`, whose `String()` is always lowercase, into the request URL —
- * never the raw arg). Error strings reproduce Go's three branches verbatim;
- * the caller wraps them like `fmt.Errorf("invalid snippet ID: %w", err)`.
+ * the CANONICAL lowercase hyphenated form (the parsed `uuid.UUID`'s
+ * `String()` is always lowercase — never the raw arg). Error strings
+ * reproduce `uuid.Parse`'s three branches verbatim; the caller wraps them
+ * like `fmt.Errorf("invalid snippet ID: %w", err)`.
  *
- * Everything operates on the argument's UTF-8 BYTES: Go's `switch len(s)`
- * counts bytes where a JS string's `length` counts UTF-16 code units, so a
- * non-ASCII argument like `é<canonical-uuid>}` (JS length 38, 39 bytes) must
- * take Go's default branch and report `invalid UUID length: 39` — not slip
- * into the braced branch and issue a request (verified against go1.26 +
- * google/uuid v1.6.0).
+ * Everything operates on the argument's UTF-8 BYTES: `uuid.Parse`'s `switch
+ * len(s)` counts bytes where a JS string's `length` counts UTF-16 code
+ * units, so a non-ASCII argument like `é<canonical-uuid>}` (JS length 38, 39
+ * bytes) must take the default branch and report `invalid UUID length: 39`
+ * — not slip into the braced branch and issue a request (verified against
+ * go1.26 + google/uuid v1.6.0).
  *
  * This pre-check is load-bearing for error-message parity: the generated
  * `V1GetASnippetInput` schema already pattern-checks UUIDs, so without it a
  * non-UUID input would surface as a `SchemaError` with a `failed to download
- * snippet:` prefix instead of Go's `invalid snippet ID:`.
+ * snippet:` prefix instead of `invalid snippet ID:`.
  */
 export function legacyParseSnippetUuid(
   input: string,
@@ -220,8 +219,7 @@ export const legacySnippetsDownload = Effect.fn("legacy.snippets.download")(func
         return;
       }
 
-      // Go's `download.Run` ignores `--output` entirely and always runs
-      // `fmt.Println(resp.JSON200.Content.Sql)` (download.go:25). Mirror that:
+      // `-o`/`--output` is ignored entirely; this always prints the raw SQL —
       // no branching on `LegacyOutputFlag`.
       yield* output.raw(readSql(rawBody) + "\n");
     }).pipe(Effect.ensuring(linkedProjectCache.cache(ref)));

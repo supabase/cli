@@ -11,10 +11,10 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves (Go `PersistentPostRun`) |
+| Path                                           | Format | When                                             |
+| ---------------------------------------------- | ------ | ------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
 
 ## API Routes
 
@@ -49,17 +49,17 @@
 
 ## Output
 
-### `--output-format text` / Go `--output pretty`
+### `--output-format text` / `--output pretty`
 
 Glamour-styled ASCII table with columns `TYPE`, `IDENTITY PROVIDER ID`, `DOMAINS`, `` SAML 2.0 `EntityID` ``, `CREATED AT (UTC)`, `UPDATED AT (UTC)`.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Encoded `{providers: items}` matching the Go binary byte-for-byte (CLI-1975): JSON keeps snake_case tags with alphabetised keys; YAML/TOML derive item keys from the Go struct field names (yaml.v3 lowercases them, BurntSushi keeps PascalCase).
+Encoded `{providers: items}` (CLI-1975): JSON keeps snake_case keys with alphabetised order; YAML lowercases item keys, TOML keeps PascalCase.
 
 ### `--output env`
 
-Single `PROVIDERS=""` line — Go's viper does not descend into slices.
+Single `PROVIDERS=""` line — the flattening does not descend into slices.
 
 ### `--output-format json` / `stream-json`
 
@@ -67,5 +67,5 @@ Single `success` event with `{providers: items}` as data.
 
 ## Notes
 
-- The `SAML 2.0 EntityID` header label is rendered as plain text; Go's markdown source writes `` SAML 2.0 `EntityID` `` and Glamour strips the inline-code backticks. Our flat ASCII renderer drops them at the source for byte parity with Glamour's output.
-- Upgrade-gate side calls only fire on 4xx (matches Go's `plan_gate.go:29`).
+- The `SAML 2.0 EntityID` header label is rendered as plain text; the old Go CLI's markdown source wrote `` SAML 2.0 `EntityID` `` and Glamour strips the inline-code backticks. Our flat ASCII renderer drops them at the source for byte parity with Glamour's output.
+- Upgrade-gate side calls only fire on 4xx.

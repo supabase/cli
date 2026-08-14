@@ -34,8 +34,8 @@ const mapStatusOrNetwork = mapLegacyHttpError({
 const handleShowError = (providerId: string, cause: SupabaseApiError) =>
   Effect.gen(function* () {
     const mapped = yield* Effect.flip(mapStatusOrNetwork(cause));
-    // Go's `get.go` does NOT call SuggestUpgradeOnError — `show` is intentionally
-    // omitted from the upgrade-suggestion paths (see plan §"Telemetry parity").
+    // `show` is intentionally omitted from the upgrade-suggestion paths
+    // (see plan §"Telemetry parity").
     if (mapped._tag === "LegacySsoShowUnexpectedStatusError" && mapped.status === 404) {
       return yield* Effect.fail(
         new LegacySsoShowNotFoundError({
@@ -70,7 +70,7 @@ export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: Lega
       );
       yield* fetching?.clear() ?? Effect.void;
 
-      // `--metadata` short-circuits regardless of `--output` — Go's `get.go:33-36`.
+      // `--metadata` short-circuits regardless of `--output`.
       if (flags.metadata) {
         yield* output.raw((response.saml?.metadata_xml ?? "") + "\n");
         return;
@@ -79,8 +79,7 @@ export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: Lega
       const goFmt = Option.getOrUndefined(goOutputFlag);
 
       if (goFmt === "env") {
-        // Matches Go's `utils.ErrEnvNotSupported` verbatim
-        // (`apps/cli-go/internal/utils/output.go:41`).
+        // Established `--output env` unsupported error message.
         return yield* Effect.fail(
           new LegacySsoShowEnvNotSupportedError({
             message: "--output env flag is not supported",
@@ -96,9 +95,8 @@ export const legacySsoShow = Effect.fn("legacy.sso.show")(function* (flags: Lega
         return;
       }
       if (goFmt === "toml") {
-        // Mirror Go's `utils.EncodeOutput` failure wrapping when BurntSushi
-        // rejects the payload (e.g. a nil element in an attribute-mapping
-        // `default` array).
+        // TOML encode failure wrapping (e.g. a nil element in an
+        // attribute-mapping `default` array).
         const toml = yield* Effect.try({
           try: () => encodeLegacyGoToml(response, LEGACY_GO_SSO_PROVIDER_RESPONSE),
           catch: (cause) =>

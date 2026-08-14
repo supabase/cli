@@ -321,7 +321,7 @@ describe("legacy branches update integration", () => {
           }),
         );
         // The branch ref the resolver returned is what `legacySuggestUpgrade`
-        // should query getProject with — Go parity.
+        // should query getProject with.
         const projectCall = apiMock.requests.find(
           (r) => r.method === "GET" && r.url.endsWith(`/v1/projects/${BRANCH_REF}`),
         );

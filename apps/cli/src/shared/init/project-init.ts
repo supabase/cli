@@ -228,7 +228,8 @@ export const writeIntelliJConfig = Effect.fnUntraced(function* (
   }
 });
 
-// Mirrors Go's `PromptForIDESettings` (`apps/cli-go/internal/init/init.go:61-75`):
+// Mirrors Go's `PromptForIDESettings` (`apps/cli-go/internal/init/init.go:61-75`,
+// deleted in CLI-1970; last present at commit 7b469f5b3):
 // both questions go through `PromptYesNo`, so `--yes`/`SUPABASE_YES` auto-accepts
 // the VS Code prompt with the `[Y/n] y` stderr echo and never reaches the
 // IntelliJ one — Go returns after writing the VS Code settings (CLI-1974).
@@ -276,7 +277,8 @@ const ensureSupabaseGitignore = Effect.fnUntraced(function* (cwd: string) {
       return;
     }
     // Go always prepends a line break when appending to an existing file, even
-    // an empty one (`apps/cli-go/internal/init/init.go:80-96`: the `err == nil`
+    // an empty one (`apps/cli-go/internal/init/init.go:80-96`, deleted in
+    // CLI-1970; last present at commit 7b469f5b3: the `err == nil`
     // branch of `FileContainsBytes` covers empty files too).
     yield* fs.writeFileString(gitignorePath, `${existing}\n${INIT_GITIGNORE_TEMPLATE}`);
     return;

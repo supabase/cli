@@ -4,7 +4,6 @@ import {
   type LegacyInspectQuerySpec,
 } from "../legacy-inspect-query.ts";
 
-// Verbatim from `apps/cli-go/internal/inspect/role_stats/role_stats.sql`.
 const SQL = `SELECT
   rolname as role_name,
   (
@@ -26,8 +25,7 @@ ORDER BY 1 DESC`;
 
 /**
  * `inspect db role-stats` — roles, connection counts/limits, and custom config.
- * Port of `apps/cli-go/internal/inspect/role_stats/role_stats.go`. Also the
- * routed query for the deprecated `role-configs` / `role-connections` aliases.
+ * Also the routed query for the deprecated `role-configs` / `role-connections` aliases.
  */
 export const legacyRoleStatsSpec: LegacyInspectQuerySpec = {
   name: "role-stats",

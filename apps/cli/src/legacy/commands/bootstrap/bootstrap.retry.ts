@@ -4,7 +4,7 @@ import { LegacyDebugFlag } from "../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 
 /**
- * `maxRetries` from Go's `utils.NewBackoffPolicy` (`internal/utils/retry.go:12`).
+ * `maxRetries` from the established `utils.NewBackoffPolicy`.
  * `backoff.WithMaxRetries(b, 8)` performs 8 retries -> 9 total attempts, matching
  * `Effect.retry({ schedule, times: 8 })`.
  */
@@ -34,8 +34,8 @@ export const legacyBootstrapBackoff = Schedule.exponential("3 seconds", 1.5).pip
 );
 
 /**
- * Reproduces Go's `utils.NewErrorCallback` (`internal/utils/retry.go:19-35`): after
- * each failed attempt it prints `<err>\nRetry (n/8): ` to a logger that starts as the
+ * Reproduces the established `utils.NewErrorCallback`: after each failed
+ * attempt it prints `<err>\nRetry (n/8): ` to a logger that starts as the
  * debug logger (discarded unless `--debug`) and switches to stderr once
  * `failureCount*3 > maxRetries` (i.e. from the 3rd failure on). Notify fires only for
  * attempts that will be retried, never the final exhausted one.

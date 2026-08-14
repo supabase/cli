@@ -1,7 +1,6 @@
 # `supabase db lint`
 
 Checks a database for PL/pgSQL typing errors via the `plpgsql_check` extension.
-Native TypeScript port of Go's `internal/db/lint`.
 
 ## Files Read
 
@@ -13,18 +12,17 @@ Native TypeScript port of Go's `internal/db/lint`.
 
 ## Files Written
 
-| Path                                           | Format | When                                                                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LegacyLinkedProjectCache.cache` (Go's `ensureProjectGroupsCached`, `cmd/root.go:174,212-234`) |
-| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush, Go `PersistentPostRun`)                                                                |
+| Path                                           | Format | When                                                  |
+| ---------------------------------------------- | ------ | ----------------------------------------------------- |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LegacyLinkedProjectCache.cache` |
+| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                          |
 
 No user data is written: the lint runs inside a transaction that is **always
-rolled back** (`BEGIN` … `ROLLBACK`), matching Go — including
+rolled back** (`BEGIN` … `ROLLBACK`) — including
 `CREATE EXTENSION plpgsql_check`, which is issued on the same connection inside
 the open transaction and so is rolled back too. `db lint` DOES write the
-linked-project cache when run with `--linked` (matching Go's
-`ensureProjectGroupsCached`); the default `--local` and `--db-url` paths never
-populate a project ref, so no cache write occurs there.
+linked-project cache when run with `--linked`; the default `--local` and
+`--db-url` paths never populate a project ref, so no cache write occurs there.
 
 ## API Routes
 
@@ -43,7 +41,7 @@ One connection (local / `--db-url` / linked-direct). Within one transaction:
 5. `ROLLBACK` (always — lint has no committed effects)
 
 Requires `plpgsql_check` to be installable; a bare vanilla `--db-url` without
-the extension fails at step 3 (matching Go).
+the extension fails at step 3.
 
 ## Environment Variables
 
@@ -67,18 +65,18 @@ the extension fails at step 3 (matching Go).
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Diagnostics on **stderr**: `Connecting to <local\|remote> database...`,
 `Linting schema: <s>`, and `\nNo schema errors found` (when no issues).
-The result is the Go pretty-printed 2-space JSON array on **stdout** (struct-order
+The result is a pretty-printed 2-space JSON array on **stdout** (struct-order
 keys, `omitempty` fields dropped, trailing newline). A filtered-empty result
-writes nothing to stdout (Go parity).
+writes nothing to stdout.
 
 ### `--output-format json`
 
 A standard `output.success("db lint", { results })` envelope on stdout
-(diagnostics on stderr). Additive — Go has no machine output.
+(diagnostics on stderr). Additive — there is no other machine output.
 
 ### `--output-format stream-json`
 

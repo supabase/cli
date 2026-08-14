@@ -14,8 +14,8 @@ import {
   legacyProjectHost,
 } from "./legacy-profile.ts";
 
-// Go's `LoadProfile` (`internal/utils/profile.go:94-118`), run from the root
-// `PersistentPreRunE` (`cmd/root.go:98-102`) immediately BEFORE
+// `LoadProfile`, run from the root
+// `PersistentPreRunE` immediately BEFORE
 // `ChangeWorkDir` — so a profile Go cannot load aborts before the workdir
 // check, `ValidateRequiredFlags`, `ValidateFlagGroups`, and `RunE`, with no
 // API call ever made. Raised by `legacyCliConfigLayer` on every command's
@@ -31,38 +31,38 @@ export class LegacyProfileLoadError extends Data.TaggedError("LegacyProfileLoadE
 }
 
 /**
- * Emulates Go's `LoadProfile` (`apps/cli-go/internal/utils/profile.go:94-118`)
+ * Emulates `LoadProfile`
  * for a resolved profile token, returning the profile's endpoint set
  * (`LegacyLoadedProfile`) or failing exactly where — and, for the
  * deterministic classes, byte-for-byte how — the Go binary fails. Go runs
- * this from the root `PersistentPreRunE` (`cmd/root.go:98-102`) BEFORE
+ * this from the root `PersistentPreRunE` BEFORE
  * `ChangeWorkDir`, so a load failure aborts the command before the workdir
  * check, the required-flag check, the mutex check, and any API request.
  *
  * Resolution, mirroring Go (binary-verified, PR #5974 review round 7):
  *
  * 1. A token that case-insensitively (`strings.EqualFold`) matches a built-in
- *    profile name resolves to that profile's API URL.
+ * profile name resolves to that profile's API URL.
  * 2. Anything else is a config-file path handed to viper (`SetConfigFile` +
- *    `ReadInConfig`):
- *    - viper ignores an empty path and falls into search mode, which fails
- *      with `Config File "config" Not Found in "[]"`;
- *    - a path whose extension (Go `filepath.Ext` semantics: last `.` in the
- *      final path segment, ANY position — `.yml` alone is extension `yml`)
- *      is not in viper's `SupportedExts` fails with
- *      `Unsupported Config Type "<ext>"`;
- *    - an unreadable path fails with the OS error
- *      (`open <path>: no such file or directory`, `read <path>: is a
- *      directory`, …).
- * 3. The content is parsed and decoded into Go's `Profile` struct with
- *    `UnmarshalExact` — unknown keys fail with mapstructure's
- *    `'utils.Profile' has invalid keys: <sorted keys>` block. Viper decodes
- *    with `WeaklyTypedInput`, so scalar YAML values (numbers, booleans) are
- *    stringified, not rejected (binary-verified: `api_url: 123` reaches the
- *    validator and fails the `http_url` tag, not decoding).
+ * `ReadInConfig`):
+ * - viper ignores an empty path and falls into search mode, which fails
+ * with `Config File "config" Not Found in "[]"`;
+ * - a path whose extension (Go `filepath.Ext` semantics: last `.` in the
+ * final path segment, ANY position — `.yml` alone is extension `yml`)
+ * is not in viper's `SupportedExts` fails with
+ * `Unsupported Config Type "<ext>"`;
+ * - an unreadable path fails with the OS error
+ * (`open <path>: no such file or directory`, `read <path>: is a
+ * directory`, …).
+ * 3. The content is parsed and decoded into `Profile` struct with
+ * `UnmarshalExact` — unknown keys fail with mapstructure's
+ * `'utils.Profile' has invalid keys: <sorted keys>` block. Viper decodes
+ * with `WeaklyTypedInput`, so scalar YAML values (numbers, booleans) are
+ * stringified, not rejected (binary-verified: `api_url: 123` reaches the
+ * validator and fails the `http_url` tag, not decoding).
  * 4. `validator.StructCtx` checks the struct tags in field order and fails
- *    with one `Key: 'Profile.<Field>' Error:Field validation for '<Field>'
- *    failed on the '<tag>' tag` line per failing field.
+ * with one `Key: 'Profile.<Field>' Error:Field validation for '<Field>'
+ * failed on the '<tag>' tag` line per failing field.
  *
  * Multi-line Go errors are rendered with every line padded to the longest
  * line's width (lipgloss block layout, binary-verified) — the padding is baked
@@ -76,34 +76,34 @@ export class LegacyProfileLoadError extends Data.TaggedError("LegacyProfileLoadE
  * Accepted micro-divergences (all fail-closed: both sides exit 1 with no API
  * request; only the detail text can differ):
  * - YAML parse-failure detail text comes from the JS `yaml` package, not
- *   go-yaml (the `failed to read profile: While parsing config: ` prefix
- *   matches).
+ * go-yaml (the `failed to read profile: While parsing config: ` prefix
+ * matches).
  * - Non-YAML/JSON `SupportedExts` contents (`.toml`, `.env`, `.ini`, …) are
- *   parsed as YAML rather than with their native viper codecs.
+ * parsed as YAML rather than with their native viper codecs.
  * - Array/object values on string fields render the offending value
- *   approximately (Go's `%v` formatting emulated, not guaranteed).
+ * approximately (`%v` formatting emulated, not guaranteed).
  * - The `http_url`/`hostname_rfc1123`/`uuid4` tag checks approximate
- *   go-playground/validator with WHATWG `URL` parsing and the validator's own
- *   published regexes.
+ * go-playground/validator with WHATWG `URL` parsing and the validator's own
+ * published regexes.
  */
 export interface LegacyLoadedProfile {
   readonly apiUrl: string;
   /**
-   * Go's `CurrentProfile.Name` — the canonical built-in name (EqualFold
+   * `CurrentProfile.Name` — the canonical built-in name (EqualFold
    * match) or the file's required `name:` field. Credential resolution keys
-   * the keyring account on this name (`access_token.go:43`), so the
+   * the keyring account on this name, so the
    * reconciled request must read the reconciled profile's token, not the
    * config layer's (review r3684153345).
    */
   readonly name: string;
-  /** Go's `Profile.ProjectHost` (`required`). */
+  /** `Profile.ProjectHost` (`required`). */
   readonly projectHost: string;
   /**
-   * Go's `Profile.PoolerHost` (`omitempty`): "" when absent, disabling the
+   * `Profile.PoolerHost` (`omitempty`): "" when absent, disabling the
    * linked pooler MITM domain assertion — never falls back to `supabase.com`.
    */
   readonly poolerHost: string;
-  /** Go's `Profile.DashboardURL` (`required`). */
+  /** `Profile.DashboardURL` (`required`). */
   readonly dashboardUrl: string;
 }
 
@@ -273,7 +273,7 @@ function goFilepathExt(token: string): string {
   return "";
 }
 
-/** Every mapstructure key of Go's `Profile` struct (`profile.go:17-27`). */
+/** Every mapstructure key of `Profile` struct. */
 const PROFILE_STRUCT_KEYS: ReadonlySet<string> = new Set([
   "name",
   "api_url",
@@ -296,7 +296,7 @@ interface ProfileStringField {
 }
 
 /**
- * Go's `Profile` string fields in struct order (`profile.go:17-27`) with
+ * `Profile` string fields in struct order with
  * their `validate:` tags — the order determines the order of the validator's
  * error lines. `regions` (a slice, no validate tag) is exempt from weak
  * string decoding and never validated, matching Go.
@@ -355,7 +355,7 @@ function goTypeName(value: unknown): string {
   return typeof value;
 }
 
-/** Approximates Go's `%v` for the YAML values reachable here. */
+/** Approximates `%v` for the YAML values reachable here. */
 function goValueString(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(goValueString).join(" ")}]`;
   if (typeof value === "object" && value !== null) {

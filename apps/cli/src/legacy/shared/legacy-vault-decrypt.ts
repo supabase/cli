@@ -2,35 +2,32 @@ import { Buffer } from "node:buffer";
 import { decrypt, PrivateKey } from "eciesjs";
 
 /**
- * dotenvx vault-secret decryption — a port of Go's `config.Secret.Decrypt`
- * (`apps/cli-go/pkg/config/secret.go:30-73`). Go decrypts with
- * `github.com/ecies/go/v2`: ECIES over secp256k1 (uncompressed ephemeral key,
+ * dotenvx vault-secret decryption: ECIES over secp256k1 (uncompressed ephemeral key,
  * HKDF-SHA256 with no salt/info, AES-256-GCM with a 16-byte nonce). dotenvx
  * itself encrypts with the JS `eciesjs` library, whose defaults match that wire
  * format byte-for-byte, so we decrypt with `eciesjs` here. Validated against
- * Go's test vector (`pkg/config/secret_test.go`).
+ * a known-good test vector.
  *
- * Go runs this inside `config.Load` (the `DecryptSecretHookFunc` decode hook),
- * so an `encrypted:` value that cannot be decrypted aborts the whole command
+ * An `encrypted:` value that cannot be decrypted aborts the whole command
  * with `failed to parse config: <error>` — it is never silently skipped. The
  * caller maps a non-`ok` result into that error.
  */
 
-/** Go's `ENCRYPTED_PREFIX` (`secret.go:28`). */
+/** `ENCRYPTED_PREFIX`. */
 const ENCRYPTED_PREFIX = "encrypted:";
-/** Go's `PRIVATE_KEY_PREFIX` (`secret.go:75`). */
+/** `PRIVATE_KEY_PREFIX`. */
 const PRIVATE_KEY_ENV_PREFIX = "DOTENV_PRIVATE_KEY";
-/** Standard base64 alphabet (Go's `base64.StdEncoding`), optional `=` padding. */
+/** Standard base64 alphabet (`base64.StdEncoding`), optional `=` padding. */
 const STD_BASE64_PATTERN = /^[A-Za-z0-9+/]*={0,2}$/u;
 
-/** Whether a `[db.vault]` value is a dotenvx ciphertext (Go's `ENCRYPTED_PREFIX`). */
+/** Whether a `[db.vault]` value is a dotenvx ciphertext (`ENCRYPTED_PREFIX`). */
 export const legacyIsEncryptedSecret = (value: string): boolean =>
   value.startsWith(ENCRYPTED_PREFIX);
 
 /**
- * Collects dotenvx private keys from the environment, mirroring Go's env scan
- * (`secret.go:77-85`): every `DOTENV_PRIVATE_KEY` or `DOTENV_PRIVATE_KEY_*`
- * variable, comma-split (Go's `strToArr`, empties dropped). The decrypt loop
+ * Collects dotenvx private keys from the environment, mirroring Go's env scan:
+ * every `DOTENV_PRIVATE_KEY` or `DOTENV_PRIVATE_KEY_*`
+ * variable, comma-split (`strToArr`, empties dropped). The decrypt loop
  * tries each key until one succeeds, so enumeration order only matters when more
  * than one distinct key could decrypt the same ciphertext (not a real scenario).
  */
@@ -57,14 +54,14 @@ export type LegacyDecryptedSecret =
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** Go's per-key `decrypt` (`secret.go:52-73`): hex key → base64 payload → ECIES. */
+/** Go's per-key `decrypt`: hex key → base64 payload → ECIES. */
 function decryptWithKey(keyHex: string, encryptedValue: string): LegacyDecryptedSecret {
   if (keyHex.length === 0) return { ok: false, error: "missing private key" };
   let privateKeyHex: string;
   try {
     privateKeyHex = PrivateKey.fromHex(keyHex).toHex();
   } catch {
-    // Fixed message rather than the underlying error (Go's `ecies.NewPrivateKeyFromHex`
+    // Fixed message rather than the underlying error (`ecies.NewPrivateKeyFromHex`
     // returns the generic "cannot decode hex string" too): the fallback hex decoder some
     // runtimes take for a malformed key can otherwise echo a fragment of the bad input
     // (offending character + index) into this error, which reaches the user's stderr.
@@ -72,7 +69,7 @@ function decryptWithKey(keyHex: string, encryptedValue: string): LegacyDecrypted
   }
   const encoded = encryptedValue.slice(ENCRYPTED_PREFIX.length);
   // Node's `Buffer.from(s, "base64")` silently drops invalid characters, unlike
-  // Go's `base64.StdEncoding.DecodeString`, so reject malformed input explicitly.
+  // `base64.StdEncoding.DecodeString`, so reject malformed input explicitly.
   if (!STD_BASE64_PATTERN.test(encoded) || encoded.length % 4 !== 0) {
     return { ok: false, error: "failed to base64 decode secret: invalid base64 data" };
   }
@@ -86,8 +83,8 @@ function decryptWithKey(keyHex: string, encryptedValue: string): LegacyDecrypted
 }
 
 /**
- * Decrypts a dotenvx `encrypted:` secret — a port of Go's `Secret.Decrypt`
- * (`secret.go:30-46`): with no keys, `missing private key`; otherwise try each
+ * Decrypts a dotenvx `encrypted:` secret — a port of `Secret.Decrypt`:
+ * with no keys, `missing private key`; otherwise try each
  * key, the first success wins, and on total failure return the last key's error.
  */
 export function legacyDecryptSecret(

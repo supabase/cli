@@ -16,13 +16,10 @@ function asRecord(value: unknown): RawDoc | undefined {
 }
 
 /**
- * Coerce a rule field value to a string, mirroring Go's mapstructure decoder under
- * viper's default `WeaklyTypedInput: true` (Go's `config.Load` calls
- * `v.UnmarshalExact` without disabling it — `apps/cli-go/pkg/config/config.go:579-584`):
- * a string passes through; a number/bigint becomes its decimal string; a boolean
+ * Coerce a rule field value to a string, using weakly-typed decoding: a
+ * string passes through; a number/bigint becomes its decimal string; a boolean
  * becomes `"1"`/`"0"`; a missing field is the zero value `""`. Any other type (a
- * nested table/array/datetime as a scalar field) is NOT coercible — mapstructure's
- * `decodeString` falls through to "expected type 'string'" and Go aborts — so this
+ * nested table/array/datetime as a scalar field) is NOT coercible — this
  * returns `undefined` to signal the caller to fail with `LegacyDbConfigLoadError`.
  */
 function coerceRuleField(value: unknown): string | undefined {
@@ -35,16 +32,14 @@ function coerceRuleField(value: unknown): string | undefined {
 }
 
 /**
- * Read `[experimental.inspect.rules]` from `<workdir>/supabase/config.toml`,
- * mirroring Go's `config.Load` (`apps/cli-go/pkg/config/config.go:236-256`): when
- * present and non-empty, these custom rules replace the embedded defaults.
+ * Read `[experimental.inspect.rules]` from `<workdir>/supabase/config.toml`:
+ * when present and non-empty, these custom rules replace the embedded defaults.
  *
  * Follows the `legacyReadDbToml` policy exactly — a **missing** config file yields
  * `[]` (defaults apply), but a **malformed** file is a hard error
- * (`LegacyDbConfigLoadError`). Each rule's string fields are run through Go's
- * `LoadEnvHook` `env(VAR)` expansion (`legacyExpandEnv`), resolving against the
- * shell environment first and then the project `.env` files (Go populates the
- * process env via `loadNestedEnv` before the decode hook runs).
+ * (`LegacyDbConfigLoadError`). Each rule's string fields are run through
+ * `env(VAR)` expansion (`legacyExpandEnv`), resolving against the
+ * shell environment first and then the project `.env` files.
  *
  * `fs`/`path` are passed in so the caller controls the platform layer; the read is
  * colocated here for now and hoisted to `legacy/shared/` if a second command reads
@@ -86,9 +81,8 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
   const inspect = asRecord(asRecord(doc?.["experimental"])?.["inspect"]);
   const rawRules = inspect?.["rules"];
 
-  // Normalize `rules` into the list of entries to decode, mirroring Go's
-  // `decodeSlice` under viper's `WeaklyTypedInput: true` (which is NOT disabled in
-  // `config.Load`, `apps/cli-go/pkg/config/config.go:579-584`):
+  // Normalize `rules` into the list of entries to decode, using weakly-typed
+  // decoding:
   //   - absent            → no custom rules (defaults apply)
   //   - array-of-tables   → decode each element as a rule
   //   - a single table    → weak-typing wraps it into a 1-element slice → one rule
@@ -118,9 +112,9 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
   const rules: Array<LegacyInspectRule> = [];
   for (let index = 0; index < entries.length; index++) {
     const record = asRecord(entries[index]);
-    // A non-table entry (e.g. `rules = ["foo"]` or `rules = "foo"`) is rejected by Go:
-    // mapstructure routes it into `decodeStruct`, whose default branch returns
-    // "expected a map or struct", aborting `config.Load`. Match that, not silent skip.
+    // A non-table entry (e.g. `rules = ["foo"]` or `rules = "foo"`) is rejected:
+    // it fails to load with "expected a map or struct" rather than being
+    // silently skipped.
     if (record === undefined) {
       return yield* Effect.fail(
         new LegacyDbConfigLoadError({
@@ -128,10 +122,8 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
         }),
       );
     }
-    // Go decodes with `UnmarshalExact` (`config.go:579`), which sets mapstructure's
-    // `ErrorUnused` per-struct: an unknown/misspelled key in a rule table (e.g.
-    // `fails = "bad"`) aborts the whole config load. The `rule` struct has no
-    // `,remain` field, so there is no escape hatch.
+    // An unknown/misspelled key in a rule table (e.g.
+    // `fails = "bad"`) aborts the whole config load — there is no escape hatch.
     const unknownKeys = Object.keys(record).filter(
       (key) => !(RULE_FIELDS as ReadonlyArray<string>).includes(key),
     );
@@ -145,7 +137,7 @@ export const legacyReadInspectRules = Effect.fnUntraced(function* (
     const fields: Record<string, string> = {};
     for (const field of RULE_FIELDS) {
       const coerced = coerceRuleField(record[field]);
-      // A non-coercible field type (nested table/array/datetime) aborts in Go too.
+      // A non-coercible field type (nested table/array/datetime) aborts too.
       if (coerced === undefined) {
         return yield* Effect.fail(
           new LegacyDbConfigLoadError({

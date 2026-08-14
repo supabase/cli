@@ -25,7 +25,7 @@ import {
 } from "../vanity-subdomains.errors.ts";
 import type { LegacyVanitySubdomainsActivateFlags } from "./activate.command.ts";
 
-/** Mirror of Go's `api.ActivateVanitySubdomainResponse` (`types.gen.go`). */
+/** Type shape for `api.ActivateVanitySubdomainResponse` (`types.gen.go`). */
 const LEGACY_GO_ACTIVATE_VANITY_RESPONSE = legacyGoStruct([["custom_domain", legacyGoString]]);
 
 const mapActivateError = mapLegacyHttpError({

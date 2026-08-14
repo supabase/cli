@@ -27,10 +27,6 @@ import { legacyLink } from "./link.handler.ts";
 import { legacyLinkHandler } from "./link.command.ts";
 import type { LegacyLinkFlags } from "./link.command.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const HEALTHY_PROJECT = {
   id: LEGACY_VALID_REF,
   ref: LEGACY_VALID_REF,

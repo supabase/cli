@@ -296,7 +296,6 @@ describe("legacy storage mv", () => {
       expect(JSON.stringify(exit)).toContain(
         "--project-ref only applies when targeting the linked project; use it with --linked (not --local)",
       );
-      // The guard fires before any network call or cache write.
       expect(requests).toHaveLength(0);
       expect(linkedCache.cached).toBe(false);
     });

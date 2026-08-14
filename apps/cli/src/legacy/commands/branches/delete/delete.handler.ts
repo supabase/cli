@@ -50,7 +50,7 @@ export const legacyBranchesDelete = Effect.fn("legacy.branches.delete")(function
     );
     yield* deleting?.clear() ?? Effect.void;
 
-    // Go's `delete.go:28` writes `"Deleted preview branch: <ref>\n"` to STDERR.
+    // Established behavior: writes `"Deleted preview branch: <ref>\n"` to STDERR.
     if (output.format === "json" || output.format === "stream-json") {
       yield* output.success("Deleted preview branch", { project_ref: branchRef });
       return;

@@ -39,12 +39,11 @@ interface LegacyLoadedStorageConfig {
 }
 
 /**
- * Load `supabase/config.toml`, mirroring Go's always-loaded `utils.Config`
- * (DQ-4): a parse failure aborts (`LegacyStorageConfigError`); a missing file
- * falls back to the embedded defaults (Go's package-global config, initialized
- * to defaults, with `config.Load` a no-op on a missing file). When a
- * `[remotes.<name>]` block matches the linked ref, `appliedRemote` carries its
- * name so the caller can print Go's `Loading config override:` line.
+ * Load `supabase/config.toml`: a parse failure aborts
+ * (`LegacyStorageConfigError`); a missing file falls back to the embedded
+ * defaults. When a `[remotes.<name>]` block matches the linked ref,
+ * `appliedRemote` carries its name so the caller can print the
+ * `Loading config override:` line.
  */
 export const legacyLoadStorageConfig = Effect.fnUntraced(function* (
   workdir: string,

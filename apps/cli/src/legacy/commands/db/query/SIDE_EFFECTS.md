@@ -45,7 +45,7 @@ the result as a table or JSON.
 
 ## Output
 
-The query payload goes to **stdout** in every `--output-format` mode (Go has no
+The query payload goes to **stdout** in every `--output-format` mode (there is no
 `--output-format` for `db query`; there is no machine envelope around the
 payload). Diagnostics (`Connecting to {local|remote} database...`) go to
 **stderr**. DDL/DML with no result columns prints the command tag.
@@ -53,7 +53,7 @@ payload). Diagnostics (`Connecting to {local|remote} database...`) go to
 - **table** (default for humans): `olekukonko/tablewriter` v1 box layout, NULL for nil.
 - **json**: a plain rows array for humans, or — in agent mode — the untrusted-data
   envelope `{advisory?, boundary, rows, warning}` with a random 16-byte hex
-  boundary (`Random`), HTML-escaped exactly like Go's `json.Encoder`, map keys
+  boundary (`Random`), HTML-escaped, map keys
   sorted. Agent mode additionally runs a best-effort RLS advisory check (local
   path only).
 
@@ -64,22 +64,22 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
 
 ## Notes / Divergences
 
-- **`-o` / `--output`.** Go registers a command-local `--output`/`-o`
+- **`-o` / `--output`.** The old Go CLI registered a command-local `--output`/`-o`
   (`json|table|csv`) that shadows the global flag. The Effect CLI extracts global
   flags from the whole token stream before the leaf parse and builds one tree-wide
   registry, so a second command-scoped `output` global is impossible
   (`Parser.createFlagRegistry` throws on duplicate names). Instead the global
   `LegacyOutputFlag` choice is the UNION of every command's `--output` values
   (`env|pretty|json|toml|yaml|table|csv`), and the command wrapper enforces this
-  command's own Go enum (`json|table|csv`, declared via `outputFormats` in
+  command's own enum (`json|table|csv`, declared via `outputFormats` in
   `query.command.ts`):
   - `-o json` selects JSON, `-o table` an ASCII table, `-o csv` CSV; an explicit
     value always wins. With no `-o`, the default is JSON for agents and a table for
-    humans (`cmd/db.go:316-325`).
+    humans.
   - Values outside the `json|table|csv` enum (`pretty|yaml|toml|env`) are rejected
-    before the handler runs with Go's pflag message — `invalid argument "yaml" for
+    before the handler runs with the fixed diagnostic text — `invalid argument "yaml" for
 "-o, --output" flag: must be one of [ json | table | csv ]` — and exit 1,
-    matching Go's per-command enum validation. See `legacy-go-output-flag.ts`.
+    matching the old CLI's per-command enum validation. See `legacy-go-output-flag.ts`.
 - **Local DDL command tags** use the raw `commandComplete` protocol tag (so
   `CREATE TABLE` etc. survive node-postgres' first-word-only parse of the tag).
 - **`--project-ref`** (TS-only, no Go equivalent on any user-facing `db`
@@ -88,13 +88,12 @@ from the environment. Agent mode defaults the format to JSON (table for humans).
   `.temp/project-ref`). It never implies `--linked`: passing it without
   `--linked` (i.e. targeting local or `--db-url`) is a hard error rather than a
   silently discarded flag (deliberately stricter than `SUPABASE_PROJECT_ID`,
-  which Go's equivalent env var simply leaves unused on a non-linked target).
-- **Linked-project cache (`PersistentPostRun` parity).** On the `--linked` path,
-  after the query runs — whether it succeeds or fails — the handler mirrors Go's
-  `ensureProjectGroupsCached` (`apps/cli-go/cmd/root.go:176,214-234`): it issues
+  which simply goes unused on a non-linked target).
+- **Linked-project cache.** On the `--linked` path,
+  after the query runs — whether it succeeds or fails — the handler issues
   `GET /v1/projects/{ref}` and writes `supabase/.temp/linked-project.json`. The
   write is skipped when the file already exists (`supabase link` is authoritative),
   the access token is missing, or the GET is non-200 — so an auth-failing query
   still fires the GET but writes nothing. `--local` / `--db-url` never resolve a
-  project ref and so never trigger this request or write (Go gates on
-  `flags.ProjectRef != ""`). Shared with `backups` via `LegacyLinkedProjectCache`.
+  project ref and so never trigger this request or write. Shared with `backups`
+  via `LegacyLinkedProjectCache`.

@@ -74,7 +74,7 @@ export const legacyGateMapError =
     });
 
 /**
- * Ports Go's `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
+ * Ports `plan_gate.go:SuggestUpgradeOnError`. Never fails the caller.
  *
  * The fallback bypasses the typed API client: its strict response schemas
  * reject the cli-e2e replay fixtures' placeholder refs (same workaround as
@@ -94,7 +94,7 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly response?: HttpClientResponse.HttpClientResponse;
   /**
    * Overrides the API base URL of the fallback project + entitlement GETs.
-   * Go's `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
+   * `SuggestUpgradeOnError` calls `GetSupabase()`, which targets the
    * process-wide `CurrentProfile` — commands that reconcile a pflag-effective
    * profile differing from the config layer's (sso add/update, PR #5974
    * round 7) pass that profile's URL so the gate requests hit the same host
@@ -103,8 +103,8 @@ export const legacySuggestUpgrade = Effect.fnUntraced(function* (opts: {
   readonly apiUrl?: string;
   /**
    * Overrides the bearer token of the fallback GETs, complementing `apiUrl`:
-   * Go resolves credentials for the process-wide reconciled `CurrentProfile`
-   * (`access_token.go:43`), so callers that pass a reconciled `apiUrl` must
+   * Go resolves credentials for the process-wide reconciled `CurrentProfile`,
+   * so callers that pass a reconciled `apiUrl` must
    * pass the reconciled profile's token too — otherwise the stale profile's
    * bearer token would be sent to the reconciled host (review r3684524241).
    * `Some` uses that token, `None` sends unauthenticated (the reconciled

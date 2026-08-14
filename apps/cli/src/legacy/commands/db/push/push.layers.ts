@@ -21,7 +21,7 @@ import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-s
  * Runtime layer for `supabase db push`. Same shape as `db lint`: it spans local
  * (`--local` / `--db-url`) and linked DB access, so it composes the Postgres
  * connection, the db-config resolver, project-ref resolution, and the
- * linked-project cache (Go's PersistentPostRun `ensureProjectGroupsCached`).
+ * linked-project cache.
  *
  * Like `db lint`, it deliberately uses the **lazy** `legacyPlatformApiFactoryLayer`
  * (not the eager management-API runtime) so the auth-free `--local` path never
@@ -81,9 +81,9 @@ export const legacyDbPushRuntimeLayer = Layer.mergeAll(
   linkedProjectCache,
   legacyIdentityStitchLayer,
   legacyTelemetryStateLayer,
-  // `legacyPromptYesNo`'s non-TTY branch reads the piped answer via `Stdin` (Go's
-  // `console.ReadLine`); without it a CI/piped `db push` that reaches a confirmation
-  // prompt fails with a missing-service defect instead of honoring `y`/`n` or the default.
+  // `legacyPromptYesNo`'s non-TTY branch reads the piped answer via `Stdin`;
+  // without it a CI/piped `db push` that reaches a confirmation prompt fails
+  // with a missing-service defect instead of honoring `y`/`n` or the default.
   stdinLayer,
   commandRuntimeLayer(["db", "push"]),
 );

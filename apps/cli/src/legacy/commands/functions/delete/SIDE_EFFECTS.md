@@ -53,7 +53,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints a success message after the function is deleted.
 

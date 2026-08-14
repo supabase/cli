@@ -33,7 +33,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints a list of local branches to stdout.
 
@@ -47,5 +47,5 @@ Not applicable.
 
 ## Notes
 
-- Deprecated in the Go CLI: use `branches list` instead.
+- Deprecated: use `branches list` instead.
 - This is a local-only operation listing branches in `<workdir>/supabase/.branches/`.

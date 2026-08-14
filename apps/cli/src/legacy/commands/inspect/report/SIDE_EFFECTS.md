@@ -2,7 +2,7 @@
 
 Runs every inspect query against the target Postgres database, writes one CSV per
 query into `<output-dir>/<YYYY-MM-DD>/`, then prints a Glamour "rules" summary table
-validating those CSVs. Native TypeScript port of `apps/cli-go/internal/inspect/report.go`.
+validating those CSVs.
 
 ## Files Read
 
@@ -15,7 +15,7 @@ validating those CSVs. Native TypeScript port of `apps/cli-go/internal/inspect/r
 | `~/.supabase/access-token`                     | plain text | `--linked` path, when `SUPABASE_ACCESS_TOKEN` unset and keyring unavailable |
 | `<output-dir>/<YYYY-MM-DD>/<name>.csv` ×14     | CSV        | read back in-memory for rule evaluation                                     |
 
-`config.toml` policy mirrors Go: a **missing** file is fine (defaults apply); a
+A **missing** `config.toml` is fine (defaults apply); a
 **malformed** file aborts the command.
 
 ## Files Written
@@ -27,34 +27,33 @@ validating those CSVs. Native TypeScript port of `apps/cli-go/internal/inspect/r
 | `~/.supabase/telemetry.json`                     | —    | always (telemetry flush)                                        |
 | `~/.supabase/<workdir-hash>/linked-project.json` | —    | `--linked` path (linked-project cache)                          |
 
-The 14 CSV basenames (underscored, matching Go's SQL filenames — **not** the
+The 14 CSV basenames (underscored, matching the SQL filenames — **not** the
 `inspect db` command names): `bloat`, `blocking`, `calls`, `db_stats`,
 `index_stats`, `locks`, `long_running_queries`, `outliers`, `replication_slots`,
 `role_stats`, `table_stats`, `traffic_profile`, `unused_indexes`, `vacuum_stats`.
 
 The date folder is **local-time** `YYYY-MM-DD`. A relative `--output-dir` resolves
-against the process CWD (`utils.CurrentDirAbs`), not `--workdir`; an absolute path
-is used as-is.
+against the process CWD, not `--workdir`; an absolute path is used as-is.
 
 Re-running on the same day reuses the existing dated folder (mkdir is recursive /
-idempotent) and **overwrites** the previous run's CSVs silently — no `--force`,
-matching Go. If a `COPY` fails partway through, the CSVs from queries that already
+idempotent) and **overwrites** the previous run's CSVs silently — no `--force`.
+If a `COPY` fails partway through, the CSVs from queries that already
 completed remain on disk (both sides write each file before running the next query),
 the command aborts with exit code 1, and the rules summary is not printed.
 
-**Divergence on the query that was in flight when `COPY` failed:** Go's
-`copyToCSV` (`apps/cli-go/internal/inspect/report.go:64-77`) opens the output file
-with `O_TRUNC` _before_ running the query, then streams `COPY ... TO STDOUT` directly
-into it — so a failing/erroring `COPY` still leaves that query's `<name>.csv` on disk,
+**Divergence on the query that was in flight when `COPY` failed:** the old Go
+CLI's `copyToCSV` opened the output file
+with `O_TRUNC` _before_ running the query, then streamed `COPY ... TO STDOUT` directly
+into it — so a failing/erroring `COPY` still left that query's `<name>.csv` on disk,
 empty or partially written. TS buffers the `COPY` result in memory
 (`session.copyToCsv`) and only calls `fs.writeFile` after it succeeds
 (`report.handler.ts`) — so on a fresh run, TS leaves **no file at all** for the query
-that failed, where Go leaves an empty (or partial) one. On a same-day **re-run**, the
-difference is the opposite way round: Go's `O_TRUNC` destroys that query's previous
-CSV (leaving it empty), while TS never touches the file at all, so the **previous
-run's stale CSV is left in place** — a user re-reading that file gets old data with no
-indication it wasn't refreshed this run, where Go at least makes the failure visible
-as an empty file.
+that failed, where the old CLI left an empty (or partial) one. On a same-day
+**re-run**, the difference is the opposite way round: the old CLI's `O_TRUNC`
+destroyed that query's previous CSV (leaving it empty), while TS never touches
+the file at all, so the **previous run's stale CSV is left in place** — a user
+re-reading that file gets old data with no indication it wasn't refreshed this
+run, where the old CLI at least made the failure visible as an empty file.
 
 ## API Routes
 
@@ -88,11 +87,11 @@ resolve the connection (via `LegacyDbConfigResolver`).
 | `1`  | `--project-ref` set with a resolved target other than linked (see Notes)                     |
 
 A **per-rule** csvq evaluation error does **not** fail the command — it becomes the
-rule's STATUS cell, matching Go.
+rule's STATUS cell.
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 stderr progress, in order:
 
@@ -103,18 +102,18 @@ Reports saved to <output-dir>/<date>    (path bolded when stdout is a TTY)
 Loading default rules...                (only when no custom config.toml rules)
 ```
 
-stdout: the Glamour `RULE | STATUS | MATCHES` summary table (byte-exact with Go's
+stdout: the Glamour `RULE | STATUS | MATCHES` summary table (byte-exact using
 `utils.RenderTable`, `AsciiStyle`, `WordWrap(-1)`).
 
 When a rule's csvq query cannot be evaluated (unsupported grammar, unknown table,
 or unknown column — e.g. a typo in a custom `config.toml` rule), the **error
 message is shown verbatim as that rule's STATUS cell** and the command continues;
-it does not fail. This matches Go, where csvq's own error string becomes the cell.
+it does not fail — csvq's own error string becomes the cell.
 When a rule's match list is longer than 20 characters, the MATCHES cell is
 summarized as `<n> matches`, where `<n>` is derived from the comma-separated match
 count.
 
-### `--output-format json` / `stream-json` (TS-extra; Go has no machine output)
+### `--output-format json` / `stream-json` (additive; there is no other machine output)
 
 The CSVs are still written. Progress lines are suppressed and no table is printed;
 instead a structured result is emitted:

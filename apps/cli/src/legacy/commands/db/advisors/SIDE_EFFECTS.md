@@ -1,8 +1,8 @@
 # `supabase db advisors`
 
-Checks a database for security and performance issues. Native TypeScript port of
-Go's `internal/db/advisors`. Two backends: `--local` / `--db-url` query the
-database directly; `--linked` fetches from the Management API.
+Checks a database for security and performance issues. Two backends: `--local`
+/ `--db-url` query the database directly; `--linked` fetches from the
+Management API.
 
 ## Files Read
 
@@ -16,7 +16,7 @@ database directly; `--linked` fetches from the Management API.
 
 | Path                                           | Format | When                                                  |
 | ---------------------------------------------- | ------ | ----------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush, Go `PersistentPostRun`)  |
+| `~/.supabase/telemetry.json`                   | JSON   | always (PostHog state flush)                          |
 | `<workdir>/supabase/.temp/linked-project.json` | JSON   | `--linked` only, via `LegacyLinkedProjectCache.cache` |
 
 The local lint query runs inside a transaction that is **always rolled back**.
@@ -29,8 +29,8 @@ The local lint query runs inside a transaction that is **always rolled back**.
 | GET    | `/v1/projects/{ref}/advisors/performance` | Bearer | —       | `{ lints: Lint[] }`    |
 
 Issued via **raw HTTP** (not the typed client) with a tolerant parse, so advisor
-`name` / `metadata.type` values the API can add do not fail decoding — matching
-Go's permissive `type X string` structs. `--type` selects which endpoints run:
+`name` / `metadata.type` values the API can add do not fail decoding. `--type`
+selects which endpoints run:
 `security` → security only, `performance` → performance only, `all` → both.
 
 ## Database (`--local` / `--db-url`)
@@ -49,7 +49,7 @@ One connection. Within one transaction: `BEGIN` → `set local search_path = ''`
 | `PGHOST` / `PGPORT` / … | connection overrides (local / `--db-url`)                            | no                                        |
 
 The API base URL is derived from `SUPABASE_PROFILE`; `SUPABASE_API_URL` is **not**
-honored (Go parity — see `legacy-cli-config.layer.unit.test.ts`).
+honored (see `legacy-cli-config.layer.unit.test.ts`).
 
 ## Exit Codes
 
@@ -65,17 +65,17 @@ honored (Go parity — see `legacy-cli-config.layer.unit.test.ts`).
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Diagnostics on **stderr**: `Connecting to <local\|remote> database...` (local) and
-`No issues found` (when no lints). The result is the Go pretty-printed 2-space
+`No issues found` (when no lints). The result is a pretty-printed 2-space
 JSON array on **stdout** (struct-order keys, `metadata` omitted when absent,
 trailing newline).
 
 ### `--output-format json`
 
 A standard `output.success("db advisors", { results })` envelope on stdout
-(diagnostics on stderr). Additive — Go has no machine output.
+(diagnostics on stderr). Additive — there is no other machine output.
 
 ### `--output-format stream-json`
 

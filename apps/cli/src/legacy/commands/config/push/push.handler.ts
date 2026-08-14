@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import { findProjectRoot, loadProjectConfig } from "@supabase/config";
 import { Effect, FileSystem, Path } from "effect";
 
@@ -44,10 +45,7 @@ import {
   storageSubsetFromConfig,
   storageToUpdateBody,
 } from "./config-sync/storage.sync.ts";
-import {
-  loadAuthEmailContent,
-  projectDirsFromConfigPath,
-} from "./config-sync/config-sync.auth-email-content.ts";
+import { loadAuthEmailContent } from "./config-sync/config-sync.auth-email-content.ts";
 import { getCostMatrix } from "./push.cost-matrix.ts";
 import { legacyPresenceIn } from "./push.raw-presence.ts";
 import {
@@ -95,24 +93,24 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
   const runtimeInfo = yield* RuntimeInfo;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  // `--yes` OR `SUPABASE_YES` (Go's viper AutomaticEnv, root.go:318-320). Go's
-  // `config push` runs `flags.LoadConfig`, which imports `supabase/.env` before
-  // `PromptYesNo` reads `viper.GetBool("YES")`, so a `SUPABASE_YES` set only in
-  // `supabase/.env` auto-confirms. Resolve against the project env, not just the
-  // flag + shell env. Load it from the resolved project root (walking up, same as
-  // `loadProjectConfig` below and Go's `ChangeWorkDir` before `LoadConfig`), so a
-  // push from a subdirectory still reads the project root's `supabase/.env`.
+  // `--yes` OR `SUPABASE_YES`. `config push` imports `supabase/.env` before
+  // the confirmation prompt reads the yes flag, so a `SUPABASE_YES` set only
+  // in `supabase/.env` auto-confirms. Resolve against the project env, not
+  // just the flag + shell env. Load it from the resolved project root
+  // (walking up, same as `loadProjectConfig` below and the workdir change
+  // before config load), so a push from a subdirectory still reads the
+  // project root's `supabase/.env`.
   const projectRoot = (yield* findProjectRoot(runtimeInfo.cwd)) ?? runtimeInfo.cwd;
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, projectRoot);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-  // dotenvx private keys for decrypting `encrypted:` secrets (Go's
-  // `DecryptSecretHookFunc`), from the shell + project env — same source/precedence
-  // as `legacy-db-config.toml-read.ts` (`process.env` wins over `supabase/.env`).
+  // dotenvx private keys for decrypting `encrypted:` secrets, from the shell
+  // + project env — same source/precedence as `legacy-db-config.toml-read.ts`
+  // (`process.env` wins over `supabase/.env`).
   const dotenvPrivateKeys = legacyCollectDotenvPrivateKeys({ ...projectEnv, ...process.env });
   // Only reached by `legacyAssertDecryptableSecrets` below for an `env(VAR)` literal that
   // survives `loaded.document`'s own (`@supabase/config`) interpolation pass unresolved — i.e.
-  // when this wider env source (matching Go's `loadNestedEnv`) resolves `VAR` but
-  // `@supabase/config`'s narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
+  // when this wider env source resolves `VAR` but `@supabase/config`'s
+  // narrower one (`supabase/.env`/`.env.local` only) didn't. Practically
   // unreachable in the same narrow way the CLI-1489 comment below already documents for
   // non-secret fields; kept for parity with the shared function's other caller
   // (`legacy-db-config.toml-read.ts`, whose pre-interpolation document relies on this).
@@ -130,9 +128,9 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
     // `ProjectConfigParseError` on `env(...)` refs over numeric/bool fields,
     // which Go resolves transparently. Switch to the fixed decoder once
     // CLI-1489 lands; until then this is the conscious tradeoff for this command.
-    // Pass `ref` so a matching `[remotes.*]` block is merged over the base config
-    // before decode (Go's `loadFromFile` with `Config.ProjectId` set). A duplicate
-    // `project_id` across remotes surfaces Go's verbatim message.
+    // Pass `ref` so a matching `[remotes.*]` block is merged over the base
+    // config before decode. A duplicate `project_id` across remotes surfaces
+    // an established error message.
     const loaded = yield* loadProjectConfig(runtimeInfo.cwd, {
       projectRef: ref,
       goViperCompat: true,
@@ -154,29 +152,29 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
         message: "failed to read supabase/config.toml: file not found",
       });
     }
-    // Go prints this from inside config load, before any command output.
+    // Printed from inside config load, before any command output.
     if (loaded.appliedRemote !== undefined) {
       yield* output.raw(`Loading config override: [remotes.${loaded.appliedRemote}]\n`, "stderr");
     }
     const projectId = ref;
     const config = loaded.config;
 
-    // 1b. Assert every `config.Secret`-typed `encrypted:` value in the document
-    // (not just auth.*) can be decrypted, mirroring Go's global
-    // `DecryptSecretHookFunc`, which runs as part of `config.Load` — before
-    // `internal/config/push.Run` ever reads the cost matrix (`push.go:16` vs.
-    // `push.go:25`) or touches any service. An undecryptable secret anywhere in
-    // the document (even one `config push` never itself pushes, e.g.
-    // `studio.openai_api_key`) aborts here with Go's own `failed to parse
-    // config: <cause>` message, before any remote service is read or updated.
+    // 1b. Assert every `config.Secret`-typed `encrypted:` value in the
+    // document (not just auth.*) can be decrypted — this must run before the
+    // cost matrix is fetched or any service is touched. An undecryptable
+    // secret anywhere in the document (even one `config push` never itself
+    // pushes, e.g. `studio.openai_api_key`) aborts here with a
+    // `failed to parse config: <cause>` message, before any remote service
+    // is read or updated.
     //
-    // `loaded.document` has already had Go's deprecated `auth.external.{linkedin,slack}`
-    // blocks stripped by `@supabase/config` (`normalizeDeprecatedExternalProviders`), but
-    // Go's decrypt hook runs at decode time — before its own later `external.validate()`
-    // deletes those blocks — so an `encrypted:` secret hiding in one of them still aborts
-    // Go's load. Fold `removedDeprecatedExternalProviders` back into a synthetic
-    // `auth.external` view and scan that too, reusing the same path list rather than a
-    // second scanner.
+    // `loaded.document` has already had deprecated
+    // `auth.external.{linkedin,slack}` blocks stripped by `@supabase/config`
+    // (`normalizeDeprecatedExternalProviders`), but the decrypt hook runs at
+    // decode time — before the later `external.validate()` deletes those
+    // blocks — so an `encrypted:` secret hiding in one of them still aborts
+    // the load. Fold `removedDeprecatedExternalProviders` back into a
+    // synthetic `auth.external` view and scan that too, reusing the same
+    // path list rather than a second scanner.
     const secretError =
       legacyAssertDecryptableSecrets(loaded.document, secretEnvLookup, dotenvPrivateKeys) ??
       legacyAssertDecryptableSecrets(
@@ -190,17 +188,18 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
 
     // Optional `*pointer` sections (ssl_enforcement, image_transformation,
     // s3_protocol) are defaulted-present by @supabase/config and cannot be
-    // recovered from the decoded config, so we inspect the raw (merged) document
-    // to restore Go's nil-pointer skip semantics — including sections a matching
-    // `[remotes.*]` block introduces.
+    // recovered from the decoded config, so we inspect the raw (merged)
+    // document to restore nil-pointer skip semantics — including sections a
+    // matching `[remotes.*]` block introduces.
     const presence = legacyPresenceIn(loaded.document);
 
-    const { projectRoot, supabaseDir } = projectDirsFromConfigPath(loaded.path);
+    // Config lives at <projectRoot>/supabase/config.{toml,json}.
+    const projectRoot = dirname(dirname(loaded.path));
 
-    // Go's `email.validate` runs during `LoadConfig` before any network call.
+    // Email content validation runs during config load, before any network call.
     const authEmailContent = authEnabled(config)
       ? yield* Effect.try({
-          try: () => loadAuthEmailContent(projectRoot, supabaseDir, config.auth.email),
+          try: () => loadAuthEmailContent(projectRoot, config.auth.email),
           catch: (cause) =>
             new LegacyConfigPushLoadConfigError({
               message: cause instanceof Error ? cause.message : String(cause),
@@ -213,9 +212,9 @@ export const legacyConfigPush = Effect.fn("legacy.config.push")(function* (
 
     yield* output.raw(`Pushing config to project: ${projectId}\n`, "stderr");
 
-    // keep(name): Go push.go `keep` + console.PromptYesNo(title, true). The shared
-    // helper mirrors Go's prompt across all modes, including scanning piped stdin on
-    // a non-TTY before falling back to the default (`console.go:64-82`).
+    // keep(name): the shared confirmation-prompt helper handles all modes,
+    // including scanning piped stdin on a non-TTY before falling back to
+    // the default.
     const keep = (name: string) =>
       Effect.gen(function* () {
         const item = cost.get(name);

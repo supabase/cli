@@ -100,7 +100,8 @@ export interface LegacyPostgresStartServiceInput {
    * `<hostPath>:/etc/backup.sql:ro` bind Go's own `StartDatabase` appends
    * (`start.go:163`, via `utils.ToDockerPath` — {@link legacyToDockerPath} here). `undefined` for
    * `supabase start`, which always calls `StartDatabase` with an empty `fromBackup`
-   * (`apps/cli-go/internal/start/start.go:295`).
+   * (`apps/cli-go/internal/start/start.go:295`, deleted in CLI-1966; last present at
+   * commit a253ccba2).
    */
   readonly fromBackup?: string;
 }
@@ -249,12 +250,11 @@ function legacyPostgresExtraEnv(
  * `Docker.ContainerCreate` over the Engine API directly rather than shelling
  * out. THIS PORT SHELLS OUT to a real `docker create`, so it deliberately
  * diverges here: the pgsodium root key travels via
- * {@link LegacyStartContainerSpec.secretFiles} instead (a short-lived HOST
- * temp file, mode `0644` — world-readable, because Postgres's entrypoint drops
- * root and reads this file back as the `postgres` user, and `docker cp`'s tar
- * transfer preserves the host file's mode verbatim; see
- * `legacyCopyStartSecretFileIntoContainer`'s doc comment — `docker cp`'d
- * straight into the container at that exact path — see
+ * {@link LegacyStartContainerSpec.secretFiles} instead (an in-memory tar
+ * entry, mode `0644` — world-readable, because Postgres's entrypoint drops
+ * root and reads this file back as the `postgres` user; see
+ * `legacyCopyStartSecretFilesIntoContainer`'s doc comment — streamed via
+ * `docker cp - <id>:/` straight into the container at that exact path — see
  * {@link legacyBuildPostgresStartContainerSpec}), so it never appears in this
  * process's own `docker create` argv (CWE-214/522).
  *

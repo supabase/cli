@@ -11,10 +11,10 @@
 
 ## Files Written
 
-| Path                                           | Format | When                                                                |
-| ---------------------------------------------- | ------ | ------------------------------------------------------------------- |
-| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`)                    |
-| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves (Go `PersistentPostRun`) |
+| Path                                           | Format | When                                             |
+| ---------------------------------------------- | ------ | ------------------------------------------------ |
+| `~/.supabase/telemetry.json`                   | JSON   | always (`Effect.ensuring(telemetryState.flush)`) |
+| `<workdir>/supabase/.temp/linked-project.json` | JSON   | best-effort after `--project-ref` resolves       |
 
 ## API Routes
 
@@ -50,17 +50,17 @@
 
 ## Output
 
-### `--output-format text` / Go `--output pretty`
+### `--output-format text` / `--output pretty`
 
-Glamour-styled property/value markdown table showing the removed provider's details (Go behaviour).
+Glamour-styled property/value markdown table showing the removed provider's details.
 
 ### `--output json` / `--output yaml` / `--output toml`
 
-Response re-encoded per format, matching the Go binary byte-for-byte (CLI-1975): JSON keeps the snake_case JSON tags with alphabetised keys and Go's HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses yaml.v3's lowercased Go struct field names (`metadataxml`, explicit `null` for nil pointers); TOML uses BurntSushi's PascalCase Go struct field names (`MetadataXml`) with nil pointers omitted.
+Response re-encoded per format (CLI-1975): JSON keeps snake_case keys, alphabetised, with Go's HTML escaping (`<`/`>`/`&` as `\u003c`-style escapes — visible in `metadata_xml`); YAML uses lowercased field names (`metadataxml`, explicit `null` for nil values); TOML uses PascalCase field names (`MetadataXml`) with absent fields omitted.
 
 ### `--output env`
 
-No output (matches Go's `remove.go:39`).
+No output.
 
 ### `--output-format json` / `stream-json`
 
@@ -69,4 +69,4 @@ Single `success` event with the removed provider's details as data.
 ## Notes
 
 - Removing a provider will prevent existing SSO users from logging in.
-- The `<provider-id>` argument must be a valid UUID; UUIDs are accepted case-insensitively (matches Go's `uuid.Parse`).
+- The `<provider-id>` argument must be a valid UUID; UUIDs are accepted case-insensitively.

@@ -102,27 +102,26 @@ import {
 } from "../../../shared/legacy-migration-history.ts";
 import { legacyUpdateMigrationHistory } from "./pull.sync.ts";
 
-// pflag's `MarkDeprecated` emits `"Flag --%s has been deprecated, %s\n"` with the
-// registration message verbatim (`apps/cli-go/cmd/db.go:533`), which ends with a `.`.
+// Established output contract; ends with a `.`.
 const DEPRECATION_LINE =
   "Flag --use-pg-delta has been deprecated, use --declarative with [experimental.pgdelta] enabled = true in your config.toml instead.";
 
-/** Migration-file mode for the initial pg_dump seed (Go's `OpenFile(..., 0644)`). */
+/** Migration-file mode for the initial pg_dump seed. */
 const MIGRATION_FILE_MODE = 0o644;
 
 // `--experimental`'s structured-dump `db pull` mode (Go's `format.WriteStructuredSchemas`)
-// stays delegated to the bundled Go binary (CLI-1957) rather than retired or ported: Go's
-// formatter routes DDL through a PostgreSQL AST parser (`multigres`) with no TS equivalent.
+// stays delegated to the bundled Go binary rather than retired or ported: Go's formatter
+// routes DDL through a PostgreSQL AST parser (`multigres`) with no TS equivalent.
 // `--declarative` (native pg-delta export) covers the same per-object-files outcome via
 // catalog introspection for schema objects, though its output tree and cluster-object
-// coverage differ (see SIDE_EFFECTS.md), so this mode is on a deprecation path — the
-// same DECISION CLI-1960 makes for `db diff --use-pg-schema` (keep delegating, flag for
-// removal), NOT the same OUTPUT: Go's `db diff --use-pg-schema` prints its own experimental
-// warning from inside the delegated child (`cmd/db.go:120`), so the TS parent deliberately
-// stays silent there. Go's `db pull --experimental` prints nothing of the kind — this line
-// is a TS-fork-only, forward-looking addition with no Go counterpart (unlike `DEPRECATION_LINE`
-// below, which byte-matches pflag's `MarkDeprecated`). Printed to stderr right alongside the
-// existing `--use-pg-delta` deprecation line below.
+// coverage differ (see SIDE_EFFECTS.md), so this mode is on a deprecation path — the same
+// decision `db diff --use-pg-schema` makes (keep delegating, flag for removal), NOT the
+// same OUTPUT: Go's `db diff --use-pg-schema` prints its own experimental warning from
+// inside the delegated child, so the TS parent deliberately stays silent there. Go's `db
+// pull --experimental` prints nothing of the kind — this line is a TS-fork-only,
+// forward-looking addition with no Go counterpart (unlike `DEPRECATION_LINE` below, which
+// byte-matches pflag's `MarkDeprecated`). Printed to stderr right alongside the existing
+// `--use-pg-delta` deprecation line below.
 const EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE =
   "The --experimental structured-dump mode for `db pull` is deprecated and will be removed in a future release. Use --declarative instead to pull the remote schema as per-object files.";
 
@@ -187,19 +186,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   const debug = yield* LegacyDebugFlag;
   const cliArgs = yield* CliArgs;
 
-  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")`, root.go:318-320). Go
-  // loads the project `.env` via `loadNestedEnv` inside `ParseDatabaseConfig`
-  // (config.go:789) before `PromptYesNo`, so a `SUPABASE_YES` set only in
-  // `supabase/.env` auto-confirms the native initial-migra history repair too.
+  // `--yes` OR `SUPABASE_YES`. The project `.env` is loaded before the migration
+  // history prompt, so a `SUPABASE_YES` set only in `supabase/.env` auto-confirms
+  // the native initial-migra history repair too.
   const projectEnv = yield* legacyLoadProjectEnv(fs, path, cliConfig.workdir);
   const yes = yield* legacyResolveYesWithProjectEnv(projectEnv);
-  // Go resolves `EXPERIMENTAL` from *either* the global `--experimental` pflag or
-  // `SUPABASE_EXPERIMENTAL` (`cmd/root.go:318-320,338,345`), with the same
-  // bound-pflag-wins-over-env precedence `legacyResolveExperimentalWithProjectEnv`
-  // already implements for `db reset`/declarative generate/sync — reuse it here
-  // instead of re-deriving the gate. Resolved once up front, same as `yes` above;
-  // declarative mode ignores it below (Go checks `usePgDelta` before `EXPERIMENTAL`,
-  // `pull.go:47-50`).
+  // `EXPERIMENTAL` resolves from *either* the global `--experimental` pflag or
+  // `SUPABASE_EXPERIMENTAL`, with the same bound-pflag-wins-over-env precedence
+  // `legacyResolveExperimentalWithProjectEnv` already implements for `db
+  // reset`/declarative generate/sync — reuse it here instead of re-deriving the
+  // gate. Resolved once up front, same as `yes` above; declarative mode ignores it
+  // below.
   const experimental = yield* legacyResolveExperimentalWithProjectEnv(projectEnv);
 
   let linkedRefForCache: string | undefined;
@@ -207,18 +204,16 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
   yield* Effect.gen(function* () {
     // Make an allowlisted `supabase/.env` registry override visible to the
     // synchronous `process.env` reader in `legacyGetRegistryImageUrl` (the pg_dump
-    // seed + migra/pg-delta diff images), reverted when this scope closes. Go's
-    // `loadNestedEnv` `os.Setenv`s the project `.env` before the dump runs.
+    // seed + migra/pg-delta diff images), reverted when this scope closes.
     yield* legacyApplyProjectEnv(projectEnv);
     const name = Option.getOrElse(flags.name, () => "remote_schema");
     // `--declarative` and the deprecated `--use-pg-delta` both bind to the same
-    // `useDeclarative` variable in Go (`cmd/db.go:531-532`), so when BOTH are
-    // passed the LAST occurrence in argv wins (e.g. `--declarative
-    // --use-pg-delta=false` => migration mode). The parsed Options don't carry
-    // order, so for the both-present case we replay pflag's last-occurrence rule
-    // off the raw argv; OR-ing the two would instead diverge on conflicting
-    // values. When only one (or neither) is present, its Option value already
-    // equals its argv value, so the OR is exact.
+    // `useDeclarative` outcome, so when BOTH are passed the LAST occurrence in
+    // argv wins (e.g. `--declarative --use-pg-delta=false` => migration mode). The
+    // parsed Options don't carry order, so for the both-present case this replays
+    // the last-occurrence rule off the raw argv; OR-ing the two would instead
+    // diverge on conflicting values. When only one (or neither) is present, its
+    // Option value already equals its argv value, so the OR is exact.
     const useDeclarative =
       Option.isSome(flags.declarative) && Option.isSome(flags.usePgDelta)
         ? (legacyResolveDeclarativeFromArgs(cliArgs.args) ?? false)
@@ -227,16 +222,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     if (Option.isSome(flags.usePgDelta)) {
       yield* output.raw(`${DEPRECATION_LINE}\n`, "stderr");
     }
-    // Declarative mode never delegates (Go checks `usePgDelta` before `EXPERIMENTAL`,
-    // `pull.go:47-50`). Computed once here — reused below for both the deprecation
-    // print and the branch that actually delegates — so the two can never drift.
+    // Declarative mode never delegates. Computed once here — reused below for both
+    // the deprecation print and the branch that actually delegates — so the two
+    // can never drift.
     const delegatesExperimentalPull = !useDeclarative && experimental;
     if (delegatesExperimentalPull) {
       yield* output.raw(`${EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE}\n`, "stderr");
     }
 
-    // cobra mutex groups: `[db-url linked local]`, `[declarative diff-engine]`,
-    // `[use-pg-delta diff-engine]` (`cmd/db.go:539-541`). "set" = pflag `Changed`.
+    // Mutually exclusive flag groups: `[db-url linked local]`, `[declarative
+    // diff-engine]`, `[use-pg-delta diff-engine]`. "set" means the flag was
+    // explicitly passed.
     const targetSet: Array<string> = [];
     if (Option.isSome(flags.dbUrl)) targetSet.push("db-url");
     if (Option.isSome(flags.linked)) targetSet.push("linked");
@@ -317,14 +313,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       const projectRefResolver = yield* LegacyProjectRefResolver;
       linkedRef = yield* projectRefResolver.loadProjectRef(flags.projectRef);
       // Cache the ref the moment it's known, not after `toml`/`localInputs` below (both
-      // fallible) resolve — Go's `ensureProjectGroupsCached` (`cmd/root.go:212-233`) reads the
-      // GLOBAL `flags.ProjectRef` singleton `LoadProjectRef` sets as a side effect, and runs
-      // unconditionally after `rootCmd.ExecuteC()` regardless of whether the command itself
-      // errored (`cmd/root.go:169-175` never checks `err` before calling it) — so Go caches a
-      // resolved ref even when a LATER step (config validation, connection, the pull itself)
-      // fails. Setting `linkedRefForCache` here, right after the ref resolves, reproduces that
-      // instead of only doing so after `toml`/`localInputs`/`resolver.resolve()` all succeed
-      // (`diff.handler.ts`'s identical fix).
+      // fallible) resolve: the project cache should still be written even when a LATER step
+      // (config validation, connection, the pull itself) fails, so this is set right after
+      // the ref resolves rather than only after `toml`/`localInputs`/`resolver.resolve()` all
+      // succeed (`diff.handler.ts`'s identical fix).
       linkedRefForCache = linkedRef;
     }
     const toml = yield* legacyReadDbToml(fs, path, cliConfig.workdir, linkedRef);
@@ -339,18 +331,13 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // below, not after: `legacyBuildLocalDbContainerInputs` -> `legacyResolveLocalConfigValues`/
     // `legacyResolveDbBootstrapConfig` read/validate fields (e.g. enabled API TLS's cert/key
     // files) that `toml` above never touches (`legacy-db-config.toml-read.ts` only tracks their
-    // dotted keys for remote-override gating, it doesn't read the files). Go performs this exact
-    // validation as part of `LoadConfig`, in the root `PersistentPreRunE`, strictly before
-    // `NewDbConfigWithPassword` — `resolver.resolve()`'s own parity target, see that call's doc
-    // comment below — or `pull.Run`'s `ConnectByConfig` ever run (`internal/utils/flags/
-    // db_url.go:87-93` -> `config_path.go:11-12`). Previously this validation ran inside the
-    // declarative/migration-file branches further down, AFTER both `resolver.resolve()` (a
-    // linked target's temp-role mint over the Management API) and `connection.connect()` — so a
-    // config broken only in a field this build reads (e.g. a missing `api.tls.cert_path` file)
-    // surfaced after those network side effects instead of before them, unlike Go (review:
-    // PRRT_kwDOErm0O86XIUK1). Skipped for the delegated `--experimental` path: that spawns the
-    // real Go binary, which performs this exact validation itself in its OWN `PersistentPreRunE`
-    // — building it here too would run (and, for any WARN branch, print) it twice for the same
+    // dotted keys for remote-override gating, it doesn't read the files). This validation must
+    // run strictly before `resolver.resolve()` (a linked target's temp-role mint over the
+    // Management API) and `connection.connect()` — otherwise a config broken only in a field
+    // this build reads (e.g. a missing `api.tls.cert_path` file) would surface after those
+    // network side effects instead of before them. Skipped for the delegated `--experimental`
+    // path: that spawns the real Go binary, which performs this exact validation itself —
+    // building it here too would run (and, for any WARN branch, print) it twice for the same
     // invocation. Kept as an `Option`, not built directly into a bare value, so the two
     // non-delegate branches below (declarative and migration-file — the exact set
     // `delegatesExperimentalPull` excludes) can unwrap it without an `undefined` check; both
@@ -389,16 +376,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     if (linkedRef !== undefined) linkedRefForCache = linkedRef;
     const targetUrl = legacyToPostgresURL(resolved.conn);
     const ctx: LegacyPgDeltaContext = {
-      // `legacyResolvePgDeltaProjectId` mirrors Go's `UpdateDockerIds`, which derives
-      // `EdgeRuntimeId` from the ALREADY-sanitized `Config.ProjectId` singleton
-      // (`internal/utils/config.go:57-76`, sanitized once by `Config.Validate` at
-      // config-load time): `SUPABASE_PROJECT_ID` env override wins, then config.toml's
-      // `project_id`, then the workdir basename fallback (`pkg/config/config.go:563-570`),
-      // with the matched `[remotes.<ref>]` block's own `project_id` (`toml.projectId`,
-      // already gated on `remoteOverrideKeys` by `legacyReadDbToml`) suppressing the raw env
-      // argument on the linked path — see that helper's own doc comment (review:
-      // PRRT_kwDOErm0O86XAlIw, PRRT_kwDOErm0O86XI1w8), and `diff.handler.ts`'s identical
-      // call site.
+      // `SUPABASE_PROJECT_ID` env override wins, then config.toml's `project_id`, then
+      // the workdir basename fallback, with the matched `[remotes.<ref>]` block's own
+      // `project_id` (`toml.projectId`, already gated on `remoteOverrideKeys` by
+      // `legacyReadDbToml`) suppressing the raw env argument on the linked path — see
+      // that helper's own doc comment, and `diff.handler.ts`'s identical call site.
       projectId: legacyResolvePgDeltaProjectId(cliConfig.projectId, toml, cliConfig.workdir),
       cwd: cliConfig.workdir,
       npmVersion: Option.getOrUndefined(toml.pgDelta.npmVersion),
@@ -407,17 +389,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     };
     const formatOptions = Option.getOrElse(toml.pgDelta.formatOptions, () => "");
 
-    // Container-level pooler fallback (Go's `PoolerFallbackConfig`,
-    // `internal/db/dump/pooler_fallback.go`, wired into `diffRemoteSchema` and
-    // `pullDeclarativePgDelta`, `internal/db/pull/pull.go`). A linked pull can reach
-    // the direct host from the CLI process (so the resolver returned the direct
-    // conn) yet fail from inside the edge-runtime container on an IPv6-only Docker
-    // network. When the differ/export error classifies as an IPv6 connectivity
-    // failure, retry once through the project's IPv4 transaction pooler, reusing the
-    // same shadow source. Gated to the `--linked` path with a direct
-    // `db.<ref>.<host>` connection (Go's `PoolerFallbackEligible` +
-    // `ProjectRefFromDirectDbHost`). The error message embeds the container stderr
-    // (edge-runtime/migra errors wrap it), which is what Go classifies.
+    // Container-level pooler fallback. A linked pull can reach the direct host from
+    // the CLI process (so the resolver returned the direct conn) yet fail from inside
+    // the edge-runtime container on an IPv6-only Docker network. When the
+    // differ/export error classifies as an IPv6 connectivity failure, retry once
+    // through the project's IPv4 transaction pooler, reusing the same shadow source.
+    // Gated to the `--linked` path with a direct `db.<ref>.<host>` connection. The
+    // error message embeds the container stderr (edge-runtime/migra errors wrap it),
+    // which is what gets classified.
     const withPoolerFallback = <A, E extends { readonly message: string }, R>(
       directTarget: string,
       attempt: (targetRef: string) => Effect.Effect<A, E, R>,
@@ -434,9 +413,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               }) &&
               legacyIsIPv6ConnectivityError(error.message)
             ) {
-              // Go's `PoolerFallbackConfig` returns `ok=false` on ANY resolution
-              // error and the caller then surfaces the ORIGINAL diff error, so a
-              // resolution failure is treated as "no fallback" (re-fail original).
+              // A pooler resolution failure is treated as "no fallback" (re-fail the
+              // ORIGINAL diff error), not surfaced as its own error.
               const pooler = yield* resolver
                 .resolvePoolerFallback({
                   dbUrl: flags.dbUrl,
@@ -470,12 +448,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
     // `EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE` above for why). In machine-output
     // mode the child's stdout is captured and a structured envelope is emitted instead,
     // so scripted callers get valid JSON rather than the Go child's human output on
-    // stdout (CLI-1546: stdout is payload-only in machine mode). The child is run with a
+    // stdout (stdout is payload-only in machine mode). The child is run with a
     // non-TTY stdin (`"ignore"`) so any prompt takes its default without blocking the
     // JSON caller. The EXPERIMENTAL structured dump returns before writing a migration or
-    // touching `schema_migrations` (`pull.go:49-61`), so `remoteHistoryUpdated` is
-    // `false`; `schemaWritten` stays `null` — the child owns the write and doesn't
-    // surface the path on stdout.
+    // touching `schema_migrations`, so `remoteHistoryUpdated` is `false`; `schemaWritten`
+    // stays `null` — the child owns the write and doesn't surface the path on stdout.
     const delegatePull = (
       engine: "migra" | "pg-delta",
       opts: { readonly remoteHistoryUpdated: boolean },
@@ -499,17 +476,14 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         yield* proxy.exec(rebuildDelegateArgs(flags), { env, suppressChildTelemetry: true });
       });
 
-    // Connectivity check (Go's `ConnectByConfig` at the top of `pull.Run`).
+    // Connectivity check, run before dialing.
     yield* Effect.scoped(
       Effect.gen(function* () {
-        // Go's `ConnectByConfigStream` prints this to stderr before dialing
-        // (`internal/utils/connect.go:330-335`), local vs remote keyed off
-        // `utils.IsLocalDatabase` (mirrored by the resolver's `isLocal`). The
-        // delegated `--experimental` branch skips it: the Go child's own
-        // `ConnectByConfig` already prints the line, so the parent printing too
-        // would double it. (The parent still dials below — mirroring Go's early
-        // connectivity check — so a parent-side connect failure on the delegate
-        // path surfaces without the line; pre-existing delegate behavior.)
+        // Local vs remote keyed off the resolver's `isLocal`. The delegated
+        // `--experimental` branch skips this print: the Go child's own connectivity
+        // check already prints the line, so the parent printing too would double it.
+        // (The parent still dials below, so a parent-side connect failure on the
+        // delegate path surfaces without the line; pre-existing delegate behavior.)
         if (!delegatesExperimentalPull) {
           yield* output.raw(
             `Connecting to ${resolved.isLocal ? "local" : "remote"} database...\n`,
@@ -521,7 +495,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           dnsResolver,
         });
 
-        // Declarative export path (Go's `pullDeclarativePgDelta`).
+        // Declarative export path.
         if (useDeclarative) {
           yield* output.raw("Preparing declarative schema export using pg-delta...\n", "stderr");
           const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
@@ -551,18 +525,15 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // and the `Effect.ensuring` finalizer actually being attached, where a fiber interrupt
           // would skip `legacyRemoveShadowDatabase` and leak the shadow container.
           // `acquireUseRelease` registers the release finalizer in the same uninterruptible
-          // continuation the acquire resolves into, matching Go's `defer DockerRemove`
-          // immediately after successful creation (review: PRRT_kwDOErm0O86XEuqJ). This does
-          // NOT make removal unconditional, though — see `legacyCreateShadowDatabase`'s own doc
-          // comment (`shadow-database.ts`) for the still-present, deliberate-Go-parity leak
-          // window when `acquire` itself fails partway through (a `docker create` success
-          // followed by a `docker cp`/`docker start` failure).
+          // continuation the acquire resolves into. This does NOT make removal unconditional,
+          // though — see `legacyCreateShadowDatabase`'s own doc comment (`shadow-database.ts`)
+          // for the still-present leak window when `acquire` itself fails partway through (a
+          // `docker create` success followed by a `docker cp`/`docker start` failure).
           //
           // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT the
           // health-wait `legacyPrepareRawShadow` performs; that runs inside the `use` phase
-          // below instead, so a SIGINT can still interrupt it, matching Go's single cancellable
-          // `ctx` (see `shadow-database.ts`'s own doc comment on `legacyPrepareRawShadow` for
-          // the full rationale, review: PRRT_kwDOErm0O86XMrID).
+          // below instead, so a SIGINT can still interrupt it (see `shadow-database.ts`'s own
+          // doc comment on `legacyPrepareRawShadow` for the full rationale).
           const exported = yield* Effect.acquireUseRelease(
             legacyCreateShadowDatabase(spawner, rawShadowInput),
             (handle) =>
@@ -582,13 +553,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
-          // Go's WriteDeclarativeSchemas also points [db.migrations] schema_paths at
-          // the declarative dir, but only when pg-delta is *disabled* in config
-          // (declarative.go:260-268, gated on IsPgDeltaEnabled which reads the config
-          // value). db pull --declarative does not force-enable pg-delta
-          // (cmd/db.go:183-186), so unlike generate/sync this branch is reachable:
-          // without it, subsequent db reset/db diff keep reading supabase/migrations
-          // and ignore the files just pulled.
+          // This also points [db.migrations] schema_paths at the declarative dir, but
+          // only when pg-delta is *disabled* in config. `db pull --declarative` does
+          // not force-enable pg-delta, so unlike generate/sync this branch is
+          // reachable: without it, subsequent db reset/db diff keep reading
+          // supabase/migrations and ignore the files just pulled.
           if (!toml.pgDelta.enabled) {
             yield* legacyUpdateDeclarativeSchemaPathsConfig(
               fs,
@@ -599,10 +568,10 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
             );
           }
-          // Go prints `utils.GetDeclarativeDir()` verbatim (`pull.go:119`): the
-          // config's declarative_schema_path or the relative `supabase/database`
-          // default — never the resolved absolute directory. The json payload
-          // below keeps the absolute path for machine consumers.
+          // Prints the config's declarative_schema_path or the relative
+          // `supabase/database` default — never the resolved absolute directory
+          // (established output contract). The json payload below keeps the
+          // absolute path for machine consumers.
           yield* output.raw(
             `Declarative schema written to ${legacyBold(declarativeDirRel)}\n`,
             "stderr",
@@ -620,25 +589,24 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           return;
         }
 
-        // Go's `EXPERIMENTAL` structured-dump branch (`pull.go:49-61`) stays
-        // delegated to Go. pg_dump itself is now native (used by the initial-migra
-        // path below), but this branch also calls `format.WriteStructuredSchemas`
-        // (`cli-go/internal/migration/format/format.go:99`), which parses every
+        // The EXPERIMENTAL structured-dump branch stays delegated to Go. pg_dump
+        // itself is now native (used by the initial-migra path below), but this
+        // branch also calls Go's structured-schema formatter, which parses every
         // dumped statement with a PostgreSQL DDL AST parser (`multigres`, ~50 node
         // types) to route objects into structured files. No Postgres DDL parser
         // exists in TS yet, and `--declarative` already covers the same per-object
         // outcome via pg-delta catalog introspection, so this path is deprecated
-        // rather than ported (CLI-1957) — see the deprecation line printed above.
+        // rather than ported — see the deprecation line printed above.
         if (delegatesExperimentalPull) {
-          // Go's structured-dump path returns before writing a migration or
-          // touching schema_migrations (`pull.go:49-61`), so no history repair.
+          // The structured-dump path returns before writing a migration or touching
+          // schema_migrations, so no history repair.
           yield* delegatePull(usePgDeltaDiff ? "pg-delta" : "migra", {
             remoteHistoryUpdated: false,
           });
           return;
         }
 
-        // Migration-file path (Go's `pull.run`).
+        // Migration-file path.
         const nowMillis = yield* Clock.currentTimeMillis;
         const timestamp = legacyFormatMigrationTimestamp(nowMillis);
         const migrationPath = legacyGetMigrationPath(path, cliConfig.workdir, timestamp, name);
@@ -659,16 +627,13 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             }),
           );
         }
-        // Initial pull, migra engine (Go's `run` → `assertRemoteInSync` returns
-        // `errMissing`): seed the migration file with a pg_dump of the remote schema
-        // (`dumpRemoteSchema`, `pull.go:144-158`), then run the migra diff below as a
-        // second pass appended to the same file (`diffRemoteSchema(ctx, nil, …)`),
-        // which captures default privileges / managed schemas pg_dump can't emit.
-        // pg-delta initial pulls skip the dump (`pull.go:134` `if !usePgDeltaDiff`):
-        // they diff against an empty shadow, which already yields the full schema.
+        // Initial pull, migra engine: seed the migration file with a pg_dump of the
+        // remote schema, then run the migra diff below as a second pass appended to
+        // the same file, which captures default privileges / managed schemas pg_dump
+        // can't emit. pg-delta initial pulls skip the dump: they diff against an
+        // empty shadow, which already yields the full schema.
         const seededFromDump = sync.kind === "missing" && !usePgDeltaDiff;
-        // Tracks whether the pg_dump seed wrote any bytes, for Go's
-        // `swallowInitialInSync` (`pull.go:282-287`): an empty dump + empty diff
+        // Tracks whether the pg_dump seed wrote any bytes: an empty dump + empty diff
         // is "in sync", a non-empty dump is a valid initial migration on its own.
         let seedWroteBytes = false;
 
@@ -690,8 +655,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             toml.majorVersion,
             Option.getOrUndefined(toml.orioledbVersion),
           );
-          // Go's `migration.DumpSchema` default options: no schema filter (so the
-          // internal-schema exclude list applies) and comments stripped (`EXTRA_SED`).
+          // Default dump options: no schema filter (so the internal-schema exclude
+          // list applies) and comments stripped.
           const dumpEnvOpt: LegacyDumpOptions = {
             schema: [],
             keepComments: false,
@@ -704,14 +669,13 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               fileOpen: true,
             });
           // Stream pg_dump → migration file, (re)truncating per attempt so a pooler
-          // retry leaves only the successful attempt's bytes (Go's `resetOutput`).
+          // retry leaves only the successful attempt's bytes.
           const runSchemaDump = (target: LegacyPgConnInput) => {
-            // Reset per attempt alongside the truncate, mirroring Go's `resetOutput`
-            // (`pooler_fallback.go:98-113`) which zeroes the file before the pooler
-            // retry. Go decides in-sync from the file on disk (`hasMigrationContent`,
-            // `pull.go:277-280`), so only the final successful attempt's bytes count: a
-            // partial direct write that then IPv6-fails must not leave this flag stuck
-            // true, or an empty pooler retry would be mis-reported as a schema write.
+            // Reset per attempt alongside the truncate, zeroing the file before the
+            // pooler retry. In-sync is decided from the file on disk, so only the
+            // final successful attempt's bytes count: a partial direct write that
+            // then IPv6-fails must not leave this flag stuck true, or an empty pooler
+            // retry would be mis-reported as a schema write.
             seedWroteBytes = false;
             return fs
               .writeFile(migrationPath, new Uint8Array(0), { mode: MIGRATION_FILE_MODE })
@@ -745,11 +709,11 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                 ),
               );
           };
-          // Go's `dumpRemoteSchema` prints this once, before `RunWithPoolerFallback`.
+          // Prints this once, before the pooler-fallback retry.
           yield* output.raw("Dumping schema from remote database...\n", "stderr");
-          // Container-level IPv6 → IPv4-pooler retry (Go's `dump.RunWithPoolerFallback`),
-          // shared with `db dump`. `db pull` prints "Dumping…" once above, so it passes
-          // `Effect.void` for the retry re-print (Go prints it outside the retried closure).
+          // Container-level IPv6 → IPv4-pooler retry, shared with `db dump`. `db pull`
+          // prints "Dumping…" once above, so it passes `Effect.void` for the retry
+          // re-print.
           const dumpResult = yield* legacyRunWithPoolerFallback({
             result: yield* runSchemaDump(resolved.conn),
             connType,
@@ -782,38 +746,29 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         }
 
         // Native diff: shadow (baseline + local migrations) vs remote → migration SQL.
-        // For the initial pull (no local migrations) the schema filter is ignored,
-        // matching Go's `diffRemoteSchema(ctx, nil, …)`.
+        // For the initial pull (no local migrations) the schema filter is ignored.
         const diffSchema = sync.kind === "missing" ? [] : flags.schema;
-        // Go's `diffRemoteSchema` retries the ENTIRE `diff.DiffDatabase` call — shadow
-        // provisioning included — against the pooler config on an IPv6 failure, not
-        // just the diff step (`internal/db/pull/pull.go:176-190`): `DiffDatabase`
-        // prints "Creating shadow database..." and runs `PrepareShadowSource` before
-        // ever touching the remote/target connection (`internal/db/diff/diff.go:211-
-        // 217`), so a pooler retry re-prints the creation/diff banners and provisions
-        // + tears down a second, fresh shadow. Mirror that observable behavior by
-        // wrapping the full prepare-shadow-then-diff operation in the retried
-        // closure — each attempt gets its own shadow and its own teardown — instead
-        // of provisioning one shadow and only retrying the diff engine against it.
+        // A pooler retry against an IPv6 failure retries the ENTIRE shadow-provisioning
+        // + diff operation, not just the diff step: shadow provisioning prints "Creating
+        // shadow database..." and prepares the shadow before ever touching the
+        // remote/target connection, so a pooler retry re-prints the creation/diff
+        // banners and provisions + tears down a second, fresh shadow. This wraps the
+        // full prepare-shadow-then-diff operation in the retried closure — each
+        // attempt gets its own shadow and its own teardown — instead of provisioning
+        // one shadow and only retrying the diff engine against it.
         const runShadowDiff = (targetRef: string) =>
           Effect.gen(function* () {
-            // Go's `DiffDatabase` emits these to stderr before provisioning + diffing
-            // (`internal/db/diff/diff.go:212,223-226`); `legacyPrepareShadowSource`
-            // doesn't print its own banner, so the pull handler emits it itself to
-            // match the migration-style `db pull` output.
+            // `legacyPrepareShadowSource` doesn't print its own banner, so the pull
+            // handler emits it itself to match the migration-style `db pull` output.
             yield* output.raw("Creating shadow database...\n", "stderr");
-            // Resolved AFTER the banner, inside the retried closure — Go's
-            // `CreateShadowDatabase` → `utils.DockerStart` (where the postgres image is
-            // resolved/pulled) runs inside `PrepareShadowSource`, which is itself called
-            // after `DiffDatabase` prints "Creating shadow database..." above, and is
-            // re-run fresh on every pooler-retry attempt (see the comment above). Resolving
-            // it earlier, outside this closure (as `diff.handler.ts`'s sibling call site does
-            // NOT do — it also resolves after its own banner), would both print nothing on an
-            // image-resolution failure before the banner and skip re-resolving it on retry.
+            // Resolved AFTER the banner, inside the retried closure, and re-run fresh
+            // on every pooler-retry attempt (see the comment above). Resolving it
+            // earlier, outside this closure (as `diff.handler.ts`'s sibling call site
+            // also resolves after its own banner), would both print nothing on an
+            // image-resolution failure before the banner and skip re-resolving it on
+            // retry.
             const resolvedPullShadowImage = yield* pullLocalInputs.resolvePostgresImage;
-            // Mirror Go's `DiffDatabase` → `PrepareShadowSource(ctx, schema,
-            // utils.IsLocalDatabase(config), …)` (`internal/db/diff/diff.go:213`): a
-            // local target with declarative schema files gets a second
+            // A local target with declarative schema files gets a second
             // `contrib_regression` shadow returned as the target override.
             const shadowInput = {
               ...legacyShadowRunInputFromLocalContainerInputs(
@@ -827,10 +782,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
               usePgDelta: usePgDeltaDiff,
               // `toml.schemaPathPatterns`, NOT `pullLocalInputs.context.config.db.migrations.
               // schema_paths`: the latter is the raw `@supabase/config` field, which never
-              // applies `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` (`@supabase/config` has no
-              // viper-`AutomaticEnv` equivalent) — `toml` above (`legacyReadDbToml`) already
-              // resolves that env override the same way Go's `utils.Config.Db.Migrations.
-              // SchemaPaths` does (review: PRRT_kwDOErm0O86XDr4S).
+              // applies `SUPABASE_DB_MIGRATIONS_SCHEMA_PATHS` — `toml` above
+              // (`legacyReadDbToml`) already resolves that env override.
               schemaPaths: toml.schemaPathPatterns,
               pgDelta: toml.pgDelta,
               ctx,
@@ -842,27 +795,23 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // actually being attached, where a fiber interrupt would skip
             // `legacyRemoveShadowDatabase` and leak the shadow container. `acquireUseRelease`
             // registers the release finalizer in the same uninterruptible continuation the
-            // acquire resolves into, matching Go's `defer DockerRemove` immediately after
-            // successful creation (review: PRRT_kwDOErm0O86XDr4Y). This does NOT make removal
-            // unconditional, though — see `legacyCreateShadowDatabase`'s own doc comment
-            // (`shadow-database.ts`) for the still-present, deliberate-Go-parity leak window
-            // when `acquire` itself fails partway through (a `docker create` success followed
-            // by a `docker cp`/`docker start` failure).
+            // acquire resolves into. This does NOT make removal unconditional, though — see
+            // `legacyCreateShadowDatabase`'s own doc comment (`shadow-database.ts`) for the
+            // still-present leak window when `acquire` itself fails partway through (a
+            // `docker create` success followed by a `docker cp`/`docker start` failure).
             //
             // `acquire` here is ONLY `legacyCreateShadowDatabase` (container creation) — NOT
             // the health-wait/migrate/declarative-apply `legacyPrepareShadowSource` performs;
             // those run inside the `use` phase below instead, so a SIGINT can still interrupt
-            // them, matching Go's single cancellable `ctx` (see `legacy-shadow-source.ts`'s own
-            // doc comment on `legacyPrepareShadowSource` for the full rationale, review:
-            // PRRT_kwDOErm0O86XMrID).
+            // them (see `legacy-shadow-source.ts`'s own doc comment on
+            // `legacyPrepareShadowSource` for the full rationale).
             return yield* Effect.acquireUseRelease(
               legacyCreateShadowDatabase(spawner, shadowInput),
               (handle) =>
                 Effect.gen(function* () {
                   const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
-                  // Use the declarative target override when present (Go substitutes it
-                  // for the diff target, `diff.go:219-220`); for remote pulls it's
-                  // undefined, so this is this attempt's resolved target URL.
+                  // Use the declarative target override when present; for remote
+                  // pulls it's undefined, so this is this attempt's resolved target URL.
                   const target = shadow.targetUrlOverride ?? targetRef;
                   yield* output.raw(
                     diffSchema.length > 0
@@ -872,8 +821,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                   );
                   if (usePgDeltaDiff) {
                     // With PGDELTA_DEBUG set, capture the shadow baseline catalog so an
-                    // empty diff can be inspected later (Go's DiffDatabase,
-                    // `internal/db/diff/diff.go:234-244`); a failed export only warns.
+                    // empty diff can be inspected later; a failed export only warns.
                     const debug = legacyIsPgDeltaDebugEnabled();
                     const sourceCatalog = debug
                       ? yield* legacyExportCatalogPgDelta(ctx, {
@@ -917,14 +865,13 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
 
         const out = diffOutcome.sql;
         const diffEmpty = out.trim().length === 0;
-        // A non-initial pull with an empty diff is "in sync" and fails (Go's
-        // `diffRemoteSchema`). The initial-migra path seeded the file with a pg_dump
-        // above, so its empty second pass is swallowed (`swallowInitialInSync`,
-        // `pull.go:282-287`) and falls through to the shared tail below.
+        // A non-initial pull with an empty diff is "in sync" and fails. The
+        // initial-migra path seeded the file with a pg_dump above, so its empty second
+        // pass is swallowed and falls through to the shared tail below.
         if (diffEmpty && !seededFromDump) {
-          // Go saves a pg-delta debug bundle and embeds its path in the in-sync
-          // error when PGDELTA_DEBUG is set (`internal/db/pull/pull.go:192-201`); a
-          // bundle-save failure falls through to the plain in-sync error.
+          // A pg-delta debug bundle is saved and its path embedded in the in-sync
+          // error when PGDELTA_DEBUG is set; a bundle-save failure falls through to
+          // the plain in-sync error.
           if (diffOutcome.capture !== undefined) {
             const debugDir = yield* legacySaveEmptyPgDeltaPullDebug({
               ctx,
@@ -971,9 +918,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           // strictly increasing timestamp so execution + migration-history order stay
           // stable. The full set is collision-checked against existing migrations and
           // each file is written exclusively so a pre-existing migration is never
-          // overwritten. Mirrors Go's `WritePgDeltaMigrations`
-          // (`internal/db/diff/pgdelta_migrations.go`). Empty plans are handled by the
-          // `diffEmpty` in-sync branch above, so `planFiles` is non-empty here.
+          // overwritten. Empty plans are handled by the `diffEmpty` in-sync branch
+          // above, so `planFiles` is non-empty here.
           const planFiles = diffOutcome.files ?? [];
           const writtenUnits = yield* legacyWritePgDeltaMigrations(fs, path, {
             workdir: cliConfig.workdir,
@@ -989,8 +935,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         } else {
           if (!diffEmpty) {
             if (seededFromDump) {
-              // Append the migra diff to the dump-seeded file (Go's `diffRemoteSchema`
-              // opens the migration file `O_APPEND`, `pull.go:217`).
+              // Append the migra diff to the dump-seeded file (opened in append mode).
               yield* Effect.scoped(
                 Effect.gen(function* () {
                   const file = yield* fs.open(migrationPath, { flag: "a" }).pipe(
@@ -1026,8 +971,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             }
           }
 
-          // Go's `swallowInitialInSync` (`pull.go:282-287`): a dump that produced
-          // nothing followed by an empty diff leaves the file empty → in sync.
+          // A dump that produced nothing followed by an empty diff leaves the file
+          // empty → in sync.
           if (seededFromDump && !seedWroteBytes && diffEmpty) {
             return yield* Effect.fail(
               new LegacyDbPullInSyncError({ message: "No schema changes found" }),
@@ -1037,26 +982,22 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         }
 
         for (const written of writtenMigrations) {
-          // Go prints the workdir-relative path (`pull.go:76`): `GetMigrationPath`
-          // joins the relative `utils.MigrationsDir` and Go chdirs into the
-          // workdir. Display-only — `writtenMigrations` keeps absolute paths for
-          // file I/O and the json payload.
+          // Prints the workdir-relative path (established output contract).
+          // Display-only — `writtenMigrations` keeps absolute paths for file I/O
+          // and the json payload.
           yield* output.raw(
             `Schema written to ${legacyBold(path.relative(cliConfig.workdir, written.path))}\n`,
             "stderr",
           );
         }
 
-        // Prompt to update the remote migration history table. Go calls
-        // `PromptYesNo(ctx, "Update remote migration history table?", true)`
-        // (`internal/db/pull/pull.go:79`), which returns the default (`true`) on
-        // `--yes`, on a non-interactive stdin, or on any prompt error
-        // (`internal/utils/console.go:74-82`) — it never fails the command.
+        // Prompt to update the remote migration history table. Returns the default
+        // (`true`) on `--yes`, on a non-interactive stdin, or on any prompt error — it
+        // never fails the command.
         let remoteHistoryUpdated = false;
         const updateHistoryTitle = "Update remote migration history table?";
-        // Go's `PromptYesNo(ctx, title, true)` (`internal/db/pull/pull.go:79`): honors
-        // `--yes`, scans piped stdin on a non-TTY before falling back to the default
-        // (`console.go:64-82`), and otherwise prompts on a real TTY.
+        // Honors `--yes`, scans piped stdin on a non-TTY before falling back to the
+        // default, and otherwise prompts on a real TTY.
         const shouldUpdate = yield* legacyPromptYesNo(output, yes, updateHistoryTitle, true);
         if (shouldUpdate) {
           yield* legacyUpdateMigrationHistory(session, fs, path, writtenMigrations);
@@ -1087,7 +1028,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
       ),
     ),
     Effect.ensuring(telemetryState.flush),
-    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply below to this
+    // Scope the `SUPABASE_INTERNAL_IMAGE_REGISTRY`-from-`.env` apply above to this
     // command run: `legacyApplyProjectEnv` registers a finalizer that reverts it.
     Effect.scoped,
   );

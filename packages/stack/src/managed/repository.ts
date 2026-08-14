@@ -97,7 +97,6 @@ export const decideManagedContextRegistration = (
     },
   };
 };
-
 export interface ApplyManagedCheckoutLocationInput {
   readonly checkoutId: string;
   readonly locationId: string;
@@ -805,7 +804,6 @@ export const decideManagedIdentityTransitionAbandon = (
   if (!exact) throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
   return { outcome: "abandoned" };
 };
-
 /**
  * Everything one stack registration needs, with every identity already minted by
  * the service: the registry stores the decision, it never makes it.

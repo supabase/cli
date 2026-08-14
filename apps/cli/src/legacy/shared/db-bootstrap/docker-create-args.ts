@@ -20,7 +20,9 @@
  * mapping it emits.
  *
  * Surveyed call sites (every `container.Config{`/`network.NetworkingConfig{`
- * block across the Go source, per the task's "read every one" instruction):
+ * block across the Go source, per the task's "read every one" instruction).
+ * The `internal/start/start.go` lines below are deleted in CLI-1966; last
+ * present at commit a253ccba2:
  *   - `apps/cli-go/internal/start/start.go:350-394`   Logflare/analytics
  *   - `apps/cli-go/internal/start/start.go:396-484`   Vector
  *   - `apps/cli-go/internal/start/start.go:486-627`   Kong
@@ -109,15 +111,15 @@ interface LegacyStartExposedPortSpec {
 }
 
 /**
- * One entry a caller must `docker cp` into the container via a short-lived HOST temp file — see
+ * One entry packed into a container's in-memory secret tar archive — see
  * {@link LegacyStartContainerSpec.secretFiles}'s doc comment for the full contract. Not exported
  * on its own — callers reference it structurally through that field; nothing outside this module
  * needs to name the shape directly.
  */
 interface LegacyStartSecretFileSpec {
-  /** The fixed path INSIDE the container the caller's `docker cp` call targets. */
+  /** The exact fixed path to materialize INSIDE the container. */
   readonly containerPath: string;
-  /** The secret content to write to a HOST temp file — never emitted into argv. */
+  /** Secret content encoded only into the in-memory archive — never host disk or argv. */
   readonly content: string;
 }
 
@@ -161,22 +163,21 @@ export interface LegacyStartContainerSpec {
    * NOT consumed here: {@link legacyBuildStartContainerCreateArgs} stays
    * pure/no-I/O and never reads this field. `container-lifecycle.ts`'s
    * `legacyCreateContainer` is the sole consumer — once `docker create` returns
-   * a container id, it writes each entry's `content` to a SHORT-LIVED
-   * HOST-side temp file (mode `0644` — world-readable, so the non-root
-   * in-container user reading it (e.g. Kong, Postgres) doesn't hit `EACCES`;
-   * `docker cp`'s tar transfer preserves the host file's mode verbatim, same
-   * as a bind mount did — see `legacyCopyStartSecretFileIntoContainer`'s doc
-   * comment) and `docker cp`s it straight into the (created, not yet started)
-   * container at `containerPath`, removing the temp file immediately
-   * afterward — never a host bind mount. Generic by design — any future
+   * a container id, it builds one in-memory Bun tar archive containing every
+   * entry at its exact `containerPath` with mode `0644` (so non-root Kong/
+   * Postgres readers do not hit `EACCES`; see `container-lifecycle.ts`'s
+   * `legacyCopyStartSecretFilesIntoContainer` doc comment), then streams that
+   * archive on stdin to `docker cp - <id>:/` before `docker start`. Plaintext
+   * never touches host disk, a host bind mount, or the subprocess argv.
+   * Generic by design — any future
    * service's spec can set this, not just the three call sites that need it
    * today, and it makes no difference whether `containerName` is set: `docker
    * cp` addresses the container by the id `docker create` returns, not by
    * name, so the shadow database's own unnamed container (`db-bootstrap/
    * shadow-database.ts`) is delivered its pgsodium root key the exact same way.
    *
-   * `docker cp` streams the file's content over the same Docker CLI/Engine
-   * API connection as `docker create`/`docker start`, so — unlike the
+   * The pathless `docker cp` stream uses the same Docker CLI/Engine API
+   * connection as `docker create`/`docker start`, so — unlike the
    * bind-mount approach this replaced (supabase/cli#6022) — it works
    * identically whether `DOCKER_HOST`/Docker-context points at a local or a
    * REMOTE daemon: a bind mount's host-side path is resolved by the daemon
@@ -184,8 +185,9 @@ export interface LegacyStartContainerSpec {
    * (https://docs.docker.com/engine/storage/bind-mounts/#considerations-and-constraints),
    * so it silently broke against a remote daemon (a scenario this codebase
    * otherwise explicitly supports — see `legacy-hostname.ts`'s
-   * `legacyGetHostname`) even though the daemon itself was reachable. `docker
-   * cp` has no such requirement, matching Go's own heredoc/`Cmd`-embed
+   * `legacyGetHostname`) even though the daemon itself was reachable. With no
+   * client-side source path, the stream also works when the Docker CLI is
+   * confined behind a private filesystem namespace. This matches Go's own heredoc/`Cmd`-embed
    * delivery (the content travels inside the container-create request itself,
    * over the Engine API) for that same reason.
    */

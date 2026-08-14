@@ -1,6 +1,6 @@
 // Structural shape matches both `V1GetSslEnforcementConfigOutput.Type` and
-// `V1UpdateSslEnforcementConfigOutput.Type` — Go's `update.Run` delegates to
-// `get.PrintSSLStatus` after a successful PUT (`update.go:26`), and the two
+// `V1UpdateSslEnforcementConfigOutput.Type` — `update.Run` delegates to
+// `get.PrintSSLStatus` after a successful PUT, and the two
 // response schemas are byte-identical. Keeping the parameter type local
 // decouples this formatter from the generated API types and survives any
 // future divergence between the two schemas.
@@ -10,7 +10,7 @@ interface SslEnforcementStatus {
 }
 
 /**
- * Reproduces `PrintSSLStatus` from `apps/cli-go/internal/ssl_enforcement/get/get.go:27-34`.
+ * Reproduces `PrintSSLStatus`.
  */
 export function printSslStatus(response: SslEnforcementStatus): string {
   if (response.currentConfig.database && response.appliedSuccessfully) {

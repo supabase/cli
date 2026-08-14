@@ -6,10 +6,9 @@ export type LegacyExplicitRefKind = "local" | "linked" | "migrations" | "url" | 
 const VALID_TARGETS = new Set(["local", "linked", "migrations"]);
 
 /**
- * Classifies an explicit `--from`/`--to` ref. Mirrors Go's
- * `resolveExplicitDatabaseRef` validation (`internal/db/diff/explicit.go:40-71`):
- * `local`/`linked`/`migrations` are the named targets; anything else must be a
- * `postgres://` / `postgresql://` URL, otherwise it is unknown.
+ * Classifies an explicit `--from`/`--to` ref: `local`/`linked`/`migrations` are
+ * the named targets; anything else must be a `postgres://` / `postgresql://`
+ * URL, otherwise it is unknown.
  */
 export function legacyClassifyExplicitRef(ref: string): LegacyExplicitRefKind {
   if (VALID_TARGETS.has(ref)) return ref as "local" | "linked" | "migrations";
@@ -17,7 +16,7 @@ export function legacyClassifyExplicitRef(ref: string): LegacyExplicitRefKind {
   return "unknown";
 }
 
-/** Go's unknown-target error message (`internal/db/diff/explicit.go:44`). */
+/** Unknown-target error message; text is an established output contract. */
 export function legacyUnknownTargetMessage(ref: string): string {
   return `unknown target ${JSON.stringify(ref)}: must be one of 'local', 'linked', 'migrations', or a postgres:// URL`;
 }

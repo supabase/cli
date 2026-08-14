@@ -59,11 +59,19 @@ const KONG_FUNCTIONS_CONFIG = JSON.stringify({
     importMapPath: "",
     staticFiles: [],
     verifyJWT: false,
+    env: {
+      SHARED: "function",
+      FUNCTION_ONLY: "function",
+      FUNCTION_SECRET: "must-not-appear-in-debug-logs",
+    },
   },
 });
 const CUSTOM_FUNCTION = `Deno.serve(() => new Response("ok", {
   headers: {
     "X-Custom-Id": "abc123",
+    "X-Shared": Deno.env.get("SHARED") ?? "",
+    "X-Function-Only": Deno.env.get("FUNCTION_ONLY") ?? "",
+    "X-Global-Only": Deno.env.get("GLOBAL_ONLY") ?? "",
     "Access-Control-Expose-Headers": "X-Custom-Id",
   },
 }));`;
@@ -280,7 +288,7 @@ describe("functions serve runtime template (offline)", () => {
   );
 
   test.skipIf(!dockerAvailable)(
-    "preserves function CORS headers and exposes JWT errors through Kong",
+    "preserves function env and CORS headers and exposes JWT errors through Kong",
     { timeout: SERVE_OFFLINE_TEST_TIMEOUT_MS },
     async () => {
       const imageDeadline = resolveDeadline();
@@ -320,6 +328,12 @@ describe("functions serve runtime template (offline)", () => {
             `SUPABASE_URL=http://${kongContainer}:8000`,
             "-e",
             `SUPABASE_INTERNAL_FUNCTIONS_CONFIG=${KONG_FUNCTIONS_CONFIG}`,
+            "-e",
+            "SUPABASE_INTERNAL_DEBUG=true",
+            "-e",
+            "SHARED=shared",
+            "-e",
+            "GLOBAL_ONLY=global",
             "-e",
             "SUPABASE_INTERNAL_WALLCLOCK_LIMIT_SEC=400",
             "-e",
@@ -396,9 +410,17 @@ describe("functions serve runtime template (offline)", () => {
         });
         expect(customResponse.status).toBe(200);
         expect(customResponse.headers.get("x-custom-id")).toBe("abc123");
+        expect(customResponse.headers.get("x-shared")).toBe("function");
+        expect(customResponse.headers.get("x-function-only")).toBe("function");
+        expect(customResponse.headers.get("x-global-only")).toBe("global");
         expect(customResponse.headers.get("access-control-expose-headers")?.toLowerCase()).toBe(
           "x-custom-id",
         );
+        const runtimeLogs = containerLogs(runtimeContainer);
+        expect(runtimeLogs).toContain("Functions config:");
+        expect(runtimeLogs).toContain('"custom"');
+        expect(runtimeLogs).not.toContain('"env"');
+        expect(runtimeLogs).not.toContain("must-not-appear-in-debug-logs");
 
         const authResponse = await fetch(authUrl, {
           headers: { Origin: "http://localhost:3000" },

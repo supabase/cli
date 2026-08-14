@@ -48,7 +48,7 @@ describe("legacyParseStringSliceFlag (pflag StringSlice CSV parity)", () => {
   //
   // Columns are 1-based BYTE offsets, matching Go `encoding/csv`'s
   // `ParseError.Column`. Every vector below was verified against the real Go
-  // CLI (`apps/cli-go`, pflag v1.0.10 → encoding/csv, Go 1.26).
+  // CLI (pflag v1.0.10 → encoding/csv, Go 1.26).
 
   it("throws on an unterminated quoted field (column = byte length + 1, Go hits EOF)", () => {
     // `"tenant` — opening quote but no closing quote; 7 bytes → column 8
@@ -131,7 +131,7 @@ describe("legacyParseStringSliceFlag (pflag StringSlice CSV parity)", () => {
   // to `\n`, and parse errors report per-line byte columns with a
   // `record on line N; ` prefix when the record starts before the error line
   // (`csv.ParseError.Error()`). Every vector below was verified against the
-  // real Go CLI (`apps/cli-go`, pflag v1.0.10 → encoding/csv, Go 1.26).
+  // real Go CLI (pflag v1.0.10 → encoding/csv, Go 1.26).
 
   it("keeps only the first record when an unquoted newline ends it (pflag reads ONE record)", () => {
     expect(legacyParseStringSliceFlag(["1.2.3.4\n5.6.7.8"])).toEqual(["1.2.3.4"]);

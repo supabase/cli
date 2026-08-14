@@ -3,20 +3,19 @@ import { formatLegacyTimestamp } from "../../shared/legacy-timestamp.format.ts";
 
 // ---------------------------------------------------------------------------
 // Pure formatter — no Effect / no service dependencies, kept unit-testable.
-// Reproduces Go's `snippets/list/list.go:27-41` markdown-table + glamour pipeline.
 //
-// Go writes each cell wrapped in backticks with `strings.ReplaceAll(value, "|", "\\|")`
-// applied; glamour then decodes the `\|` escape and strips the backticks, so the
-// final ASCII bytes contain raw `|` (not `\|`). `renderGlamourTable` lays out
-// cells directly without the markdown round-trip, so we pass raw values — any
-// `|` in `name`, `visibility`, or `owner.username` appears literally in stdout,
-// byte-matching the Go binary. (Same parity rule documented in orgs.format.ts.)
+// A markdown-table + glamour pipeline wraps each cell in backticks with
+// `strings.ReplaceAll(value, "|", "\\|")` applied; glamour then decodes the
+// `\|` escape and strips the backticks, so the final ASCII bytes contain raw
+// `|` (not `\|`). `renderGlamourTable` lays out cells directly without the
+// markdown round-trip, so we pass raw values — any `|` in `name`,
+// `visibility`, or `owner.username` appears literally in stdout. (Same rule
+// documented in orgs.format.ts.)
 //
-// Note (Go parity): API-supplied strings are NOT stripped of ANSI escape
-// sequences or other terminal control bytes before rendering. Go's glamour
-// has identical pass-through behaviour. If a future security review decides
-// to sanitize, it should land at the renderer (`legacy-glamour-table.ts`),
-// not per-command.
+// Note: API-supplied strings are NOT stripped of ANSI escape sequences or
+// other terminal control bytes before rendering. If a future security review
+// decides to sanitize, it should land at the renderer
+// (`legacy-glamour-table.ts`), not per-command.
 // ---------------------------------------------------------------------------
 
 const HEADERS = [

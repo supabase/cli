@@ -7,16 +7,16 @@ import type { LegacyDbConnType } from "./legacy-db-target-flags.ts";
  * (and later `db reset` / `db dump`).
  *
  * `connType` encodes which selector flag was explicitly set by the user, derived
- * from raw argv via `resolveLegacyDbTargetFlags` (Changed-first, matching Go's
- * `ParseDatabaseConfig` at `apps/cli-go/internal/utils/flags/db_url.go:46-63`):
- *   - "db-url"  → `--db-url` was changed (read `dbUrl.value`)
- *   - "linked"  → `--linked` was changed (Management API path)
- *   - "local"   → `--local` was changed (explicit local path)
- *   - undefined → no selector was changed; resolver defaults to local
+ * from raw argv via `resolveLegacyDbTargetFlags` (Changed-first, matching
+ * `ParseDatabaseConfig`'s precedence):
+ * - "db-url" → `--db-url` was changed (read `dbUrl.value`)
+ * - "linked" → `--linked` was changed (Management API path)
+ * - "local" → `--local` was changed (explicit local path)
+ * - undefined → no selector was changed; resolver defaults to local
  *
- * `--db-url` / `--linked` / `--local` are mutually exclusive
- * (`apps/cli-go/cmd/db.go:482-485`).  `dnsResolver` carries the global
- * `--dns-resolver` value (Go's `utils.DNSResolver.Value`), used when the
+ * `--db-url` / `--linked` / `--local` are mutually exclusive.
+ * `dnsResolver` carries the global
+ * `--dns-resolver` value (`utils.DNSResolver.Value`), used when the
  * resolver opens its own remote connection (the linked pooler temp-role probe);
  * the handler passes the same value to its primary `connect`.
  */
@@ -30,10 +30,9 @@ export interface LegacyDbConfigFlags {
    */
   readonly resolveVaultSecrets?: boolean;
   /**
-   * The `--password` / `-p` flag value (Go's `viper.GetString("DB_PASSWORD")`,
-   * bound via `viper.BindPFlag` in `apps/cli-go/cmd/db.go`). When `Some`, it
+   * The `--password` / `-p` flag value. When `Some`, it
    * takes precedence over the `SUPABASE_DB_PASSWORD` env var on the linked path,
-   * matching viper's flag-over-env precedence. Commands without a `--password`
+   * matching the established flag-over-env precedence. Commands without a `--password`
    * flag (e.g. `test db`) omit it; the resolver then falls back to env only.
    */
   readonly password?: Option.Option<string>;
@@ -64,13 +63,13 @@ export interface LegacyDbConfigFlags {
    * (e.g. `gen types --project-id <ref>`) rather than the current linked
    * workdir. The ref may belong to a different project than the cwd, so the
    * resolver must NOT inherit workdir-scoped credentials or cached state:
-   *   - it ignores the ambient `SUPABASE_DB_PASSWORD` (shell / `.env*`) so it
-   *     always mints a temporary login role instead of handing pg-meta an
-   *     unrelated password, and
-   *   - on an IPv4-only network it skips the saved `.temp/pooler-url` (which
-   *     belongs to the linked workdir) and fetches the primary pooler config
-   *     for `ref` from the Management API instead of failing with the IPv6
-   *     "run supabase link" suggestion.
+   * - it ignores the ambient `SUPABASE_DB_PASSWORD` (shell / `.env*`) so it
+   * always mints a temporary login role instead of handing pg-meta an
+   * unrelated password, and
+   * - on an IPv4-only network it skips the saved `.temp/pooler-url` (which
+   * belongs to the linked workdir) and fetches the primary pooler config
+   * for `ref` from the Management API instead of failing with the IPv6
+   * "run supabase link" suggestion.
    * Absent / false for the normal `--linked` path, which is the workdir's own
    * project and may legitimately reuse those env vars and saved files.
    *

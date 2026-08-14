@@ -35,7 +35,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints key-value pairs in env format (default) or JSON.
 

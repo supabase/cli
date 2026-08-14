@@ -8,8 +8,8 @@ import {
 
 /**
  * Reading `supabase/.temp/project-ref` failed for a reason other than the file
- * being absent (which maps to `LegacyProjectNotLinkedError`). Byte-matches Go's
- * `"failed to load project ref: " + err` (`apps/cli-go/internal/unlink/unlink.go:19`).
+ * being absent (which maps to `LegacyProjectNotLinkedError`). Message format:
+ * `"failed to load project ref: " + err`.
  */
 export class LegacyUnlinkRefReadError extends Data.TaggedError("LegacyUnlinkRefReadError")<{
   readonly message: string;

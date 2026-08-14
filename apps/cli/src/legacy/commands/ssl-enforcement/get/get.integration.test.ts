@@ -19,10 +19,6 @@ import {
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import { legacySslEnforcementGet } from "./get.handler.ts";
 
-// ---------------------------------------------------------------------------
-// Fixtures
-// ---------------------------------------------------------------------------
-
 const SSL_ENFORCED: typeof V1GetSslEnforcementConfigOutput.Type = {
   currentConfig: { database: true },
   appliedSuccessfully: true,
@@ -37,10 +33,6 @@ const SSL_DESIRED_BUT_NOT_APPLIED: typeof V1GetSslEnforcementConfigOutput.Type =
   currentConfig: { database: true },
   appliedSuccessfully: false,
 };
-
-// ---------------------------------------------------------------------------
-// Setup
-// ---------------------------------------------------------------------------
 
 interface SetupOpts {
   format?: "text" | "json" | "stream-json";
@@ -77,10 +69,6 @@ function setup(opts: SetupOpts = {}) {
   });
   return { layer, out, api };
 }
-
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
 
 describe("legacy ssl-enforcement get integration", () => {
   it.live('prints "SSL is being enforced." when database=true and appliedSuccessfully=true', () => {
@@ -305,10 +293,6 @@ describe("legacy ssl-enforcement get integration", () => {
       expect(out.messages.some((m) => m.type === "fail")).toBe(true);
     }).pipe(Effect.provide(layer));
   });
-
-  // -------------------------------------------------------------------------
-  // PersistentPostRun parity — telemetry + linked-project cache scoping
-  // -------------------------------------------------------------------------
 
   it.live("flushes telemetry and writes linked-project cache on success", () => {
     const telemetry = mockLegacyTelemetryStateTracked();

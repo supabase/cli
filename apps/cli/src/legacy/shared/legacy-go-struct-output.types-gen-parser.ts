@@ -200,9 +200,7 @@ function classifyBaseType(
   return classifyBaseType(basetype.trim(), source, new Set([...seen, text]));
 }
 
-// ---------------------------------------------------------------------------
 // Comparison: LegacyGoType (runtime spec) <-> GoParsedType (parsed Go source)
-// ---------------------------------------------------------------------------
 
 export interface GoStructDriftMismatch {
   readonly path: string;

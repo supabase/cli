@@ -41,7 +41,7 @@ describe("legacyParseGoDuration", () => {
     },
   );
 
-  // Go's `unitMap` (`time/format.go:1615-1622`) has THREE microsecond spellings:
+  // `unitMap` has THREE microsecond spellings:
   // "us", "µs" (U+00B5 MICRO SIGN), and "μs" (U+03BC GREEK SMALL LETTER MU) — verified
   // directly against the Go standard library. The Greek-mu spelling was previously
   // missing here (CLI-1961 Codex review finding).
@@ -57,7 +57,7 @@ describe("legacyParseGoDuration", () => {
     expect(() => legacyParseGoDuration("-s")).toThrow('time: invalid duration "-s"');
   });
 
-  // Go's `pre`/`post` guard: a lone "." with no digits on either side is
+  // `pre`/`post` guard: a lone "." with no digits on either side is
   // still invalid, even though "." alone passes the leading `[0-9.]` check
   // (it's the first character of a valid fraction like ".5s").
   it.each([".s", ".", "-.", "+.", ".h"])('rejects a lone "." with no digits ("%s")', (input) => {
@@ -98,7 +98,7 @@ describe("legacyParseGoDuration", () => {
     expect(legacyParseGoDuration("0.999999999999999999s")).toBe(1_000_000_000);
   });
 
-  // Go's `time.Duration` is bounded by `math.MaxInt64` nanoseconds
+  // `time.Duration` is bounded by `math.MaxInt64` nanoseconds
   // (~292.47 years); `time.ParseDuration` rejects any value whose
   // accumulated nanosecond count would exceed it.
   it('rejects a duration that overflows math.MaxInt64 nanoseconds ("2562048h")', () => {
@@ -123,7 +123,7 @@ describe("legacyParseGoDuration", () => {
     expect(() => legacyParseGoDuration("9223372036854775807ns")).not.toThrow();
   });
 
-  // Go's `time.ParseDuration` accumulates into a `uint64` and only rejects `d > 1<<63`
+  // `time.ParseDuration` accumulates into a `uint64` and only rejects `d > 1<<63`
   // (NOT `1<<63-1`) during parsing — a magnitude of exactly `1<<63` (one MORE than
   // `math.MaxInt64`) survives the loop and, once negated, lands exactly on
   // `math.MinInt64`. Verified against the real `time` package (CLI-1961 Codex review
@@ -168,7 +168,7 @@ describe("legacyFormatGoDuration", () => {
   });
 
   // A sub-second remainder must still be included when minutes/hours are
-  // present, matching Go's `Duration.String()`, which computes the
+  // present, matching `Duration.String()`, which computes the
   // fractional-seconds string from the FULL nanosecond count before peeling
   // off minutes/hours — not just when seconds is the only component.
   it("includes a sub-second fraction alongside minutes", () => {

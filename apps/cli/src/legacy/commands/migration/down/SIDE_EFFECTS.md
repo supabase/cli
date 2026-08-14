@@ -38,7 +38,7 @@
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
 Prints `Resetting database to version: <version>` to stderr, then drops every
 user schema/object (the bundled `drop.sql` DO-block), upserts `[db.vault]`
@@ -73,7 +73,8 @@ Same structured result delivered as an NDJSON `result` event.
   `SUPABASE_PROJECT_ID`, which Go's equivalent env var simply leaves unused on
   a non-linked target).
 - Takes no positional arguments.
-- Skips Go's best-effort `pgcache.TryCacheMigrationsCatalog` (documented divergence).
+- Skips a best-effort migrations-catalog cache optimization present in the old
+  Go CLI (documented divergence).
 - Dotenvx-encrypted (`encrypted:`) `[db.vault]` values are decrypted during config
   load using `DOTENV_PRIVATE_KEY[_*]`; an `encrypted:` value with no working key
-  aborts the command with `failed to parse config: …`, matching Go.
+  aborts the command with `failed to parse config: …`.

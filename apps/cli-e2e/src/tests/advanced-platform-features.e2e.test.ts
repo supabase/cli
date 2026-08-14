@@ -1,6 +1,6 @@
 import { describe, expect } from "vitest";
 import { BACKUP_TIMESTAMP, PROJECT_REF, SNIPPET_ID, isRecording } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 describe("postgres-config", () => {
   describe("postgres-config:get", () => {
@@ -131,14 +131,6 @@ describe("postgres-config", () => {
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["postgres-config", "get", "--experimental", "--project-ref", PROJECT_REF], {
-      sortStdoutRows: true,
-    });
-    testParity(["postgres-config", "get", "--experimental", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
-      sortStdoutRows: true,
     });
   });
 
@@ -302,28 +294,6 @@ describe("postgres-config", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity([
-      "postgres-config",
-      "update",
-      "--experimental",
-      "--config",
-      "max_connections=200",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      [
-        "postgres-config",
-        "update",
-        "--experimental",
-        "--config",
-        "max_connections=200",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 
   describe("postgres-config:delete", () => {
@@ -447,28 +417,6 @@ describe("postgres-config", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity([
-      "postgres-config",
-      "delete",
-      "--experimental",
-      "--config",
-      "max_connections",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      [
-        "postgres-config",
-        "delete",
-        "--experimental",
-        "--config",
-        "max_connections",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 });
 
@@ -601,11 +549,6 @@ describe("vanity-subdomains", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["vanity-subdomains", "get", "--experimental", "--project-ref", PROJECT_REF]);
-    testParity(["vanity-subdomains", "get", "--experimental", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
-    });
   });
 
   describe("vanity-subdomains:check-availability", () => {
@@ -732,28 +675,6 @@ describe("vanity-subdomains", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Too Many Requests");
     });
-
-    testParity([
-      "vanity-subdomains",
-      "check-availability",
-      "--experimental",
-      "--desired-subdomain",
-      "myapp",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      [
-        "vanity-subdomains",
-        "check-availability",
-        "--experimental",
-        "--desired-subdomain",
-        "myapp",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 
   describe("vanity-subdomains:activate", () => {
@@ -868,28 +789,6 @@ describe("vanity-subdomains", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity([
-      "vanity-subdomains",
-      "activate",
-      "--experimental",
-      "--desired-subdomain",
-      "myapp",
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      [
-        "vanity-subdomains",
-        "activate",
-        "--experimental",
-        "--desired-subdomain",
-        "myapp",
-        "--project-ref",
-        PROJECT_REF,
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 
   describe("vanity-subdomains:delete", () => {
@@ -971,11 +870,6 @@ describe("vanity-subdomains", () => {
       ]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["vanity-subdomains", "delete", "--experimental", "--project-ref", PROJECT_REF]);
-    testParity(["vanity-subdomains", "delete", "--experimental", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 });
@@ -1066,11 +960,6 @@ describe("encryption", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["encryption", "get-root-key", "--project-ref", PROJECT_REF]);
-    testParity(["encryption", "get-root-key", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
-    });
   });
 
   describe("encryption:update-root-key", () => {
@@ -1132,11 +1021,6 @@ describe("encryption", () => {
       const result = await run(["encryption", "update-root-key", "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["encryption", "update-root-key", "--project-ref", PROJECT_REF]);
-    testParity(["encryption", "update-root-key", "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 });
@@ -1226,9 +1110,6 @@ describe("backups", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["backups", "list", "--project-ref", PROJECT_REF]);
-    testParity(["backups", "list", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("backups:restore", () => {
@@ -1332,19 +1213,6 @@ describe("backups", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity([
-      "backups",
-      "restore",
-      "-t",
-      String(BACKUP_TIMESTAMP),
-      "--project-ref",
-      PROJECT_REF,
-    ]);
-    testParity(
-      ["backups", "restore", "-t", String(BACKUP_TIMESTAMP), "--project-ref", PROJECT_REF],
-      { failureType: "NON_AUTH" },
-    );
   });
 });
 
@@ -1434,9 +1302,6 @@ describe("snippets", () => {
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
     });
-
-    testParity(["snippets", "list", "--project-ref", PROJECT_REF]);
-    testParity(["snippets", "list", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("snippets:download", () => {
@@ -1491,11 +1356,6 @@ describe("snippets", () => {
       const result = await run(["snippets", "download", SNIPPET_ID, "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
       expect(result.stderr).toContain("Internal Server Error");
-    });
-
-    testParity(["snippets", "download", SNIPPET_ID, "--project-ref", PROJECT_REF]);
-    testParity(["snippets", "download", SNIPPET_ID, "--project-ref", PROJECT_REF], {
-      failureType: "NON_AUTH",
     });
   });
 });

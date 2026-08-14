@@ -6,7 +6,7 @@
  * generic string templates — they do NOT bake in the command tree. Every
  * tab press, the generated script shells back out to the running
  * `supabase` binary's hidden `__complete`/`__completeNoDesc` command (see
- * `legacy/cli/legacy-complete.ts`, CLI-1965) to get live candidates. The
+ * `legacy/cli/legacy-complete.ts`) to get live candidates. The
  * only variables in the whole template are the program name (always the
  * literal `"supabase"` — cobra derives it from `Use: "supabase"` in
  * `apps/cli-go/cmd/root.go`, a compile-time constant, not `os.Argv[0]`),
@@ -16,7 +16,7 @@
  * constants.
  *
  * Transcribed directly from the cobra v1.10.2 source (verified byte-exact
- * via a scripted round-trip against Go's own `fmt.Sprintf` semantics):
+ * via a scripted round-trip against `fmt.Sprintf` semantics):
  *   - bash_completionsV2.go   (genBashComp)
  *   - zsh_completions.go      (genZshComp)
  *   - fish_completions.go     (genFishComp)
@@ -950,7 +950,7 @@ complete -k -c ${programName} -n '__${programName}_requires_order_preservation &
  * Transcribed from `genPowerShellComp` (`spf13/cobra@v1.10.2/powershell_completions.go:28-311`).
  * `GenPowerShellCompletion` (no desc) and `GenPowerShellCompletionWithDesc` both call
  * this exact function — verified there is no other divergence between the desc/no-desc
- * variants beyond the `compCmd` token. The Go source builds this template by
+ * variants beyond the `compCmd` token. cobra's source builds this template by
  * concatenating raw-string segments with a handful of interpreted (`"..."`)
  * segments so it can embed literal PowerShell backticks (Go raw strings cannot
  * contain a backtick); reproduced here as one TS template literal with those

@@ -54,6 +54,8 @@ export interface LegacyProjectCreateInput {
   readonly region: CreateInput["region"];
   readonly size: CreateInput["desired_instance_size"];
   readonly highAvailability: CreateInput["high_availability"];
+  readonly releaseChannel: CreateInput["release_channel"];
+  readonly postgresEngine: CreateInput["postgres_engine"];
   readonly templateUrl: string | undefined;
   /**
    * Standalone `projects create` emits a `--output-format` json/stream-json
@@ -69,7 +71,8 @@ function printKeyValue(key: string, value: string): string {
 }
 
 /**
- * Ports Go's `create.Run` (`apps/cli-go/internal/projects/create/create.go:16-50`):
+ * Ports Go's `create.Run` (`apps/cli-go/internal/projects/create/create.go:16-50`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3):
  * `promptMissingParams` (prompt for / echo each empty field), `POST /v1/projects`,
  * and the project echo (`Created a new project at …` plus the `-o`/pretty render).
  *
@@ -92,6 +95,8 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
   let dbPassword = input.dbPassword;
   const size = input.size;
   const highAvailability = input.highAvailability;
+  const releaseChannel = input.releaseChannel;
+  const postgresEngine = input.postgresEngine;
 
   // promptMissingParams (`create.go:58-85`): prompt for each empty value and
   // echo the resolved value to stderr in text mode.
@@ -124,6 +129,8 @@ export const legacyProjectCreateCore = Effect.fnUntraced(function* (
     ...(region !== undefined ? { region } : {}),
     ...(size !== undefined ? { desired_instance_size: size } : {}),
     ...(highAvailability !== undefined ? { high_availability: highAvailability } : {}),
+    ...(releaseChannel !== undefined ? { release_channel: releaseChannel } : {}),
+    ...(postgresEngine !== undefined ? { postgres_engine: postgresEngine } : {}),
     ...(input.templateUrl !== undefined ? { template_url: input.templateUrl } : {}),
   };
 

@@ -167,7 +167,6 @@ describe("legacy sso show integration", () => {
       if (Exit.isFailure(exit)) {
         const dump = JSON.stringify(exit.cause);
         expect(dump).toContain("LegacySsoShowEnvNotSupportedError");
-        // Go's `utils.ErrEnvNotSupported` verbatim.
         expect(dump).toContain("--output env flag is not supported");
       }
     }).pipe(Effect.provide(layer));
@@ -183,8 +182,8 @@ describe("legacy sso show integration", () => {
       });
       expect(out.stdoutText.startsWith("{")).toBe(true);
       expect(out.stdoutText).toContain(VALID_PROVIDER_ID);
-      // Go's json.Encoder escapes `<` / `>` / `&` by default (CLI-1975), so
-      // metadata_xml must carry \u003c-style escapes byte-for-byte.
+      // The JSON encoder escapes `<` / `>` / `&` by default, so metadata_xml
+      // must carry \u003c-style escapes byte-for-byte.
       expect(out.stdoutText).toContain('"metadata_xml": "\\u003c?xml version=\\"2.0\\"?\\u003e"');
       expect(out.stdoutText).not.toContain('"metadata_xml": "<?xml');
     }).pipe(Effect.provide(layer));
@@ -198,8 +197,8 @@ describe("legacy sso show integration", () => {
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      // Byte-exact Go parity (CLI-1975): lowercased Go field names, explicit
-      // nulls for nil pointers, 4-column nesting, quoted string timestamps.
+      // Established output contract: lowercased field names, explicit nulls
+      // for absent values, 4-column nesting, quoted string timestamps.
       expect(out.stdoutText).toBe(`createdat: "2023-03-28T13:50:14.464Z"
 domains:
     - createdat: null
@@ -225,8 +224,8 @@ updatedat: "2023-03-28T13:50:14.464Z"
         providerId: VALID_PROVIDER_ID,
         metadata: false,
       });
-      // Byte-exact Go parity (CLI-1975): PascalCase Go field names, nil
-      // pointers omitted, sub-tables after primitives.
+      // Established output contract: PascalCase field names, absent values
+      // omitted, sub-tables after primitives.
       expect(out.stdoutText).toBe(`CreatedAt = "2023-03-28T13:50:14.464Z"
 Id = "${VALID_PROVIDER_ID}"
 UpdatedAt = "2023-03-28T13:50:14.464Z"

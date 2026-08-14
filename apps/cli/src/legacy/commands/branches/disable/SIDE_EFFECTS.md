@@ -1,6 +1,6 @@
 # `supabase branches disable`
 
-Hidden subcommand (`Hidden: true` in Go). Operates on the entire linked project rather than a single branch.
+Hidden subcommand. Operates on the entire linked project rather than a single branch.
 
 ## Files Read
 
@@ -8,10 +8,10 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Files Written
 
-| Path                                             | Format | When                                                                     |
-| ------------------------------------------------ | ------ | ------------------------------------------------------------------------ |
-| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves — Go parity |
-| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command — Go parity              |
+| Path                                             | Format | When                                                         |
+| ------------------------------------------------ | ------ | ------------------------------------------------------------ |
+| `~/.supabase/<workdir-hash>/linked-project.json` | JSON   | always (in `Effect.ensuring`) after `--project-ref` resolves |
+| `~/.supabase/telemetry.json`                     | JSON   | always (in `Effect.ensuring`) at end of command              |
 
 ## API Routes
 
@@ -39,9 +39,9 @@ Same auth fallback chain as every Management-API legacy command. Project-ref dis
 
 ## Output
 
-### `--output-format text` (Go CLI compatible)
+### `--output-format text`
 
-`Disabled preview branching for project: <ref>` written to **stdout** (Go `fmt.Println`).
+`Disabled preview branching for project: <ref>` written to **stdout**.
 
 ### `--output-format json` / `stream-json`
 

@@ -32,7 +32,7 @@ import {
   legacyEvaluateInspectRule,
 } from "./report.rules.ts";
 
-/** Local-time `YYYY-MM-DD`, matching Go's `time.Now().Format("2006-01-02")`. */
+/** Local-time `YYYY-MM-DD`, the report's dated output folder format. */
 function legacyReportDateFolder(epochMillis: number): string {
   const date = new Date(epochMillis);
   const year = date.getFullYear();
@@ -46,8 +46,7 @@ function legacyReportDateFolder(epochMillis: number): string {
  * query into `<output-dir>/<YYYY-MM-DD>/`, then prints a Glamour "rules" summary
  * table validating those CSVs.
  *
- * 1:1 port of Go's `inspect.Report` (`apps/cli-go/internal/inspect/report.go`).
- * Telemetry is flushed on success and failure (Go's `PersistentPostRun`); the
+ * Telemetry is flushed on success and failure; the
  * command-level wrapper adds the `cli_command_executed` instrumentation and the
  * machine-format JSON error envelope.
  */
@@ -74,10 +73,10 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   const cliArgs = yield* CliArgs;
   const isText = output.format === "text";
 
-  // Reproduce cobra's MarkFlagsMutuallyExclusive("db-url","linked","local"),
-  // keyed off raw argv (cobra's `Changed`), not the parsed boolean value.
-  // `--local=false` is Changed even though its value is false; value-based
-  // detection would miss it and route to linked incorrectly.
+  // Mutual exclusivity is keyed off raw argv (which flags were explicitly
+  // passed), not the parsed boolean value. `--local=false` was explicitly
+  // passed even though its value is false; value-based detection would miss
+  // it and route to linked incorrectly.
   const target = resolveLegacyDbTargetFlags(cliArgs.args);
   if (target.setFlags.length > 1) {
     return yield* Effect.fail(
@@ -87,14 +86,13 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
     );
   }
 
-  // Read + validate the custom `[experimental.inspect.rules]` BEFORE any DB work.
-  // Go loads and validates the whole config in `PersistentPreRunE` (via
-  // `flags.ParseDatabaseConfig` → `LoadConfig`, `cmd/root.go:118`), so a malformed
-  // `inspect.rules` config aborts before connecting or writing any CSV files. They
-  // are applied later (in `printSummary`), but validated here for parity.
+  // Read + validate the custom `[experimental.inspect.rules]` BEFORE any DB work,
+  // so a malformed `inspect.rules` config aborts before connecting or writing any
+  // CSV files. They are applied later (in the summary rendering below), but
+  // validated here up front.
   const configRules = yield* legacyReadInspectRules(fs, path, cliConfig.workdir);
 
-  // Go's `--linked` defaults to true, so absence of the others resolves to linked.
+  // `--linked` is the default, so absence of the others resolves to linked.
   const connType = target.connType ?? "linked";
 
   // `--project-ref` never implies `--linked` and must not be silently
@@ -117,14 +115,13 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
   });
 
   // `outDir = <output-dir>/<date>`, resolved against the process CWD when relative
-  // (Go's `utils.CurrentDirAbs`, set from `os.Getwd()` — NOT `--workdir`).
+  // (NOT `--workdir`).
   const epochMillis = yield* Clock.currentTimeMillis;
   let outDir = path.join(flags.outputDir, legacyReportDateFolder(epochMillis));
   if (!path.isAbsolute(outDir)) {
     outDir = path.join(runtimeInfo.cwd, outDir);
   }
-  // Go pins the output dir to 0755 (`MkdirIfNotExistFS`, `report.go:32`,
-  // `misc.go:273`) and each CSV to 0644 (`report.go:66`).
+  // The output dir is pinned to 0755 and each CSV to 0644.
   yield* fs
     .makeDirectory(outDir, { recursive: true, mode: 0o755 })
     .pipe(
@@ -133,7 +130,7 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
       ),
     );
 
-  // Go's `ConnectByConfig` writes the connect diagnostic to stderr before dialing.
+  // The connect diagnostic is written to stderr before dialing.
   if (isText) {
     yield* output.raw(`Connecting to ${cfg.isLocal ? "local" : "remote"} database...\n`, "stderr");
   }
@@ -194,6 +191,6 @@ const legacyRunInspectReport = Effect.fnUntraced(function* (
     return;
   }
 
-  // json / stream-json (TS-extra; Go has only text). CSVs are still written.
+  // json / stream-json. CSVs are still written.
   yield* output.success("inspect report", { outputDir: outDir, files, rules: results });
 });

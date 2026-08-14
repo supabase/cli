@@ -60,7 +60,7 @@ describe("legacy postgres-config delete --config flag (pflag StringSlice parity)
 
     expect(Exit.isFailure(exit)).toBe(true);
     if (Exit.isFailure(exit)) {
-      // Byte-matches the Go CLI (bare quote at byte 4 of `max"connections`).
+      // Matches pflag's own diagnostic (bare quote at byte 4 of `max"connections`).
       expect(normalizeCause(exit.cause).message).toBe(
         'invalid argument "max\\"connections" for "--config" flag: parse error on line 1, column 4: bare " in non-quoted-field',
       );

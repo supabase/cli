@@ -17,8 +17,8 @@ import type { LegacyContainerIdName } from "./legacy-docker-lifecycle.ts";
  *
  * As of supabase/cli#6022, Kong/Postgres/Supavisor's own `secretFiles` no
  * longer stage anything under this tree — `container-lifecycle.ts`'s
- * `legacyCreateContainer` now `docker cp`s them straight into the created
- * container instead (see `legacyCopyStartSecretFileIntoContainer`'s doc
+ * `legacyCreateContainer` now streams them straight into the created
+ * container instead (see `legacyCopyStartSecretFilesIntoContainer`'s doc
  * comment), so a bind mount's host-side path never has to be resolved by a
  * remote Docker daemon. This module remains load-bearing for Edge Runtime's
  * OWN, still-host-persisted staging under the exact same tree

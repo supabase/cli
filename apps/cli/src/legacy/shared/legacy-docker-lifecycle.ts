@@ -17,10 +17,10 @@ import { LEGACY_CLI_WORKDIR_LABEL } from "./legacy-docker-ids.ts";
 type Spawner = ChildProcessSpawner["Service"];
 
 /**
- * Listing containers or volumes by Docker label failed. Wraps Go's
- * `Docker.ContainerList`/`Docker.VolumeList` errors (`docker.go:99-104`,
- * `docker.go:334-336` — see `checkServiceHealth`/`DockerRemoveAll`), which Go
- * wraps as `"failed to list containers: %w"` / equivalent.
+ * Listing containers or volumes by Docker label failed. Wraps the established
+ * `Docker.ContainerList`/`Docker.VolumeList` errors (see
+ * `checkServiceHealth`/`DockerRemoveAll`), which
+ * wrap as `"failed to list containers: %w"` / equivalent.
  */
 export class LegacyDockerLifecycleListError extends Data.TaggedError(
   "LegacyDockerLifecycleListError",
@@ -38,7 +38,7 @@ export class LegacyDockerLifecycleListError extends Data.TaggedError(
 
 /**
  * Inspecting a single container's state failed for a reason other than "not
- * found" — except Go's `assertContainerHealthy` (and this port, matching it,
+ * found" — except `assertContainerHealthy` (and this port, matching it,
  * see `status.handler.ts`) never special-cases a missing container either: an
  * absent container is just another non-zero `docker container inspect` exit,
  * which is by far the dominant real trigger of this error (the user hasn't
@@ -150,8 +150,8 @@ function spawnDockerPsLines(
 }
 
 /**
- * Go's `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
- * (`docker.go:99-104`, `status.go:126-131`) via `docker ps --filter
+ * `Docker.ContainerList(ctx, container.ListOptions{All, Filters})`
+ * via `docker ps --filter
  * label=<filterValue>`. `all: false` mirrors `status`'s running-only list;
  * `all: true` mirrors `stop`'s "every container regardless of state" list.
  */
@@ -220,11 +220,10 @@ export const legacyListContainerIdsAndNames = (
   );
 
 /**
- * Go's `Docker.ContainerInspect(ctx, containerId)` (`docker.go:148`,
- * `status.go:148-155`) via `docker container inspect <id> --format
- * {{json .State}}`. Go's `assertContainerHealthy` does not special-case a
- * missing container — it wraps whatever error `ContainerInspect` returns
- * (`status.go:148-149`), so every non-zero exit, including "no such
+ * `Docker.ContainerInspect(ctx, containerId)` via `docker container inspect <id> --format
+ * {{json .State}}`. `assertContainerHealthy` does not special-case a
+ * missing container — it wraps whatever error `ContainerInspect` returns,
+ * so every non-zero exit, including "no such
  * container", propagates as `LegacyDockerLifecycleInspectError` carrying the
  * real Docker stderr text.
  */
@@ -296,12 +295,12 @@ function parseContainerState(stdout: string): {
     parsed = {};
   }
   const state = isJsonRecord(parsed) ? parsed : {};
-  // Go's `assertContainerHealthy` (`internal/status/status.go:147-156`) gates
+  // `assertContainerHealthy` gates
   // on the boolean `resp.State.Running`, not the status string — Docker's
   // inspect `State` struct exposes both independently, and a paused or
   // restarting container reports `Running: true` alongside a non-"running"
   // `Status` (`"paused"`/`"restarting"`). `status` is kept as-is for the
-  // "container is not running: <status>" message text (`status.go:151`),
+  // "container is not running: <status>" message text,
   // which still reads the string, but the gate itself must read the boolean.
   const status = typeof state["Status"] === "string" ? state["Status"] : "";
   const running = state["Running"] === true;
@@ -318,7 +317,7 @@ function isJsonRecord(value: unknown): value is { readonly [key: string]: unknow
 }
 
 /**
- * Go's `Docker.VolumeList(ctx, volume.ListOptions{Filters})`
+ * `Docker.VolumeList(ctx, volume.ListOptions{Filters})`
  * (`docker.go` — used by the `stop` post-run volume-suggestion check) via
  * `docker volume ls --filter label=<filterValue>`.
  */

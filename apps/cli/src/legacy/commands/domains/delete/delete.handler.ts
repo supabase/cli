@@ -12,10 +12,10 @@ const mapDeleteError = mapLegacyDomainsHttpError("delete");
 
 const DELETE_SUCCESS_MESSAGE = "Deleted custom hostname config successfully.";
 
-// `flags.includeRawOutput` is intentionally unread: Go declares `--include-raw-output`
-// as a persistent flag on the `domains` group, so it is accepted on `delete` too, but
-// Go's `delete.Run` ignores it (delete has no response body to encode). We mirror that —
-// the flag is inert here, asserted by the "ignores --include-raw-output" integration test.
+// `flags.includeRawOutput` is intentionally unread: `--include-raw-output`
+// is a persistent flag on the `domains` group, so it is accepted on `delete`
+// too, but ignored (delete has no response body to encode). The flag is
+// inert here, asserted by the "ignores --include-raw-output" integration test.
 export const legacyDomainsDelete = Effect.fn("legacy.domains.delete")(function* (
   flags: LegacyDomainsDeleteFlags,
 ) {

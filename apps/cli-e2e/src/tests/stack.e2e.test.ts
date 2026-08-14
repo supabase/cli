@@ -1,9 +1,9 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, inject, test } from "vitest";
-import { createHarness, exec, runParity, type CLIResult } from "@supabase/cli-test-helpers";
-import { testBehaviour, testParity } from "./test-context.ts";
-import { ACCESS_TOKEN, isRecording, TARGET } from "./env.ts";
+import { createHarness, exec, type CLIResult } from "@supabase/cli-test-helpers";
+import { testBehaviour } from "./test-context.ts";
+import { ACCESS_TOKEN, TARGET } from "./env.ts";
 
 // A guaranteed-unreachable TCP address — connection is refused immediately.
 // Used to simulate Docker being unavailable without relying on any external state.
@@ -40,29 +40,6 @@ const testStack = testBehaviour.extend<StackFixtures>({
   },
 });
 
-type ParityNormalizeOptions = NonNullable<Parameters<typeof runParity>[0]["normalize"]>;
-
-function testParityStack(
-  cmd: string[],
-  opts?: { workspaceSetup?: (dir: string) => void; normalize?: ParityNormalizeOptions },
-): void {
-  const label = `parity: ${cmd.join(" ")}`;
-  test.skipIf(isRecording)(label, async () => {
-    const serverUrl = inject("replayServerUrl") as string;
-    const dockerHostUrl = inject("dockerHostUrl") as string;
-    await runParity(
-      {
-        apiUrl: serverUrl,
-        accessToken: ACCESS_TOKEN,
-        workspaceSetup: opts?.workspaceSetup,
-        extraEnv: { DOCKER_HOST: dockerHostUrl },
-        normalize: opts?.normalize,
-      },
-      cmd,
-    );
-  });
-}
-
 // ---------------------------------------------------------------------------
 // services
 // ---------------------------------------------------------------------------
@@ -78,8 +55,6 @@ describe("services", () => {
     expect(result.stdout).toContain("gotrue");
     expect(result.stdout).toContain("storage");
   });
-
-  testParity(["services"], { normalizeVersions: false });
 });
 
 // ---------------------------------------------------------------------------
@@ -90,27 +65,12 @@ describe("services", () => {
 // project/branch on stdout, before any Docker/daemon work runs, in every
 // output mode — an adjudicated, deliberate TS-only extension with no Go
 // counterpart (Go's `status` never had a link-state concept). Go's stdout for
-// this command is otherwise empty here since the stack isn't running, so the
-// linked-state block is the entire stdout diff — strip both shapes
-// `legacyFormatLinkedStateBlock` can print: the unlinked workspace this test
-// uses ("Not linked.") and the multi-line "Linked Project:" block (Org/
-// Project/Branch lines), future-proofing against a linked fixture later.
-const STATUS_LINKED_STATE_STDOUT_STRIP: readonly RegExp[] = [
-  /^Not linked\.\n/,
-  /^Linked Project:\n(?:  .+\n)*/,
-];
-
 describe("status", () => {
   testStack("exits 1 when stack is not running", async ({ workspace, stackRun }) => {
     setupStackWorkspace(workspace.path);
     const result = await stackRun(["status"]);
     expect(result.exitCode).toBe(1);
     expect(result.stderr).toMatch(/no such container/i);
-  });
-
-  testParityStack(["status"], {
-    workspaceSetup: setupStackWorkspace,
-    normalize: { stdout: { stripPatterns: STATUS_LINKED_STATE_STDOUT_STRIP } },
   });
 });
 
@@ -136,8 +96,6 @@ describe("stop", () => {
       expect(result.stderr).toMatch(/mutually exclusive|if any flags in the group.*are set/i);
     },
   );
-
-  testParityStack(["stop"], { workspaceSetup: setupStackWorkspace });
 });
 
 // ---------------------------------------------------------------------------
@@ -164,14 +122,6 @@ describe("start", () => {
   // cleanly through the TCP relay proxy (vector health check fails on this machine).
   test.todo("start → status → stop lifecycle");
   test.todo("starts with --exclude studio and stops cleanly");
-
-  // Unlike `status`/`stop` above, there is no `testParityStack(["start"])` here,
-  // and there never will be: Go's `internal/start` was deleted outright as
-  // unreachable (CLI-1966), so `supabase-go start` is now a permanent stub that
-  // always fails with a fixed error -- there is no real Go implementation left to
-  // diff TS's behavior against. Go-parity coverage for `start` instead lives in
-  // `apps/cli/src/legacy/commands/start/start.live.test.ts` and its siblings,
-  // asserted against the pre-deletion Go behavior documented in `SIDE_EFFECTS.md`.
 });
 
 // ---------------------------------------------------------------------------
@@ -206,6 +156,4 @@ describe("seed buckets", () => {
       true,
     );
   });
-
-  testParity(["seed", "buckets"], { workspaceSetup: setupStackWorkspace });
 });

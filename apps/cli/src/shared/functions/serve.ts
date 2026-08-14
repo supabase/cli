@@ -119,7 +119,6 @@ const watchIgnoreGlobs = [
   "**/*.tmp",
   "**/.#*",
 ] as const;
-const emptyStringArray: ReadonlyArray<string> = [];
 
 export const FUNCTIONS_SERVE_INSPECT_MODES = ["run", "brk", "wait"] as const;
 
@@ -277,6 +276,8 @@ export interface StartEdgeRuntimeContainerInput {
   readonly debug: boolean;
   readonly networkId: string;
   readonly envFile: Option.Option<string>;
+  /** Standalone `functions serve` discovers `supabase/functions/<slug>/.env`; `start` does not. */
+  readonly discoverFunctionEnvFiles: boolean;
   readonly importMap: Option.Option<string>;
   readonly noVerifyJwt: Option.Option<boolean>;
   readonly inspectMode: FunctionsServeInspectMode | undefined;
@@ -856,68 +857,69 @@ export function buildFunctionsServeInspectArgs(
   ];
 }
 
+const readDotEnvFile = Effect.fnUntraced(function* (pathname: string, optional: boolean) {
+  const contents = yield* Effect.tryPromise({
+    try: () =>
+      readFile(pathname, "utf8").then(
+        (value) => value,
+        (error) => {
+          if (optional && error instanceof Error && "code" in error && error.code === "ENOENT") {
+            return undefined;
+          }
+          throw error;
+        },
+      ),
+    catch: (cause) =>
+      new Error(
+        `failed to load environment file: ${pathname}${cause instanceof Error ? ` (${cause.message})` : ""}`,
+        { cause },
+      ),
+  });
+  if (contents === undefined) {
+    return {};
+  }
+  return yield* Effect.try({
+    try: () => parseDotEnv(contents),
+    catch: (cause) => sanitizeDotEnvParseError(pathname, cause),
+  });
+});
+
+const filterCustomEnv = Effect.fnUntraced(function* (env: Readonly<Record<string, string>>) {
+  const output = yield* Output;
+  const filtered: Array<[string, string]> = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (name.startsWith("SUPABASE_")) {
+      yield* output.raw(`Env name cannot start with SUPABASE_, skipping: ${name}\n`, "stderr");
+      continue;
+    }
+    filtered.push([name, value]);
+  }
+  return Object.fromEntries(filtered);
+});
+
 const parseCustomEnvFile = Effect.fnUntraced(function* (
   envFileFlag: Option.Option<string>,
   projectRoot: string,
   flagCwd: string,
   configSecrets: Readonly<Record<string, string>>,
 ) {
-  const output = yield* Output;
-  const toEnvEntries = (parsed: Record<string, string>) => {
-    const merged = new Map<string, string>(Object.entries(configSecrets));
-    for (const [name, value] of Object.entries(parsed)) {
-      merged.set(name, value);
-    }
-    return Effect.forEach([...merged], ([name, value]) => {
-      if (name.startsWith("SUPABASE_")) {
-        return output
-          .raw(`Env name cannot start with SUPABASE_, skipping: ${name}\n`, "stderr")
-          .pipe(Effect.as(emptyStringArray));
-      }
-      return Effect.succeed([`${name}=${value}`] as const);
-    }).pipe(Effect.map((entries) => entries.flat()));
-  };
-
-  if (Option.isNone(envFileFlag)) {
-    const fallbackPath = join(projectRoot, fallbackEnvFilePath);
-    const exists = yield* Effect.tryPromise({
-      try: () =>
-        readFile(fallbackPath, "utf8").then(
-          (contents) => ({ contents, path: fallbackPath }),
-          (error) => {
-            if (error instanceof Error && "code" in error && error.code === "ENOENT") {
-              return undefined;
-            }
-            throw error;
-          },
-        ),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    });
-    if (exists === undefined) {
-      return yield* toEnvEntries({});
-    }
-    const parsed = yield* Effect.try({
-      try: () => parseDotEnv(exists.contents),
-      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-    });
-    return yield* toEnvEntries(parsed);
-  }
-
-  const envFilePath = normalizeEnvPath(flagCwd, envFileFlag.value);
-  const contents = yield* Effect.tryPromise({
-    try: () => readFile(envFilePath, "utf8"),
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+  const envFilePath = Option.match(envFileFlag, {
+    onNone: () => join(projectRoot, fallbackEnvFilePath),
+    onSome: (pathname) => normalizeEnvPath(flagCwd, pathname),
   });
-  const parsed = yield* Effect.try({
-    try: () => parseDotEnv(contents),
-    catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
-  });
-  return yield* toEnvEntries(parsed);
+  const parsed = yield* readDotEnvFile(envFilePath, Option.isNone(envFileFlag));
+  const filtered = yield* filterCustomEnv({ ...configSecrets, ...parsed });
+  return Object.entries(filtered).map(([name, value]) => `${name}=${value}`);
+});
+
+const parseFunctionEnvFile = Effect.fnUntraced(function* (pathname: string) {
+  return yield* readDotEnvFile(pathname, true).pipe(Effect.flatMap(filterCustomEnv));
 });
 
 function toFunctionContainerConfig(
   workdir: string,
   config: ResolvedDeployFunctionConfig,
+  envFile: Readonly<Record<string, string>>,
 ): ServeFunctionContainerConfig {
   const toContainerPath = (pathname: string) => {
     const resolvedPath = resolve(pathname);
@@ -935,7 +937,9 @@ function toFunctionContainerConfig(
     ...(config.staticFiles.length === 0
       ? {}
       : { staticFiles: config.staticFiles.map((pathname) => toContainerPath(pathname)) }),
-    ...(Object.keys(config.env).length === 0 ? {} : { env: config.env }),
+    ...(Object.keys(envFile).length === 0 && Object.keys(config.env).length === 0
+      ? {}
+      : { env: { ...envFile, ...config.env } }),
   };
 }
 
@@ -1582,7 +1586,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // Deterministic, persistent host path (the same `<workdir>/supabase/.temp/start-secrets/`
     // convention `start`'s own container-lifecycle bring-up used to stage Kong/Postgres/
     // Supavisor's `secretFiles` on host disk before they moved to `docker cp` delivery —
-    // see `legacyCopyStartSecretFileIntoContainer`'s doc comment, `container-lifecycle.ts`)
+    // see `legacyCopyStartSecretFilesIntoContainer`'s doc comment, `container-lifecycle.ts`)
     // rather than `os.tmpdir()`: `legacyCleanupStartSecrets` (wired into both `stop` and a
     // failed-`start` rollback) reclaims this same `<workdir>/supabase/.temp/start-secrets/
     // <containerId>` tree keyed by container name, so these JWT/service-role-key/secret env
@@ -1593,9 +1597,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // `stagingDir`): this is what lets the cleanup cover the whole staging-write window below,
     // including a mid-write failure between the first and second `writeDocker*` call, not just
     // the final `docker run` step.
-    const cleanupRuntimeArtifacts = Effect.tryPromise(() =>
-      rm(stagingDir, { recursive: true, force: true }),
-    ).pipe(Effect.orDie);
+    const removeRuntimeArtifacts = Effect.tryPromise({
+      try: () => rm(stagingDir, { recursive: true, force: true }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    });
+    const bestEffortCleanupRuntimeArtifacts = removeRuntimeArtifacts.pipe(
+      Effect.tapError((error) =>
+        output.warn(`Failed to clean up Edge Runtime artifacts: ${error.message}`),
+      ),
+      Effect.ignoreCause,
+    );
 
     const functionConfigs = yield* resolveServeFunctionConfigs(
       input.projectRoot,
@@ -1636,7 +1647,15 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
           new Error(missingSourceWarning.trimStart().replace(/^WARN:\s*/, "")),
         );
       }
-      functionsConfig[config.slug] = toFunctionContainerConfig(input.projectRoot, config);
+      const functionEnv =
+        input.discoverFunctionEnvFiles && Option.isNone(input.envFile)
+          ? yield* parseFunctionEnvFile(join(functionsDir, config.slug, ".env"))
+          : {};
+      functionsConfig[config.slug] = toFunctionContainerConfig(
+        input.projectRoot,
+        config,
+        functionEnv,
+      );
     }
 
     const binds = new Set(functionBinds);
@@ -1754,10 +1773,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
       return {
         containerId,
-        cleanup: cleanupRuntimeArtifacts,
+        cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
         watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
       } satisfies StartedRuntime;
-    }).pipe(Effect.onError(() => cleanupRuntimeArtifacts));
+    }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },
 );
 
@@ -1902,6 +1921,7 @@ const startEdgeRuntime = Effect.fnUntraced(function* (input: {
       debug: input.debug,
       networkId: networkMode,
       envFile: input.flags.envFile,
+      discoverFunctionEnvFiles: true,
       importMap: input.flags.importMap,
       noVerifyJwt: input.flags.noVerifyJwt,
       inspectMode: input.inspectMode,

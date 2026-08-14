@@ -9,8 +9,8 @@ import { LegacyDockerRun } from "./legacy-docker-run.service.ts";
 /**
  * Runs a pg_dump / pg_dumpall bash script in a one-shot container, streaming its
  * stdout chunk-by-chunk to `onStdout` and teeing stderr live, returning the exit
- * code + captured stderr for failure classification. Mirrors Go's `dockerExec`
- * (`apps/cli-go/internal/db/dump/dump.go`): host networking by default (overridden
+ * code + captured stderr for failure classification. Mirrors `dockerExec`:
+ * host networking by default (overridden
  * by the global `--network-id` flag, the ambient `SUPABASE_NETWORK_ID` env var, or
  * a project `supabase/.env` value, in that precedence), no security-opt, and the
  * Linux-only `host.docker.internal:host-gateway` extra host.
@@ -43,12 +43,12 @@ export const legacyStreamPgDump = Effect.fnUntraced(function* <E>(params: {
   const runtimeInfo = yield* RuntimeInfo;
   const networkIdFlag = yield* LegacyNetworkIdFlag;
 
-  // Go's `dockerExec` sets `NetworkMode` to host (`dump.go:91-93`), but
+  // `dockerExec` sets `NetworkMode` to host, but
   // `DockerStart` then overrides it with `viper.GetString("network-id")` whenever
-  // that resolves non-empty (`docker.go:379-380`) — a bound flag/env value wins,
+  // that resolves non-empty — a bound flag/env value wins,
   // flag > ambient env > project-`.env` (`legacyViperEnvStringWithProjectFallback`
   // precedence). Only when NEITHER the flag nor the env resolves does Go fall back
-  // to `NetId` (`docker.go:381-382`) — but that branch only fires when the caller
+  // to `NetId` — but that branch only fires when the caller
   // left `NetworkMode` empty, which the dump path never does, so the effective
   // pg_dump fallback is host networking, not the generated `supabase_network_*`.
   const networkId = Option.getOrUndefined(networkIdFlag);

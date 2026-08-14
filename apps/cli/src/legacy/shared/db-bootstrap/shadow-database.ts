@@ -14,7 +14,8 @@
  * Exposed separately (not fused into one monolithic function) because the composed shapes
  * Go itself has are NOT all the same: `migration squash` (a future port, CLI-1969) only ever
  * needs create -> health-wait -> connect -> `SetupDatabase` (no `CREATE_TEMPLATE`, no
- * migrations at that point — `apps/cli-go/internal/migration/squash/squash.go:83-96`), while
+ * migrations at that point — `apps/cli-go/internal/migration/squash/squash.go:83-96`,
+ * deleted in CLI-1970; last present at commit 7b469f5b3), while
  * `db diff --use-pgadmin` (CLI-1968, realized: see `diff.handler.ts`'s pgadmin branch) needs
  * create -> health-wait -> `MigrateShadowDatabase` (`apps/cli-go/internal/db/diff/
  * pgadmin.go:70-78`). Exposing every primitive individually lets each future caller compose
@@ -71,6 +72,7 @@ import {
   legacyEnsureNetwork,
   legacyCreateContainer,
   LEGACY_COMPOSE_PROJECT_LABEL,
+  type LegacyContainerError,
   type LegacyContainerOpts,
 } from "./container-lifecycle.ts";
 import type { LegacyImagePrepullError } from "./image-prepull.ts";
@@ -112,6 +114,7 @@ export class LegacyShadowDbError extends Data.TaggedError("LegacyShadowDbError")
     | "connect"
     | "docker_daemon"
     | "container_configuration"
+    | "internal"
     | "port_conflict"
     | "filesystem"
     | "database";
@@ -122,6 +125,8 @@ export class LegacyShadowDbError extends Data.TaggedError("LegacyShadowDbError")
         return { ...actionability.dbConnection, fingerprint_suffix: "connect" };
       case "docker_daemon":
         return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
+      case "internal":
+        return actionability.internalPanic;
       case "port_conflict":
         return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
       case "filesystem":
@@ -136,13 +141,13 @@ export class LegacyShadowDbError extends Data.TaggedError("LegacyShadowDbError")
 
 /** Carries `container-lifecycle.ts`'s own error classification through the shadow wrapper. */
 const legacyShadowContainerReason = (
-  reason: "runtime" | "configuration" | "filesystem" | "port_conflict",
+  reason: LegacyContainerError["reason"],
 ): LegacyShadowDbError["reason"] => {
   switch (reason) {
     case "runtime":
       return "docker_daemon";
-    case "filesystem":
-      return "filesystem";
+    case "internal":
+      return "internal";
     case "port_conflict":
       return "port_conflict";
     default:

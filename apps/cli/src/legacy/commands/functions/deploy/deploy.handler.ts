@@ -20,9 +20,8 @@ export const legacyFunctionsDeploy = Effect.fn("legacy.functions.deploy")(functi
   const api = yield* LegacyPlatformApi;
   const cliConfig = yield* LegacyCliConfig;
   const resolver = yield* LegacyProjectRefResolver;
-  // `--yes` OR `SUPABASE_YES` (Go's `viper.GetBool("YES")` inside the `--prune`
-  // confirm, `deploy.go:190` + root.go:318-320) — the env var must auto-confirm
-  // too, not just the flag (CLI-1974).
+  // `--yes` OR `SUPABASE_YES` inside the `--prune` confirm — the env var
+  // must auto-confirm too, not just the flag.
   const yes = yield* legacyResolveYes;
   const linkedProjectCache = yield* LegacyLinkedProjectCache;
   const telemetryState = yield* LegacyTelemetryState;

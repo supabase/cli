@@ -26,14 +26,15 @@ export const legacyEncryptionUpdateRootKey = Effect.fn("legacy.encryption.update
 
     const ref = yield* resolver.resolve(flags.projectRef);
 
-    // Faithful port of Go's `update.Run` + `credentials.PromptMasked(os.Stdin)`.
-    // Go unconditionally writes the prompt to stderr, reads the key (masked on a
-    // TTY, `io.Copy` of all stdin when piped), then prints a trailing newline to
-    // stdout (`defer fmt.Println()`) — even when stdin is piped. Both read paths
-    // trim, matching Go's `strings.TrimSpace(input)`. The stderr prompt + stdout
-    // newline are reproduced only in text mode; json / stream-json reserve stdout
-    // for the structured result. On a TTY the masked prompt uses clack framing, so
-    // the rendered prompt is not byte-identical to Go (see SIDE_EFFECTS.md).
+    // Faithful port of `update.Run` + `credentials.PromptMasked(os.Stdin)`.
+    // The prompt is unconditionally written to stderr, the key is read
+    // (masked on a TTY, `io.Copy` of all stdin when piped), then a trailing
+    // newline is printed to stdout (`defer fmt.Println()`) — even when stdin
+    // is piped. Both read paths trim, matching `strings.TrimSpace(input)`.
+    // The stderr prompt + stdout newline are reproduced only in text mode;
+    // json / stream-json reserve stdout for the structured result. On a TTY
+    // the masked prompt uses clack framing, so the rendered prompt is not
+    // byte-identical to the reference implementation (see SIDE_EFFECTS.md).
     let rootKey: string;
     if (stdin.isTTY) {
       rootKey = yield* output.promptPassword("Enter a new root key: ");
@@ -43,8 +44,8 @@ export const legacyEncryptionUpdateRootKey = Effect.fn("legacy.encryption.update
       if (output.format === "text") yield* output.raw("\n", "stdout");
     }
 
-    // Mirror Go's PersistentPostRun: write the linked-project cache and persist
-    // the telemetry state file on success and failure.
+    // Write the linked-project cache and persist the telemetry state file on
+    // success and failure.
     yield* Effect.gen(function* () {
       const updating =
         output.format === "text" ? yield* output.task("Updating root key...") : undefined;

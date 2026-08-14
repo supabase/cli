@@ -26,12 +26,12 @@ const MIGRATION_FILE = `${VERSION}_${NAME}.sql`;
 // then reads those files back as the Local column.
 //
 // Unlike `migration list`, `migration fetch` does NOT tolerate a missing history
-// table: Go's `ReadMigrationTable` has no `pgerrcode.UndefinedTable` fallback (only
-// the list path does — `pkg/migration/list.go`), so against a freshly provisioned
+// table: reading the migration table has no undefined-table fallback (only
+// the list path does), so against a freshly provisioned
 // project with no `supabase_migrations.schema_migrations` table it exits non-zero
 // (`relation … does not exist`). So we first SEED one migration into the remote
-// history via `migration repair --status applied` (Go's `repair` runs
-// `CreateMigrationTable` then upserts the version from the local file), establishing
+// history via `migration repair --status applied` (which creates the migration
+// table then upserts the version from the local file), establishing
 // the table + a row for `fetch` to read back. The ref is supplied via
 // SUPABASE_PROJECT_ID. The seed is idempotent (upsert) and the supabox stack is torn
 // down per run, so it leaves no shared state behind.
@@ -69,7 +69,7 @@ describeLiveDataPlane("supabase migration fetch (live)", () => {
         expect(`${fetched.stdout}${fetched.stderr}`).not.toContain("Unauthorized");
         expect(fetched.exitCode, `stdout:\n${fetched.stdout}\nstderr:\n${fetched.stderr}`).toBe(0);
 
-        // fetch wrote the seeded migration back, under its Go-compatible filename.
+        // fetch wrote the seeded migration back, under its established filename format.
         const files = await readdir(path.join(fetchDir, "supabase", "migrations"));
         expect(files).toContain(MIGRATION_FILE);
 

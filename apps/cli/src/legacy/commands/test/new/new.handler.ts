@@ -22,9 +22,9 @@ export const legacyTestNew = Effect.fn("legacy.test.new")(function* (flags: Lega
   const template = Option.getOrElse(flags.template, () => "pgtap" as const);
 
   yield* Effect.gen(function* () {
-    // Go builds the path relative to the project root (`utils.DbTestsDir` =
-    // "supabase/tests") and prints that relative path; FS ops are rooted at the
-    // resolved workdir (`apps/cli-go/internal/test/new/new.go:24`).
+    // Path is relative to the project root (`utils.DbTestsDir` =
+    // "supabase/tests") and that relative path is what gets printed; FS ops
+    // are rooted at the resolved workdir.
     const relPath = path.join("supabase", "tests", `${flags.name}_test.sql`);
     const target = path.join(cliConfig.workdir, relPath);
 
@@ -35,8 +35,8 @@ export const legacyTestNew = Effect.fn("legacy.test.new")(function* (flags: Lega
       );
     }
 
-    // Go's `utils.WriteFile` pins the dir to 0755 and the test file to 0644
-    // (`internal/test/new/new.go:28`, `internal/utils/misc.go:281,284`).
+    // `utils.WriteFile` pins the dir to 0755 and the test file to 0644
+    // (`internal/utils/misc.go:281,284`).
     yield* fs
       .makeDirectory(path.dirname(target), { recursive: true, mode: 0o755 })
       .pipe(

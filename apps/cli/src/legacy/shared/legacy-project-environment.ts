@@ -6,17 +6,17 @@ import type { ProjectEnvironment } from "@supabase/config";
 import { parseDotEnv } from "./legacy-dotenv.ts";
 
 /**
- * Fills the gap between `@supabase/config`'s `loadProjectEnvironment` and Go's
- * `loadNestedEnv` (`apps/cli-go/pkg/config/config.go:1169-1190`). Go's version
- * walks not just `supabase/` but one directory further, up to the project
+ * Fills the gap between `@supabase/config`'s `loadProjectEnvironment` and
+ * `loadNestedEnv`. The established
+ * behavior walks not just `supabase/` but one directory further, up to the project
  * root/workdir (the loop stops once `cwd == filepath.Dir(repoDir)`, i.e. after
  * exactly two directories: `supabase/`, then its parent), and at each
- * directory calls `loadDefaultEnv` (`config.go:1192-1207`), which loads dotenv
- * files chosen by `SUPABASE_ENV` (empty/unset defaults to `"development"`,
- * `config.go:1193-1195`): `.env.<env>.local`, `.env.local` (skipped when
+ * directory calls `loadDefaultEnv`, which loads dotenv
+ * files chosen by `SUPABASE_ENV` (empty/unset defaults to `"development"`):
+ * `.env.<env>.local`, `.env.local` (skipped when
  * `env === "test"`), `.env.<env>`, `.env` — via `godotenv.Load`, which only
  * sets a key if it isn't already present in the process environment
- * (`godotenv@v1.5.1/godotenv.go:184-204`, `overload: false`). Because
+ * (`overload: false`). Because
  * `godotenv.Load` writes straight into the process env as it goes, the net
  * precedence (highest first) is: ambient shell env > `supabase/`-dir dotenv
  * files (`.local` variant before non-local, env-specific before bare `.env`)
@@ -33,7 +33,7 @@ import { parseDotEnv } from "./legacy-dotenv.ts";
  * over anything discovered here, since it's already correct for the keys it
  * knows about.
  */
-function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
+export function legacyCandidateDotenvFilenames(env: string): ReadonlyArray<string> {
   return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
 }
 
@@ -50,7 +50,7 @@ function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
  * a malformed continuation line.
  *
  * @throws on a line that isn't blank, a comment, or a `KEY=VALUE`/`KEY: VALUE`
- * assignment — matching Go's `loadEnvIfExists` (`pkg/config/config.go:1209-1234`),
+ * assignment — matching `loadEnvIfExists`,
  * which propagates `godotenv.Load`'s parse error up through `loadNestedEnv` and
  * fails `Config.Load` before `stop`/`status` touch Docker, rather than silently
  * skipping the bad line.
@@ -86,11 +86,11 @@ function readDotEnvFile(path: string): Record<string, string> | undefined {
  *
  * `projectEnv` is `null` whenever `@supabase/config` found no
  * `supabase/config.toml`/`config.json` (searching ancestors, or at exactly
- * `workdir` when the caller passed `search: false`) — but Go's dotenv loading
+ * `workdir` when the caller passed `search: false`) — but dotenv loading
  * doesn't share that precondition: `Config.Load` calls
- * `loadNestedEnv(builder.SupabaseDirPath)` BEFORE it ever opens `config.toml`
- * (`pkg/config/config.go:786-793`), and `SupabaseDirPath` is a pure string
- * join with no existence check (`NewPathBuilder`, `pkg/config/utils.go:43-48`).
+ * `loadNestedEnv(builder.SupabaseDirPath)` BEFORE it ever opens `config.toml`,
+ * and `SupabaseDirPath` is a pure string
+ * join with no existence check (`NewPathBuilder`).
  * So a missing/absent config file must not skip dotenv loading — fall back to
  * deriving the same two directories directly from `workdir`
  * (`<workdir>/supabase` and `workdir` itself) and read `process.env` itself as
@@ -102,7 +102,7 @@ export function legacyResolveProjectEnvironmentValues(
   workdir: string,
 ): Record<string, string> {
   const env = process.env["SUPABASE_ENV"] || "development";
-  const filenames = candidateDotenvFilenames(env);
+  const filenames = legacyCandidateDotenvFilenames(env);
   const merged: Record<string, string> = {};
 
   const supabaseDir = projectEnv?.paths.supabaseDir ?? join(workdir, "supabase");

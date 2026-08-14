@@ -17,9 +17,9 @@ describe("legacyInspectText (backtick-wrapped `%s`)", () => {
     expect(legacyInspectText(42)).toBe("42");
   });
   it("renders an empty/null value as the two literal backticks of an empty code span", () => {
-    // Go wraps the cell as `` `%s` ``; an empty code span isn't a valid token, so
+    // The cell wraps as `` `…` ``; an empty code span isn't a valid token, so
     // glamour emits the two backtick characters literally (e.g. role-stats
-    // `custom_config` for the `postgres` row). Matches `role_stats.go:43`.
+    // `custom_config` for the `postgres` row).
     expect(legacyInspectText("")).toBe("``");
     expect(legacyInspectText(null)).toBe("``");
     expect(legacyInspectText(undefined)).toBe("``");
@@ -98,8 +98,9 @@ describe("legacyInspectStmt (whitespace-collapsed %s)", () => {
     expect(legacyInspectStmt("a | b")).toBe("a | b");
   });
   it("replaces each vertical tab individually (Go's RE2 `\\s` excludes `\\v`)", () => {
-    // Go's regex appends `|\v` because RE2 `\s` does not match `\v`; consecutive
-    // vertical tabs therefore collapse to one space each, not a single space.
+    // Vertical tabs are replaced individually rather than collapsed as part of
+    // a run; consecutive vertical tabs therefore collapse to one space each,
+    // not a single space.
     expect(legacyInspectStmt("a\v\vb")).toBe("a  b");
     // A space-then-vtab is a space run then an individual vtab → two spaces.
     expect(legacyInspectStmt("a \vb")).toBe("a  b");
@@ -111,7 +112,7 @@ describe("legacyInspectStmt (whitespace-collapsed %s)", () => {
 
 describe("legacyInspectBacktickStmt (backtick-wrapped, whitespace-collapsed `%s`)", () => {
   it("collapses whitespace like legacyInspectStmt for a non-empty statement", () => {
-    // calls/outliers wrap the query in `` `%s` `` (calls.go:52), so a populated
+    // calls/outliers wrap the query in `` `…` ``, so a populated
     // statement renders bare with its runs collapsed.
     expect(legacyInspectBacktickStmt("SELECT\n  1")).toBe("SELECT 1");
   });
@@ -149,8 +150,8 @@ describe("legacyVacuumStatsSpec rowcount projection", () => {
 
   it("replaces the first `-1` substring within the padded to_char output", () => {
     // `to_char(reltuples, '9G999G999G999')` right-justifies in a fixed width, so a
-    // -1 reltuples comes back space-padded. Go's `strings.Replace(..., 1)` rewrites
-    // only the first `-1` substring; the projection must match byte-for-byte.
+    // -1 reltuples comes back space-padded. Only the first `-1` substring is
+    // rewritten; the projection must match byte-for-byte.
     const cells = legacyVacuumStatsSpec.project(row("           -1"), cfg);
     expect(cells[5]).toBe("           No stats");
   });

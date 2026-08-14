@@ -14,7 +14,7 @@ import { LegacyResetReplicationSlotsError } from "./recreate-local-database.ts";
 const classify = (error: unknown) => classifyCliErrorActionability(error);
 
 describe("db bootstrap error actionability discriminants", () => {
-  it("distinguishes container-runtime, configuration, filesystem, and port failures", () => {
+  it("distinguishes container-runtime, configuration, internal, and port failures", () => {
     expect(
       classify(new LegacyNetworkCreateError({ message: "ignored", reason: "runtime" })),
     ).toMatchObject({ error_category: "docker_not_running" });
@@ -22,8 +22,8 @@ describe("db bootstrap error actionability discriminants", () => {
       classify(new LegacyNetworkCreateError({ message: "ignored", reason: "configuration" })),
     ).toMatchObject({ error_category: "invalid_config" });
     expect(
-      classify(new LegacyContainerCreateError({ message: "ignored", reason: "filesystem" })),
-    ).toMatchObject({ error_category: "permission" });
+      classify(new LegacyContainerCreateError({ message: "ignored", reason: "internal" })),
+    ).toMatchObject({ error_kind: "internal_bug", error_category: "panic" });
     expect(
       classify(new LegacyContainerStartError({ message: "ignored", reason: "port_conflict" })),
     ).toMatchObject({

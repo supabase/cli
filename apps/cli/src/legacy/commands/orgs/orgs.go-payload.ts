@@ -7,7 +7,7 @@ import {
 } from "../../shared/legacy-go-struct-output.encoders.ts";
 
 /**
- * Mirror of Go's `api.OrganizationResponseV1` (`apps/cli-go/pkg/api/types.gen.go`).
+ * Type shape for `api.OrganizationResponseV1` (`apps/cli-go/pkg/api/types.gen.go`).
  * Shared by `orgs list` and `orgs create` for `-o yaml` / `-o toml` (CLI-1975).
  */
 export const LEGACY_GO_ORGANIZATION_RESPONSE: LegacyGoType = legacyGoStruct([

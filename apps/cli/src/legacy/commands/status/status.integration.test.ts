@@ -479,8 +479,8 @@ describe("legacy status integration", () => {
   it.live(
     "sanitizes a dirty config.toml project_id before filtering, matching start's label",
     () => {
-      // Go's Config.Validate rewrites Config.ProjectId to its sanitized form once
-      // at config-load time (pkg/config/config.go:938-944); every later reader —
+      // Config validation rewrites the resolved project id to its sanitized form once
+      // at config-load time; every later reader —
       // including the Docker label `start` writes — sees that same sanitized
       // string. Filtering/inspecting with the raw value here would target
       // containers `start` never created.
@@ -518,7 +518,7 @@ describe("legacy status integration", () => {
     "succeeds against an unhealthy db when --ignore-health-check is set (status.go:104-108)",
     () => {
       // Pairs with "fails when the db container is unhealthy" below (ignoreHealthCheck: false,
-      // the default) to cover both sides of Go's `if !ignoreHealthCheck { assertContainerHealthy }`.
+      // the default) to cover both sides of the `if !ignoreHealthCheck { assertContainerHealthy }` gate.
       const { layer, child } = setup({
         route: defaultRoute({
           dbInspectStdout: JSON.stringify({
@@ -564,7 +564,7 @@ describe("legacy status integration", () => {
   });
 
   it.live("fails when [remotes.*] has a duplicate project_id, even with no projectRef", () => {
-    // Go's duplicate-project_id check (config.go:594-602) runs unconditionally
+    // The duplicate-project_id check runs unconditionally
     // on every config load, inside the same loop that resolves the [remotes.*]
     // override — it is not gated on a caller actually selecting a remote.
     // `status` never binds a --project-ref flag, so it must still fail on a
@@ -594,8 +594,8 @@ project_id = "previewrefaaaaaaaaaa"
   });
 
   it.live("fails when a [remotes.*] project_id is not a valid 20-letter ref", () => {
-    // Go's Config.Validate (config.go:996-1001) checks every [remotes.*].project_id
-    // against refPattern unconditionally on every config load — not only a
+    // Config validation checks every [remotes.*].project_id
+    // against the ref pattern unconditionally on every config load — not only a
     // remote that ends up selected — so this must fail closed before status
     // reaches Docker, even with no --project-ref requested.
     const workdir = tempRoot.current;
@@ -622,7 +622,7 @@ project_id = "short"
   it.live(
     "decodes a comma-separated string into an array field ([]string) for status to proceed",
     () => {
-      // Go's StringToSliceHookFunc (mapstructure) splits a plain string literal
+      // The decode hook splits a plain string literal
       // into a []string for a []string field like additional_redirect_urls —
       // this only runs when goViperCompat is on. Pin that status still proceeds
       // past config load (and on to a successful Docker inspect/list) rather
@@ -638,7 +638,7 @@ project_id = "short"
   );
 
   it.live("warns on stderr for a deprecated auth.external provider", () => {
-    // Go's `external.validate()` (config.go:1418-1423) disables a bare
+    // External-provider validation disables a bare
     // [auth.external.slack] block and warns — mirrored by
     // `normalizeDeprecatedExternalProviders` in packages/config's io.ts, gated
     // on `goViperCompat` (confirmed already wired in status.handler.ts). The
@@ -658,8 +658,7 @@ project_id = "short"
   });
 
   it.live("fails when --workdir/SUPABASE_WORKDIR points at a missing path", () => {
-    // Go's `ChangeWorkDir` (`apps/cli-go/internal/utils/misc.go:231-250`)
-    // `os.Chdir`s the explicit workdir in `PersistentPreRunE`, before config
+    // The explicit workdir is `chdir`'d into before config
     // load or any Docker call — a missing path must fail immediately, not
     // fall through to the workdir-basename default and inspect Docker.
     const missingWorkdir = join(tempRoot.current, "does-not-exist");
@@ -695,9 +694,9 @@ project_id = "short"
   });
 
   it.live("fails when auth.jwt_secret is configured but shorter than 16 characters", () => {
-    // Go's Config.Validate rejects this at config-load time
-    // (pkg/config/apikeys.go:45-47), entirely before assertContainerHealthy/
-    // container listing (internal/status/status.go:101-116) — so no Docker
+    // Config validation rejects this at config-load time, entirely before the
+    // health check/
+    // container listing — so no Docker
     // call happens, same as the malformed config.toml case above.
     const { layer, child } = setup({
       configContents: 'project_id = "demo"\n[auth]\njwt_secret = "too-short"\n',
@@ -715,9 +714,33 @@ project_id = "short"
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("resolves auth email content_path keys from the same project-root base", () => {
+    const { layer, child, workdir } = setup({
+      configContents: `project_id = "demo"
+[auth.email.template.recovery]
+content_path = "./supabase/templates/recovery.html"
+[auth.email.notification.password_changed]
+enabled = true
+content_path = "./supabase/templates/password_changed_notification.html"
+`,
+    });
+    const templateDir = join(workdir, "supabase", "templates");
+    mkdirSync(templateDir, { recursive: true });
+    writeFileSync(join(templateDir, "recovery.html"), "<p>Recovery</p>");
+    writeFileSync(
+      join(templateDir, "password_changed_notification.html"),
+      "<p>Password changed</p>",
+    );
+
+    return Effect.gen(function* () {
+      yield* legacyStatus(flags());
+      expect(child.spawned.length).toBeGreaterThan(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("honors SUPABASE_AUTH_JWT_SECRET over a config.toml value with -o env", () => {
-    // Go's Viper AutomaticEnv gives env vars higher precedence than config.toml
-    // (pkg/config/config.go:529-535) — a stack started with this env var set
+    // Env vars resolve with higher precedence than config.toml —
+    // a stack started with this env var set
     // must report the env-derived secret, not the one in config.toml.
     const { layer, out } = setup({
       goOutput: Option.some("env"),
@@ -732,9 +755,9 @@ project_id = "short"
   });
 
   it.live("signs anon/service_role keys asymmetrically when signing_keys_path is set", () => {
-    // Go's generateJWT signs with the first key in auth.signing_keys_path
+    // JWT generation signs with the first key in auth.signing_keys_path
     // (RS256/ES256) instead of HMAC when that file resolves to a non-empty JWK
-    // array (pkg/config/apikeys.go:76-113).
+    // array.
     const { layer, out, workdir } = setup({
       goOutput: Option.some("json"),
       configContents: 'project_id = "demo"\n[auth]\nsigning_keys_path = "signing_keys.json"\n',
@@ -752,9 +775,8 @@ project_id = "short"
   });
 
   it.live("reports status using schema defaults when config.toml is missing entirely", () => {
-    // Matches Go: `flags.LoadConfig` -> `Config.Load` -> `loadFromFile` ->
-    // `mergeFileConfig` treats a missing file as a no-op (`os.ErrNotExist` ->
-    // nil, pkg/config/config.go:655-656), not an error — `status` proceeds
+    // Config loading treats a missing file as a no-op, not an error —
+    // `status` proceeds
     // using template defaults. Only a malformed file is a hard failure (see
     // the sibling "malformed" test above).
     //
@@ -776,9 +798,9 @@ project_id = "short"
   });
 
   it.live("resolves SUPABASE_PROJECT_ID from supabase/.env over config.toml", () => {
-    // Go's Config.Load runs loadNestedEnv (supabase/.env(.local) via godotenv)
-    // before loadFromFile's AutomaticEnv reads SUPABASE_PROJECT_ID
-    // (pkg/config/config.go:735-738) — an env-file-only value overrides
+    // Config loading loads the nested env (supabase/.env(.local))
+    // before reading SUPABASE_PROJECT_ID from the resolved environment —
+    // an env-file-only value overrides
     // config.toml's project_id too, not just an ambient shell export.
     const supabaseDir = join(tempRoot.current, "supabase");
     mkdirSync(supabaseDir, { recursive: true });
@@ -818,8 +840,8 @@ project_id = "short"
   });
 
   it.live("resolves SUPABASE_PROJECT_ID from a project-root .env file", () => {
-    // Go's loadNestedEnv walks past supabase/ one more level, to the project
-    // root/workdir (pkg/config/config.go:1169-1190) — a project-root-only
+    // The nested env load walks past supabase/ one more level, to the project
+    // root/workdir — a project-root-only
     // dotenv value must override config.toml too, not just supabase/.env.
     writeFileSync(join(tempRoot.current, ".env"), "SUPABASE_PROJECT_ID=root-env-project\n");
     const { layer, child } = setup({
@@ -838,8 +860,8 @@ project_id = "short"
   it.live(
     "does not climb to an ancestor project's config.toml when workdir has none of its own",
     () => {
-      // Go's ChangeWorkDir uses an explicit/defaulted workdir exactly, with no
-      // ancestor search (apps/cli-go/internal/utils/misc.go:231-247) — mirrored
+      // The resolved workdir is used exactly, with no
+      // ancestor search — mirrored
       // here by `search: false`. A workdir with no supabase/config.toml of its
       // own must fall back to defaults (workdir-basename project id), not an
       // ancestor project's config.toml, even though `cliConfig.workdir` sits
@@ -865,8 +887,8 @@ project_id = "short"
   );
 
   it.live("resolves SUPABASE_PROJECT_ID from supabase/.env even when config.toml is absent", () => {
-    // Go's loadNestedEnv runs unconditionally, before config.toml is ever
-    // opened (pkg/config/config.go:786-793) — a supabase/.env-only project id
+    // The nested env load runs unconditionally, before config.toml is ever
+    // opened — a supabase/.env-only project id
     // must still be honored even when there's no config.toml to fall back to
     // template defaults from.
     const supabaseDir = join(tempRoot.current, "supabase");
@@ -886,8 +908,8 @@ project_id = "short"
   });
 
   it.live("honors SUPABASE_AUTH_JWT_SECRET from supabase/.env, not just the ambient shell", () => {
-    // Go's Config.Load runs loadNestedEnv (supabase/.env(.local) via godotenv)
-    // before AutomaticEnv reads SUPABASE_AUTH_JWT_SECRET (config.go:735-738) —
+    // Config loading loads the nested env (supabase/.env(.local))
+    // before reading SUPABASE_AUTH_JWT_SECRET from the resolved environment —
     // a dotenv-file-only value must be visible here too, not just an ambient
     // shell export (see the sibling "-o env" ambient test above).
     const supabaseDir = join(tempRoot.current, "supabase");
@@ -970,9 +992,9 @@ project_id = "short"
   it.live(
     "succeeds against a paused-but-healthy db, matching Go's boolean-based running gate",
     () => {
-      // Go's `assertContainerHealthy` (`status.go:150`) gates on the boolean
+      // The health check gates on the boolean
       // `resp.State.Running`, not the status string — a paused container can
-      // report `Running: true` alongside `Status: "paused"`, and Go continues
+      // report `Running: true` alongside `Status: "paused"`, and the handler continues
       // past the not-running branch to the health check in that case.
       const { layer } = setup({
         route: defaultRoute({
@@ -990,8 +1012,8 @@ project_id = "short"
   );
 
   it.live("fails when the db container is absent, preserving the real Docker stderr text", () => {
-    // Go's `assertContainerHealthy` never special-cases "not found" — it wraps
-    // whatever `ContainerInspect` returns (`status.go:148-149`), so the real
+    // The health check never special-cases "not found" — it wraps
+    // whatever the inspect call returns, so the real
     // Docker stderr must flow through rather than a hardcoded TS string.
     const { layer } = setup({
       route: defaultRoute({
@@ -1088,7 +1110,7 @@ project_id = "short"
   });
 
   it.live("merges an auto-detected stopped service with a --exclude entry (status.go:116)", () => {
-    // Go's `excluded := append(stopped, exclude...)` merges the health-derived
+    // The exclusion list merges the health-derived
     // stopped list with the user-supplied --exclude list — both must take effect
     // together, not just whichever one the command would have applied alone.
     const { layer, out } = setup({
@@ -1144,8 +1166,8 @@ project_id = "short"
   });
 
   it.live("silently ignores an --override-name entry with an unknown field key", () => {
-    // Matches Go: `env.Unmarshal` (Netflix go-env) walks CustomName's own struct
-    // fields and looks up each field's tag in the override map — it never checks
+    // The override-name resolver walks the known field keys
+    // and looks up each one in the override map — it never checks
     // for leftover/unmatched keys, so an unrecognized key is a no-op, not an error.
     const { layer, out } = setup({ goOutput: Option.some("json") });
     return Effect.gen(function* () {
@@ -1189,8 +1211,8 @@ project_id = "short"
   });
 
   it.live("lets --output pretty win over --output-format json", () => {
-    // Explicit `-o pretty` is a complete Go format choice (root.ts:119-121,
-    // matching functions/list) and must render the table, not defer to the
+    // Explicit `-o pretty` is a complete format choice (matching functions/list)
+    // and must render the table, not defer to the
     // TS-only --output-format json/stream-json branch.
     const { layer, out } = setup({ format: "json", goOutput: Option.some("pretty") });
     return Effect.gen(function* () {

@@ -42,9 +42,9 @@ export const legacyVanitySubdomainsDelete = Effect.fn("legacy.vanity-subdomains.
       );
       yield* deleting?.clear() ?? Effect.void;
 
-      // Go's delete ignores --output entirely (stderr-only success). We still read
+      // `--output` is ignored entirely (stderr-only success). We still read
       // the legacy flag so that an explicit --output suppresses the TS json/stream-json
-      // success event, matching Go's behavior of emitting nothing to stdout.
+      // success event, keeping stdout empty either way.
       const legacyOutput = Option.getOrUndefined(legacyOutputFlag);
 
       if (

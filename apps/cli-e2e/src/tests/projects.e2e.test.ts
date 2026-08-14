@@ -1,6 +1,6 @@
 import { describe, expect } from "vitest";
 import { isRecording, PROJECT_REF } from "./env.ts";
-import { testBehaviour, testParity } from "./test-context.ts";
+import { testBehaviour } from "./test-context.ts";
 
 describe("projects", () => {
   describe("projects:list", () => {
@@ -64,9 +64,6 @@ describe("projects", () => {
       const result = await run(["projects", "list"]);
       expect(result.exitCode).not.toBe(0);
     });
-
-    testParity(["projects", "list"]);
-    testParity(["projects", "list"], { failureType: "NON_AUTH" });
   });
 
   describe("projects:api-keys", () => {
@@ -123,9 +120,6 @@ describe("projects", () => {
       const result = await run(["projects", "api-keys", "--project-ref", PROJECT_REF]);
       expect(result.exitCode).not.toBe(0);
     });
-
-    testParity(["projects", "api-keys", "--project-ref", PROJECT_REF]);
-    testParity(["projects", "api-keys", "--project-ref", PROJECT_REF], { failureType: "NON_AUTH" });
   });
 
   describe("projects:create", () => {
@@ -257,36 +251,6 @@ describe("projects", () => {
       ]);
       expect(result.exitCode).not.toBe(0);
     });
-
-    testParity([
-      "projects",
-      "create",
-      "my-project",
-      "--org-id",
-      "test-org-id",
-      "--db-password",
-      "password123",
-      "--region",
-      "us-east-1",
-      "--size",
-      "micro",
-    ]);
-    testParity(
-      [
-        "projects",
-        "create",
-        "my-project",
-        "--org-id",
-        "test-org-id",
-        "--db-password",
-        "password123",
-        "--region",
-        "us-east-1",
-        "--size",
-        "micro",
-      ],
-      { failureType: "NON_AUTH" },
-    );
   });
 
   describe("projects:delete", () => {
@@ -344,8 +308,5 @@ describe("projects", () => {
       const result = await run(["projects", "delete", PROJECT_REF, "--yes"]);
       expect(result.exitCode).not.toBe(0);
     });
-
-    testParity(["projects", "delete", PROJECT_REF, "--yes"]);
-    testParity(["projects", "delete", PROJECT_REF, "--yes"], { failureType: "NON_AUTH" });
   });
 });
