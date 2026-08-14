@@ -4076,7 +4076,6 @@ const additionalLifecycleContractFixtures = defineManagedStackContractFixtures([
         code: "PRUNE_CONFLICT_EVIDENCE",
         message: "Prune preserved conflict evidence for stack-conflict",
         recovery: ["Review the preserved checkout conflict evidence before reassignment"],
-        recoveryOperations: [{ operation: "prune", recordIds: ["stack-conflict"] }],
       },
       writes: [{ target: "registry", operation: "delete", id: "stack-conflict" }],
       runtimeEffects: [],

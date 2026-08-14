@@ -474,6 +474,7 @@ const createSchema = (database: ManagedSqliteDatabase): void =>
         context_id TEXT,
         branch TEXT,
         path TEXT,
+        project_identity_location TEXT,
         expected_git_value TEXT,
         target_git_value TEXT,
         expected_owner_branch TEXT,
@@ -561,6 +562,7 @@ const managedSqliteTableColumns: Readonly<Record<string, ReadonlyArray<string>>>
     "context_id",
     "branch",
     "path",
+    "project_identity_location",
     "expected_git_value",
     "target_git_value",
     "expected_owner_branch",
@@ -956,6 +958,7 @@ const decodeIdentityTransition = (row: unknown): ManagedIdentityTransitionRecord
   contextId: getOptionalString(row, "context_id"),
   branch: getOptionalString(row, "branch"),
   path: getOptionalString(row, "path"),
+  projectIdentityLocation: getOptionalString(row, "project_identity_location"),
   expectedGitValue: getOptionalString(row, "expected_git_value"),
   targetGitValue: getOptionalString(row, "target_git_value"),
   expectedOwnerBranch: getOptionalString(row, "expected_owner_branch"),
@@ -1761,9 +1764,9 @@ const reserveIdentityTransition = (
     database
       .prepare(
         `INSERT INTO identity_transitions
-          (id, kind, phase, project_id, checkout_id, context_id, branch, path,
+          (id, kind, phase, project_id, checkout_id, context_id, branch, path, project_identity_location,
            expected_git_value, target_git_value, expected_owner_branch, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run([
         next.id,
@@ -1774,6 +1777,7 @@ const reserveIdentityTransition = (
         next.contextId ?? null,
         next.branch ?? null,
         next.path ?? null,
+        next.projectIdentityLocation ?? null,
         next.expectedGitValue ?? null,
         next.targetGitValue ?? null,
         next.expectedOwnerBranch ?? null,

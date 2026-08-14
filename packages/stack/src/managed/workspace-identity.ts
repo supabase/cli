@@ -992,6 +992,7 @@ export const makeWorkspaceIdentity = ({
                 ...targetIdentity,
                 branch: report.context.kind === "branch" ? report.context.branch : undefined,
                 path,
+                projectIdentityLocation: report.workspace.projectIdentityLocation,
                 expectedGitValue:
                   report.context.kind === "workspace"
                     ? NEW_CHECKOUT_ORDINARY_TOPOLOGY
@@ -1005,6 +1006,7 @@ export const makeWorkspaceIdentity = ({
       if (
         transition.kind !== "new-checkout" ||
         transition.path !== path ||
+        transition.projectIdentityLocation !== report.workspace.projectIdentityLocation ||
         transition.projectId === undefined ||
         transition.checkoutId === undefined ||
         transition.contextId === undefined ||
@@ -1019,6 +1021,21 @@ export const makeWorkspaceIdentity = ({
         checkoutId: transition.checkoutId,
         contextId: transition.contextId,
       };
+      const abandonReserved = () =>
+        repository.abandonIdentityTransition({
+          id: transition.id,
+          expectedPhase: "reserved",
+          kind: transition.kind,
+          path,
+          projectId: transition.projectId,
+          checkoutId: transition.checkoutId,
+          contextId: transition.contextId,
+          branch: transition.branch,
+          projectIdentityLocation: transition.projectIdentityLocation,
+          expectedGitValue: transition.expectedGitValue,
+          targetGitValue: transition.targetGitValue,
+          expectedOwnerBranch: transition.expectedOwnerBranch,
+        });
       if (transition.phase === "reserved") {
         const beforePublication = yield* discover(path);
         const beforeClaims = yield* repository.listIdentityClaims();
@@ -1030,7 +1047,25 @@ export const makeWorkspaceIdentity = ({
           reserved.phase !== "reserved" ||
           reserved.kind !== "new-checkout" ||
           reserved.path !== path ||
-          !newCheckoutTopologyMatches(reserved, beforePublication.context) ||
+          reserved.projectIdentityLocation !==
+            beforePublication.workspace.projectIdentityLocation ||
+          !newCheckoutTopologyMatches(reserved, beforePublication.context)
+        ) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+          );
+        }
+        if (
+          beforePublication.identity.projectId !== undefined &&
+          beforePublication.identity.projectId !== targetIdentity.projectId &&
+          beforePublication.identity.checkoutId === undefined
+        ) {
+          yield* abandonReserved();
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+          );
+        }
+        if (
           (beforePublication.identity.projectId !== undefined &&
             beforePublication.identity.projectId !== targetIdentity.projectId) ||
           (beforePublication.identity.checkoutId !== undefined &&
@@ -1046,6 +1081,22 @@ export const makeWorkspaceIdentity = ({
           beforePublication,
           targetIdentity,
           transition.id,
+        ).pipe(
+          Effect.catchTag("ManagedIdentityTransitionOwnershipError", (error) =>
+            Effect.gen(function* () {
+              const afterFailure = yield* discover(path).pipe(
+                Effect.catch(() => Effect.succeed(undefined)),
+              );
+              if (
+                afterFailure?.identity.projectId !== undefined &&
+                afterFailure.identity.projectId !== targetIdentity.projectId &&
+                afterFailure.identity.checkoutId === undefined
+              ) {
+                yield* abandonReserved();
+              }
+              return yield* Effect.fail(error);
+            }),
+          ),
         );
         const identity = yield* requireResolvedIdentity(claimed);
         if (
@@ -1529,6 +1580,7 @@ export const makeWorkspaceIdentity = ({
         report.activeTransition.checkoutId !== transition.checkoutId ||
         report.activeTransition.contextId !== transition.contextId ||
         report.activeTransition.branch !== transition.branch ||
+        report.activeTransition.projectIdentityLocation !== transition.projectIdentityLocation ||
         report.activeTransition.expectedGitValue !== transition.expectedGitValue ||
         report.activeTransition.targetGitValue !== transition.targetGitValue ||
         report.activeTransition.expectedOwnerBranch !== transition.expectedOwnerBranch
@@ -1625,6 +1677,7 @@ export const makeWorkspaceIdentity = ({
         checkoutId: transition.checkoutId,
         contextId: transition.contextId,
         branch: transition.branch,
+        projectIdentityLocation: transition.projectIdentityLocation,
         expectedGitValue: transition.expectedGitValue,
         targetGitValue: transition.targetGitValue,
         expectedOwnerBranch: transition.expectedOwnerBranch,

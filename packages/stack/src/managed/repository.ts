@@ -537,6 +537,7 @@ export interface ReserveManagedIdentityTransitionInput {
   readonly contextId?: string;
   readonly branch?: string;
   readonly path?: string;
+  readonly projectIdentityLocation?: string;
   readonly expectedGitValue?: string;
   readonly targetGitValue?: string;
   readonly expectedOwnerBranch?: string;
@@ -568,6 +569,7 @@ export interface AbandonManagedIdentityTransitionInput {
   readonly expectedGitValue?: string;
   readonly targetGitValue?: string;
   readonly expectedOwnerBranch?: string;
+  readonly projectIdentityLocation?: string;
 }
 
 export type AbandonManagedIdentityTransitionResult =
@@ -663,6 +665,7 @@ export const transitionResourceKeys = (input: {
   readonly contextId?: string;
   readonly branch?: string;
   readonly path?: string;
+  readonly projectIdentityLocation?: string;
 }): ReadonlyArray<string> => {
   const nonEmpty = (value: string | undefined): string | undefined => {
     const normalized = value?.trim();
@@ -673,9 +676,13 @@ export const transitionResourceKeys = (input: {
   const contextId = nonEmpty(input.contextId);
   const branch = nonEmpty(input.branch);
   const path = nonEmpty(input.path);
+  const projectIdentityLocation = nonEmpty(input.projectIdentityLocation);
   const keys: string[] = [];
   if (input.kind === "new-checkout") {
     if (path !== undefined) keys.push(`path:${path}`);
+    if (projectIdentityLocation !== undefined) {
+      keys.push(`project-identity:${projectIdentityLocation}`);
+    }
   } else if (input.kind === "rebind-checkout" || input.kind === "folder-to-git") {
     if (checkoutId !== undefined) keys.push(`checkout:${checkoutId}`);
     if (path !== undefined) keys.push(`path:${path}`);
@@ -710,6 +717,7 @@ export const decideManagedIdentityTransitionReservation = (input: {
       input.existing.contextId === requested.contextId &&
       input.existing.branch === requested.branch &&
       input.existing.path === requested.path &&
+      input.existing.projectIdentityLocation === requested.projectIdentityLocation &&
       input.existing.expectedGitValue === requested.expectedGitValue &&
       input.existing.targetGitValue === requested.targetGitValue &&
       input.existing.expectedOwnerBranch === requested.expectedOwnerBranch;
@@ -742,6 +750,7 @@ export const decideManagedIdentityTransitionReservation = (input: {
     contextId: requested.contextId,
     branch: requested.branch,
     path: requested.path,
+    projectIdentityLocation: requested.projectIdentityLocation,
     expectedGitValue: requested.expectedGitValue,
     targetGitValue: requested.targetGitValue,
     expectedOwnerBranch: requested.expectedOwnerBranch,
@@ -818,6 +827,7 @@ export const decideManagedIdentityTransitionAbandon = (
     existing.checkoutId === input.checkoutId &&
     existing.contextId === input.contextId &&
     existing.branch === input.branch &&
+    existing.projectIdentityLocation === input.projectIdentityLocation &&
     existing.expectedGitValue === input.expectedGitValue &&
     existing.targetGitValue === input.targetGitValue &&
     existing.expectedOwnerBranch === input.expectedOwnerBranch;

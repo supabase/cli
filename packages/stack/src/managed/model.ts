@@ -192,6 +192,8 @@ export interface ManagedIdentityTransitionRecord {
   readonly contextId?: string;
   readonly branch?: string;
   readonly path?: string;
+  /** Storage location shared by every checkout that reads the same project identity. */
+  readonly projectIdentityLocation?: string;
   readonly expectedGitValue?: string;
   readonly targetGitValue?: string;
   /** Previous branch owner that an adopt-context transition is allowed to replace. */

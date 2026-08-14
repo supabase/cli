@@ -39,6 +39,7 @@ export const discoveryObservation = (report: ManagedWorkspaceDiscovery): string 
       observationValue(transition.contextId),
       observationValue(transition.branch),
       observationValue(transition.path),
+      observationValue(transition.projectIdentityLocation),
       observationValue(transition.expectedGitValue),
       observationValue(transition.targetGitValue),
       observationValue(transition.expectedOwnerBranch),

@@ -503,6 +503,85 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(published.state).toBe("healthy");
   });
 
+  it("serializes concurrent new checkouts that share a Git project identity", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "concurrent-project");
+    const linked = join(root, "concurrent-linked");
+    git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+    const stateRoot = join(root, "concurrent-project-managed");
+    let repositoryA: ManagedStackRepositoryShape;
+    let repositoryB: ManagedStackRepositoryShape;
+    if (_name === "in-memory") {
+      repositoryA = createInMemoryManagedStackRepository();
+      repositoryB = repositoryA;
+    } else {
+      const registryA = await createManagedStackService({ stateRoot, publicationPollMs: 1 });
+      const registryB = await createManagedStackService({ stateRoot, publicationPollMs: 1 });
+      openHandles.push(registryA, registryB);
+      repositoryA = registryA.repository;
+      repositoryB = registryB.repository;
+    }
+
+    let arrivals = 0;
+    let releaseReservations: () => void = () => undefined;
+    const bothReservations = new Promise<void>((resolve) => {
+      releaseReservations = resolve;
+    });
+    const gateReservation = (managedRepository: ManagedStackRepositoryShape) => ({
+      ...managedRepository,
+      reserveIdentityTransition: (
+        input: Parameters<typeof managedRepository.reserveIdentityTransition>[0],
+      ) =>
+        Effect.gen(function* () {
+          arrivals += 1;
+          if (arrivals === 2) releaseReservations();
+          yield* Effect.promise(() => bothReservations);
+          return yield* managedRepository.reserveIdentityTransition(input);
+        }),
+    });
+    const serviceA = await makeManagedStackService({
+      repository: gateReservation(repositoryA),
+      stateRoot,
+      publicationPollMs: 1,
+    });
+    const serviceB = await makeManagedStackService({
+      repository: gateReservation(repositoryB),
+      stateRoot,
+      publicationPollMs: 1,
+    });
+    openHandles.push(serviceA, serviceB);
+
+    const attempts = await Promise.allSettled([
+      serviceA.newCheckout({ workspacePath: repository }),
+      serviceB.newCheckout({ workspacePath: linked }),
+    ]);
+    expect(arrivals).toBe(2);
+    const winners = attempts.filter(
+      (
+        attempt,
+      ): attempt is PromiseFulfilledResult<Awaited<ReturnType<typeof serviceA.newCheckout>>> =>
+        attempt.status === "fulfilled",
+    );
+    expect(winners).toHaveLength(1);
+    const winner = winners[0];
+    if (winner === undefined) throw new Error("expected one new-checkout winner");
+    const loserIndex = attempts.findIndex((attempt) => attempt.status === "rejected");
+    expect(winner.value.identity.projectId).toBeDefined();
+    expect(loserIndex).toBeGreaterThanOrEqual(0);
+    expect(attempts[loserIndex]).toMatchObject({
+      status: "rejected",
+      reason: { _tag: "ManagedIdentityTransitionOwnershipError" },
+    });
+
+    const retryService = loserIndex === 0 ? serviceA : serviceB;
+    const retryPath = loserIndex === 0 ? repository : linked;
+    const recovered = await retryService.newCheckout({ workspacePath: retryPath });
+    expect(recovered.identity.projectId).toBe(winner.value.identity.projectId);
+    expect(recovered.identity.checkoutId).not.toBe(winner.value.identity.checkoutId);
+    const claims = await Effect.runPromise(repositoryA.listIdentityClaims());
+    expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+  });
+
   it("refuses a reserved new checkout after the observed branch changes", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
@@ -550,7 +629,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect((await inspect(service.repository, repository)).activeTransition).toBeUndefined();
   });
 
-  it("refuses a project winner that appears before field-specific publication", async () => {
+  it("releases an untouched reservation when a project winner appears before publication", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
     const winnerProject = "00000000-0000-7000-8000-000000000108";
@@ -599,17 +678,11 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("main")),
     ).toBeUndefined();
     const claims = await Effect.runPromise(service.repository.listIdentityClaims());
-    expect(claims.transitions).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          kind: "new-checkout",
-          phase: "reserved",
-          projectId: expect.any(String),
-          checkoutId: expect.any(String),
-          contextId: expect.any(String),
-        }),
-      ]),
-    );
+    expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+
+    const recovered = await service.newCheckout({ workspacePath: repository });
+    expect(recovered.state).toBe("healthy");
+    expect(recovered.identity.projectId).toBe(winnerProject);
   });
 
   it("completes a detached checkout whose context registry row is missing", async () => {

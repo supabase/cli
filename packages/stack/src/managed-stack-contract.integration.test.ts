@@ -518,24 +518,29 @@ describe("managed stack acceptance contract", () => {
     }
   });
 
-  it("validates recovery operations as executable diagnostic contracts", () => {
+  it("validates recovery operation payloads", () => {
     const scenario: ManagedStackContractScenario | undefined = managedStackContractFixtures.find(
       ({ id }) => id === "reclamation.prune-preserves-conflict-evidence",
     );
     if (scenario === undefined) {
       throw new Error("recovery operation fixture is required");
     }
+    const validOperation = JSON.parse(JSON.stringify(scenario));
+    validOperation.expected.warning.recoveryOperations = [
+      { operation: "prune", recordIds: ["stack-conflict"] },
+    ];
+    expect(validateManagedStackContractFixtures([validOperation])).toEqual([]);
     const recoveryOperation: ManagedStackContractRecoveryOperation | undefined =
-      scenario.expected.warning?.recoveryOperations?.[0];
+      validOperation.expected.warning.recoveryOperations[0];
     expect(recoveryOperation?.operation).toBe("prune");
 
-    const emptyOperation = JSON.parse(JSON.stringify(scenario));
+    const emptyOperation = JSON.parse(JSON.stringify(validOperation));
     emptyOperation.expected.warning.recoveryOperations[0].operation = "";
     expect(validateManagedStackContractFixtures([emptyOperation])).toContain(
       `${scenario.id}: recovery operation name is required`,
     );
 
-    const nonArrayRecordIds = JSON.parse(JSON.stringify(scenario));
+    const nonArrayRecordIds = JSON.parse(JSON.stringify(validOperation));
     nonArrayRecordIds.expected.warning.recoveryOperations[0] = {
       operation: "prune",
       recordIds: null,
@@ -544,7 +549,7 @@ describe("managed stack acceptance contract", () => {
       `${scenario.id}: recovery operation prune record IDs must be an array`,
     );
 
-    const nullRecordId = JSON.parse(JSON.stringify(scenario));
+    const nullRecordId = JSON.parse(JSON.stringify(validOperation));
     nullRecordId.expected.warning.recoveryOperations[0] = {
       operation: "prune",
       recordIds: [null],
@@ -553,7 +558,7 @@ describe("managed stack acceptance contract", () => {
       `${scenario.id}: recovery operation prune record ID is required`,
     );
 
-    const nullEntry = JSON.parse(JSON.stringify(scenario));
+    const nullEntry = JSON.parse(JSON.stringify(validOperation));
     nullEntry.expected.warning.recoveryOperations = [null];
     expect(validateManagedStackContractFixtures([nullEntry])).toContain(
       `${scenario.id}: recovery operation must be an object`,
@@ -632,6 +637,13 @@ describe("managed stack acceptance contract", () => {
       );
     });
     expect(advertisedRecoveryOperations).not.toContain("newCheckout");
+
+    const conflictPrune = managedStackContractFixtures.find(
+      ({ id }) => id === "reclamation.prune-preserves-conflict-evidence",
+    );
+    const conflictExpected: ManagedStackContractScenario["expected"] | undefined =
+      conflictPrune?.expected;
+    expect(conflictExpected?.warning?.recoveryOperations).toBeUndefined();
   });
 
   it("shares branch contexts across worktrees while checkout identity keeps stacks isolated", () => {
