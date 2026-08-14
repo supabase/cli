@@ -57,8 +57,9 @@ import MultiContentAddView from "./views/AddView"
 import MultiContentEditView from "./views/EditView"
 
 
-<MenuItem value="^$" primaryText="Não exibir importados" />
-<MenuItem value="\\w+" primaryText="Exibir importados" />
+// JSX-like snippets are comments so this .ts fixture remains valid syntax.
+// <MenuItem value="^$" primaryText="Não exibir importados" />
+// <MenuItem value="\\w+" primaryText="Exibir importados" />
 
 // *Add all needed dependency to this module
 // *app requires those import modules to function
