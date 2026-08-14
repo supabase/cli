@@ -152,11 +152,16 @@ export function legacyReconcileMigrations(
   // exhausted side; `legacyParseMigrationVersion` mirrors Go's `strconv.Atoi`
   // (digits only, within int64, BigInt for exact ordering) and is shared with
   // `migration list` so both surfaces skip the same edge-case versions.
+  // `legacyLoadLocalVersions` yields versions in file-name order, which reverses
+  // `ORDER BY version` whenever one version is a prefix of another
+  // (supabase/cli#6036) — the same desynchronisation
+  // `legacyFindPendingMigrations` sorts away below.
+  const sortedLocal = legacySortMigrationVersions(local);
   const extraRemote: Array<string> = [];
   const extraLocal: Array<string> = [];
   let i = 0;
   let j = 0;
-  while (i < remote.length || j < local.length) {
+  while (i < remote.length || j < sortedLocal.length) {
     let remoteTs = LEGACY_MIGRATION_VERSION_MAX;
     if (i < remote.length) {
       const parsed = legacyParseMigrationVersion(remote[i]!);
@@ -167,8 +172,8 @@ export function legacyReconcileMigrations(
       remoteTs = parsed;
     }
     let localTs = LEGACY_MIGRATION_VERSION_MAX;
-    if (j < local.length) {
-      const parsed = legacyParseMigrationVersion(local[j]!);
+    if (j < sortedLocal.length) {
+      const parsed = legacyParseMigrationVersion(sortedLocal[j]!);
       if (parsed === undefined) {
         j++;
         continue;
@@ -176,7 +181,7 @@ export function legacyReconcileMigrations(
       localTs = parsed;
     }
     if (localTs < remoteTs) {
-      extraLocal.push(local[j]!);
+      extraLocal.push(sortedLocal[j]!);
       j++;
     } else if (remoteTs < localTs) {
       extraRemote.push(remote[i]!);
@@ -299,6 +304,10 @@ export const legacyLoadLocalVersions = (
 /** Basename of a path, handling both `/` and `\` separators (keeps the helper pure). */
 const baseName = (filePath: string): string => filePath.split(/[\\/]/u).pop() ?? filePath;
 
+/** Lexical version order, shared by both sorters so the walks cannot drift apart. */
+const legacyCompareMigrationVersions = (a: string, b: string): number =>
+  a < b ? -1 : a > b ? 1 : 0;
+
 /**
  * Orders local migration paths by version so they line up with
  * `schema_migrations` (`ORDER BY version`) before a two-pointer walk compares
@@ -314,8 +323,21 @@ export function legacySortMigrationPathsByVersion(
   return [...localPaths].sort((a, b) => {
     const versionA = MIGRATE_FILE_PATTERN.exec(baseName(a))?.[1] ?? "";
     const versionB = MIGRATE_FILE_PATTERN.exec(baseName(b))?.[1] ?? "";
-    return versionA < versionB ? -1 : versionA > versionB ? 1 : 0;
+    return legacyCompareMigrationVersions(versionA, versionB);
   });
+}
+
+/**
+ * Orders bare version strings the way `ORDER BY version` returns them, for the
+ * walks that compare version lists rather than paths. `version` is a `text`
+ * column, so Postgres orders it lexically and a prefix always precedes its
+ * extension — exactly what {@link legacySortMigrationPathsByVersion} reproduces
+ * for the path-shaped walks.
+ */
+export function legacySortMigrationVersions(
+  versions: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return [...versions].sort(legacyCompareMigrationVersions);
 }
 
 /** Outcome of `legacyFindPendingMigrations` — `(slice, error)` as a tagged union. */
