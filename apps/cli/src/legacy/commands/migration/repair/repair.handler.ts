@@ -5,6 +5,7 @@ import {
   legacyResolveYesWithProjectEnv,
 } from "../../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../../shared/cli/cli-args.service.ts";
+import { emitSuccessTrailer } from "../../../../shared/cli/success-trailer.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../../shared/output/errors.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
@@ -244,9 +245,8 @@ const runRepair = Effect.fnUntraced(function* (
     if (output.format === "text") {
       // The success banner (stdout) + follow-up suggestion (stderr), both on success.
       yield* output.raw(`Finished ${legacyAqua("supabase migration repair")}.\n`);
-      yield* output.raw(
+      yield* emitSuccessTrailer(
         `Run ${legacyAqua("supabase migration list")} to show the updated migration history.\n`,
-        "stderr",
       );
     } else {
       yield* output.success("Migration history repaired", {

@@ -95,6 +95,24 @@ export const LegacyAgentFlag = GlobalFlag.setting("agent")({
   ),
 });
 
+/**
+ * Every global/persistent flag declared above, mirroring the set Go registers on
+ * the root command (`apps/cli-go/cmd/root.go:344-354`).
+ *
+ * Adding a VALUE-taking flag here also means registering its token in
+ * `globalFlagsWithValues` (`shared/cli/run.ts`) and its name in
+ * `PERSISTENT_VALUE_FLAG_NAMES` (`shared/cli/cobra-flag-groups.ts`). Those two
+ * registries feed raw-argv pflag scanners that must run for `--help`/`--version`
+ * /bare-group invocations, which cobra serves before `PersistentPreRunE` and so
+ * never expose parsed flag values to read instead. Neither registry is derived
+ * from this list, and drift fails silently rather than loudly: an unregistered
+ * value flag does not consume its following token, so `supabase --new-flag
+ * --workdir other <cmd>` makes the upgrade notice read/write
+ * `other/supabase/.temp/cli-latest`, where Go — which lets `--new-flag` eat
+ * `--workdir` — resolves against the cwd. Only the bare space-separated spelling
+ * diverges (`--new-flag=x --workdir other` agrees), which is what makes it easy
+ * to miss.
+ */
 export const LEGACY_GLOBAL_FLAGS = [
   LegacyOutputFlag,
   LegacyProfileFlag,

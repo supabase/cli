@@ -33,7 +33,7 @@ import { parseDotEnv } from "./legacy-dotenv.ts";
  * over anything discovered here, since it's already correct for the keys it
  * knows about.
  */
-function candidateDotenvFilenames(env: string): ReadonlyArray<string> {
+export function legacyCandidateDotenvFilenames(env: string): ReadonlyArray<string> {
   return [`.env.${env}.local`, ...(env === "test" ? [] : [".env.local"]), `.env.${env}`, ".env"];
 }
 
@@ -102,7 +102,7 @@ export function legacyResolveProjectEnvironmentValues(
   workdir: string,
 ): Record<string, string> {
   const env = process.env["SUPABASE_ENV"] || "development";
-  const filenames = candidateDotenvFilenames(env);
+  const filenames = legacyCandidateDotenvFilenames(env);
   const merged: Record<string, string> = {};
 
   const supabaseDir = projectEnv?.paths.supabaseDir ?? join(workdir, "supabase");

@@ -12,6 +12,7 @@ import { normalizeCause } from "../output/normalize-error.ts";
 import type { OutputFormat } from "../output/types.ts";
 import { Output } from "../output/output.service.ts";
 import { LegacyGoChildExitError } from "../legacy/legacy-go-child-exit.error.ts";
+import { GoProxyInvocation, goProxyInvocationLayer } from "../legacy/go-proxy-invocation.ts";
 import { cliConfigLayer } from "../../next/config/cli-config.layer.ts";
 import { projectHomeLayer } from "../../next/config/project-home.layer.ts";
 import { ProjectLocalServiceVersions } from "../../next/config/project-local-service-versions.service.ts";
@@ -29,13 +30,22 @@ import { telemetryRuntimeLayer } from "../telemetry/runtime.layer.ts";
 import { tracingLayer } from "../telemetry/tracing.layer.ts";
 import { CliArgs } from "./cli-args.service.ts";
 import { resolveAgentOutputFormatFromArgs } from "./agent-output.ts";
+import { SuccessTrailer, successTrailerLayer } from "./success-trailer.ts";
 import type { CliErrorSuggestionContext } from "./subcommand-flag-suggestions.ts";
-import { flagAliasesFor, isValueTakingFlagTokenFor } from "./subcommand-flag-suggestions.ts";
+import {
+  flagAliasesFor,
+  isValueTakingFlagTokenFor,
+  resolvedCommandPathForArgv,
+} from "./subcommand-flag-suggestions.ts";
 
 // Global flags that consume the following argv token as their value. Keep this in
 // sync with the value-taking global flags defined in `shared/cli/global-flags.ts`
-// and `legacy/shared/legacy/global-flags.ts`: a value flag missing here would make
-// `extractCommandPath` mistake its value for a command-path segment.
+// and `shared/legacy/global-flags.ts` (both point back here), and with the
+// name-keyed `PERSISTENT_VALUE_FLAG_NAMES` in `shared/cli/cobra-flag-groups.ts`:
+// a value flag missing here would make `extractCommandPath` mistake its value for
+// a command-path segment, and would leave the flag's following token unconsumed
+// for every scanner below — silently mis-resolving `--workdir` for the bare
+// space-separated spelling.
 const globalFlagsWithValues = new Set([
   "--output-format",
   "--output",
@@ -104,6 +114,182 @@ export function extractCommandPath(args: ReadonlyArray<string>): ReadonlyArray<s
     commandArgs.push(arg);
   }
   return commandArgs;
+}
+
+/**
+ * Yields argv tokens that are actual flag occurrences, with their positions,
+ * honoring cobra/pflag boundaries: everything after a bare `--` is an operand,
+ * and a token consumed as a value-taking global flag's value (`--profile -v`)
+ * is not a flag.
+ */
+export function* rootFlagTokens(
+  args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
+): Generator<{ readonly token: string; readonly index: number }> {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--") return;
+    if (!arg.startsWith("-")) continue;
+    yield { token: arg, index };
+    const [flag] = arg.split("=", 1);
+    if (!arg.includes("=") && flag !== undefined && isValueTakingToken(flag)) {
+      index += 1;
+    } else if (shortClusterConsumesNextToken(arg, isValueTakingToken)) {
+      index += 1;
+    }
+  }
+}
+
+const isGlobalValueFlagToken = (token: string): boolean => globalFlagsWithValues.has(token);
+
+/**
+ * The full value-taking-token predicate for a real invocation: the global
+ * flags plus the resolved leaf command's own value flags — pflag parses with
+ * the resolved command's complete flagset, so `login --name --debug` hands
+ * `--debug` to `--name` and never sets the debug flag.
+ */
+function valueTakingFlagTokenPredicateForArgv(
+  rootCommand: Command.Command.Any,
+  args: ReadonlyArray<string>,
+): (token: string) => boolean {
+  const leafPredicate = isValueTakingFlagTokenFor(
+    rootCommand,
+    resolvedCommandPathForArgv(rootCommand, extractCommandPath(args)),
+  );
+  return (token) => isGlobalValueFlagToken(token) || leafPredicate(token);
+}
+
+/** Whether `token` is an occurrence of the long or exact-short boolean flag `name`, bare or valued (`--help`, `--help=false`). */
+function isFlagOccurrence(token: string, name: string): boolean {
+  return token === name || token.startsWith(`${name}=`);
+}
+
+/** `strconv.ParseBool`'s true spellings — how pflag reads a boolean flag's `=<value>`. An invalid value fails Go's whole parse, so a run never reaches the notice and reading it as false here is harmless. */
+const PFLAG_BOOL_TRUE = new Set(["1", "t", "T", "TRUE", "true", "True"]);
+
+/**
+ * pflag reads a single-dash token as a cluster of shorthand flags until a
+ * value-taking shorthand consumes the rest of the cluster as its value.
+ */
+function* shortClusterFlagNames(
+  token: string,
+  isValueTakingToken: (token: string) => boolean,
+): Generator<string> {
+  if (!token.startsWith("-") || token.startsWith("--")) return;
+  for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
+    const short = `-${rest[0]!}`;
+    if (isValueTakingToken(short)) return;
+    if (rest[1] === "=") {
+      yield short;
+      return;
+    }
+    yield short;
+  }
+}
+
+/** Whether a short cluster ends in a value-taking shorthand with no inline value, which pflag satisfies with the NEXT argv token (`-ho json`). */
+function shortClusterConsumesNextToken(
+  token: string,
+  isValueTakingToken: (token: string) => boolean,
+): boolean {
+  if (!token.startsWith("-") || token.startsWith("--")) return false;
+  for (let rest = token.slice(1); rest.length > 0; rest = rest.slice(1)) {
+    if (isValueTakingToken(`-${rest[0]!}`)) return rest.length === 1;
+    if (rest[1] === "=") return false;
+  }
+  return false;
+}
+
+/**
+ * Index of the first positional token — pflag's view, with flags and their
+ * consumed values skipped and everything from a bare `--` on positional —
+ * or `args.length` when there is none.
+ */
+function firstPositionalIndex(
+  args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean,
+): number {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index]!;
+    if (arg === "--") return index + 1;
+    if (!arg.startsWith("-")) return index;
+    const [flag] = arg.split("=", 1);
+    if (!arg.includes("=") && flag !== undefined && isValueTakingToken(flag)) {
+      index += 1;
+    } else if (shortClusterConsumesNextToken(arg, isValueTakingToken)) {
+      index += 1;
+    }
+  }
+  return args.length;
+}
+
+/**
+ * Whether argv sets the ROOT `--version` flag — in any spelling pflag marks as
+ * changed, which is what Go's `shouldFetchRelease` keys on: bare, valued
+ * (`--version=false` included), or followed by a
+ * space-form operand (`--version true` — cobra serves the version built-in
+ * before it ever validates the stray operand). A subcommand's own flag of the
+ * same name (`db reset --version x`) does not count: a positional precedes
+ * it. Operands after `--` and tokens consumed as another flag's value never
+ * count.
+ */
+export function hasRootVersionFlag(
+  args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
+): boolean {
+  const positional = firstPositionalIndex(args, isValueTakingToken);
+  for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
+    if (index >= positional) continue;
+    if (isFlagOccurrence(token, "--version")) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether cobra serves this argv as a built-in — help at any depth, or root
+ * version — without ever running `PersistentPreRunE`. Help counts on
+ * presence: a false value on the root or a group still lands on cobra's
+ * non-`Runnable()` help (execute() serves the built-ins and the Runnable
+ * check before `preRun`), and the one input Go would instead run (a runnable
+ * leaf under `--help=false`) is a spelling the vendored effect CLI serves
+ * help for anyway. The version flag resolves pflag-style, last value wins: a
+ * true value serves the version built-in, while `--version=false <leaf>` runs
+ * the leaf normally — `ChangeWorkDir` included — and only a bare invocation
+ * falls back to the non-runnable root's help.
+ */
+export function hasRootHelpOrVersionFlag(
+  args: ReadonlyArray<string>,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
+): boolean {
+  const positional = firstPositionalIndex(args, isValueTakingToken);
+  let version: boolean | undefined;
+  for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
+    if (isFlagOccurrence(token, "--help") || isFlagOccurrence(token, "-h")) return true;
+    const shortFlags = [...shortClusterFlagNames(token, isValueTakingToken)];
+    if (shortFlags.includes("-h")) return true;
+    if (index < positional) {
+      if (token === "--version") version = true;
+      else if (token.startsWith("--version=")) {
+        version = PFLAG_BOOL_TRUE.has(token.slice("--version=".length));
+      }
+    }
+  }
+  if (version === undefined) return false;
+  return version || positional >= args.length;
+}
+
+/** The last value a root-level `--<name>`/`--<name>=<value>` occurrence sets. `name` must be a value-taking global flag, whose space-form value the token walk already skips. */
+export function lastGlobalFlagValue(
+  args: ReadonlyArray<string>,
+  name: string,
+  isValueTakingToken: (token: string) => boolean = isGlobalValueFlagToken,
+): string | undefined {
+  let value: string | undefined;
+  for (const { token, index } of rootFlagTokens(args, isValueTakingToken)) {
+    if (token === name) value = args[index + 1];
+    else if (token.startsWith(`${name}=`)) value = token.slice(name.length + 1);
+  }
+  return value;
 }
 
 /** Whether the global signal-interrupt handler should wrap this invocation. */
@@ -486,6 +672,23 @@ export interface RunCliOptions {
    * adding to the shared list.
    */
   readonly additionalSelfManagedSignalCommands?: ReadonlyArray<ReadonlyArray<string>>;
+  /**
+   * Runs just before the process exits on any invocation that exits 0 — the
+   * seam for the legacy shell's upgrade notice. `cleanShowHelp` marks the
+   * exit-0 ShowHelp failure branch (a bare group command), which cobra serves
+   * without `PersistentPreRunE`. Must never fail, and cannot change the exit
+   * code.
+   */
+  readonly afterSuccess?: (
+    args: ReadonlyArray<string>,
+    info: {
+      readonly cleanShowHelp: boolean;
+      readonly delegatedToGo: boolean;
+      readonly workingDirectory?: string;
+      /** Value-taking-token predicate for this argv (global + resolved leaf flags) — see `valueTakingFlagTokenPredicateForArgv`. */
+      readonly isValueTakingFlagToken: (token: string) => boolean;
+    },
+  ) => Effect.Effect<void>;
 }
 
 function cliProgramFor(
@@ -567,6 +770,7 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
   const signalAwareProgram = Effect.scoped(
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
+      yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
       const cliFiber = yield* cliProgram.pipe(Effect.forkScoped);
       const outcome = yield* Effect.raceFirst(
         Fiber.await(cliFiber).pipe(Effect.map((exit) => ({ _tag: "cli" as const, exit }))),
@@ -576,7 +780,10 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       );
 
       if (outcome._tag === "signal") {
-        yield* Fiber.interrupt(cliFiber);
+        // SIGHUP must also stay held once cleanup begins.
+        yield* Effect.scoped(
+          processControl.holdSignals(["SIGHUP"]).pipe(Effect.andThen(Fiber.interrupt(cliFiber))),
+        );
         return yield* Effect.interrupt;
       }
 
@@ -590,6 +797,14 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
     Effect.provide(BunServices.layer),
   );
 
+  const selfManagedSignalProgram = Effect.scoped(
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      yield* processControl.holdSignals(["SIGINT", "SIGTERM"]);
+      return yield* cliProgram;
+    }),
+  ).pipe(Effect.provide(processControlLayer));
+
   const handledRuntimeLayer = Layer.mergeAll(processControlLayer, runtimeInfoLayer, ttyLayer);
 
   const handledProgram = <A, E, R>(
@@ -597,8 +812,44 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
   ): Effect.Effect<never, unknown, never> =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
+      const goProxyInvocation = yield* GoProxyInvocation;
       const output = yield* Output;
+      const successTrailer = yield* SuccessTrailer;
       const exit = yield* program.pipe(Effect.exit);
+      const afterSuccessHook = options.afterSuccess;
+      const afterSuccess = (code: number, cleanShowHelp: boolean) =>
+        code === 0
+          ? Effect.gen(function* () {
+              const trailers = yield* successTrailer.takeAll;
+              if (afterSuccessHook !== undefined || trailers.length > 0) {
+                yield* Effect.scoped(
+                  processControl.holdSignals(["SIGINT", "SIGTERM", "SIGHUP"]).pipe(
+                    Effect.andThen(
+                      Effect.gen(function* () {
+                        if (afterSuccessHook !== undefined) {
+                          const delegatedToGo = yield* goProxyInvocation.wasDelegated;
+                          const workingDirectory = yield* successTrailer.workingDirectory;
+                          yield* afterSuccessHook(args, {
+                            cleanShowHelp,
+                            delegatedToGo,
+                            workingDirectory,
+                            isValueTakingFlagToken: valueTakingFlagTokenPredicateForArgv(
+                              rootCommand,
+                              args,
+                            ),
+                          });
+                        }
+
+                        yield* Effect.forEach(trailers, (text) => output.raw(text, "stderr"), {
+                          discard: true,
+                        });
+                      }),
+                    ),
+                  ),
+                );
+              }
+            })
+          : Effect.void;
       if (Exit.isFailure(exit)) {
         const exitCode = exitCodeForFailure(exit.cause);
         // See `shouldReportFailure` for the reporting rules (and why they're
@@ -610,9 +861,11 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
         if (shouldReportFailure(exit.cause, exitCode)) {
           yield* output.fail(normalizeCause(exit.cause, suggestionContext));
         }
+        yield* afterSuccess(exitCode, true);
         return yield* processControl.exit(exitCode);
       }
       const exitCode = yield* processControl.getExitCode;
+      yield* afterSuccess(exitCode ?? 0, false);
       return yield* processControl.exit(exitCode ?? 0);
     }).pipe(
       Effect.provide(outputLayerFor(outputFormat)),
@@ -625,11 +878,13 @@ export async function runCli(rootCommand: Command.Command.Any, options: RunCliOp
       Effect.provide(ttyLayer),
       Effect.provide(unixHttpClientLayer),
       Effect.provide(BunServices.layer),
+      Effect.provide(goProxyInvocationLayer),
+      Effect.provide(successTrailerLayer),
     );
 
   if (useGlobalSignalInterrupt) {
     await Effect.runPromise(handledProgram(signalAwareProgram));
   } else {
-    await Effect.runPromise(handledProgram(cliProgram));
+    await Effect.runPromise(handledProgram(selfManagedSignalProgram));
   }
 }

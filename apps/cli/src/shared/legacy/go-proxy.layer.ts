@@ -3,13 +3,20 @@ import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import process from "node:process";
-import { Effect, Layer, Stream } from "effect";
+import { Effect, Layer, Option, Stream } from "effect";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 import { CLI_VERSION } from "../cli/version.ts";
 import { ProcessControl } from "../runtime/process-control.service.ts";
 import { LegacyGoChildExitError } from "./legacy-go-child-exit.error.ts";
+import { GoProxyInvocation } from "./go-proxy-invocation.ts";
 import { LegacyGoProxy } from "./go-proxy.service.ts";
+
+const markDelegated = Effect.serviceOption(GoProxyInvocation).pipe(
+  Effect.flatMap((invocation) =>
+    Option.isSome(invocation) ? invocation.value.markDelegated : Effect.void,
+  ),
+);
 
 // ---------------------------------------------------------------------------
 // Binary resolution
@@ -134,8 +141,15 @@ export function formatGoBinaryNotFoundError(tried: ReadonlyArray<string>): strin
  */
 export function makeGoProxyLayer(opts?: {
   cwd?: string;
+  /**
+   * Extra env for every spawned child.
+   */
   env?: Record<string, string>;
   globalArgs?: ReadonlyArray<string>;
+  /**
+   * Let the parent emit its success tail after re-emitting captured stdout.
+   */
+  parentOwnsCapturedSuccessTail?: boolean;
   /**
    * Override binary resolution. Primarily a test seam so specs don't have to
    * mutate `process.env.SUPABASE_GO_BINARY` or stub the filesystem:
@@ -231,6 +245,7 @@ export function makeGoProxyLayer(opts?: {
                   }),
                 );
               }
+              yield* markDelegated;
             }),
           ),
         execCapture: (args, execOpts) =>
@@ -256,6 +271,9 @@ export function makeGoProxyLayer(opts?: {
                 ...execOpts?.env,
                 ...(execOpts?.suppressChildTelemetry === true
                   ? { SUPABASE_TELEMETRY_DISABLED: "1" }
+                  : {}),
+                ...(opts?.parentOwnsCapturedSuccessTail === true
+                  ? { SUPABASE_NO_UPDATE_NOTIFIER: "1" }
                   : {}),
               };
               // Capture stdout (pipe) while keeping stderr inherited, so the child's
@@ -287,6 +305,9 @@ export function makeGoProxyLayer(opts?: {
                     message: `supabase-go exited with code ${exitCode} (see stderr for details)`,
                   }),
                 );
+              }
+              if (opts?.parentOwnsCapturedSuccessTail !== true) {
+                yield* markDelegated;
               }
               return captured;
             }),
