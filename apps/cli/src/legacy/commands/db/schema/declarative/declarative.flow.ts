@@ -1,4 +1,5 @@
 import type { LegacyPgDeltaImplementation } from "../../../../shared/legacy-pgdelta-next-flag.ts";
+import { legacySchemaToCsvField } from "../../../../shared/legacy-schema-flags.ts";
 import type { LegacyPgDeltaRemovalSummary } from "../../shared/legacy-pgdelta-engine.service.ts";
 
 /** Extensions that legacy pg-delta treated as part of its implicit Supabase baseline. */
@@ -257,17 +258,56 @@ export function legacyClassifyDeclarativeLoadCompatibility(opts: {
 export const legacyExtensionDeclaration = (extension: string): string =>
   `CREATE EXTENSION IF NOT EXISTS "${extension}" WITH SCHEMA "extensions";`;
 
-export const legacyNextExportAdoptionCommands = [
-  "  supabase db schema declarative generate --local --overwrite \\",
-  "    --output supabase/database-next --experimental",
-  "",
-  "  # review supabase/database-next",
-  "  rm -rf supabase/database && mv supabase/database-next supabase/database",
-  "  supabase db schema declarative sync --no-apply --experimental",
-] as const;
+export interface LegacyStagedExportContext {
+  readonly declarativeDir: string;
+  readonly schema: ReadonlyArray<string>;
+}
+
+export const legacyResolveStagedDeclarativeDir = (declarativeDir: string): string =>
+  `${declarativeDir}-next`;
+
+function shellQuoteArgument(value: string): string {
+  return /^[a-zA-Z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;
+}
+
+function schemaArguments(schema: ReadonlyArray<string>): string {
+  return schema
+    .map((name) => ` --schema ${shellQuoteArgument(legacySchemaToCsvField(name))}`)
+    .join("");
+}
+
+export const legacyFormatDeclarativeSyncCommand = (schema: ReadonlyArray<string>): string =>
+  `  supabase db schema declarative sync --no-apply${schemaArguments(schema)} --experimental`;
+
+export function legacyFormatStagedExportAdoption({
+  declarativeDir,
+  schema,
+}: LegacyStagedExportContext): ReadonlyArray<string> {
+  const stagedDir = legacyResolveStagedDeclarativeDir(declarativeDir);
+  return [
+    `Review ${stagedDir}, then adopt it:`,
+    `  rm -rf ${shellQuoteArgument(declarativeDir)} && mv ${shellQuoteArgument(stagedDir)} ${shellQuoteArgument(declarativeDir)}`,
+    legacyFormatDeclarativeSyncCommand(schema),
+  ];
+}
+
+export function legacyFormatStagedExportCommands(
+  context: LegacyStagedExportContext,
+): ReadonlyArray<string> {
+  const stagedDir = legacyResolveStagedDeclarativeDir(context.declarativeDir);
+  return [
+    "  supabase db schema declarative generate --local --overwrite \\",
+    `    --output ${shellQuoteArgument(stagedDir)}${schemaArguments(context.schema)} --experimental`,
+    "",
+    ...legacyFormatStagedExportAdoption(context).map((line) =>
+      line.startsWith("Review ") ? `  # review ${stagedDir}` : line,
+    ),
+  ];
+}
 
 export function legacyFormatStagedExportRecommendation(
   gap: LegacyDeclarativeCompatibilityGap,
+  context: LegacyStagedExportContext,
 ): string {
   const detected = [
     ...(gap.repairableExtensions.length > 0
@@ -288,6 +328,6 @@ export function legacyFormatStagedExportRecommendation(
     "WARNING: pg-delta next manages schema state that the legacy export did not represent.",
     ...detected,
     "Generate a next-compatible schema into a separate directory, review it, and adopt it when ready:",
-    ...legacyNextExportAdoptionCommands,
+    ...legacyFormatStagedExportCommands(context),
   ].join("\n");
 }

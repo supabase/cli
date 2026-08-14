@@ -15,23 +15,23 @@ disabling safe compaction.
 
 ## Files Read
 
-| Path                                                     | Format     | When                                                                                       |
-| -------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
-| `<workdir>/supabase/config.toml`                         | TOML       | always — pg-delta gate, format options                                                     |
-| `<workdir>/supabase/.temp/pgdelta-version`               | plain text | loaded for compatibility; legacy opt-out only                                              |
-| `<workdir>/supabase/.temp/edge-runtime-version`          | plain text | legacy opt-out's edge-runtime image tag                                                    |
-| `<workdir>/supabase/database/**/*.sql` (declarative dir) | SQL        | always — must exist (else error)                                                           |
-| `<workdir>/supabase/migrations/*.sql`                    | SQL        | bundled engine applies them to a live shadow; legacy opt-out resolves a migrations catalog |
-| `<workdir>/supabase/roles.sql`                           | SQL        | legacy migrations-catalog cache key (empty when absent)                                    |
-| `<workdir>/supabase/database/.pgdelta-export.json`       | JSON       | bundled export metadata, when present                                                      |
-| `<workdir>/supabase/.temp/pgdelta/*.json`                | JSON       | legacy opt-out's migrations/declarative catalog cache                                      |
+| Path                                                            | Format     | When                                                                                       |
+| --------------------------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| `<workdir>/supabase/config.toml`                                | TOML       | always — pg-delta gate, format options                                                     |
+| `<workdir>/supabase/.temp/pgdelta-version`                      | plain text | loaded for compatibility; legacy opt-out only                                              |
+| `<workdir>/supabase/.temp/edge-runtime-version`                 | plain text | legacy opt-out's edge-runtime image tag                                                    |
+| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir) | SQL        | always — must exist (else error)                                                           |
+| `<workdir>/supabase/migrations/*.sql`                           | SQL        | bundled engine applies them to a live shadow; legacy opt-out resolves a migrations catalog |
+| `<workdir>/supabase/roles.sql`                                  | SQL        | legacy migrations-catalog cache key (empty when absent)                                    |
+| `<workdir>/supabase/schemas/.pgdelta-export.json`               | JSON       | bundled export metadata, when present                                                      |
+| `<workdir>/supabase/.temp/pgdelta/*.json`                       | JSON       | legacy opt-out's migrations/declarative catalog cache                                      |
 
 ## Files Written
 
 | Path                                                               | Format | When                                              |
 | ------------------------------------------------------------------ | ------ | ------------------------------------------------- |
 | `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql` | SQL    | changes; bundled engine may emit ordered segments |
-| `<workdir>/supabase/database/extension.sql`                        | SQL    | accepted legacy-extension repair                  |
+| `<workdir>/supabase/schemas/extension.sql`                         | SQL    | accepted legacy-extension repair                  |
 | `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                  | JSON   | legacy opt-out's catalog cache                    |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`            | JSON   | bundled engine with `PGDELTA_DEBUG`               |
 

@@ -472,7 +472,7 @@ describe("legacy db schema declarative generate integration", () => {
       );
       const written = yield* Effect.promise(async () =>
         (await import("node:fs")).readFileSync(
-          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+          join(tmp.current, "supabase", "schemas", "schemas", "public", "tables", "players.sql"),
           "utf8",
         ),
       );
@@ -482,7 +482,7 @@ describe("legacy db schema declarative generate integration", () => {
       expect(
         s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
       ).toContainEqual({
-        text: `Declarative schema written to ${join("supabase", "database")}\n`,
+        text: `Declarative schema written to ${join("supabase", "schemas")}\n`,
         stream: "stderr",
       });
       expect(s.out.rawChunks.some((c) => c.text.includes(tmp.current))).toBe(false);
@@ -592,7 +592,7 @@ describe("legacy db schema declarative generate integration", () => {
           join(tmp.current, "staged-schema", "schemas", "public", "tables", "players.sql"),
         ),
       ).toBe(true);
-      expect(existsSync(join(tmp.current, "supabase", "database"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "schemas"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -618,14 +618,14 @@ describe("legacy db schema declarative generate integration", () => {
     // Go's confirmOverwrite returns true immediately (Console.PromptYesNo); the
     // handler must skip the prompt and overwrite. No promptConfirmResponses are
     // queued, so reaching the prompt would error — success proves --yes bypassed it.
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "database", "existing.sql"), "create table x ();");
+    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
+    writeFileSync(join(tmp.current, "supabase", "schemas", "existing.sql"), "create table x ();");
     const s = setup(tmp.current, { experimental: true, yes: true });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       const written = yield* Effect.promise(async () =>
         (await import("node:fs")).readFileSync(
-          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+          join(tmp.current, "supabase", "schemas", "schemas", "public", "tables", "players.sql"),
           "utf8",
         ),
       );
@@ -637,10 +637,10 @@ describe("legacy db schema declarative generate integration", () => {
     // Go's confirmOverwrite returns the ReadDir error and Generate aborts on it
     // (declarative.go:123-127, 226-229), rather than treating an unreadable existing
     // dir as empty and letting WriteDeclarativeSchemas wipe/recreate the path.
-    // Seeding supabase/database as a FILE makes readDirectory fail with ENOTDIR (a
+    // Seeding supabase/schemas as a FILE makes readDirectory fail with ENOTDIR (a
     // non-NotFound PlatformError), so the command must fail without writing.
     mkdirSync(join(tmp.current, "supabase"), { recursive: true });
-    writeFileSync(join(tmp.current, "supabase", "database"), "not a directory");
+    writeFileSync(join(tmp.current, "supabase", "schemas"), "not a directory");
     const s = setup(tmp.current, { experimental: true });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(
@@ -649,7 +649,7 @@ describe("legacy db schema declarative generate integration", () => {
       expect(Exit.isFailure(exit)).toBe(true);
       // The declarative path is untouched — still our seeded file, never wiped and
       // rewritten as a directory of schema files.
-      expect(readFileSync(join(tmp.current, "supabase", "database"), "utf8")).toBe(
+      expect(readFileSync(join(tmp.current, "supabase", "schemas"), "utf8")).toBe(
         "not a directory",
       );
       expect(s.out.rawChunks.some((c) => c.text.includes("Declarative schema written to"))).toBe(
@@ -830,7 +830,7 @@ describe("legacy db schema declarative generate integration", () => {
   });
 
   it.effect("smart mode: existing files + decline regenerate → skips", () => {
-    const declDir = join(tmp.current, "supabase", "database");
+    const declDir = join(tmp.current, "supabase", "schemas");
     mkdirSync(declDir, { recursive: true });
     writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const s = setup(tmp.current, {
@@ -852,7 +852,7 @@ describe("legacy db schema declarative generate integration", () => {
     // under --yes, so existing declarative files are regenerated (not skipped) and
     // no prompt is shown. No migrations → the smart target resolves to local without
     // a further prompt. No promptConfirmResponses are queued, so a prompt would throw.
-    const declDir = join(tmp.current, "supabase", "database");
+    const declDir = join(tmp.current, "supabase", "schemas");
     mkdirSync(declDir, { recursive: true });
     writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const s = setup(tmp.current, { experimental: true, stdinIsTty: false, yes: true });
@@ -863,7 +863,7 @@ describe("legacy db schema declarative generate integration", () => {
       // global YES flag (`console.go:70-72`) — the echo must not be skipped, and
       // the prompt renders the relative dir (`db_schema_declarative.go:268`).
       expect(stripAnsi(s.out.stderrText)).toContain(
-        `Declarative schema already exists at ${join("supabase", "database")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
+        `Declarative schema already exists at ${join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
       );
       expect(
         s.out.rawChunks.some((c) => c.text.includes("Skipped generating declarative schema")),
@@ -874,7 +874,7 @@ describe("legacy db schema declarative generate integration", () => {
   it.effect("smart mode: SUPABASE_YES=1 regenerates over existing files like --yes", () => {
     // Go reads `viper.GetBool("YES")`, which `AutomaticEnv` also binds to the
     // SUPABASE_YES env var — the flag alone is not the whole surface (CLI-1974).
-    const declDir = join(tmp.current, "supabase", "database");
+    const declDir = join(tmp.current, "supabase", "schemas");
     mkdirSync(declDir, { recursive: true });
     writeFileSync(join(declDir, "existing.sql"), "-- existing");
     const prev = process.env["SUPABASE_YES"];
@@ -884,7 +884,7 @@ describe("legacy db schema declarative generate integration", () => {
       yield* legacyDbSchemaDeclarativeGenerate(flags());
       expect(s.seamCalls).toEqual(["declarative"]);
       expect(stripAnsi(s.out.stderrText)).toContain(
-        `Declarative schema already exists at ${join("supabase", "database")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
+        `Declarative schema already exists at ${join("supabase", "schemas")}. Regenerate from database? This will overwrite existing files. [y/N] y\n`,
       );
     }).pipe(
       Effect.ensuring(
@@ -1187,7 +1187,7 @@ describe("legacy db schema declarative generate integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeGenerate(flags({ local: Option.some(true) }));
       const manifest = JSON.parse(
-        readFileSync(join(tmp.current, "supabase", "database", ".pgdelta-export.json"), "utf8"),
+        readFileSync(join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"), "utf8"),
       );
       expect(manifest).toMatchObject({
         formatVersion: 1,

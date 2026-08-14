@@ -856,14 +856,14 @@ describe("legacy db pull", () => {
       );
       // Prints the relative default, not the resolved absolute directory
       // (established output contract).
-      expect(err).toContain(`Declarative schema written to ${join("supabase", "database")}\n`);
+      expect(err).toContain(`Declarative schema written to ${join("supabase", "schemas")}\n`);
       expect(err).not.toContain(tmp.current);
       expect(
-        existsSync(join(tmp.current, "supabase", "database", "schemas", "public", "t.sql")),
+        existsSync(join(tmp.current, "supabase", "schemas", "schemas", "public", "t.sql")),
       ).toBe(true);
       expect(
         JSON.parse(
-          readFileSync(join(tmp.current, "supabase", "database", ".pgdelta-export.json"), "utf8"),
+          readFileSync(join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"), "utf8"),
         ),
       ).toMatchObject({
         formatVersion: 1,
@@ -902,7 +902,7 @@ describe("legacy db pull", () => {
         yield* legacyDbPull(flags({ declarative: Option.some(true) }));
         const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
         expect(config).toContain("[db.migrations]");
-        expect(config).toContain('schema_paths = [\n  "database",\n]');
+        expect(config).toContain('schema_paths = [\n  "schemas",\n]');
       }).pipe(Effect.provide(s.layer));
     },
   );
@@ -933,7 +933,7 @@ describe("legacy db pull", () => {
     return Effect.gen(function* () {
       yield* legacyDbPull(flags({ declarative: Option.some(true) }));
       const config = readFileSync(join(tmp.current, "supabase", "config.toml"), "utf8");
-      expect(config).toContain('schema_paths = [\n  "database",\n]');
+      expect(config).toContain('schema_paths = [\n  "schemas",\n]');
       expect(config).not.toContain("schemas/*.sql");
     }).pipe(Effect.provide(s.layer));
   });
@@ -946,7 +946,7 @@ describe("legacy db pull", () => {
         yield* legacyDbPull(flags({ usePgDelta: Option.some(true) }));
         expect(streamText(s.out, "stderr")).toContain("Flag --use-pg-delta has been deprecated");
         expect(streamText(s.out, "stderr")).toContain(
-          `Declarative schema written to ${join("supabase", "database")}\n`,
+          `Declarative schema written to ${join("supabase", "schemas")}\n`,
         );
       }).pipe(Effect.provide(s.layer));
     },
@@ -1049,7 +1049,7 @@ describe("legacy db pull", () => {
       // Reaching the declarative write (rather than a migration file / history
       // upsert) proves the declarative export path ran.
       expect(
-        existsSync(join(tmp.current, "supabase", "database", "schemas", "public", "t.sql")),
+        existsSync(join(tmp.current, "supabase", "schemas", "schemas", "public", "t.sql")),
       ).toBe(true);
       expect(s.historyUpserts.length).toBe(0);
     }).pipe(Effect.provide(s.layer));
@@ -2193,7 +2193,7 @@ describe("legacy db pull", () => {
       expect(streamText(s.out, "stderr")).toContain("Retrying via the IPv4 connection pooler");
       expect(s.engineCalls.filter((call) => call.operation === "export")).toHaveLength(2);
       expect(streamText(s.out, "stderr")).toContain(
-        `Declarative schema written to ${join("supabase", "database")}\n`,
+        `Declarative schema written to ${join("supabase", "schemas")}\n`,
       );
       expect(s.shadowSpawned.filter((c) => c.args[0] === "create")).toHaveLength(1);
     }).pipe(Effect.provide(s.layer));

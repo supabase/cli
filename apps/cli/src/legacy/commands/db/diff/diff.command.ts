@@ -99,7 +99,7 @@ export type LegacyDbDiffFlags = CliCommand.Command.Config.Infer<typeof config>;
 
 export const legacyDbDiffCommand = Command.make("diff", config).pipe(
   Command.withDescription(
-    "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/database are not part of this baseline. Output is printed by default; -f names and saves the complete diff as a migration and does not filter objects.",
+    "Compares a shadow built from supabase/migrations with a live database (--local by default, --linked, or --db-url). Declarative files under supabase/schemas are not part of this baseline. Output is printed by default; -f names and saves the complete diff as a migration and does not filter objects.",
   ),
   Command.withShortDescription("Diffs the local database for schema changes"),
   Command.withHandler((flags) =>

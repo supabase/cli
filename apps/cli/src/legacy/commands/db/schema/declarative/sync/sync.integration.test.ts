@@ -269,7 +269,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
   const nextFiles = opts.renderedFiles ?? [];
   const planErrors = [...(opts.planErrors ?? [])];
   let planCalls = 0;
-  const declarativeExportCalls: Array<true> = [];
+  const declarativeExportCalls: Array<ReadonlyArray<string>> = [];
   const engine =
     opts.engineImplementation === "next"
       ? Layer.succeed(
@@ -278,9 +278,9 @@ function setup(workdir: string, opts: SetupOpts = {}) {
             implementation: "next",
             diffExplicit: () => Effect.die("diffExplicit not used in sync tests"),
             diffDatabase: () => Effect.die("diffDatabase not used in sync tests"),
-            exportDeclarativeSchema: () =>
+            exportDeclarativeSchema: (input) =>
               Effect.sync(() => {
-                declarativeExportCalls.push(true);
+                declarativeExportCalls.push(input.schema);
                 return {
                   files: [
                     { name: "schemas/public/tables/players.sql", sql: "create table players ();" },
@@ -292,7 +292,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
               planCalls += 1;
               const planError = planErrors.shift();
               if (planError !== undefined) return Effect.fail(planError);
-              const extensionPath = join(workdir, "supabase", "database", "extension.sql");
+              const extensionPath = join(workdir, "supabase", "schemas", "extension.sql");
               const extensionSql = existsSync(extensionPath)
                 ? readFileSync(extensionPath, "utf8")
                 : "";
@@ -386,13 +386,13 @@ const failError = (exit: Exit.Exit<unknown, unknown>) =>
   Exit.isFailure(exit) ? exit.cause.reasons.find(Cause.isFailReason)?.error : undefined;
 
 const seedDeclarative = (workdir: string) => {
-  const dir = join(workdir, "supabase", "database");
+  const dir = join(workdir, "supabase", "schemas");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "public.sql"), "create table a();");
 };
 
-const seedLegacyUuidDeclarative = (workdir: string) => {
-  const dir = join(workdir, "supabase", "database");
+const seedLegacyUuidDeclarative = (workdir: string, directory = "schemas") => {
+  const dir = join(workdir, "supabase", directory);
   mkdirSync(join(dir, "schemas", "app", "tables"), { recursive: true });
   mkdirSync(join(dir, "schemas", "public", "views"), { recursive: true });
   writeFileSync(
@@ -675,7 +675,7 @@ describe("legacy db schema declarative sync integration", () => {
     // `Declarative schema written to <dir>` to stderr AFTER WriteDeclarativeSchemas
     // and the catalog warm (`declarative.go:133→138-155→156`), before sync's own
     // diff (step 2). It prints `utils.GetDeclarativeDir()` — the relative
-    // `supabase/database` default — never the absolute resolved dir (CLI-1980).
+    // `supabase/schemas` default — never the absolute resolved dir (CLI-1980).
     const s = setup(tmp.current, {
       experimental: true,
       stdinIsTty: true,
@@ -685,7 +685,7 @@ describe("legacy db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
-      const line = `Declarative schema written to ${join("supabase", "database")}\n`;
+      const line = `Declarative schema written to ${join("supabase", "schemas")}\n`;
       const written = s.out.rawChunks
         .map((c, index) => ({ text: stripAnsi(c.text), stream: c.stream, index }))
         .filter((c) => c.text === line);
@@ -708,7 +708,7 @@ describe("legacy db schema declarative sync integration", () => {
       // The generated files actually landed in the printed (resolved) dir.
       expect(
         existsSync(
-          join(tmp.current, "supabase", "database", "schemas", "public", "tables", "players.sql"),
+          join(tmp.current, "supabase", "schemas", "schemas", "public", "tables", "players.sql"),
         ),
       ).toBe(true);
     }).pipe(Effect.provide(s.layer));
@@ -729,7 +729,7 @@ describe("legacy db schema declarative sync integration", () => {
       expect(
         s.out.rawChunks.map((c) => ({ text: stripAnsi(c.text), stream: c.stream })),
       ).toContainEqual({
-        text: `Declarative schema written to ${join("supabase", "database")}\n`,
+        text: `Declarative schema written to ${join("supabase", "schemas")}\n`,
         stream: "stderr",
       });
     }).pipe(Effect.provide(s.layer));
@@ -747,7 +747,7 @@ describe("legacy db schema declarative sync integration", () => {
     });
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noCache: true, noApply: Option.some(true) }));
-      const line = `Declarative schema written to ${join("supabase", "database")}\n`;
+      const line = `Declarative schema written to ${join("supabase", "schemas")}\n`;
       const written = s.out.rawChunks
         .map((c, index) => ({ text: stripAnsi(c.text), stream: c.stream, index }))
         .filter((c) => c.text === line);
@@ -1065,7 +1065,7 @@ describe("legacy db schema declarative sync integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(s.planCalls).toBe(2);
-      expect(readFileSync(join(tmp.current, "supabase", "database", "extension.sql"), "utf8")).toBe(
+      expect(readFileSync(join(tmp.current, "supabase", "schemas", "extension.sql"), "utf8")).toBe(
         'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";\n',
       );
     }).pipe(Effect.provide(s.layer));
@@ -1076,7 +1076,7 @@ describe("legacy db schema declarative sync integration", () => {
     const activeMember = join(
       tmp.current,
       "supabase",
-      "database",
+      "schemas",
       "schemas",
       "app",
       "tables",
@@ -1097,7 +1097,7 @@ describe("legacy db schema declarative sync integration", () => {
           join(
             tmp.current,
             "supabase",
-            "database-next",
+            "schemas-next",
             "schemas",
             "public",
             "tables",
@@ -1107,8 +1107,55 @@ describe("legacy db schema declarative sync integration", () => {
         ),
       ).toBe("create table players ();");
       expect(
-        existsSync(join(tmp.current, "supabase", "database-next", ".pgdelta-export.json")),
+        existsSync(join(tmp.current, "supabase", "schemas-next", ".pgdelta-export.json")),
       ).toBe(true);
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("stages beside a custom active path and preserves --schema for adoption", () => {
+    seedLegacyUuidDeclarative(tmp.current, "custom-declarative");
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[experimental.pgdelta]",
+        "enabled = true",
+        'declarative_schema_path = "./custom-declarative"',
+        "",
+      ].join("\n"),
+    );
+    const activeMember = join(
+      tmp.current,
+      "supabase",
+      "custom-declarative",
+      "schemas",
+      "app",
+      "tables",
+      "members.sql",
+    );
+    const before = readFileSync(activeMember, "utf8");
+    const s = setup(tmp.current, {
+      engineImplementation: "next",
+      stdinIsTty: true,
+      planErrors: [legacyUuidLoadError()],
+      promptSelectResponses: ["stage"],
+    });
+
+    return Effect.gen(function* () {
+      yield* legacyDbSchemaDeclarativeSync(flags({ schema: ["app"], noApply: Option.some(true) }));
+
+      expect(readFileSync(activeMember, "utf8")).toBe(before);
+      expect(
+        existsSync(
+          join(tmp.current, "supabase", "custom-declarative-next", ".pgdelta-export.json"),
+        ),
+      ).toBe(true);
+      expect(s.declarativeExportCalls).toEqual([["app"]]);
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "rm -rf supabase/custom-declarative && mv supabase/custom-declarative-next supabase/custom-declarative",
+      );
+      expect(stripAnsi(s.out.stderrText)).toContain(
+        "supabase db schema declarative sync --no-apply --schema app --experimental",
+      );
     }).pipe(Effect.provide(s.layer));
   });
 
@@ -1187,14 +1234,14 @@ describe("legacy db schema declarative sync integration", () => {
     return Effect.gen(function* () {
       yield* legacyDbSchemaDeclarativeSync(flags({ noApply: Option.some(true) }));
       expect(existsSync(join(tmp.current, "supabase", "migrations"))).toBe(false);
-      expect(existsSync(join(tmp.current, "supabase", "database", "extension.sql"))).toBe(false);
+      expect(existsSync(join(tmp.current, "supabase", "schemas", "extension.sql"))).toBe(false);
     }).pipe(Effect.provide(s.layer));
   });
 
   it.effect("suppresses the compatibility warning when a next export manifest is present", () => {
     seedDeclarative(tmp.current);
     writeFileSync(
-      join(tmp.current, "supabase", "database", ".pgdelta-export.json"),
+      join(tmp.current, "supabase", "schemas", ".pgdelta-export.json"),
       JSON.stringify({ formatVersion: 1, redactSecrets: true, scope: "database" }),
     );
     const s = setup(tmp.current, {

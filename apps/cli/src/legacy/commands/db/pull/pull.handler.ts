@@ -567,7 +567,7 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             );
           }
           // Prints the config's declarative_schema_path or the relative
-          // `supabase/database` default — never the resolved absolute directory
+          // `supabase/schemas` default — never the resolved absolute directory
           // (established output contract). The json payload below keeps the
           // absolute path for machine consumers.
           yield* output.raw(

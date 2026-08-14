@@ -197,7 +197,7 @@ export interface LegacyPgDeltaTomlConfig {
   /**
    * `[experimental.pgdelta] declarative_schema_path`, resolved to a
    * `supabase/`-prefixed path when relative. `None` → callers use the default
-   * `supabase/database` (`legacyResolveDeclarativeDir`).
+   * `supabase/schemas` (`legacyResolveDeclarativeDir`).
    */
   readonly declarativeSchemaPath: Option.Option<string>;
   /** `[experimental.pgdelta] format_options`, a JSON string passed to pg-delta. */
@@ -215,7 +215,7 @@ const DEFAULT_API_SCHEMAS = ["public", "graphql_public"] as const;
 const DEFAULT_DENO_VERSION = 2;
 
 /** Default declarative schema dir. */
-const DEFAULT_DECLARATIVE_DIR_SEGMENTS = ["supabase", "database"] as const;
+const DEFAULT_DECLARATIVE_DIR_SEGMENTS = ["supabase", "schemas"] as const;
 
 type RawDoc = { readonly [key: string]: unknown };
 
@@ -2795,7 +2795,7 @@ export const legacyReadDbToml = (
 /**
  * The effective declarative schema directory: the configured
  * `declarative_schema_path` (already `supabase/`-prefixed when relative) or the
- * default `supabase/database`. Mirrors `utils.GetDeclarativeDir`.
+ * default `supabase/schemas`. Mirrors `utils.GetDeclarativeDir`.
  * `path` joins the segments so
  * the separator matches the host platform, as `filepath.Join` does.
  */

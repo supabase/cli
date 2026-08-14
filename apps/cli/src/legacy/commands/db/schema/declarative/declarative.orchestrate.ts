@@ -34,7 +34,8 @@ import {
 import {
   legacyClassifyDeclarativeLoadCompatibility,
   legacyExtensionDeclaration,
-  legacyNextExportAdoptionCommands,
+  legacyFormatDeclarativeSyncCommand,
+  legacyFormatStagedExportCommands,
   type LegacyDeclarativeLoadCompatibilityFinding,
 } from "./declarative.flow.ts";
 
@@ -43,6 +44,8 @@ export interface LegacyDeclarativeRunContext {
   readonly pgDelta: LegacyPgDeltaContext;
   readonly formatOptions: string;
   readonly declarativeDir: string;
+  /** User-facing configured/output path, kept separate from the absolute I/O path. */
+  readonly declarativeDirDisplay: string;
   readonly schema: ReadonlyArray<string>;
   readonly noCache: boolean;
   readonly debug: boolean;
@@ -66,6 +69,7 @@ const declarativeError = (message: string) => new LegacyDeclarativeDiffError({ m
 
 const formatImplicitExtensionLoadFailure = (
   findings: ReadonlyArray<LegacyDeclarativeLoadCompatibilityFinding>,
+  run: Pick<LegacyDeclarativeRunContext, "declarativeDirDisplay" | "schema">,
 ): string => {
   const extensions = [...new Set(findings.map((finding) => finding.extension))].sort();
   const detected = findings.map((finding) => {
@@ -84,12 +88,15 @@ const formatImplicitExtensionLoadFailure = (
     "",
     "Recommended — generate a next-compatible tree, review it, then adopt:",
     "",
-    ...legacyNextExportAdoptionCommands,
+    ...legacyFormatStagedExportCommands({
+      declarativeDir: run.declarativeDirDisplay,
+      schema: run.schema,
+    }),
     "",
     "Alternative — add the missing extension declarations to extension.sql, then re-plan:",
     ...extensions.map((extension) => legacyExtensionDeclaration(extension)),
     "",
-    "  supabase db schema declarative sync --no-apply --experimental",
+    legacyFormatDeclarativeSyncCommand(run.schema),
   ].join("\n");
 };
 
@@ -158,7 +165,7 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
         return findings.length === 0
           ? error
           : new LegacyDeclarativeCompatibilityError({
-              message: formatImplicitExtensionLoadFailure(findings),
+              message: formatImplicitExtensionLoadFailure(findings, run),
               loadFindings: findings,
             });
       }),

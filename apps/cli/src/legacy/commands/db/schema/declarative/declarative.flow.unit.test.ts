@@ -97,8 +97,39 @@ describe("legacyClassifyDeclarativeCompatibilityGap", () => {
       'CREATE EXTENSION IF NOT EXISTS "uuid-ossp" WITH SCHEMA "extensions";',
     );
     const gap = classifyGap();
-    expect(legacyFormatStagedExportRecommendation(gap)).toContain(
-      "generate --local --overwrite \\\n    --output supabase/database-next --experimental",
+    expect(
+      legacyFormatStagedExportRecommendation(gap, {
+        declarativeDir: "supabase/schemas",
+        schema: [],
+      }),
+    ).toContain(
+      "generate --local --overwrite \\\n    --output supabase/schemas-next --experimental",
+    );
+  });
+
+  it("derives staged-export commands from a custom declarative path", () => {
+    const recommendation = legacyFormatStagedExportRecommendation(classifyGap(), {
+      declarativeDir: "supabase/custom schema",
+      schema: [],
+    });
+
+    expect(recommendation).toContain("--output 'supabase/custom schema-next'");
+    expect(recommendation).toContain(
+      "rm -rf 'supabase/custom schema' && mv 'supabase/custom schema-next' 'supabase/custom schema'",
+    );
+  });
+
+  it("preserves schema filters in staged-export and follow-up sync commands", () => {
+    const recommendation = legacyFormatStagedExportRecommendation(classifyGap(), {
+      declarativeDir: "supabase/schemas",
+      schema: ["app", "tenant,one"],
+    });
+
+    expect(recommendation).toContain(
+      `--output supabase/schemas-next --schema app --schema '"tenant,one"' --experimental`,
+    );
+    expect(recommendation).toContain(
+      `sync --no-apply --schema app --schema '"tenant,one"' --experimental`,
     );
   });
 });

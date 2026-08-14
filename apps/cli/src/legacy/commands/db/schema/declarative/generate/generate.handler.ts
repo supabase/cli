@@ -176,6 +176,7 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
+        declarativeDirDisplay: declarativeDirRel,
         schema: flags.schema,
         noCache: flags.noCache,
         debug: legacyIsPgDeltaDebugEnabled(),

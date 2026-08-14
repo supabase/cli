@@ -158,6 +158,7 @@ const ctx = (cwd: string, declarativeDir: string): LegacyDeclarativeRunContext =
   },
   formatOptions: "",
   declarativeDir,
+  declarativeDirDisplay: declarativeDir,
   schema: [],
   noCache: false,
   debug: false,

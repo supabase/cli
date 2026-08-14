@@ -337,7 +337,7 @@ const LEGACY_SCHEMA_PATHS_PATTERN = /\nschema_paths = \[[\s\S]*?\]\n/g;
  * rather than "doing the right TOML thing".
  *
  * `resolvedDeclarativeDir` is the resolved declarative dir (Go's
- * `GetDeclarativeDir()`, e.g. `supabase/database`); the leading `supabase/` is
+ * `GetDeclarativeDir()`, e.g. `supabase/schemas`); the leading `supabase/` is
  * trimmed for the written value (Go's `strings.TrimPrefix`).
  */
 export const legacyUpdateDeclarativeSchemaPathsConfig = Effect.fnUntraced(function* (

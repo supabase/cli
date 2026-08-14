@@ -57,7 +57,9 @@ import {
 import {
   legacyClassifyDeclarativeCompatibilityGap,
   legacyExtensionDeclaration,
+  legacyFormatStagedExportAdoption,
   legacyFormatStagedExportRecommendation,
+  legacyResolveStagedDeclarativeDir,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
 } from "../declarative.flow.ts";
@@ -150,7 +152,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       }
 
       // Go's `utils.GetDeclarativeDir()` — the config value verbatim (already
-      // `supabase/`-prefixed when relative) or the relative `supabase/database`
+      // `supabase/`-prefixed when relative) or the relative `supabase/schemas`
       // default. Printed verbatim in the bootstrap's written-to line below, exactly
       // as Go prints it (Go chdirs into the workdir, so its paths stay relative).
       const declarativeDirRel = legacyResolveDeclarativeDir(path, toml.pgDelta);
@@ -158,6 +160,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // used as-is, matching Go's `config.resolve` (which only prefixes the workdir onto
       // a relative path). `path.join(workdir, abs)` would mangle the absolute path.
       const declarativeDir = path.resolve(cliConfig.workdir, declarativeDirRel);
+      const stagedDirRel = legacyResolveStagedDeclarativeDir(declarativeDirRel);
       const migrationsDir = path.join(cliConfig.workdir, "supabase", "migrations");
       const tempDir = legacyPgDeltaTempPath(path, cliConfig.workdir);
       const run: LegacyDeclarativeRunContext = {
@@ -175,6 +178,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         },
         formatOptions: Option.getOrElse(toml.pgDelta.formatOptions, () => ""),
         declarativeDir,
+        declarativeDirDisplay: declarativeDirRel,
         schema: flags.schema,
         noCache: flags.noCache,
         debug: legacyIsPgDeltaDebugEnabled(),
@@ -308,7 +312,6 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         toml.baseline,
       );
       const stageNextExport = Effect.fnUntraced(function* () {
-        const stagedDirRel = "supabase/database-next";
         const stagedDir = path.resolve(cliConfig.workdir, stagedDirRel);
         if (stagedDir === declarativeDir) {
           return yield* Effect.fail(
@@ -343,9 +346,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         yield* output.raw(legacyDeclarativeSchemaWrittenLine(stagedDirRel), "stderr");
         yield* output.raw(
           [
-            "Review supabase/database-next, then adopt it:",
-            "  rm -rf supabase/database && mv supabase/database-next supabase/database",
-            "  supabase db schema declarative sync --no-apply --experimental",
+            ...legacyFormatStagedExportAdoption({
+              declarativeDir: declarativeDirRel,
+              schema: flags.schema,
+            }),
             "",
           ].join("\n"),
           "stderr",
@@ -420,7 +424,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           const choice = yield* output.promptSelect("How would you like to continue?", [
             {
               value: "stage",
-              label: "Generate next export to supabase/database-next",
+              label: `Generate next export to ${stagedDirRel}`,
               hint: "recommended",
             },
             { value: "repair", label: "Add missing extension declarations and re-plan" },
@@ -474,7 +478,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
         if (compatibility.recommendedAction === "none") break;
 
         if (compatibility.recommendedAction === "stage-next-export") {
-          const explanation = legacyFormatStagedExportRecommendation(compatibility);
+          const explanation = legacyFormatStagedExportRecommendation(compatibility, {
+            declarativeDir: declarativeDirRel,
+            schema: flags.schema,
+          });
           if (!tty.stdinIsTty || yes) {
             return yield* Effect.fail(
               new LegacyDeclarativeCompatibilityError({ message: explanation }),
@@ -484,7 +491,7 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           const choice = yield* output.promptSelect("How would you like to continue?", [
             {
               value: "stage",
-              label: "Generate next export to supabase/database-next",
+              label: `Generate next export to ${stagedDirRel}`,
               hint: "recommended",
             },
             { value: "cancel", label: "Cancel" },
@@ -508,7 +515,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
                 "Non-interactive sync will not modify the declarative schema automatically. Add these statements to extension.sql, then run sync again:",
                 ...statements,
                 "",
-                legacyFormatStagedExportRecommendation(compatibility),
+                legacyFormatStagedExportRecommendation(compatibility, {
+                  declarativeDir: declarativeDirRel,
+                  schema: flags.schema,
+                }),
               ].join("\n"),
             }),
           );

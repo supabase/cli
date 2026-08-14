@@ -588,7 +588,7 @@ describe("legacy db diff", () => {
   });
 
   it.effect("next local diff ignores schema_paths and declarative files", () => {
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
       [
@@ -602,7 +602,7 @@ describe("legacy db diff", () => {
     );
     writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
     writeFileSync(
-      join(tmp.current, "supabase", "database", "ignored.sql"),
+      join(tmp.current, "supabase", "schemas", "ignored.sql"),
       "create table ignored ();\n",
     );
     const s = setup(tmp.current, {
@@ -1376,12 +1376,12 @@ describe("legacy db diff", () => {
   });
 
   it.effect("writes live-only SQL with --file even when declarative targets are configured", () => {
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
       [
         "[db.migrations]",
-        'schema_paths = ["database/*.sql"]',
+        'schema_paths = ["schemas/*.sql"]',
         "",
         "[experimental.pgdelta]",
         "enabled = true",
@@ -1389,7 +1389,7 @@ describe("legacy db diff", () => {
       ].join("\n"),
     );
     writeFileSync(
-      join(tmp.current, "supabase", "database", "declarative.sql"),
+      join(tmp.current, "supabase", "schemas", "declarative.sql"),
       "create table declarative_only ();\n",
     );
     const s = setup(tmp.current, {
@@ -1412,9 +1412,9 @@ describe("legacy db diff", () => {
   });
 
   it.effect("includes the ignored declarative baseline advisory in JSON output", () => {
-    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    mkdirSync(join(tmp.current, "supabase", "schemas"), { recursive: true });
     writeFileSync(
-      join(tmp.current, "supabase", "database", "items.sql"),
+      join(tmp.current, "supabase", "schemas", "items.sql"),
       "create table items ();\n",
     );
     const s = setup(tmp.current, {
@@ -1436,7 +1436,7 @@ describe("legacy db diff", () => {
             severity: "info",
             context: {
               baseline: "supabase/migrations",
-              declarativePath: "supabase/database",
+              declarativePath: "supabase/schemas",
               fileFlagFiltersObjects: false,
             },
           },

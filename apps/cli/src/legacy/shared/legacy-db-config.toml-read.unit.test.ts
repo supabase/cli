@@ -2807,7 +2807,7 @@ describe("legacyReadDbToml [experimental.pgdelta]", () => {
 });
 
 describe("legacyResolveDeclarativeDir", () => {
-  it.effect("uses the default supabase/database when no path is configured", () =>
+  it.effect("uses the default supabase/schemas when no path is configured", () =>
     Effect.gen(function* () {
       const path = yield* Path.Path;
       expect(
@@ -2817,7 +2817,7 @@ describe("legacyResolveDeclarativeDir", () => {
           formatOptions: Option.none(),
           npmVersion: Option.none(),
         }),
-      ).toBe(join("supabase", "database"));
+      ).toBe(join("supabase", "schemas"));
     }).pipe(Effect.provide(BunServices.layer)),
   );
 

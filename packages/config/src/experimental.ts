@@ -86,7 +86,7 @@ export const experimental = Schema.Struct({
       declarative_schema_path: Schema.optionalKey(
         Schema.String.annotate({
           description: "Directory under supabase/ where declarative schema files are written.",
-          examples: ["./database"],
+          examples: ["./schemas"],
           tags,
         }),
       ),

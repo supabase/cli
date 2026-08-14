@@ -25,12 +25,12 @@ formatting without disabling safe compaction.
 
 ## Files Written
 
-| Path                                                                                                | Format | When                                                         |
-| --------------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------ |
-| `<workdir>/supabase/database/**/*.sql` (configured declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation |
-| `<selected-output>/.pgdelta-export.json`                                                            | JSON   | bundled-engine export metadata                               |
-| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                                                   | JSON   | legacy opt-out's catalog cache                               |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                             | JSON   | bundled engine with `PGDELTA_DEBUG`                          |
+| Path                                                                                            | Format | When                                                         |
+| ----------------------------------------------------------------------------------------------- | ------ | ------------------------------------------------------------ |
+| `<workdir>/supabase/schemas/**/*.sql` (default declarative dir, or invocation-local `--output`) | SQL    | selected destination is wiped + rewritten after confirmation |
+| `<selected-output>/.pgdelta-export.json`                                                        | JSON   | bundled-engine export metadata                               |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                                               | JSON   | legacy opt-out's catalog cache                               |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                                         | JSON   | bundled engine with `PGDELTA_DEBUG`                          |
 
 ## Subprocesses / Containers
 

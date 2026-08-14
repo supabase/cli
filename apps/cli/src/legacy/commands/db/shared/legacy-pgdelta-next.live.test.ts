@@ -56,7 +56,7 @@ describeDockerLive("pg-delta next local convergence (live)", () => {
       config
         .replace("schema_paths = []", 'schema_paths = ["./schemas/*.sql"]')
         .replace(
-          '# declarative_schema_path = "./database"',
+          '# declarative_schema_path = "./schemas"',
           'declarative_schema_path = "./schemas"',
         ),
     );
