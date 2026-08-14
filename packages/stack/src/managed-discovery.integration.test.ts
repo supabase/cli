@@ -728,6 +728,44 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
   });
 
+  it("reclaims a shared reservation after only its project identity was published", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "partially-published-shared-reservation");
+    const linked = join(root, "removed-partially-published-linked");
+    git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+    const service = await open(root);
+    openHandles.push(service);
+    const staleProjectId = "00000000-0000-7000-8000-000000000116";
+    const staleCheckoutId = "00000000-0000-7000-8000-000000000117";
+    const staleContextId = "00000000-0000-7000-8000-000000000118";
+    const stale = await inspect(service.repository, linked);
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000119",
+        kind: "new-checkout",
+        projectId: staleProjectId,
+        checkoutId: staleCheckoutId,
+        contextId: staleContextId,
+        branch: "linked",
+        path: linked,
+        projectIdentityLocation: stale.workspace.projectIdentityLocation,
+        targetGitValue: staleContextId,
+        now: new Date().toISOString(),
+      }),
+    );
+    git(repository, "config", GIT_PROJECT_ID_KEY, staleProjectId);
+    rmSync(linked, { recursive: true, force: true });
+
+    const recovered = await service.newCheckout({ workspacePath: repository });
+
+    expect(recovered.state).toBe("healthy");
+    expect(recovered.identity.projectId).toBe(staleProjectId);
+    expect(recovered.identity.checkoutId).not.toBe(staleCheckoutId);
+    expect(recovered.identity.contextId).not.toBe(staleContextId);
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.transitions.filter((transition) => transition.phase !== "finalized")).toEqual([]);
+  });
+
   it("completes a detached checkout whose context registry row is missing", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
@@ -2517,6 +2555,47 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(resumed.identity).toEqual(ordinary.identity);
     expect(resumed.stack.id).toBe(ordinary.stack.id);
     expect((await inspect(service.repository, workspace)).activeTransition).toBeUndefined();
+  });
+
+  it("refuses a reserved folder-to-Git migration after another repository replaces the path", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "replaced-interrupted-folder-to-git");
+    const service = await open(root);
+    openHandles.push(service);
+    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    git(workspace, "init", "-q", "-b", "main");
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000120",
+        kind: "folder-to-git",
+        projectId: ordinary.identity.projectId,
+        checkoutId: ordinary.identity.checkoutId,
+        contextId: ordinary.identity.contextId,
+        branch: "main",
+        path: workspace,
+        projectIdentityLocation: join(workspace, ".git"),
+        expectedGitValue: "absent",
+        targetGitValue: ordinary.identity.contextId,
+        now: new Date().toISOString(),
+      }),
+    );
+    const claimsBefore = await Effect.runPromise(service.repository.listIdentityClaims());
+    rmSync(workspace, { recursive: true, force: true });
+    mkdirSync(workspace, { recursive: true });
+    git(workspace, "init", "-q", "-b", "main");
+
+    await expect(
+      service.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+
+    expect(
+      storedConfigValue(gitConfigPath(join(workspace, ".git")), GIT_PROJECT_ID_KEY),
+    ).toBeUndefined();
+    expect(existsSync(gitCheckoutIdentityPath(join(workspace, ".git")))).toBe(false);
+    expect(
+      storedConfigValue(gitConfigPath(join(workspace, ".git")), gitBranchContextIdKey("main")),
+    ).toBeUndefined();
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(claimsBefore);
   });
 
   it("requires adoption when a branch context has no authoritative owner", async () => {

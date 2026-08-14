@@ -17,6 +17,7 @@ import {
   ensureOrdinaryWorkspaceIdentity,
   publishGitCheckoutIdentity,
   publishOrdinaryWorkspaceIdentity,
+  readOrdinaryWorkspaceIdentityWithFileSystem,
 } from "./identity.ts";
 import {
   ensureBranchContextId,
@@ -492,8 +493,9 @@ export const makeWorkspaceIdentity = ({
   /**
    * A reserved Git checkout publishes the shared project key before any
    * checkout-local marker. If its worktree is now definitely absent and the
-   * shared key is still unpublished, its exact reservation is safe to release
-   * so another worktree can claim the repository.
+   * shared key is either unpublished or contains that reservation's exact
+   * project target, its exact reservation is safe to release so another
+   * worktree can claim the repository.
    */
   const releaseMissingSharedNewCheckoutReservation = (
     report: ManagedWorkspaceDiscovery,
@@ -515,7 +517,8 @@ export const makeWorkspaceIdentity = ({
       if (
         current === undefined ||
         current.workspace.projectIdentityLocation !== stale.projectIdentityLocation ||
-        current.identity.projectId !== undefined ||
+        (current.identity.projectId !== undefined &&
+          current.identity.projectId !== stale.projectId) ||
         current.identity.checkoutId !== undefined ||
         current.identity.contextId !== undefined
       ) {
@@ -627,6 +630,18 @@ export const makeWorkspaceIdentity = ({
       }
 
       if (transition.phase === "reserved") {
+        const ordinaryMarker = yield* withWorkspaceServices(
+          readOrdinaryWorkspaceIdentityWithFileSystem(path),
+        );
+        if (
+          ordinaryMarker?.projectId !== claim.projectId ||
+          ordinaryMarker.checkoutId !== claim.checkoutId ||
+          ordinaryMarker.contextId !== claim.contextId
+        ) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+          );
+        }
         const claimsAfterReserve = yield* repository.listIdentityClaims();
         const exactLocationClaims = claimsAfterReserve.locations.filter(
           (location) => location.state === "active" && location.canonicalPath === path,
