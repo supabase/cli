@@ -62,6 +62,33 @@ function findCommand(
   return current;
 }
 
+/**
+ * The longest command-path prefix argv's positionals resolve to in the tree,
+ * cobra-`Find`-style: segments descend while they match a subcommand and stop
+ * at the first that doesn't (an operand). Includes the root's own name, the
+ * shape `isValueTakingFlagTokenFor` expects.
+ */
+export function resolvedCommandPathForArgv(
+  rootCommand: Command.Command.Any,
+  positionals: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  const path: Array<string> = [rootCommand.name];
+  let current: Command.Command.Any = rootCommand;
+  for (const segment of positionals) {
+    let next: Command.Command.Any | undefined;
+    for (const group of current.subcommands) {
+      next = group.commands.find(
+        (command) => command.name === segment || command.alias === segment,
+      );
+      if (next) break;
+    }
+    if (!next) break;
+    current = next;
+    path.push(segment);
+  }
+  return path;
+}
+
 function collectDescendants(
   command: Command.Command.Any,
   commandPath: ReadonlyArray<string>,

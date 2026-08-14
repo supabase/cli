@@ -35,6 +35,7 @@ import {
   LegacyYesFlag,
 } from "../../../shared/legacy/global-flags.ts";
 import { CliArgs } from "../../../shared/cli/cli-args.service.ts";
+import { SuccessTrailer, successTrailerLayer } from "../../../shared/cli/success-trailer.ts";
 import {
   LegacyDbConnection,
   type LegacyPgConnInput,
@@ -248,6 +249,7 @@ describe("legacy bootstrap linked-project cache location", () => {
         mockStdin(true),
         flagsLayer,
         debugLoggerLayer,
+        successTrailerLayer,
       );
 
       const flags: LegacyBootstrapFlags = {
@@ -256,7 +258,10 @@ describe("legacy bootstrap linked-project cache location", () => {
       };
 
       return Effect.gen(function* () {
+        const successTrailer = yield* SuccessTrailer;
         yield* legacyBootstrap(flags, FAST_BACKOFF);
+
+        expect(yield* successTrailer.workingDirectory).toBe(bootstrapWorkdir);
 
         const projectRef = join(bootstrapWorkdir, "supabase", ".temp", "project-ref");
         const cacheInWorkdir = join(bootstrapWorkdir, "supabase", ".temp", "linked-project.json");

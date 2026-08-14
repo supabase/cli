@@ -19,6 +19,31 @@ describe("ProcessControl", () => {
     }).pipe(Effect.provide(processControlLayer)),
   );
 
+  it.effect("holdSignals remains installed after awaitSignal resolves", () =>
+    Effect.gen(function* () {
+      const processControl = yield* ProcessControl;
+      const before = process.listenerCount("SIGINT");
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* processControl.holdSignals(["SIGINT"]);
+          const fiber = yield* processControl
+            .awaitSignal(["SIGINT"])
+            .pipe(Effect.forkChild({ startImmediately: true }));
+
+          expect(process.listenerCount("SIGINT") - before).toBe(2);
+          yield* Effect.sync(() => {
+            process.emit("SIGINT");
+          });
+          expect(yield* Fiber.join(fiber)).toBe("SIGINT");
+          expect(process.listenerCount("SIGINT") - before).toBe(1);
+        }),
+      );
+
+      expect(process.listenerCount("SIGINT")).toBe(before);
+    }).pipe(Effect.provide(processControlLayer)),
+  );
+
   it.effect("getExitCode returns the value previously set via setExitCode", () =>
     Effect.gen(function* () {
       const processControl = yield* ProcessControl;
