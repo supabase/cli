@@ -432,3 +432,28 @@ describe("legacyMigrateAndSeed experimental declarative-schema branch", () => {
     },
   );
 });
+
+describe("legacyMigrateAndSeed apply order", () => {
+  it.effect("applies mixed-width versions in version order, like db push (#6036)", () => {
+    const workdir = makeWorkdir();
+    // `20260420010000_b.sql` precedes `20260420_a.sql` in file-name order
+    // ('0' < '_'), the reverse of the version order `db push` applies in since
+    // #6038. Unsorted, `db reset`/`db start` replay `b` before `a` locally while
+    // `db push` sends `a` before `b` remotely.
+    writeFile(workdir, "supabase/migrations/20260420_a.sql", "create table t (id int);");
+    writeFile(workdir, "supabase/migrations/20260420010000_b.sql", "alter table t add c int;");
+    const { session, execs } = fakeSession();
+    const out = mockOutput();
+    return run(workdir, "", baseConfig, session, out).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(execs.filter((sql) => sql.includes("table t"))).toEqual([
+            "create table t (id int)",
+            "alter table t add c int",
+          ]);
+          rmSync(workdir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+});

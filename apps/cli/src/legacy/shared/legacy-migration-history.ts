@@ -404,11 +404,16 @@ export const legacyLoadPartialMigrations = (
 ) =>
   legacyListLocalMigrations(fs, path, migrationsDir).pipe(
     Effect.map((paths) =>
-      paths.filter((p) => {
-        if (version.length === 0) return true;
-        const v = MIGRATE_FILE_PATTERN.exec(path.basename(p))?.[1];
-        return v !== undefined && v <= version;
-      }),
+      // Sorted by version, not by file name: `db push` has applied in version
+      // order since supabase/cli#6038, so replaying in name order here would
+      // apply the same files in the opposite order locally (#6036).
+      legacySortMigrationPathsByVersion(
+        paths.filter((p) => {
+          if (version.length === 0) return true;
+          const v = MIGRATE_FILE_PATTERN.exec(path.basename(p))?.[1];
+          return v !== undefined && v <= version;
+        }),
+      ),
     ),
   );
 
