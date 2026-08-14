@@ -55,6 +55,7 @@ import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseDiffInput,
   type LegacyPgDeltaExplicitDiffInput,
+  type LegacyPgDeltaHazardReport,
 } from "../shared/legacy-pgdelta-engine.service.ts";
 import type { LegacyDbDiffFlags } from "./diff.command.ts";
 import { legacyDbDiff } from "./diff.handler.ts";
@@ -72,6 +73,7 @@ interface SetupOpts {
   readonly diffFiles?: ReadonlyArray<{ readonly name: string; readonly sql: string }>;
   // Exact suffixes returned by the next renderer, parallel to `diffFiles`.
   readonly diffSuffixes?: ReadonlyArray<string | null>;
+  readonly hazards?: LegacyPgDeltaHazardReport;
   readonly pgDeltaImplementation?: "legacy" | "next";
   readonly oom?: boolean; // edge-runtime OOMs; the bash fallback returns `diffSql`
   readonly delegateStdout?: string; // stdout returned by a captured Go-delegate run
@@ -201,6 +203,7 @@ function setup(workdir: string, opts: SetupOpts = {}) {
       changes: files.length > 0,
       sql: opts.diffFiles !== undefined ? files.map((file) => file.sql).join("\n\n") : sql,
       files,
+      ...(opts.hazards !== undefined ? { hazards: opts.hazards } : {}),
     };
   };
   const pgDeltaEngine = Layer.succeed(
@@ -1923,6 +1926,25 @@ describe("legacy db diff", () => {
       yield* legacyDbDiff(flags());
       expect(stderr(s.out)).toContain("Found drop statements in schema diff");
       expect(stderr(s.out)).toContain("drop table gone");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("warns on semantic data-loss hazards without a DROP statement", () => {
+    const sql = "ALTER TABLE public.accounts ALTER COLUMN email TYPE text;";
+    const s = setup(tmp.current, {
+      pgDeltaImplementation: "next",
+      diffSql: sql,
+      hazards: {
+        actions: [{ actionIndex: 0, kinds: ["data_loss"] }],
+        dataLoss: [{ actionIndex: 0, sql }],
+        coverage: ["data_loss"],
+        kinds: ["data_loss"],
+      },
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      expect(stderr(s.out)).toContain("Found destructive changes in schema diff");
+      expect(stderr(s.out)).toContain(sql);
     }).pipe(Effect.provide(s.layer));
   });
 

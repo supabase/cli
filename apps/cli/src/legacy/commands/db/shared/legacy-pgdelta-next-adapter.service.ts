@@ -7,7 +7,11 @@ import {
   ErrorActionabilityId,
 } from "../../../../shared/telemetry/error-actionability.ts";
 import type { LegacyMigrationTransactionMode } from "../../../shared/legacy-migration-file.ts";
-import type { LegacyPgDeltaRemovalSummary } from "./legacy-pgdelta-engine.service.ts";
+import type {
+  LegacyPgDeltaHazardKind,
+  LegacyPgDeltaHazardReport,
+  LegacyPgDeltaRemovalSummary,
+} from "./legacy-pgdelta-engine.service.ts";
 
 export type LegacyPgDeltaNextOperation =
   | "diff"
@@ -21,6 +25,7 @@ export type LegacyPgDeltaNextDiagnosticOrigin =
   | "export"
   | "declarativeLoad"
   | "declarativeTarget"
+  | "declarativeDrift"
   | "snapshot";
 
 export interface LegacyPgDeltaNextDiagnostic {
@@ -39,6 +44,9 @@ export interface LegacyPgDeltaNextRenderedFile {
   readonly transactionMode: LegacyMigrationTransactionMode;
   readonly actionCount: number;
 }
+
+export type LegacyPgDeltaNextHazardKind = LegacyPgDeltaHazardKind;
+export type LegacyPgDeltaNextHazardReport = LegacyPgDeltaHazardReport;
 
 export interface LegacyPgDeltaNextSqlFile {
   readonly name: string;
@@ -69,6 +77,7 @@ interface LegacyPgDeltaNextDiffResult {
   readonly sql: string;
   readonly files: readonly LegacyPgDeltaNextRenderedFile[];
   readonly diagnostics: readonly LegacyPgDeltaNextDiagnostic[];
+  readonly hazards: LegacyPgDeltaNextHazardReport;
   readonly debug?: LegacyPgDeltaNextDebugArtifacts;
 }
 
@@ -138,6 +147,8 @@ export interface LegacyPgDeltaNextDeclarativePlanInput {
   readonly seedAssumedSchemas?: boolean;
   readonly restrictToApplier?: boolean;
   readonly strictFunctionBodies?: boolean;
+  /** Reject data-changing SQL observed while loading declarative schema files. */
+  readonly strictDataStatements?: boolean;
   readonly formatOptions?: string;
   /** Defaults to true, preserving pg-topo statement-level reorder support. */
   readonly reorder?: boolean;
@@ -155,6 +166,7 @@ interface LegacyPgDeltaNextDeclarativePlanResult {
   readonly sql: string;
   readonly files: readonly LegacyPgDeltaNextRenderedFile[];
   readonly diagnostics: readonly LegacyPgDeltaNextDiagnostic[];
+  readonly hazards: LegacyPgDeltaNextHazardReport;
   readonly skipped: readonly LegacyPgDeltaNextSkippedStatement[];
   readonly removals: LegacyPgDeltaRemovalSummary;
   readonly debug?: LegacyPgDeltaNextDebugArtifacts;

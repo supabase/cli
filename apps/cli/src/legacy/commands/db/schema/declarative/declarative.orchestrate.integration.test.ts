@@ -198,11 +198,22 @@ describe("legacyDiffDeclarativeToMigrations", () => {
         planDeclarativeSchema: (input) => {
           calls.push(input);
           return Effect.succeed({
-            changes: false,
-            sql: "",
+            changes: true,
+            sql: "ALTER TABLE public.accounts ALTER COLUMN email TYPE text;",
             files: [],
             sourceRef: "migrations",
             targetRef: "declarative",
+            hazards: {
+              actions: [{ actionIndex: 0, kinds: ["data_loss"] }],
+              dataLoss: [
+                {
+                  actionIndex: 0,
+                  sql: "ALTER TABLE public.accounts ALTER COLUMN email TYPE text;",
+                },
+              ],
+              coverage: ["data_loss"],
+              kinds: ["data_loss"],
+            },
             removals: {
               extensions: ["pgcrypto"],
               extensionIntents: [
@@ -229,6 +240,9 @@ describe("legacyDiffDeclarativeToMigrations", () => {
           expect(calls[0]?.noCache).toBe(true);
           expect(calls[0]?.strictCoverage).toBe(true);
           expect(result.manifestPresent).toBe(true);
+          expect(result.dropWarnings).toEqual([
+            "ALTER TABLE public.accounts ALTER COLUMN email TYPE text;",
+          ]);
           expect(result.removals).toEqual({
             extensions: ["pgcrypto"],
             extensionIntents: [{ extension: "pg_cron", intentKind: "job", key: "refresh metrics" }],

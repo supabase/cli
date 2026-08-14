@@ -596,7 +596,7 @@ describe("legacy db schema declarative generate integration", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("--overwrite replaces only the absolute --output destination", () => {
+  it.effect("--overwrite preserves unmanaged files in the absolute --output destination", () => {
     const destination = mkdtempSync(join(tmpdir(), "legacy-decl-output-"));
     mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
     writeFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "select 1;");
@@ -610,7 +610,7 @@ describe("legacy db schema declarative generate integration", () => {
           overwrite: true,
         }),
       );
-      expect(existsSync(join(destination, "stale.sql"))).toBe(false);
+      expect(readFileSync(join(destination, "stale.sql"), "utf8")).toBe("select 'stale';");
       expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(true);
       expect(
         readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),

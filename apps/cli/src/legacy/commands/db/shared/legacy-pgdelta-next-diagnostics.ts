@@ -1,4 +1,5 @@
 import { Effect } from "effect";
+import { hasBlockingDiagnostics, STRICT_COVERAGE_CODES } from "@supabase/pg-delta/frontends";
 
 import { Output } from "../../../../shared/output/output.service.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
@@ -7,8 +8,6 @@ import type {
   LegacyPgDeltaNextDiagnostic,
   LegacyPgDeltaNextOperation,
 } from "./legacy-pgdelta-next-adapter.service.ts";
-
-const coverageDiagnosticCodes = new Set(["unmodeled_kind", "unresolved_security_label"]);
 
 const operationConsequence: Record<LegacyPgDeltaNextOperation, string> = {
   diff: "Changes to these objects are omitted from the generated database diff.",
@@ -43,12 +42,20 @@ export function legacyPgDeltaNextDiagnosticReport(
   diagnostics: readonly LegacyPgDeltaNextDiagnostic[],
   strictCoverage: boolean,
 ): LegacyPgDeltaNextDiagnosticReport {
-  const coverage = diagnostics.filter((diagnostic) => coverageDiagnosticCodes.has(diagnostic.code));
-  const blocking = diagnostics.filter(
-    (diagnostic) =>
-      diagnostic.severity === "error" ||
-      (strictCoverage && coverageDiagnosticCodes.has(diagnostic.code)),
-  );
+  const coverage = diagnostics.filter((diagnostic) => STRICT_COVERAGE_CODES.has(diagnostic.code));
+  const libraryDiagnostics = diagnostics.map((diagnostic) => ({
+    code: diagnostic.code,
+    severity: diagnostic.severity,
+    message: diagnostic.message,
+    ...(diagnostic.context !== undefined ? { context: { ...diagnostic.context } } : {}),
+  }));
+  const blocking = hasBlockingDiagnostics(libraryDiagnostics, { strictCoverage })
+    ? diagnostics.filter(
+        (diagnostic) =>
+          diagnostic.severity === "error" ||
+          (strictCoverage && STRICT_COVERAGE_CODES.has(diagnostic.code)),
+      )
+    : [];
   const unmodeledKinds = [
     ...new Set(diagnostics.map(diagnosticKind).filter((kind) => kind !== undefined)),
   ].sort((left, right) => left.localeCompare(right));
@@ -122,7 +129,7 @@ export const legacyReportPgDeltaNextDiagnostics = Effect.fnUntraced(function* (
     const renderDetail =
       verboseDiagnostics ||
       diagnostic.severity === "error" ||
-      (strictCoverage && coverageDiagnosticCodes.has(diagnostic.code));
+      (strictCoverage && STRICT_COVERAGE_CODES.has(diagnostic.code));
     if (!renderDetail) {
       yield* debug.debug(message);
       continue;

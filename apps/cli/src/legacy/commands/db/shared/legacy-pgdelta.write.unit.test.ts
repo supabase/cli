@@ -1,4 +1,12 @@
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -71,6 +79,96 @@ describe("legacyWriteDeclarativeSchemas", () => {
             profile: "supabase",
             files: ["schemas/a.sql", "schemas/z.sql"],
           });
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("preserves custom and unmanaged files while pruning stale owned files", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-write-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(join(declDir, "_custom"), { recursive: true });
+    writeFileSync(join(declDir, "_custom", "casts.sql"), "create cast (int as text);");
+    writeFileSync(join(declDir, "unmanaged.sql"), "select 'keep me';");
+    writeFileSync(join(declDir, "stale.sql"), "select 'remove me';");
+    writeFileSync(
+      join(declDir, ".pgdelta-export.json"),
+      `${JSON.stringify({
+        formatVersion: 1,
+        redactSecrets: true,
+        scope: "database",
+        files: ["stale.sql"],
+      })}\n`,
+    );
+
+    return write(declDir, {
+      files: [{ name: "schemas/public.sql", sql: "create table public.example(id int);" }],
+      manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+    }).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(existsSync(join(declDir, "stale.sql"))).toBe(false);
+          expect(readFileSync(join(declDir, "unmanaged.sql"), "utf8")).toBe("select 'keep me';");
+          expect(readFileSync(join(declDir, "_custom", "casts.sql"), "utf8")).toBe(
+            "create cast (int as text);",
+          );
+          expect(
+            JSON.parse(readFileSync(join(declDir, ".pgdelta-export.json"), "utf8")).files,
+          ).toEqual(["schemas/public.sql"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("does not rewrite unchanged next-engine files or manifests", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-write-"));
+    const declDir = join(dir, "supabase", "database");
+    const schemaPath = join(declDir, "schemas", "public.sql");
+    const manifestPath = join(declDir, ".pgdelta-export.json");
+    const output: LegacyPgDeltaDeclarativeExportResult = {
+      files: [{ name: "schemas/public.sql", sql: "create table public.example(id int);" }],
+      manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+    };
+
+    return write(declDir, output).pipe(
+      Effect.flatMap(() =>
+        Effect.sync(() => {
+          const old = new Date("2020-01-01T00:00:00.000Z");
+          utimesSync(schemaPath, old, old);
+          utimesSync(manifestPath, old, old);
+        }),
+      ),
+      Effect.flatMap(() => write(declDir, output)),
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(statSync(schemaPath).mtime.toISOString()).toBe("2020-01-01T00:00:00.000Z");
+          expect(statSync(manifestPath).mtime.toISOString()).toBe("2020-01-01T00:00:00.000Z");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("rejects next-engine output targeting the reserved custom directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-write-"));
+    const declDir = join(dir, "supabase", "database");
+    return write(declDir, {
+      files: [{ name: "_custom/generated.sql", sql: "select 1;" }],
+      manifest: { redactSecrets: true, scope: "database" },
+    }).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
+            expect(error).toBeInstanceOf(LegacyDeclarativeWriteError);
+            expect((error as LegacyDeclarativeWriteError).message).toBe(
+              "refusing to write into reserved declarative schema path: _custom/generated.sql",
+            );
+          }
           rmSync(dir, { recursive: true, force: true });
         }),
       ),

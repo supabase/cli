@@ -7,7 +7,7 @@ import {
   type StableId,
 } from "@supabase/pg-delta/core";
 import { renderPlanFiles, ShadowLoadError } from "@supabase/pg-delta/frontends";
-import { plan } from "@supabase/pg-delta/plan";
+import { plan, type Action } from "@supabase/pg-delta/plan";
 import { Effect } from "effect";
 import { Pool } from "pg";
 import { describe, expect } from "vitest";
@@ -18,6 +18,7 @@ import {
   legacyFilterPgDeltaNextPlatformParameterAclDiagnostics,
   legacyPgDeltaNextProfile,
   legacyPgDeltaNextUserOwnedParameterAcls,
+  legacySummarizePgDeltaNextHazards,
   legacySummarizePgDeltaNextRemovals,
   type LegacyPgDeltaNextLibraries,
 } from "./legacy-pgdelta-next-adapter.layer.ts";
@@ -155,6 +156,7 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
         plan: { source: "target-facts", desired: "loaded-files" },
         loadDiagnostics: [fakeDiagnostic("load-warning", "load")],
         targetDiagnostics: [fakeDiagnostic("target-warning", "target")],
+        driftDiagnostics: [fakeDiagnostic("unmodeled_drift", "drift")],
         skipped: [{ file: "roles.sql", stmt: "create role ignored" }],
       };
     },
@@ -171,6 +173,16 @@ function setupLibraries(sourcePool: Pool, desiredPool: Pool) {
       extensionIntents: [
         { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
       ],
+    }),
+    summarizeHazards: (_generatedPlan, diagnostics) => ({
+      actions: [{ actionIndex: 0, kinds: ["data_loss"] }],
+      dataLoss: [{ actionIndex: 0, sql: "TRUNCATE TABLE public.audit_log" }],
+      coverage: diagnostics.some((diagnostic) => diagnostic.code === "unmodeled_drift")
+        ? ["unmodeled_drift"]
+        : [],
+      kinds: diagnostics.some((diagnostic) => diagnostic.code === "unmodeled_drift")
+        ? ["data_loss", "unmodeled_drift"]
+        : ["data_loss"],
     }),
     encodeSubject: (subject) => `subject:${subject.id}`,
   };
@@ -230,6 +242,42 @@ describe("LegacyPgDeltaNextAdapter", () => {
       extensionIntents: [
         { extension: "pg_cron", intentKind: "job", key: "refresh download metrics" },
       ],
+    });
+  });
+
+  it("derives semantic hazards and destructive non-DROP actions from the typed plan", () => {
+    const destructiveAlter: Action = {
+      sql: 'ALTER TABLE "public"."items" ALTER COLUMN "quantity" TYPE smallint;',
+      verb: "alter",
+      produces: [],
+      consumes: [],
+      destroys: [],
+      releases: [],
+      transactionality: "transactional",
+      lockClass: "accessExclusive",
+      newSegmentBefore: false,
+      dataLoss: "destructive",
+      rewriteRisk: true,
+    };
+
+    expect(
+      legacySummarizePgDeltaNextHazards({ actions: [destructiveAlter] }, [
+        {
+          code: "unmodeled_drift",
+          severity: "warning",
+          message: "a desired prerequisite is absent from the target",
+        },
+      ]),
+    ).toEqual({
+      actions: [
+        {
+          actionIndex: 0,
+          kinds: ["data_loss", "rewrite_risk", "access_exclusive_lock"],
+        },
+      ],
+      dataLoss: [{ actionIndex: 0, sql: destructiveAlter.sql }],
+      coverage: ["unmodeled_drift"],
+      kinds: ["data_loss", "rewrite_risk", "access_exclusive_lock", "unmodeled_drift"],
     });
   });
 
@@ -704,17 +752,31 @@ describe("LegacyPgDeltaNextAdapter", () => {
           debug: true,
           isolatedShadow: true,
           seedAssumedSchemas: true,
+          strictDataStatements: true,
           formatOptions: "null",
         });
         expect(state.declarativeInputs).toHaveLength(1);
         expect(state.declarativeInputs[0]).toMatchObject({
           reorder: true,
           seedAssumedSchemas: true,
+          strictDataStatements: true,
         });
         expect(planned.diagnostics.map((diagnostic) => diagnostic.origin)).toEqual([
           "declarativeLoad",
           "declarativeTarget",
+          "declarativeDrift",
         ]);
+        expect(planned.diagnostics.at(-1)).toMatchObject({
+          origin: "declarativeDrift",
+          code: "unmodeled_drift",
+          subject: "subject:drift",
+        });
+        expect(planned.hazards).toEqual({
+          actions: [{ actionIndex: 0, kinds: ["data_loss"] }],
+          dataLoss: [{ actionIndex: 0, sql: "TRUNCATE TABLE public.audit_log" }],
+          coverage: ["unmodeled_drift"],
+          kinds: ["data_loss", "unmodeled_drift"],
+        });
         expect(planned.skipped).toEqual([{ file: "roles.sql", statement: "create role ignored" }]);
         expect(planned.removals).toEqual({
           extensions: ["pgcrypto"],
@@ -784,11 +846,18 @@ describe("LegacyPgDeltaNextAdapter", () => {
         plan: { source: "unused", desired: "unused" },
         loadDiagnostics: [],
         targetDiagnostics: [],
+        driftDiagnostics: [],
         skipped: [],
       }),
       serializeSnapshot: () => "unused",
       serializePlan: () => "unused",
       summarizeRemovals: () => ({ extensions: [], extensionIntents: [] }),
+      summarizeHazards: () => ({
+        actions: [],
+        dataLoss: [],
+        coverage: [],
+        kinds: [],
+      }),
       encodeSubject: (subject: string) => subject,
     });
 
@@ -837,6 +906,12 @@ describe("LegacyPgDeltaNextAdapter", () => {
       serializeSnapshot: () => "unused",
       serializePlan: () => "unused",
       summarizeRemovals: () => ({ extensions: [], extensionIntents: [] }),
+      summarizeHazards: () => ({
+        actions: [],
+        dataLoss: [],
+        coverage: [],
+        kinds: [],
+      }),
       encodeSubject: (subject: string) => subject,
     });
 

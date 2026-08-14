@@ -51,6 +51,7 @@ import { legacyDiffMigra } from "../shared/legacy-migra.ts";
 import {
   LegacyPgDeltaEngine,
   type LegacyPgDeltaDatabaseEndpoint,
+  type LegacyPgDeltaDiffResult,
   type LegacyPgDeltaEndpoint,
   type LegacyPgDeltaRenderedFile,
 } from "../shared/legacy-pgdelta-engine.service.ts";
@@ -585,6 +586,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     let diffResult: {
       readonly sql: string;
       readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile> | undefined;
+      readonly hazards?: LegacyPgDeltaDiffResult["hazards"];
     };
     if (usePgAdmin) {
       // The running-db check runs AFTER the config load + target resolve above, and —
@@ -740,7 +742,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
               // Keep the per-unit plan files so a multi-unit plan can be written as one
               // migration file each; `sql` stays the flattened join for stdout review +
               // machine payloads.
-              return { sql: result.sql, files: result.files };
+              return { sql: result.sql, files: result.files, hazards: result.hazards };
             }
             const sql = yield* legacyDiffMigra(ctx, {
               source: shadow.sourceUrl,
@@ -771,7 +773,11 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
 
     // The file-write + drop-statement warning below is bypassed by the pgadmin path.
     const engine = usePgAdmin ? "pgadmin" : useDelta ? "pg-delta" : "migra";
-    const drops: ReadonlyArray<string> = usePgAdmin ? [] : legacyFindDropStatements(out);
+    const drops: ReadonlyArray<string> = usePgAdmin
+      ? []
+      : diffResult.hazards !== undefined
+        ? diffResult.hazards.dataLoss.map((action) => action.sql)
+        : legacyFindDropStatements(out);
     const writtenFiles: Array<string> = [];
     let ignoredDeclarativeAdvisory: ReturnType<typeof declarativeBaselineAdvisory> | undefined;
     if (
@@ -850,7 +856,9 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
     }
     if (drops.length > 0) {
       yield* output.raw(
-        "Found drop statements in schema diff. Please double check if these are expected:\n",
+        diffResult.hazards === undefined
+          ? "Found drop statements in schema diff. Please double check if these are expected:\n"
+          : "Found destructive changes in schema diff. Please double check if these are expected:\n",
         "stderr",
       );
       yield* output.raw(`${legacyYellow(drops.join("\n"))}\n`, "stderr");

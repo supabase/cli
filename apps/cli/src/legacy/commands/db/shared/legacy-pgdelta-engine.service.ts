@@ -68,6 +68,33 @@ export interface LegacyPgDeltaRemovalSummary {
   readonly extensionIntents: ReadonlyArray<LegacyPgDeltaExtensionIntentRemoval>;
 }
 
+export type LegacyPgDeltaHazardKind =
+  | "data_loss"
+  | "rewrite_risk"
+  | "non_transactional"
+  | "access_exclusive_lock"
+  | "unmodeled_kind"
+  | "unmodeled_drift"
+  | "unresolved_security_label";
+
+interface LegacyPgDeltaActionHazard {
+  readonly actionIndex: number;
+  readonly kinds: ReadonlyArray<LegacyPgDeltaHazardKind>;
+}
+
+interface LegacyPgDeltaDataLossAction {
+  readonly actionIndex: number;
+  readonly sql: string;
+}
+
+/** Semantic safety metadata derived from pg-delta's typed plan actions. */
+export interface LegacyPgDeltaHazardReport {
+  readonly actions: ReadonlyArray<LegacyPgDeltaActionHazard>;
+  readonly dataLoss: ReadonlyArray<LegacyPgDeltaDataLossAction>;
+  readonly coverage: ReadonlyArray<LegacyPgDeltaHazardKind>;
+  readonly kinds: ReadonlyArray<LegacyPgDeltaHazardKind>;
+}
+
 interface LegacyPgDeltaDebugArtifacts {
   readonly sourceSnapshot?: string;
   readonly desiredSnapshot?: string;
@@ -82,6 +109,7 @@ export interface LegacyPgDeltaDiffResult {
   readonly sql: string;
   readonly files: ReadonlyArray<LegacyPgDeltaRenderedFile>;
   readonly removals?: LegacyPgDeltaRemovalSummary;
+  readonly hazards?: LegacyPgDeltaHazardReport;
   readonly debug?: LegacyPgDeltaDebugArtifacts;
 }
 

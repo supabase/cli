@@ -1,8 +1,11 @@
 import { Effect, type FileSystem, type Path } from "effect";
+import { classifySqlFiles } from "@supabase/pg-delta/frontends";
 
 import { legacyBold } from "../../../shared/legacy-colors.ts";
+import { legacyWalkSqlFiles } from "../../../shared/legacy-glob.ts";
 import type { LegacyDeclarativeOutput } from "../../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
+import { LegacyReadPgDeltaExportManifest } from "./legacy-pgdelta-files.ts";
 import type {
   LegacyPgDeltaDeclarativeExportResult,
   LegacyPgDeltaExportManifest,
@@ -11,6 +14,205 @@ import type {
 const EXPORT_MANIFEST_FILE = ".pgdelta-export.json";
 
 type LegacyDeclarativeWriteOutput = LegacyDeclarativeOutput | LegacyPgDeltaDeclarativeExportResult;
+type LegacyPgDeltaNextDeclarativeOutput = LegacyPgDeltaDeclarativeExportResult & {
+  readonly manifest: LegacyPgDeltaExportManifest;
+};
+
+function legacyDeclarativeWriteError(message: string): LegacyDeclarativeWriteError {
+  return new LegacyDeclarativeWriteError({ message });
+}
+
+function isNextDeclarativeOutput(
+  output: LegacyDeclarativeWriteOutput,
+): output is LegacyPgDeltaNextDeclarativeOutput {
+  return "manifest" in output && output.manifest !== undefined;
+}
+
+function safeDeclarativeExportName(path: Path.Path, name: string): string {
+  const rel = path.normalize(name.split("\\").join("/"));
+  if (rel.startsWith("..") || path.isAbsolute(rel)) {
+    throw legacyDeclarativeWriteError(`unsafe declarative export path: ${name}`);
+  }
+  return rel.split("\\").join("/");
+}
+
+function isCustomDeclarativePath(name: string): boolean {
+  return name.split("/")[0] === "_custom";
+}
+
+const readManagedDeclarativeSqlFiles = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  declarativeDir: string,
+) {
+  const names = yield* fs.readDirectory(declarativeDir);
+  const files: Array<{ readonly name: string; readonly sql: string }> = [];
+  for (const name of names) {
+    if (name === "_custom") continue;
+    const absolute = path.join(declarativeDir, name);
+    const isSymlink = yield* fs.readLink(absolute).pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
+    if (isSymlink) continue;
+    const info = yield* fs.stat(absolute);
+    if (info.type === "Directory") {
+      const nested = yield* legacyWalkSqlFiles(fs, absolute, name);
+      for (const relative of nested) {
+        files.push({
+          name: relative,
+          sql: yield* fs.readFileString(path.join(declarativeDir, relative)),
+        });
+      }
+    } else if (info.type === "File" && name.endsWith(".sql")) {
+      files.push({ name, sql: yield* fs.readFileString(absolute) });
+    }
+  }
+  return files;
+});
+
+const writeLegacyDeclarativeSchemas = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  declarativeDir: string,
+  output: LegacyDeclarativeWriteOutput,
+) {
+  yield* fs
+    .remove(declarativeDir, { recursive: true })
+    .pipe(
+      Effect.catchTag("PlatformError", (error) =>
+        error.reason._tag === "NotFound"
+          ? Effect.void
+          : Effect.fail(
+              legacyDeclarativeWriteError(
+                `failed to clean declarative schema directory: ${error.message}`,
+              ),
+            ),
+      ),
+    );
+  yield* fs.makeDirectory(declarativeDir, { recursive: true });
+
+  for (const file of output.files) {
+    const name = "name" in file ? file.name : file.path;
+    const rel = yield* Effect.try({
+      try: () => safeDeclarativeExportName(path, name),
+      catch: (error) =>
+        error instanceof LegacyDeclarativeWriteError
+          ? error
+          : legacyDeclarativeWriteError(String(error)),
+    });
+    const targetPath = path.join(declarativeDir, rel);
+    yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
+    yield* fs.writeFileString(targetPath, file.sql);
+  }
+});
+
+const writeNextDeclarativeSchemas = Effect.fnUntraced(function* (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  declarativeDir: string,
+  output: LegacyPgDeltaNextDeclarativeOutput,
+) {
+  const proposed = yield* Effect.forEach(output.files, (file) =>
+    Effect.try({
+      try: () => {
+        const name = safeDeclarativeExportName(path, file.name);
+        if (isCustomDeclarativePath(name)) {
+          throw legacyDeclarativeWriteError(
+            `refusing to write into reserved declarative schema path: ${file.name}`,
+          );
+        }
+        return { name, sql: file.sql };
+      },
+      catch: (error) =>
+        error instanceof LegacyDeclarativeWriteError
+          ? error
+          : legacyDeclarativeWriteError(String(error)),
+    }),
+  );
+
+  const exists = yield* fs
+    .exists(declarativeDir)
+    .pipe(
+      Effect.mapError((error) =>
+        legacyDeclarativeWriteError(
+          `failed to inspect declarative schema directory: ${error.message}`,
+        ),
+      ),
+    );
+  const existingFiles = exists
+    ? yield* readManagedDeclarativeSqlFiles(fs, path, declarativeDir).pipe(
+        Effect.mapError((error) =>
+          legacyDeclarativeWriteError(
+            `failed to read managed declarative schema files: ${error.message}`,
+          ),
+        ),
+      )
+    : [];
+  const previousManifest = exists
+    ? yield* LegacyReadPgDeltaExportManifest(fs, path, declarativeDir).pipe(
+        Effect.mapError((error) => legacyDeclarativeWriteError(error.message)),
+      )
+    : undefined;
+  const classification = classifySqlFiles({
+    proposed,
+    existing: new Map(existingFiles.map((file) => [file.name, file.sql])),
+    ...(previousManifest?.files !== undefined
+      ? { previouslyOwned: new Set(previousManifest.files) }
+      : {}),
+  });
+
+  yield* fs.makeDirectory(declarativeDir, { recursive: true });
+  const changed = new Set([...classification.created, ...classification.updated]);
+  for (const file of proposed) {
+    if (!changed.has(file.name)) continue;
+    const targetPath = path.join(declarativeDir, file.name);
+    yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
+    yield* fs.writeFileString(targetPath, file.sql);
+  }
+
+  for (const name of classification.removed) {
+    yield* fs
+      .remove(path.join(declarativeDir, name))
+      .pipe(
+        Effect.mapError((error) =>
+          legacyDeclarativeWriteError(
+            `failed to remove stale declarative schema file: ${error.message}`,
+          ),
+        ),
+      );
+  }
+
+  const manifest: LegacyPgDeltaExportManifest & {
+    readonly formatVersion: 1;
+    readonly files: ReadonlyArray<string>;
+  } = {
+    formatVersion: 1,
+    ...output.manifest,
+    files: proposed.map((file) => file.name).sort(),
+  };
+  const serialized = `${JSON.stringify(manifest, null, 2)}\n`;
+  const manifestPath = path.join(declarativeDir, EXPORT_MANIFEST_FILE);
+  const manifestExists = yield* fs
+    .exists(manifestPath)
+    .pipe(
+      Effect.mapError((error) =>
+        legacyDeclarativeWriteError(`failed to inspect export manifest: ${error.message}`),
+      ),
+    );
+  const previousSerialized = manifestExists
+    ? yield* fs
+        .readFileString(manifestPath)
+        .pipe(
+          Effect.mapError((error) =>
+            legacyDeclarativeWriteError(`failed to read export manifest: ${error.message}`),
+          ),
+        )
+    : undefined;
+  if (previousSerialized !== serialized) {
+    yield* fs.writeFileString(manifestPath, serialized);
+  }
+});
 
 /**
  * Go's `declarative.Generate` / `pull.go`'s written-to line, printed by all three
@@ -24,8 +226,11 @@ export const legacyDeclarativeSchemaWrittenLine = (dir: string): string =>
 
 /**
  * Materializes pg-delta declarative export output under the declarative dir.
- * Mirrors Go's `WriteDeclarativeSchemas` (`declarative.go:239`): wipe the dir,
- * recreate it, and write each file at its (path-safe) relative path.
+ * Legacy-engine output keeps Go's wipe-and-rewrite behavior. Next-engine output
+ * uses pg-delta's manifest ownership and file classification: only stale files
+ * owned by the previous export are removed, unchanged files are not rewritten,
+ * unmanaged files are preserved, and the reserved root `_custom/` tree is never
+ * read as managed output or deleted.
  *
  * Go also updates `[db.migrations] schema_paths` afterwards, but only when
  * pg-delta is *disabled* in config (`if utils.IsPgDeltaEnabled() { return nil }`).
@@ -41,52 +246,9 @@ export const legacyWriteDeclarativeSchemas = Effect.fnUntraced(function* (
   declarativeDir: string,
   output: LegacyDeclarativeWriteOutput,
 ) {
-  yield* fs.remove(declarativeDir, { recursive: true }).pipe(
-    Effect.catchTag("PlatformError", (error) =>
-      // Go wraps any failure; a missing dir is fine (we recreate it next).
-      error.reason._tag === "NotFound"
-        ? Effect.void
-        : Effect.fail(
-            new LegacyDeclarativeWriteError({
-              message: `failed to clean declarative schema directory: ${error.message}`,
-            }),
-          ),
-    ),
-  );
-  yield* fs.makeDirectory(declarativeDir, { recursive: true });
-
-  const writtenFiles: Array<string> = [];
-  for (const file of output.files) {
-    const name = "name" in file ? file.name : file.path;
-    const rel = path.normalize(name);
-    if (rel.startsWith("..") || path.isAbsolute(rel)) {
-      return yield* Effect.fail(
-        new LegacyDeclarativeWriteError({
-          message: `unsafe declarative export path: ${name}`,
-        }),
-      );
-    }
-    const targetPath = path.join(declarativeDir, rel);
-    yield* fs.makeDirectory(path.dirname(targetPath), { recursive: true });
-    yield* fs.writeFileString(targetPath, file.sql);
-    writtenFiles.push(name.split("\\").join("/"));
-  }
-
-  const manifest = "manifest" in output ? output.manifest : undefined;
-  if (manifest !== undefined) {
-    const serialized: LegacyPgDeltaExportManifest & {
-      readonly formatVersion: 1;
-      readonly files: ReadonlyArray<string>;
-    } = {
-      formatVersion: 1,
-      ...manifest,
-      files: [...writtenFiles].sort(),
-    };
-    yield* fs.writeFileString(
-      path.join(declarativeDir, EXPORT_MANIFEST_FILE),
-      `${JSON.stringify(serialized, null, 2)}\n`,
-    );
-  }
+  return yield* isNextDeclarativeOutput(output)
+    ? writeNextDeclarativeSchemas(fs, path, declarativeDir, output)
+    : writeLegacyDeclarativeSchemas(fs, path, declarativeDir, output);
 });
 
 // Go's `schemaPathsPattern` (`internal/db/declarative/declarative.go:59`):

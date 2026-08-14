@@ -31,6 +31,7 @@ import {
 export const legacyPgDeltaNextIsolatedShadowPlanOptions = {
   isolatedShadow: true,
   seedAssumedSchemas: false,
+  strictDataStatements: true,
 } as const;
 
 function legacyPgDeltaNextConnectSuggestion(cause: unknown): string | undefined {
@@ -67,6 +68,7 @@ function normalizeNextDiff(
       readonly actionCount: number;
     }>;
     readonly removals?: LegacyPgDeltaDiffResult["removals"];
+    readonly hazards: NonNullable<LegacyPgDeltaDiffResult["hazards"]>;
     readonly debug?: {
       readonly sourceSnapshot?: string;
       readonly desiredSnapshot?: string;
@@ -87,6 +89,7 @@ function normalizeNextDiff(
       actionCount: file.actionCount,
     })),
     ...(result.removals !== undefined ? { removals: result.removals } : {}),
+    hazards: result.hazards,
     ...(result.debug !== undefined
       ? {
           debug: {

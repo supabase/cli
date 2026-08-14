@@ -13,6 +13,7 @@ describe("legacyPgDeltaNextIsolatedShadowPlanOptions", () => {
     expect(legacyPgDeltaNextIsolatedShadowPlanOptions).toEqual({
       isolatedShadow: true,
       seedAssumedSchemas: false,
+      strictDataStatements: true,
     });
   });
 });

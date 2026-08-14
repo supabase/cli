@@ -458,7 +458,11 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       // Step 6: drop warnings.
       if (result.dropWarnings.length > 0) {
         yield* output.raw(
-          `${legacyYellow("Found drop statements in schema diff. Please double check if these are expected:")}\n`,
+          `${legacyYellow(
+            engine.implementation === "next"
+              ? "Found destructive changes in schema diff. Please double check if these are expected:"
+              : "Found drop statements in schema diff. Please double check if these are expected:",
+          )}\n`,
           "stderr",
         );
         yield* output.raw(`${legacyYellow(result.dropWarnings.join("\n"))}\n`, "stderr");

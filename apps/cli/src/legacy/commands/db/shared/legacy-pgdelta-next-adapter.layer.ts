@@ -1,8 +1,13 @@
 import { Effect, Layer } from "effect";
 import type { Pool } from "pg";
-import { serializeSnapshot, encodeId } from "@supabase/pg-delta/core";
+import {
+  serializeSnapshot,
+  encodeId,
+  type Diagnostic as PgDeltaDiagnostic,
+} from "@supabase/pg-delta/core";
 import {
   buildSchemaExport,
+  dataLossActions,
   planSchemaFiles,
   renderPlanFiles,
   ShadowLoadError,
@@ -12,7 +17,7 @@ import {
   resolveProfile,
   supabaseProfile,
 } from "@supabase/pg-delta/integrations";
-import { plan, serializePlan } from "@supabase/pg-delta/plan";
+import { classifyPlanHazards, plan, serializePlan } from "@supabase/pg-delta/plan";
 import type { Plan as PgDeltaPlan } from "@supabase/pg-delta/plan";
 import type { Policy } from "@supabase/pg-delta/policy";
 import { formatSqlStatements, type SqlFormatOptions } from "@supabase/pg-delta/sql-format";
@@ -28,6 +33,7 @@ import {
   type LegacyPgDeltaNextDiagnosticOrigin,
   type LegacyPgDeltaNextDiffInput,
   type LegacyPgDeltaNextExportManifest,
+  type LegacyPgDeltaNextHazardReport,
   type LegacyPgDeltaNextRenderedFile,
   type LegacyPgDeltaNextSnapshotCaptureInput,
   type LegacyPgDeltaNextSqlFile,
@@ -82,6 +88,7 @@ interface LegacyPgDeltaNextLibrarySchemaPlan<Plan, Subject> {
   readonly plan: Plan;
   readonly loadDiagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[];
   readonly targetDiagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[];
+  readonly driftDiagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[];
   readonly skipped: readonly { readonly file: string; readonly stmt: string }[];
 }
 
@@ -124,6 +131,10 @@ export interface LegacyPgDeltaNextLibraries<FactBase, PlanOptions extends object
   ) => string;
   readonly serializePlan: (plan: Plan) => string;
   readonly summarizeRemovals: (plan: Plan) => LegacyPgDeltaRemovalSummary;
+  readonly summarizeHazards: (
+    plan: Plan,
+    diagnostics: readonly LegacyPgDeltaNextLibraryDiagnostic<Subject>[],
+  ) => LegacyPgDeltaNextHazardReport;
   readonly encodeSubject: (subject: Subject) => string;
 }
 
@@ -154,6 +165,22 @@ export function legacySummarizePgDeltaNextRemovals(
         left.intentKind.localeCompare(right.intentKind) ||
         left.key.localeCompare(right.key),
     ),
+  };
+}
+
+export function legacySummarizePgDeltaNextHazards(
+  generatedPlan: Pick<PgDeltaPlan, "actions">,
+  diagnostics: readonly PgDeltaDiagnostic[],
+): LegacyPgDeltaNextHazardReport {
+  const classified = classifyPlanHazards(generatedPlan, diagnostics);
+  return {
+    actions: classified.actions.map((action) => ({
+      actionIndex: action.actionIndex,
+      kinds: [...action.kinds],
+    })),
+    dataLoss: dataLossActions(generatedPlan.actions).map((action) => ({ ...action })),
+    coverage: [...classified.coverage],
+    kinds: [...classified.kinds],
   };
 }
 
@@ -460,6 +487,9 @@ function legacyPgDeltaNextPlanOptions(input: LegacyPgDeltaNextDeclarativePlanInp
     ...(input.strictFunctionBodies !== undefined
       ? { strictFunctionBodies: input.strictFunctionBodies }
       : {}),
+    ...(input.strictDataStatements !== undefined
+      ? { strictDataStatements: input.strictDataStatements }
+      : {}),
     reorder: input.reorder ?? true,
     ...(input.onWarning !== undefined ? { onWarning: input.onWarning } : {}),
   };
@@ -512,6 +542,10 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           sql: renderedFiles.map((file) => file.contents).join("\n\n"),
           files: legacyNormalizePgDeltaNextRenderedFiles(renderedFiles),
           diagnostics,
+          hazards: libraries.summarizeHazards(generatedPlan, [
+            ...source.diagnostics,
+            ...desired.diagnostics,
+          ]),
           ...(input.debug
             ? {
                 debug: {
@@ -564,6 +598,11 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
           allowDrops: input.allowDrops,
         });
         const renderedFiles = legacyFormatPgDeltaNextRenderedFiles(rendered.files, format);
+        const libraryDiagnostics = [
+          ...result.loadDiagnostics,
+          ...result.targetDiagnostics,
+          ...result.driftDiagnostics,
+        ];
         return {
           changes: rendered.changes,
           sql: renderedFiles.map((file) => file.contents).join("\n\n"),
@@ -579,7 +618,13 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
               "declarativeTarget",
               libraries.encodeSubject,
             ),
+            ...legacyNormalizePgDeltaNextDiagnostics(
+              result.driftDiagnostics,
+              "declarativeDrift",
+              libraries.encodeSubject,
+            ),
           ],
+          hazards: libraries.summarizeHazards(result.plan, libraryDiagnostics),
           skipped: result.skipped.map((skipped) => ({
             file: skipped.file,
             statement: skipped.stmt,
@@ -673,6 +718,7 @@ const legacyPgDeltaNextRealLibraries = {
   serializeSnapshot,
   serializePlan,
   summarizeRemovals: legacySummarizePgDeltaNextRemovals,
+  summarizeHazards: legacySummarizePgDeltaNextHazards,
   encodeSubject: encodeId,
 };
 

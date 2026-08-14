@@ -117,6 +117,24 @@ describe("pg-delta next diagnostic coverage policy", () => {
     }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
   });
 
+  it("uses the upstream coverage policy to block unmodeled declarative drift", () => {
+    const report = legacyPgDeltaNextDiagnosticReport(
+      [
+        {
+          origin: "declarativeDrift",
+          code: "unmodeled_drift",
+          severity: "warning",
+          message: "desired text search configuration is absent from the target",
+          context: { kind: "text search configuration" },
+        },
+      ],
+      true,
+    );
+
+    expect(report.coverage).toHaveLength(1);
+    expect(report.blocking).toEqual(report.coverage);
+  });
+
   it("can suppress a repeated feedback invitation without suppressing warnings", () => {
     const out = mockOutput();
     const debugMessages: string[] = [];
@@ -201,7 +219,7 @@ describe("pg-delta next diagnostic coverage policy", () => {
     }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
   });
 
-  it("classifies both coverage codes and aggregates arbitrary kinds safely", () => {
+  it("classifies all upstream coverage codes and aggregates arbitrary kinds safely", () => {
     const report = legacyPgDeltaNextDiagnosticReport(
       [
         unmodeled("z future kind"),
@@ -217,12 +235,18 @@ describe("pg-delta next diagnostic coverage policy", () => {
           message: "provider was not resolved",
           context: { kind: 42 },
         },
+        {
+          origin: "declarativeDrift",
+          code: "unmodeled_drift",
+          severity: "warning",
+          message: "desired object is absent from the target",
+        },
       ],
       true,
     );
 
-    expect(report.coverage).toHaveLength(7);
-    expect(report.blocking).toHaveLength(7);
+    expect(report.coverage).toHaveLength(8);
+    expect(report.blocking).toHaveLength(8);
     expect(report.unmodeledKinds).toEqual(["a future kind", "line break", "z future kind"]);
   });
 

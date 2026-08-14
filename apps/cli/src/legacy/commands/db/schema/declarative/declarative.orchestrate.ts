@@ -102,7 +102,10 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
     files: result.files,
     sourceRef: result.sourceRef,
     targetRef: result.targetRef,
-    dropWarnings: legacyFindDropStatements(result.sql),
+    dropWarnings:
+      engine.implementation === "next" && result.hazards !== undefined
+        ? result.hazards.dataLoss.map((action) => action.sql)
+        : legacyFindDropStatements(result.sql),
     manifestPresent: manifest !== undefined,
     removals: result.removals ?? { extensions: [], extensionIntents: [] },
   } satisfies LegacyDeclarativeSyncResult;
