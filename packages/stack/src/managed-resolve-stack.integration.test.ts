@@ -67,6 +67,46 @@ const adapters = [
   ],
 ] as const;
 
+describe("resolveStack identity publication", () => {
+  it("accepts a monotonic partial identity published between discovery passes", async () => {
+    const root = makeRoot();
+    const repositoryPath = makeRepository(root);
+    const projectId = "00000000-0000-7000-8000-000000000116";
+    const baseRepository = createInMemoryManagedStackRepository();
+    let injected = false;
+    const racingRepository = {
+      ...baseRepository,
+      listIdentityClaims: (requestedProjectId?: string) =>
+        Effect.gen(function* () {
+          const claims = yield* baseRepository.listIdentityClaims(requestedProjectId);
+          if (!injected) {
+            injected = true;
+            git(repositoryPath, "config", GIT_PROJECT_ID_KEY, projectId);
+          }
+          return claims;
+        }),
+    };
+    const service = await makeManagedStackService({
+      repository: racingRepository,
+      stateRoot: join(root, "managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(service);
+
+    const resolved = await service.resolveStack({
+      workspacePath: repositoryPath,
+      operation: "start",
+    });
+
+    expect(injected).toBe(true);
+    expect(resolved.identity).toMatchObject({
+      projectId,
+      checkoutId: expect.any(String),
+      contextId: expect.any(String),
+    });
+  });
+});
+
 const runRepo = Effect.runSync;
 
 const invalidStackNames = managedStackContractFixtures

@@ -792,30 +792,16 @@ describe("managed service options", () => {
     },
   );
 
-  it("refuses an undefined state root instead of falling back to SUPABASE_HOME or the home directory", async () => {
+  it("refuses an undefined state root before any environment fallback", async () => {
     // `stateRoot` is required in the option type, but a caller bypassing the
     // type system (or a plain-JS caller) could still pass `undefined`. That
-    // must fail loudly instead of silently resolving against SUPABASE_HOME or
-    // the user's home directory.
-    const root = makeRoot();
-    const configuredHome = join(root, "unused-supabase-home");
-    const originalSupabaseHome = process.env["SUPABASE_HOME"];
-    process.env["SUPABASE_HOME"] = configuredHome;
-    try {
-      await expect(
-        makeManagedStackService({
-          repository: createInMemoryManagedStackRepository(),
-          stateRoot: undefined,
-        } as unknown as MakeManagedStackServiceOptions),
-      ).rejects.toBeInstanceOf(UnsafeManagedStackPathError);
-      expect(existsSync(configuredHome)).toBe(false);
-    } finally {
-      if (originalSupabaseHome === undefined) {
-        delete process.env["SUPABASE_HOME"];
-      } else {
-        process.env["SUPABASE_HOME"] = originalSupabaseHome;
-      }
-    }
+    // must fail loudly before any environment fallback is considered.
+    await expect(
+      makeManagedStackService({
+        repository: createInMemoryManagedStackRepository(),
+        stateRoot: undefined,
+      } as unknown as MakeManagedStackServiceOptions),
+    ).rejects.toBeInstanceOf(UnsafeManagedStackPathError);
   });
 
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY])(

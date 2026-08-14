@@ -461,6 +461,50 @@ const observationMatches = (
   );
 };
 
+const sameManagedWorkspaceTopology = (
+  report: ManagedWorkspaceDiscovery,
+  freshReport: ManagedWorkspaceDiscovery,
+): boolean =>
+  report.workspace.checkoutKind === freshReport.workspace.checkoutKind &&
+  report.workspace.workspaceRoot === freshReport.workspace.workspaceRoot &&
+  report.workspace.projectIdentityLocation === freshReport.workspace.projectIdentityLocation &&
+  report.workspace.checkoutIdentityLocation === freshReport.workspace.checkoutIdentityLocation &&
+  report.context.kind === freshReport.context.kind &&
+  report.context.branch === freshReport.context.branch &&
+  report.context.commit === freshReport.context.commit;
+
+const identityPublicationIsMonotonic = (
+  report: ManagedWorkspaceDiscovery,
+  freshReport: ManagedWorkspaceDiscovery,
+): boolean =>
+  (report.identity.projectId === undefined ||
+    report.identity.projectId === freshReport.identity.projectId) &&
+  (report.identity.checkoutId === undefined ||
+    report.identity.checkoutId === freshReport.identity.checkoutId) &&
+  (report.identity.contextId === undefined ||
+    report.identity.contextId === freshReport.identity.contextId);
+
+const identityPublicationAdvanced = (
+  report: ManagedWorkspaceDiscovery,
+  freshReport: ManagedWorkspaceDiscovery,
+): boolean =>
+  (report.identity.projectId === undefined && freshReport.identity.projectId !== undefined) ||
+  (report.identity.checkoutId === undefined && freshReport.identity.checkoutId !== undefined) ||
+  (report.identity.contextId === undefined && freshReport.identity.contextId !== undefined);
+
+/** A same-topology start may have published part of the Git identity meanwhile. */
+const concurrentIdentityPublication = (
+  report: ManagedWorkspaceDiscovery,
+  freshReport: ManagedWorkspaceDiscovery,
+): boolean =>
+  report.state === "unregistered" &&
+  freshReport.state === "unregistered" &&
+  freshReport.conflicts.length === 0 &&
+  freshReport.activeTransition === undefined &&
+  sameManagedWorkspaceTopology(report, freshReport) &&
+  identityPublicationIsMonotonic(report, freshReport) &&
+  identityPublicationAdvanced(report, freshReport);
+
 /**
  * What a workspace resolved to before any stack is looked up: where the
  * identities live, which context the working tree is in, and whichever parts of
@@ -895,6 +939,7 @@ export class ManagedStackService extends Context.Service<
           Effect.gen(function* () {
             const canonicalPath = report.workspace.canonicalPath;
             const freshReport = yield* discover(canonicalPath);
+            const sameWorkspaceTopology = sameManagedWorkspaceTopology(report, freshReport);
             const winnerPublished =
               report.state === "unregistered" &&
               freshReport.state === "healthy" &&
@@ -903,17 +948,12 @@ export class ManagedStackService extends Context.Service<
               freshReport.identity.contextId !== undefined &&
               freshReport.conflicts.length === 0 &&
               freshReport.activeTransition === undefined &&
-              freshReport.workspace.workspaceRoot === report.workspace.workspaceRoot &&
-              freshReport.workspace.projectIdentityLocation ===
-                report.workspace.projectIdentityLocation &&
-              freshReport.workspace.checkoutIdentityLocation ===
-                report.workspace.checkoutIdentityLocation &&
-              freshReport.context.kind === report.context.kind &&
-              freshReport.context.branch === report.context.branch &&
-              freshReport.context.commit === report.context.commit;
+              sameWorkspaceTopology &&
+              identityPublicationIsMonotonic(report, freshReport);
             if (
               discoveryObservation(report) !== discoveryObservation(freshReport) &&
-              !winnerPublished
+              !winnerPublished &&
+              !concurrentIdentityPublication(report, freshReport)
             ) {
               return yield* Effect.fail(
                 new InvalidManagedIdentityError({
@@ -2594,36 +2634,24 @@ export class ManagedStackService extends Context.Service<
               resolveOptions.operation === "start"
                 ? yield* discover(resolveOptions.workspacePath)
                 : report;
-            const sameWorkspaceTopology =
-              report.workspace.checkoutKind === settledReport.workspace.checkoutKind &&
-              report.workspace.workspaceRoot === settledReport.workspace.workspaceRoot &&
-              report.workspace.projectIdentityLocation ===
-                settledReport.workspace.projectIdentityLocation &&
-              report.workspace.checkoutIdentityLocation ===
-                settledReport.workspace.checkoutIdentityLocation &&
-              report.context.kind === settledReport.context.kind &&
-              report.context.branch === settledReport.context.branch &&
-              report.context.commit === settledReport.context.commit;
+            const sameWorkspaceTopology = sameManagedWorkspaceTopology(report, settledReport);
+            const settledIdentityIsMonotonic = identityPublicationIsMonotonic(
+              report,
+              settledReport,
+            );
             const settledIdentityPublished =
               settledReport.identity.projectId !== undefined &&
               settledReport.identity.checkoutId !== undefined &&
               settledReport.identity.contextId !== undefined;
-            const settledIdentityPublishing =
-              settledReport.state === "duplicate" &&
-              settledReport.identity.checkoutId === undefined &&
-              (settledReport.identity.projectId !== undefined ||
-                settledReport.identity.contextId !== undefined);
             const benignConcurrentRegistration =
               report.state === "unregistered" &&
-              report.identity.projectId === undefined &&
-              report.identity.checkoutId === undefined &&
-              report.identity.contextId === undefined &&
               sameWorkspaceTopology &&
+              settledIdentityIsMonotonic &&
               settledReport.activeTransition === undefined &&
-              (settledReport.conflicts.length === 0 || settledIdentityPublishing) &&
-              (settledReport.state === "healthy" ||
-                (settledReport.state === "unregistered" && settledIdentityPublished) ||
-                settledIdentityPublishing);
+              ((settledReport.state === "healthy" &&
+                settledIdentityPublished &&
+                settledReport.conflicts.length === 0) ||
+                concurrentIdentityPublication(report, settledReport));
             if (
               resolveOptions.operation === "start" &&
               discoveryObservation(report) !== discoveryObservation(settledReport) &&

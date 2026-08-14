@@ -699,7 +699,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(claims.locations).toEqual(
       expect.arrayContaining([expect.objectContaining({ canonicalPath: next, state: "active" })]),
     );
-  }, 15_000);
+  });
 
   it("blocks both the active and historical paths when a superseded path reappears", async () => {
     const root = makeRoot();
@@ -720,7 +720,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         service.resolveStack({ workspacePath, operation: "start" }),
       ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     }
-  }, 15_000);
+  });
 
   it("retains each probed location state when historical rows share a path", async () => {
     const root = makeRoot();
@@ -1110,7 +1110,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(after.transitions.find((transition) => transition.id.endsWith("0096"))?.phase).toBe(
       "reserved",
     );
-  }, 15_000);
+  });
 
   it("does not finalize recovery when a historical path reappears during registry apply", async () => {
     const root = makeRoot();
@@ -1160,7 +1160,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.historicalPathEvidence).toEqual(
       expect.arrayContaining([expect.objectContaining({ path: previous, probe: "same" })]),
     );
-  }, 15_000);
+  });
 
   it("settles concurrent rebinds with one CAS winner", async () => {
     const root = makeRoot();
