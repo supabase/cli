@@ -1,7 +1,7 @@
 diff remote[auth] local[auth]
 --- remote[auth]
 +++ local[auth]
-@@ -47,62 +47,74 @@
+@@ -49,63 +49,75 @@
  inactivity_timeout = "0s"
  
  [email]
@@ -9,13 +9,14 @@ diff remote[auth] local[auth]
 -double_confirm_changes = false
 -enable_confirmations = false
 -secure_password_change = false
--max_frequency = "1m0s"
--otp_length = 6
--otp_expiry = 3600
 +enable_signup = true
 +double_confirm_changes = true
 +enable_confirmations = true
 +secure_password_change = true
+ require_current_password = false
+-max_frequency = "1m0s"
+-otp_length = 6
+-otp_expiry = 3600
 +max_frequency = "1s"
 +otp_length = 8
 +otp_expiry = 86400

@@ -1182,6 +1182,14 @@ export function legacyResolveAuthEmail(
           "auth.email.secure_password_change",
           projectEnvValues,
         ),
+    require_current_password: remoteWins("auth.email.require_current_password")
+      ? email.require_current_password
+      : legacyEnvOverrideBool(
+          "SUPABASE_AUTH_EMAIL_REQUIRE_CURRENT_PASSWORD",
+          email.require_current_password,
+          "auth.email.require_current_password",
+          projectEnvValues,
+        ),
     max_frequency: remoteWins("auth.email.max_frequency")
       ? email.max_frequency
       : (legacyEnvOverride(

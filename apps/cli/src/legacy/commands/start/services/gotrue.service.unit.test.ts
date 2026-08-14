@@ -34,6 +34,7 @@ const baseEnvInput: LegacyBuildGotrueEnvInput = {
     double_confirm_changes: true,
     enable_confirmations: false,
     secure_password_change: false,
+    require_current_password: false,
     max_frequency: "1s",
     otp_length: 6,
     otp_expiry: 3600,
@@ -446,6 +447,27 @@ describe("legacyBuildGotrueEnv", () => {
     test("omits CAPTCHA env when unset", () => {
       const env = legacyBuildGotrueEnv(baseEnvInput);
       expect(env["GOTRUE_SECURITY_CAPTCHA_ENABLED"]).toBeUndefined();
+    });
+  });
+
+  describe("update password", () => {
+    test("emits REQUIRE_REAUTHENTICATION and REQUIRE_CURRENT_PASSWORD from email config", () => {
+      const env = legacyBuildGotrueEnv({
+        ...baseEnvInput,
+        email: {
+          ...baseEnvInput.email,
+          secure_password_change: true,
+          require_current_password: true,
+        },
+      });
+      expect(env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION"]).toBe("true");
+      expect(env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD"]).toBe("true");
+    });
+
+    test("emits false defaults when email config is unset", () => {
+      const env = legacyBuildGotrueEnv(baseEnvInput);
+      expect(env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION"]).toBe("false");
+      expect(env["GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD"]).toBe("false");
     });
   });
 
