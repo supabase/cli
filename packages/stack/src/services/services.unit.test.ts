@@ -594,6 +594,28 @@ describe("docker-backed auxiliary services", () => {
     );
   });
 
+  it("forces IPv4 resolution for the realtime database connection", () => {
+    const dependencies = [{ service: "postgres", condition: "healthy" }] as const;
+    const def = makeRealtimeServiceDocker({
+      image: dockerImageForService("realtime", DEFAULT_VERSIONS.realtime),
+      identity: EPHEMERAL_IDENTITY,
+      port: 54330,
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "test-jwks",
+      tenantId: "realtime-dev",
+      encryptionKey: "supabaserealtime",
+      secretKeyBase: "test-secret-key-base",
+      maxHeaderLength: 4096,
+      platformOs: "linux",
+      dependencies,
+    });
+
+    expect(def.args).toContain("DB_IP_VERSION=ipv4");
+    expect(def.args).toContain("DB_HOST=host.docker.internal");
+  });
+
   it("defines storage mounts, cleanup, topology, and readiness locally", () => {
     const dependencies = [{ service: "postgres-init", condition: "completed" }] as const;
     const def = makeStorageServiceDocker({
