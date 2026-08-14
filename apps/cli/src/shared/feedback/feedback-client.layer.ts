@@ -31,7 +31,11 @@ const REQUEST_TIMEOUT_MS = 10_000;
 
 interface FeedbackClientOptions {
   readonly environment: FeedbackEnvironment;
-  /** Injectable transport for hermetic tests, like `legacyDohFetch`'s `innerFetch`. */
+  /**
+   * Injectable transport. Production wires the legacy debug/DoH fetch
+   * (`legacyFeedbackFetch` in `feedback.layers.ts`) so `--debug` and
+   * `--dns-resolver https` apply; hermetic tests inject a recording fake.
+   */
   readonly fetch?: typeof globalThis.fetch;
 }
 
@@ -80,17 +84,21 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
     });
 
     // PostgREST reports failures as a returned `error`, not a rejection; a
-    // thrown/timed-out fetch rejects. Both map to `FeedbackBackendError`.
+    // thrown/timed-out/aborted fetch rejects. Both map to `FeedbackBackendError`.
+    // Each request aborts on whichever fires first: fiber interruption (the
+    // signal `Effect.tryPromise` hands us — Ctrl-C must not let an in-flight
+    // submit commit after the command is cancelled) or the 10s timeout.
     const run = <A>(
       operation: FeedbackBackendError["operation"],
-      request: () => PromiseLike<{
+      request: (signal: AbortSignal) => PromiseLike<{
         data: A;
         error: { message: string } | null;
         count?: number | null;
       }>,
     ) =>
       Effect.tryPromise({
-        try: request,
+        try: (signal) =>
+          request(AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])),
         catch: (cause) =>
           new FeedbackBackendError({
             message: cause instanceof Error ? cause.message : String(cause),
@@ -106,10 +114,8 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
 
     return FeedbackClient.of({
       submit: (submission) =>
-        run("submit", () =>
-          client
-            .rpc("submit_interfaces_feedback", toRpcArgs(submission))
-            .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS)),
+        run("submit", (signal) =>
+          client.rpc("submit_interfaces_feedback", toRpcArgs(submission)).abortSignal(signal),
         ).pipe(
           Effect.flatMap(({ data }) =>
             typeof data === "string" && data.length > 0
@@ -124,13 +130,13 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
         ),
 
       preview: (token, context) =>
-        run("preview", () => {
+        run("preview", (signal) => {
           let request = client
             .from("interfaces_feedback")
             .select("feedback")
             .eq("delete_token", token)
             .setHeader("x-feedback-token", token)
-            .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
+            .abortSignal(signal);
           if (context?.projectRef !== undefined) {
             request = request.setHeader("x-feedback-project-ref", context.projectRef);
           }
@@ -141,7 +147,7 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
         }).pipe(Effect.map(({ data }) => Option.fromNullishOr(data?.[0]?.feedback))),
 
       delete: (token, context) =>
-        run("delete", () => {
+        run("delete", (signal) => {
           // The `delete_token=eq.` filter satisfies PostgREST's filterless-delete
           // rejection; the `x-feedback-token` header is the actual security
           // boundary (RLS matches zero rows without it). `count: "exact"` asks
@@ -152,7 +158,7 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
             .delete({ count: "exact" })
             .eq("delete_token", token)
             .setHeader("x-feedback-token", token)
-            .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
+            .abortSignal(signal);
           if (context?.projectRef !== undefined) {
             request = request.setHeader("x-feedback-project-ref", context.projectRef);
           }

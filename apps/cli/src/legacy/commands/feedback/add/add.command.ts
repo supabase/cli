@@ -5,7 +5,9 @@ import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.
 import { stdinLayer } from "../../../../shared/runtime/stdin.layer.ts";
 import { aiToolLayer } from "../../../../shared/telemetry/ai-tool.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyFeedbackClientLayer, legacyFeedbackCliConfigLayer } from "../feedback.layers.ts";
+import { LEGACY_FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { legacyFeedbackAdd } from "./add.handler.ts";
 
 const config = {
@@ -20,7 +22,12 @@ export type LegacyFeedbackAddArgs = CliCommand.Command.Config.Infer<typeof confi
 // Exported so integration tests can drive the exact wiring `Command.withHandler`
 // uses below, instead of re-asserting the generic instrumentation mechanism.
 export const legacyFeedbackAddHandler = (args: LegacyFeedbackAddArgs) =>
-  legacyFeedbackAdd(args).pipe(withLegacyCommandInstrumentation(), withJsonErrorHandling);
+  legacyFeedbackAdd(args).pipe(
+    // Feedback's own `-o` enum is `pretty|json`, not the resource-command set
+    // (see feedback-output.ts).
+    withLegacyCommandInstrumentation({ outputFormats: LEGACY_FEEDBACK_OUTPUT_FORMATS }),
+    withJsonErrorHandling,
+  );
 
 export const legacyFeedbackAddCommand = Command.make("add", config).pipe(
   Command.withDescription("Send quick feedback about the Supabase CLI to the Supabase team."),
@@ -38,6 +45,7 @@ export const legacyFeedbackAddCommand = Command.make("add", config).pipe(
   ]),
   Command.withHandler(legacyFeedbackAddHandler),
   Command.provide(commandRuntimeLayer(["feedback", "add"])),
+  Command.provide(legacyTelemetryStateLayer),
   Command.provide(stdinLayer),
   Command.provide(aiToolLayer),
   // `Layer.provide` does not share to siblings: the handler and the feedback

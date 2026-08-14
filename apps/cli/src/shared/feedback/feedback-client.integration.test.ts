@@ -1,5 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
-import { Effect, Option } from "effect";
+import { Effect, Fiber, Option } from "effect";
 import { feedbackClientLayer } from "./feedback-client.layer.ts";
 import type { FeedbackSubmission } from "./feedback-client.service.ts";
 import { FeedbackClient } from "./feedback-client.service.ts";
@@ -154,6 +154,31 @@ describe("feedbackClientLayer", () => {
 
         expect(error._tag).toBe("FeedbackBackendError");
         expect(error.operation).toBe("submit");
+      }).pipe(Effect.provide(layerWith(transport)));
+    });
+
+    it.live("aborts the in-flight request when the fiber is interrupted", () => {
+      // Ctrl-C during submission must abort the HTTP request, not let the
+      // insert commit after the command was cancelled. The fake fetch behaves
+      // like a real one: it settles only when its abort signal fires.
+      let capturedSignal: AbortSignal | undefined;
+      const inFlight = Promise.withResolvers<void>();
+      const transport = recordingFetch((request) => {
+        capturedSignal = request.signal;
+        inFlight.resolve();
+        return new Promise<Response>((_, reject) => {
+          request.signal.addEventListener("abort", () => reject(request.signal.reason));
+        });
+      });
+      return Effect.gen(function* () {
+        const client = yield* FeedbackClient;
+        const fiber = yield* client
+          .submit(SUBMISSION)
+          .pipe(Effect.forkChild({ startImmediately: true }));
+        yield* Effect.promise(() => inFlight.promise);
+        yield* Fiber.interrupt(fiber);
+
+        expect(capturedSignal?.aborted).toBe(true);
       }).pipe(Effect.provide(layerWith(transport)));
     });
 

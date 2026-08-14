@@ -8,6 +8,7 @@ import {
   FeedbackBackendError,
   FeedbackClient,
 } from "../../../../shared/feedback/feedback-client.service.ts";
+import { LegacyAgentFlag, LegacyOutputFlag } from "../../../../shared/legacy/global-flags.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { AiTool } from "../../../../shared/telemetry/ai-tool.service.ts";
 import {
@@ -21,8 +22,11 @@ import {
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
+  mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
+import { legacyInvalidOutputFormatMessage } from "../../../shared/legacy-go-output-flag.ts";
+import { LEGACY_FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { legacyFeedbackAddHandler } from "./add.command.ts";
 import { LEGACY_FEEDBACK_EMPTY_MESSAGE } from "./add.errors.ts";
 import { legacyFeedbackAdd } from "./add.handler.ts";
@@ -80,6 +84,9 @@ function setupLegacyFeedback(
     stdinIsTTY?: boolean;
     pipedInput?: string;
     agentName?: string;
+    agentFlag?: "auto" | "yes" | "no";
+    /** Simulates the Go-compat `-o`/`--output` global flag. */
+    goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     submitFailWith?: string;
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `LegacyCliConfig` reads. */
     projectIdEnv?: string;
@@ -92,9 +99,11 @@ function setupLegacyFeedback(
   const submitter = mockFeedbackClient(
     opts.submitFailWith === undefined ? {} : { failWith: opts.submitFailWith },
   );
+  const telemetryState = mockLegacyTelemetryStateTracked();
   const layer = Layer.mergeAll(
     out.layer,
     submitter.layer,
+    telemetryState.layer,
     mockStdin(opts.stdinIsTTY ?? true, opts.pipedInput),
     mockRuntimeInfo({ platform: "darwin", arch: "arm64" }),
     mockTelemetryRuntime({
@@ -108,11 +117,13 @@ function setupLegacyFeedback(
       projectId: opts.projectIdEnv === undefined ? Option.none() : Option.some(opts.projectIdEnv),
     }),
     mockAiTool(opts.agentName),
+    Layer.succeed(LegacyAgentFlag, opts.agentFlag ?? "auto"),
+    Layer.succeed(LegacyOutputFlag, Option.fromNullishOr(opts.goOutput)),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
     BunServices.layer,
   );
-  return { layer, out, submitter };
+  return { layer, out, submitter, telemetryState };
 }
 
 // Extra layers required by the wrapped `legacyFeedbackAddHandler` (the exact
@@ -135,7 +146,7 @@ function setupLegacyFeedbackHandler(
 
 describe("legacy feedback add", () => {
   it.live("submits a quoted message with CLI version, os, and arch attached", () => {
-    const { layer, out, submitter } = setupLegacyFeedback();
+    const { layer, out, submitter, telemetryState } = setupLegacyFeedback();
     return Effect.gen(function* () {
       yield* legacyFeedbackAdd({ message: ["port conflicts when running two stacks"] });
 
@@ -162,6 +173,9 @@ describe("legacy feedback add", () => {
           message: `To delete this feedback later, run: supabase feedback delete ${MOCK_DELETE_TOKEN}`,
         }),
       );
+      // telemetry.json is refreshed on every invocation, like every other
+      // legacy command's PersistentPostRun-shaped finalizer.
+      expect(telemetryState.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
   });
 
@@ -181,6 +195,31 @@ describe("legacy feedback add", () => {
 
       expect(submitter.submissions[0]?.context.isAgent).toBe(true);
       expect(submitter.submissions[0]?.context.agentName).toBe("claude_code");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("suppresses agent metadata when --agent no overrides a detected tool", () => {
+    const { layer, submitter } = setupLegacyFeedback({
+      agentName: "claude_code",
+      agentFlag: "no",
+    });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackAdd({ message: ["human at the keyboard"] });
+
+      expect(submitter.submissions[0]?.context.isAgent).toBe(false);
+      // The name is suppressed too — an `is_agent: false` payload must not
+      // carry a contradictory `agent_name`.
+      expect(submitter.submissions[0]?.context.agentName).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("marks the submission as agent feedback when --agent yes forces it", () => {
+    const { layer, submitter } = setupLegacyFeedback({ agentFlag: "yes" });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackAdd({ message: ["undetected agent"] });
+
+      expect(submitter.submissions[0]?.context.isAgent).toBe(true);
+      expect(submitter.submissions[0]?.context.agentName).toBeUndefined();
     }).pipe(Effect.provide(layer));
   });
 
@@ -284,6 +323,40 @@ describe("legacy feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("does not prompt when piped stdin is exhausted, even with a TTY stdout", () => {
+    // `printf ' ' | supabase feedback add` in a terminal: stdout is a TTY (so
+    // `output.interactive` is true) but stdin is a drained pipe the prompt
+    // cannot read from. This must fail like the non-interactive case instead
+    // of opening a prompt against exhausted stdin.
+    const { layer, submitter } = setupLegacyFeedback({
+      output: { interactive: true, promptTextResponses: ["never read"] },
+      stdinIsTTY: false,
+      pipedInput: "   \n",
+    });
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackAdd({ message: [] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "LegacyFeedbackEmptyMessageError",
+        message: LEGACY_FEEDBACK_EMPTY_MESSAGE,
+      });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails without prompting when stdout is not interactive, even on a TTY stdin", () => {
+    // `supabase feedback add > out.txt` in a terminal: stdin is a TTY but
+    // stdout is redirected, so the text layer reports interactive: false and
+    // there is nowhere to render a prompt.
+    const { layer, submitter } = setupLegacyFeedback({ output: { interactive: false } });
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackAdd({ message: [] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({ _tag: "LegacyFeedbackEmptyMessageError" });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails with a helpful error when there is no message anywhere", () => {
     // Whitespace-only args and whitespace-only pipe both fall through; a
     // non-interactive terminal leaves nothing left to ask.
@@ -319,6 +392,37 @@ describe("legacy feedback add", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("emits only the machine payload on stdout with -o json", () => {
+    const { layer, out, submitter } = setupLegacyFeedback({ goOutput: "json" });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackAdd({ message: ["go machine format feedback"] });
+
+      expect(submitter.submissions).toHaveLength(1);
+      expect(out.rawChunks).toHaveLength(1);
+      expect(out.rawChunks[0]?.stream).toBe("stdout");
+      expect(JSON.parse(out.rawChunks[0]!.text)).toEqual({ delete_token: MOCK_DELETE_TOKEN });
+      // No human-readable acknowledgement — stdout is payload-only.
+      expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
+      expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("rejects an -o value outside feedback's pretty|json enum", () => {
+    const { layer, submitter } = setupLegacyFeedbackHandler({
+      goOutput: "yaml",
+      args: ["feedback", "add", "doomed", "--output", "yaml"],
+    });
+    return Effect.gen(function* () {
+      const error = yield* legacyFeedbackAddHandler({ message: ["doomed"] }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        _tag: "LegacyInvalidOutputFormatError",
+        message: legacyInvalidOutputFormatMessage("yaml", LEGACY_FEEDBACK_OUTPUT_FORMATS),
+      });
+      expect(submitter.submissions).toHaveLength(0);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("reports a json error and exit code 1 when the message is missing in json mode", () => {
     const { layer, out, submitter, processControl } = setupLegacyFeedbackHandler({
       output: { format: "json" },
@@ -336,7 +440,9 @@ describe("legacy feedback add", () => {
   });
 
   it.live("surfaces a submitter failure", () => {
-    const { layer, out } = setupLegacyFeedback({ submitFailWith: "backend unavailable" });
+    const { layer, out, telemetryState } = setupLegacyFeedback({
+      submitFailWith: "backend unavailable",
+    });
     return Effect.gen(function* () {
       const error = yield* legacyFeedbackAdd({ message: ["doomed message"] }).pipe(Effect.flip);
 
@@ -345,6 +451,8 @@ describe("legacy feedback add", () => {
         message: "backend unavailable",
       });
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
+      // The finalizer runs on failure too, matching Go's PersistentPostRun.
+      expect(telemetryState.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
   });
 

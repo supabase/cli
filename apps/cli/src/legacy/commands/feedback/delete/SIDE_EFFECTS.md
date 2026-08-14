@@ -11,9 +11,9 @@
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                            | Format | When                                                                                                                  |
+| ----------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | every invocation, success or failure — the shared telemetry-state finalizer (device id persistence, session rotation) |
 
 ## API Routes
 
@@ -55,6 +55,7 @@ Global telemetry consent env applies as with every command.
 | `1`  | no feedback matched (wrong token, already deleted, or project-ref/user-id context mismatch)   |
 | `1`  | confirmation declined, or prompt unavailable (non-interactive / machine mode without `--yes`) |
 | `1`  | backend failure (PostgREST error, network failure, or 10 s timeout) on preview or delete      |
+| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run)           |
 
 ## Telemetry Events Fired
 

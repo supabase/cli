@@ -42,9 +42,9 @@ import {
   legacyOrderedKeys,
   legacyRenderJson,
   legacyRenderTablewriter,
-  legacyResolveAgentMode,
   legacyToCsv,
 } from "./query.format.ts";
+import { legacyResolveAgentMode } from "../../../shared/legacy-agent-mode.ts";
 
 /** The output formats `db query` selects: `json|table|csv`. */
 type LegacyResolvedFormat = "json" | "table" | "csv";

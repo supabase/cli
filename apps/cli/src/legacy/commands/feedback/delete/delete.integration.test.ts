@@ -8,7 +8,7 @@ import {
   FeedbackBackendError,
   FeedbackClient,
 } from "../../../../shared/feedback/feedback-client.service.ts";
-import { LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
+import { LegacyOutputFlag, LegacyYesFlag } from "../../../../shared/legacy/global-flags.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import {
   mockContextualAnalytics,
@@ -19,6 +19,7 @@ import {
 import {
   LEGACY_VALID_REF,
   mockLegacyCliConfig,
+  mockLegacyTelemetryStateTracked,
   useLegacyTempWorkdir,
 } from "../../../../../tests/helpers/legacy-mocks.ts";
 import type { LegacyFeedbackDeleteArgs } from "./delete.command.ts";
@@ -107,6 +108,8 @@ function setupLegacyFeedbackDelete(
     output?: Parameters<typeof mockOutput>[0];
     client?: MockClientOpts;
     yes?: boolean;
+    /** Simulates the Go-compat `-o`/`--output` global flag. */
+    goOutput?: "env" | "pretty" | "json" | "toml" | "yaml" | "table" | "csv";
     /** Simulates `SUPABASE_PROJECT_ID`, the only source `LegacyCliConfig` reads. */
     projectIdEnv?: string;
     /** Simulates the gotrue user id persisted to telemetry.json at login. */
@@ -116,9 +119,11 @@ function setupLegacyFeedbackDelete(
 ) {
   const out = mockOutput(opts.output ?? { promptConfirmResponses: [true] });
   const client = mockFeedbackClient(opts.client ?? { previewText: "my papercut" });
+  const telemetryState = mockLegacyTelemetryStateTracked();
   const layer = Layer.mergeAll(
     out.layer,
     client.layer,
+    telemetryState.layer,
     mockTelemetryRuntime({
       cliVersion: "9.9.9",
       distinctId: opts.distinctId,
@@ -130,12 +135,13 @@ function setupLegacyFeedbackDelete(
       projectId: opts.projectIdEnv === undefined ? Option.none() : Option.some(opts.projectIdEnv),
     }),
     Layer.succeed(LegacyYesFlag, opts.yes ?? false),
+    Layer.succeed(LegacyOutputFlag, Option.fromNullishOr(opts.goOutput)),
     Layer.succeed(CliArgs, { args: [] }),
     // Real filesystem: the handler reads `supabase/.temp/project-ref` from the
     // temp workdir, so this must not be stubbed out.
     BunServices.layer,
   );
-  return { layer, out, client };
+  return { layer, out, client, telemetryState };
 }
 
 // Extra layers required by the wrapped `legacyFeedbackDeleteHandler` (the exact
@@ -158,7 +164,7 @@ function setupLegacyFeedbackDeleteHandler(
 
 describe("legacy feedback delete", () => {
   it.live("previews the feedback, confirms, and deletes it", () => {
-    const { layer, out, client } = setupLegacyFeedbackDelete();
+    const { layer, out, client, telemetryState } = setupLegacyFeedbackDelete();
     return Effect.gen(function* () {
       yield* legacyFeedbackDelete(deleteArgs());
 
@@ -173,6 +179,9 @@ describe("legacy feedback delete", () => {
       expect(out.messages).toContainEqual(
         expect.objectContaining({ type: "success", message: "Feedback deleted." }),
       );
+      // telemetry.json is refreshed on every invocation, like every other
+      // legacy command's PersistentPostRun-shaped finalizer.
+      expect(telemetryState.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
   });
 
@@ -364,6 +373,25 @@ describe("legacy feedback delete", () => {
     }).pipe(Effect.provide(layer));
   });
 
+  it.live("emits only the machine payload on stdout with -o json", () => {
+    const { layer, out } = setupLegacyFeedbackDelete({
+      goOutput: "json",
+      client: { previewText: "go machine feedback" },
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyFeedbackDelete(deleteArgs());
+
+      expect(out.rawChunks).toHaveLength(1);
+      expect(out.rawChunks[0]?.stream).toBe("stdout");
+      expect(JSON.parse(out.rawChunks[0]!.text)).toEqual({ feedback: "go machine feedback" });
+      // The payload carries the feedback text; no "Found feedback" info line
+      // and no human-readable acknowledgement — stdout is payload-only.
+      expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "info" }));
+      expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live("fails loudly in json mode without --yes instead of silently deleting", () => {
     const { layer, out, client, processControl } = setupLegacyFeedbackDeleteHandler({
       output: { format: "json", promptConfirmFail: true },
@@ -391,7 +419,7 @@ describe("legacy feedback delete", () => {
   });
 
   it.live("surfaces a backend failure during the delete", () => {
-    const { layer, out } = setupLegacyFeedbackDelete({
+    const { layer, out, telemetryState } = setupLegacyFeedbackDelete({
       client: { previewText: "doomed", deleteFailWith: "backend unavailable" },
       yes: true,
     });
@@ -400,6 +428,8 @@ describe("legacy feedback delete", () => {
 
       expect(error).toMatchObject({ _tag: "FeedbackBackendError", operation: "delete" });
       expect(out.messages).not.toContainEqual(expect.objectContaining({ type: "success" }));
+      // The finalizer runs on failure too, matching Go's PersistentPostRun.
+      expect(telemetryState.flushCount).toBe(1);
     }).pipe(Effect.provide(layer));
   });
 

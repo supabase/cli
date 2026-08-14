@@ -3,7 +3,9 @@ import type * as CliCommand from "effect/unstable/cli/Command";
 import { withJsonErrorHandling } from "../../../../shared/output/json-error-handling.ts";
 import { commandRuntimeLayer } from "../../../../shared/runtime/command-runtime.layer.ts";
 import { withLegacyCommandInstrumentation } from "../../../telemetry/legacy-command-instrumentation.ts";
+import { legacyTelemetryStateLayer } from "../../../telemetry/legacy-telemetry-state.layer.ts";
 import { legacyFeedbackClientLayer, legacyFeedbackCliConfigLayer } from "../feedback.layers.ts";
+import { LEGACY_FEEDBACK_OUTPUT_FORMATS } from "../feedback-output.ts";
 import { legacyFeedbackDelete } from "./delete.handler.ts";
 
 const config = {
@@ -24,7 +26,11 @@ export const legacyFeedbackDeleteHandler = (args: LegacyFeedbackDeleteArgs) =>
   legacyFeedbackDelete(args).pipe(
     // The token is a positional (structurally excluded from telemetry) and
     // `--project-ref` is a plain string flag, so its value is redacted.
-    withLegacyCommandInstrumentation({ flags: args }),
+    // Feedback's own `-o` enum is `pretty|json` (see feedback-output.ts).
+    withLegacyCommandInstrumentation({
+      flags: args,
+      outputFormats: LEGACY_FEEDBACK_OUTPUT_FORMATS,
+    }),
     withJsonErrorHandling,
   );
 
@@ -39,6 +45,7 @@ export const legacyFeedbackDeleteCommand = Command.make("delete", config).pipe(
   ]),
   Command.withHandler(legacyFeedbackDeleteHandler),
   Command.provide(commandRuntimeLayer(["feedback", "delete"])),
+  Command.provide(legacyTelemetryStateLayer),
   // `Layer.provide` does not share to siblings: the handler and the feedback
   // client each get their own cli-config provision (legacy CLAUDE.md item 5).
   Command.provide(legacyFeedbackClientLayer),

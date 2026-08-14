@@ -11,9 +11,9 @@
 
 ## Files Written
 
-| Path | Format | When |
-| ---- | ------ | ---- |
-| —    | —      | —    |
+| Path                                            | Format | When                                                                                                                  |
+| ----------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------- |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON   | every invocation, success or failure — the shared telemetry-state finalizer (device id persistence, session rotation) |
 
 ## API Routes
 
@@ -46,11 +46,12 @@ every command.
 
 ## Exit Codes
 
-| Code | Condition                                                         |
-| ---- | ----------------------------------------------------------------- |
-| `0`  | success                                                           |
-| `1`  | no message from args, piped stdin, or an interactive prompt       |
-| `1`  | submit failure (PostgREST error, network failure, or 10s timeout) |
+| Code | Condition                                                                           |
+| ---- | ----------------------------------------------------------------------------------- |
+| `0`  | success                                                                             |
+| `1`  | no message from args, piped stdin, or an interactive prompt                         |
+| `1`  | submit failure (PostgREST error, network failure, or 10s timeout)                   |
+| `1`  | `-o`/`--output` value outside the command's `pretty\|json` enum (validated pre-run) |
 
 ## Telemetry Events Fired
 
