@@ -11,7 +11,7 @@ import {
   type CliErrorActionabilityDeclaration,
   ErrorActionabilityId,
 } from "../../shared/telemetry/error-actionability.ts";
-import type { LegacyDbSession } from "./legacy-db-connection.service.ts";
+import type { LegacyDbBatchStatement, LegacyDbSession } from "./legacy-db-connection.service.ts";
 import {
   legacyApplyMigrationFile,
   legacyApplySchemaFiles,
@@ -27,6 +27,7 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
   readonly code?: string;
   readonly detail?: string;
   readonly position?: number;
+  readonly statementIndex?: number;
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return actionability.dbFinding;
@@ -36,15 +37,41 @@ class FakeExecError extends Data.TaggedError("LegacyDbExecError")<{
 function fakeSession(
   opts: {
     failOn?: string;
+    failAfterBatch?: boolean;
     failWith?: { message: string; code?: string; detail?: string; position?: number };
   } = {},
 ) {
-  const calls: Array<{ kind: "exec" | "query"; sql: string; params?: ReadonlyArray<unknown> }> = [];
+  const calls: Array<{
+    kind: "exec" | "batch" | "query";
+    sql: string;
+    statements?: ReadonlyArray<LegacyDbBatchStatement>;
+    params?: ReadonlyArray<unknown>;
+  }> = [];
   const session: LegacyDbSession = {
     exec: (sql) => {
       calls.push({ kind: "exec", sql });
       return opts.failOn !== undefined && sql.includes(opts.failOn)
         ? Effect.fail(new FakeExecError(opts.failWith ?? { message: "exec failed" }))
+        : Effect.void;
+    },
+    execBatch: (statements) => {
+      calls.push({
+        kind: "batch",
+        sql: statements.map(({ sql }) => sql).join(";\n"),
+        statements,
+      });
+      const statementIndex = opts.failAfterBatch
+        ? statements.length
+        : statements.findIndex(({ sql }) =>
+            opts.failOn === undefined ? false : sql.includes(opts.failOn),
+          );
+      return statementIndex >= 0
+        ? Effect.fail(
+            new FakeExecError({
+              ...(opts.failWith ?? { message: "exec failed" }),
+              statementIndex,
+            }),
+          )
         : Effect.void;
     },
     query: (sql, params) => {
@@ -57,6 +84,21 @@ function fakeSession(
   };
   return { session, calls };
 }
+
+const executedSql = (
+  calls: ReadonlyArray<{
+    readonly kind: "exec" | "batch" | "query";
+    readonly sql: string;
+    readonly statements?: ReadonlyArray<LegacyDbBatchStatement>;
+  }>,
+): ReadonlyArray<string> =>
+  calls.flatMap((call) =>
+    call.kind === "exec"
+      ? [call.sql]
+      : call.kind === "batch"
+        ? (call.statements ?? []).map(({ sql }) => sql)
+        : [],
+  );
 
 const run = (session: LegacyDbSession, migrationPath: string): Effect.Effect<void, TestError> =>
   Effect.gen(function* () {
@@ -82,7 +124,7 @@ describe("legacyApplyMigrationFile", () => {
       return run(session, file).pipe(
         Effect.tap(() =>
           Effect.sync(() => {
-            const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+            const execs = executedSql(calls);
             expect(execs).toContain("CREATE SCHEMA IF NOT EXISTS supabase_migrations");
             expect(execs).toContain("RESET ALL");
             // The history-table setup scopes lock_timeout to its own transaction
@@ -97,14 +139,16 @@ describe("legacyApplyMigrationFile", () => {
             expect(firstBegin).toBe(1);
             expect(setLocal).toBeGreaterThan(firstBegin);
             expect(setLocal).toBeLessThan(setupCommit);
-            // The migration's own statements run in a later, separate transaction.
-            const lastBegin = execs.lastIndexOf("BEGIN");
-            const lastCommit = execs.lastIndexOf("COMMIT");
-            expect(lastBegin).toBeGreaterThan(setupCommit);
-            expect(execs.indexOf("ALTER TABLE a ADD COLUMN b int")).toBeGreaterThan(lastBegin);
-            expect(execs.indexOf("CREATE INDEX i ON a(b)")).toBeLessThan(lastCommit);
+            // The migration's statements and history insert share one implicitly
+            // transactional extended-protocol batch.
+            const migrationBatch = calls.find((call) => call.kind === "batch");
+            expect(migrationBatch?.statements?.map(({ sql }) => sql)).toEqual([
+              "ALTER TABLE a ADD COLUMN b int",
+              "CREATE INDEX i ON a(b)",
+              expect.stringContaining("supabase_migrations.schema_migrations"),
+            ]);
             // History insert carries version, name, and the statements array.
-            const insert = calls.find((c) => c.kind === "query");
+            const insert = migrationBatch?.statements?.at(-1);
             expect(insert?.sql).toContain("supabase_migrations.schema_migrations");
             expect(insert?.params).toEqual([
               "20240101120000",
@@ -118,6 +162,49 @@ describe("legacyApplyMigrationFile", () => {
     },
   );
 
+  it.effect("records a versioned empty migration in one batch", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_empty.sql");
+    writeFileSync(file, "");
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(1);
+          expect(batches[0]?.statements).toEqual([
+            {
+              sql: expect.stringContaining("supabase_migrations.schema_migrations"),
+              params: ["20240101120000", "empty", []],
+            },
+          ]);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("keeps migration-authored transaction controls inside the batch", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_authored_transaction.sql");
+    writeFileSync(file, "BEGIN; CREATE TABLE widgets(id int); COMMIT;");
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const migrationBatch = calls.find((call) => call.kind === "batch");
+          expect(migrationBatch?.statements?.map(({ sql }) => sql)).toEqual([
+            "BEGIN",
+            "CREATE TABLE widgets(id int)",
+            "COMMIT",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
   it.effect("rolls back and maps the error when a statement fails", () => {
     const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
     const file = join(dir, "20240101120000_boom.sql");
@@ -128,7 +215,7 @@ describe("legacyApplyMigrationFile", () => {
       Effect.tap((exit) =>
         Effect.sync(() => {
           expect(Exit.isFailure(exit)).toBe(true);
-          expect(calls.some((c) => c.kind === "exec" && c.sql === "ROLLBACK")).toBe(true);
+          expect(calls.filter((call) => call.kind === "batch")).toHaveLength(1);
           // Go's ExecBatch appends the failing statement number + text for context.
           if (Exit.isFailure(exit)) {
             const msg = JSON.stringify(exit.cause);
@@ -138,6 +225,62 @@ describe("legacyApplyMigrationFile", () => {
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
+    );
+  });
+
+  it.effect("sends a large compatible migration in one batch", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_many.sql");
+    const statements = Array.from({ length: 10_000 }, (_, index) => `SELECT ${index + 1}`);
+    writeFileSync(file, `${statements.join(";\n")};`);
+    const { session, calls } = fakeSession();
+    return run(session, file).pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(1);
+          expect(batches[0]?.statements).toHaveLength(statements.length + 1);
+          expect(batches[0]?.statements?.slice(0, -1).map(({ sql }) => sql)).toEqual(statements);
+          expect(calls.some((call) => call.kind === "exec" && statements.includes(call.sql))).toBe(
+            false,
+          );
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("keeps the global error index after an incompatible-statement flush", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_fail_after_vacuum.sql");
+    writeFileSync(file, "SELECT 1;\nVACUUM;\nSELECT missing_column;\nSELECT 4;");
+    const { session } = fakeSession({ failOn: "missing_column" });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("SELECT missing_column");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("defaults a deferred batch failure to the migration history statement", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-apply-"));
+    const file = join(dir, "20240101120000_deferred.sql");
+    writeFileSync(file, "SELECT 1;");
+    const { session } = fakeSession({ failAfterBatch: true });
+    return run(session, file).pipe(
+      Effect.flip,
+      Effect.tap((error) =>
+        Effect.sync(() => {
+          expect(error.message).toContain("At statement: 2");
+          expect(error.message).toContain("INSERT INTO supabase_migrations.schema_migrations");
+        }),
+      ),
+      Effect.ensuring(Effect.sync(() => rmSync(dir, { recursive: true, force: true }))),
     );
   });
 
@@ -179,27 +322,22 @@ describe("legacyApplyMigrationFile", () => {
     return run(session, file).pipe(
       Effect.tap(() =>
         Effect.sync(() => {
-          const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+          const execs = executedSql(calls);
           const concurrently = "CREATE INDEX CONCURRENTLY a_idx ON a(id)";
           expect(execs).toContain(concurrently);
-          // The CONCURRENTLY statement must not run inside an open transaction, or
-          // PostgreSQL rejects it (SQLSTATE 25001). The batch is flushed first, so the
-          // BEGIN/COMMIT counts before it must balance (no open transaction).
-          const before = execs.slice(0, execs.indexOf(concurrently));
-          expect(before.filter((s) => s === "BEGIN").length).toBe(
-            before.filter((s) => s === "COMMIT").length,
-          );
-          // The compatible statements still ran inside a transaction...
-          expect(before).toContain("BEGIN");
-          expect(before).toContain("COMMIT");
-          // ...and the trailing compatible statement reopens a transaction after it.
-          const after = execs.slice(execs.indexOf(concurrently) + 1);
-          expect(after).toContain("BEGIN");
-          expect(after.indexOf("ALTER TABLE a ENABLE ROW LEVEL SECURITY")).toBeGreaterThanOrEqual(
-            0,
-          );
+          // The CONCURRENTLY statement must not run inside an implicit batch
+          // transaction, so the compatible statements are flushed on each side.
+          const batches = calls.filter((call) => call.kind === "batch");
+          expect(batches).toHaveLength(2);
+          expect(batches[0]?.statements?.map(({ sql }) => sql)).toEqual([
+            "create table a (id int)",
+          ]);
+          expect(batches[1]?.statements?.map(({ sql }) => sql)).toEqual([
+            "ALTER TABLE a ENABLE ROW LEVEL SECURITY",
+            expect.stringContaining("supabase_migrations.schema_migrations"),
+          ]);
           // The migration is still recorded once every statement succeeds.
-          const insert = calls.find((c) => c.kind === "query");
+          const insert = batches[1]?.statements?.at(-1);
           expect(insert?.params?.[0]).toBe("20240101120000");
           rmSync(dir, { recursive: true, force: true });
         }),
@@ -224,7 +362,11 @@ describe("legacyApplyMigrationFile", () => {
             expect(msg).toContain("CREATE INDEX CONCURRENTLY a_idx ON a(id)");
           }
           // The migration version is not recorded when a statement fails.
-          expect(calls.some((c) => c.kind === "query")).toBe(false);
+          expect(
+            executedSql(calls).some((sql) =>
+              sql.includes("INSERT INTO supabase_migrations.schema_migrations"),
+            ),
+          ).toBe(false);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -461,12 +603,14 @@ describe("legacySeedGlobals", () => {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       yield* legacySeedGlobals(session, fs, path, [file], (message) => new TestError({ message }));
-      const execs = calls.filter((c) => c.kind === "exec").map((c) => c.sql);
+      const execs = executedSql(calls);
       // Go's SeedGlobals calls ExecBatch directly — no RESET ALL (that's only the
       // migration-apply path) and no schema-migrations history insert.
       expect(execs).not.toContain("RESET ALL");
       expect(execs).toContain("CREATE ROLE my_role");
-      expect(calls.some((c) => c.kind === "query")).toBe(false);
+      expect(
+        execs.some((sql) => sql.includes("INSERT INTO supabase_migrations.schema_migrations")),
+      ).toBe(false);
       rmSync(dir, { recursive: true, force: true });
     }).pipe(
       Effect.provide(mockOutput({ format: "text" }).layer),
@@ -644,7 +788,7 @@ describe("legacyApplySchemaFiles", () => {
           (message, suggestion) =>
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
         );
-        expect(calls.some((c) => c.kind === "exec" && c.sql.startsWith("SELECT 'a"))).toBe(true);
+        expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {
@@ -1030,7 +1174,7 @@ describe("legacyApplySchemaFiles", () => {
             new TestError({ message: suggestion ? `${message} (${suggestion})` : message }),
           { SUPABASE_SCANNER_BUFFER_SIZE: "100b" },
         );
-        expect(calls.some((c) => c.kind === "exec" && c.sql.startsWith("SELECT 'a"))).toBe(true);
+        expect(executedSql(calls).some((sql) => sql.startsWith("SELECT 'a"))).toBe(true);
       }).pipe(
         Effect.ensuring(
           Effect.sync(() => {

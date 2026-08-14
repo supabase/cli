@@ -27,13 +27,13 @@ before migrations unless `--skip-vault` is set.
 
 ## Database Mutations
 
-| Statement                                                                                                                                | When                                                                                                                    |
-| ---------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| `RESET ALL` + `BEGIN` … migration statements … `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` … `COMMIT` | per pending migration (after confirmation); pipeline-incompatible statements run standalone between batches — see Notes |
-| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                                              | once before applying migrations (idempotent)                                                                            |
-| `RESET ALL` + `BEGIN` … roles.sql statements … `COMMIT` (no history row)                                                                 | per `--include-roles` globals file (after confirmation)                                                                 |
-| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`                             | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                           |
-| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …`                      | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                  |
+| Statement                                                                                                           | When                                                                                                                                                                                               |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `RESET ALL` + migration statements + `INSERT INTO supabase_migrations.schema_migrations(version, name, statements)` | per pending migration (after confirmation); compatible statements use an implicit extended-protocol batch with one final `Sync`, while pipeline-incompatible statements run standalone — see Notes |
+| `CREATE SCHEMA/TABLE … supabase_migrations.schema_migrations`, `ALTER TABLE … ADD COLUMN …`                         | once before applying migrations (idempotent)                                                                                                                                                       |
+| `roles.sql` statements (no history row)                                                                             | per `--include-roles` globals file (after confirmation); statements use an implicit extended-protocol batch with one final `Sync`                                                                  |
+| `SELECT id, name FROM vault.secrets …`, `SELECT vault.update_secret(...)`, `SELECT vault.create_secret(...)`        | when `[db.vault]` has syncable secrets, migrations are applied, and `--skip-vault` is not set                                                                                                      |
+| `CREATE TABLE … supabase_migrations.seed_files`, seed statements, `INSERT … seed_files(path, hash) … ON CONFLICT …` | per pending seed file with `--include-seed` (after confirmation); a dirty seed only refreshes the hash                                                                                             |
 
 ## API Routes
 

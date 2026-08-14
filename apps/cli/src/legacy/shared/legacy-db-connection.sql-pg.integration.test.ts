@@ -12,7 +12,11 @@ import { Effect } from "effect";
 
 import { LEGACY_SUGGEST_ENV_VAR, LEGACY_SUGGEST_LOCAL_STACK } from "./legacy-connect-errors.ts";
 import type { LegacyDbConnectError, LegacyDbExecError } from "./legacy-db-connection.errors.ts";
-import { type LegacyPgConnInput, LegacyDbConnection } from "./legacy-db-connection.service.ts";
+import {
+  type LegacyDbSession,
+  type LegacyPgConnInput,
+  LegacyDbConnection,
+} from "./legacy-db-connection.service.ts";
 import { legacyDbConnectionSqlPgLayer } from "./legacy-db-connection.sql-pg.layer.ts";
 
 const SUGGESTION_CONTEXT = {
@@ -123,6 +127,164 @@ const AUTHENTICATION_OK = wireMessage("R", Buffer.from([0, 0, 0, 0]));
 const READY_FOR_QUERY = wireMessage("Z", Buffer.from("I", "ascii"));
 const commandComplete = (tag: string): Buffer =>
   wireMessage("C", Buffer.concat([Buffer.from(tag, "utf8"), Buffer.from([0])]));
+const PARSE_COMPLETE = wireMessage("1", Buffer.alloc(0));
+const BIND_COMPLETE = wireMessage("2", Buffer.alloc(0));
+const NO_DATA = wireMessage("n", Buffer.alloc(0));
+const EMPTY_QUERY = wireMessage("I", Buffer.alloc(0));
+
+const readCString = (body: Buffer, offset: number): readonly [string, number] => {
+  const end = body.indexOf(0, offset);
+  return [body.toString("utf8", offset, end), end + 1];
+};
+
+const parseBindValues = (body: Buffer): ReadonlyArray<string | null> => {
+  const [, afterPortal] = readCString(body, 0);
+  const [, afterStatement] = readCString(body, afterPortal);
+  const formatCount = body.readInt16BE(afterStatement);
+  let offset = afterStatement + 2 + formatCount * 2;
+  const valueCount = body.readInt16BE(offset);
+  offset += 2;
+  const values: Array<string | null> = [];
+  for (let index = 0; index < valueCount; index += 1) {
+    const length = body.readInt32BE(offset);
+    offset += 4;
+    if (length < 0) {
+      values.push(null);
+    } else {
+      values.push(body.toString("utf8", offset, offset + length));
+      offset += length;
+    }
+  }
+  return values;
+};
+
+interface FakeBatchServerState {
+  readonly frameTypes: Array<string>;
+  readonly statements: Array<string>;
+  readonly params: Array<ReadonlyArray<string | null>>;
+  syncs: number;
+}
+
+const fakeBatchServer = (
+  options: {
+    readonly failAt?: number;
+    readonly failExecuteAt?: number;
+    readonly failOnSync?: boolean;
+    readonly emptyAt?: number;
+  } = {},
+): Promise<{
+  readonly port: number;
+  readonly close: () => void;
+  readonly state: FakeBatchServerState;
+}> =>
+  new Promise((resolve) => {
+    const state: FakeBatchServerState = {
+      frameTypes: [],
+      statements: [],
+      params: [],
+      syncs: 0,
+    };
+    const server = net.createServer((socket) => {
+      let sawStartup = false;
+      let pending = Buffer.alloc(0);
+      let failed = false;
+      let activeIndex = -1;
+      socket.on("data", (data: Buffer) => {
+        pending = Buffer.concat([pending, data]);
+        for (;;) {
+          if (!sawStartup) {
+            if (pending.length < 8) return;
+            const length = pending.readInt32BE(0);
+            if (pending.length < length) return;
+            if (pending.readInt32BE(4) === 80877103) {
+              socket.write("N");
+            } else {
+              sawStartup = true;
+              socket.write(Buffer.concat([AUTHENTICATION_OK, READY_FOR_QUERY]));
+            }
+            pending = pending.subarray(length);
+            continue;
+          }
+          if (pending.length < 5) return;
+          const length = pending.readInt32BE(1);
+          if (pending.length < length + 1) return;
+          const type = String.fromCharCode(pending[0] ?? 0);
+          const body = pending.subarray(5, length + 1);
+          pending = pending.subarray(length + 1);
+          if (type === "Q") {
+            socket.write(Buffer.concat([commandComplete("SELECT 1"), READY_FOR_QUERY]));
+            continue;
+          }
+          state.frameTypes.push(type);
+          if (type === "P") {
+            activeIndex += 1;
+            const [, sqlOffset] = readCString(body, 0);
+            const [sql] = readCString(body, sqlOffset);
+            state.statements.push(sql);
+            if (!failed && activeIndex === options.failAt) {
+              failed = true;
+              socket.write(
+                errorResponse({
+                  S: "ERROR",
+                  V: "ERROR",
+                  C: "42601",
+                  M: "syntax error at or near bad",
+                  D: "batch detail",
+                  P: "10",
+                }),
+              );
+            } else if (!failed) {
+              socket.write(PARSE_COMPLETE);
+            }
+          } else if (type === "B") {
+            state.params.push(parseBindValues(body));
+            if (!failed) socket.write(BIND_COMPLETE);
+          } else if (type === "D") {
+            if (!failed) socket.write(NO_DATA);
+          } else if (type === "E") {
+            if (!failed) {
+              if (activeIndex === options.failExecuteAt) {
+                failed = true;
+                socket.write(
+                  errorResponse({
+                    S: "ERROR",
+                    V: "ERROR",
+                    C: "23505",
+                    M: "duplicate key value violates unique constraint",
+                    D: "runtime detail",
+                  }),
+                );
+              } else {
+                socket.write(
+                  activeIndex === options.emptyAt ? EMPTY_QUERY : commandComplete("SELECT 1"),
+                );
+              }
+            }
+          } else if (type === "S") {
+            state.syncs += 1;
+            if (options.failOnSync === true && !failed) {
+              socket.write(
+                errorResponse({
+                  S: "ERROR",
+                  V: "ERROR",
+                  C: "23514",
+                  M: "deferred constraint failed",
+                }),
+              );
+            }
+            socket.write(READY_FOR_QUERY);
+            failed = false;
+            activeIndex = -1;
+          }
+        }
+      });
+      socket.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1", () => {
+      const address = server.address() as net.AddressInfo;
+      resolve({ port: address.port, close: () => server.close(), state });
+    });
+  });
 
 /**
  * A fake Postgres server that completes the startup handshake (no auth) and
@@ -337,5 +499,141 @@ describe("legacyDbConnectionSqlPgLayer exec failures", () => {
           expect(error.position).toBe(25);
         }
       }),
+  );
+});
+
+describe("legacyDbConnectionSqlPgLayer extended batches", () => {
+  const runWithBatchServer = <A>(
+    server: Awaited<ReturnType<typeof fakeBatchServer>>,
+    use: (session: LegacyDbSession) => Effect.Effect<A, unknown>,
+  ) =>
+    Effect.gen(function* () {
+      const conn = yield* LegacyDbConnection;
+      const session = yield* conn.connect(
+        {
+          host: "127.0.0.1",
+          port: server.port,
+          user: "postgres",
+          password: "postgres",
+          database: "postgres",
+        },
+        { isLocal: true, dnsResolver: "native" },
+      );
+      return yield* use(session);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(legacyDbConnectionSqlPgLayer),
+      Effect.ensuring(Effect.sync(server.close)),
+    );
+
+  it.live("sends every statement and parameter set before one Sync", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1 }));
+      const values = ["plain", 'quote"', "slash\\", "comma,", "{brace}", "line\nbreak", "NULL", ""];
+      yield* runWithBatchServer(server, (session) => {
+        if (session.execBatch === undefined) return Effect.die("execBatch is unavailable");
+        return session.execBatch([
+          { sql: "SELECT 1" },
+          { sql: "-- comment only" },
+          {
+            sql: "INSERT INTO history(version, name, statements) VALUES($1, $2, $3)",
+            params: ["v'1", "name\\two", values],
+          },
+        ]);
+      });
+      expect(server.state.statements).toEqual([
+        "SELECT 1",
+        "-- comment only",
+        "INSERT INTO history(version, name, statements) VALUES($1, $2, $3)",
+      ]);
+      expect(server.state.params).toEqual([
+        [],
+        [],
+        [
+          "v'1",
+          "name\\two",
+          '{"plain","quote\\\"","slash\\\\","comma,","{brace}","line\nbreak","NULL",""}',
+        ],
+      ]);
+      expect(server.state.frameTypes).toEqual([
+        "P",
+        "B",
+        "D",
+        "E",
+        "P",
+        "B",
+        "D",
+        "E",
+        "P",
+        "B",
+        "D",
+        "E",
+        "S",
+      ]);
+      expect(server.state.syncs).toBe(1);
+    }),
+  );
+
+  it.live("maps a later parse failure to its statement and keeps its local position", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ emptyAt: 1, failAt: 2 }));
+      yield* runWithBatchServer(server, (session) => {
+        const execBatch = session.execBatch;
+        if (execBatch === undefined) return Effect.die("execBatch is unavailable");
+        return Effect.gen(function* () {
+          const error = yield* execBatch([
+            { sql: "SELECT 1" },
+            { sql: "-- comment only" },
+            { sql: "SELECT bad" },
+          ]).pipe(Effect.flip);
+          expect(error.statementIndex).toBe(2);
+          expect(error.code).toBe("42601");
+          expect(error.detail).toBe("batch detail");
+          expect(error.position).toBe(10);
+          yield* session.exec("SELECT after_error");
+        });
+      });
+      expect(server.state.syncs).toBe(1);
+    }),
+  );
+
+  it.live("maps a position-less runtime failure from completed commands", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ failExecuteAt: 1 }));
+      yield* runWithBatchServer(server, (session) => {
+        if (session.execBatch === undefined) return Effect.die("execBatch is unavailable");
+        return session
+          .execBatch([{ sql: "SELECT 1" }, { sql: "INSERT duplicate" }, { sql: "SELECT 3" }])
+          .pipe(
+            Effect.flip,
+            Effect.tap((error) =>
+              Effect.sync(() => {
+                expect(error.statementIndex).toBe(1);
+                expect(error.code).toBe("23505");
+                expect(error.detail).toBe("runtime detail");
+                expect(error.position).toBeUndefined();
+              }),
+            ),
+          );
+      });
+    }),
+  );
+
+  it.live("reports a deferred Sync failure after every completed statement", () =>
+    Effect.gen(function* () {
+      const server = yield* Effect.promise(() => fakeBatchServer({ failOnSync: true }));
+      yield* runWithBatchServer(server, (session) => {
+        if (session.execBatch === undefined) return Effect.die("execBatch is unavailable");
+        return session.execBatch([{ sql: "SELECT 1" }, { sql: "SELECT 2" }]).pipe(
+          Effect.flip,
+          Effect.tap((error) =>
+            Effect.sync(() => {
+              expect(error.statementIndex).toBe(2);
+              expect(error.code).toBe("23514");
+            }),
+          ),
+        );
+      });
+    }),
   );
 });
