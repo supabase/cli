@@ -50,7 +50,6 @@ import {
   type ReconcileAbandonedOperationsOptions as LifecycleReconcileAbandonedOperationsOptions,
   type ReconcileAbandonedOperationsResult as LifecycleReconcileAbandonedOperationsResult,
   type RetainedManagedOperation as LifecycleRetainedManagedOperation,
-  type RegisterManagedStackFailure,
   type RegisterManagedStackInput,
   type RegisterManagedStackResult,
   type UpdateManagedStackConfigurationFailure as LifecycleUpdateManagedStackConfigurationFailure,
@@ -197,7 +196,6 @@ export type ResolveManagedStackFailure =
   | ManagedStackNotFoundError
   | ManagedStackPublicationTimeoutError
   | PrepareStackFailure
-  | RegisterManagedStackFailure
   | UnsupportedGitWorkspaceError
   | UpdateManagedStackConfigurationFailure;
 
@@ -307,7 +305,7 @@ const stackNamePattern = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
  * must never be asked about a value that is not a pid — `kill(0, 0)` signals
  * the caller's own process group, and a fractional pid throws, either of which
  * would report a dead owner as alive and wedge recovery forever. Callers
- * therefore filter pids through {@link isUsableManagedOwnerPid} first.
+ * therefore validate persisted pids before probing them.
  */
 const processIsAlive = (pid: number): boolean => {
   try {
@@ -411,8 +409,9 @@ export class ManagedStackService extends Context.Service<
 
         /**
          * The identity a mutating resolve must have ended up with. Every claim
-         * above either produces all three parts or fails, so a gap here is a bug
-         * in this module rather than a state a caller could be in — but it is
+         * from the composed identity policy either produces all three parts or fails,
+         * so a gap here is a bug in this module rather than a state a caller
+         * could be in — but it is
          * reported rather than asserted, because inventing an identity is the one
          * thing this layer must never do.
          */

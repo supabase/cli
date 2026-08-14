@@ -110,7 +110,9 @@ export interface ManagedOperationRecoveryFailure {
 
 export interface ReconcileAbandonedOperationsResult {
   readonly recovered: ReadonlyArray<ManagedStackRecord>;
+  /** State removal succeeded; failed removals are reported separately. */
   readonly abortedStackIds: ReadonlyArray<string>;
+  /** State removal succeeded; failed removals are reported separately. */
   readonly reclaimedStackIds: ReadonlyArray<string>;
   readonly retained: ReadonlyArray<RetainedManagedOperation>;
   readonly skippedOperationIds: ReadonlyArray<string>;
@@ -141,7 +143,7 @@ export type DeleteManagedStackFailure =
   | RequireManagedOperationFailure
   | UpdateManagedStackFailure;
 
-export type RegisterManagedStackFailure =
+type RegisterManagedStackFailure =
   | InvalidManagedIdentityError
   | ManagedAbandonedOperationError
   | ManagedOperationInProgressError
@@ -164,6 +166,7 @@ const deletionResult = (
   dataReclamation: DeleteManagedStackResult["dataReclamation"],
 ): DeleteManagedStackResult => ({ outcome, stack, dataReclamation });
 
+/** Interruptions remain interrupts; only ordinary failures are recorded. */
 const recordUnlessInterrupted =
   <E, A2, E2, R2>(record: (cause: Cause.Cause<E>) => Effect.Effect<A2, E2, R2>) =>
   <A, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A | A2, E2, R | R2> =>
@@ -247,8 +250,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       recordUnlessInterrupted(() => Effect.succeed(false)),
     );
 
-  // Operation claims must be released even when the protected work fails; the
-  // original cause is then re-raised unchanged to the caller.
+  // Attempt claim release as best-effort compensation; refusal is absorbed so
+  // the original failure cause is re-raised unchanged to the caller.
   const releasingClaimOnFailure =
     (stackId: string, operationToken: string) =>
     <A, E, R>(self: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
@@ -261,6 +264,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
           ),
       );
 
+  // Once the tombstone is final, a concurrent owner-release race is harmless;
+  // only that ownership refusal is absorbed here.
   const finishDeleteOperationTolerantly = (
     stackId: string,
     operationToken: string,
@@ -524,9 +529,8 @@ export const makeStackLifecycle = (dependencies: StackLifecycleDependencies): St
       if (existing.status === "tombstoned") {
         return deletionResult("no-op", existing, yield* reclaimStackState(existing));
       }
-      // As in registration, claim acquisition and its release compensation
-      // must be interruption-safe; only the caller's stop/reclamation work is
-      // restored to interruptible execution.
+      // Claim acquisition and the entire post-claim delete sequence are inside
+      // the mask; restore only makes that owned work interruptible as a whole.
       return yield* Effect.uninterruptibleMask((restore) =>
         Effect.gen(function* () {
           const operation = yield* requireOperation(stackId, "delete");
