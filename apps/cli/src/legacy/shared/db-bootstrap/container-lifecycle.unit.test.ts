@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
-import { Deferred, Effect, Fiber, PlatformError, Sink, Stream } from "effect";
-import { ChildProcessSpawner } from "effect/unstable/process";
+import { Deferred, Effect, PlatformError, Sink, Stream } from "effect";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { afterEach, beforeEach } from "vitest";
 
 import {
@@ -44,6 +44,7 @@ function mockSpawner(
     readonly args: ReadonlyArray<string>;
     readonly env: Record<string, string | undefined> | undefined;
     readonly extendEnv: boolean | undefined;
+    readonly stdin: ChildProcess.CommandInput | ChildProcess.StdinConfig | undefined;
   }> = [];
 
   const spawner = ChildProcessSpawner.make((command) =>
@@ -55,6 +56,7 @@ function mockSpawner(
           args,
           env: command.options.env,
           extendEnv: command.options.extendEnv,
+          stdin: command.options.stdin,
         });
       }
       const result = handler(args);
@@ -91,6 +93,27 @@ function mockSpawner(
       return spawnedOptions;
     },
   };
+}
+
+function tarRegularFileModes(archive: Uint8Array): ReadonlyArray<number> {
+  const decoder = new TextDecoder();
+  const parseOctal = (field: Uint8Array) =>
+    Number.parseInt(decoder.decode(field).replaceAll("\0", "").trim() || "0", 8);
+  const modes: Array<number> = [];
+  let offset = 0;
+
+  while (offset + 512 <= archive.byteLength) {
+    const header = archive.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) break;
+
+    const type = header[156];
+    if (type === 0 || type === 0x30) modes.push(parseOctal(header.subarray(100, 108)));
+
+    const size = parseOctal(header.subarray(124, 136));
+    offset += 512 + Math.ceil(size / 512) * 512;
+  }
+
+  return modes;
 }
 
 const baseSpec: LegacyStartContainerSpec = {
@@ -363,16 +386,14 @@ describe("legacyCreateContainer", () => {
 });
 
 describe("legacyCreateContainer secretFiles", () => {
-  it.live("copies a mode-0644 secret before start without leaking it to argv or disk", () => {
-    let hostPath: string | undefined;
-    let cpArgs: ReadonlyArray<string> | undefined;
-    let modeAtCopyTime: number | undefined;
+  it.live("starts when the container CLI cannot see the caller's temporary filesystem", () => {
     const mock = mockSpawner((args) => {
-      if (args[0] === "create") return { exitCode: 0, stdout: "container-id-umask\n" };
-      if (args[0] === "cp") {
-        cpArgs = args;
-        hostPath = args[1];
-        modeAtCopyTime = statSync(hostPath ?? "").mode & 0o777;
+      if (args[0] === "create") return { exitCode: 0, stdout: "container-id-snap\n" };
+      if (args[0] === "cp" && args[1] !== "-") {
+        return {
+          exitCode: 1,
+          stderr: `lstat ${args[1] ?? "/tmp/supabase-start-secret-missing"}: no such file or directory\n`,
+        };
       }
       return { exitCode: 0 };
     });
@@ -380,36 +401,74 @@ describe("legacyCreateContainer secretFiles", () => {
     const spec: LegacyStartContainerSpec = {
       ...baseSpec,
       binds: [],
-      secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+      secretFiles: [
+        { containerPath: "/etc/kong/kong.yml", content: "super-secret-content" },
+        { containerPath: "/home/kong/localhost.key", content: "tls-private-key" },
+        { containerPath: "/home/kong/localhost.crt", content: "" },
+      ],
     };
 
-    return Effect.sync(() => process.umask(0o077)).pipe(
-      Effect.flatMap((originalUmask) =>
-        legacyCreateContainer(mock.spawner, spec, {
-          projectId: "proj",
-          isBitbucketPipeline: false,
-          workdir,
-          extraHosts: [],
-        }).pipe(
-          Effect.map(() => {
-            expect(modeAtCopyTime).toBe(0o644);
-            expect(cpArgs).toEqual(["cp", hostPath, "container-id-umask:/etc/kong/kong.yml"]);
-            expect(mock.spawned.map((args) => args[0])).toEqual(["create", "cp", "start"]);
-            expect(mock.spawned.flat().join(" ")).not.toContain("super-secret-content");
-            expect(existsSync(hostPath ?? "")).toBe(false);
-          }),
-          Effect.ensuring(Effect.sync(() => process.umask(originalUmask))),
-        ),
-      ),
-    );
+    return Effect.gen(function* () {
+      const containerId = yield* legacyCreateContainer(mock.spawner, spec, {
+        projectId: "proj",
+        isBitbucketPipeline: false,
+        workdir,
+        extraHosts: [],
+      });
+
+      expect(containerId).toBe("container-id-snap");
+      // `docker cp` runs strictly between `docker create` and `docker start` — the
+      // container must already exist for it to have a target, and must not be running
+      // yet so its entrypoint never races the copy.
+      expect(mock.spawned.map((args) => args[0])).toEqual(["create", "cp", "start"]);
+
+      const cp = mock.spawnedOptions.find((entry) => entry.args[0] === "cp");
+      expect(cp?.args).toEqual(["cp", "-", "container-id-snap:/"]);
+      const spawnedArgv = mock.spawned.flat();
+      expect(spawnedArgv.some((arg) => arg.includes("super-secret-content"))).toBe(false);
+      expect(spawnedArgv.some((arg) => arg.includes("tls-private-key"))).toBe(false);
+      expect(spawnedArgv.some((arg) => arg.includes("supabase-start-secret"))).toBe(false);
+
+      const stdin = cp?.stdin;
+      expect(Stream.isStream(stdin)).toBe(true);
+      if (!Stream.isStream(stdin)) return yield* Effect.die("docker cp stdin was not a stream");
+
+      const chunks = yield* Stream.runCollect(stdin);
+      expect(chunks).toHaveLength(1);
+      const archiveBytes = chunks[0];
+      expect(archiveBytes).toBeInstanceOf(Uint8Array);
+      if (!(archiveBytes instanceof Uint8Array)) {
+        return yield* Effect.die("docker cp stdin did not contain archive bytes");
+      }
+
+      const files = yield* Effect.promise(() => new Bun.Archive(archiveBytes).files());
+      expect([...files.keys()]).toEqual([
+        "etc/kong/kong.yml",
+        "home/kong/localhost.key",
+        "home/kong/localhost.crt",
+      ]);
+
+      const kongConfig = files.get("etc/kong/kong.yml");
+      const tlsKey = files.get("home/kong/localhost.key");
+      const tlsCert = files.get("home/kong/localhost.crt");
+      expect(kongConfig).toBeDefined();
+      expect(tlsKey).toBeDefined();
+      expect(tlsCert).toBeDefined();
+      if (kongConfig === undefined || tlsKey === undefined || tlsCert === undefined) {
+        return yield* Effect.die("docker cp archive did not contain the requested files");
+      }
+      expect(yield* Effect.promise(() => kongConfig.text())).toBe("super-secret-content");
+      expect(yield* Effect.promise(() => tlsKey.text())).toBe("tls-private-key");
+      expect(yield* Effect.promise(() => tlsCert.text())).toBe("");
+
+      expect(tarRegularFileModes(archiveBytes)).toEqual([0o644, 0o644, 0o644]);
+    });
   });
 
-  it.live("cleans up and never starts when docker cp fails", () => {
-    let hostPath: string | undefined;
+  it.live("fails when docker cp rejects the archive and never invokes docker start", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "create") return { exitCode: 0, stdout: "container-id-def\n" };
       if (args[0] === "cp") {
-        hostPath = args[1];
         return { exitCode: 1, stderr: "Error: No such container: container-id-def\n" };
       }
       return { exitCode: 0 };
@@ -433,14 +492,47 @@ describe("legacyCreateContainer secretFiles", () => {
         expect(error.message).toBe(
           "failed to create docker container: failed to copy secret file into container: Error: No such container: container-id-def",
         );
-        expect(hostPath).toBeDefined();
-        expect(existsSync(hostPath ?? "")).toBe(false);
+        expect(mock.spawned.map((args) => args[0])).toEqual(["create", "cp"]);
+        expect(mock.spawned[1]).toEqual(["cp", "-", "container-id-def:/"]);
         expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
       }),
     );
   });
 
-  it.live("never copies or starts when docker create fails", () => {
+  it.live("propagates docker start failure after copying the secret archive", () => {
+    const mock = mockSpawner((args) => {
+      if (args[0] === "create") return { exitCode: 0, stdout: "container-id-start-fail\n" };
+      if (args[0] === "start") {
+        return { exitCode: 1, stderr: "container is already stopped\n" };
+      }
+      return { exitCode: 0 };
+    });
+
+    const spec: LegacyStartContainerSpec = {
+      ...baseSpec,
+      binds: [],
+      secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
+    };
+
+    return legacyCreateContainer(mock.spawner, spec, {
+      projectId: "proj",
+      isBitbucketPipeline: false,
+      workdir,
+      extraHosts: [],
+    }).pipe(
+      Effect.flip,
+      Effect.map((error) => {
+        expect(error).toBeInstanceOf(LegacyContainerStartError);
+        expect(error.message).toBe(
+          'failed to start docker container "supabase_db_proj": container is already stopped',
+        );
+        expect(mock.spawned.map((args) => args[0])).toEqual(["create", "cp", "start"]);
+        expect(mock.spawned[1]).toEqual(["cp", "-", "container-id-start-fail:/"]);
+      }),
+    );
+  });
+
+  it.live("never invokes docker cp or docker start when docker create fails", () => {
     const mock = mockSpawner((args) => {
       if (args[0] === "create") return { exitCode: 1, stderr: "no such image\n" };
       return { exitCode: 0 };
@@ -465,80 +557,6 @@ describe("legacyCreateContainer secretFiles", () => {
         expect(mock.spawned.some((args) => args[0] === "start")).toBe(false);
       }),
     );
-  });
-
-  it.live("removes the local secret when interrupted during docker cp", () => {
-    const cpStarted = Deferred.makeUnsafe<void>();
-    const hangForever = Deferred.makeUnsafe<ChildProcessSpawner.ExitCode>();
-    let hostPath: string | undefined;
-    const encoder = new TextEncoder();
-
-    function succeededHandle(stdout = "") {
-      return Effect.gen(function* () {
-        const exitDeferred = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-        yield* Deferred.succeed(exitDeferred, ChildProcessSpawner.ExitCode(0));
-        return ChildProcessSpawner.makeHandle({
-          pid: ChildProcessSpawner.ProcessId(1),
-          stdout: Stream.fromIterable(stdout.length > 0 ? [encoder.encode(stdout)] : []),
-          stderr: Stream.empty,
-          all: Stream.empty,
-          exitCode: Deferred.await(exitDeferred),
-          isRunning: Effect.succeed(false),
-          stdin: Sink.drain,
-          kill: () => Effect.void,
-          unref: Effect.succeed(Effect.void),
-          getInputFd: () => Sink.drain,
-          getOutputFd: () => Stream.empty,
-        });
-      });
-    }
-
-    const spawner = ChildProcessSpawner.make((command) =>
-      Effect.gen(function* () {
-        const args = command._tag === "StandardCommand" ? command.args : [];
-        if (args[0] === "create") {
-          return yield* succeededHandle("container-id-sigint\n");
-        }
-        if (args[0] === "cp") {
-          hostPath = args[1];
-          yield* Deferred.succeed(cpStarted, undefined);
-          return ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(1),
-            stdout: Stream.empty,
-            stderr: Stream.empty,
-            all: Stream.empty,
-            exitCode: Deferred.await(hangForever),
-            isRunning: Effect.succeed(true),
-            stdin: Sink.drain,
-            kill: () => Effect.void,
-            unref: Effect.succeed(Effect.void),
-            getInputFd: () => Sink.drain,
-            getOutputFd: () => Stream.empty,
-          });
-        }
-        return yield* succeededHandle();
-      }),
-    );
-
-    const spec: LegacyStartContainerSpec = {
-      ...baseSpec,
-      binds: [],
-      secretFiles: [{ containerPath: "/etc/kong/kong.yml", content: "super-secret-content" }],
-    };
-
-    return Effect.gen(function* () {
-      const fiber = yield* legacyCreateContainer(spawner, spec, {
-        projectId: "proj",
-        isBitbucketPipeline: false,
-        workdir,
-        extraHosts: [],
-      }).pipe(Effect.forkChild({ startImmediately: true }));
-      yield* Deferred.await(cpStarted);
-      expect(hostPath).toBeDefined();
-      expect(existsSync(hostPath ?? "")).toBe(true);
-      yield* Fiber.interrupt(fiber);
-      expect(existsSync(hostPath ?? "")).toBe(false);
-    });
   });
 });
 
@@ -871,8 +889,7 @@ describe("legacyCreateContainer with an empty containerName (the shadow database
           // `docker cp` addresses the container by the id `docker create` returned, never by
           // name — the unnamed shadow container is delivered its secret the same way a named
           // one is.
-          expect(cpArgs?.[0]).toBe("cp");
-          expect(cpArgs?.[2]).toBe("shadow-container-id:/etc/postgresql-custom/pgsodium_root.key");
+          expect(cpArgs).toEqual(["cp", "-", "shadow-container-id:/"]);
         }),
       );
     },

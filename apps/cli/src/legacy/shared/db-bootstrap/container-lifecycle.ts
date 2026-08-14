@@ -13,11 +13,7 @@
  * comment for why it is hoisted to run once instead of once per container.
  */
 
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-import { Data, Effect } from "effect";
+import { Data, Effect, Stream } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import {
@@ -69,7 +65,7 @@ type Spawner = ChildProcessSpawner["Service"];
  */
 export const LEGACY_COMPOSE_PROJECT_LABEL = "com.docker.compose.project";
 
-type LegacyContainerOperationReason = "runtime" | "configuration" | "filesystem" | "port_conflict";
+type LegacyContainerOperationReason = "runtime" | "configuration" | "internal" | "port_conflict";
 
 function legacyContainerOperationActionability(
   reason: LegacyContainerOperationReason | undefined,
@@ -77,8 +73,8 @@ function legacyContainerOperationActionability(
   switch (reason) {
     case "runtime":
       return { ...actionability.dockerNotRunning, fingerprint_suffix: "docker_not_running" };
-    case "filesystem":
-      return { ...actionability.permission, fingerprint_suffix: "filesystem" };
+    case "internal":
+      return actionability.internalPanic;
     case "port_conflict":
       return { ...actionability.invalidConfig, fingerprint_suffix: "port_conflict" };
     default:
@@ -112,7 +108,7 @@ export class LegacyVolumeCreateError extends Data.TaggedError("LegacyVolumeCreat
 /** `docker create` failed. */
 export class LegacyContainerCreateError extends Data.TaggedError("LegacyContainerCreateError")<{
   readonly message: string;
-  readonly reason: "runtime" | "configuration" | "filesystem";
+  readonly reason: "runtime" | "configuration" | "internal";
 }> {
   get [ErrorActionabilityId](): CliErrorActionabilityDeclaration {
     return legacyContainerOperationActionability(this.reason);
@@ -680,17 +676,19 @@ function legacyDockerStartContainer(
 }
 
 /**
- * Copies a host file into a created container through the configured Docker connection.
+ * Extracts an in-memory tar archive through the same Docker CLI/Engine connection used by create
+ * and start. Stdin requires no daemon-visible bind source or client-visible host path, so the flow
+ * works with local, remote-context, and confined container clients.
  */
-function legacyDockerCopyIntoContainer(
+function legacyDockerCopyArchiveIntoContainer(
   spawner: Spawner,
-  hostPath: string,
+  archive: Uint8Array,
   containerDest: string,
 ): Effect.Effect<void, LegacyContainerCreateError> {
   return Effect.scoped(
     Effect.gen(function* () {
-      const child = yield* spawnContainerCli(spawner, ["cp", hostPath, containerDest], {
-        stdin: "ignore",
+      const child = yield* spawnContainerCli(spawner, ["cp", "-", containerDest], {
+        stdin: Stream.make(archive),
         stdout: "ignore",
         stderr: "pipe",
       }).pipe(
@@ -732,66 +730,39 @@ function legacyDockerCopyIntoContainer(
 }
 
 /**
- * Stages one secret at mode 0644, copies it into the container, and removes the
- * host artifact on success, failure, or interruption. The explicit chmod avoids
- * restrictive umasks making the file unreadable to the container's non-root user.
- */
-function legacyCopyStartSecretFileIntoContainer(
-  spawner: Spawner,
-  containerId: string,
-  secretFile: LegacyStartSecretFileSpec,
-): Effect.Effect<void, LegacyContainerCreateError> {
-  return Effect.tryPromise({
-    try: () => mkdtemp(join(tmpdir(), "supabase-start-secret-")),
-    catch: (cause) =>
-      new LegacyContainerCreateError({
-        message: `failed to create docker container: failed to stage container secret file: ${
-          cause instanceof Error ? cause.message : String(cause)
-        }`,
-        reason: "filesystem",
-      }),
-  }).pipe(
-    Effect.flatMap((dir) => {
-      const hostPath = join(dir, "secret");
-      return Effect.tryPromise({
-        try: async () => {
-          await writeFile(hostPath, secretFile.content, { mode: 0o644 });
-          await chmod(hostPath, 0o644);
-        },
-        catch: (cause) =>
-          new LegacyContainerCreateError({
-            message: `failed to create docker container: failed to stage container secret file: ${
-              cause instanceof Error ? cause.message : String(cause)
-            }`,
-            reason: "filesystem",
-          }),
-      }).pipe(
-        Effect.flatMap(() =>
-          legacyDockerCopyIntoContainer(
-            spawner,
-            hostPath,
-            `${containerId}:${secretFile.containerPath}`,
-          ),
-        ),
-        Effect.ensuring(Effect.promise(() => rm(dir, { recursive: true, force: true }))),
-      );
-    }),
-  );
-}
-
-/**
- * Copies all secrets into the created, not-yet-started container concurrently.
+ * Streams all secret files as one archive after create and before start. `Bun.Archive` exposes no
+ * per-entry mode option, so the unit test pins its `0644` default. That mode keeps the files
+ * readable by non-root Kong/Postgres processes and matches Go's result. Once copied, the files
+ * live in the container filesystem, so normal restarts need no host artifact. This mirrors Go's
+ * path-independent Engine API delivery without exposing plaintext through host files or argv.
  */
 function legacyCopyStartSecretFilesIntoContainer(
   spawner: Spawner,
   containerId: string,
   secretFiles: ReadonlyArray<LegacyStartSecretFileSpec>,
 ): Effect.Effect<void, LegacyContainerCreateError> {
-  return Effect.forEach(
-    secretFiles,
-    (secretFile) => legacyCopyStartSecretFileIntoContainer(spawner, containerId, secretFile),
-    { concurrency: "unbounded" },
-  ).pipe(Effect.asVoid);
+  if (secretFiles.length === 0) return Effect.void;
+
+  const entries = Object.fromEntries(
+    secretFiles.map((secretFile) => [
+      secretFile.containerPath.replace(/^\/+/, ""),
+      secretFile.content,
+    ]),
+  );
+  return Effect.tryPromise({
+    try: () => new Bun.Archive(entries).bytes(),
+    catch: (cause) =>
+      new LegacyContainerCreateError({
+        message: `failed to create docker container: failed to prepare container secret files: ${
+          cause instanceof Error ? cause.message : String(cause)
+        }`,
+        reason: "internal",
+      }),
+  }).pipe(
+    Effect.flatMap((archive) =>
+      legacyDockerCopyArchiveIntoContainer(spawner, archive, `${containerId}:/`),
+    ),
+  );
 }
 
 /**
@@ -806,12 +777,12 @@ function legacyCopyStartSecretFilesIntoContainer(
  *    (`legacyApplyBitbucketStartContainerFilter`, already ported).
  * 4. `docker create`.
  * 5. Copy any `secretFiles` into the just-created (not yet started) container
- *    via `docker cp` (`legacyCopyStartSecretFilesIntoContainer`) — a
- *    TS-port-only step with no Go equivalent, see `docker-create-args.ts`'s
- *    `secretFiles` doc comment. Runs strictly between `docker create` and
- *    `docker start`: the container must already exist for `docker cp` to have
- *    a target, and must not be running yet so its entrypoint never races the
- *    copy.
+ *    as one stdin tar archive via `docker cp`
+ *    (`legacyCopyStartSecretFilesIntoContainer`) — a TS-port-only step with no
+ *    Go equivalent, see `docker-create-args.ts`'s `secretFiles` doc comment.
+ *    Runs strictly between `docker create` and `docker start`: the container
+ *    must already exist for `docker cp` to have a target, and must not be
+ *    running yet so its entrypoint never races the copy.
  * 6. `docker start`.
  *
  * Resolves to the created container's id/name on success.

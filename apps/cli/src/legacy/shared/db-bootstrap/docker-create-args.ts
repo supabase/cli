@@ -111,15 +111,15 @@ interface LegacyStartExposedPortSpec {
 }
 
 /**
- * One entry a caller must `docker cp` into the container via a short-lived HOST temp file — see
+ * One entry packed into a container's in-memory secret tar archive — see
  * {@link LegacyStartContainerSpec.secretFiles}'s doc comment for the full contract. Not exported
  * on its own — callers reference it structurally through that field; nothing outside this module
  * needs to name the shape directly.
  */
 interface LegacyStartSecretFileSpec {
-  /** The fixed path INSIDE the container the caller's `docker cp` call targets. */
+  /** The exact fixed path to materialize INSIDE the container. */
   readonly containerPath: string;
-  /** The secret content to write to a HOST temp file — never emitted into argv. */
+  /** Secret content encoded only into the in-memory archive — never host disk or argv. */
   readonly content: string;
 }
 
@@ -150,8 +150,46 @@ export interface LegacyStartContainerSpec {
    */
   readonly env: Readonly<Record<string, string>>;
   /**
-   * Secret-bearing files copied after create and before start. The lifecycle
-   * layer keeps their contents out of argv and works with remote Docker daemons.
+   * Entrypoint/`Cmd`-script secret content that must land at a specific path
+   * INSIDE the container without ever appearing in this process's own
+   * `docker create` argv (`ps aux`/`/proc/<pid>/cmdline`, CWE-214/522) — the
+   * entrypoint/`Cmd` analogue of {@link env}'s key-only `-e KEY` protection.
+   * Kong/Postgres/Supavisor all heredoc or shell-embed secret-bearing content
+   * (Kong's `kong.yml`/TLS private key, Postgres's pgsodium root key,
+   * Supavisor's rendered `pooler.exs`) directly into their entrypoint script
+   * or `Cmd` — safe in Go's Engine-API architecture (never a subprocess's own
+   * argv) but not in this port's, which shells out to a real `docker create`.
+   *
+   * NOT consumed here: {@link legacyBuildStartContainerCreateArgs} stays
+   * pure/no-I/O and never reads this field. `container-lifecycle.ts`'s
+   * `legacyCreateContainer` is the sole consumer — once `docker create` returns
+   * a container id, it builds one in-memory Bun tar archive containing every
+   * entry at its exact `containerPath` with mode `0644` (so non-root Kong/
+   * Postgres readers do not hit `EACCES`; see `container-lifecycle.ts`'s
+   * `legacyCopyStartSecretFilesIntoContainer` doc comment), then streams that
+   * archive on stdin to `docker cp - <id>:/` before `docker start`. Plaintext
+   * never touches host disk, a host bind mount, or the subprocess argv.
+   * Generic by design — any future
+   * service's spec can set this, not just the three call sites that need it
+   * today, and it makes no difference whether `containerName` is set: `docker
+   * cp` addresses the container by the id `docker create` returns, not by
+   * name, so the shadow database's own unnamed container (`db-bootstrap/
+   * shadow-database.ts`) is delivered its pgsodium root key the exact same way.
+   *
+   * The pathless `docker cp` stream uses the same Docker CLI/Engine API
+   * connection as `docker create`/`docker start`, so — unlike the
+   * bind-mount approach this replaced (supabase/cli#6022) — it works
+   * identically whether `DOCKER_HOST`/Docker-context points at a local or a
+   * REMOTE daemon: a bind mount's host-side path is resolved by the daemon
+   * itself
+   * (https://docs.docker.com/engine/storage/bind-mounts/#considerations-and-constraints),
+   * so it silently broke against a remote daemon (a scenario this codebase
+   * otherwise explicitly supports — see `legacy-hostname.ts`'s
+   * `legacyGetHostname`) even though the daemon itself was reachable. With no
+   * client-side source path, the stream also works when the Docker CLI is
+   * confined behind a private filesystem namespace. This matches Go's own heredoc/`Cmd`-embed
+   * delivery (the content travels inside the container-create request itself,
+   * over the Engine API) for that same reason.
    */
   readonly secretFiles?: ReadonlyArray<LegacyStartSecretFileSpec>;
   /**
