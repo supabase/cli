@@ -240,16 +240,17 @@ type (
 	}
 
 	email struct {
-		EnableSignup         bool                     `toml:"enable_signup" json:"enable_signup"`
-		DoubleConfirmChanges bool                     `toml:"double_confirm_changes" json:"double_confirm_changes"`
-		EnableConfirmations  bool                     `toml:"enable_confirmations" json:"enable_confirmations"`
-		SecurePasswordChange bool                     `toml:"secure_password_change" json:"secure_password_change"`
-		Template             map[string]emailTemplate `toml:"template" json:"template"`
-		Notification         map[string]notification  `toml:"notification" json:"notification"`
-		Smtp                 *smtp                    `toml:"smtp" json:"smtp"`
-		MaxFrequency         time.Duration            `toml:"max_frequency" json:"max_frequency"`
-		OtpLength            uint                     `toml:"otp_length" json:"otp_length"`
-		OtpExpiry            uint                     `toml:"otp_expiry" json:"otp_expiry"`
+		EnableSignup           bool                     `toml:"enable_signup" json:"enable_signup"`
+		DoubleConfirmChanges   bool                     `toml:"double_confirm_changes" json:"double_confirm_changes"`
+		EnableConfirmations    bool                     `toml:"enable_confirmations" json:"enable_confirmations"`
+		SecurePasswordChange   bool                     `toml:"secure_password_change" json:"secure_password_change"`
+		RequireCurrentPassword bool                     `toml:"require_current_password" json:"require_current_password"`
+		Template               map[string]emailTemplate `toml:"template" json:"template"`
+		Notification           map[string]notification  `toml:"notification" json:"notification"`
+		Smtp                   *smtp                    `toml:"smtp" json:"smtp"`
+		MaxFrequency           time.Duration            `toml:"max_frequency" json:"max_frequency"`
+		OtpLength              uint                     `toml:"otp_length" json:"otp_length"`
+		OtpExpiry              uint                     `toml:"otp_expiry" json:"otp_expiry"`
 	}
 
 	smtp struct {

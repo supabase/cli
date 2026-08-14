@@ -15,6 +15,7 @@ const defaultEnableSignup = true;
 const defaultDoubleConfirmChanges = true;
 const defaultEnableConfirmations = false;
 const defaultSecurePasswordChange = false;
+const defaultRequireCurrentPassword = false;
 const defaultMaxFrequency = "1s";
 const defaultOtpLength = 6;
 const defaultOtpExpiry = 3600;
@@ -107,6 +108,12 @@ export const email = Schema.Struct({
     tags,
     links: [links.auth],
   }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultSecurePasswordChange))),
+  require_current_password: Schema.Boolean.annotate({
+    default: defaultRequireCurrentPassword,
+    description: "If enabled, users must provide their current password to change their password.",
+    tags,
+    links: [links.auth],
+  }).pipe(Schema.withDecodingDefaultKey(Effect.succeed(defaultRequireCurrentPassword))),
   max_frequency: Schema.String.annotate({
     default: defaultMaxFrequency,
     description:

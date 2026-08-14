@@ -488,6 +488,9 @@ export function legacyBuildGotrueEnv(input: LegacyBuildGotrueEnvInput): Record<s
     GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_REAUTHENTICATION: String(
       input.email.secure_password_change,
     ),
+    GOTRUE_SECURITY_UPDATE_PASSWORD_REQUIRE_CURRENT_PASSWORD: String(
+      input.email.require_current_password,
+    ),
     GOTRUE_MFA_PHONE_ENROLL_ENABLED: String(input.mfa.phone.enroll_enabled),
     GOTRUE_MFA_PHONE_VERIFY_ENABLED: String(input.mfa.phone.verify_enabled),
     GOTRUE_MFA_TOTP_ENROLL_ENABLED: String(input.mfa.totp.enroll_enabled),

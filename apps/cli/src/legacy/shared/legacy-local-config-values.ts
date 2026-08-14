@@ -1023,6 +1023,12 @@ export function legacyResolveAuthEmail(
       "auth.email.secure_password_change",
       projectEnvValues,
     ),
+    require_current_password: legacyEnvOverrideBool(
+      "SUPABASE_AUTH_EMAIL_REQUIRE_CURRENT_PASSWORD",
+      email.require_current_password,
+      "auth.email.require_current_password",
+      projectEnvValues,
+    ),
     max_frequency:
       legacyEnvOverride(
         "SUPABASE_AUTH_EMAIL_MAX_FREQUENCY",
