@@ -541,9 +541,6 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       projectEnv: cfg.projectEnv,
     };
     const formatOptions = Option.getOrElse(cfg.pgDelta.formatOptions, () => "");
-    if (cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
-      yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
-    }
 
     // Engine resolution: the pg-delta env/config/flag gate, read from the
     // (possibly remote-merged) config.
@@ -558,6 +555,17 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       usePgSchema,
       pgDeltaDefault,
     });
+    // The bundled next engine is the ONLY mode whose baseline is local migrations
+    // alone. Every other mode — migra, pgAdmin, and the `SUPABASE_USE_PG_DELTA_NEXT=
+    // false` legacy pg-delta opt-out — still substitutes the declared-schema
+    // `contrib_regression` target for a local database (`legacy-shadow-source.ts`'s
+    // `migrationMode !== "pgdelta-next"` branch), so under those engines
+    // `schema_paths` genuinely does still shape the output and the transition warning
+    // would be factually wrong. Gate it on the resolved engine, not on the setting.
+    const usesPgDeltaNext = useDelta && pgDelta.implementation === "next";
+    if (usesPgDeltaNext && cfg.schemaPaths !== undefined && cfg.schemaPaths.length > 0) {
+      yield* output.raw(legacySchemaPathsTransitionWarning, "stderr");
+    }
 
     // pgAdmin's own text-mode status lines go to STDOUT, not stderr — unlike the migra/
     // pg-delta path's diagnostics below, which always go to stderr. In machine output
@@ -670,8 +678,7 @@ export const legacyDbDiff = Effect.fn("legacy.db.diff")(function* (flags: Legacy
       diffResult = { sql, files: undefined };
     } else {
       yield* output.raw("Creating shadow database...\n", "stderr");
-      const migrationMode: "legacy" | "pgdelta-next" =
-        useDelta && pgDelta.implementation === "next" ? "pgdelta-next" : "legacy";
+      const migrationMode: "legacy" | "pgdelta-next" = usesPgDeltaNext ? "pgdelta-next" : "legacy";
       const shadowInput = {
         ...(yield* resolveShadowRunInput()),
         targetLocal: resolved.isLocal,

@@ -1,7 +1,10 @@
 import { Clock, Effect, FileSystem, Layer, Path } from "effect";
 
 import { Output } from "../../../../shared/output/output.service.ts";
-import { parseLegacyConnectionString } from "../../../shared/legacy-db-config.parse.ts";
+import {
+  parseLegacyConnectionString,
+  redactLegacyConnectionString,
+} from "../../../shared/legacy-db-config.parse.ts";
 import { LegacyDbConnectError } from "../../../shared/legacy-db-connection.errors.ts";
 import { legacyAcquirePgPool } from "../../../shared/legacy-db-connection.sql-pg.layer.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
@@ -109,7 +112,11 @@ export function legacyParsePgDeltaNextEndpoint(endpoint: LegacyPgDeltaDatabaseEn
     return yield* Effect.fail(
       new LegacyPgDeltaEngineError({
         message: "failed to parse Postgres connection string for pg-delta",
-        cause: endpoint.ref.replace(/:[^:@/]+@/, ":***@"),
+        // `redactLegacyConnectionString`, not a local `:password@` regex: the input
+        // reaching here is by definition unparseable, and a hand-typed password
+        // containing `/`, `@`, or `:` defeats a naive single-character-class match
+        // (CWE-209). The shared redactor over-redacts instead of leaking.
+        cause: redactLegacyConnectionString(endpoint.ref),
       }),
     );
   });
@@ -226,7 +233,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
                   return yield* Effect.fail(
                     new LegacyPgDeltaEngineError({
                       message: "failed to parse pg-delta migrations shadow URL",
-                      cause: shadow.migrationsUrl.replace(/:[^:@/]+@/, ":***@"),
+                      cause: redactLegacyConnectionString(shadow.migrationsUrl),
                     }),
                   );
                 }

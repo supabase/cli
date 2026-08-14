@@ -50,6 +50,7 @@ import { LegacyLinkedProjectCache } from "../../../telemetry/legacy-linked-proje
 import { LegacyTelemetryState } from "../../../telemetry/legacy-telemetry-state.service.ts";
 import {
   legacyUpdateDeclarativeSchemaPathsConfig,
+  legacyWarnPreservedUnmanagedDeclarativeFiles,
   legacyWriteDeclarativeSchemas,
 } from "../shared/legacy-pgdelta.write.ts";
 import {
@@ -460,6 +461,8 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
         envEnabled: legacyParseBoolEnv(toml.envLookup("SUPABASE_EXPERIMENTAL_PG_DELTA")),
       }),
     });
+    /** Whether the migration-style diff runs on the bundled in-process next engine. */
+    const usesPgDeltaNext = usePgDeltaDiff && pgDeltaEngine.implementation === "next";
 
     // Runs the Go-delegated `--experimental` structured dump (still delegated, see
     // `EXPERIMENTAL_STRUCTURED_DUMP_DEPRECATION_LINE` above for why). In machine-output
@@ -591,9 +594,17 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
                     (handle) => legacyRemoveShadowDatabase(spawner, handle.containerId),
                   );
                 });
-          yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, exported).pipe(
+          const written = yield* legacyWriteDeclarativeSchemas(
+            fs,
+            path,
+            declarativeDir,
+            exported,
+          ).pipe(
             Effect.mapError((cause) => new LegacyDbPullWriteError({ message: cause.message })),
           );
+          // Same manifest-less-merge caveat as generate/sync: the next writer only
+          // prunes manifest-owned files, so name what survived.
+          yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
           // Go's WriteDeclarativeSchemas also points [db.migrations] schema_paths at
           // the declarative dir, but only when pg-delta is *disabled* in config
           // (declarative.go:260-268, gated on IsPgDeltaEnabled which reads the config
@@ -633,8 +644,16 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
           return;
         }
 
+        // Gated on the resolved engine, not merely on `schema_paths` being set: the
+        // bundled next engine is the only mode whose baseline is local migrations
+        // alone. Under migra or the `SUPABASE_USE_PG_DELTA_NEXT=false` legacy pg-delta
+        // opt-out, `legacy-shadow-source.ts` still substitutes the declared-schema
+        // `contrib_regression` target for a local database (its `migrationMode !==
+        // "pgdelta-next"` branch), so `schema_paths` does still shape the output there
+        // and this warning would be factually wrong.
         if (
           !delegatesExperimentalPull &&
+          usesPgDeltaNext &&
           toml.schemaPaths !== undefined &&
           toml.schemaPaths.length > 0
         ) {
@@ -828,8 +847,9 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // target with declarative schema files gets a second `contrib_regression` shadow
             // returned as the target override. Pg-delta next compares the migrations shadow
             // directly to the live target instead.
-            const migrationMode: "legacy" | "pgdelta-next" =
-              usePgDeltaDiff && pgDeltaEngine.implementation === "next" ? "pgdelta-next" : "legacy";
+            const migrationMode: "legacy" | "pgdelta-next" = usesPgDeltaNext
+              ? "pgdelta-next"
+              : "legacy";
             const shadowInput = {
               ...legacyShadowRunInputFromLocalContainerInputs(
                 pullLocalInputs,

@@ -69,6 +69,7 @@ import {
 import { LegacyDeclarativeSeam } from "../../../shared/legacy-pgdelta.seam.service.ts";
 import {
   legacyDeclarativeSchemaWrittenLine,
+  legacyWarnPreservedUnmanagedDeclarativeFiles,
   legacyWriteDeclarativeSchemas,
 } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeSyncFlags } from "./sync.command.ts";
@@ -261,7 +262,10 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
           ensureLocalPostgresImageCurrent,
         );
         const generated = yield* legacyGenerateDeclarativeOutput(run, toml, target);
-        yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
+        const written = yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, generated);
+        // A manifest-less directory keeps files the export did not replace, and those
+        // files go straight into the plan below — warn before diffing against them.
+        yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
         if (!(yield* declarativeDirHasFiles(fs, declarativeDir))) {
           return yield* Effect.fail(
             new LegacyDeclarativeNoFilesGeneratedError({

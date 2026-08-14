@@ -631,6 +631,50 @@ describe("legacy db diff", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
+  // The transition warning is only true for the bundled next engine. Every other
+  // engine still routes a local target with declarative files through the
+  // declared-schema `contrib_regression` override, so schema_paths DOES still shape
+  // their output and claiming otherwise would be a lie.
+  const writeSchemaPathsConfig = (pgDeltaEnabled: boolean) => {
+    mkdirSync(join(tmp.current, "supabase", "database"), { recursive: true });
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db.migrations]",
+        'schema_paths = ["configured.sql"]',
+        "",
+        "[experimental.pgdelta]",
+        `enabled = ${pgDeltaEnabled}`,
+        "",
+      ].join("\n"),
+    );
+    writeFileSync(join(tmp.current, "supabase", "configured.sql"), "create table configured ();\n");
+  };
+
+  it.effect("legacy pg-delta local diff does not print the schema_paths transition warning", () => {
+    writeSchemaPathsConfig(true);
+    const s = setup(tmp.current, {
+      pgDeltaImplementation: "legacy",
+      diffSql: "create table result ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags({ usePgDelta: Option.some(true) }));
+      expect(stderr(s.out)).not.toContain("schema_paths no longer changes the migrations baseline");
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("migra local diff does not print the schema_paths transition warning", () => {
+    writeSchemaPathsConfig(false);
+    const s = setup(tmp.current, {
+      pgDeltaImplementation: "next",
+      diffSql: "create table result ();\n",
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbDiff(flags());
+      expect(stderr(s.out)).not.toContain("schema_paths no longer changes the migrations baseline");
+    }).pipe(Effect.provide(s.layer));
+  });
+
   it.effect("PG14: provisions a shadow via the SQL-exec init path (no PG15+ one-shot jobs)", () => {
     // This covers the PG14 branch of the `legacySetupDatabase` pipeline, which execs
     // SQL directly via the session instead of the three one-shot `LegacyDockerRun`

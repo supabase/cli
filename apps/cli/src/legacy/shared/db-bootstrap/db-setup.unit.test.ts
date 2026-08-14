@@ -9,7 +9,8 @@ import { Deferred, Effect, FileSystem, Layer, Path, Schema, Sink, Stream } from 
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { mockOutput, mockRuntimeInfo } from "../../../../tests/helpers/mocks.ts";
-import type { LegacyDbSession } from "../legacy-db-connection.service.ts";
+import { LegacyDbExecError } from "../legacy-db-connection.errors.ts";
+import { LegacyDbConnection, type LegacyDbSession } from "../legacy-db-connection.service.ts";
 import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.service.ts";
 import { LegacyDockerRunError } from "../legacy-docker-run.errors.ts";
 import { LegacyEdgeRuntimeScriptError } from "../legacy-edge-runtime-script.errors.ts";
@@ -21,6 +22,7 @@ import { LegacyPgDeltaSslProbe } from "../legacy-pgdelta-ssl-probe.service.ts";
 import {
   LegacyDbSetupError,
   legacyResolveDbSetupPrelude,
+  legacyRunDatabaseWebhooksSetup,
   legacyStartInitCurrentBranch,
   legacyStartSetupLocalDatabase,
   type LegacyStartSetupLocalDatabaseInput,
@@ -915,6 +917,118 @@ describe("legacyResolveDbSetupPrelude", () => {
       );
     },
   );
+});
+
+/**
+ * `supabase start` on an EXISTING volume never replays migrations, so this
+ * convergence is the only thing that can reconcile the volume's pg_net with the
+ * current `[experimental.webhooks]` setting — in both directions, and without ever
+ * dropping an extension a user's own migration created.
+ */
+describe("legacyRunDatabaseWebhooksSetup", () => {
+  const PG_NET_DROP_FINGERPRINT = "drop extension if exists pg_net";
+
+  function fakeWebhooksSession(opts: {
+    readonly appliedStatements?: ReadonlyArray<ReadonlyArray<string>>;
+    readonly historyUnavailable?: boolean;
+  }) {
+    const execSql: Array<string> = [];
+    const session: LegacyDbSession = {
+      exec: (sql) =>
+        Effect.sync(() => {
+          execSql.push(sql);
+        }),
+      query: (sql) =>
+        sql.includes("supabase_migrations.schema_migrations")
+          ? opts.historyUnavailable === true
+            ? Effect.fail(
+                new LegacyDbExecError({ message: 'relation "schema_migrations" does not exist' }),
+              )
+            : Effect.succeed(
+                (opts.appliedStatements ?? []).map((statements, index) => ({
+                  version: `2024010100000${index}`,
+                  name: "migration",
+                  statements,
+                })),
+              )
+          : Effect.succeed([]),
+      extensionExists: () => Effect.succeed(false),
+      copyToCsv: () => Effect.succeed(new Uint8Array()),
+      queryRaw: () => Effect.succeed({ fields: [], rows: [], commandTag: "" }),
+    };
+    return { session, execSql };
+  }
+
+  const converge = (
+    enabled: boolean,
+    sessionOpts: Parameters<typeof fakeWebhooksSession>[0] = {},
+  ) => {
+    const { session, execSql } = fakeWebhooksSession(sessionOpts);
+    const dbConnection = Layer.succeed(LegacyDbConnection, {
+      connect: () => Effect.succeed(session),
+    });
+    return {
+      execSql,
+      effect: Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* legacyRunDatabaseWebhooksSetup({
+          fs,
+          path,
+          hostname: "127.0.0.1",
+          dbPort: 54322,
+          dbUrl: "postgresql://postgres:postgres@127.0.0.1:5432/postgres",
+          enabled,
+        });
+      }).pipe(Effect.provide(Layer.mergeAll(dbConnection, BunServices.layer))),
+    };
+  };
+
+  it.effect("installs pg_net when Database Webhooks are enabled", () => {
+    const { execSql, effect } = converge(true);
+    return effect.pipe(
+      Effect.map(() => {
+        expect(execSql.some((sql) => sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(true);
+        expect(execSql.some((sql) => sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(false);
+      }),
+    );
+  });
+
+  it.effect("drops pg_net when disabled and no applied migration installs it", () => {
+    const { execSql, effect } = converge(false, {
+      appliedStatements: [["create table public.items (id int)"]],
+    });
+    return effect.pipe(
+      Effect.map(() => {
+        expect(execSql.some((sql) => sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(true);
+        expect(execSql.some((sql) => sql.includes(PG_NET_CREATE_FINGERPRINT))).toBe(false);
+      }),
+    );
+  });
+
+  it.effect("preserves pg_net created by an applied migration", () => {
+    const { execSql, effect } = converge(false, {
+      appliedStatements: [
+        ["create table public.items (id int)"],
+        ['CREATE EXTENSION IF NOT EXISTS "pg_net" WITH SCHEMA extensions'],
+      ],
+    });
+    return effect.pipe(
+      Effect.map(() => {
+        expect(execSql.some((sql) => sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(false);
+      }),
+    );
+  });
+
+  it.effect("preserves pg_net when the migration history cannot be read", () => {
+    // Erring toward not dropping: an unreadable history is treated as ownership.
+    const { execSql, effect } = converge(false, { historyUnavailable: true });
+    return effect.pipe(
+      Effect.map(() => {
+        expect(execSql.some((sql) => sql.includes(PG_NET_DROP_FINGERPRINT))).toBe(false);
+      }),
+    );
+  });
 });
 
 describe("legacyStartInitCurrentBranch", () => {

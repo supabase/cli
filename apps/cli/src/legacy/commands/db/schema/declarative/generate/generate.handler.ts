@@ -40,6 +40,7 @@ import {
 } from "../declarative.orchestrate.ts";
 import {
   legacyDeclarativeSchemaWrittenLine,
+  legacyWarnPreservedUnmanagedDeclarativeFiles,
   legacyWriteDeclarativeSchemas,
 } from "../../../shared/legacy-pgdelta.write.ts";
 import type { LegacyDbSchemaDeclarativeGenerateFlags } from "./generate.command.ts";
@@ -291,7 +292,11 @@ export const legacyDbSchemaDeclarativeGenerate = Effect.fn("legacy.db.schema.dec
         }
       }
 
-      yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, result);
+      const written = yield* legacyWriteDeclarativeSchemas(fs, path, declarativeDir, result);
+      // The overwrite prompts above promise existing files may be deleted, but the
+      // next writer only prunes what an export manifest claimed — say so when a
+      // manifest-less directory kept files the export did not replace.
+      yield* legacyWarnPreservedUnmanagedDeclarativeFiles(declarativeDirRel, written);
 
       // Warm the declarative catalog cache after writing the files and before the
       // success message, gated on `!--no-cache` — Go's `Generate`

@@ -612,6 +612,20 @@ describe("legacy db schema declarative generate integration", () => {
       );
       expect(readFileSync(join(destination, "stale.sql"), "utf8")).toBe("select 'stale';");
       expect(existsSync(join(destination, ".pgdelta-export.json"))).toBe(true);
+      // The destination had no manifest, so nothing could be classified as stale and
+      // `stale.sql` silently survived an "overwrite" the user confirmed. Say so, and
+      // point at the only instruction that produces a clean tree.
+      const stderrText = stripAnsi(
+        s.out.rawChunks
+          .filter((chunk) => chunk.stream === "stderr")
+          .map((chunk) => chunk.text)
+          .join(""),
+      );
+      expect(stderrText).toContain(
+        "1 existing declarative schema file(s) in " + destination + " are not tracked",
+      );
+      expect(stderrText).toContain("stale.sql");
+      expect(stderrText).toContain(`remove ${destination} and re-run`);
       expect(
         readFileSync(join(tmp.current, "supabase", "database", "configured.sql"), "utf8"),
       ).toBe("select 1;");

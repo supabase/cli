@@ -30,7 +30,23 @@ describe("legacyParsePgDeltaNextEndpoint", () => {
 
     expect(error).toBeInstanceOf(LegacyPgDeltaEngineError);
     expect(error.message).toBe("failed to parse Postgres connection string for pg-delta");
-    expect(error.cause).toBe("postgresql://postgres:***@[/postgres");
+    expect(error.cause).toBe("postgresql://postgres:[REDACTED]@[/postgres");
+  });
+
+  it("redacts a password containing @, :, and / rather than leaking a fragment", () => {
+    // The previous inline `/:[^:@/]+@/` regex matched nothing here and surfaced the
+    // raw URL; the shared redactor anchors on the last `@` before the authority
+    // terminator and over-redacts instead (CWE-209).
+    const endpoint = {
+      kind: "database",
+      ref: "postgresql://postgres:p@ss:word/x@[/postgres",
+      connectOptions: { isLocal: false, dnsResolver: "native" },
+    } satisfies LegacyPgDeltaDatabaseEndpoint;
+
+    const error = Effect.runSync(legacyParsePgDeltaNextEndpoint(endpoint).pipe(Effect.flip));
+
+    expect(String(error.cause)).not.toContain("ss:word/x");
+    expect(String(error.cause)).toContain("[REDACTED]");
   });
 
   it("uses a supplied parsed connection without reparsing the display ref", () => {

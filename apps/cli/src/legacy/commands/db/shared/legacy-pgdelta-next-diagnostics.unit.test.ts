@@ -6,6 +6,7 @@ import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { LegacyDebugLogger } from "../../../shared/legacy-debug-logger.service.ts";
 import type { LegacyPgDeltaNextDiagnostic } from "./legacy-pgdelta-next-adapter.service.ts";
 import {
+  LEGACY_PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE,
   legacyPgDeltaNextDiagnosticMessage,
   legacyPgDeltaNextDiagnosticReport,
   legacyPgDeltaNextFeedbackInvitation,
@@ -151,6 +152,76 @@ describe("pg-delta next diagnostic coverage policy", () => {
       );
       expect(out.messages.some(({ type }) => type === "warn")).toBe(true);
     }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+  });
+
+  const skippedStatement = (file: string, statement: string): LegacyPgDeltaNextDiagnostic => ({
+    origin: "declarativeLoad",
+    code: LEGACY_PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE,
+    severity: "warning",
+    subject: file,
+    message: `pg-delta could not load a declarative schema statement from ${file}: ${statement}`,
+    context: { file, statement },
+  });
+
+  it("warns about skipped declarative statements without leaking their SQL", () => {
+    const out = mockOutput();
+    const debugMessages: string[] = [];
+    return Effect.gen(function* () {
+      yield* legacyReportPgDeltaNextDiagnostics(
+        "declarativePlan",
+        [
+          skippedStatement("roles.sql", "create role app password 's3cret'"),
+          skippedStatement("roles.sql", "alter role app set search_path = public"),
+        ],
+        false,
+      );
+
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message:
+          "pg-delta could not load 2 declarative schema statements in roles.sql. Changes to these objects are omitted from the declarative migration plan.",
+      });
+      // Statement text stays out of the default-visibility summary; the per-diagnostic
+      // detail carries it and is routed to debug unless strict/verbose.
+      expect(out.messages.some(({ message }) => message.includes("s3cret"))).toBe(false);
+      expect(debugMessages.some((message) => message.includes("s3cret"))).toBe(true);
+    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+  });
+
+  it("fails on skipped declarative statements under strict coverage", () => {
+    const out = mockOutput();
+    const debugMessages: string[] = [];
+    return Effect.gen(function* () {
+      const exit = yield* legacyReportPgDeltaNextDiagnostics(
+        "declarativePlan",
+        [skippedStatement("roles.sql", "create role app")],
+        true,
+      ).pipe(Effect.exit);
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      expect(out.messages).toContainEqual({
+        type: "warn",
+        message:
+          "pg-delta could not load 1 declarative schema statement in roles.sql. Strict coverage is enabled, so the operation will stop.",
+      });
+      // Strict mode renders the detail (with the statement) so the user can fix it.
+      expect(out.messages.some(({ message }) => message.includes("create role app"))).toBe(true);
+      // No object kinds involved, so no unmodeled-kind summary and no feedback invite.
+      expect(out.messages.some(({ message }) => message.includes("does not manage"))).toBe(false);
+      expect(out.messages.some(({ message }) => message.includes("supabase issue feature"))).toBe(
+        false,
+      );
+    }).pipe(Effect.provide(out.layer), Effect.provide(debugLayer(debugMessages)));
+  });
+
+  it("classifies a skipped statement as a coverage gap only under strict coverage", () => {
+    const diagnostics = [skippedStatement("roles.sql", "create role app")];
+    const lenient = legacyPgDeltaNextDiagnosticReport(diagnostics, false);
+    expect(lenient.coverage).toHaveLength(1);
+    expect(lenient.blocking).toEqual([]);
+
+    const strict = legacyPgDeltaNextDiagnosticReport(diagnostics, true);
+    expect(strict.blocking).toEqual(strict.coverage);
   });
 
   it("always renders and fails error diagnostics", () => {

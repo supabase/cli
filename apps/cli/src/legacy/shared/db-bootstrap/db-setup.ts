@@ -141,6 +141,8 @@ import { LegacyDockerRun, type LegacyDockerRunOpts } from "../legacy-docker-run.
 import { LegacyEdgeRuntimeScript } from "../legacy-edge-runtime-script.service.ts";
 import { legacyMigrateAndSeed } from "../legacy-migrate-and-seed.ts";
 import { LegacyMigrationApplyError, legacyExecSqlFile } from "../legacy-migration-apply.ts";
+import { legacyReadMigrationTable } from "../legacy-migration-history.ts";
+import { legacyStatementInstallsPgNet } from "../legacy-pg-net-guidance.ts";
 import { legacyTryCacheMigrationsCatalog } from "../legacy-pgdelta.cache.ts";
 import { legacyResolvePgDeltaImplementation } from "../legacy-pgdelta-next-flag.ts";
 import type { LegacyPgDeltaContext } from "../legacy-pgdelta.ts";
@@ -187,7 +189,7 @@ const LEGACY_START_ENABLE_DATABASE_WEBHOOKS_SQL =
 // its schema. Remove it after the dump so the final baseline still follows the
 // user's webhooks setting. Enabled projects recreate it after the dump, when
 // the bundled event trigger can apply the intended grants.
-const LEGACY_START_REMOVE_PG14_DATABASE_WEBHOOKS_SQL = "drop extension if exists pg_net;";
+const LEGACY_START_REMOVE_DATABASE_WEBHOOKS_SQL = "drop extension if exists pg_net;";
 
 /**
  * A SQL exec (schema/globals/API-privileges) or one-shot service-migration Docker
@@ -943,6 +945,28 @@ export const legacyApplyDatabaseWebhooks = Effect.fnUntraced(function* (
 });
 
 /**
+ * Drops pg_net. Hoisted so the fresh-setup PG14 dump cleanup, the `db reset` PG14
+ * path, and the existing-volume webhooks convergence all run the identical statement
+ * instead of one of them silently diverging (`db reset` on PG14 with webhooks
+ * disabled used to leave pg_net installed while fresh setup removed it).
+ */
+export const legacyRemoveDatabaseWebhooks = Effect.fnUntraced(function* (
+  session: LegacyDbSession,
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  tmpDir: string,
+) {
+  yield* legacyExecSqlConstant(
+    session,
+    fs,
+    path,
+    tmpDir,
+    "remove-database-webhooks.sql",
+    LEGACY_START_REMOVE_DATABASE_WEBHOOKS_SQL,
+  );
+});
+
+/**
  * Port of Go's `initCurrentBranch` (`start.go:233-241`): writes
  * `supabase/.branches/_current_branch` = `"main"` (Go's `CurrBranchPath`,
  * `apps/cli-go/internal/utils/misc.go:99` = `filepath.Join(SupabaseDirPath,
@@ -1030,14 +1054,7 @@ export const legacySetupDatabase = (
         const requiresPg14WebhooksCleanup = input.majorVersion === 14;
         yield* legacyStartInitSchema(spawner, input, tmpDir);
         if (requiresPg14WebhooksCleanup) {
-          yield* legacyExecSqlConstant(
-            session,
-            fs,
-            path,
-            tmpDir,
-            "remove-pg14-database-webhooks.sql",
-            LEGACY_START_REMOVE_PG14_DATABASE_WEBHOOKS_SQL,
-          );
+          yield* legacyRemoveDatabaseWebhooks(session, fs, path, tmpDir);
         }
         const activateUserExtensions = options.activateUserExtensions ?? true;
         const legacyPgNetBaseline = options.legacyPgNetBaseline ?? false;
@@ -1306,7 +1323,22 @@ const legacyConnectLocalPostgres = (input: {
       );
   });
 
-/** Idempotently converges Database Webhooks on a healthy, existing local database. */
+/**
+ * Idempotently converges Database Webhooks on a healthy, existing local database —
+ * in BOTH directions. Installing pg_net when the setting is on was always covered;
+ * removing it when the setting is turned back off was not, so pg_net silently
+ * survived on the volume while the next engine's shadow baseline (rebuilt from the
+ * current config) omitted it, reporting pg_net drift on every `db diff`/`db pull`.
+ *
+ * The removal is guarded, because `supabase start` does NOT replay migrations on an
+ * existing volume: an unconditional drop would delete an extension a user's own
+ * migration created, with nothing to put it back. So pg_net is dropped only when no
+ * applied migration in `supabase_migrations.schema_migrations` installs it (see
+ * {@link legacyStatementInstallsPgNet}), and any failure to read that history —
+ * missing table, malformed table, insufficient privileges — is treated as
+ * "migration-owned" and leaves the extension alone. Erring toward not dropping is
+ * the only safe direction here.
+ */
 export const legacyRunDatabaseWebhooksSetup = (input: {
   readonly fs: FileSystem.FileSystem;
   readonly path: Path.Path;
@@ -1314,15 +1346,23 @@ export const legacyRunDatabaseWebhooksSetup = (input: {
   readonly dbPort: number;
   readonly dbUrl: string;
   readonly enabled: boolean;
-}) => {
-  if (!input.enabled) return Effect.void;
-  return Effect.scoped(
+}) =>
+  Effect.scoped(
     Effect.gen(function* () {
       const session = yield* legacyConnectLocalPostgres({
         hostname: input.hostname,
         dbPort: input.dbPort,
         password: legacyStartInternalDbPassword(input.dbUrl),
       });
+      if (!input.enabled) {
+        const pgNetOwnedByMigrations = yield* legacyReadMigrationTable(session).pipe(
+          Effect.map((migrations) =>
+            migrations.some((migration) => migration.statements.some(legacyStatementInstallsPgNet)),
+          ),
+          Effect.orElseSucceed(() => true),
+        );
+        if (pgNetOwnedByMigrations) return;
+      }
       const tmpDir = yield* input.fs
         .makeTempDirectoryScoped({ prefix: "supabase-start-db-webhooks-" })
         .pipe(
@@ -1334,10 +1374,13 @@ export const legacyRunDatabaseWebhooksSetup = (input: {
               }),
           ),
         );
+      if (!input.enabled) {
+        yield* legacyRemoveDatabaseWebhooks(session, input.fs, input.path, tmpDir);
+        return;
+      }
       yield* legacyApplyDatabaseWebhooks(session, input.fs, input.path, tmpDir, input.enabled);
     }),
   );
-};
 
 /**
  * Runs {@link legacyStartSetupLocalDatabase} against a freshly-provisioned local

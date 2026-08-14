@@ -81,9 +81,20 @@ export const legacyDiffDeclarativeToMigrations = Effect.fnUntraced(function* (
   const files = yield* LegacyLoadPgDeltaSqlFiles(fs, path, run.declarativeDir).pipe(
     Effect.mapError((error) => declarativeError(error.message)),
   );
-  const manifest = yield* LegacyReadPgDeltaExportManifest(fs, path, run.declarativeDir).pipe(
-    Effect.mapError((error) => declarativeError(error.message)),
-  );
+  // Only the next engine consumes the export manifest (its planner reads ownership
+  // metadata from it); the legacy engine's `planDeclarativeSchema` ignores
+  // `input.manifest` entirely. Reading it unconditionally made the strict manifest
+  // validation (`LegacyReadPgDeltaExportManifest` fails on malformed JSON or missing
+  // policy metadata) fail a legacy-engine sync over a file the legacy planner never
+  // looks at, defeating the `SUPABASE_USE_PG_DELTA_NEXT=false` escape hatch. Under
+  // the legacy engine the manifest is treated as absent, exactly as if the file did
+  // not exist.
+  const manifest =
+    engine.implementation === "next"
+      ? yield* LegacyReadPgDeltaExportManifest(fs, path, run.declarativeDir).pipe(
+          Effect.mapError((error) => declarativeError(error.message)),
+        )
+      : undefined;
   const result = yield* engine.planDeclarativeSchema({
     context: run.pgDelta,
     schema: run.schema,

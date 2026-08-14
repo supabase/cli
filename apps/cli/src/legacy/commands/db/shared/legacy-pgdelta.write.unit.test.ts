@@ -14,12 +14,14 @@ import { BunServices } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit, FileSystem, Path } from "effect";
 
+import { mockOutput } from "../../../../../tests/helpers/mocks.ts";
 import { legacyBold } from "../../../shared/legacy-colors.ts";
 import type { LegacyDeclarativeOutput } from "../../../shared/legacy-pgdelta.ts";
 import { LegacyDeclarativeWriteError } from "./legacy-pgdelta.errors.ts";
 import type { LegacyPgDeltaDeclarativeExportResult } from "./legacy-pgdelta-engine.service.ts";
 import {
   legacyDeclarativeSchemaWrittenLine,
+  legacyWarnPreservedUnmanagedDeclarativeFiles,
   legacyWriteDeclarativeSchemas,
 } from "./legacy-pgdelta.write.ts";
 
@@ -116,6 +118,84 @@ describe("legacyWriteDeclarativeSchemas", () => {
           expect(
             JSON.parse(readFileSync(join(declDir, ".pgdelta-export.json"), "utf8")).files,
           ).toEqual(["schemas/public.sql"]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports pre-existing files preserved when no manifest claims ownership", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-write-"));
+    const declDir = join(dir, "supabase", "database");
+    // A directory produced by the OLD legacy full-wipe exporter: `.sql` files, no
+    // `.pgdelta-export.json`. Nothing can be classified as stale, so the next writer
+    // merges into it — the caller has to tell the user that happened.
+    mkdirSync(join(declDir, "_custom"), { recursive: true });
+    writeFileSync(join(declDir, "_custom", "casts.sql"), "create cast (int as text);");
+    writeFileSync(join(declDir, "legacy-b.sql"), "select 'b';");
+    writeFileSync(join(declDir, "legacy-a.sql"), "select 'a';");
+    writeFileSync(join(declDir, "schemas-public.sql"), "-- replaced by the export below");
+
+    return write(declDir, {
+      files: [{ name: "schemas-public.sql", sql: "create table public.example(id int);" }],
+      manifest: { redactSecrets: true, scope: "database", profile: "supabase" },
+    }).pipe(
+      Effect.tap((written) =>
+        Effect.sync(() => {
+          // Sorted, excludes the file the export itself replaced and the reserved
+          // `_custom/` tree (never read as managed output).
+          expect(written.preservedUnmanagedFiles).toEqual(["legacy-a.sql", "legacy-b.sql"]);
+          expect(readFileSync(join(declDir, "legacy-a.sql"), "utf8")).toBe("select 'a';");
+          expect(readFileSync(join(declDir, "schemas-public.sql"), "utf8")).toBe(
+            "create table public.example(id int);",
+          );
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports nothing preserved once a manifest owns the directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-write-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "unmanaged.sql"), "select 'keep me';");
+    writeFileSync(
+      join(declDir, ".pgdelta-export.json"),
+      `${JSON.stringify({
+        formatVersion: 1,
+        redactSecrets: true,
+        scope: "database",
+        files: ["stale.sql"],
+      })}\n`,
+    );
+
+    return write(declDir, {
+      files: [{ name: "schemas/public.sql", sql: "create table public.example(id int);" }],
+      manifest: { redactSecrets: true, scope: "database" },
+    }).pipe(
+      Effect.tap((written) =>
+        Effect.sync(() => {
+          expect(written.preservedUnmanagedFiles).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("reports nothing preserved for the legacy full-wipe writer", () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-write-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "stale.sql"), "-- wiped");
+    return write(declDir, {
+      version: 1,
+      mode: "declarative",
+      files: [{ path: "public.sql", order: 0, statements: 0, sql: "select 1;" }],
+    }).pipe(
+      Effect.tap((written) =>
+        Effect.sync(() => {
+          expect(written.preservedUnmanagedFiles).toEqual([]);
           rmSync(dir, { recursive: true, force: true });
         }),
       ),
@@ -223,5 +303,31 @@ describe("legacyDeclarativeSchemaWrittenLine", () => {
     expect(legacyDeclarativeSchemaWrittenLine("supabase/database")).toBe(
       `Declarative schema written to ${legacyBold("supabase/database")}\n`,
     );
+  });
+});
+
+describe("legacyWarnPreservedUnmanagedDeclarativeFiles", () => {
+  it.effect("names the preserved files and advises a full rewrite", () => {
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      yield* legacyWarnPreservedUnmanagedDeclarativeFiles("supabase/database", {
+        preservedUnmanagedFiles: ["legacy-a.sql", "legacy-b.sql"],
+      });
+      const stderr = out.stderrText;
+      expect(stderr).toContain("2 existing declarative schema file(s) in supabase/database");
+      expect(stderr).toContain("legacy-a.sql, legacy-b.sql");
+      expect(stderr).toContain("were preserved");
+      expect(stderr).toContain("remove supabase/database and re-run");
+    }).pipe(Effect.provide(out.layer));
+  });
+
+  it.effect("stays silent when the write preserved nothing", () => {
+    const out = mockOutput();
+    return Effect.gen(function* () {
+      yield* legacyWarnPreservedUnmanagedDeclarativeFiles("supabase/database", {
+        preservedUnmanagedFiles: [],
+      });
+      expect(out.stderrText).toBe("");
+    }).pipe(Effect.provide(out.layer));
   });
 });

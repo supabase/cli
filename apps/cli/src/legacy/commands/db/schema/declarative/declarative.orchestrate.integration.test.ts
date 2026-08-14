@@ -253,6 +253,84 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       Effect.provide(Layer.mergeAll(engine, BunServices.layer)),
     );
   });
+
+  // The legacy engine's `planDeclarativeSchema` never looks at `input.manifest`, so
+  // validating the manifest for it turned a stale/hand-edited `.pgdelta-export.json`
+  // into a hard failure of the documented `SUPABASE_USE_PG_DELTA_NEXT=false` escape
+  // hatch. The next engine, which does consume it, must still reject it.
+  const stubEngine = (
+    implementation: "legacy" | "next",
+    calls: LegacyPgDeltaDeclarativePlanInput[],
+  ) =>
+    Layer.succeed(
+      LegacyPgDeltaEngine,
+      LegacyPgDeltaEngine.of({
+        implementation,
+        diffExplicit: () => Effect.die("diffExplicit not used"),
+        diffDatabase: () => Effect.die("diffDatabase not used"),
+        exportDeclarativeSchema: () => Effect.die("exportDeclarativeSchema not used"),
+        planDeclarativeSchema: (input) => {
+          calls.push(input);
+          return Effect.succeed({
+            changes: true,
+            sql: "create table public.accounts();",
+            files: [],
+            sourceRef: "migrations",
+            targetRef: "declarative",
+          });
+        },
+      }),
+    );
+
+  const withCorruptManifest = () => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    writeFileSync(join(declDir, "public.sql"), "create table public.accounts();");
+    writeFileSync(join(declDir, ".pgdelta-export.json"), "{ not json at all");
+    return { dir, declDir };
+  };
+
+  it.effect("ignores a corrupt export manifest under the legacy engine opt-out", () => {
+    const { dir, declDir } = withCorruptManifest();
+    const calls: LegacyPgDeltaDeclarativePlanInput[] = [];
+    return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), toml, setupInputs).pipe(
+      Effect.tap((result) =>
+        Effect.sync(() => {
+          expect(calls[0]?.files).toEqual([
+            { name: "public.sql", sql: "create table public.accounts();" },
+          ]);
+          expect(calls[0]?.manifest).toBeUndefined();
+          expect(result.manifestPresent).toBe(false);
+          expect(result.diffSQL).toBe("create table public.accounts();");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(stubEngine("legacy", calls), BunServices.layer)),
+    );
+  });
+
+  it.effect("still rejects a corrupt export manifest under the next engine", () => {
+    const { dir, declDir } = withCorruptManifest();
+    const calls: LegacyPgDeltaDeclarativePlanInput[] = [];
+    return legacyDiffDeclarativeToMigrations(ctx(dir, declDir), toml, setupInputs).pipe(
+      Effect.exit,
+      Effect.tap((exit) =>
+        Effect.sync(() => {
+          expect(Exit.isFailure(exit)).toBe(true);
+          if (Exit.isFailure(exit)) {
+            const error = exit.cause.reasons.find(Cause.isFailReason)?.error;
+            expect(String((error as { message?: string } | undefined)?.message)).toContain(
+              "malformed export manifest",
+            );
+          }
+          expect(calls).toEqual([]);
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+      Effect.provide(Layer.mergeAll(stubEngine("next", calls), BunServices.layer)),
+    );
+  });
 });
 
 // A minimal, valid `LegacySetupInputs` — the exact field values don't matter to
@@ -363,6 +441,69 @@ describe("legacyDiffDeclarativeToMigrations", () => {
       );
     },
   );
+
+  // `--strict-coverage` is enforced entirely by the next engine's diagnostic report;
+  // the legacy engine has no coverage diagnostics, so the flag silently did nothing
+  // under `SUPABASE_USE_PG_DELTA_NEXT=false`. It must say so instead.
+  const runWithLegacyEngine = (strictCoverage: boolean) => {
+    const dir = mkdtempSync(join(tmpdir(), "legacy-decl-orch-"));
+    const declDir = join(dir, "supabase", "database");
+    mkdirSync(declDir, { recursive: true });
+    const seam = mockSeam({
+      declarative: "supabase/.temp/pgdelta/decl.json",
+      baseline: "supabase/.temp/pgdelta/base.json",
+    });
+    const edge = mockEdge("ALTER TABLE x ADD COLUMN y int;\n");
+    const out = mockOutput();
+    const shadow = mockShadowInfra();
+    return {
+      dir,
+      out,
+      effect: legacyDiffDeclarativeToMigrations(
+        { ...ctx(dir, declDir), strictCoverage },
+        toml,
+        setupInputs,
+      ).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            seam.layer,
+            edge.layer,
+            probe,
+            out.layer,
+            engineLayer(seam.layer, edge.layer, out.layer, shadow.layer),
+            BunServices.layer,
+            shadow.layer,
+          ),
+        ),
+      ),
+    };
+  };
+
+  it.effect("warns that --strict-coverage does nothing on the legacy engine", () => {
+    const { dir, out, effect } = runWithLegacyEngine(true);
+    return effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(out.stderrText).toContain(
+            '"--strict-coverage" has no effect with the legacy pg-delta engine.',
+          );
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
+
+  it.effect("stays silent about --strict-coverage when the flag is unset", () => {
+    const { dir, out, effect } = runWithLegacyEngine(false);
+    return effect.pipe(
+      Effect.tap(() =>
+        Effect.sync(() => {
+          expect(out.stderrText).not.toContain("--strict-coverage");
+          rmSync(dir, { recursive: true, force: true });
+        }),
+      ),
+    );
+  });
 
   it.effect(
     "reuses an already-warmed platform-baseline catalog without provisioning a shadow",

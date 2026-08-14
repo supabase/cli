@@ -10,6 +10,7 @@ import {
 } from "../../../../shared/legacy/global-flags.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { RuntimeInfo } from "../../../../shared/runtime/runtime-info.service.ts";
+import { legacyYellow } from "../../../shared/legacy-colors.ts";
 import { LegacyDbConnection } from "../../../shared/legacy-db-connection.service.ts";
 import { LegacyEdgeRuntimeScript } from "../../../shared/legacy-edge-runtime-script.service.ts";
 import { LegacyDockerRun } from "../../../shared/legacy-docker-run.service.ts";
@@ -37,6 +38,18 @@ import { LegacyDeclarativeSeam } from "./legacy-pgdelta.seam.service.ts";
 
 const mapError = (cause: { readonly message: string }) =>
   new LegacyPgDeltaEngineError({ message: cause.message, cause });
+
+/**
+ * `--strict-coverage` is enforced entirely by the next engine's diagnostic report
+ * (`legacy-pgdelta-next-diagnostics.ts`); this adapter has no coverage diagnostics
+ * to reject, so the flag is a silent no-op under
+ * `SUPABASE_USE_PG_DELTA_NEXT=false`. Say so once instead, rather than letting a
+ * user believe an unsupported-object guard is active. Mirrors `db diff`'s
+ * `warnPgSchemaDeprecated` line shape.
+ */
+export const legacyStrictCoverageIgnoredWarning = `${legacyYellow(
+  "WARNING:",
+)} "--strict-coverage" has no effect with the legacy pg-delta engine.`;
 
 function normalizeDiff(
   result: {
@@ -106,6 +119,19 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
       operation: Effect.Effect<Success, Error, Requirements>,
     ) => operation.pipe(Effect.provide(runtime));
 
+    // Emitted from the engine layer, not from each handler: this is the single place
+    // where the resolved implementation and the per-operation input meet, so all four
+    // workflows (`db diff`, `db pull`, and declarative `generate`/`sync`) get the line
+    // with no per-command wiring. Once per process — `sync` can plan twice (extension
+    // repair re-plans) and a repeated line adds nothing.
+    let strictCoverageWarned = false;
+    const warnStrictCoverageIgnored = (strictCoverage: boolean) =>
+      Effect.suspend(() => {
+        if (!strictCoverage || strictCoverageWarned) return Effect.void;
+        strictCoverageWarned = true;
+        return output.raw(`${legacyStrictCoverageIgnoredWarning}\n`, "stderr");
+      });
+
     const endpointRef = (
       context: LegacyPgDeltaContext,
       endpoint: LegacyPgDeltaEndpoint,
@@ -132,6 +158,7 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
       implementation: "legacy",
       diffExplicit: (input) =>
         Effect.gen(function* () {
+          yield* warnStrictCoverageIgnored(input.strictCoverage);
           const sourceRef = yield* endpointRef(input.context, input.source, input.toml);
           const targetRef = yield* endpointRef(input.context, input.desired, input.toml);
           const result = yield* provideRuntime(
@@ -146,6 +173,7 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         }).pipe(Effect.mapError(mapError)),
       diffDatabase: (input) =>
         Effect.gen(function* () {
+          yield* warnStrictCoverageIgnored(input.strictCoverage);
           const sourceSnapshot = input.debug
             ? yield* provideRuntime(
                 legacyExportCatalogPgDelta(input.context, {
@@ -178,6 +206,7 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         }).pipe(Effect.mapError(mapError)),
       exportDeclarativeSchema: (input) =>
         Effect.gen(function* () {
+          yield* warnStrictCoverageIgnored(input.strictCoverage);
           if (input.source === undefined) {
             return yield* Effect.fail(
               new LegacyPgDeltaEngineError({
@@ -200,6 +229,7 @@ export const legacyPgDeltaLegacyEngineLayer = Layer.effect(
         }).pipe(Effect.mapError(mapError)),
       planDeclarativeSchema: (input) =>
         Effect.gen(function* () {
+          yield* warnStrictCoverageIgnored(input.strictCoverage);
           const sourceRef = yield* legacyGetMigrationsCatalogRef(
             fs,
             path,

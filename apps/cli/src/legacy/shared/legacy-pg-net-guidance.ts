@@ -19,3 +19,21 @@ export const legacyIsPgNetUnavailableError = (
 ): boolean =>
   (error.code === "3F000" && MISSING_NET_SCHEMA_PATTERN.test(error.message)) ||
   (error.code === "42883" && MISSING_PG_NET_FUNCTION_PATTERN.test(error.message));
+
+const CREATE_PG_NET_EXTENSION_PATTERN = /\bcreate\s+extension\b[\s\S]*?\bpg_net\b/iu;
+
+/**
+ * Whether a recorded `supabase_migrations.schema_migrations` statement installs
+ * pg_net.
+ *
+ * Deliberately a loose, over-matching scan (no SQL parse, no schema/quoting
+ * awareness) because of the direction the answer is used in: it only ever gates
+ * AWAY from dropping the extension. A false positive leaves a user's pg_net
+ * installed, which is harmless; a false negative would drop an extension the user's
+ * OWN migrations created — and `supabase start` does not replay migrations on an
+ * existing volume, so nothing would put it back. The constraint this exists to
+ * enforce: the webhooks-disabled convergence drop must never remove
+ * migration-owned pg_net.
+ */
+export const legacyStatementInstallsPgNet = (statement: string): boolean =>
+  CREATE_PG_NET_EXTENSION_PATTERN.test(statement);

@@ -765,11 +765,24 @@ describe("LegacyPgDeltaNextAdapter", () => {
           "declarativeLoad",
           "declarativeTarget",
           "declarativeDrift",
+          "declarativeLoad",
         ]);
-        expect(planned.diagnostics.at(-1)).toMatchObject({
+        expect(planned.diagnostics.at(-2)).toMatchObject({
           origin: "declarativeDrift",
           code: "unmodeled_drift",
           subject: "subject:drift",
+        });
+        // Statements the loader could not model become coverage diagnostics here, so
+        // they travel the shared diagnostic report (warn by default, fail under
+        // `--strict-coverage`) instead of only living in the unread `skipped` field.
+        expect(planned.diagnostics.at(-1)).toEqual({
+          origin: "declarativeLoad",
+          code: "skipped_statement",
+          severity: "warning",
+          subject: "roles.sql",
+          message:
+            "pg-delta could not load a declarative schema statement from roles.sql: create role ignored",
+          context: { file: "roles.sql", statement: "create role ignored" },
         });
         expect(planned.hazards).toEqual({
           actions: [{ actionIndex: 0, kinds: ["data_loss"] }],

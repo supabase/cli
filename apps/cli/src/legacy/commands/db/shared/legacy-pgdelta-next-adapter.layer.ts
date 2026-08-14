@@ -40,6 +40,7 @@ import {
   type LegacyPgDeltaNextOperation,
 } from "./legacy-pgdelta-next-adapter.service.ts";
 import type { LegacyPgDeltaRemovalSummary } from "./legacy-pgdelta-engine.service.ts";
+import { LEGACY_PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE } from "./legacy-pgdelta-next-diagnostics.ts";
 
 interface LegacyPgDeltaNextLibraryDiagnostic<Subject> {
   readonly code: string;
@@ -227,6 +228,28 @@ function legacyNormalizePgDeltaNextDiagnostics<Subject>(
     ...(diagnostic.subject !== undefined ? { subject: encodeSubject(diagnostic.subject) } : {}),
     message: diagnostic.message,
     ...(diagnostic.context !== undefined ? { context: diagnostic.context } : {}),
+  }));
+}
+
+/**
+ * Turns `planSchemaFiles`' skipped statements into coverage diagnostics so they
+ * travel the ONE diagnostic report path every consumer already renders and
+ * enforces — warned by default, blocking under `--strict-coverage`. Built here,
+ * where `skipped` originates, so no consumer has to remember to look at the
+ * separate `skipped` field (nothing did, and the statements vanished silently).
+ * The raw statement stays in `context`/detail rather than the aggregate warning,
+ * since a skipped `CREATE ROLE` can carry a password.
+ */
+function legacySkippedStatementDiagnostics(
+  skipped: readonly { readonly file: string; readonly stmt: string }[],
+): LegacyPgDeltaNextDiagnostic[] {
+  return skipped.map((entry) => ({
+    origin: "declarativeLoad",
+    code: LEGACY_PG_DELTA_NEXT_SKIPPED_STATEMENT_CODE,
+    severity: "warning",
+    subject: entry.file,
+    message: `pg-delta could not load a declarative schema statement from ${entry.file}: ${entry.stmt}`,
+    context: { file: entry.file, statement: entry.stmt },
   }));
 }
 
@@ -623,6 +646,7 @@ function legacyMakePgDeltaNextAdapter<FactBase, PlanOptions extends object, Plan
               "declarativeDrift",
               libraries.encodeSubject,
             ),
+            ...legacySkippedStatementDiagnostics(result.skipped),
           ],
           hazards: libraries.summarizeHazards(result.plan, libraryDiagnostics),
           skipped: result.skipped.map((skipped) => ({

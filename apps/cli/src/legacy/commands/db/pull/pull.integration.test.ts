@@ -771,7 +771,47 @@ describe("legacy db pull", () => {
     }).pipe(Effect.provide(s.layer));
   });
 
-  it.effect("pulls with migra and warns that schema_paths cannot replace the target", () => {
+  // The transition warning belongs to the bundled next engine only: migra (and the
+  // legacy pg-delta opt-out) still substitute the declared-schema
+  // `contrib_regression` target for a local database, so schema_paths does still
+  // shape their output and the warning would be factually wrong.
+  it.effect("pulls with the next engine and warns that schema_paths no longer applies", () => {
+    seedMigration(tmp.current, "20240101000000");
+    writeFileSync(
+      join(tmp.current, "supabase", "config.toml"),
+      [
+        "[db.migrations]",
+        'schema_paths = ["database/*.sql"]',
+        "",
+        "[experimental.pgdelta]",
+        "enabled = true",
+        "",
+      ].join("\n"),
+    );
+    const s = setup(tmp.current, {
+      remoteVersions: ["20240101000000"],
+      engineImplementation: "next",
+      // The next engine's mock parses `edgeStdout` as a rendered-file envelope.
+      edgeStdout: JSON.stringify({
+        files: [
+          {
+            name: "schema_changes",
+            transactionMode: "transactional",
+            sql: "create table remote ();\n",
+          },
+        ],
+      }),
+      yes: true,
+    });
+    return Effect.gen(function* () {
+      yield* legacyDbPull(flags());
+      expect(streamText(s.out, "stderr")).toContain(
+        "schema_paths no longer changes the migrations baseline",
+      );
+    }).pipe(Effect.provide(s.layer));
+  });
+
+  it.effect("pulls with migra and does not warn about schema_paths", () => {
     seedMigration(tmp.current, "20240101000000");
     writeFileSync(
       join(tmp.current, "supabase", "config.toml"),
@@ -788,7 +828,7 @@ describe("legacy db pull", () => {
       // (a pg-delta selection would instead try — and fail — to `JSON.parse` it).
       expect(s.shadowSpawned.filter((call) => call.args[0] === "create")).toHaveLength(1);
       const err = streamText(s.out, "stderr");
-      expect(err).toContain("schema_paths no longer changes the migrations baseline");
+      expect(err).not.toContain("schema_paths no longer changes the migrations baseline");
       // Go's `ConnectByConfig` prints the Connecting line to stderr before dialing
       // (`internal/utils/connect.go:348`), ahead of any other pull output.
       expect(err).toContain("Connecting to remote database...\n");
