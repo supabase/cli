@@ -235,6 +235,23 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
 }
 
 /**
+ * The registry file opened successfully, but its load-bearing SQLite schema is
+ * not the shape this runtime was built to use. This is a caller-actionable
+ * incompatibility, distinct from driver corruption or an I/O defect.
+ */
+export class IncompatibleManagedRegistryError extends Data.TaggedError(
+  "IncompatibleManagedRegistryError",
+)<{
+  readonly reason: string;
+}> {
+  readonly code = "INCOMPATIBLE_MANAGED_REGISTRY" as const;
+
+  override get message(): string {
+    return `Managed registry schema is incompatible: ${this.reason}`;
+  }
+}
+
+/**
  * The closed set of materially different reasons {@link UnsupportedGitWorkspaceError}
  * is raised for, so telemetry can fingerprint them separately instead of
  * collapsing every refusal into one bucket:
@@ -538,6 +555,7 @@ export type ManagedStackError =
   | ManagedCopiedBranchConflictError
   | DuplicateManagedIdentityError
   | DuplicateManagedPortKeyError
+  | IncompatibleManagedRegistryError
   | InvalidManagedIdentityError
   | InvalidManagedOwnerPidError
   | InvalidManagedPortError
@@ -601,6 +619,7 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "MANAGED_COPIED_BRANCH_CONFLICT",
   "DUPLICATE_MANAGED_IDENTITY",
   "INVALID_MANAGED_IDENTITY",
+  "INCOMPATIBLE_MANAGED_REGISTRY",
   "MANAGED_DUPLICATE_PORT_KEY",
   "MANAGED_INVALID_OWNER_PID",
   "MANAGED_INVALID_PORT",
@@ -638,6 +657,7 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_COPIED_BRANCH_CONFLICT: "ManagedCopiedBranchConflictError",
   DUPLICATE_MANAGED_IDENTITY: "DuplicateManagedIdentityError",
   INVALID_MANAGED_IDENTITY: "InvalidManagedIdentityError",
+  INCOMPATIBLE_MANAGED_REGISTRY: "IncompatibleManagedRegistryError",
   MANAGED_DUPLICATE_PORT_KEY: "DuplicateManagedPortKeyError",
   MANAGED_INVALID_OWNER_PID: "InvalidManagedOwnerPidError",
   MANAGED_INVALID_PORT: "InvalidManagedPortError",

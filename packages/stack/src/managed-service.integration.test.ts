@@ -2908,9 +2908,11 @@ describe("managed repository and lifecycle", () => {
     database.exec("ALTER TABLE contexts RENAME COLUMN owner_branch TO owner_branch_missing");
     database.close();
 
-    await expect(openRegistry(databasePath)).rejects.toThrow(
-      "table contexts is missing column owner_branch",
-    );
+    await expect(openRegistry(databasePath)).rejects.toMatchObject({
+      _tag: "IncompatibleManagedRegistryError",
+      code: "INCOMPATIBLE_MANAGED_REGISTRY",
+      reason: "table contexts is missing column owner_branch",
+    });
   });
 
   it("refuses a registry whose active-location index has the wrong columns", async () => {

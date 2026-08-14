@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, ManagedRuntime, type FileSystem } from "effect";
 import { fromCallback, isFinished } from "./callback.ts";
-import { UnsafeManagedStackPathError } from "./model.ts";
+import { IncompatibleManagedRegistryError, UnsafeManagedStackPathError } from "./model.ts";
 import type {
   InvalidManagedOwnerPidError,
   ManagedOperationRecord,
@@ -238,11 +238,14 @@ const managedStackServiceHandle = async <ER>(
  * The state-root and owner-pid errors are option bugs the layer refuses to start
  * with.
  */
-export type ManagedStackLayerFailure = InvalidManagedOwnerPidError | UnsafeManagedStackPathError;
+export type ManagedStackLayerFailure =
+  | IncompatibleManagedRegistryError
+  | InvalidManagedOwnerPidError
+  | UnsafeManagedStackPathError;
 
 const serviceLayer = (
   options: ManagedStackServiceOptions,
-  repositoryLayer: Layer.Layer<ManagedStackRepository>,
+  repositoryLayer: Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError>,
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
 ): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
   ManagedStackService.make(options).pipe(
@@ -269,7 +272,9 @@ const serviceLayer = (
  */
 export const managedStackLayerWith = (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
-  openRepository: (registryPath: string) => Layer.Layer<ManagedStackRepository>,
+  openRepository: (
+    registryPath: string,
+  ) => Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError>,
   options: CreateManagedStackServiceOptions,
 ): Layer.Layer<ManagedStackRepository | ManagedStackService, ManagedStackLayerFailure> =>
   Layer.unwrap(
@@ -327,7 +332,9 @@ export const makeManagedStackServiceWith = async (
  */
 export const createManagedStackServiceWith = async (
   fileSystemLayer: Layer.Layer<FileSystem.FileSystem>,
-  openRepository: (registryPath: string) => Layer.Layer<ManagedStackRepository>,
+  openRepository: (
+    registryPath: string,
+  ) => Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError>,
   options: CreateManagedStackServiceOptions,
 ): Promise<ManagedStackServiceHandle> => {
   // Validated here as well as in the layer, so a caller that supplied an

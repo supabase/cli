@@ -16,6 +16,7 @@ import {
   branchRefExists,
   GitConfigStore,
   inspectWorkspace,
+  isOrdinaryIdentityMarkerTracked,
   readBranchContextId,
   readGitCheckoutIdentityWithFileSystem,
   type GitCheckoutInspection,
@@ -73,6 +74,7 @@ export interface ManagedWorkspaceDiscoveryIdentity {
 export interface ManagedOrdinaryMarkerEvidence {
   readonly path: string;
   readonly present: boolean;
+  readonly tracked?: boolean;
   readonly identity?: ManagedWorkspaceDiscoveryIdentity;
 }
 
@@ -199,6 +201,8 @@ interface WorkspaceClassificationEvidence {
   readonly samePathClaims: number;
   readonly markerRegistryConflict: boolean;
   readonly sameCheckoutReappeared: boolean;
+  /** The active historical location was proved missing during this discovery. */
+  readonly activeLocationMissing: boolean;
   readonly inaccessiblePaths: number;
   readonly recycledPaths: number;
   readonly authoritativeOwnerBranch?: string;
@@ -264,7 +268,8 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     evidence.currentLocation?.state === "blocked" ||
     (evidence.currentLocation?.state === "superseded" &&
       evidence.anyActiveLocation !== undefined &&
-      evidence.anyActiveLocation.id !== evidence.currentLocation.id)
+      evidence.anyActiveLocation.id !== evidence.currentLocation.id &&
+      !evidence.activeLocationMissing)
   ) {
     state = "duplicate";
     conflicts.push(
@@ -543,9 +548,13 @@ export const discoverWorkspace = (
         .exists(markerPath)
         .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
       const marker = yield* Effect.exit(readOrdinaryWorkspaceIdentityWithFileSystem(canonicalPath));
+      const markerTracked = markerExists
+        ? yield* isOrdinaryIdentityMarkerTracked(inspection.workspaceRoot)
+        : false;
       ordinaryMarker = {
         path: markerPath,
         present: markerExists,
+        tracked: markerTracked,
         identity: marker._tag === "Success" ? marker.value : undefined,
       };
       const stored = yield* readGitCheckoutIdentityWithFileSystem(inspection);
@@ -617,6 +626,7 @@ export const discoverWorkspace = (
       (location) =>
         location.canonicalPath === metadata.workspace.workspaceRoot &&
         location.checkoutId !== identity.checkoutId &&
+        location.state !== "superseded" &&
         !folderClaimCheckoutIds.has(location.checkoutId),
     );
 
@@ -633,9 +643,16 @@ export const discoverWorkspace = (
       (location) =>
         location.state === "active" && location.canonicalPath === metadata.workspace.workspaceRoot,
     );
-    const currentLocation = locations.find(
-      (location) => location.canonicalPath === metadata.workspace.workspaceRoot,
-    );
+    // A path can have superseded ancestry alongside its current active row
+    // after a move-away/move-back cycle. Prefer the active claim so history
+    // cannot make an actually active checkout look duplicated.
+    const currentLocation =
+      locations.find(
+        (location) =>
+          location.canonicalPath === metadata.workspace.workspaceRoot &&
+          location.state === "active",
+      ) ??
+      locations.find((location) => location.canonicalPath === metadata.workspace.workspaceRoot);
     const anyActiveLocation = locations.find((location) => location.state === "active");
     const previousPathProbes: ReadonlyArray<{
       readonly path: string;
@@ -674,6 +691,9 @@ export const discoverWorkspace = (
       .filter((probe) => probe.result === "recycled")
       .map((probe) => probe.path);
     const sameCheckoutReappeared = previousPathProbes.some((probe) => probe.result === "same");
+    const activeLocationMissing = previousPathProbes.some(
+      (probe) => probe.locationState === "active" && probe.result === "missing",
+    );
     const historicalPathEvidence = previousPathProbes.map(({ path, locationState, result }) => ({
       path,
       locationState,
@@ -710,6 +730,7 @@ export const discoverWorkspace = (
       samePathClaims: samePathClaims.length,
       markerRegistryConflict,
       sameCheckoutReappeared,
+      activeLocationMissing,
       inaccessiblePaths: inaccessiblePaths.length,
       recycledPaths: recycledPaths.length,
       authoritativeOwnerBranch: ownerEvidence?.authoritativeOwnerBranch,
@@ -734,6 +755,9 @@ export const discoverWorkspace = (
     const conflicts = [...classification.conflicts];
     const warnings = [...classification.warnings];
     const recoveryOperations = [...classification.recoveryOperations];
+    if (ordinaryMarker?.present === true && ordinaryMarker.tracked === true) {
+      warnings.push("Tracked ordinary-folder identity marker is inert in this Git checkout");
+    }
     const protectedLocationIds = protectedManagedCheckoutLocationIds({
       locations,
       transitions: allClaims.transitions,

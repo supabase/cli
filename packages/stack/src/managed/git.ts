@@ -16,7 +16,12 @@ import {
   type GitCheckoutIdentity,
   type UnsupportedGitWorkspaceCause,
 } from "./model.ts";
-import { gitCheckoutIdentityPath, gitConfigPath, gitWorktreeConfigPath } from "./paths.ts";
+import {
+  gitCheckoutIdentityPath,
+  gitConfigPath,
+  gitWorktreeConfigPath,
+  ordinaryWorkspaceIdentityPath,
+} from "./paths.ts";
 
 const BRANCH_REF_PREFIX = "refs/heads/";
 const COMMON_DIRECTORY_FILE = "commondir";
@@ -502,6 +507,51 @@ export const inspectWorkspace = (
       ),
     ),
   );
+
+/**
+ * Read-only check used when a folder identity marker is carried into a Git
+ * checkout. `ls-files --error-unmatch` gives a stable three-way result: exit 0
+ * means tracked, exit 1 means absent from the index, and every other status is
+ * metadata-inaccessible. The index is never modified.
+ */
+export const isOrdinaryIdentityMarkerTracked = (
+  workspaceRoot: string,
+): Effect.Effect<boolean, UnsupportedGitWorkspaceError> =>
+  Effect.tryPromise({
+    try: () =>
+      new Promise<boolean>((resolveResult, reject) => {
+        execFile(
+          "git",
+          ["-C", workspaceRoot, "ls-files", "--error-unmatch", "--", ".supabase/identity.json"],
+          { encoding: "utf8" },
+          (error, _stdout, stderr) => {
+            if (error === null) {
+              resolveResult(true);
+              return;
+            }
+            if (error.code === 1) {
+              resolveResult(false);
+              return;
+            }
+            reject(
+              new UnsupportedGitWorkspaceError({
+                path: ordinaryWorkspaceIdentityPath(workspaceRoot),
+                reason: `Git index metadata is inaccessible (${stderr.trim() || String(error.code)})`,
+                workspaceCause: "metadata-inaccessible",
+              }),
+            );
+          },
+        );
+      }),
+    catch: (error: unknown) =>
+      error instanceof UnsupportedGitWorkspaceError
+        ? error
+        : new UnsupportedGitWorkspaceError({
+            path: ordinaryWorkspaceIdentityPath(workspaceRoot),
+            reason: `Git index metadata is inaccessible (${errorCode(error) ?? String(error)})`,
+            workspaceCause: "metadata-inaccessible",
+          }),
+  });
 
 export interface GitConfigStoreShape {
   /** Every value stored at `key`, in file order; empty when it is not set. */

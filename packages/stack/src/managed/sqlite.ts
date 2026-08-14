@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import { Duration, Effect, Layer, Schedule, Schema } from "effect";
 import {
   DuplicateManagedIdentityError,
+  IncompatibleManagedRegistryError,
   ManagedCheckoutConflictError,
   ManagedCopiedBranchConflictError,
   ManagedIdentityTransitionOwnershipError,
@@ -645,8 +646,8 @@ const normalizeSql = (sql: string): string =>
     .replace(/;$/, "")
     .trim();
 
-const sqliteSchemaError = (message: string): Error =>
-  new Error(`Managed registry schema is incompatible: ${message}`);
+const sqliteSchemaError = (reason: string): IncompatibleManagedRegistryError =>
+  new IncompatibleManagedRegistryError({ reason });
 
 /**
  * Checks the current schema's load-bearing shape when opening an existing
@@ -722,7 +723,9 @@ const validateCurrentSchema = (database: ManagedSqliteDatabase): void => {
  * created directly. Driver errors stay defects so actual SQLite corruption/open
  * failures remain visible to callers.
  */
-const initializeRegistry = (database: ManagedSqliteDatabase): Effect.Effect<void> =>
+const initializeRegistry = (
+  database: ManagedSqliteDatabase,
+): Effect.Effect<void, IncompatibleManagedRegistryError> =>
   Effect.gen(function* () {
     yield* Effect.sync(() => {
       database.exec("PRAGMA busy_timeout = 5000");
@@ -731,7 +734,10 @@ const initializeRegistry = (database: ManagedSqliteDatabase): Effect.Effect<void
     yield* enableWriteAheadLogging(database);
     yield* Effect.sync(() => {
       createSchema(database);
-      validateCurrentSchema(database);
+    });
+    yield* Effect.try({
+      try: () => validateCurrentSchema(database),
+      catch: failsWith<IncompatibleManagedRegistryError>(IncompatibleManagedRegistryError),
     });
   });
 
@@ -1903,7 +1909,7 @@ const requireOwnerPid = (
  */
 const createSqliteManagedStackRepository = (
   database: ManagedSqliteDatabase,
-): Effect.Effect<ManagedStackRepositoryShape> =>
+): Effect.Effect<ManagedStackRepositoryShape, IncompatibleManagedRegistryError> =>
   Effect.gen(function* () {
     yield* initializeRegistry(database);
 
@@ -2124,7 +2130,7 @@ export const hardenManagedRegistryFile = (path: string): void => {
  */
 export const sqliteManagedStackRepositoryLayer = (
   openDatabase: () => ManagedSqliteDatabase,
-): Layer.Layer<ManagedStackRepository> =>
+): Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError> =>
   Layer.effect(
     ManagedStackRepository,
     Effect.gen(function* () {

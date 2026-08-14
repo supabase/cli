@@ -135,6 +135,7 @@ export const discoveryObservation = (report: ManagedWorkspaceDiscovery): string 
     observationValue(report.identity.contextId),
     observationValue(report.ordinaryMarker?.path),
     observationValue(report.ordinaryMarker?.present),
+    observationValue(report.ordinaryMarker?.tracked),
     observationValue(report.ordinaryMarker?.identity?.projectId),
     observationValue(report.ordinaryMarker?.identity?.checkoutId),
     observationValue(report.ordinaryMarker?.identity?.contextId),

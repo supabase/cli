@@ -103,6 +103,13 @@ export interface ApplyManagedCheckoutLocationInput {
   readonly locationId: string;
   readonly canonicalPath: string;
   readonly now: string;
+  /**
+   * When returning to a superseded path, the discovery probe must identify the
+   * exact active row it proved missing. The repository rechecks that CAS token
+   * under its transaction so two live locations can never be recovered by
+   * guesswork.
+   */
+  readonly expectedActiveLocationId?: string;
 }
 
 export interface ManagedCheckoutLocationDecision {
@@ -248,7 +255,12 @@ export const decideManagedCheckoutLocation = (
   const pathRows = input.checkoutLocations.filter(
     (row) => row.canonicalPath === input.requested.canonicalPath,
   );
-  const conflictingPath = pathRows.find((row) => row.checkoutId !== input.requested.checkoutId);
+  // A superseded row is historical provenance, not a live claim. It must not
+  // block a different checkout from reusing a path the original checkout has
+  // vacated; active and blocked rows remain hard conflicts.
+  const conflictingPath = pathRows.find(
+    (row) => row.checkoutId !== input.requested.checkoutId && row.state !== "superseded",
+  );
   if (conflictingPath !== undefined) {
     const location: ManagedCheckoutLocation = {
       id: input.requested.locationId,
@@ -288,6 +300,27 @@ export const decideManagedCheckoutLocation = (
       outcome: "blocked",
       location: { ...blockedPath, lastSeenAt: input.requested.now },
       updates: [{ ...blockedPath, lastSeenAt: input.requested.now }],
+    };
+  }
+  if (
+    supersededPath !== undefined &&
+    activeCheckoutLocation !== undefined &&
+    input.requested.expectedActiveLocationId === activeCheckoutLocation.id
+  ) {
+    return {
+      outcome: "rebound",
+      supersededLocationId: activeCheckoutLocation.id,
+      updates: [
+        { ...activeCheckoutLocation, state: "superseded", lastSeenAt: input.requested.now },
+      ],
+      location: {
+        id: input.requested.locationId,
+        checkoutId: input.requested.checkoutId,
+        canonicalPath: input.requested.canonicalPath,
+        state: "active",
+        reboundFromLocationId: activeCheckoutLocation.id,
+        lastSeenAt: input.requested.now,
+      },
     };
   }
   if (supersededPath !== undefined && activeCheckoutLocation !== undefined) {

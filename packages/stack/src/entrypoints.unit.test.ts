@@ -95,6 +95,7 @@ describe("@supabase/stack entrypoints", () => {
       "GIT_CHECKOUT_IDENTITY_VERSION",
       "GIT_PROJECT_ID_KEY",
       "GitConfigStore",
+      "IncompatibleManagedRegistryError",
       "InvalidManagedIdentityError",
       "InvalidManagedOwnerPidError",
       "InvalidManagedPortError",

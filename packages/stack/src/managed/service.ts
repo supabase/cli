@@ -1600,6 +1600,9 @@ export class ManagedStackService extends Context.Service<
                   locationId: yield* managedUuid("checkout location"),
                   canonicalPath: path,
                   now: now(),
+                  expectedActiveLocationId: current.locations.find(
+                    (location) => location.checkoutId === checkoutId && location.state === "active",
+                  )?.id,
                 });
                 if (decision.outcome === "blocked") {
                   return yield* Effect.fail(

@@ -335,6 +335,73 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(prune).toBeUndefined();
   });
 
+  it("allows a fresh checkout to claim a vacated historical path", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root, "project-a");
+    const next = join(root, "project-b");
+    const service = await open(root);
+    openHandles.push(service);
+
+    const original = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    const rebound = await service.resolveStack({ workspacePath: next, operation: "start" });
+    expect(rebound.identity).toEqual(original.identity);
+
+    git(root, "clone", "-q", next, previous);
+    const fresh = await service.resolveStack({ workspacePath: previous, operation: "start" });
+
+    expect(fresh.identity.checkoutId).not.toBe(original.identity.checkoutId);
+    expect(fresh.identity.projectId).not.toBe(original.identity.projectId);
+    expect(fresh.stack.id).not.toBe(original.stack.id);
+  });
+
+  it("reuses one checkout when it moves away and returns to its original path", async () => {
+    const root = makeRoot();
+    const originalPath = makeRepository(root, "project-a");
+    const movedPath = join(root, "project-b");
+    const service = await open(root);
+    openHandles.push(service);
+
+    const original = await service.resolveStack({
+      workspacePath: originalPath,
+      operation: "start",
+    });
+    renameSync(originalPath, movedPath);
+    const moved = await service.resolveStack({ workspacePath: movedPath, operation: "start" });
+    expect(moved.identity).toEqual(original.identity);
+
+    renameSync(movedPath, originalPath);
+    const returnReport = await inspect(service.repository, originalPath);
+    expect(returnReport).toMatchObject({
+      state: "moved",
+      historicalPathEvidence: expect.arrayContaining([
+        expect.objectContaining({ path: movedPath, locationState: "active", probe: "missing" }),
+      ]),
+    });
+    const returned = await service.resolveStack({
+      workspacePath: originalPath,
+      operation: "start",
+    });
+
+    expect(returned.identity).toEqual(original.identity);
+    expect(returned.stack.id).toBe(original.stack.id);
+    const locations = (await Effect.runPromise(service.repository.listIdentityClaims())).locations;
+    expect(locations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          checkoutId: original.identity.checkoutId,
+          canonicalPath: originalPath,
+          state: "active",
+        }),
+        expect.objectContaining({
+          checkoutId: original.identity.checkoutId,
+          canonicalPath: movedPath,
+          state: "superseded",
+        }),
+      ]),
+    );
+  });
+
   it("emits an actionable prune operation only for unprotected stale history", async () => {
     const root = makeRoot();
     const workspace = makeRepository(root);
@@ -1483,7 +1550,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(snapshotTree(guardedRoot)).toEqual(beforeTree);
   });
 
-  it("classifies superseded and blocked location reappearance as duplicate", async () => {
+  it("recovers when the active location is missing", async () => {
     const root = makeRoot();
     const workspace = makeDirectory(root, "history");
     const service = await open(root);
@@ -1503,22 +1570,28 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       }),
     );
     const report = await inspect(service.repository, workspace);
-    expect(report.state).toBe("duplicate");
-    expect(report.recoveryOperations).toEqual([]);
-    await expect(
-      service.resolveStack({ workspacePath: workspace, operation: "start" }),
-    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
-    await Effect.runPromise(
-      service.repository.applyCheckoutLocation({
-        checkoutId: old.checkoutId,
-        locationId: old.id,
-        canonicalPath: old.canonicalPath,
-        now: new Date().toISOString(),
-      }),
-    );
-    const blocked = await inspect(service.repository, workspace);
-    expect(blocked.state).toBe("duplicate");
-    expect(blocked.recoveryOperations).toEqual([]);
+    expect(report.state).toBe("moved");
+    expect(report.recoveryOperations).toEqual([
+      {
+        operation: "rebindCheckout",
+        checkoutId: started.identity.checkoutId,
+        path: workspace,
+      },
+    ]);
+
+    const recovered = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    expect(recovered.identity).toEqual(started.identity);
+    expect(recovered.stack.id).toBe(started.stack.id);
+
+    const healthy = await inspect(service.repository, workspace);
+    expect(healthy.state).toBe("healthy");
+    const locations = (
+      await Effect.runPromise(service.repository.listIdentityClaims())
+    ).locations.filter((location) => location.checkoutId === started.identity.checkoutId);
+    expect(locations.filter((location) => location.state === "active")).toEqual([
+      expect.objectContaining({ canonicalPath: workspace }),
+    ]);
+    expect(locations.filter((location) => location.state === "blocked")).toEqual([]);
   });
 
   it("reuses identity for an unborn branch", async () => {
@@ -1607,6 +1680,9 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(report.state).toBe("healthy");
     expect(report.identity).toEqual(ordinary.identity);
     expect(report.ordinaryMarker?.present).toBe(true);
+    expect(report.warnings).toContain(
+      "Tracked ordinary-folder identity marker is inert in this Git checkout",
+    );
     expect(report.folderToGitClaims).toEqual([]);
     expect(git(workspace, "config", "--get", "supabase.projectId").trim()).toBe(
       ordinary.identity.projectId,
