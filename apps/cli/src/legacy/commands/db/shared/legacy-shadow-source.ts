@@ -158,6 +158,7 @@ export const legacyPrepareShadowSource = <E>(
 
     yield* legacyWaitForShadowReady(spawner, containerId, connConfig, {
       timeoutSeconds: input.healthTimeoutSeconds,
+      image: input.image,
     });
 
     // `handle` doubles as the baseline state: on a warm shadow-cache hit the cluster it carries

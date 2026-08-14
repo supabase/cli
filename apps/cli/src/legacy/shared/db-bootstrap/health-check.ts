@@ -489,6 +489,8 @@ const legacyProbeShadowConnect = (
 
 export interface LegacyWaitForShadowReadyOptions {
   readonly timeoutSeconds?: number;
+  /** The shadow container's already-resolved postgres image, named in the exec-format recovery hint. */
+  readonly image?: string;
 }
 
 /**
@@ -515,7 +517,12 @@ export interface LegacyWaitForShadowReadyOptions {
  * Failure shape is deliberately identical to the health gate's: the same
  * {@link LegacyHealthCheckTimeoutError}, the same `unhealthy` payload, and the
  * same `docker logs` dump teed to stderr on the way out, so a broken shadow
- * still surfaces exactly what it surfaced before.
+ * still surfaces exactly what it surfaced before. It additionally attaches the
+ * exec-format recovery {@link suggestion} when the caller names the shadow's
+ * image via {@link LegacyWaitForShadowReadyOptions.image} — something the old
+ * shadow call sites never got, since none of them ever passed `images` to
+ * {@link legacyWaitForHealthyServices} either. This closes that pre-existing
+ * gap rather than restoring parity with a behavior that previously existed.
  */
 export function legacyWaitForShadowReady(
   spawner: Spawner,
@@ -586,13 +593,25 @@ export function legacyWaitForShadowReady(
       Effect.gen(function* () {
         // Go skips this dump on context cancellation (`start.go:215`) — an
         // interrupted fiber never reaches this handler, so no separate check.
-        yield* legacyDumpContainerLogs(spawner, containerId);
+        const scan = yield* legacyDumpContainerLogs(spawner, containerId);
+        // Unlike the health gate, the old shadow call sites never named an
+        // image here at all — so this `opts.image` check is what makes a
+        // shadow's exec-format failure carry the hint for the first time.
+        const suggestion =
+          scan.found && opts.image !== undefined
+            ? legacyExecFormatRecoveryHint(
+                [containerId],
+                new Map([[containerId, opts.image]]),
+                scan.runtime ?? "docker",
+              )
+            : undefined;
         return yield* Effect.fail(
           new LegacyHealthCheckTimeoutError({
             // The health gate's own `<id> <reason>` joining, so both waits read
             // identically on stderr.
             message: `${containerId} ${failure.reason}`,
             unhealthy: [{ containerId, reason: failure.reason }],
+            ...(suggestion === undefined ? {} : { suggestion }),
           }),
         );
       }),

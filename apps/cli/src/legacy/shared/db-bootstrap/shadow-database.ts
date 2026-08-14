@@ -591,6 +591,7 @@ export const legacyPrepareRawShadow = (
     };
     yield* legacyWaitForShadowReady(spawner, containerId, connConfig, {
       timeoutSeconds: input.healthTimeoutSeconds,
+      image: input.image,
     });
     return {
       container: containerId,

@@ -976,4 +976,87 @@ describe("legacyWaitForShadowReady", () => {
       ).toBe(true);
     }),
   );
+
+  describe("exec format error recovery advice", () => {
+    it.effect("names the shadow's image when its dumped logs show exec format error", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningStarting, {
+          [SHADOW_CONTAINER_ID]: ["exec /docker-entrypoint.sh: exec format error\n"],
+        });
+        const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+        const error = yield* withSilencedStderr(
+          Effect.gen(function* () {
+            const fiber = yield* legacyWaitForShadowReady(
+              mock.spawner,
+              SHADOW_CONTAINER_ID,
+              shadowConnConfig,
+              { timeoutSeconds: 1, image: "public.ecr.aws/supabase/postgres:15.1.0.147" },
+            ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+            yield* TestClock.adjust("1 seconds");
+            return yield* Fiber.join(fiber).pipe(Effect.flip);
+          }),
+        );
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.suggestion).toContain(
+          `${SHADOW_CONTAINER_ID}'s image public.ecr.aws/supabase/postgres:15.1.0.147`,
+        );
+        expect(error.suggestion).toContain(
+          "supabase stop\n  docker image rm -f public.ecr.aws/supabase/postgres:15.1.0.147\n  supabase start",
+        );
+      }),
+    );
+
+    it.effect("stays silent when no image is named, even if the logs show exec format error", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningStarting, {
+          [SHADOW_CONTAINER_ID]: ["exec /docker-entrypoint.sh: exec format error\n"],
+        });
+        const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+        const error = yield* withSilencedStderr(
+          Effect.gen(function* () {
+            const fiber = yield* legacyWaitForShadowReady(
+              mock.spawner,
+              SHADOW_CONTAINER_ID,
+              shadowConnConfig,
+              { timeoutSeconds: 1 },
+            ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+            yield* TestClock.adjust("1 seconds");
+            return yield* Fiber.join(fiber).pipe(Effect.flip);
+          }),
+        );
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.suggestion).toBeUndefined();
+      }),
+    );
+
+    it.effect("stays silent for a plain not-ready timeout even when an image is named", () =>
+      Effect.gen(function* () {
+        const mock = mockHealthSpawner(() => runningStarting);
+        const db = mockShadowDbConnection({ failTimes: Number.POSITIVE_INFINITY });
+
+        const error = yield* withSilencedStderr(
+          Effect.gen(function* () {
+            const fiber = yield* legacyWaitForShadowReady(
+              mock.spawner,
+              SHADOW_CONTAINER_ID,
+              shadowConnConfig,
+              { timeoutSeconds: 1, image: "public.ecr.aws/supabase/postgres:15.1.0.147" },
+            ).pipe(Effect.provide(db.layer), Effect.forkChild({ startImmediately: true }));
+
+            yield* TestClock.adjust("1 seconds");
+            return yield* Fiber.join(fiber).pipe(Effect.flip);
+          }),
+        );
+
+        expect(error).toBeInstanceOf(LegacyHealthCheckTimeoutError);
+        expect(error.suggestion).toBeUndefined();
+      }),
+    );
+  });
 });
