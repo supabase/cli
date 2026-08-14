@@ -54,6 +54,9 @@ function subprocessBaseEnv(): Record<string, string> {
     if (value !== undefined) env[key] = value;
   }
   for (const key of AGENT_DETECTION_ENV_KEYS) delete env[key];
+  // Keep test spawns hermetic: never let the upgrade notice hit GitHub or
+  // print into asserted output. Tests exercising the notice override this.
+  env["SUPABASE_NO_UPDATE_NOTIFIER"] = "1";
   return env;
 }
 

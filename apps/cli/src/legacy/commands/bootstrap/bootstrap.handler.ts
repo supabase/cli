@@ -11,6 +11,10 @@ import {
   legacyResolveYes,
   legacyResolveYesWithProjectEnv,
 } from "../../../shared/legacy/global-flags.ts";
+import {
+  emitSuccessTrailer,
+  setSuccessWorkingDirectory,
+} from "../../../shared/cli/success-trailer.ts";
 import { legacyPromptYesNo } from "../../../shared/legacy/legacy-prompt-yes-no.ts";
 import { CONTEXT_CANCELED_MESSAGE } from "../../../shared/output/errors.ts";
 import { Output } from "../../../shared/output/output.service.ts";
@@ -382,7 +386,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
     // M. Start suggestion.
     if (isText) {
       const suggestion = suggestAppStart(runtimeInfo.cwd, workdir, starter.start, legacyAqua);
-      yield* output.raw(`${suggestion}\n`, "stderr");
+      yield* emitSuccessTrailer(`${suggestion}\n`);
     } else {
       yield* output.success("", {
         workdir,
@@ -392,6 +396,7 @@ export const legacyBootstrap = Effect.fn("legacy.bootstrap")(function* (
         env_file: envFileWritten ? envFilePath : null,
       });
     }
+    yield* setSuccessWorkingDirectory(workdir);
   }).pipe(
     Effect.ensuring(
       Effect.sync(() => {

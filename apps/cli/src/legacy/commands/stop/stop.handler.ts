@@ -1,6 +1,7 @@
 import { Effect, FileSystem, Option } from "effect";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
+import { emitSuccessTrailer } from "../../../shared/cli/success-trailer.ts";
 import { Output } from "../../../shared/output/output.service.ts";
 import { LegacyCliConfig } from "../../config/legacy-cli-config.service.ts";
 import { LegacyTelemetryState } from "../../telemetry/legacy-telemetry-state.service.ts";
@@ -247,9 +248,8 @@ export const legacyStop = Effect.fn("legacy.stop")(function* (flags: LegacyStopF
           searchProjectIdFilter.length > 0
             ? `docker volume ls --filter label=com.supabase.cli.project=${searchProjectIdFilter}`
             : "docker volume ls --filter label=com.supabase.cli.project";
-        yield* output.raw(
+        yield* emitSuccessTrailer(
           `Local data are backed up to docker volume. Use docker to show them: ${legacyAqua(listVolumeCommand)}\n`,
-          "stderr",
         );
       }
     }

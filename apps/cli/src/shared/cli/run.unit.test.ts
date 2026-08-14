@@ -10,8 +10,11 @@ import {
   classifyParseErrorConsoleOutput,
   exitCodeForFailure,
   extractCommandPath,
+  hasRootHelpOrVersionFlag,
+  rootFlagTokens,
   shouldReportFailure,
   shouldUseGlobalSignalInterrupt,
+  hasRootVersionFlag,
 } from "./run.ts";
 
 // Real command tree (not a hand-rolled stand-in) so `classifyParseErrorConsoleOutput`'s
@@ -40,6 +43,24 @@ describe("extractCommandPath", () => {
     expect(extractCommandPath(["--output-format=json", "functions", "serve"])).toEqual([
       "functions",
       "serve",
+    ]);
+  });
+});
+
+describe("local shorthand clusters", () => {
+  const localValues = (token: string) => token === "-p";
+
+  it("does not read an attached local shorthand value as help", () => {
+    expect(hasRootHelpOrVersionFlag(["link", "-ph"], localValues)).toBe(false);
+  });
+
+  it("recognizes help after boolean shorthand flags at subcommand depth", () => {
+    expect(hasRootHelpOrVersionFlag(["link", "-xh"], localValues)).toBe(true);
+  });
+
+  it("skips a following token consumed by a local shorthand value flag", () => {
+    expect([...rootFlagTokens(["link", "-p", "--debug"], localValues)]).toEqual([
+      { token: "-p", index: 1 },
     ]);
   });
 });
@@ -497,5 +518,31 @@ describe("classifyParseErrorConsoleOutput", () => {
         args: [],
       }),
     ).toBe("flush-unchanged");
+  });
+});
+
+describe("hasRootVersionFlag", () => {
+  it.each([
+    [["--version"], true],
+    [["-v"], false],
+    [["--version=true"], true],
+    [["--version=false"], true],
+    [["-v=1"], false],
+    [["-hv"], false],
+    [["-xv"], false],
+    [["--version", "true"], true],
+    [["--version", "foo"], true],
+    [["-v", "1"], false],
+    [["--debug", "-v"], false],
+    [["--profile", "-v"], false],
+    [["--profile=x", "-v"], false],
+    [["-o", "-v"], false],
+    [["db", "reset", "--version", "20240101000000"], false],
+    [["migration", "squash", "--version", "x"], false],
+    [["branches", "-v"], false],
+    [["--", "--version"], false],
+    [[], false],
+  ])("%j -> %s", (args, expected) => {
+    expect(hasRootVersionFlag(args as ReadonlyArray<string>)).toBe(expected);
   });
 });
