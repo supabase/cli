@@ -1441,7 +1441,12 @@ export function buildServeEntrypointCommand(
   command: ReadonlyArray<string>,
   multilineEnvScriptPath?: string,
 ) {
-  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}${command.join(" ")}
+  // `exec` so edge-runtime (not `sh`) is PID 1 and `docker stop`'s SIGTERM reaches it directly —
+  // without it every stop burns the full 10s grace period before SIGKILL. The optional
+  // multiline-env `.` sourcing above still runs in the wrapper shell before the exec, and its
+  // exported env survives into the exec'd process. Stop timing is outside the Go-parity surface
+  // (ADR 0016).
+  return `${multilineEnvScriptPath === undefined ? "" : `. ${multilineEnvScriptPath}\n`}exec ${command.join(" ")}
 `;
 }
 

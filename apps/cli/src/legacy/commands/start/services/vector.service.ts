@@ -290,7 +290,11 @@ export function legacyBuildVectorEntrypointScript(vectorYaml: string, logflareId
     vectorYaml +
     "\nEOF\nuntil wget --no-verbose --tries=1 --spider http://" +
     logflareId +
-    ":4000/health 2>/dev/null; do sleep 2; done\nvector --config /etc/vector/vector.yaml\n"
+    // `exec` so Vector (not `sh`) is PID 1 and `docker stop`'s SIGTERM reaches it directly —
+    // without it every stop burns the full 10s grace period. The wget wait-loop above still runs
+    // in the wrapper shell BEFORE the exec, unchanged. Stop timing is outside the Go-parity
+    // surface (ADR 0016).
+    ":4000/health 2>/dev/null; do sleep 2; done\nexec vector --config /etc/vector/vector.yaml\n"
   );
 }
 

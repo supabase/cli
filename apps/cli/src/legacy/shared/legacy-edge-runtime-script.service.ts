@@ -104,7 +104,12 @@ export function legacyBuildEdgeRuntimeEntrypoint(
   files: ReadonlyArray<LegacyEdgeRuntimeFile>,
   cmd: string,
 ): string {
-  if (files.length === 0) return `${cmd}\n`;
+  // `exec` diverges from Go's byte-for-byte script on purpose: edge-runtime (not `sh`) becomes
+  // PID 1, so an early `docker stop`/`rm -f` SIGTERM reaches it directly instead of burning the
+  // 10s grace period. These containers are `--rm` and normally exit on their own, so this is a
+  // cancellation-latency nicety, not a stop-path requirement. Timing is outside the Go-parity
+  // surface (ADR 0016).
+  if (files.length === 0) return `exec ${cmd}\n`;
   let head = "";
   let bodies = "";
   files.forEach((file, index) => {
@@ -112,5 +117,5 @@ export function legacyBuildEdgeRuntimeEntrypoint(
     head += `cat <<'${sentinel}' > ${file.name} && `;
     bodies += `${file.content}\n${sentinel}\n`;
   });
-  return `${head}${cmd}\n${bodies}`;
+  return `${head}exec ${cmd}\n${bodies}`;
 }

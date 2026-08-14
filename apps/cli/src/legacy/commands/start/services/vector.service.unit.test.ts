@@ -227,7 +227,7 @@ describe("legacyBuildVectorEntrypointScript", () => {
         "VECTOR_YAML" +
         "\nEOF\nuntil wget --no-verbose --tries=1 --spider http://" +
         "supabase_analytics_proj" +
-        ":4000/health 2>/dev/null; do sleep 2; done\nvector --config /etc/vector/vector.yaml\n",
+        ":4000/health 2>/dev/null; do sleep 2; done\nexec vector --config /etc/vector/vector.yaml\n",
     );
   });
 });

@@ -172,9 +172,13 @@ export function legacyBuildKongEmailTemplateBind(
   return `${hostPath}:${dockerPath}:rw`;
 }
 
+// `exec` so Kong (not `sh`) is PID 1 and `docker stop`'s SIGTERM reaches it directly — without
+// it every stop burns the full 10s grace period before SIGKILL. Same deliberate divergence from
+// Go's script as the Postgres entrypoint (`db-bootstrap/postgres.service.ts`); stop timing is
+// outside the Go-parity surface (ADR 0016).
 const LEGACY_KONG_ENTRYPOINT_HEAD =
   "cat <<'EOF' > /home/kong/custom_nginx.template && \\\n" +
-  "./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
+  "exec ./docker-entrypoint.sh kong docker-start --nginx-conf /home/kong/custom_nginx.template\n";
 
 /**
  * Builds the surviving (non-secret) half of the Kong entrypoint: only the

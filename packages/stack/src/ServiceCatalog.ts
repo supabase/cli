@@ -131,7 +131,7 @@ export const SERVICE_CATALOG = {
   postgrest: {
     name: "postgrest",
     configKey: "postgrest",
-    defaultVersion: "14.16",
+    defaultVersion: "16.1",
     runtimeSupport: "native-preferred",
     artifact: {
       docker: { ownership: "supabase", repository: "postgrest", tagPrefix: "v" },
@@ -201,7 +201,7 @@ export const SERVICE_CATALOG = {
   realtime: {
     name: "realtime",
     configKey: "realtime",
-    defaultVersion: "2.123.1",
+    defaultVersion: "2.124.4",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "realtime", tagPrefix: "v" } },
     activation: { startup: "eager", activates: [], owns: [] },
@@ -210,7 +210,7 @@ export const SERVICE_CATALOG = {
   storage: {
     name: "storage",
     configKey: "storage",
-    defaultVersion: "1.68.1",
+    defaultVersion: "1.69.0",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "storage-api", tagPrefix: "v" } },
     activation: { startup: "lazy", activates: ["imgproxy"], owns: ["imgproxy"] },
@@ -237,7 +237,7 @@ export const SERVICE_CATALOG = {
   pgmeta: {
     name: "pgmeta",
     configKey: "pgmeta",
-    defaultVersion: "0.96.6",
+    defaultVersion: "0.98.0",
     runtimeSupport: "docker-only",
     artifact: {
       docker: { ownership: "supabase", repository: "postgres-meta", tagPrefix: "v" },
@@ -248,7 +248,7 @@ export const SERVICE_CATALOG = {
   studio: {
     name: "studio",
     configKey: "studio",
-    defaultVersion: "2026.08.03-sha-022b374",
+    defaultVersion: "2026.08.10-sha-5b68af1",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "studio" } },
     activation: { startup: "eager", activates: ["analytics"], owns: [] },
@@ -257,7 +257,7 @@ export const SERVICE_CATALOG = {
   analytics: {
     name: "analytics",
     configKey: "analytics",
-    defaultVersion: "1.49.2",
+    defaultVersion: "1.50.2",
     runtimeSupport: "docker-only",
     artifact: { docker: { ownership: "supabase", repository: "logflare" } },
     activation: { startup: "lazy", activates: ["vector"], owns: ["vector"] },

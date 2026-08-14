@@ -51,8 +51,14 @@ const LEGACY_LOGFLARE_API_KEY = "api-key";
  * running Logflare against an unmigrated database lets Oban die on the
  * missing `public.oban_jobs` table instead.
  */
+// Both `exec`s are load-bearing for stop time (SIGTERM must reach Logflare's BEAM as PID 1, not
+// an intermediate `sh` — without them every `docker stop` burns the full 10s grace period):
+// `exec sh run.sh` replaces the outer wrapper shell, and `exec ./logflare start` replaces
+// `run.sh`'s own shell once the migrate step succeeded. The `migrate && start` sequencing is
+// unchanged and deliberate — see the doc comment above (#6088). Stop timing is outside the
+// Go-parity surface (ADR 0016).
 const LEGACY_LOGFLARE_ENTRYPOINT_SCRIPT =
-  "cat <<'EOF' > run.sh && sh run.sh\n./logflare eval Logflare.Release.migrate &&\n./logflare start --sname logflare\nEOF\n";
+  "cat <<'EOF' > run.sh && exec sh run.sh\n./logflare eval Logflare.Release.migrate &&\nexec ./logflare start --sname logflare\nEOF\n";
 
 export interface LegacyLogflareContainerSpecInput {
   /**
