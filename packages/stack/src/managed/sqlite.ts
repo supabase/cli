@@ -58,6 +58,8 @@ import type {
   RefreshManagedContextOwnerInput,
   MigrateManagedContextToBranchInput,
   MigrateManagedContextToBranchFailure,
+  MigrateManagedContextToDetachedInput,
+  MigrateManagedContextToDetachedFailure,
   ReserveManagedIdentityTransitionInput,
   AdvanceManagedIdentityTransitionInput,
   FinalizeManagedIdentityTransitionInput,
@@ -84,6 +86,7 @@ import {
   decideManagedIdentityTransitionReservation,
   decideManagedContextOwnerRefresh,
   decideManagedContextToBranch,
+  decideManagedContextToDetached,
   decideManagedIdentityMetadataPrune,
   transitionResourceKeys,
   decideManagedCheckoutIdentity,
@@ -1685,6 +1688,27 @@ const migrateContextToBranch = (
   return next;
 };
 
+const migrateContextToDetached = (
+  database: ManagedSqliteDatabase,
+  input: MigrateManagedContextToDetachedInput,
+): ManagedContextRecord => {
+  const row = database.prepare("SELECT * FROM contexts WHERE id = ?").get([input.contextId]);
+  const existing = row === undefined ? undefined : decodeContext(row);
+  const next = decideManagedContextToDetached({
+    requested: input,
+    existing,
+    detachedExisting: findCheckoutContext(database, input.checkoutId, "detached"),
+  });
+  if (existing !== undefined && existing.kind !== next.kind) {
+    database
+      .prepare(
+        "UPDATE contexts SET checkout_id = ?, kind = ?, locator = NULL, owner_branch = NULL WHERE id = ?",
+      )
+      .run([next.checkoutId ?? null, next.kind, next.id]);
+  }
+  return next;
+};
+
 const reserveIdentityTransition = (
   database: ManagedSqliteDatabase,
   input: ReserveManagedIdentityTransitionInput,
@@ -1910,6 +1934,12 @@ const createSqliteManagedStackRepository = (
             DuplicateManagedIdentityError,
             ManagedCopiedBranchConflictError,
           ),
+        ),
+      migrateContextToDetached: (input) =>
+        transaction(
+          database,
+          () => migrateContextToDetached(database, input),
+          failsWith<MigrateManagedContextToDetachedFailure>(DuplicateManagedIdentityError),
         ),
       reserveIdentityTransition: (input) =>
         transaction(

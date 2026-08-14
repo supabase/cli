@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Effect } from "effect";
@@ -473,6 +473,48 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(
       storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("copied")),
     ).toBe(copied.identity.contextId);
+  });
+
+  it("refuses copied-directory branch repair before moving the live checkout", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "owner");
+    const copiedRepository = join(root, "copied");
+    const service = await openService(root);
+    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    cpSync(repository, copiedRepository, { recursive: true });
+    git(copiedRepository, "branch", "-c", "main", "feature");
+    git(copiedRepository, "checkout", "-q", "feature");
+    const copiedConfig = gitConfigPath(join(copiedRepository, ".git"));
+    const copiedMarker = gitCheckoutIdentityPath(join(copiedRepository, ".git"));
+    const beforeConfig = readFileSync(copiedConfig, "utf8");
+    const beforeMarker = readFileSync(copiedMarker, "utf8");
+    const beforeStatus = git(copiedRepository, "status", "--porcelain");
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const beforeStacks = await Effect.runPromise(service.repository.listStacks());
+    const beforeOperations = await Effect.runPromise(service.repository.listActiveOperations());
+
+    const report = await service.discoverWorkspace(copiedRepository);
+    expect(report.state).toBe("duplicate");
+    expect(report.recoveryOperations).toEqual([]);
+    await expect(
+      service.resolveStack({ workspacePath: copiedRepository, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+
+    expect(readFileSync(copiedConfig, "utf8")).toBe(beforeConfig);
+    expect(readFileSync(copiedMarker, "utf8")).toBe(beforeMarker);
+    expect(git(copiedRepository, "status", "--porcelain")).toBe(beforeStatus);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
+    expect(await Effect.runPromise(service.repository.listActiveOperations())).toEqual(
+      beforeOperations,
+    );
+    expect(
+      beforeClaims.locations.find(
+        (location) =>
+          location.checkoutId === owner.identity.checkoutId && location.state === "active",
+      )?.canonicalPath,
+    ).toBe(repository);
+    expect((await service.discoverWorkspace(copiedRepository)).state).toBe("duplicate");
   });
 
   it("resumes a copied branch after Git won but transition advancement failed", async () => {

@@ -2,7 +2,7 @@ import { BunFileSystem } from "@effect/platform-bun";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
 import { dirname, join } from "node:path";
-import { symlinkSync, renameSync } from "node:fs";
+import { cpSync, symlinkSync, renameSync } from "node:fs";
 import { writeFileSync, readFileSync, existsSync, readdirSync, mkdirSync, rmSync } from "node:fs";
 import {
   gitCheckoutIdentityPath,
@@ -20,7 +20,11 @@ import { GIT_PROJECT_ID_KEY, gitBranchContextIdKey, gitConfigStoreLayer } from "
 import { createInMemoryManagedStackRepository } from "./managed/repository-memory.ts";
 import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./managed/repository.ts";
 import { discoverWorkspace } from "./managed/discovery.ts";
-import { createManagedStackService, makeManagedStackService } from "./managed-bun.ts";
+import {
+  createManagedStackService,
+  makeManagedStackService,
+  ManagedIdentityTransitionOwnershipError,
+} from "./managed-bun.ts";
 
 const { makeRoot, removeAll } = temporaryRoots("managed-discovery-test-");
 
@@ -294,6 +298,53 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(published.state).toBe("healthy");
   });
 
+  it("refuses a reserved new checkout after the observed branch changes", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    let interruptReservation = true;
+    const interruptedRepository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      reserveIdentityTransition: (input) =>
+        Effect.flatMap(service.repository.reserveIdentityTransition(input), (transition) => {
+          if (!interruptReservation) return Effect.succeed(transition);
+          interruptReservation = false;
+          return Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
+          );
+        }),
+    };
+    const interrupted = await makeManagedStackService({
+      repository: interruptedRepository,
+      stateRoot: join(root, "branch-bound-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(interrupted);
+    await expect(interrupted.newCheckout({ workspacePath: repository })).rejects.toMatchObject({
+      _tag: "ManagedIdentityTransitionOwnershipError",
+    });
+    git(repository, "checkout", "-q", "-b", "other");
+    const configPath = gitConfigPath(join(repository, ".git"));
+    const markerPath = gitCheckoutIdentityPath(join(repository, ".git"));
+    const configBefore = readFileSync(configPath, "utf8");
+    const markerBefore = existsSync(markerPath) ? readFileSync(markerPath, "utf8") : undefined;
+    const claimsBefore = await Effect.runPromise(service.repository.listIdentityClaims());
+
+    await expect(interrupted.newCheckout({ workspacePath: repository })).rejects.toMatchObject({
+      _tag: "ManagedIdentityTransitionOwnershipError",
+    });
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(claimsBefore);
+    expect(readFileSync(configPath, "utf8")).toBe(configBefore);
+    expect(existsSync(markerPath) ? readFileSync(markerPath, "utf8") : undefined).toBe(
+      markerBefore,
+    );
+    expect(claimsBefore.transitions).toContainEqual(
+      expect.objectContaining({ kind: "new-checkout", phase: "reserved", branch: "main" }),
+    );
+    expect((await inspect(service.repository, repository)).activeTransition).toBeUndefined();
+  });
+
   it("refuses a project winner that appears before field-specific publication", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
@@ -420,6 +471,53 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         checkoutId: first.identity.checkoutId,
       }),
     ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+  });
+
+  it("refuses adopting a live copied checkout when its project key is missing", async () => {
+    const root = makeRoot();
+    const ownerWorkspace = makeRepository(root, "owner");
+    const copiedWorkspace = join(root, "copied");
+    const service = await open(root);
+    openHandles.push(service);
+    const owner = await service.resolveStack({
+      workspacePath: ownerWorkspace,
+      operation: "start",
+    });
+    cpSync(ownerWorkspace, copiedWorkspace, { recursive: true });
+    git(copiedWorkspace, "config", "--unset", GIT_PROJECT_ID_KEY);
+    const copiedConfig = gitConfigPath(join(copiedWorkspace, ".git"));
+    const copiedMarker = gitCheckoutIdentityPath(join(copiedWorkspace, ".git"));
+    const beforeConfig = readFileSync(copiedConfig, "utf8");
+    const beforeMarker = readFileSync(copiedMarker, "utf8");
+    const beforeStatus = gitStatus(copiedWorkspace);
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const beforeStacks = await Effect.runPromise(service.repository.listStacks());
+    const beforeOperations = await Effect.runPromise(service.repository.listActiveOperations());
+    const beforeTree = snapshotTree(root);
+
+    const report = await inspect(service.repository, copiedWorkspace);
+    expect(report.identity).toEqual({
+      checkoutId: owner.identity.checkoutId,
+      contextId: owner.identity.contextId,
+    });
+    expect(report.state).toBe("duplicate");
+    expect(report.recoveryOperations).toEqual([]);
+    await expect(
+      service.adoptCheckout({
+        workspacePath: copiedWorkspace,
+        checkoutId: owner.identity.checkoutId,
+      }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+
+    expect(readFileSync(copiedConfig, "utf8")).toBe(beforeConfig);
+    expect(readFileSync(copiedMarker, "utf8")).toBe(beforeMarker);
+    expect(gitStatus(copiedWorkspace)).toBe(beforeStatus);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
+    expect(await Effect.runPromise(service.repository.listActiveOperations())).toEqual(
+      beforeOperations,
+    );
+    expect(snapshotTree(root)).toEqual(beforeTree);
   });
 
   it("canonicalizes an explicit recovery alias without registering the alias path", async () => {
@@ -581,6 +679,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         projectId,
         checkoutId,
         contextId,
+        branch: "main",
         path: repository,
         targetGitValue: "00000000-0000-7000-8000-000000000107",
         now: new Date().toISOString(),
@@ -612,6 +711,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
         checkoutId: "00000000-0000-7000-8000-000000000118",
         contextId: "00000000-0000-7000-8000-000000000119",
         path: workspace,
+        expectedGitValue: "topology:ordinary",
         now: new Date().toISOString(),
       }),
     );
@@ -1393,6 +1493,76 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(git(workspace, "config", "--get", "supabase.projectId").trim()).toBe(
       ordinary.identity.projectId,
     );
+  });
+
+  it("resumes detached folder-to-Git migration with the original context and marker", async () => {
+    const root = makeRoot();
+    const workspace = makeDirectory(root, "detached-folder-to-git");
+    const service = await open(root);
+    openHandles.push(service);
+    const ordinary = await service.resolveStack({ workspacePath: workspace, operation: "start" });
+    const markerPath = ordinaryWorkspaceIdentityPath(workspace);
+    git(workspace, "init", "-q", "-b", "main");
+    git(workspace, "add", ".supabase/identity.json");
+    git(workspace, "commit", "-q", "-m", "track ordinary identity");
+    git(workspace, "checkout", "-q", "--detach", "HEAD");
+    const markerBefore = readFileSync(markerPath, "utf8");
+    const indexBefore = git(workspace, "ls-files", "--stage", ".supabase/identity.json");
+    const statusBefore = gitStatus(workspace);
+    let interruptRegistration = true;
+    const repository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      registerCheckoutIdentity: (input) => {
+        if (!interruptRegistration) return service.repository.registerCheckoutIdentity(input);
+        interruptRegistration = false;
+        return Effect.fail(
+          new ManagedIdentityTransitionOwnershipError({ transitionId: "injected-interruption" }),
+        );
+      },
+    };
+    const recovering = await makeManagedStackService({
+      repository,
+      stateRoot: join(root, "detached-recovery-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(recovering);
+
+    await expect(
+      recovering.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    const interruptedClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(
+      interruptedClaims.contexts.find((context) => context.id === ordinary.identity.contextId),
+    ).toMatchObject({
+      id: ordinary.identity.contextId,
+      checkoutId: ordinary.identity.checkoutId,
+      kind: "detached",
+    });
+    expect(interruptedClaims.transitions).toContainEqual(
+      expect.objectContaining({ kind: "folder-to-git", phase: "git-written" }),
+    );
+    expect(readFileSync(markerPath, "utf8")).toBe(markerBefore);
+    expect(git(workspace, "ls-files", "--stage", ".supabase/identity.json")).toBe(indexBefore);
+    expect(gitStatus(workspace)).toBe(statusBefore);
+
+    const migrated = await recovering.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+    });
+    expect(migrated.identity).toEqual(ordinary.identity);
+    expect(migrated.stack.id).toBe(ordinary.stack.id);
+    expect(migrated.context.kind).toBe("detached");
+    expect(await recovering.inspectStack(ordinary.stack.id)).toMatchObject({
+      contextKind: "detached",
+    });
+    const report = await inspect(service.repository, workspace);
+    expect(report.state).toBe("healthy");
+    expect(report.identity).toEqual(ordinary.identity);
+    expect(report.activeTransition).toBeUndefined();
+    expect(report.folderToGitClaims).toEqual([]);
+    expect(readFileSync(markerPath, "utf8")).toBe(markerBefore);
+    expect(git(workspace, "ls-files", "--stage", ".supabase/identity.json")).toBe(indexBefore);
+    expect(gitStatus(workspace)).toBe(statusBefore);
   });
 
   it("creates fresh Git identities when only a tracked marker exists in a clone", async () => {

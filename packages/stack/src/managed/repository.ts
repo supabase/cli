@@ -374,6 +374,55 @@ export type MigrateManagedContextToBranchFailure =
   | DuplicateManagedIdentityError
   | ManagedCopiedBranchConflictError;
 
+export interface MigrateManagedContextToDetachedInput {
+  readonly contextId: string;
+  readonly projectId: string;
+  readonly checkoutId: string;
+  readonly now: string;
+}
+
+export type MigrateManagedContextToDetachedFailure = DuplicateManagedIdentityError;
+
+/** Preserves an ordinary context ID while making its ownership checkout-detached. */
+export const decideManagedContextToDetached = (input: {
+  readonly requested: MigrateManagedContextToDetachedInput;
+  readonly existing?: ManagedContextRecord;
+  readonly detachedExisting?: ManagedContextRecord;
+}): ManagedContextRecord => {
+  const { requested, existing, detachedExisting } = input;
+  const requestedClaim = `${requested.projectId}/${requested.checkoutId}/detached`;
+  if (existing === undefined) {
+    throw new DuplicateManagedIdentityError({
+      identityId: requested.contextId,
+      existingClaim: "missing context",
+      requestedClaim,
+    });
+  }
+  if (existing.projectId !== requested.projectId || existing.checkoutId !== requested.checkoutId) {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: `${existing.projectId}/${existing.checkoutId ?? existing.kind}`,
+      requestedClaim,
+    });
+  }
+  if (detachedExisting !== undefined && detachedExisting.id !== existing.id) {
+    throw new DuplicateManagedIdentityError({
+      identityId: requested.contextId,
+      existingClaim: detachedExisting.id,
+      requestedClaim,
+    });
+  }
+  if (existing.kind === "detached") return existing;
+  if (existing.kind !== "workspace") {
+    throw new DuplicateManagedIdentityError({
+      identityId: existing.id,
+      existingClaim: existing.kind,
+      requestedClaim,
+    });
+  }
+  return { ...existing, kind: "detached", locator: undefined, ownerBranch: undefined };
+};
+
 /**
  * Decides the one ownership transition that turns an ordinary-folder context
  * into a project-scoped branch context. Adapters pass every branch context
@@ -874,6 +923,9 @@ export interface ManagedStackRepositoryShape {
   readonly migrateContextToBranch: (
     input: MigrateManagedContextToBranchInput,
   ) => Effect.Effect<ManagedContextRecord, MigrateManagedContextToBranchFailure>;
+  readonly migrateContextToDetached: (
+    input: MigrateManagedContextToDetachedInput,
+  ) => Effect.Effect<ManagedContextRecord, MigrateManagedContextToDetachedFailure>;
   readonly reserveIdentityTransition: (
     input: ReserveManagedIdentityTransitionInput,
   ) => Effect.Effect<ManagedIdentityTransitionRecord, ManagedIdentityRecoveryError>;

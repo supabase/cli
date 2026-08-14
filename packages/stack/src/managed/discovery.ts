@@ -139,25 +139,49 @@ const completeIdentity = (
   identity.checkoutId !== undefined &&
   identity.contextId !== undefined;
 
+const NEW_CHECKOUT_ORDINARY_TOPOLOGY = "topology:ordinary";
+const NEW_CHECKOUT_DETACHED_TOPOLOGY = "topology:detached";
+
+const newCheckoutTopologyMatches = (
+  transition: ManagedIdentityTransitionRecord,
+  context: ManagedWorkspaceDiscoveryContext,
+): boolean => {
+  if (context.kind === "branch") return transition.branch === context.branch;
+  return (
+    transition.branch === undefined &&
+    transition.expectedGitValue ===
+      (context.kind === "workspace"
+        ? NEW_CHECKOUT_ORDINARY_TOPOLOGY
+        : NEW_CHECKOUT_DETACHED_TOPOLOGY)
+  );
+};
+
 const transitionMatches = (
   transition: ManagedIdentityTransitionRecord,
   identity: ManagedWorkspaceDiscoveryIdentity,
-  branch: string | undefined,
+  context: ManagedWorkspaceDiscoveryContext,
   workspaceRoot: string,
-): boolean =>
-  transition.phase !== "finalized" &&
-  (transition.kind !== "folder-to-git" || transition.branch === branch) &&
-  ((transition.projectId === identity.projectId &&
-    transition.checkoutId === undefined &&
-    transition.contextId === undefined &&
-    transition.branch === undefined &&
-    transition.path === undefined) ||
-    transition.path === workspaceRoot ||
-    (transition.checkoutId !== undefined && transition.checkoutId === identity.checkoutId) ||
-    (transition.contextId !== undefined && transition.contextId === identity.contextId) ||
-    (transition.branch !== undefined &&
-      transition.branch === branch &&
-      transition.projectId === identity.projectId));
+): boolean => {
+  if (transition.phase === "finalized") return false;
+  if (transition.kind === "new-checkout") {
+    return transition.path === workspaceRoot && newCheckoutTopologyMatches(transition, context);
+  }
+  const branch = context.kind === "branch" ? context.branch : undefined;
+  return (
+    (transition.kind !== "folder-to-git" || transition.branch === branch) &&
+    ((transition.projectId === identity.projectId &&
+      transition.checkoutId === undefined &&
+      transition.contextId === undefined &&
+      transition.branch === undefined &&
+      transition.path === undefined) ||
+      transition.path === workspaceRoot ||
+      (transition.checkoutId !== undefined && transition.checkoutId === identity.checkoutId) ||
+      (transition.contextId !== undefined && transition.contextId === identity.contextId) ||
+      (transition.branch !== undefined &&
+        transition.branch === branch &&
+        transition.projectId === identity.projectId))
+  );
+};
 
 const matchingStacks = (
   repository: ManagedStackRepositoryShape,
@@ -207,6 +231,7 @@ interface WorkspaceClassificationEvidence {
   readonly folderToGitClaims: number;
   readonly gitCheckout: boolean;
   readonly identity: ManagedWorkspaceDiscoveryIdentity;
+  readonly checkoutProjectKnown: boolean;
   readonly checkoutProjectOwnership: "unknown" | "matching" | "foreign";
   readonly contextPresent: boolean;
   readonly locationCount: number;
@@ -227,6 +252,11 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
   const warnings: string[] = [];
   const recoveryOperations: ManagedRecoveryOperation[] = [];
   const identityComplete = completeIdentity(evidence.identity);
+  const knownCheckoutActiveElsewhere =
+    evidence.identity.projectId === undefined &&
+    evidence.checkoutProjectKnown &&
+    evidence.activeLocation === undefined &&
+    evidence.anyActiveLocation !== undefined;
   let state: ManagedWorkspaceDiscoveryState;
   if (evidence.activeTransition !== undefined) {
     state = "transitioning";
@@ -237,6 +267,7 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     evidence.duplicateLocations ||
     evidence.samePathClaims > 0 ||
     evidence.markerRegistryConflict ||
+    knownCheckoutActiveElsewhere ||
     evidence.checkoutProjectOwnership === "foreign" ||
     evidence.sameCheckoutReappeared ||
     evidence.inaccessiblePaths > 0 ||
@@ -256,9 +287,11 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
         ? `Checkout ${evidence.identity.checkoutId} has multiple active locations`
         : evidence.markerRegistryConflict
           ? "Workspace marker context conflicts with registry context"
-          : evidence.checkoutProjectOwnership === "foreign"
-            ? `Checkout ${evidence.identity.checkoutId} belongs to another project`
-            : `Workspace path ${evidence.canonicalPath} is claimed by another checkout`,
+          : knownCheckoutActiveElsewhere
+            ? `Checkout ${evidence.identity.checkoutId} is already active at another path`
+            : evidence.checkoutProjectOwnership === "foreign"
+              ? `Checkout ${evidence.identity.checkoutId} belongs to another project`
+              : `Workspace path ${evidence.canonicalPath} is claimed by another checkout`,
     );
   } else if (
     evidence.authoritativeOwnerBranch === undefined &&
@@ -617,12 +650,7 @@ export const discoverWorkspace = (
       stackIds.has(operation.stackId),
     );
     const activeTransition = allClaims.transitions.find((transition) =>
-      transitionMatches(
-        transition,
-        identity,
-        metadata.context.kind === "branch" ? metadata.context.branch : undefined,
-        metadata.workspace.workspaceRoot,
-      ),
+      transitionMatches(transition, identity, metadata.context, metadata.workspace.workspaceRoot),
     );
 
     const activeLocation = locations.find(
@@ -718,6 +746,7 @@ export const discoverWorkspace = (
       folderToGitClaims: folderToGitClaims.length,
       gitCheckout: inspection.kind === "git-checkout",
       identity,
+      checkoutProjectKnown: claimedCheckoutProject !== undefined,
       checkoutProjectOwnership,
       contextPresent: context !== undefined,
       locationCount: locations.length,

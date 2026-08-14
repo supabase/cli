@@ -37,6 +37,7 @@ import {
   decideManagedIdentityTransitionAbandon,
   decideManagedContextOwnerRefresh,
   decideManagedContextToBranch,
+  decideManagedContextToDetached,
   decideManagedIdentityMetadataPrune,
   transitionResourceKeys,
   decideManagedContextRegistration,
@@ -61,6 +62,8 @@ import {
   type RefreshManagedContextOwnerInput,
   type MigrateManagedContextToBranchInput,
   type MigrateManagedContextToBranchFailure,
+  type MigrateManagedContextToDetachedInput,
+  type MigrateManagedContextToDetachedFailure,
   type ReserveManagedIdentityTransitionInput,
   type AdvanceManagedIdentityTransitionInput,
   type PruneManagedIdentityMetadataInput,
@@ -652,6 +655,22 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
       return copy(next);
     });
 
+  const migrateContextToDetached = (
+    input: MigrateManagedContextToDetachedInput,
+  ): ManagedContextRecord =>
+    atomic(() => {
+      const existing = contexts.get(input.contextId);
+      const next = decideManagedContextToDetached({
+        requested: input,
+        existing,
+        detachedExisting: [...contexts.values()].find(
+          (context) => context.checkoutId === input.checkoutId && context.kind === "detached",
+        ),
+      });
+      if (existing === undefined || existing !== next) contexts.set(next.id, next);
+      return copy(next);
+    });
+
   const reserveIdentityTransition = (
     input: ReserveManagedIdentityTransitionInput,
   ): ManagedIdentityTransitionRecord =>
@@ -761,6 +780,11 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
           DuplicateManagedIdentityError,
           ManagedCopiedBranchConflictError,
         ),
+      }),
+    migrateContextToDetached: (input) =>
+      Effect.try({
+        try: () => migrateContextToDetached(input),
+        catch: failsWith<MigrateManagedContextToDetachedFailure>(DuplicateManagedIdentityError),
       }),
     reserveIdentityTransition: (input) =>
       Effect.try({

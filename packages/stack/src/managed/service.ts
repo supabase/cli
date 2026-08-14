@@ -448,6 +448,23 @@ const dataRetained = (error: unknown): DeleteManagedStackResult["dataReclamation
 const checkoutKindOf = (inspection: GitCheckoutInspection): ManagedCheckoutKind =>
   inspection.checkoutKind === "primary" ? "git" : inspection.checkoutKind;
 
+const NEW_CHECKOUT_ORDINARY_TOPOLOGY = "topology:ordinary";
+const NEW_CHECKOUT_DETACHED_TOPOLOGY = "topology:detached";
+
+const newCheckoutTopologyMatches = (
+  transition: ManagedIdentityTransitionRecord,
+  report: ManagedWorkspaceDiscovery,
+): boolean => {
+  if (report.context.kind === "branch") return transition.branch === report.context.branch;
+  return (
+    transition.branch === undefined &&
+    transition.expectedGitValue ===
+      (report.context.kind === "workspace"
+        ? NEW_CHECKOUT_ORDINARY_TOPOLOGY
+        : NEW_CHECKOUT_DETACHED_TOPOLOGY)
+  );
+};
+
 const observationMatches = (
   report: ManagedWorkspaceDiscovery,
   inspection:
@@ -1315,6 +1332,13 @@ export class ManagedStackService extends Context.Service<
                 branch: inspection.head.branch,
                 now: now(),
               });
+            } else {
+              yield* repository.migrateContextToDetached({
+                contextId: claim.contextId,
+                projectId: claim.projectId,
+                checkoutId: claim.checkoutId,
+                now: now(),
+              });
             }
             const requiredGitIdentity = yield* withWorkspaceServices(
               readGitCheckoutIdentityWithFileSystem(inspection),
@@ -1346,7 +1370,7 @@ export class ManagedStackService extends Context.Service<
               context:
                 inspection.head.kind !== "detached"
                   ? { kind: "branch", locator: inspection.head.branch }
-                  : { kind: "workspace" },
+                  : { kind: "detached" },
               now: now(),
             });
             const latest =
@@ -1843,8 +1867,14 @@ export class ManagedStackService extends Context.Service<
                       id: yield* managedUuid("identity transition"),
                       kind: "new-checkout",
                       ...targetIdentity,
+                      branch: report.context.kind === "branch" ? report.context.branch : undefined,
                       path,
-                      expectedGitValue: report.identity.contextId,
+                      expectedGitValue:
+                        report.context.kind === "workspace"
+                          ? NEW_CHECKOUT_ORDINARY_TOPOLOGY
+                          : report.context.kind === "detached"
+                            ? NEW_CHECKOUT_DETACHED_TOPOLOGY
+                            : report.identity.contextId,
                       targetGitValue: targetIdentity.contextId,
                       now: now(),
                     });
@@ -1854,7 +1884,8 @@ export class ManagedStackService extends Context.Service<
               transition.path !== path ||
               transition.projectId === undefined ||
               transition.checkoutId === undefined ||
-              transition.contextId === undefined
+              transition.contextId === undefined ||
+              !newCheckoutTopologyMatches(transition, report)
             ) {
               return yield* Effect.fail(
                 new ManagedIdentityTransitionOwnershipError({ transitionId: transition.id }),
@@ -1876,6 +1907,7 @@ export class ManagedStackService extends Context.Service<
                 reserved.phase !== "reserved" ||
                 reserved.kind !== "new-checkout" ||
                 reserved.path !== path ||
+                !newCheckoutTopologyMatches(reserved, beforePublication) ||
                 (beforePublication.identity.projectId !== undefined &&
                   beforePublication.identity.projectId !== targetIdentity.projectId) ||
                 (beforePublication.identity.checkoutId !== undefined &&
@@ -2050,10 +2082,21 @@ export class ManagedStackService extends Context.Service<
           const owner = evidence?.authoritativeOwnerBranch;
           if (owner === undefined || owner === report.context.branch) return false;
           const liveClaims = evidence?.claims.filter((claim) => claim.live) ?? [];
+          const activeLocations = report.locations.filter(
+            (location) => location.state === "active",
+          );
           return (
             liveClaims.length === 2 &&
             liveClaims.some((claim) => claim.branch === owner) &&
-            liveClaims.some((claim) => claim.branch === report.context.branch)
+            liveClaims.some((claim) => claim.branch === report.context.branch) &&
+            activeLocations.length === 1 &&
+            activeLocations[0]?.checkoutId === report.identity.checkoutId &&
+            activeLocations[0]?.canonicalPath === report.workspace.workspaceRoot &&
+            report.conflicts.length === 1 &&
+            report.recoveryOperations.length === 0 &&
+            report.conflictingLocations === undefined &&
+            report.inaccessiblePaths === undefined &&
+            report.historicalPathEvidence === undefined
           );
         };
 
