@@ -190,7 +190,7 @@ func Execute() {
 		if err != nil {
 			fmt.Fprintln(utils.GetDebugLogger(), err)
 		}
-		if semver.Compare(version, "v"+utils.Version) > 0 {
+		if semver.Compare(version, "v"+utils.Version) > 0 && !utils.HideVersionMessage() {
 			fmt.Fprintln(os.Stderr, suggestUpgrade(version))
 		}
 	}

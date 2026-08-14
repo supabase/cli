@@ -30,6 +30,12 @@ var (
 	PostHogEndpoint string
 )
 
+// HideVersionMessage returns true when SUPABASE_HIDE_VERSION_MESSAGE is set,
+// suppressing the "A new version of Supabase CLI is available" upgrade hint.
+func HideVersionMessage() bool {
+	return os.Getenv("SUPABASE_HIDE_VERSION_MESSAGE") != ""
+}
+
 func ShortContainerImageName(imageName string) string {
 	matches := ImageNamePattern.FindStringSubmatch(imageName)
 	if len(matches) < 2 {

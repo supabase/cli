@@ -135,3 +135,15 @@ func TestUpdateNotifierEnabled(t *testing.T) {
 		assert.Equal(t, wantEnabled, updateNotifierEnabled(), "value %q", value)
 	}
 }
+
+func TestHideVersionMessage(t *testing.T) {
+	t.Run("defaults to false", func(t *testing.T) {
+		t.Setenv("SUPABASE_HIDE_VERSION_MESSAGE", "")
+		assert.False(t, utils.HideVersionMessage())
+	})
+
+	t.Run("is true when env var is set", func(t *testing.T) {
+		t.Setenv("SUPABASE_HIDE_VERSION_MESSAGE", "true")
+		assert.True(t, utils.HideVersionMessage())
+	})
+}
