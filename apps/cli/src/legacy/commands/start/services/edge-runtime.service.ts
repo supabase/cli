@@ -148,9 +148,9 @@ export interface LegacyEdgeRuntimeBringUpInput {
  * still exist for as long as the container itself can be reattached to
  * (e.g. a plain `docker start` by the user, or discovery by a later CLI
  * invocation) — unlike Kong/Postgres/Supavisor's `secretFiles`, which
- * `container-lifecycle.ts`'s `legacyCreateContainer` now `docker cp`s straight
+ * `container-lifecycle.ts`'s `legacyCreateContainer` now streams straight
  * into the container instead of staging on host disk (see
- * `legacyCopyStartSecretFileIntoContainer`'s doc comment), Edge Runtime's own
+ * `legacyCopyStartSecretFilesIntoContainer`'s doc comment), Edge Runtime's own
  * bind-mounted env-file/multiline-env-script/serve-main-template artifacts
  * still need this host persistence, since `docker run -d` bind-mounts them
  * rather than copying their content in. `startEdgeRuntimeContainer` (`shared/functions/

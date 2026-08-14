@@ -1586,7 +1586,7 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // Deterministic, persistent host path (the same `<workdir>/supabase/.temp/start-secrets/`
     // convention `start`'s own container-lifecycle bring-up used to stage Kong/Postgres/
     // Supavisor's `secretFiles` on host disk before they moved to `docker cp` delivery —
-    // see `legacyCopyStartSecretFileIntoContainer`'s doc comment, `container-lifecycle.ts`)
+    // see `legacyCopyStartSecretFilesIntoContainer`'s doc comment, `container-lifecycle.ts`)
     // rather than `os.tmpdir()`: `legacyCleanupStartSecrets` (wired into both `stop` and a
     // failed-`start` rollback) reclaims this same `<workdir>/supabase/.temp/start-secrets/
     // <containerId>` tree keyed by container name, so these JWT/service-role-key/secret env
