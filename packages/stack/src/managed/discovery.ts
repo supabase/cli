@@ -358,7 +358,8 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     (evidence.locationCount === 0 &&
       evidence.activeLocation === undefined &&
       evidence.anyActiveLocation === undefined &&
-      evidence.checkoutProjectOwnership === "unknown")
+      evidence.checkoutProjectOwnership === "unknown" &&
+      (!evidence.contextPresent || (evidence.gitCheckout && evidence.contextKind === "branch")))
   ) {
     state = "unregistered";
     recoveryOperations.push({ operation: "newCheckout", path: evidence.workspaceRoot });

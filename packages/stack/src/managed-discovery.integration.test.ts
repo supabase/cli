@@ -1,7 +1,7 @@
 import { BunFileSystem } from "@effect/platform-bun";
 import { Effect, Layer, ManagedRuntime } from "effect";
 import { afterEach, describe, expect, it } from "vitest";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { symlinkSync, renameSync } from "node:fs";
 import { writeFileSync, readFileSync, existsSync, readdirSync, mkdirSync, rmSync } from "node:fs";
 import {
@@ -1158,6 +1158,59 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     await expect(
       service.resolveStack({ workspacePath: workspace, operation: "start" }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+  });
+
+  it("fails closed when an ordinary marker reuses another checkout's context", async () => {
+    const root = makeRoot();
+    const ownerWorkspace = makeDirectory(root, "ordinary-owner");
+    const conflictingWorkspace = makeDirectory(root, "ordinary-conflict");
+    const service = await open(root);
+    openHandles.push(service);
+    const owner = await service.resolveStack({
+      workspacePath: ownerWorkspace,
+      operation: "start",
+    });
+    const ownerMarker = JSON.parse(
+      readFileSync(ordinaryWorkspaceIdentityPath(ownerWorkspace), "utf8"),
+    ) as {
+      readonly version: number;
+      readonly projectId: string;
+      readonly checkoutId: string;
+      readonly contextId: string;
+    };
+    const conflictingMarkerPath = ordinaryWorkspaceIdentityPath(conflictingWorkspace);
+    mkdirSync(dirname(conflictingMarkerPath), { recursive: true });
+    writeFileSync(
+      conflictingMarkerPath,
+      `${JSON.stringify({
+        ...ownerMarker,
+        checkoutId: "00000000-0000-7000-8000-000000000096",
+      })}\n`,
+    );
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const beforeStacks = await Effect.runPromise(service.repository.listStacks());
+    const beforeOperations = await Effect.runPromise(service.repository.listActiveOperations());
+    const beforeTree = snapshotTree(root);
+    const beforeMarker = readFileSync(conflictingMarkerPath, "utf8");
+
+    const report = await inspect(service.repository, conflictingWorkspace);
+    expect(report.identity).toEqual({
+      projectId: owner.identity.projectId,
+      checkoutId: "00000000-0000-7000-8000-000000000096",
+      contextId: owner.identity.contextId,
+    });
+    expect(report.state).toBe("duplicate");
+    expect(report.recoveryOperations).toEqual([]);
+    await expect(
+      service.resolveStack({ workspacePath: conflictingWorkspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
+    expect(await Effect.runPromise(service.repository.listActiveOperations())).toEqual(
+      beforeOperations,
+    );
+    expect(snapshotTree(root)).toEqual(beforeTree);
+    expect(readFileSync(conflictingMarkerPath, "utf8")).toBe(beforeMarker);
   });
 
   it("fails closed when Git project and checkout markers belong to different projects", async () => {
