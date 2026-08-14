@@ -233,6 +233,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
               removed: result.removed + 1,
               prunedRecordIds: [...result.prunedRecordIds, staleId],
               preservedRecordIds: result.preservedRecordIds,
+              unknownRecordIds: result.unknownRecordIds,
             };
           },
         ),
@@ -252,6 +253,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       removed: 1,
       prunedRecordIds: [staleId],
       preservedRecordIds: [],
+      unknownRecordIds: [],
     });
     expect(stalePresent).toBe(false);
     expect(await service.inspectStack(started.stack.id)).toMatchObject({ status: "active" });
@@ -463,6 +465,44 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
       ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
     }
   }, 15_000);
+
+  it("retains each probed location state when historical rows share a path", async () => {
+    const root = makeRoot();
+    const previous = makeRepository(root);
+    const next = join(root, "shared-historical-path");
+    const service = await open(root);
+    openHandles.push(service);
+    const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    await service.resolveStack({ workspacePath: next, operation: "start" });
+    const base = service.repository;
+    const wrapped: ManagedStackRepositoryShape = {
+      ...base,
+      listIdentityClaims: (projectId) =>
+        Effect.map(base.listIdentityClaims(projectId), (claims) => ({
+          ...claims,
+          locations: [
+            {
+              id: "00000000-0000-7000-8000-000000000108",
+              checkoutId: first.identity.checkoutId,
+              canonicalPath: previous,
+              state: "blocked" as const,
+              lastSeenAt: new Date().toISOString(),
+            },
+            ...claims.locations,
+          ],
+        })),
+    };
+
+    const report = await inspect(wrapped, next);
+
+    expect(report.historicalPathEvidence).toEqual(
+      expect.arrayContaining([
+        { path: previous, locationState: "blocked", probe: "missing" },
+        { path: previous, locationState: "superseded", probe: "missing" },
+      ]),
+    );
+  });
 
   it("resumes an interrupted rebind when the marker still matches", async () => {
     const root = makeRoot();
@@ -1118,6 +1158,58 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     await expect(
       service.resolveStack({ workspacePath: workspace, operation: "start" }),
     ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+  });
+
+  it("fails closed when Git project and checkout markers belong to different projects", async () => {
+    const root = makeRoot();
+    const workspace = makeRepository(root, "checkout-project");
+    const contextWorkspace = makeRepository(root, "context-project");
+    const service = await open(root);
+    openHandles.push(service);
+    const checkoutOwner = await service.resolveStack({
+      workspacePath: workspace,
+      operation: "start",
+    });
+    const contextOwner = await service.resolveStack({
+      workspacePath: contextWorkspace,
+      operation: "start",
+    });
+    expect(contextOwner.identity.projectId).not.toBe(checkoutOwner.identity.projectId);
+    git(workspace, "config", GIT_PROJECT_ID_KEY, contextOwner.identity.projectId);
+    git(workspace, "config", gitBranchContextIdKey("main"), contextOwner.identity.contextId);
+
+    const calls = { count: 0 };
+    const guardedRepository = mutationDenied(service.repository, calls);
+    const guardedRoot = join(root, "inconsistent-identity-managed");
+    const guarded = await makeManagedStackService({
+      repository: guardedRepository,
+      stateRoot: guardedRoot,
+      publicationPollMs: 1,
+    });
+    openHandles.push(guarded);
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const beforeStacks = await Effect.runPromise(service.repository.listStacks());
+    const beforeOperations = await Effect.runPromise(service.repository.listActiveOperations());
+    const beforeTree = snapshotTree(guardedRoot);
+
+    const report = await inspect(guardedRepository, workspace);
+    expect(report.identity).toEqual({
+      projectId: contextOwner.identity.projectId,
+      checkoutId: checkoutOwner.identity.checkoutId,
+      contextId: contextOwner.identity.contextId,
+    });
+    expect(report.state).toBe("duplicate");
+    expect(report.recoveryOperations).toEqual([]);
+    await expect(
+      guarded.resolveStack({ workspacePath: workspace, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+    expect(calls.count).toBe(0);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
+    expect(await Effect.runPromise(service.repository.listActiveOperations())).toEqual(
+      beforeOperations,
+    );
+    expect(snapshotTree(guardedRoot)).toEqual(beforeTree);
   });
 
   it("classifies superseded and blocked location reappearance as duplicate", async () => {

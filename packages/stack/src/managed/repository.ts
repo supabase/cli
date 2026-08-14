@@ -313,26 +313,6 @@ export const decideManagedCheckoutLocation = (
       updates: [{ ...supersededPath, state: "blocked", lastSeenAt: input.requested.now }],
     };
   }
-  if (byId !== undefined) {
-    const active = checkoutRows.find((row) => row.state === "active" && row.id !== byId.id);
-    if (byId.state === "superseded" && active !== undefined) {
-      const blocked: ManagedCheckoutLocation = {
-        ...byId,
-        state: "blocked",
-        lastSeenAt: input.requested.now,
-      };
-      return {
-        outcome: "blocked",
-        location: blocked,
-        supersededLocationId: active.id,
-        updates: [{ ...active, state: "blocked", lastSeenAt: input.requested.now }, blocked],
-      };
-    }
-    return {
-      outcome: byId.state === "blocked" ? "blocked" : "active",
-      location: { ...byId, lastSeenAt: input.requested.now },
-    };
-  }
   const active = checkoutRows.find((row) => row.state === "active");
   if (active === undefined) {
     return {
@@ -519,14 +499,14 @@ export interface PruneManagedIdentityMetadataResult {
   readonly removed: number;
   readonly prunedRecordIds: ReadonlyArray<string>;
   readonly preservedRecordIds: ReadonlyArray<string>;
+  readonly unknownRecordIds: ReadonlyArray<string>;
 }
 
-export const decideManagedIdentityMetadataPrune = (input: {
+/** Location rows that discovery may advertise but metadata pruning must retain. */
+export const protectedManagedCheckoutLocationIds = (input: {
   readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
-  readonly locationIds: ReadonlyArray<string>;
   readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;
-}): PruneManagedIdentityMetadataResult => {
-  const selected = new Set(input.locationIds);
+}): ReadonlySet<string> => {
   const protectedIds = new Set(
     input.locations
       .filter((location) => location.state === "active" || location.state === "blocked")
@@ -536,11 +516,13 @@ export const decideManagedIdentityMetadataPrune = (input: {
   while (expanded) {
     expanded = false;
     for (const location of input.locations) {
-      if (location.reboundFromLocationId !== undefined && protectedIds.has(location.id)) {
-        if (!protectedIds.has(location.reboundFromLocationId)) {
-          protectedIds.add(location.reboundFromLocationId);
-          expanded = true;
-        }
+      if (
+        location.reboundFromLocationId !== undefined &&
+        protectedIds.has(location.id) &&
+        !protectedIds.has(location.reboundFromLocationId)
+      ) {
+        protectedIds.add(location.reboundFromLocationId);
+        expanded = true;
       }
     }
   }
@@ -555,15 +537,34 @@ export const decideManagedIdentityMetadataPrune = (input: {
       }
     }
   }
+  return protectedIds;
+};
+
+export const decideManagedIdentityMetadataPrune = (input: {
+  readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly locationIds: ReadonlyArray<string>;
+  readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;
+}): PruneManagedIdentityMetadataResult => {
+  const selected = new Set(input.locationIds);
+  const protectedIds = protectedManagedCheckoutLocationIds(input);
   const prunedRecordIds: string[] = [];
   const preservedRecordIds: string[] = [];
+  const unknownRecordIds: string[] = [];
   for (const id of selected) {
     const location = input.locations.find((candidate) => candidate.id === id);
-    if (location === undefined) continue;
+    if (location === undefined) {
+      unknownRecordIds.push(id);
+      continue;
+    }
     if (protectedIds.has(id)) preservedRecordIds.push(id);
     else prunedRecordIds.push(id);
   }
-  return { removed: prunedRecordIds.length, prunedRecordIds, preservedRecordIds };
+  return {
+    removed: prunedRecordIds.length,
+    prunedRecordIds,
+    preservedRecordIds,
+    unknownRecordIds,
+  };
 };
 
 export type ManagedIdentityRecoveryError =

@@ -7,6 +7,7 @@ import {
   type ManagedContextDescriptor,
   type ManagedContextKind,
   type ManagedIdentityTransitionRecord,
+  type ManagedIdentityClaims,
   type ManagedOperationRecord,
   type ManagedStackProjection,
   type ManagedIdentityTriple,
@@ -25,7 +26,11 @@ import {
   readOrdinaryWorkspaceIdentityWithFileSystem,
 } from "./identity.ts";
 import { gitConfigPath, ordinaryWorkspaceIdentityPath } from "./paths.ts";
-import { ManagedStackRepository, type ManagedStackRepositoryShape } from "./repository.ts";
+import {
+  ManagedStackRepository,
+  protectedManagedCheckoutLocationIds,
+  type ManagedStackRepositoryShape,
+} from "./repository.ts";
 
 export type ManagedWorkspaceDiscoveryState =
   | "adoptable"
@@ -159,6 +164,206 @@ const matchingStacks = (
   identity: ManagedWorkspaceDiscoveryIdentity,
 ): Effect.Effect<ReadonlyArray<ManagedStackProjection>> =>
   completeIdentity(identity) ? repository.listStackProjections({ identity }) : Effect.succeed([]);
+
+const projectIdentityClaims = (
+  allClaims: ManagedIdentityClaims,
+  identity: ManagedWorkspaceDiscoveryIdentity,
+): ManagedIdentityClaims => {
+  if (identity.projectId === undefined) return allClaims;
+  const checkoutProjects = allClaims.checkoutProjects.filter(
+    (checkout) => checkout.projectId === identity.projectId,
+  );
+  const contexts = allClaims.contexts.filter((context) => context.projectId === identity.projectId);
+  const checkoutIds = new Set(checkoutProjects.map((checkout) => checkout.checkoutId));
+  const contextIds = new Set(contexts.map((context) => context.id));
+  return {
+    checkoutProjects,
+    locations: allClaims.locations.filter((location) => checkoutIds.has(location.checkoutId)),
+    contexts,
+    transitions: allClaims.transitions.filter(
+      (transition) =>
+        transition.projectId === identity.projectId ||
+        (transition.checkoutId !== undefined && checkoutIds.has(transition.checkoutId)) ||
+        (transition.contextId !== undefined && contextIds.has(transition.contextId)),
+    ),
+  };
+};
+
+interface WorkspaceClassificationEvidence {
+  readonly activeTransition?: ManagedIdentityTransitionRecord;
+  readonly duplicateLocations: boolean;
+  readonly samePathClaims: number;
+  readonly markerRegistryConflict: boolean;
+  readonly sameCheckoutReappeared: boolean;
+  readonly inaccessiblePaths: number;
+  readonly recycledPaths: number;
+  readonly authoritativeOwnerBranch?: string;
+  readonly contextKind: ManagedWorkspaceDiscoveryContext["kind"];
+  readonly currentBranch?: string;
+  readonly authoritativeOwnerLive: boolean;
+  readonly liveOwnerClaims: ReadonlyArray<{ readonly branch: string }>;
+  readonly currentLocation?: ManagedCheckoutLocation;
+  readonly anyActiveLocation?: ManagedCheckoutLocation;
+  readonly folderToGitClaims: number;
+  readonly gitCheckout: boolean;
+  readonly identity: ManagedWorkspaceDiscoveryIdentity;
+  readonly contextPresent: boolean;
+  readonly locationCount: number;
+  readonly activeLocation?: ManagedCheckoutLocation;
+  readonly workspaceRoot: string;
+  readonly canonicalPath: string;
+}
+
+interface WorkspaceClassification {
+  readonly state: ManagedWorkspaceDiscoveryState;
+  readonly conflicts: ReadonlyArray<string>;
+  readonly warnings: ReadonlyArray<string>;
+  readonly recoveryOperations: ReadonlyArray<ManagedRecoveryOperation>;
+}
+
+const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): WorkspaceClassification => {
+  const conflicts: string[] = [];
+  const warnings: string[] = [];
+  const recoveryOperations: ManagedRecoveryOperation[] = [];
+  const identityComplete = completeIdentity(evidence.identity);
+  let state: ManagedWorkspaceDiscoveryState;
+  if (evidence.activeTransition !== undefined) {
+    state = "transitioning";
+    warnings.push(
+      `Identity transition ${evidence.activeTransition.id} is ${evidence.activeTransition.phase}`,
+    );
+  } else if (
+    evidence.duplicateLocations ||
+    evidence.samePathClaims > 0 ||
+    evidence.markerRegistryConflict ||
+    evidence.sameCheckoutReappeared ||
+    evidence.inaccessiblePaths > 0 ||
+    evidence.recycledPaths > 0 ||
+    (evidence.authoritativeOwnerBranch !== undefined &&
+      evidence.contextKind === "branch" &&
+      evidence.authoritativeOwnerBranch !== evidence.currentBranch &&
+      evidence.authoritativeOwnerLive) ||
+    evidence.currentLocation?.state === "blocked" ||
+    (evidence.currentLocation?.state === "superseded" &&
+      evidence.anyActiveLocation !== undefined &&
+      evidence.anyActiveLocation.id !== evidence.currentLocation.id)
+  ) {
+    state = "duplicate";
+    conflicts.push(
+      evidence.duplicateLocations
+        ? `Checkout ${evidence.identity.checkoutId} has multiple active locations`
+        : evidence.markerRegistryConflict
+          ? "Workspace marker context conflicts with registry context"
+          : `Workspace path ${evidence.canonicalPath} is claimed by another checkout`,
+    );
+  } else if (
+    evidence.authoritativeOwnerBranch === undefined &&
+    evidence.liveOwnerClaims.length > 1
+  ) {
+    state = "ambiguous";
+    conflicts.push(`Context ${evidence.identity.contextId} is claimed by multiple live branches`);
+  } else if (
+    evidence.authoritativeOwnerBranch !== undefined &&
+    evidence.contextKind === "branch" &&
+    evidence.currentBranch !== evidence.authoritativeOwnerBranch &&
+    !evidence.authoritativeOwnerLive &&
+    evidence.liveOwnerClaims.length === 1 &&
+    evidence.liveOwnerClaims[0]?.branch === evidence.currentBranch
+  ) {
+    state = "adoptable";
+    warnings.push("Authoritative branch owner is absent; branch adoption is required");
+    if (evidence.identity.contextId !== undefined && evidence.currentBranch !== undefined) {
+      recoveryOperations.push({
+        operation: "adoptContext",
+        contextId: evidence.identity.contextId,
+        branch: evidence.currentBranch,
+      });
+    }
+  } else if (
+    evidence.authoritativeOwnerBranch !== undefined &&
+    evidence.contextKind === "branch" &&
+    evidence.currentBranch !== evidence.authoritativeOwnerBranch &&
+    !evidence.authoritativeOwnerLive &&
+    evidence.liveOwnerClaims.length > 1
+  ) {
+    state = "ambiguous";
+    conflicts.push(`Context ${evidence.identity.contextId} has multiple plausible live owners`);
+  } else if (evidence.folderToGitClaims > 1) {
+    state = "duplicate";
+    conflicts.push("Multiple live ordinary-folder claims match this Git checkout path");
+  } else if (evidence.folderToGitClaims === 1 && evidence.gitCheckout && !identityComplete) {
+    state = "adoptable";
+    warnings.push("An exact ordinary-folder claim can be migrated into Git-owned identity");
+  } else if (
+    evidence.contextKind === "branch" &&
+    evidence.currentBranch !== undefined &&
+    identityComplete &&
+    evidence.contextPresent &&
+    evidence.authoritativeOwnerBranch === undefined
+  ) {
+    state = "orphaned";
+    warnings.push("Branch context has no authoritative owner; recovery is required");
+    recoveryOperations.push({
+      operation: "adoptContext",
+      contextId: evidence.identity.contextId,
+      branch: evidence.currentBranch,
+    });
+  } else if (
+    identityComplete &&
+    evidence.activeLocation === undefined &&
+    evidence.anyActiveLocation !== undefined
+  ) {
+    state = "moved";
+    recoveryOperations.push({
+      operation: "rebindCheckout",
+      checkoutId: evidence.identity.checkoutId,
+      path: evidence.workspaceRoot,
+    });
+  } else if (
+    identityComplete &&
+    ((!evidence.contextPresent && evidence.locationCount > 0) ||
+      (evidence.authoritativeOwnerBranch !== undefined && evidence.liveOwnerClaims.length === 0))
+  ) {
+    state = "orphaned";
+    if (
+      evidence.contextKind === "branch" &&
+      evidence.currentBranch !== undefined &&
+      evidence.identity.contextId !== undefined
+    ) {
+      recoveryOperations.push({
+        operation: "adoptContext",
+        contextId: evidence.identity.contextId,
+        branch: evidence.currentBranch,
+      });
+    }
+  } else if (identityComplete && evidence.activeLocation !== undefined) {
+    state = "healthy";
+  } else if (
+    evidence.identity.checkoutId !== undefined &&
+    evidence.identity.contextId !== undefined &&
+    evidence.locationCount > 0
+  ) {
+    state = "adoptable";
+    recoveryOperations.push({
+      operation: "adoptCheckout",
+      checkoutId: evidence.identity.checkoutId,
+      path: evidence.workspaceRoot,
+    });
+  } else if (
+    !identityComplete ||
+    (evidence.locationCount === 0 &&
+      evidence.activeLocation === undefined &&
+      evidence.anyActiveLocation === undefined &&
+      !evidence.contextPresent)
+  ) {
+    state = "unregistered";
+    recoveryOperations.push({ operation: "newCheckout", path: evidence.workspaceRoot });
+  } else {
+    state = "duplicate";
+    conflicts.push("Workspace evidence does not match a recoverable identity state");
+  }
+  return { state, conflicts, warnings, recoveryOperations };
+};
 
 type PreviousLocationProbe = ManagedHistoricalPathProbe;
 
@@ -347,15 +552,12 @@ export const discoverWorkspace = (
       }
     }
 
-    const claims = yield* repository.listIdentityClaims(identity.projectId);
-    const allClaims =
-      identity.projectId === undefined ? claims : yield* repository.listIdentityClaims();
+    const allClaims = yield* repository.listIdentityClaims();
+    const claims = projectIdentityClaims(allClaims, identity);
     // A new-checkout transition is reserved before the marker has an identity,
     // so its project scope is intentionally empty. Read the complete transition
     // set when a marker now supplies a project ID; otherwise an interrupted
     // publication would disappear from discovery instead of remaining resumable.
-    const transitionClaims =
-      identity.projectId === undefined ? claims : yield* repository.listIdentityClaims();
     const folderToGitClaims: ReadonlyArray<ManagedFolderToGitClaim> =
       inspection.kind === "git-checkout"
         ? allClaims.locations
@@ -398,7 +600,7 @@ export const discoverWorkspace = (
     const activeOperations = (yield* repository.listActiveOperations()).filter((operation) =>
       stackIds.has(operation.stackId),
     );
-    const activeTransition = transitionClaims.transitions.find((transition) =>
+    const activeTransition = allClaims.transitions.find((transition) =>
       transitionMatches(
         transition,
         identity,
@@ -407,9 +609,6 @@ export const discoverWorkspace = (
       ),
     );
 
-    const conflicts: string[] = [];
-    const warnings: string[] = [];
-    const recoveryOperations: ManagedRecoveryOperation[] = [];
     const activeLocation = locations.find(
       (location) =>
         location.state === "active" && location.canonicalPath === metadata.workspace.workspaceRoot,
@@ -420,12 +619,16 @@ export const discoverWorkspace = (
     const anyActiveLocation = locations.find((location) => location.state === "active");
     const previousPathProbes: ReadonlyArray<{
       readonly path: string;
+      readonly locationState: ManagedCheckoutLocation["state"];
       readonly result: PreviousLocationProbe;
     }> = completeIdentity(identity)
       ? yield* Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
-          const probes: Array<{ readonly path: string; readonly result: PreviousLocationProbe }> =
-            [];
+          const probes: Array<{
+            readonly path: string;
+            readonly locationState: ManagedCheckoutLocation["state"];
+            readonly result: PreviousLocationProbe;
+          }> = [];
           const candidates =
             activeLocation === undefined
               ? locations.filter((candidate) => candidate.state === "active")
@@ -437,6 +640,7 @@ export const discoverWorkspace = (
           )) {
             probes.push({
               path: location.canonicalPath,
+              locationState: location.state,
               result: yield* probePreviousLocation(fs, location.canonicalPath, identity.checkoutId),
             });
           }
@@ -450,10 +654,9 @@ export const discoverWorkspace = (
       .filter((probe) => probe.result === "recycled")
       .map((probe) => probe.path);
     const sameCheckoutReappeared = previousPathProbes.some((probe) => probe.result === "same");
-    const historicalPathEvidence = previousPathProbes.map(({ path, result }) => ({
+    const historicalPathEvidence = previousPathProbes.map(({ path, locationState, result }) => ({
       path,
-      locationState:
-        locations.find((location) => location.canonicalPath === path)?.state ?? "active",
+      locationState,
       probe: result,
     }));
     const sameContextClaims =
@@ -481,167 +684,38 @@ export const discoverWorkspace = (
       identity.checkoutId !== undefined
         ? locations.filter((location) => location.state === "active").length > 1
         : false;
-    let state: ManagedWorkspaceDiscoveryState;
-    if (activeTransition !== undefined) {
-      state = "transitioning";
-      warnings.push(`Identity transition ${activeTransition.id} is ${activeTransition.phase}`);
-    } else if (
-      duplicateLocations ||
-      samePathClaims.length > 0 ||
-      markerRegistryConflict ||
-      sameCheckoutReappeared ||
-      inaccessiblePaths.length > 0 ||
-      recycledPaths.length > 0 ||
-      (ownerEvidence?.authoritativeOwnerBranch !== undefined &&
-        metadata.context.kind === "branch" &&
-        ownerEvidence.authoritativeOwnerBranch !== metadata.context.branch &&
-        authoritativeOwnerLive) ||
-      currentLocation?.state === "blocked" ||
-      (currentLocation?.state === "superseded" &&
-        anyActiveLocation !== undefined &&
-        anyActiveLocation.id !== currentLocation.id)
-    ) {
-      state = "duplicate";
-      conflicts.push(
-        duplicateLocations
-          ? `Checkout ${identity.checkoutId} has multiple active locations`
-          : markerRegistryConflict
-            ? `Workspace marker context conflicts with registry context`
-            : `Workspace path ${canonicalPath} is claimed by another checkout`,
-      );
-    } else if (
-      ownerEvidence?.authoritativeOwnerBranch === undefined &&
-      liveOwnerClaims.length > 1
-    ) {
-      state = "ambiguous";
-      conflicts.push(`Context ${identity.contextId} is claimed by multiple live branches`);
-    } else if (
-      ownerEvidence?.authoritativeOwnerBranch !== undefined &&
-      metadata.context.kind === "branch" &&
-      metadata.context.branch !== ownerEvidence.authoritativeOwnerBranch &&
-      !authoritativeOwnerLive &&
-      liveOwnerClaims.length === 1 &&
-      liveOwnerClaims[0]?.branch === metadata.context.branch
-    ) {
-      state = "adoptable";
-      warnings.push("Authoritative branch owner is absent; branch adoption is required");
-      if (identity.contextId !== undefined && metadata.context.branch !== undefined) {
-        recoveryOperations.push({
-          operation: "adoptContext",
-          contextId: identity.contextId,
-          branch: metadata.context.branch,
-        });
-      }
-    } else if (
-      ownerEvidence?.authoritativeOwnerBranch !== undefined &&
-      metadata.context.kind === "branch" &&
-      metadata.context.branch !== ownerEvidence.authoritativeOwnerBranch &&
-      !authoritativeOwnerLive &&
-      liveOwnerClaims.length > 1
-    ) {
-      state = "ambiguous";
-      conflicts.push(`Context ${identity.contextId} has multiple plausible live owners`);
-    } else if (folderToGitClaims.length > 1) {
-      state = "duplicate";
-      conflicts.push("Multiple live ordinary-folder claims match this Git checkout path");
-    } else if (
-      folderToGitClaims.length === 1 &&
-      inspection.kind === "git-checkout" &&
-      !completeIdentity(identity)
-    ) {
-      state = "adoptable";
-      warnings.push("An exact ordinary-folder claim can be migrated into Git-owned identity");
-    } else if (
-      metadata.context.kind === "branch" &&
-      currentBranch !== undefined &&
-      completeIdentity(identity) &&
-      context !== undefined &&
-      context.ownerBranch === undefined
-    ) {
-      state = "orphaned";
-      warnings.push("Branch context has no authoritative owner; recovery is required");
-      recoveryOperations.push({
-        operation: "adoptContext",
-        contextId: identity.contextId,
-        branch: currentBranch,
-      });
-    } else if (
-      completeIdentity(identity) &&
-      activeLocation === undefined &&
-      anyActiveLocation !== undefined
-    ) {
-      state = "moved";
-      recoveryOperations.push({
-        operation: "rebindCheckout",
-        checkoutId: identity.checkoutId,
-        path: metadata.workspace.workspaceRoot,
-      });
-    } else if (
-      completeIdentity(identity) &&
-      ((context === undefined && locations.length > 0) ||
-        (ownerEvidence !== undefined && liveOwnerClaims.length === 0))
-    ) {
-      state = "orphaned";
-      if (
-        metadata.context.kind === "branch" &&
-        metadata.context.branch !== undefined &&
-        identity.contextId !== undefined
-      ) {
-        recoveryOperations.push({
-          operation: "adoptContext",
-          contextId: identity.contextId,
-          branch: metadata.context.branch,
-        });
-      }
-    } else if (completeIdentity(identity) && activeLocation !== undefined) {
-      state = "healthy";
-    } else if (
-      identity.checkoutId !== undefined &&
-      identity.contextId !== undefined &&
-      locations.length > 0
-    ) {
-      state = "adoptable";
-      if (identity.checkoutId !== undefined) {
-        recoveryOperations.push({
-          operation: "adoptCheckout",
-          checkoutId: identity.checkoutId,
-          path: metadata.workspace.workspaceRoot,
-        });
-      }
-    } else {
-      state = "unregistered";
-      recoveryOperations.push({ operation: "newCheckout", path: metadata.workspace.workspaceRoot });
-    }
-    const protectedLocationIds = new Set(
-      locations
-        .filter((location) => location.state === "active" || location.state === "blocked")
-        .map((location) => location.id),
-    );
-    let expandedProtectedLocations = true;
-    while (expandedProtectedLocations) {
-      expandedProtectedLocations = false;
-      for (const location of locations) {
-        if (
-          location.reboundFromLocationId !== undefined &&
-          protectedLocationIds.has(location.id) &&
-          !protectedLocationIds.has(location.reboundFromLocationId)
-        ) {
-          protectedLocationIds.add(location.reboundFromLocationId);
-          expandedProtectedLocations = true;
-        }
-      }
-    }
-    for (const transition of transitionClaims.transitions) {
-      if (transition.phase === "finalized") continue;
-      for (const location of locations) {
-        if (
-          (transition.checkoutId !== undefined && transition.checkoutId === location.checkoutId) ||
-          (transition.path !== undefined && transition.path === location.canonicalPath)
-        ) {
-          protectedLocationIds.add(location.id);
-        }
-      }
-    }
+    const classification = classifyWorkspace({
+      activeTransition,
+      duplicateLocations,
+      samePathClaims: samePathClaims.length,
+      markerRegistryConflict,
+      sameCheckoutReappeared,
+      inaccessiblePaths: inaccessiblePaths.length,
+      recycledPaths: recycledPaths.length,
+      authoritativeOwnerBranch: ownerEvidence?.authoritativeOwnerBranch,
+      contextKind: metadata.context.kind,
+      currentBranch,
+      authoritativeOwnerLive,
+      liveOwnerClaims,
+      currentLocation,
+      anyActiveLocation,
+      folderToGitClaims: folderToGitClaims.length,
+      gitCheckout: inspection.kind === "git-checkout",
+      identity,
+      contextPresent: context !== undefined,
+      locationCount: locations.length,
+      activeLocation,
+      workspaceRoot: metadata.workspace.workspaceRoot,
+      canonicalPath,
+    });
+    const { state } = classification;
+    const conflicts = [...classification.conflicts];
+    const warnings = [...classification.warnings];
+    const recoveryOperations = [...classification.recoveryOperations];
+    const protectedLocationIds = protectedManagedCheckoutLocationIds({
+      locations,
+      transitions: allClaims.transitions,
+    });
     if (activeTransition === undefined && conflicts.length === 0) {
       const pruneRecordIds = historicalPathEvidence
         .filter(

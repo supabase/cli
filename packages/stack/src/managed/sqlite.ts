@@ -1567,11 +1567,7 @@ const selectCheckoutLocations = (
   database
     .prepare("SELECT * FROM checkout_locations ORDER BY canonical_path")
     .all()
-    .map(
-      (row): ManagedCheckoutLocation => ({
-        ...decodeCheckoutLocation(row),
-      }),
-    );
+    .map(decodeCheckoutLocation);
 
 const selectIdentityTransitions = (
   database: ManagedSqliteDatabase,
@@ -1798,13 +1794,25 @@ const listIdentityClaims = (
   database: ManagedSqliteDatabase,
   projectId?: string,
 ): ManagedIdentityClaims => {
-  const locations = selectCheckoutLocations(database).filter((location) =>
+  const checkoutRows =
     projectId === undefined
-      ? true
+      ? database.prepare("SELECT id, project_id FROM checkouts ORDER BY id").all()
       : database
-          .prepare("SELECT 1 FROM checkouts WHERE id = ? AND project_id = ?")
-          .get([location.checkoutId, projectId]) !== undefined,
-  );
+          .prepare("SELECT id, project_id FROM checkouts WHERE project_id = ? ORDER BY id")
+          .all([projectId]);
+  const locationRows =
+    projectId === undefined
+      ? database.prepare("SELECT * FROM checkout_locations ORDER BY canonical_path").all()
+      : database
+          .prepare(
+            `SELECT checkout_locations.*
+             FROM checkout_locations
+             INNER JOIN checkouts ON checkouts.id = checkout_locations.checkout_id
+             WHERE checkouts.project_id = ?
+             ORDER BY checkout_locations.canonical_path`,
+          )
+          .all([projectId]);
+  const locations = locationRows.map(decodeCheckoutLocation);
   const contextRows =
     projectId === undefined
       ? database.prepare("SELECT * FROM contexts ORDER BY id").all()
@@ -1824,6 +1832,10 @@ const listIdentityClaims = (
           )
           .all([projectId, projectId, projectId]);
   return {
+    checkoutProjects: checkoutRows.map((row) => ({
+      checkoutId: getString(row, "id"),
+      projectId: getString(row, "project_id"),
+    })),
     locations,
     contexts: contextRows.map(decodeContext),
     transitions: transitionRows.map(decodeIdentityTransition),

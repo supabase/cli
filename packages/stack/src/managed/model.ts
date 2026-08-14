@@ -200,6 +200,11 @@ export interface ManagedIdentityTransitionRecord {
 }
 
 export interface ManagedIdentityClaims {
+  /** Authoritative project ownership for checkout-scoped claims in this snapshot. */
+  readonly checkoutProjects: ReadonlyArray<{
+    readonly checkoutId: string;
+    readonly projectId: string;
+  }>;
   readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
   readonly contexts: ReadonlyArray<ManagedContextRecord>;
   readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;

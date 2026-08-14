@@ -579,6 +579,10 @@ export const createInMemoryManagedStackRepository = (): ManagedStackRepositorySh
         .map((context) => context.id),
     );
     return {
+      checkoutProjects: [...checkouts.values()]
+        .filter((checkout) => projectId === undefined || checkout.projectId === projectId)
+        .sort((left, right) => compareManagedText(left.id, right.id))
+        .map((checkout) => ({ checkoutId: checkout.id, projectId: checkout.projectId })),
       locations: [...locations.values()]
         .filter((location) => {
           if (projectId === undefined) return true;

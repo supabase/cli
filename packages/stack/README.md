@@ -135,7 +135,9 @@ Checkout locations retain a small history (`active`, `superseded`, or `blocked`)
 be distinguished from a recycled or conflicting path. `prune({ recordIds })` and
 `prune({ operation: "prune", recordIds })` remove only explicitly selected, unprotected location
 metadata. Active and blocked rows, transition-referenced rows, and conflict evidence remain
-protected, and the result reports both removed and preserved IDs. Stack records remain globally
+protected, and the result reports removed, preserved, and unknown requested IDs. Every requested
+ID appears in exactly one result list, so repeating a prune remains an explicit idempotent no-op.
+Stack records remain globally
 addressable by opaque stack ID: an orphaned stack can still be listed, stopped, and deleted without
 any live checkout, and deletion remains idempotent. The current managed registry is an unreleased
 internal format; it is used directly with no migration or compatibility promise.
@@ -145,7 +147,7 @@ const report = await managed.discoverWorkspace("/absolute/project");
 const prune = report.recoveryOperations.find((operation) => operation.operation === "prune");
 if (prune !== undefined) {
   const result = await managed.prune(prune);
-  console.log(result.prunedRecordIds, result.preservedRecordIds);
+  console.log(result.prunedRecordIds, result.preservedRecordIds, result.unknownRecordIds);
 }
 ```
 

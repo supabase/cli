@@ -3539,6 +3539,7 @@ describe("managed repository and lifecycle", () => {
             removed: 0,
             prunedRecordIds: [],
             preservedRecordIds: ["loc-a", "loc-b"],
+            unknownRecordIds: [],
           });
 
           runRepo(
@@ -3566,6 +3567,7 @@ describe("managed repository and lifecycle", () => {
             removed: 0,
             prunedRecordIds: [],
             preservedRecordIds: ["loc-a", "loc-b"],
+            unknownRecordIds: [],
           });
         }
       } finally {
@@ -3601,35 +3603,60 @@ describe("managed repository and lifecycle", () => {
           locationIds: [location.id],
           transitions: [],
         }),
-      ).toEqual({ removed: 1, prunedRecordIds: [location.id], preservedRecordIds: [] });
+      ).toEqual({
+        removed: 1,
+        prunedRecordIds: [location.id],
+        preservedRecordIds: [],
+        unknownRecordIds: [],
+      });
       expect(
         decideManagedIdentityMetadataPrune({
           locations: [location],
           locationIds: [location.id],
           transitions: [transition],
         }),
-      ).toEqual({ removed: 0, prunedRecordIds: [], preservedRecordIds: [location.id] });
+      ).toEqual({
+        removed: 0,
+        prunedRecordIds: [],
+        preservedRecordIds: [location.id],
+        unknownRecordIds: [],
+      });
       expect(
         decideManagedIdentityMetadataPrune({
           locations: [location],
           locationIds: [location.id],
           transitions: [pathTransition],
         }),
-      ).toEqual({ removed: 0, prunedRecordIds: [], preservedRecordIds: [location.id] });
+      ).toEqual({
+        removed: 0,
+        prunedRecordIds: [],
+        preservedRecordIds: [location.id],
+        unknownRecordIds: [],
+      });
       expect(
         decideManagedIdentityMetadataPrune({
           locations: [location],
           locationIds: [location.id],
           transitions: [{ ...pathTransition, phase: "git-written" }],
         }),
-      ).toEqual({ removed: 0, prunedRecordIds: [], preservedRecordIds: [location.id] });
+      ).toEqual({
+        removed: 0,
+        prunedRecordIds: [],
+        preservedRecordIds: [location.id],
+        unknownRecordIds: [],
+      });
       expect(
         decideManagedIdentityMetadataPrune({
           locations: [location],
           locationIds: [location.id],
           transitions: [{ ...pathTransition, phase: "finalized" }],
         }),
-      ).toEqual({ removed: 1, prunedRecordIds: [location.id], preservedRecordIds: [] });
+      ).toEqual({
+        removed: 1,
+        prunedRecordIds: [location.id],
+        preservedRecordIds: [],
+        unknownRecordIds: [],
+      });
     });
 
     it("enforces transition resource overlap and true phase CAS in both adapters", async () => {
