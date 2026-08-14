@@ -2,6 +2,7 @@ import { Effect, Option } from "effect";
 import { FeedbackClient } from "../../../../shared/feedback/feedback-client.service.ts";
 import { Output } from "../../../../shared/output/output.service.ts";
 import { legacyResolveYes } from "../../../../shared/legacy/global-flags.ts";
+import { TelemetryRuntime } from "../../../../shared/telemetry/runtime.service.ts";
 import { LegacyCliConfig } from "../../../config/legacy-cli-config.service.ts";
 import { legacyResolveFeedbackProjectRef } from "../feedback-project-ref.ts";
 import type { LegacyFeedbackDeleteArgs } from "./delete.command.ts";
@@ -24,6 +25,7 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
 ) {
   const output = yield* Output;
   const cliConfig = yield* LegacyCliConfig;
+  const telemetryRuntime = yield* TelemetryRuntime;
   const client = yield* FeedbackClient;
 
   if (!LEGACY_UUID_PATTERN.test(args.token)) {
@@ -43,9 +45,19 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
     Option.orElse(args.projectRef, () => cliConfig.projectId),
   ).pipe(Effect.map(Option.getOrUndefined));
 
+  // User-id context gate, same shape as the project-ref one: rows submitted
+  // with a user_id only match when the same id arrives as a header. Unlike
+  // the submit-side attribution this is NOT consent-gated — it is functional
+  // auth context, and gating it would strand rows submitted before a consent
+  // opt-out. Logged out → undefined → header omitted.
+  const rowContext = {
+    projectRef,
+    userId: telemetryRuntime.identity.current(),
+  };
+
   const looking = yield* output.task("Looking up feedback...");
   const preview = yield* client
-    .preview(token, projectRef)
+    .preview(token, rowContext)
     .pipe(Effect.tapError(() => looking.fail()));
   yield* looking.clear();
 
@@ -79,7 +91,7 @@ export const legacyFeedbackDelete = Effect.fn("legacy.feedback.delete")(function
 
   const deleting = yield* output.task("Deleting feedback...");
   const { deleted } = yield* client
-    .delete(token, projectRef)
+    .delete(token, rowContext)
     .pipe(Effect.tapError(() => deleting.fail()));
   yield* deleting.clear();
 

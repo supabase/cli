@@ -19,7 +19,23 @@ interface FeedbackContext {
 export interface FeedbackSubmission {
   readonly message: string;
   readonly projectRef?: string;
+  /**
+   * Gotrue user UUID (persisted telemetry distinct_id); absent when not
+   * logged in or when telemetry consent is denied.
+   */
+  readonly userId?: string;
   readonly context: FeedbackContext;
+}
+
+/**
+ * Row-context values presented as `x-feedback-*` headers on preview/delete.
+ * The RLS policies require each one when (and only when) the row was
+ * submitted with it — extra context against a context-free row is ignored, so
+ * sending whatever is available is always safe.
+ */
+interface FeedbackRowContext {
+  readonly projectRef?: string;
+  readonly userId?: string;
 }
 
 /**
@@ -49,17 +65,17 @@ interface FeedbackClientShape {
   ) => Effect.Effect<FeedbackSubmitReceipt, FeedbackBackendError>;
   /**
    * The feedback text of the row the token unlocks, or `None` when no row
-   * matches (wrong token, already deleted, or a project-ref context mismatch —
-   * the backend cannot distinguish these).
+   * matches (wrong token, already deleted, or a project-ref/user-id context
+   * mismatch — the backend cannot distinguish these).
    */
   readonly preview: (
     token: string,
-    projectRef?: string,
+    context?: FeedbackRowContext,
   ) => Effect.Effect<Option.Option<string>, FeedbackBackendError>;
   /** `deleted: false` means the delete matched zero rows (same causes as `preview` → `None`). */
   readonly delete: (
     token: string,
-    projectRef?: string,
+    context?: FeedbackRowContext,
   ) => Effect.Effect<{ readonly deleted: boolean }, FeedbackBackendError>;
 }
 

@@ -61,6 +61,13 @@ export const legacyFeedbackAdd = Effect.fn("legacy.feedback.add")(function* (
     .submit({
       message,
       projectRef: Option.getOrUndefined(projectRef),
+      // Gotrue user UUID stamped into ~/.supabase/telemetry.json at login (ADR
+      // 0013). A synchronous in-memory read — best-effort attribution with no
+      // auth/API/network dependency, so feedback keeps working logged-out
+      // (undefined → user_id omitted). Gated on telemetry consent: opted-out
+      // users submit anonymously.
+      userId:
+        telemetryRuntime.consent === "granted" ? telemetryRuntime.identity.current() : undefined,
       context: {
         cliVersion: telemetryRuntime.cliVersion,
         userAgent: cliConfig.userAgent,

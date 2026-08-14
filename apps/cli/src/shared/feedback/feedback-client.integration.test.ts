@@ -13,10 +13,12 @@ const TEST_ENV = {
 
 const TOKEN = "123e4567-e89b-12d3-a456-426614174000";
 const PROJECT_REF = "abcdefghijklmnopqrst";
+const USER_ID = "11111111-2222-3333-4444-555555555555";
 
 const SUBMISSION: FeedbackSubmission = {
   message: "port conflicts when running two stacks",
   projectRef: PROJECT_REF,
+  userId: USER_ID,
   context: {
     cliVersion: "9.9.9",
     userAgent: "SupabaseCLI/9.9.9",
@@ -76,6 +78,7 @@ describe("feedbackClientLayer", () => {
           feedback: "port conflicts when running two stacks",
           user_agent: "SupabaseCLI/9.9.9",
           project_ref: PROJECT_REF,
+          user_id: USER_ID,
           metadata: {
             cli_version: "9.9.9",
             source: "cli",
@@ -171,7 +174,7 @@ describe("feedbackClientLayer", () => {
       const transport = recordingFetch(() => jsonResponse([{ feedback: "my papercut" }]));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
-        const preview = yield* client.preview(TOKEN, PROJECT_REF);
+        const preview = yield* client.preview(TOKEN, { projectRef: PROJECT_REF, userId: USER_ID });
 
         expect(preview).toEqual(Option.some("my papercut"));
         const { request } = transport.requests[0]!;
@@ -183,10 +186,11 @@ describe("feedbackClientLayer", () => {
         expect(request.headers.get("apikey")).toBe(TEST_ENV.key);
         expect(request.headers.get("x-feedback-token")).toBe(TOKEN);
         expect(request.headers.get("x-feedback-project-ref")).toBe(PROJECT_REF);
+        expect(request.headers.get("x-feedback-user-id")).toBe(USER_ID);
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
-    it.live("sends no project-ref header when no ref is provided", () => {
+    it.live("sends no context headers when no ref or user id is provided", () => {
       const transport = recordingFetch(() => jsonResponse([{ feedback: "context-free" }]));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
@@ -195,6 +199,7 @@ describe("feedbackClientLayer", () => {
         const { request } = transport.requests[0]!;
         expect(request.headers.get("x-feedback-token")).toBe(TOKEN);
         expect(request.headers.has("x-feedback-project-ref")).toBe(false);
+        expect(request.headers.has("x-feedback-user-id")).toBe(false);
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
@@ -202,7 +207,7 @@ describe("feedbackClientLayer", () => {
       const transport = recordingFetch(() => jsonResponse([]));
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
-        const preview = yield* client.preview(TOKEN, PROJECT_REF);
+        const preview = yield* client.preview(TOKEN, { projectRef: PROJECT_REF });
 
         expect(Option.isNone(preview)).toBe(true);
       }).pipe(Effect.provide(layerWith(transport)));
@@ -235,7 +240,7 @@ describe("feedbackClientLayer", () => {
       );
       return Effect.gen(function* () {
         const client = yield* FeedbackClient;
-        const result = yield* client.delete(TOKEN, PROJECT_REF);
+        const result = yield* client.delete(TOKEN, { projectRef: PROJECT_REF, userId: USER_ID });
 
         expect(result).toEqual({ deleted: true });
         const { request } = transport.requests[0]!;
@@ -246,12 +251,13 @@ describe("feedbackClientLayer", () => {
         expect(request.headers.get("prefer")).toContain("count=exact");
         expect(request.headers.get("x-feedback-token")).toBe(TOKEN);
         expect(request.headers.get("x-feedback-project-ref")).toBe(PROJECT_REF);
+        expect(request.headers.get("x-feedback-user-id")).toBe(USER_ID);
       }).pipe(Effect.provide(layerWith(transport)));
     });
 
     it.live("reports deleted: false when the delete matched zero rows", () => {
-      // Wrong/stale token or a project-ref context mismatch: RLS matches
-      // nothing and PostgREST reports an empty range.
+      // Wrong/stale token or a project-ref/user-id context mismatch: RLS
+      // matches nothing and PostgREST reports an empty range.
       const transport = recordingFetch(
         () => new Response(null, { status: 204, headers: { "content-range": "*/0" } }),
       );
@@ -261,6 +267,7 @@ describe("feedbackClientLayer", () => {
 
         expect(result).toEqual({ deleted: false });
         expect(transport.requests[0]!.request.headers.has("x-feedback-project-ref")).toBe(false);
+        expect(transport.requests[0]!.request.headers.has("x-feedback-user-id")).toBe(false);
       }).pipe(Effect.provide(layerWith(transport)));
     });
 

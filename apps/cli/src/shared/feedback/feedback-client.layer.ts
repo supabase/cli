@@ -50,14 +50,17 @@ export function legacyFeedbackEnvironment(profile: string): FeedbackEnvironment 
 
 type RpcArgs = Database["public"]["Functions"]["submit_interfaces_feedback"]["Args"];
 
-// `user_id` is deliberately never sent: the CLI has no user-scoped identity in
-// this flow, and omitting it keeps the row's delete authorization token-only.
+// `user_id` is the gotrue user UUID the handler read from the persisted
+// telemetry identity — best-effort attribution, omitted when logged out or
+// when telemetry consent is denied. A row submitted with it additionally
+// requires the matching `x-feedback-user-id` header on preview/delete (RLS).
 function toRpcArgs(submission: FeedbackSubmission): RpcArgs {
   const { context } = submission;
   return {
     feedback: submission.message,
     user_agent: context.userAgent,
     ...(submission.projectRef === undefined ? {} : { project_ref: submission.projectRef }),
+    ...(submission.userId === undefined ? {} : { user_id: submission.userId }),
     metadata: {
       cli_version: context.cliVersion,
       source: "cli",
@@ -120,35 +123,43 @@ export function feedbackClientLayer(options: FeedbackClientOptions): Layer.Layer
           ),
         ),
 
-      preview: (token, projectRef) =>
+      preview: (token, context) =>
         run("preview", () => {
-          const request = client
+          let request = client
             .from("interfaces_feedback")
             .select("feedback")
             .eq("delete_token", token)
             .setHeader("x-feedback-token", token)
             .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
-          return projectRef === undefined
-            ? request
-            : request.setHeader("x-feedback-project-ref", projectRef);
+          if (context?.projectRef !== undefined) {
+            request = request.setHeader("x-feedback-project-ref", context.projectRef);
+          }
+          if (context?.userId !== undefined) {
+            request = request.setHeader("x-feedback-user-id", context.userId);
+          }
+          return request;
         }).pipe(Effect.map(({ data }) => Option.fromNullishOr(data?.[0]?.feedback))),
 
-      delete: (token, projectRef) =>
+      delete: (token, context) =>
         run("delete", () => {
           // The `delete_token=eq.` filter satisfies PostgREST's filterless-delete
           // rejection; the `x-feedback-token` header is the actual security
           // boundary (RLS matches zero rows without it). `count: "exact"` asks
           // for a Content-Range so the caller can tell a matched delete from a
           // zero-row one.
-          const request = client
+          let request = client
             .from("interfaces_feedback")
             .delete({ count: "exact" })
             .eq("delete_token", token)
             .setHeader("x-feedback-token", token)
             .abortSignal(AbortSignal.timeout(REQUEST_TIMEOUT_MS));
-          return projectRef === undefined
-            ? request
-            : request.setHeader("x-feedback-project-ref", projectRef);
+          if (context?.projectRef !== undefined) {
+            request = request.setHeader("x-feedback-project-ref", context.projectRef);
+          }
+          if (context?.userId !== undefined) {
+            request = request.setHeader("x-feedback-user-id", context.userId);
+          }
+          return request;
         }).pipe(Effect.map(({ count }) => ({ deleted: count === 1 }))),
     });
   });

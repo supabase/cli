@@ -2,11 +2,12 @@
 
 ## Files Read
 
-| Path                                   | Format                              | When                                                                                                                                              |
-| -------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `~/.supabase/profile`                  | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliConfigLayer`)                                                 |
-| `$SUPABASE_PROFILE`                    | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                  |
-| `<workdir>/supabase/.temp/project-ref` | plain text (project ref)            | when `SUPABASE_PROJECT_ID` is unset — supplies the submission's `project_ref`. Absent, blank, or unreadable → `null` (never fails the submission) |
+| Path                                            | Format                              | When                                                                                                                                                                                                                         |
+| ----------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `~/.supabase/profile`                           | plain text (profile name)           | when `--profile` and `SUPABASE_PROFILE` are unset (profile resolution via `legacyCliConfigLayer`)                                                                                                                            |
+| `$SUPABASE_PROFILE`                             | YAML (`api_url:` / `gotrue_url:` …) | when `SUPABASE_PROFILE` is set to a file path instead of a built-in profile name                                                                                                                                             |
+| `<workdir>/supabase/.temp/project-ref`          | plain text (project ref)            | when `SUPABASE_PROJECT_ID` is unset — supplies the submission's `project_ref`. Absent, blank, or unreadable → `null` (never fails the submission)                                                                            |
+| `<SUPABASE_HOME or ~/.supabase>/telemetry.json` | JSON (telemetry state)              | read at startup by the shared telemetry runtime — its `distinct_id` (gotrue user id stamped at login) supplies the submission's `user_id` when telemetry consent is granted. Absent, logged-out, or consent-denied → omitted |
 
 ## Files Written
 
@@ -16,9 +17,9 @@
 
 ## API Routes
 
-| Method | Path                                                        | Auth                                 | Request body                                                                                                                               | Response (used fields)                                     |
-| ------ | ----------------------------------------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------- |
-| `POST` | `<feedback-env-url>/rest/v1/rpc/submit_interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, user_agent, project_ref (omitted when unlinked), metadata: { cli_version, source: "cli", os, arch, is_agent, agent_name? } }` | uuid delete token (issued exactly once, shown to the user) |
+| Method | Path                                                        | Auth                                 | Request body                                                                                                                                                                                    | Response (used fields)                                     |
+| ------ | ----------------------------------------------------------- | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------- |
+| `POST` | `<feedback-env-url>/rest/v1/rpc/submit_interfaces_feedback` | `apikey` = committed publishable key | `{ feedback, user_agent, project_ref (omitted when unlinked), user_id (omitted when logged out or consent-denied), metadata: { cli_version, source: "cli", os, arch, is_agent, agent_name? } }` | uuid delete token (issued exactly once, shown to the user) |
 
 `<feedback-env-url>` follows the resolved profile (`feedback.layers.ts`):
 `supabase-staging` / `supabase-local` → the staging feedback project;
@@ -100,6 +101,12 @@ terminal, a "What's on your mind?" text prompt collects it first.
 - Submission context: CLI version, user agent (`SupabaseCLI/<version>` from
   `LegacyCliConfig`), OS/arch, agent detection, and — when the workdir has a
   linked project — its project ref. The resolved access token is never sent.
+- The persisted gotrue user id from `<SUPABASE_HOME or ~/.supabase>/telemetry.json` (`distinct_id`,
+  stamped at login) is sent as `user_id` when present **and** telemetry consent
+  is granted; opted-out or logged-out runs omit it. The lookup is a synchronous
+  in-memory read — no auth or network dependency is added. A row submitted with
+  a `user_id` additionally requires the matching `x-feedback-user-id` header to
+  preview/delete it later (`feedback delete` sends it automatically).
 - Project-ref resolution order: `SUPABASE_PROJECT_ID` →
   `<workdir>/supabase/.temp/project-ref` (written by `supabase link`) → `null`.
   This mirrors the soft-load half of `LegacyProjectRefResolver.resolveOptional`
