@@ -23,6 +23,7 @@ import {
 } from "./storage.ts";
 import { makeStudioServiceDocker } from "./studio.ts";
 import { makeVectorServiceDocker } from "./vector.ts";
+import { makeRealtimeServiceDocker } from "./realtime.ts";
 import { DEFAULT_VERSIONS, dockerImageForService } from "../versions.ts";
 
 const JWT_SECRET = "super-secret-jwt-token-with-at-least-32-characters-long";
@@ -793,5 +794,26 @@ describe("docker-backed auxiliary services", () => {
     expect(def.args).toContain(`PROXY_PORT_TRANSACTION=${poolerContainerPorts.transaction}`);
     expect(def.args).toContain(`54329:${poolerContainerPorts.admin}`);
     expect(def.args).toContain(`54330:${poolerContainerPorts.transaction}`);
+  });
+
+  it("forces IPv4 resolution for the realtime database connection", () => {
+    const def = makeRealtimeServiceDocker({
+      image: dockerImageForService("realtime", DEFAULT_VERSIONS.realtime),
+      port: 54331,
+      apiPort: API_PORT,
+      dbHost: "host.docker.internal",
+      dbPort: DB_PORT,
+      jwtSecret: JWT_SECRET,
+      jwtJwks: "jwks",
+      tenantId: "realtime-dev",
+      encryptionKey: "12345678901234567890123456789012",
+      secretKeyBase: "1234567890123456789012345678901234567890123456789012345678901234",
+      maxHeaderLength: 4096,
+      networkArgs: [...LINUX_HOST_GATEWAY_ARGS, "-p", "54331:54331"],
+      dependencies: [{ service: "postgres", condition: "healthy" }],
+    });
+
+    expect(def.args).toContain("DB_IP_VERSION=ipv4");
+    expect(def.args).toContain("DB_HOST=host.docker.internal");
   });
 });

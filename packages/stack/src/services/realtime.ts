@@ -49,6 +49,7 @@ export const makeRealtimeServiceDocker = (opts: DockerRealtimeOptions): ServiceD
       DB_USER: "postgres",
       DB_PASSWORD: "postgres",
       DB_NAME: "postgres",
+      DB_IP_VERSION: "ipv4",
       DB_AFTER_CONNECT_QUERY: "SET search_path TO _realtime",
       DB_ENC_KEY: opts.encryptionKey,
       API_JWT_SECRET: opts.jwtSecret,
