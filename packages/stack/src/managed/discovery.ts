@@ -257,6 +257,10 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     evidence.checkoutProjectKnown &&
     evidence.activeLocation === undefined &&
     evidence.anyActiveLocation !== undefined;
+  const knownCheckoutMissingProjectAtActivePath =
+    evidence.identity.projectId === undefined &&
+    evidence.checkoutProjectKnown &&
+    evidence.activeLocation !== undefined;
   let state: ManagedWorkspaceDiscoveryState;
   if (evidence.activeTransition !== undefined) {
     state = "transitioning";
@@ -268,6 +272,7 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
     evidence.samePathClaims > 0 ||
     evidence.markerRegistryConflict ||
     knownCheckoutActiveElsewhere ||
+    knownCheckoutMissingProjectAtActivePath ||
     evidence.checkoutProjectOwnership === "foreign" ||
     evidence.sameCheckoutReappeared ||
     evidence.inaccessiblePaths > 0 ||
@@ -289,9 +294,11 @@ const classifyWorkspace = (evidence: WorkspaceClassificationEvidence): Workspace
           ? "Workspace marker context conflicts with registry context"
           : knownCheckoutActiveElsewhere
             ? `Checkout ${evidence.identity.checkoutId} is already active at another path`
-            : evidence.checkoutProjectOwnership === "foreign"
-              ? `Checkout ${evidence.identity.checkoutId} belongs to another project`
-              : `Workspace path ${evidence.canonicalPath} is claimed by another checkout`,
+            : knownCheckoutMissingProjectAtActivePath
+              ? `Checkout ${evidence.identity.checkoutId} is missing its registered project marker`
+              : evidence.checkoutProjectOwnership === "foreign"
+                ? `Checkout ${evidence.identity.checkoutId} belongs to another project`
+                : `Workspace path ${evidence.canonicalPath} is claimed by another checkout`,
     );
   } else if (
     evidence.authoritativeOwnerBranch === undefined &&

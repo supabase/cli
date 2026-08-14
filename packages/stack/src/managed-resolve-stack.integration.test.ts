@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readFileSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Effect } from "effect";
@@ -473,6 +473,48 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(
       storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("copied")),
     ).toBe(copied.identity.contextId);
+  });
+
+  it("repairs a copied branch after its checkout was safely rebound", async () => {
+    const root = makeRoot();
+    const original = makeRepository(root, "original");
+    const moved = join(root, "moved");
+    const service = await openService(root);
+    const owner = await service.resolveStack({ workspacePath: original, operation: "start" });
+    renameSync(original, moved);
+    const rebound = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    expect(rebound.identity).toEqual(owner.identity);
+
+    const reboundReport = await service.discoverWorkspace(moved);
+    expect(reboundReport.state).toBe("healthy");
+    expect(reboundReport.historicalPathEvidence).toContainEqual({
+      path: original,
+      locationState: "superseded",
+      probe: "missing",
+    });
+    git(moved, "branch", "-c", "main", "feature");
+    git(moved, "checkout", "-q", "feature");
+
+    const feature = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    expect(feature.outcome).toBe("create");
+    expect(feature.identity.projectId).toBe(owner.identity.projectId);
+    expect(feature.identity.checkoutId).toBe(owner.identity.checkoutId);
+    expect(feature.identity.contextId).not.toBe(owner.identity.contextId);
+    const healthy = await service.discoverWorkspace(moved);
+    expect(healthy.state).toBe("healthy");
+    expect(healthy.historicalPathEvidence).toContainEqual({
+      path: original,
+      locationState: "superseded",
+      probe: "missing",
+    });
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.locations).toContainEqual(
+      expect.objectContaining({
+        checkoutId: owner.identity.checkoutId,
+        canonicalPath: original,
+        state: "superseded",
+      }),
+    );
   });
 
   it("refuses copied-directory branch repair before moving the live checkout", async () => {

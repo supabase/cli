@@ -520,6 +520,48 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(snapshotTree(root)).toEqual(beforeTree);
   });
 
+  it("does not advertise adoption when the active checkout project key is missing", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "config", "--unset", GIT_PROJECT_ID_KEY);
+    const configPath = gitConfigPath(join(repository, ".git"));
+    const markerPath = gitCheckoutIdentityPath(join(repository, ".git"));
+    const beforeConfig = readFileSync(configPath, "utf8");
+    const beforeMarker = readFileSync(markerPath, "utf8");
+    const beforeStatus = gitStatus(repository);
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const beforeStacks = await Effect.runPromise(service.repository.listStacks());
+    const beforeOperations = await Effect.runPromise(service.repository.listActiveOperations());
+    const beforeTree = snapshotTree(root);
+
+    const report = await service.discoverWorkspace(repository);
+    expect(report.identity).toEqual({
+      checkoutId: started.identity.checkoutId,
+      contextId: started.identity.contextId,
+    });
+    expect(report.state).toBe("duplicate");
+    expect(report.recoveryOperations).toEqual([]);
+    await expect(
+      service.adoptCheckout({
+        workspacePath: repository,
+        checkoutId: started.identity.checkoutId,
+      }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+
+    expect(readFileSync(configPath, "utf8")).toBe(beforeConfig);
+    expect(readFileSync(markerPath, "utf8")).toBe(beforeMarker);
+    expect(gitStatus(repository)).toBe(beforeStatus);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
+    expect(await Effect.runPromise(service.repository.listActiveOperations())).toEqual(
+      beforeOperations,
+    );
+    expect(snapshotTree(root)).toEqual(beforeTree);
+  });
+
   it("canonicalizes an explicit recovery alias without registering the alias path", async () => {
     const root = makeRoot();
     const previous = makeRepository(root);

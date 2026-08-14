@@ -2096,7 +2096,7 @@ export class ManagedStackService extends Context.Service<
             report.recoveryOperations.length === 0 &&
             report.conflictingLocations === undefined &&
             report.inaccessiblePaths === undefined &&
-            report.historicalPathEvidence === undefined
+            (report.historicalPathEvidence ?? []).every((evidence) => evidence.probe === "missing")
           );
         };
 
