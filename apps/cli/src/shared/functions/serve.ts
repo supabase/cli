@@ -1597,9 +1597,16 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
     // `stagingDir`): this is what lets the cleanup cover the whole staging-write window below,
     // including a mid-write failure between the first and second `writeDocker*` call, not just
     // the final `docker run` step.
-    const cleanupRuntimeArtifacts = Effect.tryPromise(() =>
-      rm(stagingDir, { recursive: true, force: true }),
-    ).pipe(Effect.orDie);
+    const removeRuntimeArtifacts = Effect.tryPromise({
+      try: () => rm(stagingDir, { recursive: true, force: true }),
+      catch: (cause) => (cause instanceof Error ? cause : new Error(String(cause))),
+    });
+    const bestEffortCleanupRuntimeArtifacts = removeRuntimeArtifacts.pipe(
+      Effect.tapError((error) =>
+        output.warn(`Failed to clean up Edge Runtime artifacts: ${error.message}`),
+      ),
+      Effect.ignoreCause,
+    );
 
     const functionConfigs = yield* resolveServeFunctionConfigs(
       input.projectRoot,
@@ -1766,10 +1773,10 @@ export const startEdgeRuntimeContainer = Effect.fn("functions.startEdgeRuntimeCo
 
       return {
         containerId,
-        cleanup: cleanupRuntimeArtifacts,
+        cleanup: removeRuntimeArtifacts.pipe(Effect.orDie),
         watchSpecs: yield* Effect.promise(() => buildWatchSpecs([...functionBinds])),
       } satisfies StartedRuntime;
-    }).pipe(Effect.onError(() => cleanupRuntimeArtifacts));
+    }).pipe(Effect.onError(() => bestEffortCleanupRuntimeArtifacts));
   },
 );
 
