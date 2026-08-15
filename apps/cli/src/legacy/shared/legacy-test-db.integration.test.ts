@@ -115,7 +115,12 @@ function mockDbConnection(opts: {
   };
 }
 
-function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
+function mockDockerRun(opts: {
+  exitCode?: number;
+  runFails?: boolean;
+  /** pg_prove's stdout, delivered to `onStdout` one array entry per chunk. */
+  stdout?: ReadonlyArray<string>;
+}) {
   let lastOpts: LegacyDockerRunOpts | undefined;
   const layer = Layer.succeed(LegacyDockerRun, {
     run: (runOpts) => {
@@ -142,7 +147,7 @@ function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
           )
         : Effect.succeed({ exitCode: opts.exitCode ?? 0, stdout: new Uint8Array(0), stderr: "" });
     },
-    runStream: (runOpts) => {
+    runStream: (runOpts, streamOpts) => {
       lastOpts = runOpts;
       return opts.runFails === true
         ? Effect.fail(
@@ -152,7 +157,13 @@ function mockDockerRun(opts: { exitCode?: number; runFails?: boolean }) {
               daemonDown: false,
             }),
           )
-        : Effect.succeed({ exitCode: opts.exitCode ?? 0, stderr: "" });
+        : Effect.gen(function* () {
+            const encoder = new TextEncoder();
+            for (const chunk of opts.stdout ?? []) {
+              yield* streamOpts.onStdout(encoder.encode(chunk));
+            }
+            return { exitCode: opts.exitCode ?? 0, stderr: "" };
+          });
     },
   });
   return {
@@ -184,6 +195,7 @@ interface SetupOpts {
   dropFails?: boolean;
   exitCode?: number;
   runFails?: boolean;
+  stdout?: ReadonlyArray<string>;
   debug?: boolean;
   networkId?: string;
   workdir?: string;
@@ -405,6 +417,71 @@ describe("legacy test db integration", () => {
       if (Exit.isFailure(exit)) {
         expect(JSON.stringify(exit.cause)).toContain("error running container: exit 3");
       }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("fails when pg_prove ran no tests, even though it exited 0 (CLI-2194)", () => {
+    const { layer } = setup({
+      exitCode: 0,
+      stdout: ["Files=0, Tests=0,  0 wallclock secs\nResult: NOTESTS\n"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags({ paths: ["tests/db"] })));
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(JSON.stringify(exit.cause)).toContain(
+          "no pgTAP tests found in /work/project/tests/db",
+        );
+      }
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("detects the NOTESTS verdict when it straddles a stdout chunk boundary", () => {
+    const { layer } = setup({ exitCode: 0, stdout: ["Files=0\nResult: NOTE", "STS\n"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("detects the NOTESTS verdict arriving one byte per chunk", () => {
+    const { layer } = setup({
+      exitCode: 0,
+      stdout: [..."Files=0\nResult: NOTESTS\n"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("detects the NOTESTS verdict opening the stream, with no line before it", () => {
+    // The seeded newline exists for exactly this case: stream start counts as a
+    // line start, so the anchored match still fires.
+    const { layer } = setup({ exitCode: 0, stdout: ["Result: NOTESTS\n"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("does not trip on the verdict text mid-line, as a --verbose replay can emit", () => {
+    const { layer } = setup({
+      exitCode: 0,
+      stdout: ["# diag: Result: NOTESTS is what an empty run prints\n", "Result: PASS\n"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("forwards the TAP stream to stdout byte-exact and succeeds on a passing run", () => {
+    const chunks = ["a.test.sql .. ok\n", "All tests successful.\n", "Result: PASS\n"];
+    const { layer, out } = setup({ exitCode: 0, stdout: chunks });
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags());
+      expect(out.stdoutText).toBe(chunks.join(""));
     }).pipe(Effect.provide(layer));
   });
 

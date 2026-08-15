@@ -21,6 +21,7 @@ import type { LegacyTestDbFlags } from "./legacy-test-db.command-handler.ts";
 import {
   LegacyTestDbEnablePgtapError,
   LegacyTestDbMutuallyExclusiveFlagsError,
+  LegacyTestDbNoTestsError,
   LegacyTestDbRunError,
 } from "./legacy-test-db.errors.ts";
 import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
@@ -33,9 +34,22 @@ const DISABLE_PGTAP = "drop extension if exists pgtap";
 // The TS config schema does not model an `[images]` override, so it is fixed here.
 // Go resolves it through `GetRegistryImageUrl` (`DockerStart`), honoring
 // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / the default ECR mirror, so do the same
-// before passing it to `docker run`.
+// before passing it to `docker run`. Re-verify `NO_TESTS_VERDICT` still matches
+// when bumping this tag.
 const LEGACY_PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
 const MAX_PROJECT_ID_LENGTH = 40;
+/**
+ * `TAP::Harness`'s verdict line when the run aggregated no test files. `pg_prove`
+ * still exits 0 for it, so "found nothing to run" is otherwise indistinguishable
+ * from "everything passed" — a typo'd path, an empty directory, or a bind the
+ * daemon resolved against a different filesystem than the CLI's (a sibling-container
+ * Docker socket) all report a green build that ran zero tests (CLI-2194).
+ *
+ * Anchored to the start of a line so a `--verbose` run replaying a test's own
+ * output cannot trip it mid-line. Matching the harness's human summary is a
+ * heuristic, not a guarantee — it is pinned to the image tag above.
+ */
+const NO_TESTS_VERDICT = "\nResult: NOTESTS";
 
 /** Port of Go's `sanitizeProjectId` (`pkg/config/config.go:1037`). */
 function sanitizeProjectId(src: string): string {
@@ -138,10 +152,15 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
             })
           : { _tag: "host" as const };
 
-    const exitCode = yield* Effect.scoped(
+    const decoder = new TextDecoder();
+    // Seeded with the anchor newline so a stream that opens on the verdict matches.
+    let verdictTail = "\n";
+    let ranNoTests = false;
+
+    const { exitCode } = yield* Effect.scoped(
       Effect.gen(function* () {
-        // stdout is reserved for the pg_prove TAP stream (the docker subprocess
-        // writes it there directly), so connection diagnostics must go to stderr —
+        // stdout is reserved for the pg_prove TAP stream (forwarded byte-exact
+        // below), so connection diagnostics must go to stderr —
         // exactly as Go does (`ConnectByConfigStream` writes "Connecting to …
         // database…" to `os.Stderr`, `connect.go:205-228`). A `Output.task`
         // spinner would corrupt the TAP stream: clack writes spinner ANSI to
@@ -187,16 +206,34 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         // Windows Docker Desktop provide the mapping natively (empty there).
         const extraHosts =
           runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-        return yield* docker.run({
-          image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
-          cmd: args.cmd,
-          env: runEnv,
-          binds: args.binds,
-          workingDir: args.workingDir,
-          securityOpt: inBitbucket ? [] : ["label:disable"],
-          extraHosts,
-          network,
-        });
+        // Stream (rather than inherit) stdout so the verdict can be read on the way
+        // past; every chunk is forwarded byte-exact and unframed, leaving the TAP
+        // stream identical to what the container wrote. stderr is teed live, as
+        // inheriting it did.
+        return yield* docker.runStream(
+          {
+            image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
+            cmd: args.cmd,
+            env: runEnv,
+            binds: args.binds,
+            workingDir: args.workingDir,
+            securityOpt: inBitbucket ? [] : ["label:disable"],
+            extraHosts,
+            network,
+          },
+          {
+            onStdout: (chunk) =>
+              Effect.suspend(() => {
+                // Carry one verdict's worth of the previous chunk so a match split
+                // across a chunk boundary is still seen, at constant memory.
+                verdictTail += decoder.decode(chunk, { stream: true });
+                if (verdictTail.includes(NO_TESTS_VERDICT)) ranNoTests = true;
+                verdictTail = verdictTail.slice(-NO_TESTS_VERDICT.length);
+                return output.rawBytes(chunk, "stdout");
+              }),
+            teeStderr: true,
+          },
+        );
       }),
     );
 
@@ -210,6 +247,14 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     if (exitCode !== 0) {
       return yield* Effect.fail(
         new LegacyTestDbRunError({ message: `error running container: exit ${exitCode}` }),
+      );
+    }
+
+    if (ranNoTests) {
+      return yield* Effect.fail(
+        new LegacyTestDbNoTestsError({
+          message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
+        }),
       );
     }
   }).pipe(Effect.ensuring(telemetryState.flush));
