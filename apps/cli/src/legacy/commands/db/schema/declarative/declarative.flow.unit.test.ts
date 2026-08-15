@@ -4,9 +4,11 @@ import {
   legacyClassifyDeclarativeCompatibilityGap,
   legacyClassifyDeclarativeLoadCompatibility,
   legacyExtensionDeclaration,
+  legacyFormatStagedExportAdoption,
   legacyFormatStagedExportRecommendation,
   legacyResolveDeclarativeMigrationName,
   legacyResolveDeclarativeSyncApplyDecision,
+  legacyResolveStagedDeclarativeDir,
 } from "./declarative.flow.ts";
 
 const stuck = (message: string) => ({
@@ -307,6 +309,31 @@ describe("legacyClassifyDeclarativeLoadCompatibility", () => {
         files: [{ name: "members.sql", sql: "select extensions.uuid_generate_v4();" }],
       }),
     ).toHaveLength(1);
+  });
+});
+
+describe("legacyResolveStagedDeclarativeDir", () => {
+  it("suffixes the last path segment to produce a sibling directory", () => {
+    expect(legacyResolveStagedDeclarativeDir("supabase/schemas")).toBe("supabase/schemas-next");
+  });
+
+  it("strips trailing separators so the staged dir cannot nest inside the tree", () => {
+    expect(legacyResolveStagedDeclarativeDir("./schemas/")).toBe("./schemas-next");
+    expect(legacyResolveStagedDeclarativeDir("supabase/schemas//")).toBe("supabase/schemas-next");
+    expect(legacyResolveStagedDeclarativeDir("supabase\\schemas\\")).toBe("supabase\\schemas-next");
+  });
+
+  it("strips trailing current-directory segments", () => {
+    expect(legacyResolveStagedDeclarativeDir("supabase/schemas/.")).toBe("supabase/schemas-next");
+    expect(legacyResolveStagedDeclarativeDir("supabase/schemas/./")).toBe("supabase/schemas-next");
+  });
+
+  it("prints adoption commands that target the sibling staged directory", () => {
+    const lines = legacyFormatStagedExportAdoption({
+      declarativeDir: "./schemas/",
+      schema: [],
+    });
+    expect(lines.join("\n")).toContain("rm -rf ./schemas/ && mv ./schemas-next ./schemas/");
   });
 });
 

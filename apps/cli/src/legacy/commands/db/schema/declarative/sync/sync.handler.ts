@@ -313,10 +313,18 @@ export const legacyDbSchemaDeclarativeSync = Effect.fn("legacy.db.schema.declara
       );
       const stageNextExport = Effect.fnUntraced(function* () {
         const stagedDir = path.resolve(cliConfig.workdir, stagedDirRel);
-        if (stagedDir === declarativeDir) {
+        // Reject the active directory itself AND anything nested under it: a
+        // staged export inside the declarative tree would be loaded recursively
+        // by the next sync, and the printed `rm -rf && mv` adoption command
+        // would delete the staged copy along with the tree.
+        const stagedRelative = path.relative(declarativeDir, stagedDir);
+        if (
+          stagedRelative === "" ||
+          (!stagedRelative.startsWith("..") && !path.isAbsolute(stagedRelative))
+        ) {
           return yield* Effect.fail(
             new LegacyDeclarativeCompatibilityError({
-              message: `${stagedDirRel} is the active declarative schema directory; choose a different staging directory.`,
+              message: `${stagedDirRel} is inside the active declarative schema directory; choose a different staging directory.`,
             }),
           );
         }

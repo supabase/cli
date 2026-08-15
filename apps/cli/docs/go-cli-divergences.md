@@ -20,6 +20,14 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 ## Flag divergences from the Go reference
 
+- `db diff`, `db pull`, and `db schema declarative generate`/`sync` have a TS-only
+  `--strict-coverage` flag (no Go equivalent). It applies only when the bundled
+  pg-delta next engine is active (the default): coverage gaps that the engine
+  reports — statements it skipped or objects it could not represent — normally
+  surface as warnings, and `--strict-coverage` promotes them to hard failures.
+  Under the `SUPABASE_USE_PG_DELTA_NEXT=false` legacy opt-out the flag is
+  accepted but has no effect, since the legacy edge-runtime engine does not
+  emit coverage diagnostics. Default behavior (omitted flag) matches Go.
 - `db push` has a TS-only `--skip-vault` flag. It applies migrations without
   resolving or updating `[db.vault]` secrets; default behavior still matches Go.
 - Every legacy command that resolves a linked project ref for its own database

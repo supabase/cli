@@ -263,8 +263,18 @@ export interface LegacyStagedExportContext {
   readonly schema: ReadonlyArray<string>;
 }
 
-export const legacyResolveStagedDeclarativeDir = (declarativeDir: string): string =>
-  `${declarativeDir}-next`;
+/**
+ * Derives the staging directory as a sibling of the declarative directory by
+ * suffixing its last path segment. Trailing separators (and `/.` segments) in
+ * the configured `declarative_schema_path` are stripped first — appending to
+ * `supabase/schemas/` verbatim would nest the staging directory *inside* the
+ * active tree, so a later sync would load the staged export recursively and
+ * the printed `rm -rf <dir> && mv` adoption command would destroy both copies.
+ */
+export const legacyResolveStagedDeclarativeDir = (declarativeDir: string): string => {
+  const trimmed = declarativeDir.replace(/(?:[\\/]+\.?)+$/, "");
+  return `${trimmed === "" ? declarativeDir : trimmed}-next`;
+};
 
 function shellQuoteArgument(value: string): string {
   return /^[a-zA-Z0-9_./:@%+=,-]+$/.test(value) ? value : `'${value.replaceAll("'", `'"'"'`)}'`;

@@ -50,12 +50,15 @@ function hasDockerDaemon(): boolean {
 }
 
 /**
- * `describe` for local-stack live tests that only require a real Docker daemon.
- * Unlike `describeLive`, this gate does not require platform credentials or a
- * Management API. The synchronous `docker info` probe is read-only and runs once
- * when this helper module is collected.
+ * `describe` for local-stack live tests that additionally require a reachable
+ * Docker daemon. Composes the configured-live gate (`isLiveConfigured`) with a
+ * `docker info` probe so these suites stay inert (skipped, not failed) outside
+ * the cli-e2e-ci runner — a machine that merely exposes Docker must never
+ * launch a real stack just by collecting the live Vitest project. The
+ * synchronous read-only probe runs once when this helper module is collected,
+ * and only when the live environment is configured.
  */
-export const describeDockerLive = describe.skipIf(!hasDockerDaemon());
+export const describeDockerLive = describe.skipIf(!isLiveConfigured() || !hasDockerDaemon());
 
 /**
  * `describe` for project-scoped live suites: runs only when the live env is
