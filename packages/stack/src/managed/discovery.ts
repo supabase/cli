@@ -149,19 +149,26 @@ const transitionMatches = (
     return transition.path === workspaceRoot && newCheckoutTopologyMatches(transition, context);
   }
   const branch = context.kind === "branch" ? context.branch : undefined;
+  if (
+    (transition.kind === "folder-to-git" ||
+      transition.kind === "adopt-context" ||
+      transition.kind === "branch-copy") &&
+    transition.branch !== branch
+  ) {
+    return false;
+  }
   return (
-    (transition.kind !== "folder-to-git" || transition.branch === branch) &&
-    ((transition.projectId === identity.projectId &&
+    (transition.projectId === identity.projectId &&
       transition.checkoutId === undefined &&
       transition.contextId === undefined &&
       transition.branch === undefined &&
       transition.path === undefined) ||
-      transition.path === workspaceRoot ||
-      (transition.checkoutId !== undefined && transition.checkoutId === identity.checkoutId) ||
-      (transition.contextId !== undefined && transition.contextId === identity.contextId) ||
-      (transition.branch !== undefined &&
-        transition.branch === branch &&
-        transition.projectId === identity.projectId))
+    transition.path === workspaceRoot ||
+    (transition.checkoutId !== undefined && transition.checkoutId === identity.checkoutId) ||
+    (transition.contextId !== undefined && transition.contextId === identity.contextId) ||
+    (transition.branch !== undefined &&
+      transition.branch === branch &&
+      transition.projectId === identity.projectId)
   );
 };
 
@@ -543,17 +550,14 @@ export const discoverWorkspace = (
       // becoming a repository. It is read as transition evidence only; its
       // values never populate the active Git identity below.
       const markerPath = ordinaryWorkspaceIdentityPath(inspection.workspaceRoot);
-      const fs = yield* FileSystem.FileSystem;
-      const markerExists = yield* fs
-        .exists(markerPath)
-        .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
       const marker = yield* readOrdinaryWorkspaceIdentityWithFileSystem(inspection.workspaceRoot);
-      const markerTracked = markerExists
-        ? yield* isOrdinaryIdentityMarkerTracked(inspection.workspaceRoot)
-        : false;
+      const markerTracked =
+        marker !== undefined
+          ? yield* isOrdinaryIdentityMarkerTracked(inspection.workspaceRoot)
+          : false;
       ordinaryMarker = {
         path: markerPath,
-        present: markerExists,
+        present: marker !== undefined,
         tracked: markerTracked,
         identity: marker,
       };

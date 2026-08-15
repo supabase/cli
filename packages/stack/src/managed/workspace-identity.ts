@@ -613,10 +613,15 @@ export const makeWorkspaceIdentity = ({
    * sequence, so an interrupted publication can only resume after every
    * expected value still matches.
    */
+  interface ManagedFolderToGitRecoveryResult {
+    readonly report: ManagedWorkspaceDiscovery;
+    readonly identityMarkerCreated: boolean;
+  }
+
   const migrateFolderToGit = (
     report: ManagedWorkspaceDiscovery,
   ): Effect.Effect<
-    ManagedWorkspaceDiscovery,
+    ManagedFolderToGitRecoveryResult,
     | InvalidManagedIdentityError
     | DuplicateManagedIdentityError
     | UnsupportedGitWorkspaceError
@@ -625,7 +630,9 @@ export const makeWorkspaceIdentity = ({
     Effect.gen(function* () {
       const resuming = report.activeTransition?.kind === "folder-to-git";
       if (!resuming) {
-        if (report.folderToGitClaims.length === 0) return report;
+        if (report.folderToGitClaims.length === 0) {
+          return { report, identityMarkerCreated: false };
+        }
         if (report.folderToGitClaims.length > 1) {
           return yield* Effect.fail(
             new ManagedCheckoutConflictError({
@@ -641,7 +648,7 @@ export const makeWorkspaceIdentity = ({
           report.identity.checkoutId !== undefined ||
           report.identity.contextId !== undefined
         ) {
-          return report;
+          return { report, identityMarkerCreated: false };
         }
       }
       const claim =
@@ -657,7 +664,9 @@ export const makeWorkspaceIdentity = ({
               canonicalPath: report.activeTransition.path,
             }
           : undefined);
-      if (claim === undefined || report.workspace.checkoutKind === "ordinary") return report;
+      if (claim === undefined || report.workspace.checkoutKind === "ordinary") {
+        return { report, identityMarkerCreated: false };
+      }
       const path = report.workspace.workspaceRoot;
       const inspection = yield* withWorkspaceServices(inspectWorkspace(path));
       if (inspection.kind !== "git-checkout") {
@@ -715,6 +724,7 @@ export const makeWorkspaceIdentity = ({
         );
       }
 
+      let identityMarkerCreated = false;
       if (transition.phase === "reserved") {
         const ordinaryMarker = yield* withWorkspaceServices(
           readOrdinaryWorkspaceIdentityWithFileSystem(path),
@@ -811,7 +821,7 @@ export const makeWorkspaceIdentity = ({
             }),
           );
         yield* publishConfig(GIT_PROJECT_ID_KEY, claim.projectId);
-        yield* withWorkspaceServices(
+        identityMarkerCreated = yield* withWorkspaceServices(
           publishGitCheckoutIdentity(inspection.gitDirectory, claim.checkoutId),
         );
         if (inspection.head.kind !== "detached") {
@@ -935,7 +945,7 @@ export const makeWorkspaceIdentity = ({
         });
       }
       const migrated = yield* discover(path);
-      return migrated;
+      return { report: migrated, identityMarkerCreated };
     });
 
   const requestedRecoveryPath = (

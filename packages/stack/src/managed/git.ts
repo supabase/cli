@@ -774,7 +774,13 @@ const gitConfigReplaceExpected = (
       () =>
         Effect.gen(function* () {
           const current = yield* gitConfigOnce(["--file", file, "--get-all", key], true, file);
-          if ((current ?? "").trim() !== expected) {
+          const settled = settledValue(
+            (current ?? "")
+              .split("\n")
+              .map((candidate) => candidate.trim())
+              .filter((candidate) => candidate.length > 0),
+          );
+          if (settled !== expected) {
             return yield* Effect.fail(
               new InvalidManagedIdentityError({
                 message: `${key} changed before conditional replacement`,
