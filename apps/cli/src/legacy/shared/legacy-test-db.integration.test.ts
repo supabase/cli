@@ -444,7 +444,7 @@ describe("legacy test db integration", () => {
   });
 
   it.live("detects the NOTESTS verdict when it straddles a stdout chunk boundary", () => {
-    const { layer } = setup({ exitCode: 0, stdout: ["Files=0\nResult: NOTE", "STS\n"] });
+    const { layer } = setup({ exitCode: 0, stdout: ["Files=0, Tests=0\nResult: NOTE", "STS\n"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -454,7 +454,7 @@ describe("legacy test db integration", () => {
   it.live("detects the NOTESTS verdict arriving one byte per chunk", () => {
     const { layer } = setup({
       exitCode: 0,
-      stdout: [..."Files=0\nResult: NOTESTS\n"],
+      stdout: [..."Files=0, Tests=0\nResult: NOTESTS\n"],
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
@@ -462,19 +462,27 @@ describe("legacy test db integration", () => {
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("detects the NOTESTS verdict opening the stream, with no line before it", () => {
-    const { layer } = setup({ exitCode: 0, stdout: ["Result: NOTESTS\n"] });
+  it.live("detects the NOTESTS verdict when the stream ends without a trailing newline", () => {
+    const { layer } = setup({ exitCode: 0, stdout: ["Files=0, Tests=0\nResult: NOTESTS"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
-  it.live("detects the NOTESTS verdict when the stream ends without a trailing newline", () => {
-    const { layer } = setup({ exitCode: 0, stdout: ["Files=0\nResult: NOTESTS"] });
+  it.live("passes a suite that deliberately skips itself, which also ends NOTESTS", () => {
+    // `1..0 # SKIP …` reports `Files=1, Tests=0` + `Result: NOTESTS` and exits 0. A
+    // file WAS found, so this is a successful run, not an empty one (PR #6210 review).
+    const { layer } = setup({
+      exitCode: 0,
+      stdout: [
+        "skip.test.sql .. skipped: not applicable on this platform\n",
+        "Files=1, Tests=0,  0 wallclock secs\nResult: NOTESTS\n",
+      ],
+    });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
-      expect(Exit.isFailure(exit)).toBe(true);
+      expect(Exit.isSuccess(exit)).toBe(true);
     }).pipe(Effect.provide(layer));
   });
 
@@ -499,7 +507,7 @@ describe("legacy test db integration", () => {
         "ok 1 - passes\n",
         "Result: NOTESTS is diagnostic text\n",
         "ok 2 - passes\n",
-        "Files=1, Tests=2\nResult: PASS\n",
+        "Files=1, Tests=2,  0 wallclock secs\nResult: PASS\n",
       ],
     });
     return Effect.gen(function* () {

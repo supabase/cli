@@ -50,9 +50,14 @@ const MAX_PROJECT_ID_LENGTH = 40;
  * harness replays each test's raw TAP, and a passing test may legally print its own
  * `Result: …` line, which must not be mistaken for the run's outcome. Matching the
  * harness's human summary is a heuristic pinned to the image tag above.
+ *
+ * The verdict alone is not enough: a suite that deliberately skips itself
+ * (`1..0 # SKIP …`) also ends `NOTESTS`, but reports `Files=1`. Only a run that
+ * aggregated ZERO files found nothing to run, so both signals must agree.
  */
 const VERDICT_PREFIX = "Result: ";
 const NO_TESTS_VERDICT = "Result: NOTESTS";
+const FILES_SUMMARY = /^Files=(\d+),/;
 
 /** Port of Go's `sanitizeProjectId` (`pkg/config/config.go:1037`). */
 function sanitizeProjectId(src: string): string {
@@ -156,9 +161,10 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
           : { _tag: "host" as const };
 
     const decoder = new TextDecoder();
-    // The trailing partial line, plus the last complete verdict line seen so far.
+    // The trailing partial line, plus the last complete summary/verdict lines so far.
     let pendingLine = "";
     let lastVerdict = "";
+    let lastSummary = "";
 
     const { exitCode } = yield* Effect.scoped(
       Effect.gen(function* () {
@@ -233,6 +239,7 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
                 pendingLine = lines.pop() ?? "";
                 for (const line of lines) {
                   if (line.startsWith(VERDICT_PREFIX)) lastVerdict = line;
+                  else if (FILES_SUMMARY.test(line)) lastSummary = line;
                 }
                 return output.rawBytes(chunk, "stdout");
               }),
@@ -260,7 +267,8 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
 
     // A stream that ends without a trailing newline leaves the verdict unterminated.
     const finalVerdict = pendingLine.startsWith(VERDICT_PREFIX) ? pendingLine : lastVerdict;
-    if (finalVerdict.trimEnd() === NO_TESTS_VERDICT) {
+    const aggregatedFiles = FILES_SUMMARY.exec(lastSummary)?.[1];
+    if (finalVerdict.trimEnd() === NO_TESTS_VERDICT && aggregatedFiles === "0") {
       return yield* Effect.fail(
         new LegacyTestDbNoTestsError({
           message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
