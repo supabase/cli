@@ -1650,6 +1650,122 @@ export const makeWorkspaceIdentity = ({
   > =>
     Effect.gen(function* () {
       const existing = report.activeTransition;
+      const branchCopyTakeover =
+        existing?.kind === "branch-copy" &&
+        (existing.phase === "reserved" || existing.phase === "git-written") &&
+        existing.path !== undefined &&
+        existing.path !== report.workspace.workspaceRoot &&
+        existing.projectIdentityLocation !== undefined &&
+        existing.projectIdentityLocation === report.workspace.projectIdentityLocation &&
+        existing.projectId !== undefined &&
+        existing.projectId === report.identity.projectId &&
+        existing.checkoutId !== undefined &&
+        existing.contextId !== undefined &&
+        existing.branch !== undefined &&
+        existing.branch ===
+          (report.context.kind === "branch" ? report.context.branch : undefined) &&
+        existing.expectedGitValue === existing.contextId &&
+        existing.targetGitValue !== undefined &&
+        existing.targetGitValue !== existing.contextId &&
+        report.identity.checkoutId === undefined &&
+        (report.identity.contextId === existing.contextId ||
+          report.identity.contextId === existing.targetGitValue) &&
+        report.conflicts.length === 0 &&
+        report.conflictingLocations === undefined &&
+        report.inaccessiblePaths === undefined;
+      if (branchCopyTakeover && existing !== undefined) {
+        const path = report.workspace.workspaceRoot;
+        const target = existing.targetGitValue;
+        const current = yield* discover(path);
+        if (
+          !(yield* pathIsDefinitelyMissing(existing.path)) ||
+          current.activeTransition?.id !== existing.id ||
+          current.activeTransition.kind !== "branch-copy" ||
+          current.activeTransition.phase !== existing.phase ||
+          current.workspace.projectIdentityLocation !== existing.projectIdentityLocation ||
+          current.identity.projectId !== existing.projectId ||
+          current.identity.checkoutId !== undefined ||
+          (current.identity.contextId !== existing.contextId &&
+            current.identity.contextId !== target) ||
+          current.context.kind !== "branch" ||
+          current.context.branch !== existing.branch ||
+          current.conflicts.length > 0 ||
+          current.conflictingLocations !== undefined ||
+          current.inaccessiblePaths !== undefined
+        ) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: existing.id }),
+          );
+        }
+        if (existing.phase === "reserved") {
+          const inspection = yield* withWorkspaceServices(inspectWorkspace(path));
+          if (inspection.kind !== "git-checkout" || inspection.head.kind === "detached") {
+            return yield* Effect.fail(
+              new ManagedIdentityTransitionOwnershipError({ transitionId: existing.id }),
+            );
+          }
+          const observed = yield* withWorkspaceServices(
+            readBranchContextId(inspection, existing.branch),
+          );
+          if (observed !== existing.contextId && observed !== target) {
+            return yield* Effect.fail(
+              new ManagedIdentityTransitionOwnershipError({ transitionId: existing.id }),
+            );
+          }
+          if (observed === existing.contextId) {
+            yield* withWorkspaceServices(
+              replaceBranchContextId(inspection, existing.branch, existing.contextId, target),
+            );
+          }
+          const winner = yield* withWorkspaceServices(
+            readBranchContextId(inspection, existing.branch),
+          );
+          if (winner !== target) {
+            return yield* Effect.fail(
+              new ManagedIdentityTransitionOwnershipError({ transitionId: existing.id }),
+            );
+          }
+          yield* repository.advanceIdentityTransition({
+            id: existing.id,
+            expectedPhase: "reserved",
+            phase: "git-written",
+            now: now(),
+          });
+        }
+        const latest = (yield* repository.listIdentityClaims()).transitions.find(
+          (candidate) => candidate.id === existing.id,
+        );
+        const settled = yield* discover(path);
+        if (
+          !(yield* pathIsDefinitelyMissing(existing.path)) ||
+          latest?.kind !== "branch-copy" ||
+          latest.phase !== "git-written" ||
+          latest.projectId !== existing.projectId ||
+          latest.checkoutId !== existing.checkoutId ||
+          latest.contextId !== existing.contextId ||
+          latest.branch !== existing.branch ||
+          latest.path !== existing.path ||
+          latest.projectIdentityLocation !== existing.projectIdentityLocation ||
+          latest.expectedGitValue !== existing.expectedGitValue ||
+          latest.targetGitValue !== existing.targetGitValue ||
+          settled.identity.projectId !== existing.projectId ||
+          settled.identity.checkoutId !== undefined ||
+          settled.identity.contextId !== target ||
+          settled.context.kind !== "branch" ||
+          settled.context.branch !== existing.branch ||
+          settled.conflicts.length > 0
+        ) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: existing.id }),
+          );
+        }
+        yield* repository.finalizeIdentityTransition({
+          id: latest.id,
+          expectedPhase: "git-written",
+          now: now(),
+        });
+        return yield* discover(path);
+      }
       const resuming = existing?.kind === "branch-copy";
       if (!resuming && !branchCopyIsUnambiguous(report)) {
         return yield* Effect.fail(
@@ -1706,6 +1822,7 @@ export const makeWorkspaceIdentity = ({
             contextId,
             branch,
             path,
+            projectIdentityLocation: report.workspace.projectIdentityLocation,
             expectedGitValue: contextId,
             targetGitValue: yield* managedUuid("contextId"),
             now: now(),

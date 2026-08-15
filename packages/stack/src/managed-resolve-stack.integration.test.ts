@@ -1,4 +1,4 @@
-import { cpSync, existsSync, readFileSync, renameSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Effect } from "effect";
@@ -695,6 +695,90 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
         gitBranchContextIdKey("copy-after-advance-failure"),
       ),
     ).toBe(resumed.identity.contextId);
+  });
+
+  it("takes over a copied-branch transition when its original linked worktree disappears", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const linked = join(root, "copy-original");
+    const replacement = join(root, "copy-replacement");
+    const service = await openService(root);
+    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+    git(repository, "config", "branch.linked.supabaseContextId", owner.identity.contextId);
+    const linkedCheckoutId = "00000000-0000-7000-8000-000000000401";
+    writeFileSync(
+      gitCheckoutIdentityPath(git(linked, "rev-parse", "--git-dir").trim()),
+      `${JSON.stringify({ version: 1, checkoutId: linkedCheckoutId })}\n`,
+    );
+    await Effect.runPromise(
+      service.repository.registerCheckoutIdentity({
+        identity: {
+          projectId: owner.identity.projectId,
+          checkoutId: linkedCheckoutId,
+          contextId: owner.identity.contextId,
+        },
+        checkoutKind: "linked-worktree",
+        checkoutRootPath: linked,
+        locationId: "00000000-0000-7000-8000-000000000402",
+        context: { kind: "branch", locator: "linked" },
+        now: new Date().toISOString(),
+      }),
+    );
+
+    let interruptAdvance = true;
+    const interruptedRepository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      advanceIdentityTransition: (input) =>
+        interruptAdvance
+          ? ((interruptAdvance = false),
+            Effect.fail(new ManagedIdentityTransitionOwnershipError({ transitionId: input.id })))
+          : service.repository.advanceIdentityTransition(input),
+    };
+    const recovering = await makeManagedStackService({
+      repository: interruptedRepository,
+      stateRoot: join(root, "copy-takeover-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(recovering);
+
+    await expect(
+      recovering.resolveStack({ workspacePath: linked, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    const interrupted = await Effect.runPromise(
+      service.repository.listIdentityClaims(owner.identity.projectId),
+    );
+    const transition = interrupted.transitions.find(
+      (candidate) => candidate.kind === "branch-copy",
+    );
+    expect(transition).toMatchObject({
+      phase: "reserved",
+      path: linked,
+      projectId: owner.identity.projectId,
+      checkoutId: linkedCheckoutId,
+      contextId: owner.identity.contextId,
+      branch: "linked",
+    });
+    expect(transition?.targetGitValue).toEqual(expect.any(String));
+
+    rmSync(linked, { recursive: true, force: true });
+    git(repository, "worktree", "prune");
+    git(repository, "worktree", "add", "-q", replacement, "linked");
+
+    const resolved = await recovering.resolveStack({
+      workspacePath: replacement,
+      operation: "start",
+    });
+    expect(resolved.outcome).toBe("create");
+    expect(resolved.identity.projectId).toBe(owner.identity.projectId);
+    expect(resolved.identity.checkoutId).not.toBe(linkedCheckoutId);
+    expect(resolved.identity.contextId).toBe(transition?.targetGitValue);
+    expect((await service.discoverWorkspace(replacement)).state).toBe("healthy");
+    expect(
+      (await Effect.runPromise(service.repository.listIdentityClaims())).transitions.filter(
+        (candidate) => candidate.phase !== "finalized",
+      ),
+    ).toEqual([]);
   });
 
   it("does not overwrite a competing branch owner discovered during registration", async () => {
