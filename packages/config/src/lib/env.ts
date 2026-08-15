@@ -261,10 +261,21 @@ function walk(
   onResolvedEnv: ((path: ReadonlyArray<string>) => void) | undefined,
 ): unknown {
   if (Array.isArray(document)) {
-    return document.map((item, index) => {
+    let resolved = false;
+    const onResolvedArrayEnv =
+      onResolvedEnv === undefined
+        ? undefined
+        : () => {
+            resolved = true;
+          };
+    const result = document.map((item, index) => {
       const child = ast === null ? null : descendAst(ast, String(index));
-      return walk(item, env, child, goViperCompat, [...path, String(index)], onResolvedEnv);
+      return walk(item, env, child, goViperCompat, [...path, String(index)], onResolvedArrayEnv);
     });
+    if (resolved) {
+      onResolvedEnv?.(path);
+    }
+    return result;
   }
 
   if (typeof document === "object" && document !== null) {

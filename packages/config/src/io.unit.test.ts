@@ -1493,6 +1493,42 @@ port = "env(REMOTE_DB_PORT)"
     }
   });
 
+  test("tracks environment origins for local and selected-remote array leaves", async () => {
+    const localArrayCwd = await writeTomlProject(`project_id = "baseref"
+
+[api]
+schemas = ["env(LOCAL_SCHEMA)"]
+`);
+    const remoteArrayCwd = await writeTomlProject(`project_id = "baseref"
+
+[remotes.preview]
+project_id = "${PREVIEW_REF}"
+[remotes.preview.api]
+schemas = ["env(REMOTE_SCHEMA)"]
+`);
+
+    try {
+      const localArrayLoaded = await runConfigEffect(
+        loadProjectConfig(localArrayCwd, {
+          projectEnv: injectedProjectEnv({ LOCAL_SCHEMA: "local_schema" }),
+        }),
+      );
+      const remoteArrayLoaded = await runConfigEffect(
+        loadProjectConfig(remoteArrayCwd, {
+          projectRef: PREVIEW_REF,
+          projectEnv: injectedProjectEnv({ REMOTE_SCHEMA: "remote_schema" }),
+        }),
+      );
+
+      expect(originAt(localArrayLoaded, ["api", "schemas"])).toBe("environment");
+      expect(originAt(remoteArrayLoaded, ["api", "schemas"])).toBe("environment");
+    } finally {
+      await Promise.all(
+        [localArrayCwd, remoteArrayCwd].map((cwd) => rm(cwd, { recursive: true, force: true })),
+      );
+    }
+  });
+
   test("merges the matching remote subtree over the base before decode", async () => {
     const cwd = await writeTomlProject(BASE_WITH_REMOTES);
     try {
