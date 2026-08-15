@@ -19,15 +19,18 @@ import {
   legacyBuildLocalDbContainerInputs,
   type LegacyLocalDbContainerInputs,
 } from "../../../shared/db-bootstrap/local-container-inputs.ts";
-import { legacyWaitForHealthyServices } from "../../../shared/db-bootstrap/health-check.ts";
+import { legacyWaitForShadowReady } from "../../../shared/db-bootstrap/health-check.ts";
+import {
+  legacyAcquireShadowDatabase,
+  type LegacyShadowAcquiredHandle,
+  type LegacyShadowCacheOpts,
+} from "../../../shared/db-bootstrap/shadow-cache.ts";
 import {
   legacyConnectShadowDatabase,
-  legacyCreateShadowDatabase,
   legacyMigrateNextShadowDatabase,
   legacyRemoveShadowDatabase,
   legacyShadowRunInputFromLocalContainerInputs,
   legacySetupShadowDatabase,
-  type LegacyShadowDatabaseHandle,
 } from "../../../shared/db-bootstrap/shadow-database.ts";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import type { ChildProcessSpawner as ChildProcessSpawnerType } from "effect/unstable/process/ChildProcessSpawner";
@@ -98,7 +101,7 @@ export const legacyPreparePgDeltaNextDeclarativeBaseline = Effect.fnUntraced(fun
   yield* session.exec('DROP EXTENSION IF EXISTS "uuid-ossp"');
 });
 
-const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowDatabaseHandle) => ({
+const setupRunInput = (input: NativeShadowInput, handle: LegacyShadowAcquiredHandle) => ({
   fs: input.base.fs,
   path: input.base.path,
   workdir: input.base.workdir,
@@ -198,34 +201,54 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
       ),
     });
 
-    const acquireShadow = (input: NativeShadowInput) =>
-      Effect.acquireRelease(legacyCreateShadowDatabase(input.spawner, input.base), (handle) =>
-        legacyRemoveShadowDatabase(input.spawner, handle.containerId).pipe(
-          Effect.provideService(Output, output),
-        ),
+    /**
+     * Cache-aware acquire, released when the current scope closes — next returns a URL the
+     * engine keeps using after provision, so this cannot be `legacyWithShadowDatabase`
+     * (that wrapper removes the container when `use` returns).
+     */
+    const acquireShadow = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+      Effect.acquireRelease(
+        legacyAcquireShadowDatabase(input.spawner, input.base, opts),
+        (handle) =>
+          legacyRemoveShadowDatabase(input.spawner, handle.containerId).pipe(
+            Effect.provideService(Output, output),
+          ),
       );
 
-    const provisionMigrations = (input: NativeShadowInput) =>
-      Effect.gen(function* () {
-        const handle = yield* acquireShadow(input);
-        yield* legacyWaitForHealthyServices(input.spawner, [handle.containerId], {
+    const awaitShadowReady = (input: NativeShadowInput, handle: LegacyShadowAcquiredHandle) =>
+      legacyWaitForShadowReady(
+        input.spawner,
+        handle.containerId,
+        {
+          host: input.base.hostname,
+          port: input.base.shadowPort,
+          user: "postgres",
+          password: input.base.password,
+          database: "postgres",
+        },
+        {
           timeoutSeconds: input.base.healthTimeoutSeconds,
-        });
+          image: input.base.image,
+        },
+      );
+
+    const provisionMigrations = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
+      Effect.gen(function* () {
+        const handle = yield* acquireShadow(input, opts);
+        yield* awaitShadowReady(input, handle);
         const setup = setupRunInput(input, handle);
-        yield* legacyMigrateNextShadowDatabase(input.spawner, setup);
+        yield* legacyMigrateNextShadowDatabase(input.spawner, setup, handle);
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
         } satisfies LegacyPgDeltaNextMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
-    const provisionDeclarative = (input: NativeShadowInput) =>
+    const provisionDeclarative = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
       Effect.gen(function* () {
-        const handle = yield* acquireShadow(input);
-        yield* legacyWaitForHealthyServices(input.spawner, [handle.containerId], {
-          timeoutSeconds: input.base.healthTimeoutSeconds,
-        });
+        const handle = yield* acquireShadow(input, opts);
+        yield* awaitShadowReady(input, handle);
         const setup = setupRunInput(input, handle);
-        yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" });
+        yield* legacySetupShadowDatabase(input.spawner, setup, { webhooks: "disabled" }, handle);
         yield* Effect.scoped(
           Effect.gen(function* () {
             const session = yield* legacyConnectShadowDatabase(setup.connConfig);
@@ -238,13 +261,16 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         return legacyToPostgresURL(setup.connConfig);
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
+    const cacheOpts = (opts: LegacyPgDeltaNextShadowInput): LegacyShadowCacheOpts =>
+      opts.bypassCache === true ? { bypassCache: true } : {};
+
     return LegacyPgDeltaNextShadow.of({
       provisionMigrations: (opts) =>
         Effect.gen(function* () {
           const port = yield* nextPort();
           const built = yield* buildNativeBase(opts);
           const input = buildNativeInput(opts, built, port);
-          return yield* provisionMigrations(input);
+          return yield* provisionMigrations(input, cacheOpts(opts));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
@@ -253,8 +279,9 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          const migrations = yield* provisionMigrations(migrationsInput);
-          const declarativeUrl = yield* provisionDeclarative(declarativeInput);
+          const cache = cacheOpts(opts);
+          const migrations = yield* provisionMigrations(migrationsInput, cache);
+          const declarativeUrl = yield* provisionDeclarative(declarativeInput, cache);
           return {
             ...migrations,
             declarativeUrl,

@@ -1075,16 +1075,21 @@ const legacyProvisionBaselineShadow = (
       password: shadowInput.password,
       database: "postgres",
     };
-    yield* legacySetupShadowDatabase(spawner, {
-      fs,
-      path,
-      workdir: ctx.cwd,
-      projectId: shadowInput.projectId,
-      container: handle.containerId,
-      networkId: shadowInput.networkId,
-      connConfig,
-      setup: shadowInput.setup,
-    });
+    yield* legacySetupShadowDatabase(
+      spawner,
+      {
+        fs,
+        path,
+        workdir: ctx.cwd,
+        projectId: shadowInput.projectId,
+        container: handle.containerId,
+        networkId: shadowInput.networkId,
+        connConfig,
+        setup: shadowInput.setup,
+      },
+      {},
+      handle,
+    );
     return { sourceUrl: legacyToPostgresURL(connConfig) } satisfies LegacyProvisionedShadow;
   });
 
@@ -1117,16 +1122,21 @@ const legacyProvisionDeclarativeShadow = (
       password: shadowInput.password,
       database: "postgres",
     };
-    yield* legacySetupShadowDatabase(spawner, {
-      fs,
-      path,
-      workdir: ctx.cwd,
-      projectId: shadowInput.projectId,
-      container: handle.containerId,
-      networkId: shadowInput.networkId,
-      connConfig,
-      setup: shadowInput.setup,
-    });
+    yield* legacySetupShadowDatabase(
+      spawner,
+      {
+        fs,
+        path,
+        workdir: ctx.cwd,
+        projectId: shadowInput.projectId,
+        container: handle.containerId,
+        networkId: shadowInput.networkId,
+        connConfig,
+        setup: shadowInput.setup,
+      },
+      {},
+      handle,
+    );
     const targetUrl = legacyToPostgresURL(connConfig);
     yield* legacyApplyDeclarativePgDelta(ctx, {
       fs,

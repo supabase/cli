@@ -322,6 +322,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               context: input.context,
               toml: input.toml,
               ...(input.projectRef !== undefined ? { projectRef: input.projectRef } : {}),
+              ...(input.noCache ? { bypassCache: true } : {}),
             });
             const migrations = parseLegacyConnectionString(shadow.migrationsUrl);
             const declarative = parseLegacyConnectionString(shadow.declarativeUrl);

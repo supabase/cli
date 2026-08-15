@@ -16,7 +16,6 @@ import {
 const baseKeyInputs = (): LegacyShadowCacheKeyInputs => ({
   postgresImage: "public.ecr.aws/supabase/postgres:17.6.1.158",
   majorVersion: 17,
-  shadowPort: 54320,
   jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
   jwtExpiry: 3600,
   rootKey: "d4dc5b6d4a1d6a10b2c1e5b6a7c8d9e0",
@@ -85,7 +84,6 @@ describe("legacyShadowCacheKey", () => {
     }> = [
       { label: "postgres image tag", inputs: { ...base, postgresImage: "postgres:17.6.1.159" } },
       { label: "major version", inputs: { ...base, majorVersion: 15 } },
-      { label: "shadow port", inputs: { ...base, shadowPort: 54321 } },
       { label: "jwt secret", inputs: { ...base, jwtSecret: "other-secret" } },
       { label: "jwt expiry", inputs: { ...base, jwtExpiry: 7200 } },
       { label: "root key", inputs: { ...base, rootKey: "0000" } },

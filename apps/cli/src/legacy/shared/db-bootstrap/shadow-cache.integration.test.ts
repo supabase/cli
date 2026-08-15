@@ -364,12 +364,12 @@ const shadowSetup = (): LegacyShadowDbSetupInput<never> => ({
 const shadowInput = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
-  overrides: { readonly shadowPort?: number } = {},
+  overrides: { readonly shadowPort?: number; readonly jwtExpiry?: number } = {},
 ): LegacyShadowSetupInput<never> => ({
   db: { major_version: 17, settings: {} },
   experimental: defaultConfig.experimental,
   jwtSecret: "super-secret-jwt-token-with-at-least-32-characters-long",
-  jwtExpiry: 3600,
+  jwtExpiry: overrides.jwtExpiry ?? 3600,
   networkId: "supabase_network_proj",
   image: "public.ecr.aws/supabase/postgres:17.4.1.030",
   configImage: "supabase/postgres:17.4.1.030",
@@ -729,10 +729,10 @@ describe("legacyAcquireShadowDatabase", () => {
         const first = yield* soleTarName(fs, path);
         expect(first).toHaveLength(1);
 
-        // A changed baseline input (the shadow's own published port) is a different cluster /
-        // different key — both must coexist in the global cache (unlike the old project-local
-        // current-key-only sweep, which would have deleted the first).
-        const rekeyed = yield* coldRun(docker, shadowInput(fs, path, { shadowPort: 54399 }));
+        // A changed baked-in input (jwt expiry) is a different cluster / different key — both
+        // must coexist in the global cache (unlike the old project-local current-key-only sweep,
+        // which would have deleted the first). Host publish port is NOT a key input.
+        const rekeyed = yield* coldRun(docker, shadowInput(fs, path, { jwtExpiry: 7200 }));
         const both = yield* soleTarName(fs, path);
         expect(both).toHaveLength(2);
         expect(both).toContain(first[0]);
@@ -744,7 +744,7 @@ describe("legacyAcquireShadowDatabase", () => {
 
         // Fill to the keep-cap + 1 with more distinct keys; the oldest (first) is evicted.
         for (let i = 0; i < LEGACY_SHADOW_BASELINE_KEEP - 1; i++) {
-          yield* coldRun(docker, shadowInput(fs, path, { shadowPort: 54400 + i }));
+          yield* coldRun(docker, shadowInput(fs, path, { jwtExpiry: 8000 + i }));
         }
         const afterCap = yield* soleTarName(fs, path);
         expect(afterCap).toHaveLength(LEGACY_SHADOW_BASELINE_KEEP);
@@ -779,6 +779,32 @@ describe("legacyAcquireShadowDatabase", () => {
         });
         expect(warm.baselinePresent).toBe(true);
         expect(warm.containerId).not.toBe(cold.containerId);
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+        yield* legacyRemoveShadowDatabase(docker.spawner, warm.containerId);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("a changed published host port is still a warm hit", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cold = yield* coldRun(docker, shadowInput(fs, path, { shadowPort: 54320 }));
+        expect(cold.baselinePresent).toBe(false);
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+
+        // pg-delta next allocates an ephemeral host port per shadow; the published port is
+        // not in PGDATA, so a later run on a different port must restore the same tar.
+        const warm = yield* legacyAcquireShadowDatabase(
+          docker.spawner,
+          shadowInput(fs, path, { shadowPort: 54399 }),
+        );
+        expect(warm.baselinePresent).toBe(true);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
         yield* legacyRemoveShadowDatabase(docker.spawner, warm.containerId);
       }),

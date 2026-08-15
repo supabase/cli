@@ -734,11 +734,17 @@ export const legacyBuildShadowSetupDatabaseInput = <E>(
  * connect error immediately, not pay for JWKS work first. The connection is closed once this
  * resolves (Go's `defer conn.Close(...)`), matching `Effect.scoped`'s finalizer running at the
  * end of this function rather than leaking a `Scope.Scope` requirement to the caller.
+ *
+ * `baseline` defaults to {@link LEGACY_SHADOW_BASELINE_COLD}, i.e. exactly the sequence above.
+ * A warm shadow-cache hit skips the prelude + `SetupDatabase` (the restored cluster already
+ * has them) and only recreates `contrib_regression`; a cache-enabled COLD provision snapshots
+ * between the baseline and the template, matching {@link migrateShadowDatabase}.
  */
 export const legacySetupShadowDatabase = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupRunInput<E>,
   options: LegacySetupDatabaseOptions = {},
+  baseline: LegacyShadowBaselineState = LEGACY_SHADOW_BASELINE_COLD,
 ): Effect.Effect<
   void,
   LegacyStartSetupLocalDatabaseError | LegacyShadowDbError | LegacyImagePrepullError | E,
@@ -746,13 +752,30 @@ export const legacySetupShadowDatabase = <E>(
 > =>
   Effect.scoped(
     Effect.gen(function* () {
+      if (!baseline.baselinePresent && baseline.snapshotRequired) {
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const setupSession = yield* legacyConnectShadowDatabase(input.connConfig);
+            const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+            yield* legacySetupDatabase(
+              spawner,
+              legacyBuildShadowSetupDatabaseInput(input, setupSession, resolved),
+              options,
+            );
+          }),
+        );
+        yield* baseline.snapshotBaseline;
+      }
       const session = yield* legacyConnectShadowDatabase(input.connConfig);
-      const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
-      yield* legacySetupShadowConn(
-        spawner,
-        legacyBuildShadowSetupDatabaseInput(input, session, resolved),
-        options,
-      );
+      if (!baseline.baselinePresent && !baseline.snapshotRequired) {
+        const resolved = yield* legacyResolveDbSetupPrelude(input.setup);
+        yield* legacySetupDatabase(
+          spawner,
+          legacyBuildShadowSetupDatabaseInput(input, session, resolved),
+          options,
+        );
+      }
+      yield* legacyCreateShadowTemplateDatabase(session);
     }),
   );
 

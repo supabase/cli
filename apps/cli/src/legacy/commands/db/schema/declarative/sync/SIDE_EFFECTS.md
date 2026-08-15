@@ -9,7 +9,8 @@ there is no automatic fallback. Coverage gaps warn; `--strict-coverage` makes
 them fatal, while `PGDELTA_DEBUG` writes diagnostic JSON under
 `supabase/.temp/pgdelta/v2/debug/<id>/`. Bundled output may use different SQL
 and ordered transaction-aware files but must apply and converge. `--no-cache`
-affects only the legacy opt-out. The bundled formatter defaults to lowercase SQL
+bypasses the bundled engine's shadow baseline cache and the legacy opt-out's
+catalog + snapshot caches. The bundled formatter defaults to lowercase SQL
 at width 180; config overrides it, and JSON `null` disables formatting without
 disabling safe compaction.
 
@@ -25,25 +26,25 @@ disabling safe compaction.
 | `<workdir>/supabase/roles.sql`                                              | SQL        | legacy migrations-catalog cache key (empty when absent)                                                                                                                    |
 | `<workdir>/supabase/schemas/.pgdelta-export.json`                           | JSON       | bundled export metadata, when present                                                                                                                                      |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                                   | JSON       | legacy opt-out's migrations/declarative catalog cache                                                                                                                      |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar        | warm shadow-cache hit on a migrations-catalog miss — snapshot streamed into the fresh shadow container before it starts (`SUPABASE_HOME` overrides the `~/.supabase` root) |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar        | warm shadow-cache hit — bundled-engine migrations/declarative shadows, and the legacy opt-out's migrations-catalog miss (`SUPABASE_HOME` overrides the `~/.supabase` root) |
 | `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar        | during a cold export's abandoned-partial sweep — enumerated and `stat`ed, and removed when older than an hour (a crashed/SIGKILLed earlier export's leftover)              |
 
 ## Files Written
 
-| Path                                                                        | Format | When                                                                                                                                                                                                                                                                                                                                            |
-| --------------------------------------------------------------------------- | ------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql`          | SQL    | changes; bundled engine may emit ordered segments                                                                                                                                                                                                                                                                                               |
-| `<workdir>/supabase/schemas/extension.sql`                                  | SQL    | accepted legacy-extension repair                                                                                                                                                                                                                                                                                                                |
-| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                           | JSON   | legacy opt-out's catalog cache                                                                                                                                                                                                                                                                                                                  |
-| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                             |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | cache-enabled (default) COLD shadow provision on a migrations-catalog cache miss only (a catalog hit provisions no shadow; a warm hit rewrites nothing; `--no-cache` bypasses the snapshot cache entirely — neither read nor written) — the shadow's PGDATA snapshot, ~90MB, LRU keep-8 + 14-day mtime TTL (`SUPABASE_HOME` overrides the root) |
-| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar    | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than an hour                                                                                                                    |
+| Path                                                                        | Format | When                                                                                                                                                                                                                                                                                                                                                                                                      |
+| --------------------------------------------------------------------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `<workdir>/supabase/migrations/<timestamp>_<name>[_<segment>].sql`          | SQL    | changes; bundled engine may emit ordered segments                                                                                                                                                                                                                                                                                                                                                         |
+| `<workdir>/supabase/schemas/extension.sql`                                  | SQL    | accepted legacy-extension repair                                                                                                                                                                                                                                                                                                                                                                          |
+| `<workdir>/supabase/.temp/pgdelta/catalog-*.json`                           | JSON   | legacy opt-out's catalog cache                                                                                                                                                                                                                                                                                                                                                                            |
+| `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                                                                       |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar`               | tar    | cache-enabled (default) COLD shadow provision — bundled-engine migrations/declarative shadows, and the legacy opt-out's migrations-catalog miss (a catalog hit provisions no shadow; a warm hit rewrites nothing; `--no-cache` bypasses the snapshot cache entirely — neither read nor written) — the shadow's PGDATA snapshot, ~90MB, LRU keep-8 + 14-day mtime TTL (`SUPABASE_HOME` overrides the root) |
+| `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar.<pid>.partial` | tar    | during a cold export — the in-flight temp file, `rename`d into the tar above on success and removed on failure; only a crash/SIGKILL leaves it behind, and later cold exports / warm hits sweep leftovers older than an hour                                                                                                                                                                              |
 
 ## Subprocesses / Containers
 
 | What                                                                                                                                                                                                                         | When                                                              |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| Two natively-provisioned shadows: migrated source and declarative target                                                                                                                                                     | bundled engine                                                    |
+| Two natively-provisioned shadows (migrated source + declarative target) via `legacyAcquireShadowDatabase` — ephemeral host ports, settings-keyed global baseline cache                                                       | bundled engine                                                    |
 | Natively-provisioned shadow Postgres container (`legacyCreateShadowDatabase`/`legacyPrepareShadowSource`) + native migrate; the catalog itself is exported via edge-runtime                                                  | legacy opt-out, migrations-catalog cache miss                     |
 | Natively-provisioned shadow Postgres container (platform-baseline setup via one-shot auth/storage/realtime migrate jobs, then the declarative directory applied via the pg-delta edge-runtime apply script) → catalog export | legacy opt-out, declarative-catalog cache miss                    |
 | Edge-runtime container running the pg-delta diff and, on a catalog cache miss, catalog-export/declarative-apply scripts                                                                                                      | legacy opt-out                                                    |
@@ -128,24 +129,27 @@ existing SQL or creates an export manifest.
 
 ### Shadow baseline cache (`SUPABASE_SHADOW_CACHE`, default ON)
 
-The migrations-catalog shadow this command provisions on a cache miss goes through
-`legacyGetMigrationsCatalogRef` -> `exportViaShadowCatalog` (`legacy-pgdelta.cache.ts`), the same
-`legacyWithShadowDatabase` seam `db diff`/`db pull` use, so it inherits the whole lifecycle: ON by
-default, `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (honored from the ambient env AND the
-project's dotenv, e.g. `supabase/.env`), and `--no-cache` bypasses it for that invocation (the
-flag promises fresh shadow setup, so it disables the snapshot cache along with the catalog
-cache); a warm hit skips the platform baseline and therefore the
-`Initialising schema...` progress line. Artifact:
+The bundled (pg-delta next) engine provisions both plan shadows through
+`legacyAcquireShadowDatabase` (`legacy-pgdelta-next-shadow.layer.ts`): ON by default,
+`SUPABASE_SHADOW_CACHE=false`/`=0` opts out (ambient env or project dotenv), and `--no-cache`
+bypasses restore and publish for that invocation. Next allocates an ephemeral host port per
+shadow; the cache key hashes the cluster recipe, not the published port, so worktrees and
+repeated syncs with the same settings share a warm hit. A warm hit skips the platform baseline
+on both the migrated and declarative shadows (`legacyMigrateNextShadowDatabase` /
+`legacySetupShadowDatabase` are baseline-state-aware). Artifact:
 `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
-the root), a PGDATA snapshot keyed by a hash of every input baked into the cluster; shared across
-worktrees with the same settings; retention is LRU (keep 8) + 14-day mtime TTL (warm hits refresh
-mtime). Container
-lifecycle is identical to the uncached path except a cold run drops `--rm` (still removed on
-release). A cache anomaly never fails the command — a warm-path anomaly cold-provisions instead, a
-cold export failure only warns and leaves the run uncached (one exception: a shadow that fails
-to come back up after the snapshot fails the run rather than reporting a false success). See `shared/db-bootstrap/
-shadow-cache.ts`'s doc comment for the mechanics. The DECLARATIVE-catalog shadow (and `generate`'s
-baseline-catalog shadow) is NOT cached: its provision runs the platform baseline via
-`legacySetupShadowDatabase`, which is not baseline-state-aware, so those callers pass an
-unconditional bypass — making them warm-aware is a recorded follow-up
+the root); shared across worktrees with the same settings; retention is LRU (keep 8) + 14-day
+mtime TTL (warm hits refresh mtime). Container lifecycle is identical to the uncached path
+except a cold run drops `--rm` (still removed on release). A cache anomaly never fails the
+command — a warm-path anomaly cold-provisions instead, a cold export failure only warns and
+leaves the run uncached (one exception: a shadow that fails to come back up after the snapshot
+fails the run rather than reporting a false success). See `shared/db-bootstrap/shadow-cache.ts`.
+
+Under the legacy opt-out, the migrations-catalog shadow on a cache miss goes through
+`legacyGetMigrationsCatalogRef` -> `exportViaShadowCatalog` (`legacy-pgdelta.cache.ts`), the same
+`legacyWithShadowDatabase` seam `db diff`/`db pull` use, and `--no-cache` bypasses that snapshot
+cache along with the catalog cache. The DECLARATIVE-catalog shadow (and `generate`'s
+baseline-catalog shadow) now threads baseline state through `legacySetupShadowDatabase` so a
+warm hit does not double-apply the baseline; swapping their `legacyWaitForHealthyServices`
+docker-health wait for `legacyWaitForShadowReady` is a recorded follow-up
 (`docs/roadmap/pg-delta-next-follow-ups.md`).

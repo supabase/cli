@@ -153,12 +153,6 @@ export interface LegacyShadowCacheKeyInputs {
   /** The resolved, full `supabase/postgres` image (tag included — a major version is not enough). */
   readonly postgresImage: string;
   readonly majorVersion: number;
-  /**
-   * The shadow's published host port. Not baked into PGDATA itself, but it IS part of the
-   * container shape a snapshot is restored into, and a plan that changed it is a different plan —
-   * cheap to include, and it keeps the key a superset of everything the container carries.
-   */
-  readonly shadowPort: number;
   readonly jwtSecret: string;
   readonly jwtExpiry: number;
   readonly rootKey: string;
@@ -269,7 +263,9 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
   const lines: Array<string> = [
     `postgres_image=${quoted(inputs.postgresImage)}`,
     `major_version=${inputs.majorVersion}`,
-    `shadow_port=${inputs.shadowPort}`,
+    // Host publish port is deliberately excluded: it is not baked into PGDATA, and
+    // pg-delta next allocates an ephemeral port per shadow. Hashing it would miss
+    // every warm hit on that path. Restore always uses the current run's port.
     `jwt_secret=${quoted(inputs.jwtSecret)}`,
     `jwt_expiry=${inputs.jwtExpiry}`,
     `root_key=${quoted(inputs.rootKey)}`,
@@ -388,7 +384,6 @@ const legacyResolveShadowCacheKeyInputs = <E>(
     return Option.some({
       postgresImage: input.image,
       majorVersion: input.db.major_version,
-      shadowPort: input.shadowPort,
       jwtSecret: input.jwtSecret,
       jwtExpiry: input.jwtExpiry,
       // The EFFECTIVE value, not the raw input: `legacyBuildShadowPostgresContainerSpec`
@@ -866,8 +861,10 @@ const legacyWarmShadow = <E>(
 /**
  * `Effect.acquireUseRelease`'s `acquire` for every shadow-provisioning call site that runs the
  * platform baseline (`db diff`'s migra/pg-delta branch, `db pull`'s migration diff,
- * `legacy-pgdelta.cache.ts`'s catalog export) — see {@link legacyWithShadowDatabase}, which is
- * what those call sites actually use.
+ * `legacy-pgdelta.cache.ts`'s catalog export, and pg-delta next's scoped shadows) — see
+ * {@link legacyWithShadowDatabase} for the acquire/use/release wrapper, and
+ * `legacy-pgdelta-next-shadow.layer.ts` for the scoped `acquireRelease` form next uses so the
+ * container outlives provision (the engine keeps using the URL after this returns).
  *
  * With {@link LEGACY_SHADOW_CACHE_ENV} set to a falsey value this IS `legacyCreateShadowDatabase`,
  * byte for byte. Otherwise it resolves the cache key and either restores this key's snapshot into
