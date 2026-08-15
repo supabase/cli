@@ -485,6 +485,7 @@ function legacyPgDeltaNextPlanOptions(input: LegacyPgDeltaNextDeclarativePlanInp
     profile: legacyPgDeltaNextProfile(input.schema),
     ...(manifest !== undefined ? { manifest } : {}),
     isolatedShadow: true,
+    ...(input.allowSameDatabaseIdentity === true ? { allowSameDatabaseIdentity: true } : {}),
     seedAssumedSchemas: false,
     strictDataStatements: true,
     reorder: true,

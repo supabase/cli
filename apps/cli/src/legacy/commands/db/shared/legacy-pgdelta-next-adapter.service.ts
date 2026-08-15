@@ -100,6 +100,7 @@ export interface LegacyPgDeltaNextDeclarativePlanInput {
   readonly shadowPool: Pool;
   readonly files: readonly LegacyPgDeltaNextSqlFile[];
   readonly allowDrops: boolean;
+  readonly allowSameDatabaseIdentity?: boolean;
   readonly debug: boolean;
   readonly manifest?: LegacyPgDeltaNextExportManifest;
   readonly formatOptions?: string;
