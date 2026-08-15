@@ -6,6 +6,7 @@ import { afterEach } from "vitest";
 import { Cause, Duration, Effect, Exit } from "effect";
 import { ensureOrdinaryWorkspaceIdentity } from "./managed/identity.ts";
 import {
+  InvalidManagedIdentityError,
   ManagedStackInitializationError,
   ManagedStackPublicationTimeoutError,
 } from "./managed/model.ts";
@@ -161,6 +162,20 @@ describe("managed stack Effect surface", () => {
       expect(after.state).toBe("stopped");
       expect(after.selection?.stackId).toBe(stack.id);
       expect(after.stacks.map((candidate) => candidate.id)).toEqual([stack.id]);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("rejects conflicting recovery path spellings before mutation", () => {
+    const { workspace, layer } = setupInMemory();
+    return Effect.gen(function* () {
+      const managed = yield* ManagedStackService;
+      const exit = yield* Effect.exit(
+        managed.newCheckout({ workspacePath: workspace, path: `${workspace}-other` }),
+      );
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(InvalidManagedIdentityError);
+      }
     }).pipe(Effect.provide(layer));
   });
 

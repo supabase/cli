@@ -39,7 +39,7 @@ it, and JSON `null` disables formatting without disabling safe compaction.
 | Path                                                                        | Format | When                                                                                                                                                                                                                                                                                                                                                                            |
 | --------------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `<workdir>/supabase/migrations/<YYYYMMDDHHMMSS>_<name>.sql`                 | SQL    | non-empty `--file` diff; bundled pg-delta may emit ordered transaction-aware files, while pgAdmin always emits one                                                                                                                                                                                                                                                              |
-| `<path>` (from `--output` / `-o`)                                           | SQL    | explicit `--from/--to` mode with `--output`                                                                                                                                                                                                                                                                                                                                     |
+| `<path>` (from `--output` / `-o`)                                           | SQL    | explicit `--from/--to` mode with `--output`; flattened review representation, not a portable apply script                                                                                                                                                                                                                                                                       |
 | `<workdir>/supabase/.temp/pgdelta/*.json`                                   | JSON   | legacy opt-out's explicit migrations catalog                                                                                                                                                                                                                                                                                                                                    |
 | `<workdir>/supabase/.temp/pgdelta/pgdelta-target-ca.crt`                    | PEM    | legacy opt-out, for a Supabase TLS target                                                                                                                                                                                                                                                                                                                                       |
 | `<workdir>/supabase/.temp/pgdelta/v2/debug/<id>/*.json`                     | JSON   | bundled engine with `PGDELTA_DEBUG`                                                                                                                                                                                                                                                                                                                                             |
@@ -143,6 +143,17 @@ Progress to stderr (`Creating shadow database...`, `Diffing schemas[: <list>]`,
 that it no longer changes the migrations baseline. The SQL diff prints to stdout
 when neither `--file` nor explicit `--output` is set.
 
+Explicit `--from`/`--to` mode returns before normal `--file` handling, so `-f` is
+ignored. It joins the pg-delta plan files with blank lines and writes that same
+flattened review representation to stdout or `--output`. File header comments
+and preambles remain, but runner-enforced transaction boundaries do not:
+transactional units can begin with `SET LOCAL check_function_bodies = off`,
+which has no effect under plain `psql -f` without a surrounding transaction.
+A plan may also mix transactional and non-transactional units, so wrapping the
+whole flattened representation in one transaction is not generally safe. To
+create applicable migrations, use normal target mode with `--file`; it persists
+the ordered plan units separately for application through `db reset` or `db push`.
+
 ### `--output-format json` / `stream-json`
 
 Progress strings still go to stderr; stdout carries a single structured envelope
@@ -150,6 +161,10 @@ Progress strings still go to stderr; stdout carries a single structured envelope
 the raw SQL. Bundled pg-delta reports the best-effort
 `DeclarativeSchemaNotUsedAsDiffBaseline` advisory for a non-empty `--file` diff
 when declarative files exist.
+
+In explicit `--from`/`--to` mode, the `diff` field is the same flattened review
+representation as text stdout; the machine envelope does not restore the per-unit
+transaction metadata.
 
 ### `--use-pgadmin` (CLI-1968)
 
@@ -203,7 +218,9 @@ when declarative files exist.
 - `--use-pg-schema` rebuilds the argv and exec's the bundled Go binary (its side
   effects are Go's); the Go child's telemetry is disabled so the single
   `cli_command_executed` event comes from this TS command.
-- Explicit `--from`/`--to` mode always uses pg-delta and writes to `--output` (or stdout).
+- Explicit `--from`/`--to` mode always uses pg-delta and writes the flattened review
+  representation to `--output` (or stdout). It ignores `--file`; normal mode retains
+  per-unit migration files for the CLI apply paths.
 - Normal mode always compares the migrations shadow to the selected live database;
   declarative files and `schema_paths` do not replace that baseline.
 - Under the legacy opt-out, the explicit `migrations` target resolves natively (CLI-1959): a bare

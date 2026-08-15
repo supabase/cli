@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { BunFileSystem } from "@effect/platform-bun";
 import { describe, expect, it } from "@effect/vitest";
 import { afterEach } from "vitest";
-import { Effect, FileSystem, Layer, PlatformError } from "effect";
+import { Cause, Effect, Exit, FileSystem, Layer, PlatformError } from "effect";
 import {
   git,
   makeBareRepository,
@@ -22,9 +22,11 @@ import {
   inspectWorkspace,
   readBranchContextId,
   readGitCheckoutIdentity,
+  replaceBranchContextId,
   type GitCheckoutInspection,
 } from "./git.ts";
-import { UnsupportedGitWorkspaceError } from "./model.ts";
+import { publishGitCheckoutIdentity } from "./identity.ts";
+import { InvalidManagedIdentityError, UnsupportedGitWorkspaceError } from "./model.ts";
 import { gitCheckoutIdentityPath, gitConfigPath, gitWorktreeConfigPath } from "./paths.ts";
 
 /**
@@ -487,6 +489,89 @@ describe("workspace topology", () => {
 });
 
 describe("git-stored identity", () => {
+  it.live("refuses a raced checkout marker with an unsupported version", () =>
+    Effect.gen(function* () {
+      const gitDirectory = makeDirectory(makeRoot(), "git-directory");
+      const markerPath = gitCheckoutIdentityPath(gitDirectory);
+      const checkoutId = "00000000-0000-7000-8000-000000000304";
+      const baseFileSystem = yield* FileSystem.FileSystem;
+      let firstRead = true;
+      const racingFileSystem = {
+        ...baseFileSystem,
+        readFileString: (path: string, encoding?: string) => {
+          if (path !== markerPath || !firstRead)
+            return baseFileSystem.readFileString(path, encoding);
+          firstRead = false;
+          return Effect.sync(() => {
+            writeFileSync(markerPath, JSON.stringify({ version: 2, checkoutId }));
+          }).pipe(
+            Effect.flatMap(() =>
+              Effect.fail(
+                PlatformError.systemError({
+                  _tag: "NotFound",
+                  module: "test",
+                  method: "readFileString",
+                  pathOrDescriptor: markerPath,
+                }),
+              ),
+            ),
+          );
+        },
+      };
+
+      const exit = yield* Effect.exit(
+        publishGitCheckoutIdentity(gitDirectory, checkoutId).pipe(
+          Effect.provideService(FileSystem.FileSystem, racingFileSystem),
+        ),
+      );
+
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        expect(Cause.hasDies(exit.cause)).toBe(false);
+        expect(Cause.squash(exit.cause)).toBeInstanceOf(InvalidManagedIdentityError);
+      }
+      expect(readFileSync(markerPath, "utf8")).toContain('"version":2');
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
+  it.live("holds the Git config lock across validation and publication", () =>
+    Effect.gen(function* () {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const inspection = yield* inspectCheckout(repository);
+      const expected = "00000000-0000-7000-8000-000000000301";
+      const target = "00000000-0000-7000-8000-000000000303";
+      git(repository, "config", gitBranchContextIdKey("main"), expected);
+      const config = gitConfigPath(inspection.commonDirectory);
+      const baseFileSystem = yield* FileSystem.FileSystem;
+      let writerBlocked = false;
+      const racingFileSystem = {
+        ...baseFileSystem,
+        writeFileString: (
+          path: string,
+          data: string,
+          options?: { readonly flag?: FileSystem.OpenFlag; readonly mode?: number },
+        ) =>
+          Effect.tap(baseFileSystem.writeFileString(path, data, options), () =>
+            Effect.sync(() => {
+              if (path !== `${config}.lock`) return;
+              try {
+                git(repository, "config", "--replace-all", gitBranchContextIdKey("main"), target);
+              } catch {
+                writerBlocked = true;
+              }
+            }),
+          ),
+      };
+
+      yield* replaceBranchContextId(inspection, "main", expected, target).pipe(
+        Effect.provideService(FileSystem.FileSystem, racingFileSystem),
+      );
+      expect(writerBlocked).toBe(true);
+      expect(storedConfigValue(config, gitBranchContextIdKey("main"))).toBe(target);
+    }).pipe(Effect.provide(gitLayer)),
+  );
+
   it.live("gives sibling linked worktrees one project and separate checkouts", () =>
     Effect.gen(function* () {
       const root = makeRoot();
