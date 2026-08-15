@@ -646,6 +646,32 @@ describe("ordinary-folder managed stack contract", () => {
     await service.close();
   });
 
+  it("preserves an in-flight typed failure when close races before rejection", async () => {
+    const root = makeRoot();
+    const base = createInMemoryManagedStackRepository();
+    let signalStarted: () => void = () => undefined;
+    const started = new Promise<void>((resolve) => {
+      signalStarted = resolve;
+    });
+    const typedFailure = new InvalidManagedIdentityError({ message: "controlled failure" });
+    const service = await makeManagedStackService({
+      repository: {
+        ...base,
+        listStackProjections: () =>
+          Effect.sync(() => {
+            signalStarted();
+            throw typedFailure;
+          }),
+      },
+      stateRoot: join(root, "close-race-managed"),
+    });
+    const inFlight = service.listStacks();
+    await started;
+    await service.close();
+
+    await expect(inFlight).rejects.toBe(typedFailure);
+  });
+
   it("rejects a copied ordinary-folder identity claim", async () => {
     const root = makeRoot();
     const firstWorkspace = makeWorkspace(root, "first");

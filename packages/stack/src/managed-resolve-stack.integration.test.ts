@@ -536,6 +536,23 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     expect(branchStacks.map((stack) => stack.id)).toEqual([feature.stack.id]);
   });
 
+  it("settles a moved checkout and renamed branch in one subsequent start", async () => {
+    const root = makeRoot();
+    const original = makeRepository(root, "original");
+    const moved = join(root, "moved");
+    const service = await openService(root);
+    const first = await service.resolveStack({ workspacePath: original, operation: "start" });
+
+    git(original, "branch", "-m", "main", "renamed");
+    renameSync(original, moved);
+
+    const recovered = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    expect(recovered.outcome).toBe("reuse");
+    expect(recovered.stack.id).toBe(first.stack.id);
+    expect(recovered.identity).toEqual(first.identity);
+    expect(recovered.context).toEqual({ kind: "branch", branch: "renamed" });
+  });
+
   it("repairs a copied branch on its first mutating start without changing the owner", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
