@@ -2079,6 +2079,20 @@ export const makeWorkspaceIdentity = ({
           );
         }
         if (currentOwnerBranch === expectedOwnerBranch) {
+          if (
+            expectedOwnerBranch !== undefined &&
+            current.ownerEvidence?.claims.some(
+              (claim) => claim.branch === expectedOwnerBranch && claim.live,
+            )
+          ) {
+            return yield* Effect.fail(
+              new ManagedCopiedBranchConflictError({
+                branch,
+                existingContextId: contextId,
+                requestedContextId: contextId,
+              }),
+            );
+          }
           yield* repository.refreshContextOwner({
             contextId,
             ownerBranch: branch,

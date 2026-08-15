@@ -3047,6 +3047,61 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect((await inspect(service.repository, repository)).activeTransition).toBeUndefined();
   });
 
+  it("rejects adoption retry when the previous owner branch becomes live again", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await open(root);
+    openHandles.push(service);
+    const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-m", "renamed");
+    let interrupt = true;
+    const wrapped: ManagedStackRepositoryShape = {
+      ...service.repository,
+      refreshContextOwner: (input) =>
+        interrupt
+          ? ((interrupt = false),
+            Effect.fail(
+              new ManagedIdentityTransitionOwnershipError({ transitionId: input.contextId }),
+            ))
+          : service.repository.refreshContextOwner(input),
+    };
+    const recovering = await makeManagedStackService({
+      repository: wrapped,
+      stateRoot: join(root, "adopt-owner-reappears-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(recovering);
+    const report = await recovering.discoverWorkspace(repository);
+    expect(report.state).toBe("adoptable");
+    await expect(
+      recovering.adoptContext({ workspacePath: repository, observation: report }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect((await inspect(service.repository, repository)).activeTransition).toMatchObject({
+      kind: "adopt-context",
+      phase: "reserved",
+      expectedOwnerBranch: "main",
+      branch: "renamed",
+    });
+
+    git(repository, "branch", "main");
+    git(repository, "config", gitBranchContextIdKey("main"), started.identity.contextId);
+
+    await expect(recovering.adoptContext({ workspacePath: repository })).rejects.toMatchObject({
+      _tag: "ManagedCopiedBranchConflictError",
+    });
+    expect(
+      (await Effect.runPromise(service.repository.listIdentityClaims())).contexts.find(
+        (context) => context.id === started.identity.contextId,
+      )?.ownerBranch,
+    ).toBe("main");
+    expect((await inspect(service.repository, repository)).activeTransition).toMatchObject({
+      kind: "adopt-context",
+      phase: "reserved",
+      expectedOwnerBranch: "main",
+      branch: "renamed",
+    });
+  });
+
   it.each(["renamed", "foreign"] as const)(
     "rejects normal adoption when the owner changes during refresh (%s)",
     async (raceOwner) => {
