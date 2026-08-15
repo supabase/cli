@@ -49,6 +49,11 @@ import {
 } from "./topology.ts";
 import { discoveryObservation } from "./discovery-observation.ts";
 import { workspaceMetadata } from "./workspace-metadata.ts";
+import {
+  concurrentIdentityPublication,
+  identityPublicationIsMonotonic,
+  sameManagedWorkspaceTopology,
+} from "./workspace-settlement.ts";
 
 export interface WorkspaceIdentityDependencies {
   readonly repository: ManagedStackRepositoryShape;
@@ -174,50 +179,6 @@ const observationMatches = (
     report.context.commit === commit
   );
 };
-
-const sameManagedWorkspaceTopology = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  report.workspace.checkoutKind === freshReport.workspace.checkoutKind &&
-  report.workspace.workspaceRoot === freshReport.workspace.workspaceRoot &&
-  report.workspace.projectIdentityLocation === freshReport.workspace.projectIdentityLocation &&
-  report.workspace.checkoutIdentityLocation === freshReport.workspace.checkoutIdentityLocation &&
-  report.context.kind === freshReport.context.kind &&
-  report.context.branch === freshReport.context.branch &&
-  report.context.commit === freshReport.context.commit;
-
-const identityPublicationIsMonotonic = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  (report.identity.projectId === undefined ||
-    report.identity.projectId === freshReport.identity.projectId) &&
-  (report.identity.checkoutId === undefined ||
-    report.identity.checkoutId === freshReport.identity.checkoutId) &&
-  (report.identity.contextId === undefined ||
-    report.identity.contextId === freshReport.identity.contextId);
-
-const identityPublicationAdvanced = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  (report.identity.projectId === undefined && freshReport.identity.projectId !== undefined) ||
-  (report.identity.checkoutId === undefined && freshReport.identity.checkoutId !== undefined) ||
-  (report.identity.contextId === undefined && freshReport.identity.contextId !== undefined);
-
-/** A same-topology start may have published part of the Git identity meanwhile. */
-const concurrentIdentityPublication = (
-  report: ManagedWorkspaceDiscovery,
-  freshReport: ManagedWorkspaceDiscovery,
-): boolean =>
-  report.state === "unregistered" &&
-  freshReport.state === "unregistered" &&
-  freshReport.conflicts.length === 0 &&
-  freshReport.activeTransition === undefined &&
-  sameManagedWorkspaceTopology(report, freshReport) &&
-  identityPublicationIsMonotonic(report, freshReport) &&
-  identityPublicationAdvanced(report, freshReport);
 
 const newCheckoutTransitionMatches = (
   transition: ManagedIdentityTransitionRecord | undefined,
@@ -2251,8 +2212,5 @@ export const makeWorkspaceIdentity = ({
     repairCopiedBranch,
     adoptContext,
     abandonIdentityTransition,
-    sameManagedWorkspaceTopology,
-    identityPublicationIsMonotonic,
-    concurrentIdentityPublication,
   };
 };

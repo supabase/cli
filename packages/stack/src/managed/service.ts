@@ -37,6 +37,7 @@ import {
 import type { ManagedIdentityRecoveryError } from "./repository.ts";
 import type { ManagedWorkspaceDiscovery } from "./discovery.ts";
 import { discoveryObservation } from "./discovery-observation.ts";
+import { benignConcurrentRegistration } from "./workspace-settlement.ts";
 import {
   makeStackLifecycle,
   type StackLifecycle,
@@ -480,40 +481,10 @@ export class ManagedStackService extends Context.Service<
               resolveOptions.operation === "start"
                 ? yield* workspaceIdentity.discover(resolveOptions.workspacePath)
                 : report;
-            const sameWorkspaceTopology = workspaceIdentity.sameManagedWorkspaceTopology(
-              report,
-              settledReport,
-            );
-            const settledIdentityIsMonotonic = workspaceIdentity.identityPublicationIsMonotonic(
-              report,
-              settledReport,
-            );
-            const settledIdentityPublished =
-              settledReport.identity.projectId !== undefined &&
-              settledReport.identity.checkoutId !== undefined &&
-              settledReport.identity.contextId !== undefined;
-            const settledNewCheckoutReservation =
-              report.state === "unregistered" &&
-              settledReport.state === "transitioning" &&
-              settledReport.activeTransition?.kind === "new-checkout" &&
-              settledReport.activeTransition.path === settledReport.workspace.workspaceRoot &&
-              settledReport.activeTransition.projectIdentityLocation ===
-                settledReport.workspace.projectIdentityLocation &&
-              settledReport.conflicts.length === 0;
-            const benignConcurrentRegistration =
-              report.state === "unregistered" &&
-              sameWorkspaceTopology &&
-              settledIdentityIsMonotonic &&
-              ((settledReport.activeTransition === undefined &&
-                ((settledReport.state === "healthy" &&
-                  settledIdentityPublished &&
-                  settledReport.conflicts.length === 0) ||
-                  workspaceIdentity.concurrentIdentityPublication(report, settledReport))) ||
-                settledNewCheckoutReservation);
             if (
               resolveOptions.operation === "start" &&
               discoveryObservation(report) !== discoveryObservation(settledReport) &&
-              !benignConcurrentRegistration
+              !benignConcurrentRegistration(report, settledReport)
             ) {
               return yield* Effect.fail(
                 new InvalidManagedIdentityError({
