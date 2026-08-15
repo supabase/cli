@@ -1,4 +1,4 @@
-import { existsSync, rmSync } from "node:fs";
+import { cpSync, existsSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Effect } from "effect";
@@ -18,6 +18,8 @@ import {
   gitConfigPath,
   InvalidManagedStackNameError,
   ManagedPortReservationError,
+  ManagedIdentityTransitionOwnershipError,
+  type ManagedStackRepositoryShape,
   type ManagedStackServiceHandle,
   type ResolveManagedStackRequest,
 } from "./managed-bun.ts";
@@ -66,6 +68,46 @@ const adapters = [
   ],
 ] as const;
 
+describe("resolveStack identity publication", () => {
+  it("accepts a monotonic partial identity published between discovery passes", async () => {
+    const root = makeRoot();
+    const repositoryPath = makeRepository(root);
+    const projectId = "00000000-0000-7000-8000-000000000116";
+    const baseRepository = createInMemoryManagedStackRepository();
+    let injected = false;
+    const racingRepository = {
+      ...baseRepository,
+      listIdentityClaims: (requestedProjectId?: string) =>
+        Effect.gen(function* () {
+          const claims = yield* baseRepository.listIdentityClaims(requestedProjectId);
+          if (!injected) {
+            injected = true;
+            git(repositoryPath, "config", GIT_PROJECT_ID_KEY, projectId);
+          }
+          return claims;
+        }),
+    };
+    const service = await makeManagedStackService({
+      repository: racingRepository,
+      stateRoot: join(root, "managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(service);
+
+    const resolved = await service.resolveStack({
+      workspacePath: repositoryPath,
+      operation: "start",
+    });
+
+    expect(injected).toBe(true);
+    expect(resolved.identity).toMatchObject({
+      projectId,
+      checkoutId: expect.any(String),
+      contextId: expect.any(String),
+    });
+  });
+});
+
 const runRepo = Effect.runSync;
 
 const invalidStackNames = managedStackContractFixtures
@@ -85,6 +127,65 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const service = await make(root);
     openHandles.push(service);
     return service;
+  };
+
+  const startRacingServices = async (root: string, workspacePath: string) => {
+    let repositoryA: ManagedStackRepositoryShape;
+    let repositoryB: ManagedStackRepositoryShape;
+    if (_name === "in-memory") {
+      const repository = createInMemoryManagedStackRepository();
+      repositoryA = repository;
+      repositoryB = repository;
+    } else {
+      const baseA = await make(root);
+      const baseB = await make(root);
+      openHandles.push(baseA, baseB);
+      repositoryA = baseA.repository;
+      repositoryB = baseB.repository;
+    }
+
+    let firstReservation = true;
+    let notifyReservation: () => void = () => undefined;
+    const reservationObserved = new Promise<void>((resolve) => {
+      notifyReservation = resolve;
+    });
+    let releaseReservation: () => void = () => undefined;
+    const reservationGate = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+    const gateReservation = (repository: ManagedStackRepositoryShape) => ({
+      ...repository,
+      reserveIdentityTransition: (
+        input: Parameters<typeof repository.reserveIdentityTransition>[0],
+      ) =>
+        Effect.gen(function* () {
+          const transition = yield* repository.reserveIdentityTransition(input);
+          if (firstReservation) {
+            firstReservation = false;
+            notifyReservation();
+            yield* Effect.promise(() => reservationGate);
+          }
+          return transition;
+        }),
+    });
+    const serviceA = await makeManagedStackService({
+      repository: gateReservation(repositoryA),
+      stateRoot: join(root, "race-managed-a"),
+      publicationPollMs: 1,
+    });
+    const serviceB = await makeManagedStackService({
+      repository: gateReservation(repositoryB),
+      stateRoot: join(root, "race-managed-b"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(serviceA, serviceB);
+
+    const firstAttempt = serviceA.resolveStack({ workspacePath, operation: "start" });
+    await reservationObserved;
+    const secondAttempt = serviceB
+      .resolveStack({ workspacePath, operation: "start" })
+      .finally(() => releaseReservation());
+    return { service: serviceA, firstAttempt, secondAttempt };
   };
 
   it("gives sibling worktrees one project, separate checkouts, and independent stacks", async () => {
@@ -364,15 +465,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const root = makeRoot();
     const repository = makeRepository(root);
     git(repository, "checkout", "-q", git(repository, "rev-parse", "HEAD").trim());
-    const service = await openService(root);
+    const { service, firstAttempt, secondAttempt } = await startRacingServices(root, repository);
 
     // Neither caller can see the other's context before it is committed, so both
     // mint a candidate; the registry keeps the one that landed first, which is
     // what stops a raced detached start from splitting into two stacks.
-    const [first, second] = await Promise.all([
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-    ]);
+    const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
 
     expect(second.identity.contextId).toBe(first.identity.contextId);
     expect(second.stack.id).toBe(first.stack.id);
@@ -383,15 +481,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
   it("reports exactly one racing start as having published the checkout identity", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
-    const service = await openService(root);
+    const { firstAttempt, secondAttempt } = await startRacingServices(root, repository);
 
     // Neither caller can see the other's checkout marker before it lands, so
     // both race `ensureGitCheckoutIdentity` on the same unclaimed checkout; the
     // atomic claim settles which one actually published it.
-    const [first, second] = await Promise.all([
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-    ]);
+    const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
 
     expect(second.identity).toEqual(first.identity);
     expect(second.stack.id).toBe(first.stack.id);
@@ -439,6 +534,373 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
       }),
     );
     expect(branchStacks.map((stack) => stack.id)).toEqual([feature.stack.id]);
+  });
+
+  it("repairs a copied branch on its first mutating start without changing the owner", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await openService(root);
+
+    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-c", "main", "copied");
+    git(repository, "checkout", "-q", "copied");
+
+    const conflict = await service.discoverWorkspace(repository);
+    expect(conflict.state).toBe("duplicate");
+    expect(conflict.ownerEvidence?.authoritativeOwnerBranch).toBe("main");
+    expect(conflict.recoveryOperations).toEqual([]);
+
+    const copied = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(copied.outcome).toBe("create");
+    expect(copied.identity.projectId).toBe(owner.identity.projectId);
+    expect(copied.identity.checkoutId).toBe(owner.identity.checkoutId);
+    expect(copied.identity.contextId).not.toBe(owner.identity.contextId);
+    expect(copied.stack.id).not.toBe(owner.stack.id);
+
+    git(repository, "checkout", "-q", "main");
+    const ownerAgain = await service.resolveStack({
+      workspacePath: repository,
+      operation: "start",
+    });
+    expect(ownerAgain.identity.contextId).toBe(owner.identity.contextId);
+    expect(ownerAgain.stack.id).toBe(owner.stack.id);
+    expect(
+      storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("copied")),
+    ).toBe(copied.identity.contextId);
+  });
+
+  it("repairs a copied branch after its checkout was safely rebound", async () => {
+    const root = makeRoot();
+    const original = makeRepository(root, "original");
+    const moved = join(root, "moved");
+    const service = await openService(root);
+    const owner = await service.resolveStack({ workspacePath: original, operation: "start" });
+    renameSync(original, moved);
+    const rebound = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    expect(rebound.identity).toEqual(owner.identity);
+
+    const reboundReport = await service.discoverWorkspace(moved);
+    expect(reboundReport.state).toBe("healthy");
+    expect(reboundReport.historicalPathEvidence).toContainEqual({
+      path: original,
+      locationState: "superseded",
+      probe: "missing",
+    });
+    git(moved, "branch", "-c", "main", "feature");
+    git(moved, "checkout", "-q", "feature");
+
+    const feature = await service.resolveStack({ workspacePath: moved, operation: "start" });
+    expect(feature.outcome).toBe("create");
+    expect(feature.identity.projectId).toBe(owner.identity.projectId);
+    expect(feature.identity.checkoutId).toBe(owner.identity.checkoutId);
+    expect(feature.identity.contextId).not.toBe(owner.identity.contextId);
+    const healthy = await service.discoverWorkspace(moved);
+    expect(healthy.state).toBe("healthy");
+    expect(healthy.historicalPathEvidence).toContainEqual({
+      path: original,
+      locationState: "superseded",
+      probe: "missing",
+    });
+    const claims = await Effect.runPromise(service.repository.listIdentityClaims());
+    expect(claims.locations).toContainEqual(
+      expect.objectContaining({
+        checkoutId: owner.identity.checkoutId,
+        canonicalPath: original,
+        state: "superseded",
+      }),
+    );
+  });
+
+  it("refuses copied-directory branch repair before moving the live checkout", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root, "owner");
+    const copiedRepository = join(root, "copied");
+    const service = await openService(root);
+    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    cpSync(repository, copiedRepository, { recursive: true });
+    git(copiedRepository, "branch", "-c", "main", "feature");
+    git(copiedRepository, "checkout", "-q", "feature");
+    const copiedConfig = gitConfigPath(join(copiedRepository, ".git"));
+    const copiedMarker = gitCheckoutIdentityPath(join(copiedRepository, ".git"));
+    const beforeConfig = readFileSync(copiedConfig, "utf8");
+    const beforeMarker = readFileSync(copiedMarker, "utf8");
+    const beforeStatus = git(copiedRepository, "status", "--porcelain");
+    const beforeClaims = await Effect.runPromise(service.repository.listIdentityClaims());
+    const beforeStacks = await Effect.runPromise(service.repository.listStacks());
+    const beforeOperations = await Effect.runPromise(service.repository.listActiveOperations());
+
+    const report = await service.discoverWorkspace(copiedRepository);
+    expect(report.state).toBe("duplicate");
+    expect(report.recoveryOperations).toEqual([]);
+    await expect(
+      service.resolveStack({ workspacePath: copiedRepository, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedCheckoutConflictError" });
+
+    expect(readFileSync(copiedConfig, "utf8")).toBe(beforeConfig);
+    expect(readFileSync(copiedMarker, "utf8")).toBe(beforeMarker);
+    expect(git(copiedRepository, "status", "--porcelain")).toBe(beforeStatus);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(beforeClaims);
+    expect(await Effect.runPromise(service.repository.listStacks())).toEqual(beforeStacks);
+    expect(await Effect.runPromise(service.repository.listActiveOperations())).toEqual(
+      beforeOperations,
+    );
+    expect(
+      beforeClaims.locations.find(
+        (location) =>
+          location.checkoutId === owner.identity.checkoutId && location.state === "active",
+      )?.canonicalPath,
+    ).toBe(repository);
+    expect((await service.discoverWorkspace(copiedRepository)).state).toBe("duplicate");
+  });
+
+  it("resumes a copied branch after Git won but transition advancement failed", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const base = await openService(root);
+    const owner = await base.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-c", "main", "copy-after-advance-failure");
+    git(repository, "checkout", "-q", "copy-after-advance-failure");
+    let failAfterGitWrite = true;
+    const racingRepository = {
+      ...base.repository,
+      advanceIdentityTransition: (
+        input: Parameters<typeof base.repository.advanceIdentityTransition>[0],
+      ) =>
+        Effect.gen(function* () {
+          if (failAfterGitWrite) {
+            failAfterGitWrite = false;
+            return yield* Effect.fail(
+              new ManagedIdentityTransitionOwnershipError({ transitionId: input.id }),
+            );
+          }
+          return yield* base.repository.advanceIdentityTransition(input);
+        }),
+    };
+    const racing = await makeManagedStackService({
+      repository: racingRepository,
+      stateRoot: join(root, "racing-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(racing);
+
+    await expect(
+      racing.resolveStack({ workspacePath: repository, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    const resumed = await racing.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(resumed.outcome).toBe("create");
+    expect(resumed.identity.contextId).not.toBe(owner.identity.contextId);
+    expect(
+      storedConfigValue(
+        gitConfigPath(join(repository, ".git")),
+        gitBranchContextIdKey("copy-after-advance-failure"),
+      ),
+    ).toBe(resumed.identity.contextId);
+  });
+
+  it("takes over a copied-branch transition when its original linked worktree disappears", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const linked = join(root, "copy-original");
+    const replacement = join(root, "copy-replacement");
+    const service = await openService(root);
+    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+    git(repository, "config", "branch.linked.supabaseContextId", owner.identity.contextId);
+    const linkedCheckoutId = "00000000-0000-7000-8000-000000000401";
+    writeFileSync(
+      gitCheckoutIdentityPath(git(linked, "rev-parse", "--git-dir").trim()),
+      `${JSON.stringify({ version: 1, checkoutId: linkedCheckoutId })}\n`,
+    );
+    await Effect.runPromise(
+      service.repository.registerCheckoutIdentity({
+        identity: {
+          projectId: owner.identity.projectId,
+          checkoutId: linkedCheckoutId,
+          contextId: owner.identity.contextId,
+        },
+        checkoutKind: "linked-worktree",
+        checkoutRootPath: linked,
+        locationId: "00000000-0000-7000-8000-000000000402",
+        context: { kind: "branch", locator: "linked" },
+        now: new Date().toISOString(),
+      }),
+    );
+
+    let interruptAdvance = true;
+    const interruptedRepository: ManagedStackRepositoryShape = {
+      ...service.repository,
+      advanceIdentityTransition: (input) =>
+        interruptAdvance
+          ? ((interruptAdvance = false),
+            Effect.fail(new ManagedIdentityTransitionOwnershipError({ transitionId: input.id })))
+          : service.repository.advanceIdentityTransition(input),
+    };
+    const recovering = await makeManagedStackService({
+      repository: interruptedRepository,
+      stateRoot: join(root, "copy-takeover-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(recovering);
+
+    await expect(
+      recovering.resolveStack({ workspacePath: linked, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    const interrupted = await Effect.runPromise(
+      service.repository.listIdentityClaims(owner.identity.projectId),
+    );
+    const transition = interrupted.transitions.find(
+      (candidate) => candidate.kind === "branch-copy",
+    );
+    expect(transition).toMatchObject({
+      phase: "reserved",
+      path: linked,
+      projectId: owner.identity.projectId,
+      checkoutId: linkedCheckoutId,
+      contextId: owner.identity.contextId,
+      branch: "linked",
+    });
+    expect(transition?.targetGitValue).toEqual(expect.any(String));
+
+    rmSync(linked, { recursive: true, force: true });
+    git(repository, "worktree", "prune");
+    git(repository, "worktree", "add", "-q", replacement, "linked");
+
+    const resolved = await recovering.resolveStack({
+      workspacePath: replacement,
+      operation: "start",
+    });
+    expect(resolved.outcome).toBe("create");
+    expect(resolved.identity.projectId).toBe(owner.identity.projectId);
+    expect(resolved.identity.checkoutId).not.toBe(linkedCheckoutId);
+    expect(resolved.identity.contextId).toBe(transition?.targetGitValue);
+    expect((await service.discoverWorkspace(replacement)).state).toBe("healthy");
+    expect(
+      (await Effect.runPromise(service.repository.listIdentityClaims())).transitions.filter(
+        (candidate) => candidate.phase !== "finalized",
+      ),
+    ).toEqual([]);
+  });
+
+  it("does not overwrite a competing branch owner discovered during registration", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const base = await openService(root);
+    const first = await base.resolveStack({ workspacePath: repository, operation: "start" });
+    let raced = false;
+    const racingRepository = {
+      ...base.repository,
+      prepareStack: (input: Parameters<typeof base.repository.prepareStack>[0]) =>
+        Effect.gen(function* () {
+          const prepared = yield* base.repository.prepareStack(input);
+          if (!raced) {
+            raced = true;
+            yield* base.repository.refreshContextOwner({
+              contextId: first.identity.contextId,
+              ownerBranch: "competing-owner",
+              locator: "competing-owner",
+              now: new Date().toISOString(),
+            });
+          }
+          return prepared;
+        }),
+    };
+    const racing = await makeManagedStackService({
+      repository: racingRepository,
+      stateRoot: join(root, "owner-race-managed"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(racing);
+    await racing.resolveStack({ workspacePath: repository, operation: "start" });
+    const claims = await Effect.runPromise(
+      base.repository.listIdentityClaims(first.identity.projectId),
+    );
+    expect(
+      claims.contexts.find((context) => context.id === first.identity.contextId)?.ownerBranch,
+    ).toBe("competing-owner");
+  });
+
+  it("refuses a copied-branch transition with a missing target without changing the branch key", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await openService(root);
+    const owner = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "branch", "-c", "main", "copy");
+    git(repository, "checkout", "-q", "copy");
+    await Effect.runPromise(
+      service.repository.reserveIdentityTransition({
+        id: "00000000-0000-7000-8000-000000000099",
+        kind: "branch-copy",
+        projectId: owner.identity.projectId,
+        checkoutId: owner.identity.checkoutId,
+        contextId: owner.identity.contextId,
+        branch: "copy",
+        path: repository,
+        expectedGitValue: owner.identity.contextId,
+        now: new Date().toISOString(),
+      }),
+    );
+    const before = storedConfigValue(
+      gitConfigPath(join(repository, ".git")),
+      gitBranchContextIdKey("copy"),
+    );
+    await expect(
+      service.resolveStack({ workspacePath: repository, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+    expect(
+      storedConfigValue(gitConfigPath(join(repository, ".git")), gitBranchContextIdKey("copy")),
+    ).toBe(before);
+  });
+
+  it("adopts an unambiguous renamed branch context through the explicit recovery operation", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await openService(root);
+
+    git(repository, "checkout", "-q", "-b", "original");
+    const original = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    git(repository, "checkout", "-q", "main");
+    git(repository, "branch", "-D", "original");
+    git(repository, "checkout", "-q", "-b", "renamed");
+    git(repository, "config", gitBranchContextIdKey("renamed"), original.identity.contextId);
+
+    const report = await service.discoverWorkspace(repository);
+    expect(report.state).toBe("adoptable");
+    expect(report.recoveryOperations).toContainEqual({
+      operation: "adoptContext",
+      contextId: original.identity.contextId,
+      branch: "renamed",
+    });
+    const adopted = await service.adoptContext({ workspacePath: repository, observation: report });
+    expect(adopted.state).toBe("healthy");
+    expect(adopted.ownerEvidence?.authoritativeOwnerBranch).toBe("renamed");
+
+    const reused = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(reused.outcome).toBe("reuse");
+    expect(reused.identity.contextId).toBe(original.identity.contextId);
+    expect(reused.stack.id).toBe(original.stack.id);
+  });
+
+  it("preserves a branch context across ref movement and mints a new one after delete/recreate", async () => {
+    const root = makeRoot();
+    const repository = makeRepository(root);
+    const service = await openService(root);
+
+    git(repository, "checkout", "-q", "-b", "lifecycle");
+    const first = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    const firstCommit = git(repository, "rev-parse", "HEAD").trim();
+    git(repository, "commit", "-q", "--allow-empty", "-m", "move");
+    git(repository, "reset", "-q", "--hard", firstCommit);
+    git(repository, "update-ref", "refs/heads/lifecycle", firstCommit);
+    const moved = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(moved.identity.contextId).toBe(first.identity.contextId);
+    expect(moved.stack.id).toBe(first.stack.id);
+
+    git(repository, "checkout", "-q", "main");
+    git(repository, "branch", "-D", "lifecycle");
+    git(repository, "checkout", "-q", "-b", "lifecycle");
+    const recreated = await service.resolveStack({ workspacePath: repository, operation: "start" });
+    expect(recreated.identity.contextId).not.toBe(first.identity.contextId);
+    expect(recreated.stack.id).not.toBe(first.stack.id);
   });
 
   it("resolves an ordinary folder through the same path as a checkout", async () => {

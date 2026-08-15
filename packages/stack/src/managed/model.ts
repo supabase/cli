@@ -1,6 +1,5 @@
 import { Data } from "effect";
 
-export const MANAGED_REGISTRY_SCHEMA_VERSION = 4;
 export const ORDINARY_WORKSPACE_IDENTITY_VERSION = 1;
 export const GIT_CHECKOUT_IDENTITY_VERSION = 1;
 export const DEFAULT_MANAGED_STACK_NAME = "default";
@@ -148,6 +147,8 @@ export interface ManagedContextRecord {
   readonly kind: ManagedContextKind;
   /** The branch name a branch context was last resolved under; display-only. */
   readonly locator?: string;
+  /** Authoritative branch owner; locator is display-only and may be refreshed. */
+  readonly ownerBranch?: string;
   readonly createdAt: string;
 }
 
@@ -166,7 +167,50 @@ export interface ManagedCheckoutLocation {
   readonly id: string;
   readonly checkoutId: string;
   readonly canonicalPath: string;
+  readonly state: ManagedCheckoutLocationState;
+  readonly reboundFromLocationId?: string;
   readonly lastSeenAt: string;
+}
+
+export type ManagedCheckoutLocationState = "active" | "blocked" | "superseded";
+
+export type ManagedIdentityTransitionKind =
+  | "adopt-context"
+  | "branch-copy"
+  | "folder-to-git"
+  | "new-checkout"
+  | "rebind-checkout";
+
+export type ManagedIdentityTransitionPhase = "finalized" | "git-written" | "reserved";
+
+export interface ManagedIdentityTransitionRecord {
+  readonly id: string;
+  readonly kind: ManagedIdentityTransitionKind;
+  readonly phase: ManagedIdentityTransitionPhase;
+  readonly projectId?: string;
+  readonly checkoutId?: string;
+  readonly contextId?: string;
+  readonly branch?: string;
+  readonly path?: string;
+  /** Storage location shared by every checkout that reads the same project identity. */
+  readonly projectIdentityLocation?: string;
+  readonly expectedGitValue?: string;
+  readonly targetGitValue?: string;
+  /** Previous branch owner that an adopt-context transition is allowed to replace. */
+  readonly expectedOwnerBranch?: string;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ManagedIdentityClaims {
+  /** Authoritative project ownership for checkout-scoped claims in this snapshot. */
+  readonly checkoutProjects: ReadonlyArray<{
+    readonly checkoutId: string;
+    readonly projectId: string;
+  }>;
+  readonly locations: ReadonlyArray<ManagedCheckoutLocation>;
+  readonly contexts: ReadonlyArray<ManagedContextRecord>;
+  readonly transitions: ReadonlyArray<ManagedIdentityTransitionRecord>;
 }
 
 export interface ManagedStackConfiguration {
@@ -192,6 +236,23 @@ export class InvalidManagedIdentityError extends Data.TaggedError("InvalidManage
   readonly message: string;
 }> {
   readonly code = "INVALID_MANAGED_IDENTITY" as const;
+}
+
+/**
+ * The registry file opened successfully, but its load-bearing SQLite schema is
+ * not the shape this runtime was built to use. This is a caller-actionable
+ * incompatibility, distinct from driver corruption or an I/O defect.
+ */
+export class IncompatibleManagedRegistryError extends Data.TaggedError(
+  "IncompatibleManagedRegistryError",
+)<{
+  readonly reason: string;
+}> {
+  readonly code = "INCOMPATIBLE_MANAGED_REGISTRY" as const;
+
+  override get message(): string {
+    return `Managed registry schema is incompatible: ${this.reason}`;
+  }
 }
 
 /**
@@ -237,19 +298,6 @@ export class UnsupportedGitWorkspaceError extends Data.TaggedError("UnsupportedG
   }
 }
 
-export class UnsupportedManagedRegistryVersionError extends Data.TaggedError(
-  "UnsupportedManagedRegistryVersionError",
-)<{
-  readonly found: number;
-  readonly supported: number;
-}> {
-  readonly code = "UNSUPPORTED_MANAGED_REGISTRY_VERSION" as const;
-
-  override get message(): string {
-    return `Managed registry version ${this.found} is unsupported; expected version ${this.supported}`;
-  }
-}
-
 export class DuplicateManagedIdentityError extends Data.TaggedError(
   "DuplicateManagedIdentityError",
 )<{
@@ -261,6 +309,55 @@ export class DuplicateManagedIdentityError extends Data.TaggedError(
 
   override get message(): string {
     return `Managed identity ${this.identityId} is already claimed by ${this.existingClaim}; refusing a second claim from ${this.requestedClaim}`;
+  }
+}
+
+export class ManagedCheckoutConflictError extends Data.TaggedError("ManagedCheckoutConflictError")<{
+  readonly checkoutId: string;
+  readonly canonicalPath: string;
+  readonly existingCheckoutId?: string;
+}> {
+  readonly code = "MANAGED_CHECKOUT_CONFLICT" as const;
+
+  override get message(): string {
+    return `Managed checkout path ${this.canonicalPath} conflicts with ${this.existingCheckoutId ?? "another claim"}`;
+  }
+}
+
+export class ManagedInaccessiblePathError extends Data.TaggedError("ManagedInaccessiblePathError")<{
+  readonly path: string;
+}> {
+  readonly code = "MANAGED_INACCESSIBLE_PATH" as const;
+
+  override get message(): string {
+    return `Managed checkout path is inaccessible: ${JSON.stringify(this.path)}`;
+  }
+}
+
+export class ManagedCopiedBranchConflictError extends Data.TaggedError(
+  "ManagedCopiedBranchConflictError",
+)<{
+  readonly branch: string;
+  readonly existingContextId?: string;
+  readonly requestedContextId?: string;
+}> {
+  readonly code = "MANAGED_COPIED_BRANCH_CONFLICT" as const;
+
+  override get message(): string {
+    return `Copied branch ${this.branch} conflicts with existing managed context`;
+  }
+}
+
+export class ManagedIdentityTransitionOwnershipError extends Data.TaggedError(
+  "ManagedIdentityTransitionOwnershipError",
+)<{
+  readonly transitionId: string;
+  readonly resource?: string;
+}> {
+  readonly code = "MANAGED_IDENTITY_TRANSITION_OWNERSHIP" as const;
+
+  override get message(): string {
+    return `Identity transition ${this.transitionId} is owned by another transition`;
   }
 }
 
@@ -458,8 +555,11 @@ export class ManagedAbandonedOperationError extends Data.TaggedError(
  * runtime equivalent of the old `instanceof` check.
  */
 export type ManagedStackError =
+  | ManagedCheckoutConflictError
+  | ManagedCopiedBranchConflictError
   | DuplicateManagedIdentityError
   | DuplicateManagedPortKeyError
+  | IncompatibleManagedRegistryError
   | InvalidManagedIdentityError
   | InvalidManagedOwnerPidError
   | InvalidManagedPortError
@@ -467,6 +567,8 @@ export type ManagedStackError =
   | ManagedAbandonedOperationError
   | ManagedOperationInProgressError
   | ManagedOperationOwnershipError
+  | ManagedIdentityTransitionOwnershipError
+  | ManagedInaccessiblePathError
   | ManagedPendingStackUpdateError
   | ManagedPortReservationError
   | ManagedRunningStackPortChangeError
@@ -475,8 +577,7 @@ export type ManagedStackError =
   | ManagedStackNotStoppedError
   | ManagedStackPublicationTimeoutError
   | UnsafeManagedStackPathError
-  | UnsupportedGitWorkspaceError
-  | UnsupportedManagedRegistryVersionError;
+  | UnsupportedGitWorkspaceError;
 
 /**
  * Every `code` literal declared by a managed failure, and every `_tag`
@@ -518,14 +619,19 @@ function exhaustiveArrayOf<T extends string>() {
  * under Bun and Node alike, without pulling in a SQLite driver.
  */
 export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
+  "MANAGED_CHECKOUT_CONFLICT",
+  "MANAGED_COPIED_BRANCH_CONFLICT",
   "DUPLICATE_MANAGED_IDENTITY",
   "INVALID_MANAGED_IDENTITY",
+  "INCOMPATIBLE_MANAGED_REGISTRY",
   "MANAGED_DUPLICATE_PORT_KEY",
   "MANAGED_INVALID_OWNER_PID",
   "MANAGED_INVALID_PORT",
   "MANAGED_INVALID_STACK_NAME",
   "MANAGED_OPERATION_IN_PROGRESS",
   "MANAGED_OPERATION_OWNERSHIP_MISMATCH",
+  "MANAGED_IDENTITY_TRANSITION_OWNERSHIP",
+  "MANAGED_INACCESSIBLE_PATH",
   "MANAGED_OPERATION_REQUIRES_RECONCILIATION",
   "MANAGED_PENDING_STACK_UPDATE",
   "MANAGED_PORT_ALREADY_RESERVED",
@@ -536,7 +642,6 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
   "MANAGED_STACK_PUBLICATION_TIMEOUT",
   "UNSAFE_MANAGED_STACK_PATH",
   "UNSUPPORTED_GIT_WORKSPACE",
-  "UNSUPPORTED_MANAGED_REGISTRY_VERSION",
 ] as const);
 
 /**
@@ -552,14 +657,19 @@ export const MANAGED_ERROR_CODES = exhaustiveArrayOf<ManagedErrorCode>()([
  * new error class that is not registered here is a compile error.
  */
 export const MANAGED_ERROR_TAG_BY_CODE = {
+  MANAGED_CHECKOUT_CONFLICT: "ManagedCheckoutConflictError",
+  MANAGED_COPIED_BRANCH_CONFLICT: "ManagedCopiedBranchConflictError",
   DUPLICATE_MANAGED_IDENTITY: "DuplicateManagedIdentityError",
   INVALID_MANAGED_IDENTITY: "InvalidManagedIdentityError",
+  INCOMPATIBLE_MANAGED_REGISTRY: "IncompatibleManagedRegistryError",
   MANAGED_DUPLICATE_PORT_KEY: "DuplicateManagedPortKeyError",
   MANAGED_INVALID_OWNER_PID: "InvalidManagedOwnerPidError",
   MANAGED_INVALID_PORT: "InvalidManagedPortError",
   MANAGED_INVALID_STACK_NAME: "InvalidManagedStackNameError",
   MANAGED_OPERATION_IN_PROGRESS: "ManagedOperationInProgressError",
   MANAGED_OPERATION_OWNERSHIP_MISMATCH: "ManagedOperationOwnershipError",
+  MANAGED_IDENTITY_TRANSITION_OWNERSHIP: "ManagedIdentityTransitionOwnershipError",
+  MANAGED_INACCESSIBLE_PATH: "ManagedInaccessiblePathError",
   MANAGED_OPERATION_REQUIRES_RECONCILIATION: "ManagedAbandonedOperationError",
   MANAGED_PENDING_STACK_UPDATE: "ManagedPendingStackUpdateError",
   MANAGED_PORT_ALREADY_RESERVED: "ManagedPortReservationError",
@@ -570,7 +680,6 @@ export const MANAGED_ERROR_TAG_BY_CODE = {
   MANAGED_STACK_PUBLICATION_TIMEOUT: "ManagedStackPublicationTimeoutError",
   UNSAFE_MANAGED_STACK_PATH: "UnsafeManagedStackPathError",
   UNSUPPORTED_GIT_WORKSPACE: "UnsupportedGitWorkspaceError",
-  UNSUPPORTED_MANAGED_REGISTRY_VERSION: "UnsupportedManagedRegistryVersionError",
 } as const satisfies Record<ManagedErrorCode, ManagedErrorTag>;
 
 const MANAGED_ERROR_TAGS: ReadonlySet<string> = new Set(Object.values(MANAGED_ERROR_TAG_BY_CODE));

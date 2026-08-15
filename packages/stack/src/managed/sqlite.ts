@@ -3,18 +3,26 @@ import { dirname } from "node:path";
 import { Duration, Effect, Layer, Schedule, Schema } from "effect";
 import {
   DuplicateManagedIdentityError,
+  IncompatibleManagedRegistryError,
+  ManagedCheckoutConflictError,
+  ManagedCopiedBranchConflictError,
+  ManagedIdentityTransitionOwnershipError,
+  ManagedInaccessiblePathError,
   DuplicateManagedPortKeyError,
   InvalidManagedOwnerPidError,
   InvalidManagedPortError,
-  MANAGED_REGISTRY_SCHEMA_VERSION,
   ManagedOperationOwnershipError,
   ManagedPendingStackUpdateError,
   ManagedPortReservationError,
   ManagedRunningStackPortChangeError,
   ManagedStackNotFoundError,
-  UnsupportedManagedRegistryVersionError,
   type ManagedCheckoutKind,
   type ManagedCheckoutLocation,
+  type ManagedIdentityClaims,
+  type ManagedIdentityTransitionRecord,
+  type ManagedIdentityTransitionKind,
+  type ManagedIdentityTransitionPhase,
+  type ManagedCheckoutLocationState,
   type ManagedCheckoutScopedContextKind,
   type ManagedContextKind,
   type ManagedContextRecord,
@@ -46,6 +54,23 @@ import type {
   ReconcileManagedOperationResult,
   UpdateManagedStackFailure,
   UpdateManagedStackInput,
+  ApplyManagedCheckoutLocationInput,
+  ManagedCheckoutLocationDecision,
+  RefreshManagedContextOwnerInput,
+  MigrateManagedContextToBranchInput,
+  MigrateManagedContextToBranchFailure,
+  MigrateManagedContextToDetachedInput,
+  MigrateManagedContextToDetachedFailure,
+  ReserveManagedIdentityTransitionInput,
+  AdvanceManagedIdentityTransitionInput,
+  FinalizeManagedIdentityTransitionInput,
+  AbandonManagedIdentityTransitionInput,
+  PruneManagedIdentityMetadataInput,
+  PruneManagedIdentityMetadataResult,
+  ManagedIdentityRecoveryError,
+  RegisterManagedCheckoutIdentityInput,
+  ManagedCheckoutIdentityRegistration,
+  ManagedCheckoutIdentityRegistrationFailure,
 } from "./repository.ts";
 import {
   assertManagedOwnerPid,
@@ -55,6 +80,17 @@ import {
   ManagedStackRepository,
   reconcileManagedPortAssignments,
   validateManagedPortAssignments,
+  decideManagedCheckoutLocation,
+  decideManagedIdentityTransitionAdvance,
+  decideManagedIdentityTransitionFinalize,
+  decideManagedIdentityTransitionAbandon,
+  decideManagedIdentityTransitionReservation,
+  decideManagedContextOwnerRefresh,
+  decideManagedContextToBranch,
+  decideManagedContextToDetached,
+  decideManagedIdentityMetadataPrune,
+  transitionResourceKeys,
+  decideManagedCheckoutIdentity,
 } from "./repository.ts";
 import { errorCode } from "./error-code.ts";
 import { failsWith, neverFails } from "./failure.ts";
@@ -97,6 +133,19 @@ const getString = (row: unknown, field: string): string => {
     throw new Error(`SQLite column ${field} is not a string`);
   }
   return value;
+};
+
+const getCheckoutKind = (row: unknown): ManagedCheckoutKind => {
+  const kind = getString(row, "kind");
+  if (
+    kind === "bare-worktree" ||
+    kind === "git" ||
+    kind === "linked-worktree" ||
+    kind === "ordinary"
+  ) {
+    return kind;
+  }
+  throw new Error(`SQLite row has invalid checkout kind ${kind}`);
 };
 
 const getOptionalString = (row: unknown, field: string): string | undefined => {
@@ -203,6 +252,28 @@ const managedPortIntent = (value: string): ManagedPortIntent => {
     return value;
   }
   throw new Error(`Unknown managed port intent ${value}`);
+};
+
+const managedCheckoutLocationState = (value: string): ManagedCheckoutLocationState => {
+  if (value === "active" || value === "blocked" || value === "superseded") return value;
+  throw new Error(`Unknown managed checkout location state ${value}`);
+};
+
+const managedIdentityTransitionPhase = (value: string): ManagedIdentityTransitionPhase => {
+  if (value === "reserved" || value === "git-written" || value === "finalized") return value;
+  throw new Error(`Unknown managed identity transition phase ${value}`);
+};
+
+const managedIdentityTransitionKind = (value: string): ManagedIdentityTransitionKind => {
+  if (
+    value === "adopt-context" ||
+    value === "branch-copy" ||
+    value === "folder-to-git" ||
+    value === "new-checkout" ||
+    value === "rebind-checkout"
+  )
+    return value;
+  throw new Error(`Unknown managed identity transition kind ${value}`);
 };
 
 const isSqliteBusy = (error: unknown): boolean => {
@@ -312,24 +383,42 @@ const runTransaction = <A>(
 };
 
 /**
- * The schema migration is a registry decision like any other, so it runs through
- * {@link runTransaction}: it is the first thing an opened handle does, before the
- * repository it initializes exists, so no transaction can be open on the handle
- * yet. An already-current registry returns without writing and the transaction
- * commits nothing.
+ * Creates the current registry schema directly on a fresh database handle.
+ * This package is unreleased, so there is no historical schema to migrate or
+ * version marker to maintain.
  */
-const migrateSchema = (database: ManagedSqliteDatabase): void =>
+const createSchema = (database: ManagedSqliteDatabase): void =>
   runTransaction(database, "BEGIN IMMEDIATE", () => {
-    const versionRow = database.prepare("PRAGMA user_version").get();
-    const version = getNumber(versionRow, "user_version");
-    if (version !== 0 && version !== MANAGED_REGISTRY_SCHEMA_VERSION) {
-      throw new UnsupportedManagedRegistryVersionError({
-        found: version,
-        supported: MANAGED_REGISTRY_SCHEMA_VERSION,
-      });
-    }
-    if (version === MANAGED_REGISTRY_SCHEMA_VERSION) {
+    const requiredObjects = [
+      "projects",
+      "checkouts",
+      "checkout_locations",
+      "one_active_location_per_checkout",
+      "one_active_location_per_path",
+      "contexts",
+      "one_checkout_scoped_context_per_kind",
+      "identity_transitions",
+      "stacks",
+      "one_live_stack_per_identity",
+      "ports",
+      "port_assignments_by_port",
+      "operations",
+      "one_active_operation_per_stack",
+    ] as const;
+    const existingObjects = new Set(
+      database
+        .prepare(
+          `SELECT name FROM sqlite_master
+           WHERE name IN (${requiredObjects.map(() => "?").join(", ")})`,
+        )
+        .all(requiredObjects)
+        .map((row) => getString(row, "name")),
+    );
+    if (existingObjects.size === requiredObjects.length) {
       return;
+    }
+    if (existingObjects.size !== 0) {
+      throw sqliteSchemaError("Managed registry schema is incomplete");
     }
     database.exec(`
       CREATE TABLE projects (
@@ -347,11 +436,15 @@ const migrateSchema = (database: ManagedSqliteDatabase): void =>
       CREATE TABLE checkout_locations (
         id TEXT PRIMARY KEY,
         checkout_id TEXT NOT NULL REFERENCES checkouts(id),
-        canonical_path TEXT NOT NULL UNIQUE,
+        canonical_path TEXT NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ('active', 'blocked', 'superseded')),
+        rebound_from_location_id TEXT REFERENCES checkout_locations(id),
         last_seen_at TEXT NOT NULL
       );
-      CREATE UNIQUE INDEX one_location_per_checkout
-        ON checkout_locations(checkout_id);
+      CREATE UNIQUE INDEX one_active_location_per_checkout
+        ON checkout_locations(checkout_id) WHERE state = 'active';
+      CREATE UNIQUE INDEX one_active_location_per_path
+        ON checkout_locations(canonical_path) WHERE state = 'active';
 
       CREATE TABLE contexts (
         id TEXT PRIMARY KEY,
@@ -359,6 +452,7 @@ const migrateSchema = (database: ManagedSqliteDatabase): void =>
         checkout_id TEXT REFERENCES checkouts(id),
         kind TEXT NOT NULL CHECK (kind IN ('branch', 'detached', 'workspace')),
         locator TEXT,
+        owner_branch TEXT,
         created_at TEXT NOT NULL,
         -- A branch is shared by every checkout of the repository, so its context
         -- is project-scoped; the other two kinds belong to one checkout each.
@@ -370,6 +464,23 @@ const migrateSchema = (database: ManagedSqliteDatabase): void =>
       CREATE UNIQUE INDEX one_checkout_scoped_context_per_kind
         ON contexts(checkout_id, kind)
         WHERE kind IN ('detached', 'workspace');
+
+      CREATE TABLE identity_transitions (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('adopt-context', 'branch-copy', 'folder-to-git', 'new-checkout', 'rebind-checkout')),
+        phase TEXT NOT NULL CHECK (phase IN ('reserved', 'git-written', 'finalized')),
+        project_id TEXT,
+        checkout_id TEXT,
+        context_id TEXT,
+        branch TEXT,
+        path TEXT,
+        project_identity_location TEXT,
+        expected_git_value TEXT,
+        target_git_value TEXT,
+        expected_owner_branch TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
 
       CREATE TABLE stacks (
         id TEXT PRIMARY KEY,
@@ -420,22 +531,205 @@ const migrateSchema = (database: ManagedSqliteDatabase): void =>
         ON operations(stack_id)
         WHERE status = 'active';
 
-      PRAGMA user_version = ${MANAGED_REGISTRY_SCHEMA_VERSION};
     `);
   });
+
+type ManagedSqliteIndexShape = {
+  readonly table: string;
+  readonly columns: ReadonlyArray<string>;
+  readonly unique: boolean;
+  readonly predicate?: string;
+};
+
+const managedSqliteTableColumns: Readonly<Record<string, ReadonlyArray<string>>> = {
+  projects: ["id", "created_at"],
+  checkouts: ["id", "project_id", "kind", "created_at"],
+  checkout_locations: [
+    "id",
+    "checkout_id",
+    "canonical_path",
+    "state",
+    "rebound_from_location_id",
+    "last_seen_at",
+  ],
+  contexts: ["id", "project_id", "checkout_id", "kind", "locator", "owner_branch", "created_at"],
+  identity_transitions: [
+    "id",
+    "kind",
+    "phase",
+    "project_id",
+    "checkout_id",
+    "context_id",
+    "branch",
+    "path",
+    "project_identity_location",
+    "expected_git_value",
+    "target_git_value",
+    "expected_owner_branch",
+    "created_at",
+    "updated_at",
+  ],
+  stacks: [
+    "id",
+    "project_id",
+    "checkout_id",
+    "context_id",
+    "name",
+    "status",
+    "lifecycle",
+    "runtime_request",
+    "runtime",
+    "root_path",
+    "data_path",
+    "logs_path",
+    "runtime_path",
+    "config_fingerprint",
+    "credentials_reference",
+    "service_versions_json",
+    "runtime_metadata_json",
+    "created_at",
+    "updated_at",
+    "tombstoned_at",
+  ],
+  ports: ["stack_id", "key", "port", "intent"],
+  operations: [
+    "token",
+    "stack_id",
+    "kind",
+    "status",
+    "owner_pid",
+    "started_at",
+    "finished_at",
+    "error",
+  ],
+};
+
+const managedSqliteIndexShapes: Readonly<Record<string, ManagedSqliteIndexShape>> = {
+  one_active_location_per_checkout: {
+    table: "checkout_locations",
+    columns: ["checkout_id"],
+    unique: true,
+    predicate: "state = 'active'",
+  },
+  one_active_location_per_path: {
+    table: "checkout_locations",
+    columns: ["canonical_path"],
+    unique: true,
+    predicate: "state = 'active'",
+  },
+  one_checkout_scoped_context_per_kind: {
+    table: "contexts",
+    columns: ["checkout_id", "kind"],
+    unique: true,
+    predicate: "kind IN ('detached', 'workspace')",
+  },
+  one_live_stack_per_identity: {
+    table: "stacks",
+    columns: ["checkout_id", "context_id", "name"],
+    unique: true,
+    predicate: "status != 'tombstoned'",
+  },
+  port_assignments_by_port: {
+    table: "ports",
+    columns: ["port"],
+    unique: false,
+  },
+  one_active_operation_per_stack: {
+    table: "operations",
+    columns: ["stack_id"],
+    unique: true,
+    predicate: "status = 'active'",
+  },
+};
+
+const normalizeSql = (sql: string): string =>
+  sql
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/\s*([(),=<>!])\s*/g, "$1")
+    .replace(/;$/, "")
+    .trim();
+
+const sqliteSchemaError = (reason: string): IncompatibleManagedRegistryError =>
+  new IncompatibleManagedRegistryError({ reason });
+
+/**
+ * Checks the current schema's load-bearing shape when opening an existing
+ * registry. Object names alone are insufficient: a hand-edited or partially
+ * created database can retain every expected name while dropping a column or
+ * changing a partial uniqueness invariant.
+ */
+const validateCurrentSchema = (database: ManagedSqliteDatabase): void => {
+  for (const [table, requiredColumns] of Object.entries(managedSqliteTableColumns)) {
+    const columns = new Set(
+      database
+        .prepare(`PRAGMA table_info(${table})`)
+        .all()
+        .map((row) => getString(row, "name")),
+    );
+    for (const column of requiredColumns) {
+      if (!columns.has(column)) {
+        throw sqliteSchemaError(`table ${table} is missing column ${column}`);
+      }
+    }
+  }
+
+  for (const [indexName, shape] of Object.entries(managedSqliteIndexShapes)) {
+    const index = database
+      .prepare(`PRAGMA index_list(${shape.table})`)
+      .all()
+      .find((row) => getString(row, "name") === indexName);
+    if (index === undefined) {
+      throw sqliteSchemaError(`index ${indexName} is missing`);
+    }
+    const unique = getNumber(index, "unique") === 1;
+    if (unique !== shape.unique) {
+      throw sqliteSchemaError(`index ${indexName} has the wrong uniqueness`);
+    }
+    if (shape.predicate !== undefined && getNumber(index, "partial") !== 1) {
+      throw sqliteSchemaError(`index ${indexName} is missing its partial predicate`);
+    }
+    if (shape.predicate === undefined && getNumber(index, "partial") !== 0) {
+      throw sqliteSchemaError(`index ${indexName} unexpectedly has a partial predicate`);
+    }
+
+    const columns = [...database.prepare(`PRAGMA index_info(${indexName})`).all()]
+      .sort((left: unknown, right: unknown) => getNumber(left, "seqno") - getNumber(right, "seqno"))
+      .map((row: unknown) => getString(row, "name"));
+    if (
+      columns.length !== shape.columns.length ||
+      columns.some((column, position) => column !== shape.columns[position])
+    ) {
+      throw sqliteSchemaError(
+        `index ${indexName} has columns ${JSON.stringify(columns)} instead of ${JSON.stringify(shape.columns)}`,
+      );
+    }
+
+    if (shape.predicate !== undefined) {
+      const sqlRow = database
+        .prepare("SELECT sql FROM sqlite_master WHERE type = 'index' AND name = ?")
+        .get([indexName]);
+      const sql = getString(sqlRow, "sql");
+      const normalized = normalizeSql(sql);
+      const where = normalized.match(/\bwhere\b(.+)$/)?.[1]?.trim();
+      if (where !== normalizeSql(shape.predicate)) {
+        throw sqliteSchemaError(`index ${indexName} has the wrong partial predicate`);
+      }
+    }
+  }
+};
 
 /**
  * Prepares a freshly opened handle for use as the registry.
  *
  * `busy_timeout` is set first so every later statement waits out a writer on its
- * own, then the file is converted to WAL, and only then is the schema read and
- * created. A registry written by an unsupported version is the one outcome a
- * caller can act on, so it is the only failure this reports; everything else the
- * driver raises stays a defect.
+ * own, then the file is converted to WAL, and only then is the current schema
+ * created directly. Driver errors stay defects so actual SQLite corruption/open
+ * failures remain visible to callers.
  */
 const initializeRegistry = (
   database: ManagedSqliteDatabase,
-): Effect.Effect<void, UnsupportedManagedRegistryVersionError> =>
+): Effect.Effect<void, IncompatibleManagedRegistryError> =>
   Effect.gen(function* () {
     yield* Effect.sync(() => {
       database.exec("PRAGMA busy_timeout = 5000");
@@ -443,12 +737,12 @@ const initializeRegistry = (
     });
     yield* enableWriteAheadLogging(database);
     yield* Effect.try({
-      try: () => {
-        migrateSchema(database);
-      },
-      catch: failsWith<UnsupportedManagedRegistryVersionError>(
-        UnsupportedManagedRegistryVersionError,
-      ),
+      try: () => createSchema(database),
+      catch: failsWith<IncompatibleManagedRegistryError>(IncompatibleManagedRegistryError),
+    });
+    yield* Effect.try({
+      try: () => validateCurrentSchema(database),
+      catch: failsWith<IncompatibleManagedRegistryError>(IncompatibleManagedRegistryError),
     });
   });
 
@@ -580,7 +874,8 @@ const STACK_PROJECTION_SELECT = `SELECT stacks.*,
          FROM stacks
          JOIN checkouts ON checkouts.id = stacks.checkout_id
          JOIN contexts ON contexts.id = stacks.context_id
-         LEFT JOIN checkout_locations ON checkout_locations.checkout_id = stacks.checkout_id`;
+         LEFT JOIN checkout_locations ON checkout_locations.checkout_id = stacks.checkout_id
+              AND checkout_locations.state = 'active'`;
 
 const getStackProjection = (
   database: ManagedSqliteDatabase,
@@ -641,7 +936,34 @@ const decodeContext = (row: unknown): ManagedContextRecord => ({
   checkoutId: getOptionalString(row, "checkout_id"),
   kind: managedContextKind(getString(row, "kind")),
   locator: getOptionalString(row, "locator"),
+  ownerBranch: getOptionalString(row, "owner_branch"),
   createdAt: getString(row, "created_at"),
+});
+
+const decodeCheckoutLocation = (row: unknown): ManagedCheckoutLocation => ({
+  id: getString(row, "id"),
+  checkoutId: getString(row, "checkout_id"),
+  canonicalPath: getString(row, "canonical_path"),
+  state: managedCheckoutLocationState(getString(row, "state")),
+  reboundFromLocationId: getOptionalString(row, "rebound_from_location_id"),
+  lastSeenAt: getString(row, "last_seen_at"),
+});
+
+const decodeIdentityTransition = (row: unknown): ManagedIdentityTransitionRecord => ({
+  id: getString(row, "id"),
+  kind: managedIdentityTransitionKind(getString(row, "kind")),
+  phase: managedIdentityTransitionPhase(getString(row, "phase")),
+  projectId: getOptionalString(row, "project_id"),
+  checkoutId: getOptionalString(row, "checkout_id"),
+  contextId: getOptionalString(row, "context_id"),
+  branch: getOptionalString(row, "branch"),
+  path: getOptionalString(row, "path"),
+  projectIdentityLocation: getOptionalString(row, "project_identity_location"),
+  expectedGitValue: getOptionalString(row, "expected_git_value"),
+  targetGitValue: getOptionalString(row, "target_git_value"),
+  expectedOwnerBranch: getOptionalString(row, "expected_owner_branch"),
+  createdAt: getString(row, "created_at"),
+  updatedAt: getString(row, "updated_at"),
 });
 
 const findCheckoutContext = (
@@ -849,8 +1171,8 @@ const registerContext = (database: ManagedSqliteDatabase, input: PrepareStackInp
   }
   database
     .prepare(
-      `INSERT INTO contexts (id, project_id, checkout_id, kind, locator, created_at)
-             VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO contexts (id, project_id, checkout_id, kind, locator, owner_branch, created_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?)`,
     )
     .run([
       decision.context.id,
@@ -858,9 +1180,122 @@ const registerContext = (database: ManagedSqliteDatabase, input: PrepareStackInp
       decision.context.checkoutId ?? null,
       decision.context.kind,
       decision.context.locator ?? null,
+      decision.context.ownerBranch ?? null,
       decision.context.createdAt,
     ]);
   return decision.context.id;
+};
+
+const registerCheckoutIdentity = (
+  database: ManagedSqliteDatabase,
+  input: RegisterManagedCheckoutIdentityInput,
+): ManagedCheckoutIdentityRegistration => {
+  database
+    .prepare("INSERT OR IGNORE INTO projects (id, created_at) VALUES (?, ?)")
+    .run([input.identity.projectId, input.now]);
+  const checkoutRow = database
+    .prepare("SELECT project_id, kind FROM checkouts WHERE id = ?")
+    .get([input.identity.checkoutId]);
+  const existingCheckout =
+    checkoutRow === undefined
+      ? undefined
+      : {
+          projectId: getString(checkoutRow, "project_id"),
+          kind: getCheckoutKind(checkoutRow),
+        };
+  const requestedExistingRow = database
+    .prepare("SELECT * FROM contexts WHERE id = ?")
+    .get([input.identity.contextId]);
+  const requestedExisting =
+    requestedExistingRow === undefined ? undefined : decodeContext(requestedExistingRow);
+  const checkoutScopedExisting =
+    input.context.kind === "branch"
+      ? undefined
+      : findCheckoutContext(database, input.identity.checkoutId, input.context.kind);
+  const decision = decideManagedCheckoutIdentity({
+    requested: input,
+    existingCheckout,
+    checkoutLocations: selectCheckoutLocations(database),
+    checkoutScopedExisting,
+    requestedExisting,
+  });
+  database
+    .prepare(
+      `INSERT INTO checkouts (id, project_id, kind, created_at) VALUES (?, ?, ?, ?)
+             ON CONFLICT (id) DO UPDATE SET kind = excluded.kind`,
+    )
+    .run([input.identity.checkoutId, input.identity.projectId, input.checkoutKind, input.now]);
+  const contextRow = database
+    .prepare("SELECT id FROM contexts WHERE id = ?")
+    .get([decision.registration.context.id]);
+  if (contextRow === undefined) {
+    database
+      .prepare(
+        `INSERT INTO contexts (id, project_id, checkout_id, kind, locator, owner_branch, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run([
+        decision.registration.context.id,
+        decision.registration.context.projectId,
+        decision.registration.context.checkoutId ?? null,
+        decision.registration.context.kind,
+        decision.registration.context.locator ?? null,
+        decision.registration.context.ownerBranch ?? null,
+        decision.registration.context.createdAt,
+      ]);
+  } else {
+    database
+      .prepare(
+        `UPDATE contexts
+            SET project_id = ?, checkout_id = ?, kind = ?, locator = ?, owner_branch = ?, created_at = ?
+          WHERE id = ?`,
+      )
+      .run([
+        decision.registration.context.projectId,
+        decision.registration.context.checkoutId ?? null,
+        decision.registration.context.kind,
+        decision.registration.context.locator ?? null,
+        decision.registration.context.ownerBranch ?? null,
+        decision.registration.context.createdAt,
+        decision.registration.context.id,
+      ]);
+  }
+  for (const updated of decision.locationDecision.updates ?? []) {
+    database
+      .prepare("UPDATE checkout_locations SET state = ?, last_seen_at = ? WHERE id = ?")
+      .run([updated.state, updated.lastSeenAt, updated.id]);
+  }
+  const locationRow = database
+    .prepare("SELECT id FROM checkout_locations WHERE id = ?")
+    .get([decision.registration.location.id]);
+  if (locationRow === undefined) {
+    database
+      .prepare(
+        `INSERT INTO checkout_locations
+                (id, checkout_id, canonical_path, state, rebound_from_location_id, last_seen_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run([
+        decision.registration.location.id,
+        decision.registration.location.checkoutId,
+        decision.registration.location.canonicalPath,
+        decision.registration.location.state,
+        decision.registration.location.reboundFromLocationId ?? null,
+        decision.registration.location.lastSeenAt,
+      ]);
+  } else {
+    database
+      .prepare(
+        "UPDATE checkout_locations SET state = ?, rebound_from_location_id = ?, last_seen_at = ? WHERE id = ?",
+      )
+      .run([
+        decision.registration.location.state,
+        decision.registration.location.reboundFromLocationId ?? null,
+        decision.registration.location.lastSeenAt,
+        decision.registration.location.id,
+      ]);
+  }
+  return decision.registration;
 };
 
 const prepareStack = (
@@ -893,44 +1328,44 @@ const prepareStack = (
 
   const contextId = registerContext(database, input);
 
-  const checkoutLocation = database
-    .prepare("SELECT * FROM checkout_locations WHERE checkout_id = ?")
-    .get([input.identity.checkoutId]);
-  if (
-    checkoutLocation !== undefined &&
-    getString(checkoutLocation, "canonical_path") !== input.checkoutRootPath
-  ) {
-    throw new DuplicateManagedIdentityError({
-      identityId: input.identity.checkoutId,
-      existingClaim: getString(checkoutLocation, "canonical_path"),
-      requestedClaim: input.checkoutRootPath,
+  const locationDecision = decideManagedCheckoutLocation({
+    requested: {
+      checkoutId: input.identity.checkoutId,
+      locationId: input.locationId,
+      canonicalPath: input.checkoutRootPath,
+      now: input.now,
+    },
+    checkoutLocations: selectCheckoutLocations(database),
+    checkoutExists: true,
+  });
+  if (locationDecision.outcome !== "active") {
+    throw new ManagedCheckoutConflictError({
+      checkoutId: input.identity.checkoutId,
+      canonicalPath: input.checkoutRootPath,
     });
   }
-  const pathLocation = database
-    .prepare("SELECT * FROM checkout_locations WHERE canonical_path = ?")
-    .get([input.checkoutRootPath]);
-  if (
-    pathLocation !== undefined &&
-    getString(pathLocation, "checkout_id") !== input.identity.checkoutId
-  ) {
-    throw new DuplicateManagedIdentityError({
-      identityId: input.checkoutRootPath,
-      existingClaim: getString(pathLocation, "checkout_id"),
-      requestedClaim: input.identity.checkoutId,
-    });
-  }
-  if (checkoutLocation === undefined) {
+  const existingLocation = database
+    .prepare("SELECT id FROM checkout_locations WHERE id = ?")
+    .get([locationDecision.location.id]);
+  if (existingLocation === undefined) {
     database
       .prepare(
         `INSERT INTO checkout_locations
-                (id, checkout_id, canonical_path, last_seen_at)
-               VALUES (?, ?, ?, ?)`,
+                (id, checkout_id, canonical_path, state, rebound_from_location_id, last_seen_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
       )
-      .run([input.locationId, input.identity.checkoutId, input.checkoutRootPath, input.now]);
+      .run([
+        locationDecision.location.id,
+        locationDecision.location.checkoutId,
+        locationDecision.location.canonicalPath,
+        locationDecision.location.state,
+        locationDecision.location.reboundFromLocationId ?? null,
+        locationDecision.location.lastSeenAt,
+      ]);
   } else {
     database
       .prepare("UPDATE checkout_locations SET last_seen_at = ? WHERE id = ?")
-      .run([input.now, getString(checkoutLocation, "id")]);
+      .run([input.now, locationDecision.location.id]);
   }
 
   const existingRow = database
@@ -1159,29 +1594,310 @@ const selectCheckoutLocations = (
   database
     .prepare("SELECT * FROM checkout_locations ORDER BY canonical_path")
     .all()
-    .map(
-      (row): ManagedCheckoutLocation => ({
-        id: getString(row, "id"),
-        checkoutId: getString(row, "checkout_id"),
-        canonicalPath: getString(row, "canonical_path"),
-        lastSeenAt: getString(row, "last_seen_at"),
-      }),
-    );
+    .map(decodeCheckoutLocation);
 
-const pruneCheckoutLocations = (
+const selectIdentityTransitions = (
   database: ManagedSqliteDatabase,
-  locationIds: ReadonlyArray<string>,
-): number => {
-  let removed = 0;
-  const statement = database.prepare("DELETE FROM checkout_locations WHERE id = ?");
-  for (const id of new Set(locationIds)) {
-    const existing = database.prepare("SELECT id FROM checkout_locations WHERE id = ?").get([id]);
-    if (existing !== undefined) {
-      statement.run([id]);
-      removed += 1;
+): ReadonlyArray<ManagedIdentityTransitionRecord> =>
+  database
+    .prepare("SELECT * FROM identity_transitions ORDER BY created_at, id")
+    .all()
+    .map(decodeIdentityTransition);
+
+const applyCheckoutLocation = (
+  database: ManagedSqliteDatabase,
+  input: ApplyManagedCheckoutLocationInput,
+): ManagedCheckoutLocationDecision => {
+  const checkout = database
+    .prepare("SELECT id FROM checkouts WHERE id = ?")
+    .get([input.checkoutId]);
+  const existing = selectCheckoutLocations(database);
+  const decision = decideManagedCheckoutLocation({
+    requested: input,
+    checkoutLocations: existing,
+    checkoutExists: checkout !== undefined,
+  });
+  for (const updated of decision.updates ?? []) {
+    database
+      .prepare("UPDATE checkout_locations SET state = ?, last_seen_at = ? WHERE id = ?")
+      .run([updated.state, updated.lastSeenAt, updated.id]);
+  }
+  {
+    const found = database
+      .prepare("SELECT id FROM checkout_locations WHERE id = ?")
+      .get([decision.location.id]);
+    if (found === undefined) {
+      database
+        .prepare(
+          `INSERT INTO checkout_locations
+             (id, checkout_id, canonical_path, state, rebound_from_location_id, last_seen_at)
+           VALUES (?, ?, ?, ?, ?, ?)`,
+        )
+        .run([
+          decision.location.id,
+          decision.location.checkoutId,
+          decision.location.canonicalPath,
+          decision.location.state,
+          decision.location.reboundFromLocationId ?? null,
+          decision.location.lastSeenAt,
+        ]);
+    } else {
+      database
+        .prepare(
+          "UPDATE checkout_locations SET checkout_id = ?, canonical_path = ?, state = ?, rebound_from_location_id = ?, last_seen_at = ? WHERE id = ?",
+        )
+        .run([
+          decision.location.checkoutId,
+          decision.location.canonicalPath,
+          decision.location.state,
+          decision.location.reboundFromLocationId ?? null,
+          decision.location.lastSeenAt,
+          decision.location.id,
+        ]);
     }
   }
-  return removed;
+  return decision;
+};
+
+const refreshContextOwner = (
+  database: ManagedSqliteDatabase,
+  input: RefreshManagedContextOwnerInput,
+): ManagedContextRecord => {
+  const row = database.prepare("SELECT * FROM contexts WHERE id = ?").get([input.contextId]);
+  const next = decideManagedContextOwnerRefresh({
+    existing: row === undefined ? undefined : decodeContext(row),
+    requested: input,
+  });
+  database
+    .prepare("UPDATE contexts SET owner_branch = ?, locator = ? WHERE id = ?")
+    .run([next.ownerBranch ?? null, next.locator ?? null, next.id]);
+  return next;
+};
+
+const migrateContextToBranch = (
+  database: ManagedSqliteDatabase,
+  input: MigrateManagedContextToBranchInput,
+): ManagedContextRecord => {
+  const row = database.prepare("SELECT * FROM contexts WHERE id = ?").get([input.contextId]);
+  const branchContexts = database
+    .prepare("SELECT * FROM contexts WHERE project_id = ? AND kind = 'branch'")
+    .all([input.projectId])
+    .map(decodeContext);
+  const existing = row === undefined ? undefined : decodeContext(row);
+  const next = decideManagedContextToBranch({
+    requested: input,
+    existing,
+    branchContexts,
+  });
+  if (
+    existing !== undefined &&
+    (existing.kind !== next.kind ||
+      existing.projectId !== next.projectId ||
+      existing.checkoutId !== next.checkoutId ||
+      existing.locator !== next.locator ||
+      existing.ownerBranch !== next.ownerBranch)
+  ) {
+    database
+      .prepare(
+        "UPDATE contexts SET checkout_id = ?, kind = ?, locator = ?, owner_branch = ? WHERE id = ?",
+      )
+      .run([
+        next.checkoutId ?? null,
+        next.kind,
+        next.locator ?? null,
+        next.ownerBranch ?? null,
+        next.id,
+      ]);
+  }
+  return next;
+};
+
+const migrateContextToDetached = (
+  database: ManagedSqliteDatabase,
+  input: MigrateManagedContextToDetachedInput,
+): ManagedContextRecord => {
+  const row = database.prepare("SELECT * FROM contexts WHERE id = ?").get([input.contextId]);
+  const existing = row === undefined ? undefined : decodeContext(row);
+  const next = decideManagedContextToDetached({
+    requested: input,
+    existing,
+    detachedExisting: findCheckoutContext(database, input.checkoutId, "detached"),
+  });
+  if (existing !== undefined && existing.kind !== next.kind) {
+    database
+      .prepare(
+        "UPDATE contexts SET checkout_id = ?, kind = ?, locator = NULL, owner_branch = NULL WHERE id = ?",
+      )
+      .run([next.checkoutId ?? null, next.kind, next.id]);
+  }
+  return next;
+};
+
+const reserveIdentityTransition = (
+  database: ManagedSqliteDatabase,
+  input: ReserveManagedIdentityTransitionInput,
+): ManagedIdentityTransitionRecord => {
+  const row = database.prepare("SELECT * FROM identity_transitions WHERE id = ?").get([input.id]);
+  const existing = row === undefined ? undefined : decodeIdentityTransition(row);
+  const resourceRows = database
+    .prepare("SELECT * FROM identity_transitions WHERE phase != 'finalized'")
+    .all()
+    .map(decodeIdentityTransition);
+  const requestedKeys = transitionResourceKeys(input);
+  const resourceOwner = resourceRows.find((candidate) =>
+    transitionResourceKeys(candidate).some((key) => requestedKeys.includes(key)),
+  );
+  const contextRow =
+    input.kind === "adopt-context" && input.contextId !== undefined
+      ? database.prepare("SELECT owner_branch FROM contexts WHERE id = ?").get([input.contextId])
+      : undefined;
+  const contextOwnerBranch =
+    contextRow === undefined ? undefined : getOptionalString(contextRow, "owner_branch");
+  const next = decideManagedIdentityTransitionReservation({
+    requested: input,
+    existing,
+    resourceOwner,
+    contextOwnerBranch,
+    contextPresent: contextRow !== undefined ? true : undefined,
+  });
+  if (existing === undefined) {
+    database
+      .prepare(
+        `INSERT INTO identity_transitions
+          (id, kind, phase, project_id, checkout_id, context_id, branch, path, project_identity_location,
+           expected_git_value, target_git_value, expected_owner_branch, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run([
+        next.id,
+        next.kind,
+        next.phase,
+        next.projectId ?? null,
+        next.checkoutId ?? null,
+        next.contextId ?? null,
+        next.branch ?? null,
+        next.path ?? null,
+        next.projectIdentityLocation ?? null,
+        next.expectedGitValue ?? null,
+        next.targetGitValue ?? null,
+        next.expectedOwnerBranch ?? null,
+        next.createdAt,
+        next.updatedAt,
+      ]);
+  }
+  return next;
+};
+
+const advanceIdentityTransition = (
+  database: ManagedSqliteDatabase,
+  input: AdvanceManagedIdentityTransitionInput,
+): ManagedIdentityTransitionRecord => {
+  const row = database.prepare("SELECT * FROM identity_transitions WHERE id = ?").get([input.id]);
+  if (row === undefined)
+    throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  const next = decideManagedIdentityTransitionAdvance(decodeIdentityTransition(row), input);
+  database
+    .prepare("UPDATE identity_transitions SET phase = ?, updated_at = ? WHERE id = ?")
+    .run([next.phase, next.updatedAt, next.id]);
+  return next;
+};
+
+const finalizeIdentityTransition = (
+  database: ManagedSqliteDatabase,
+  input: FinalizeManagedIdentityTransitionInput,
+): ManagedIdentityTransitionRecord => {
+  const row = database.prepare("SELECT * FROM identity_transitions WHERE id = ?").get([input.id]);
+  if (row === undefined)
+    throw new ManagedIdentityTransitionOwnershipError({ transitionId: input.id });
+  const next = decideManagedIdentityTransitionFinalize(decodeIdentityTransition(row), input);
+  database
+    .prepare("UPDATE identity_transitions SET phase = ?, updated_at = ? WHERE id = ?")
+    .run([next.phase, next.updatedAt, next.id]);
+  return next;
+};
+
+const abandonIdentityTransition = (
+  database: ManagedSqliteDatabase,
+  input: AbandonManagedIdentityTransitionInput,
+) => {
+  const row = database.prepare("SELECT * FROM identity_transitions WHERE id = ?").get([input.id]);
+  const decision = decideManagedIdentityTransitionAbandon(
+    row === undefined ? undefined : decodeIdentityTransition(row),
+    input,
+  );
+  if (decision.outcome === "abandoned") {
+    database
+      .prepare("DELETE FROM identity_transitions WHERE id = ? AND phase = 'reserved'")
+      .run([input.id]);
+  }
+  return decision;
+};
+
+const pruneIdentityMetadata = (
+  database: ManagedSqliteDatabase,
+  input: PruneManagedIdentityMetadataInput,
+): PruneManagedIdentityMetadataResult => {
+  const locations = selectCheckoutLocations(database);
+  const decision = decideManagedIdentityMetadataPrune({
+    locations,
+    locationIds: input.locationIds,
+    transitions: selectIdentityTransitions(database),
+  });
+  const statement = database.prepare("DELETE FROM checkout_locations WHERE id = ?");
+  for (const id of decision.prunedRecordIds) statement.run([id]);
+  return decision;
+};
+
+const listIdentityClaims = (
+  database: ManagedSqliteDatabase,
+  projectId?: string,
+): ManagedIdentityClaims => {
+  const checkoutRows =
+    projectId === undefined
+      ? database.prepare("SELECT id, project_id FROM checkouts ORDER BY id").all()
+      : database
+          .prepare("SELECT id, project_id FROM checkouts WHERE project_id = ? ORDER BY id")
+          .all([projectId]);
+  const locationRows =
+    projectId === undefined
+      ? database.prepare("SELECT * FROM checkout_locations ORDER BY canonical_path").all()
+      : database
+          .prepare(
+            `SELECT checkout_locations.*
+             FROM checkout_locations
+             INNER JOIN checkouts ON checkouts.id = checkout_locations.checkout_id
+             WHERE checkouts.project_id = ?
+             ORDER BY checkout_locations.canonical_path`,
+          )
+          .all([projectId]);
+  const locations = locationRows.map(decodeCheckoutLocation);
+  const contextRows =
+    projectId === undefined
+      ? database.prepare("SELECT * FROM contexts ORDER BY id").all()
+      : database
+          .prepare("SELECT * FROM contexts WHERE project_id = ? ORDER BY id")
+          .all([projectId]);
+  const transitionRows =
+    projectId === undefined
+      ? database.prepare("SELECT * FROM identity_transitions ORDER BY created_at, id").all()
+      : database
+          .prepare(
+            `SELECT * FROM identity_transitions
+             WHERE project_id = ?
+                OR checkout_id IN (SELECT id FROM checkouts WHERE project_id = ?)
+                OR context_id IN (SELECT id FROM contexts WHERE project_id = ?)
+             ORDER BY created_at, id`,
+          )
+          .all([projectId, projectId, projectId]);
+  return {
+    checkoutProjects: checkoutRows.map((row) => ({
+      checkoutId: getString(row, "id"),
+      projectId: getString(row, "project_id"),
+    })),
+    locations,
+    contexts: contextRows.map(decodeContext),
+    transitions: transitionRows.map(decodeIdentityTransition),
+  };
 };
 
 /**
@@ -1210,11 +1926,73 @@ const requireOwnerPid = (
  */
 const createSqliteManagedStackRepository = (
   database: ManagedSqliteDatabase,
-): Effect.Effect<ManagedStackRepositoryShape, UnsupportedManagedRegistryVersionError> =>
+): Effect.Effect<ManagedStackRepositoryShape, IncompatibleManagedRegistryError> =>
   Effect.gen(function* () {
     yield* initializeRegistry(database);
 
     return {
+      registerCheckoutIdentity: (input) =>
+        transaction(
+          database,
+          () => registerCheckoutIdentity(database, input),
+          failsWith<ManagedCheckoutIdentityRegistrationFailure>(
+            DuplicateManagedIdentityError,
+            ManagedCheckoutConflictError,
+            ManagedInaccessiblePathError,
+          ),
+        ),
+      listIdentityClaims: (projectId) =>
+        readTransaction(database, () => listIdentityClaims(database, projectId)),
+      applyCheckoutLocation: (input) =>
+        transaction(
+          database,
+          () => applyCheckoutLocation(database, input),
+          failsWith<ManagedIdentityRecoveryError>(
+            ManagedCheckoutConflictError,
+            ManagedCopiedBranchConflictError,
+            ManagedIdentityTransitionOwnershipError,
+            ManagedInaccessiblePathError,
+          ),
+        ),
+      refreshContextOwner: (input) =>
+        transaction(
+          database,
+          () => refreshContextOwner(database, input),
+          failsWith<ManagedIdentityRecoveryError>(ManagedCopiedBranchConflictError),
+        ),
+      migrateContextToBranch: (input) =>
+        transaction(
+          database,
+          () => migrateContextToBranch(database, input),
+          failsWith<MigrateManagedContextToBranchFailure>(
+            DuplicateManagedIdentityError,
+            ManagedCopiedBranchConflictError,
+          ),
+        ),
+      migrateContextToDetached: (input) =>
+        transaction(
+          database,
+          () => migrateContextToDetached(database, input),
+          failsWith<MigrateManagedContextToDetachedFailure>(DuplicateManagedIdentityError),
+        ),
+      reserveIdentityTransition: (input) =>
+        transaction(
+          database,
+          () => reserveIdentityTransition(database, input),
+          failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
+        ),
+      advanceIdentityTransition: (input) =>
+        transaction(
+          database,
+          () => advanceIdentityTransition(database, input),
+          failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
+        ),
+      finalizeIdentityTransition: (input) =>
+        transaction(
+          database,
+          () => finalizeIdentityTransition(database, input),
+          failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
+        ),
       prepareStack: (input) =>
         Effect.flatMap(requireOwnerPid(input.ownerPid), () =>
           transaction(
@@ -1222,6 +2000,10 @@ const createSqliteManagedStackRepository = (
             () => prepareStack(database, input),
             failsWith<PrepareStackFailure>(
               DuplicateManagedIdentityError,
+              ManagedCheckoutConflictError,
+              ManagedCopiedBranchConflictError,
+              ManagedIdentityTransitionOwnershipError,
+              ManagedInaccessiblePathError,
               DuplicateManagedPortKeyError,
               InvalidManagedPortError,
               ManagedOperationOwnershipError,
@@ -1229,6 +2011,12 @@ const createSqliteManagedStackRepository = (
               ManagedStackNotFoundError,
             ),
           ),
+        ),
+      abandonIdentityTransition: (input) =>
+        transaction(
+          database,
+          () => abandonIdentityTransition(database, input),
+          failsWith<ManagedIdentityRecoveryError>(ManagedIdentityTransitionOwnershipError),
         ),
       publishPendingStack: (stackId, operationToken, now) =>
         transaction(
@@ -1292,7 +2080,7 @@ const createSqliteManagedStackRepository = (
           ),
         ),
       listActiveOperations: (startedBefore) =>
-        Effect.sync(() => selectActiveOperations(database, startedBefore)),
+        readTransaction(database, () => selectActiveOperations(database, startedBefore)),
       reconcileOperation: (stackId, operationToken, lifecycle, now) =>
         transaction(
           database,
@@ -1314,9 +2102,19 @@ const createSqliteManagedStackRepository = (
             ManagedStackNotFoundError,
           ),
         ),
-      listCheckoutLocations: () => Effect.sync(() => selectCheckoutLocations(database)),
-      pruneCheckoutLocations: (locationIds) =>
-        transaction(database, () => pruneCheckoutLocations(database, locationIds), neverFails),
+      listCheckoutLocations: () =>
+        readTransaction(database, () => selectCheckoutLocations(database)),
+      pruneIdentityMetadata: (input) =>
+        transaction(
+          database,
+          () => pruneIdentityMetadata(database, input),
+          failsWith<ManagedIdentityRecoveryError>(
+            ManagedCheckoutConflictError,
+            ManagedCopiedBranchConflictError,
+            ManagedIdentityTransitionOwnershipError,
+            ManagedInaccessiblePathError,
+          ),
+        ),
     };
   });
 
@@ -1349,7 +2147,7 @@ export const hardenManagedRegistryFile = (path: string): void => {
  */
 export const sqliteManagedStackRepositoryLayer = (
   openDatabase: () => ManagedSqliteDatabase,
-): Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError> =>
+): Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError> =>
   Layer.effect(
     ManagedStackRepository,
     Effect.gen(function* () {
