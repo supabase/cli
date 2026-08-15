@@ -4,6 +4,7 @@ import { Option } from "effect";
 import {
   LEGACY_SHADOW_BASELINE_KEEP,
   LEGACY_SHADOW_BASELINE_MAX_AGE_MS,
+  legacyEffectiveShadowWebhooksEnabled,
   legacyIsShadowBaselinePartial,
   legacyIsShadowBaselineTar,
   legacyShadowBaselineTarFileName,
@@ -23,6 +24,7 @@ const baseKeyInputs = (): LegacyShadowCacheKeyInputs => ({
   dbSettings: { effective_cache_size: "128MB", max_connections: 100 },
   autoExposeNewTables: Option.none(),
   storageTargetMigration: "20240101000000",
+  webhooksEnabled: true,
   rolesSql: "create role custom_role;\n",
   vault: [{ name: "secret", value: "value", resolved: true }],
   jwks: '{"keys":[]}',
@@ -62,6 +64,19 @@ describe("legacyShadowCacheEnabled", () => {
   });
 });
 
+describe("legacyEffectiveShadowWebhooksEnabled", () => {
+  it("matches legacySetupDatabase: enabled/disabled override config, config follows the flag", () => {
+    expect(legacyEffectiveShadowWebhooksEnabled("enabled", false)).toBe(true);
+    expect(legacyEffectiveShadowWebhooksEnabled("enabled", true)).toBe(true);
+    expect(legacyEffectiveShadowWebhooksEnabled("disabled", true)).toBe(false);
+    expect(legacyEffectiveShadowWebhooksEnabled("disabled", false)).toBe(false);
+    expect(legacyEffectiveShadowWebhooksEnabled("config", true)).toBe(true);
+    expect(legacyEffectiveShadowWebhooksEnabled("config", false)).toBe(false);
+    expect(legacyEffectiveShadowWebhooksEnabled(undefined, true)).toBe(true);
+    expect(legacyEffectiveShadowWebhooksEnabled(undefined, false)).toBe(false);
+  });
+});
+
 describe("legacyShadowCacheKey", () => {
   it("is stable for identical inputs and independent of object key order", () => {
     const first = legacyShadowCacheKey(baseKeyInputs());
@@ -97,6 +112,7 @@ describe("legacyShadowCacheKey", () => {
         label: "auto expose new tables (explicit false vs unset)",
         inputs: { ...base, autoExposeNewTables: Option.some(false) },
       },
+      { label: "effective webhooks / pg_net", inputs: { ...base, webhooksEnabled: false } },
       { label: "roles.sql", inputs: { ...base, rolesSql: "" } },
       {
         label: "storage migration pin (storage enabled, majorVersion >= 15)",
