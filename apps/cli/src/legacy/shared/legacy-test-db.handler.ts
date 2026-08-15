@@ -21,6 +21,7 @@ import type { LegacyTestDbFlags } from "./legacy-test-db.command-handler.ts";
 import {
   LegacyTestDbEnablePgtapError,
   LegacyTestDbMutuallyExclusiveFlagsError,
+  LegacyTestDbNoTestsError,
   LegacyTestDbRunError,
 } from "./legacy-test-db.errors.ts";
 import { buildLegacyPgProveArgs } from "./legacy-test-db.pg-prove-args.ts";
@@ -33,9 +34,30 @@ const DISABLE_PGTAP = "drop extension if exists pgtap";
 // The TS config schema does not model an `[images]` override, so it is fixed here.
 // Go resolves it through `GetRegistryImageUrl` (`DockerStart`), honoring
 // `SUPABASE_INTERNAL_IMAGE_REGISTRY` / the default ECR mirror, so do the same
-// before passing it to `docker run`.
+// before passing it to `docker run`. Re-verify `NO_TESTS_VERDICT` still matches
+// when bumping this tag.
 const LEGACY_PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
 const MAX_PROJECT_ID_LENGTH = 40;
+/**
+ * `TAP::Harness` closes every run with exactly one `Result: <verdict>` line.
+ * `pg_prove` still exits 0 for the empty-run verdict, so "found nothing to run" is
+ * otherwise indistinguishable from "everything passed" — a typo'd path, an empty
+ * directory, or a bind the daemon resolved against a different filesystem than the
+ * CLI's (a sibling-container Docker socket) all report a green build that ran zero
+ * tests (CLI-2194).
+ *
+ * Only the harness's FINAL verdict decides: under `--debug` (`--verbose`) the
+ * harness replays each test's raw TAP, and a passing test may legally print its own
+ * `Result: …` line, which must not be mistaken for the run's outcome. Matching the
+ * harness's human summary is a heuristic pinned to the image tag above.
+ *
+ * The verdict alone is not enough: a suite that deliberately skips itself
+ * (`1..0 # SKIP …`) also ends `NOTESTS`, but reports `Files=1`. Only a run that
+ * aggregated ZERO files found nothing to run, so both signals must agree.
+ */
+const VERDICT_PREFIX = "Result: ";
+const NO_TESTS_VERDICT = "Result: NOTESTS";
+const FILES_SUMMARY = /^Files=(\d+),/;
 
 /** Port of Go's `sanitizeProjectId` (`pkg/config/config.go:1037`). */
 function sanitizeProjectId(src: string): string {
@@ -138,10 +160,16 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
             })
           : { _tag: "host" as const };
 
-    const exitCode = yield* Effect.scoped(
+    const decoder = new TextDecoder();
+    // The trailing partial line, plus the last complete summary/verdict lines so far.
+    let pendingLine = "";
+    let lastVerdict = "";
+    let lastSummary = "";
+
+    const { exitCode } = yield* Effect.scoped(
       Effect.gen(function* () {
-        // stdout is reserved for the pg_prove TAP stream (the docker subprocess
-        // writes it there directly), so connection diagnostics must go to stderr —
+        // stdout is reserved for the pg_prove TAP stream (forwarded byte-exact
+        // below), so connection diagnostics must go to stderr —
         // exactly as Go does (`ConnectByConfigStream` writes "Connecting to …
         // database…" to `os.Stderr`, `connect.go:205-228`). A `Output.task`
         // spinner would corrupt the TAP stream: clack writes spinner ANSI to
@@ -187,16 +215,40 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
         // Windows Docker Desktop provide the mapping natively (empty there).
         const extraHosts =
           runtimeInfo.platform === "linux" ? ["host.docker.internal:host-gateway"] : [];
-        return yield* docker.run({
-          image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
-          cmd: args.cmd,
-          env: runEnv,
-          binds: args.binds,
-          workingDir: args.workingDir,
-          securityOpt: inBitbucket ? [] : ["label:disable"],
-          extraHosts,
-          network,
-        });
+        // Stream (rather than inherit) stdout so the verdict can be read on the way
+        // past; every chunk is forwarded byte-exact and unframed, leaving the TAP
+        // stream identical to what the container wrote. stderr is teed live, as
+        // inheriting it did.
+        return yield* docker.runStream(
+          {
+            image: legacyGetRegistryImageUrl(LEGACY_PG_PROVE_IMAGE),
+            cmd: args.cmd,
+            env: runEnv,
+            binds: args.binds,
+            workingDir: args.workingDir,
+            securityOpt: inBitbucket ? [] : ["label:disable"],
+            extraHosts,
+            network,
+          },
+          {
+            onStdout: (chunk) =>
+              Effect.suspend(() => {
+                // Split on newlines, carrying the incomplete trailing line into the
+                // next chunk so a verdict straddling a chunk boundary is still seen.
+                const lines = (pendingLine + decoder.decode(chunk, { stream: true })).split("\n");
+                pendingLine = lines.pop() ?? "";
+                for (const line of lines) {
+                  if (line.startsWith(VERDICT_PREFIX)) lastVerdict = line;
+                  else if (FILES_SUMMARY.test(line)) lastSummary = line;
+                }
+                return output.rawBytes(chunk, "stdout");
+              }),
+            // Teed straight to the terminal as inheriting it did; nothing here reads
+            // the buffered copy, and a pgTAP suite's psql notices are unbounded.
+            teeStderr: true,
+            captureStderr: false,
+          },
+        );
       }),
     );
 
@@ -210,6 +262,17 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
     if (exitCode !== 0) {
       return yield* Effect.fail(
         new LegacyTestDbRunError({ message: `error running container: exit ${exitCode}` }),
+      );
+    }
+
+    // A stream that ends without a trailing newline leaves the verdict unterminated.
+    const finalVerdict = pendingLine.startsWith(VERDICT_PREFIX) ? pendingLine : lastVerdict;
+    const aggregatedFiles = FILES_SUMMARY.exec(lastSummary)?.[1];
+    if (finalVerdict.trimEnd() === NO_TESTS_VERDICT && aggregatedFiles === "0") {
+      return yield* Effect.fail(
+        new LegacyTestDbNoTestsError({
+          message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
+        }),
       );
     }
   }).pipe(Effect.ensuring(telemetryState.flush));
