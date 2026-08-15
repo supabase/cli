@@ -43,7 +43,9 @@ interface LegacyPgDeltaNextShadowShape {
   >;
   /**
    * Provisions the independent migrated and declarative shadows needed by a
-   * declarative plan. Both are removed when the current Effect scope closes.
+   * declarative plan, concurrently — the declarative shadow's provisioning
+   * cost hides behind the slower migrations shadow. Both are removed when the
+   * current Effect scope closes.
    */
   readonly provisionPlan: (
     opts: LegacyPgDeltaNextShadowInput,

@@ -20,7 +20,10 @@
  * a warm-path anomaly cold-provisions (deleting the tar only when its contents are implicated —
  * see `LegacyShadowCacheUnavailable.tarSuspect`), a cold export failure only warns and leaves the
  * run uncached (with ONE deliberate exception: a shadow that fails to come back up after the
- * snapshot fails the run — see `legacyExportShadowBaseline`); tars live under the global
+ * snapshot fails the run — see `legacyExportShadowBaseline`); same-PROCESS concurrent exports are
+ * additionally serialized by an in-process mutex, because `legacyExportPgDataTar`'s temp name is
+ * pid-scoped and two fibers of one process would otherwise share it (see
+ * {@link legacyWriteShadowBaselineTar}); tars live under the global
  * `${SUPABASE_HOME}/cache/shadow-baseline/` (shared across worktrees with the same settings),
  * with LRU (keep 8) + 14-day mtime TTL retention. `SUPABASE_SHADOW_CACHE` is ON by default;
  * `false`/`0` opts out.
@@ -29,7 +32,7 @@
 import { createHash } from "node:crypto";
 
 import type { ProjectConfig } from "@supabase/config";
-import { Clock, Effect, Option, Result, type FileSystem } from "effect";
+import { Clock, Effect, Option, Result, Semaphore, type FileSystem } from "effect";
 import type { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner";
 
 import { Output } from "../../../shared/output/output.service.ts";
@@ -680,9 +683,26 @@ const legacyAwaitShadowReady = <E>(
 // ---------------------------------------------------------------------------
 
 /**
+ * Serializes same-process cold exports. Two shadows provisioned concurrently in one process
+ * (pg-delta next's plan shadows — `legacy-pgdelta-next-shadow.layer.ts`'s `provisionPlan`) can
+ * both reach the export step, and with an equal key (the declarative and migrations shadows
+ * hash identically whenever their effective webhooks booleans agree) they would race on the
+ * SAME `<tar>.<pid>.partial` temp path — `legacyExportPgDataTar` scopes its temp name by pid
+ * alone, so the second writer's pre-clean unlinks the first's live temp file, and the first's
+ * rename would then publish the second's half-written bytes under the final name. One permit
+ * makes that interleaving impossible; cross-PROCESS writers were never affected (distinct
+ * pids). Exports run only on the cold path and take seconds, so the serialization is invisible
+ * outside a double-cold first run.
+ */
+const legacyShadowExportMutex = Semaphore.makeUnsafe(1);
+
+/**
  * Ensures the tar's global cache directory exists, delegates the actual export to
  * {@link legacyExportPgDataTar} (`pgdata-snapshot.ts` — see that function's own doc comment for
- * the atomic-publish mechanics), then applies the LRU + TTL retention rule.
+ * the atomic-publish mechanics), then applies the LRU + TTL retention rule. Runs under
+ * {@link legacyShadowExportMutex}, and skips the export entirely when the tar was published
+ * while this fiber waited on the permit — a same-key sibling's snapshot is this same baseline,
+ * so re-exporting would only re-move ~90MB to replace equivalent bytes.
  */
 const legacyWriteShadowBaselineTar = <E>(
   spawner: Spawner,
@@ -690,23 +710,27 @@ const legacyWriteShadowBaselineTar = <E>(
   tarPath: string,
   containerId: string,
 ): Effect.Effect<void, LegacyShadowCacheUnavailable> =>
-  Effect.gen(function* () {
-    const cacheDir = legacyShadowBaselineCacheDir(input.path);
-    yield* input.fs
-      .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
-      .pipe(
-        Effect.mapError((cause) =>
-          legacyShadowCacheUnavailable(`failed to create ${cacheDir}: ${cause.message}`),
+  legacyShadowExportMutex.withPermit(
+    Effect.gen(function* () {
+      const published = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
+      if (published) return;
+      const cacheDir = legacyShadowBaselineCacheDir(input.path);
+      yield* input.fs
+        .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
+        .pipe(
+          Effect.mapError((cause) =>
+            legacyShadowCacheUnavailable(`failed to create ${cacheDir}: ${cause.message}`),
+          ),
+        );
+      yield* legacySweepAbandonedShadowBaselinePartials(input);
+      yield* legacyExportPgDataTar(spawner, containerId, input.fs, tarPath).pipe(
+        Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
+          legacyShadowCacheUnavailable(cause.reason),
         ),
       );
-    yield* legacySweepAbandonedShadowBaselinePartials(input);
-    yield* legacyExportPgDataTar(spawner, containerId, input.fs, tarPath).pipe(
-      Effect.mapError((cause: LegacyPgDataSnapshotUnavailable) =>
-        legacyShadowCacheUnavailable(cause.reason),
-      ),
-    );
-    yield* legacySweepShadowBaselineRetention(input);
-  });
+      yield* legacySweepShadowBaselineRetention(input);
+    }),
+  );
 
 /**
  * The cold path's snapshot step, run at the baseline/migrations seam — after

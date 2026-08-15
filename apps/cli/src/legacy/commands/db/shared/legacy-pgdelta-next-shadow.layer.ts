@@ -304,10 +304,19 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          const migrations = yield* provisionMigrations(migrationsInput, cacheOpts(opts, "config"));
-          const declarative = yield* provisionDeclarative(
-            declarativeInput,
-            cacheOpts(opts, "disabled"),
+          // The two shadows are fully independent — anonymous containers on the distinct host
+          // ports allocated above, per-invocation scoped temp dirs, a race-tolerant network
+          // ensure, and cold snapshot exports serialized by `legacyShadowExportMutex`
+          // (`shadow-cache.ts`) — so they provision concurrently: the declarative shadow's whole
+          // create/ready/baseline cost hides behind the slower migrations shadow instead of
+          // adding to it. A failure on either side interrupts the other, and the scope
+          // finalizers registered by each acquire still remove whatever was created.
+          const [migrations, declarative] = yield* Effect.all(
+            [
+              provisionMigrations(migrationsInput, cacheOpts(opts, "config")),
+              provisionDeclarative(declarativeInput, cacheOpts(opts, "disabled")),
+            ],
+            { concurrency: 2 },
           );
           return {
             migrationsUrl: migrations.migrationsUrl,

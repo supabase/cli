@@ -80,6 +80,12 @@ const legacyPgDataSnapshotUnavailable = (reason: string): LegacyPgDataSnapshotUn
  * stop/start around this call. The `rename` is the LAST step and is what publishes the entry: a
  * partially written tar must never be observable under the final name. Any failure removes the
  * temp file; nothing is left behind for a later run to find.
+ *
+ * The temp name is scoped by pid alone, so two exports to the same `tarPath` are safe across
+ * processes but NOT within one: a same-process concurrent writer's pre-clean would unlink this
+ * writer's live temp file, and the eventual `rename` could publish the other writer's
+ * half-written bytes under the final name. Callers own that serialization — `shadow-cache.ts`
+ * holds `legacyShadowExportMutex` around every call.
  */
 export const legacyExportPgDataTar = (
   spawner: Spawner,

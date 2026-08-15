@@ -718,6 +718,57 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
+  it.live("concurrent same-key cold snapshots publish exactly one intact tar", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // pg-delta next's parallel plan provisioning: both shadows acquire before either has
+        // published, so both go cold with the SAME key (the host port is not a key input), and
+        // both snapshot steps then race toward the same tar path. The export mutex must
+        // serialize them and the loser must skip — without it, both writers share the same
+        // pid-scoped temp file and the rename can publish half-written bytes.
+        const [first, second] = yield* Effect.all(
+          [
+            legacyAcquireShadowDatabase(docker.spawner, shadowInput(fs, path)),
+            legacyAcquireShadowDatabase(
+              docker.spawner,
+              shadowInput(fs, path, { shadowPort: 54321 }),
+            ),
+          ],
+          { concurrency: 2 },
+        );
+        expect(first.baselinePresent).toBe(false);
+        expect(second.baselinePresent).toBe(false);
+
+        yield* Effect.all([first.snapshotBaseline, second.snapshotBaseline], { concurrency: 2 });
+
+        // One export, one tar with the exported bytes intact, no leftover partials.
+        expect(docker.stepCalls("cp-out")).toHaveLength(1);
+        const tars = yield* soleTarName(fs, path);
+        expect(tars).toHaveLength(1);
+        expect(yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""))).toBe(
+          FAKE_PGDATA_TAR,
+        );
+        const leftovers = yield* fs.readDirectory(shadowCacheDir(path));
+        expect(leftovers.filter((entry) => entry.includes("partial"))).toEqual([]);
+
+        // Both shadows are back up after their own stop/start cycles — the skipped writer's
+        // container is revived exactly like the exporting one's.
+        expect(docker.containers.get(first.containerId)?.running).toBe(true);
+        expect(docker.containers.get(second.containerId)?.running).toBe(true);
+
+        yield* legacyRemoveShadowDatabase(docker.spawner, first.containerId);
+        yield* legacyRemoveShadowDatabase(docker.spawner, second.containerId);
+        expect(docker.ids()).toEqual([]);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
   it.live("publishing distinct keys keeps both tars until LRU/TTL eviction", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
