@@ -201,14 +201,17 @@ function fakeDockerDaemon(
       } else if (args[0] === "rm") {
         containers.delete(args[args.length - 1] ?? "");
       } else if (args[0] === "cp" && args[1] === "-") {
-        // Restore: `docker cp - <id>:<containerPath>`, tar on stdin.
+        // Secret copy is `docker cp - <id>:/`; restore is `docker cp - <id>:<pgdata parent>`.
+        // Both use stdin, so failCopyIn must apply only to the restore — otherwise a warm
+        // fallback test kills the pgsodium root-key copy and never reaches the archive.
         const [id = "", containerPath = ""] = (args[2] ?? "").split(":");
         const container = containers.get(id);
         const received = yield* readStdin(command);
-        if (opts.failCopyIn === true || container === undefined) {
+        const isSecret = containerPath === "" || containerPath === "/";
+        if (container === undefined || (!isSecret && opts.failCopyIn === true)) {
           exitCode = 1;
           stderr = "no such container";
-        } else {
+        } else if (!isSecret) {
           container.restored = `${containerPath}::${received}`;
         }
       } else if (args[0] === "cp" && args[2] === "-") {
@@ -261,7 +264,11 @@ function fakeDockerDaemon(
     if (args[0] === "network") return "network";
     if (args[0] === "container" && args[1] === "inspect") return "inspect";
     if (args[0] === "cp") {
-      if (args[1] === "-") return "cp-in";
+      if (args[1] === "-") {
+        const dest = args[2] ?? "";
+        const containerPath = dest.slice(dest.indexOf(":") + 1);
+        return containerPath === "" || containerPath === "/" ? "cp-secret" : "cp-in";
+      }
       if (args[2] === "-") return "cp-out";
       return "cp-secret";
     }

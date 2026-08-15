@@ -886,6 +886,7 @@ const migrateShadowDatabase = <E>(
         yield* legacySetupDatabase(
           spawner,
           legacyBuildShadowSetupDatabaseInput(input, session, resolved),
+          setupOptions,
         );
       }
       yield* legacyCreateShadowTemplateDatabase(session);

@@ -746,8 +746,8 @@ export function legacyIsolatedHomeLayer(
 }
 
 // ---------------------------------------------------------------------------
-// Failing filesystem — wraps the real Bun `FileSystem` and fails the Nth
-// `writeFileString` call with a `PlatformError`, so cleanup-on-failure paths
+// Failing filesystem — wraps the real Bun `FileSystem` and fails a chosen
+// `writeFileString` with a `PlatformError`, so cleanup-on-failure paths
 // (e.g. the pg-delta multi-file migration writer) can be exercised
 // deterministically. Every other call delegates to the real filesystem, so
 // config reads / earlier writes behave normally. Merge this AFTER
@@ -758,6 +758,23 @@ export function legacyIsolatedHomeLayer(
 export function legacyFailWriteStringOnNthCallFsLayer(
   failOnCall: number,
 ): Layer.Layer<FileSystem.FileSystem> {
+  return legacyFailWriteStringFsLayer((_, calls) => calls === failOnCall);
+}
+
+/**
+ * Same as {@link legacyFailWriteStringOnNthCallFsLayer}, but fails the first
+ * `writeFileString` whose path matches `match`. Prefer this when earlier
+ * setup writes (shadow SQL, branch markers) make a fixed call index brittle.
+ */
+export function legacyFailWriteStringMatchingFsLayer(
+  match: (path: string) => boolean,
+): Layer.Layer<FileSystem.FileSystem> {
+  return legacyFailWriteStringFsLayer((path) => match(path));
+}
+
+function legacyFailWriteStringFsLayer(
+  shouldFail: (path: string, calls: number) => boolean,
+): Layer.Layer<FileSystem.FileSystem> {
   return Layer.effect(
     FileSystem.FileSystem,
     Effect.map(FileSystem.FileSystem, (real) => {
@@ -766,7 +783,7 @@ export function legacyFailWriteStringOnNthCallFsLayer(
         ...real,
         writeFileString: (path, data, options) => {
           calls += 1;
-          if (calls === failOnCall) {
+          if (shouldFail(path, calls)) {
             return Effect.fail(
               new PlatformError(
                 new SystemError({

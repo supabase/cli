@@ -10,6 +10,7 @@ import { stripAnsi } from "../../../../../tests/helpers/ansi.ts";
 import {
   LEGACY_FAKE_SHADOW_CONTAINER_ID,
   LEGACY_VALID_REF,
+  legacyFailWriteStringMatchingFsLayer,
   legacyFailWriteStringOnNthCallFsLayer,
   mockLegacyCliConfig,
   mockLegacyLinkedProjectCacheTracked,
@@ -88,6 +89,10 @@ interface SetupOpts {
   readonly networkId?: string; // --network-id value forwarded to docker runs
   // When set, the Nth `writeFileString` fails, exercising cleanup-on-failure.
   readonly failWriteOnCall?: number;
+  // When set, the first `writeFileString` whose path matches fails. Prefer this
+  // over `failWriteOnCall` when shadow setup writes extra SQL before the
+  // command's `--file` migration.
+  readonly failWriteMatching?: (path: string) => boolean;
   // When set, the shadow container never reports healthy — for the interrupt-during-
   // health-wait regression coverage (review: PRRT_kwDOErm0O86XMrID). See
   // `mockLegacyShadowContainerCliSpawner`'s own doc comment for why this is required
@@ -450,10 +455,13 @@ function setup(workdir: string, opts: SetupOpts = {}) {
     mockRuntimeInfo({ platform: opts.platform ?? "linux" }),
   );
   // Merged last so its `FileSystem` overrides everything above (last-wins).
-  const layer =
-    opts.failWriteOnCall === undefined
-      ? baseLayer
-      : Layer.merge(baseLayer, legacyFailWriteStringOnNthCallFsLayer(opts.failWriteOnCall));
+  const failWriteLayer =
+    opts.failWriteMatching !== undefined
+      ? legacyFailWriteStringMatchingFsLayer(opts.failWriteMatching)
+      : opts.failWriteOnCall !== undefined
+        ? legacyFailWriteStringOnNthCallFsLayer(opts.failWriteOnCall)
+        : undefined;
+  const layer = failWriteLayer === undefined ? baseLayer : Layer.merge(baseLayer, failWriteLayer);
 
   return {
     layer,
@@ -2452,12 +2460,9 @@ describe("legacy db diff", () => {
     it.effect(
       "fails with LegacyDbDiffWriteError when writing the pgAdmin --file migration fails",
       () => {
-        // Shadow setup writes the branch marker and `revoke-api-privileges.sql`
-        // before the command writes the pgAdmin migration, so call #3 is the
-        // diff-file write exercised here.
         const s = setup(tmp.current, {
           pgadminStdout: [JSON.stringify([pgadminEntry()])],
-          failWriteOnCall: 3,
+          failWriteMatching: (path) => path.includes("pgadmin_diff"),
         });
         return Effect.gen(function* () {
           const error = yield* legacyDbDiff(
