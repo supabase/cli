@@ -116,6 +116,41 @@ assignments without holding a host-wide lease; exact configuration takes precede
 or failed stack is updated. A stack may change port numbers as part of one transition out of a
 port-occupying lifecycle; intent-only updates never count as runtime port drift.
 
+Managed identity is separated into project, checkout, and context ownership. A project belongs to a
+repository, a checkout belongs to one canonical folder (including linked worktrees), branch
+contexts are project-scoped, and detached and ordinary-folder contexts are checkout-scoped.
+Branch renames and in-place ref updates preserve the context; copying a branch, deleting and
+recreating a ref, changing checkout folders, detaching `HEAD`, or moving between a folder and Git
+produces an explicit discovery state instead of silently aliasing stacks. `discoverWorkspace()` is
+read-only and reports states such as `healthy`, `moved`, `duplicate`, `orphaned`, `ambiguous`, and
+`transitioning`, together with typed recovery operations (`newCheckout`, `rebindCheckout`,
+`adoptContext`, and metadata-only `prune`). Callers pass the returned operation back to the matching
+method after reviewing it; recovery never deletes stack data or runtime state.
+If a process dies while reserving identity metadata, `abandonIdentityTransition({ transitionId,
+workspacePath })` performs an exact compare-and-delete of a still-`reserved` transition. It refuses
+published or ambiguous targets and is idempotent when the transition was already removed; callers
+should resume the matching recovery operation when publication evidence exists.
+
+Checkout locations retain a small history (`active`, `superseded`, or `blocked`) so a moved path can
+be distinguished from a recycled or conflicting path. `prune({ recordIds })` and
+`prune({ operation: "prune", recordIds })` remove only explicitly selected, unprotected location
+metadata. Active and blocked rows, transition-referenced rows, and conflict evidence remain
+protected, and the result reports removed, preserved, and unknown requested IDs. Every requested
+ID appears in exactly one result list, so repeating a prune remains an explicit idempotent no-op.
+Stack records remain globally
+addressable by opaque stack ID: an orphaned stack can still be listed, stopped, and deleted without
+any live checkout, and deletion remains idempotent. The current managed registry is an unreleased
+internal format; it is used directly with no migration or compatibility promise.
+
+```typescript
+const report = await managed.discoverWorkspace("/absolute/project");
+const prune = report.recoveryOperations.find((operation) => operation.operation === "prune");
+if (prune !== undefined) {
+  const result = await managed.prune(prune);
+  console.log(result.prunedRecordIds, result.preservedRecordIds, result.unknownRecordIds);
+}
+```
+
 ### With explicit config
 
 ```typescript

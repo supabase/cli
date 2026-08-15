@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import type { Layer } from "effect";
-import type { UnsupportedManagedRegistryVersionError } from "./model.ts";
 import type { ManagedStackRepository } from "./repository.ts";
+import type { IncompatibleManagedRegistryError } from "./model.ts";
 import {
   hardenManagedRegistryFile,
   sqliteManagedStackRepositoryLayer,
@@ -37,5 +37,5 @@ const openDatabase = (path: string): ManagedSqliteDatabase => {
 
 export const nodeSqliteManagedStackRepositoryLayer = (
   path: string,
-): Layer.Layer<ManagedStackRepository, UnsupportedManagedRegistryVersionError> =>
+): Layer.Layer<ManagedStackRepository, IncompatibleManagedRegistryError> =>
   sqliteManagedStackRepositoryLayer(() => openDatabase(path));

@@ -113,6 +113,11 @@ const CLI_ERROR_FINGERPRINT_SUFFIXES = [
   "managed_git_workspace_malformed_metadata",
   "managed_git_workspace_metadata_inaccessible",
   "managed_git_workspace_reftable",
+  "managed_checkout_conflict",
+  "managed_copied_branch_conflict",
+  "managed_identity_transition_ownership",
+  "managed_inaccessible_path",
+  "incompatible_managed_registry",
   "managed_identity",
   "managed_identity_conflict",
   "managed_initialization",
@@ -840,9 +845,25 @@ const managedActionabilityByCode: Record<ManagedErrorCode, ErrorActionabilityAda
     ...actionability.invalidInput,
     fingerprint_suffix: "managed_stack_name",
   }),
-  UNSUPPORTED_MANAGED_REGISTRY_VERSION: () => ({
+  MANAGED_CHECKOUT_CONFLICT: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_checkout_conflict",
+  }),
+  MANAGED_COPIED_BRANCH_CONFLICT: () => ({
     ...actionability.invalidConfig,
-    fingerprint_suffix: "invalid_config",
+    fingerprint_suffix: "managed_copied_branch_conflict",
+  }),
+  MANAGED_IDENTITY_TRANSITION_OWNERSHIP: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_identity_transition_ownership",
+  }),
+  MANAGED_INACCESSIBLE_PATH: () => ({
+    ...actionability.invalidInput,
+    fingerprint_suffix: "managed_inaccessible_path",
+  }),
+  INCOMPATIBLE_MANAGED_REGISTRY: () => ({
+    ...actionability.invalidConfig,
+    fingerprint_suffix: "incompatible_managed_registry",
   }),
   MANAGED_STACK_NOT_FOUND: () => ({
     ...actionability.invalidInput,
