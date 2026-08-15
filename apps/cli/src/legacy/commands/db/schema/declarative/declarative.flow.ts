@@ -272,7 +272,18 @@ export interface LegacyStagedExportContext {
  * the printed `rm -rf <dir> && mv` adoption command would destroy both copies.
  */
 export const legacyResolveStagedDeclarativeDir = (declarativeDir: string): string => {
-  const trimmed = declarativeDir.replace(/(?:[\\/]+\.?)+$/, "");
+  const isSeparator = (ch: string | undefined) => ch === "/" || ch === "\\";
+  let end = declarativeDir.length;
+  while (end > 0) {
+    if (isSeparator(declarativeDir[end - 1])) {
+      end -= 1;
+    } else if (declarativeDir[end - 1] === "." && isSeparator(declarativeDir[end - 2])) {
+      end -= 1;
+    } else {
+      break;
+    }
+  }
+  const trimmed = declarativeDir.slice(0, end);
   return `${trimmed === "" ? declarativeDir : trimmed}-next`;
 };
 
