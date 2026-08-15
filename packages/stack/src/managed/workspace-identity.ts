@@ -218,6 +218,23 @@ const concurrentIdentityPublication = (
   identityPublicationIsMonotonic(report, freshReport) &&
   identityPublicationAdvanced(report, freshReport);
 
+const newCheckoutTransitionMatches = (
+  transition: ManagedIdentityTransitionRecord | undefined,
+  transitionId: string,
+  targetIdentity: ManagedIdentityTriple,
+  report: ManagedWorkspaceDiscovery,
+): boolean =>
+  transition !== undefined &&
+  transition.kind === "new-checkout" &&
+  transition.id === transitionId &&
+  transition.path === report.workspace.workspaceRoot &&
+  transition.projectIdentityLocation === report.workspace.projectIdentityLocation &&
+  transition.projectId === targetIdentity.projectId &&
+  transition.checkoutId === targetIdentity.checkoutId &&
+  transition.contextId === targetIdentity.contextId &&
+  transition.targetGitValue === targetIdentity.contextId &&
+  newCheckoutTopologyMatches(transition, report.context);
+
 export const makeWorkspaceIdentity = ({
   repository,
   withWorkspaceServices,
@@ -267,6 +284,20 @@ export const makeWorkspaceIdentity = ({
       const canonicalPath = report.workspace.canonicalPath;
       const freshReport = yield* discover(canonicalPath);
       const sameWorkspaceTopology = sameManagedWorkspaceTopology(report, freshReport);
+      const exactNewCheckoutPublication =
+        targetIdentity !== undefined &&
+        (freshReport.activeTransition?.phase === "reserved" ||
+          freshReport.activeTransition?.phase === "git-written") &&
+        newCheckoutTransitionMatches(
+          freshReport.activeTransition,
+          transitionId,
+          targetIdentity,
+          freshReport,
+        ) &&
+        freshReport.state === "transitioning" &&
+        freshReport.conflicts.length === 0 &&
+        sameWorkspaceTopology &&
+        identityPublicationIsMonotonic(report, freshReport);
       const winnerPublished =
         report.state === "unregistered" &&
         freshReport.state === "healthy" &&
@@ -280,7 +311,8 @@ export const makeWorkspaceIdentity = ({
       if (
         discoveryObservation(report) !== discoveryObservation(freshReport) &&
         !winnerPublished &&
-        !concurrentIdentityPublication(report, freshReport)
+        !concurrentIdentityPublication(report, freshReport) &&
+        !exactNewCheckoutPublication
       ) {
         return yield* Effect.fail(
           new InvalidManagedIdentityError({
@@ -1225,6 +1257,11 @@ export const makeWorkspaceIdentity = ({
         checkoutId: transition.checkoutId,
         contextId: transition.contextId,
       };
+      const publishedIdentityMatches = (candidate: ManagedWorkspaceDiscovery): boolean =>
+        candidate.conflicts.length === 0 &&
+        candidate.identity.projectId === targetIdentity.projectId &&
+        candidate.identity.checkoutId === targetIdentity.checkoutId &&
+        candidate.identity.contextId === targetIdentity.contextId;
       const abandonReserved = () => abandonReservedTransition(transition, path);
       let identityMarkerCreated = false;
       if (transition.phase === "reserved") {
@@ -1233,6 +1270,25 @@ export const makeWorkspaceIdentity = ({
         const reserved = beforeClaims.transitions.find(
           (candidate) => candidate.id === transition.id,
         );
+        if (
+          reserved?.phase === "finalized" &&
+          beforePublication.state === "healthy" &&
+          beforePublication.activeTransition === undefined &&
+          sameManagedWorkspaceTopology(report, beforePublication) &&
+          newCheckoutTransitionMatches(
+            reserved,
+            transition.id,
+            targetIdentity,
+            beforePublication,
+          ) &&
+          publishedIdentityMatches(beforePublication)
+        ) {
+          return {
+            published: beforePublication,
+            transition: undefined,
+            identityMarkerCreated: false,
+          };
+        }
         if (
           reserved === undefined ||
           reserved.phase !== "reserved" ||
@@ -1313,12 +1369,34 @@ export const makeWorkspaceIdentity = ({
             }),
           );
         }
-        yield* repository.advanceIdentityTransition({
-          id: transition.id,
-          expectedPhase: "reserved",
-          phase: "git-written",
-          now: now(),
-        });
+        yield* repository
+          .advanceIdentityTransition({
+            id: transition.id,
+            expectedPhase: "reserved",
+            phase: "git-written",
+            now: now(),
+          })
+          .pipe(
+            Effect.catchTag("ManagedIdentityTransitionOwnershipError", (error) =>
+              Effect.gen(function* () {
+                const latest = (yield* repository.listIdentityClaims()).transitions.find(
+                  (candidate) => candidate.id === transition.id,
+                );
+                const settled = yield* discover(path);
+                if (
+                  latest?.phase === "finalized" &&
+                  settled.state === "healthy" &&
+                  settled.activeTransition === undefined &&
+                  sameManagedWorkspaceTopology(beforePublication, settled) &&
+                  newCheckoutTransitionMatches(latest, transition.id, targetIdentity, settled) &&
+                  publishedIdentityMatches(settled)
+                ) {
+                  return;
+                }
+                return yield* Effect.fail(error);
+              }),
+            ),
+          );
       }
       const published = yield* discover(path);
       if (
@@ -1731,6 +1809,80 @@ export const makeWorkspaceIdentity = ({
   > =>
     Effect.gen(function* () {
       const report = yield* recoveryReport(options);
+      const path = report.workspace.workspaceRoot;
+      const takeover = report.activeTransition;
+      const takeoverBranch = report.context.kind === "branch" ? report.context.branch : undefined;
+      const missingOriginalCheckoutTakeover =
+        takeover?.kind === "adopt-context" &&
+        takeover.phase === "reserved" &&
+        takeover.path !== undefined &&
+        takeover.path !== path &&
+        takeover.projectIdentityLocation !== undefined &&
+        takeover.projectIdentityLocation === report.workspace.projectIdentityLocation &&
+        takeover.projectId !== undefined &&
+        takeover.projectId === report.identity.projectId &&
+        takeover.contextId !== undefined &&
+        takeover.contextId === report.identity.contextId &&
+        takeover.branch === takeoverBranch &&
+        takeover.expectedOwnerBranch !== undefined &&
+        takeover.expectedOwnerBranch !== takeover.branch &&
+        report.identity.checkoutId === undefined;
+      if (missingOriginalCheckoutTakeover && takeover !== undefined) {
+        const transitionContextId = takeover.contextId;
+        const transitionBranch = takeover.branch;
+        const transitionExpectedOwnerBranch = takeover.expectedOwnerBranch;
+        if (transitionContextId === undefined || transitionBranch === undefined) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: takeover.id }),
+          );
+        }
+        const current = yield* discover(path);
+        const currentTransition = current.activeTransition;
+        if (
+          currentTransition?.id !== takeover.id ||
+          currentTransition.phase !== "reserved" ||
+          !(yield* pathIsDefinitelyMissing(takeover.path)) ||
+          current.workspace.projectIdentityLocation !== takeover.projectIdentityLocation ||
+          current.identity.projectId !== takeover.projectId ||
+          current.identity.checkoutId !== undefined ||
+          current.identity.contextId !== takeover.contextId ||
+          current.context.kind !== "branch" ||
+          current.context.branch !== takeover.branch ||
+          current.ownerEvidence?.authoritativeOwnerBranch !== transitionExpectedOwnerBranch ||
+          transitionExpectedOwnerBranch === undefined
+        ) {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: takeover.id }),
+          );
+        }
+        yield* repository.refreshContextOwner({
+          contextId: transitionContextId,
+          ownerBranch: transitionBranch,
+          locator: transitionBranch,
+          expectedOwnerBranch: transitionExpectedOwnerBranch,
+          now: now(),
+        });
+        yield* repository.advanceIdentityTransition({
+          id: takeover.id,
+          expectedPhase: "reserved",
+          phase: "git-written",
+          now: now(),
+        });
+        const latest = (yield* repository.listIdentityClaims()).transitions.find(
+          (candidate) => candidate.id === takeover.id,
+        );
+        if (latest?.phase !== "git-written") {
+          return yield* Effect.fail(
+            new ManagedIdentityTransitionOwnershipError({ transitionId: takeover.id }),
+          );
+        }
+        yield* repository.finalizeIdentityTransition({
+          id: latest.id,
+          expectedPhase: "git-written",
+          now: now(),
+        });
+        return yield* discover(path);
+      }
       if (
         report.context.kind !== "branch" ||
         report.context.branch === undefined ||
@@ -1773,7 +1925,6 @@ export const makeWorkspaceIdentity = ({
           }),
         );
       }
-      const path = report.workspace.workspaceRoot;
       const reserved =
         resuming && transition !== undefined
           ? transition
@@ -1785,6 +1936,7 @@ export const makeWorkspaceIdentity = ({
               contextId,
               branch,
               path,
+              projectIdentityLocation: report.workspace.projectIdentityLocation,
               expectedGitValue: contextId,
               targetGitValue: contextId,
               expectedOwnerBranch,
@@ -1814,6 +1966,7 @@ export const makeWorkspaceIdentity = ({
             contextId,
             ownerBranch: branch,
             locator: branch,
+            expectedOwnerBranch,
             now: now(),
           });
         }

@@ -19,6 +19,7 @@ import {
   InvalidManagedStackNameError,
   ManagedPortReservationError,
   ManagedIdentityTransitionOwnershipError,
+  type ManagedStackRepositoryShape,
   type ManagedStackServiceHandle,
   type ResolveManagedStackRequest,
 } from "./managed-bun.ts";
@@ -126,6 +127,65 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const service = await make(root);
     openHandles.push(service);
     return service;
+  };
+
+  const startRacingServices = async (root: string, workspacePath: string) => {
+    let repositoryA: ManagedStackRepositoryShape;
+    let repositoryB: ManagedStackRepositoryShape;
+    if (_name === "in-memory") {
+      const repository = createInMemoryManagedStackRepository();
+      repositoryA = repository;
+      repositoryB = repository;
+    } else {
+      const baseA = await make(root);
+      const baseB = await make(root);
+      openHandles.push(baseA, baseB);
+      repositoryA = baseA.repository;
+      repositoryB = baseB.repository;
+    }
+
+    let firstReservation = true;
+    let notifyReservation: () => void = () => undefined;
+    const reservationObserved = new Promise<void>((resolve) => {
+      notifyReservation = resolve;
+    });
+    let releaseReservation: () => void = () => undefined;
+    const reservationGate = new Promise<void>((resolve) => {
+      releaseReservation = resolve;
+    });
+    const gateReservation = (repository: ManagedStackRepositoryShape) => ({
+      ...repository,
+      reserveIdentityTransition: (
+        input: Parameters<typeof repository.reserveIdentityTransition>[0],
+      ) =>
+        Effect.gen(function* () {
+          const transition = yield* repository.reserveIdentityTransition(input);
+          if (firstReservation) {
+            firstReservation = false;
+            notifyReservation();
+            yield* Effect.promise(() => reservationGate);
+          }
+          return transition;
+        }),
+    });
+    const serviceA = await makeManagedStackService({
+      repository: gateReservation(repositoryA),
+      stateRoot: join(root, "race-managed-a"),
+      publicationPollMs: 1,
+    });
+    const serviceB = await makeManagedStackService({
+      repository: gateReservation(repositoryB),
+      stateRoot: join(root, "race-managed-b"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(serviceA, serviceB);
+
+    const firstAttempt = serviceA.resolveStack({ workspacePath, operation: "start" });
+    await reservationObserved;
+    const secondAttempt = serviceB
+      .resolveStack({ workspacePath, operation: "start" })
+      .finally(() => releaseReservation());
+    return { service: serviceA, firstAttempt, secondAttempt };
   };
 
   it("gives sibling worktrees one project, separate checkouts, and independent stacks", async () => {
@@ -405,15 +465,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
     const root = makeRoot();
     const repository = makeRepository(root);
     git(repository, "checkout", "-q", git(repository, "rev-parse", "HEAD").trim());
-    const service = await openService(root);
+    const { service, firstAttempt, secondAttempt } = await startRacingServices(root, repository);
 
     // Neither caller can see the other's context before it is committed, so both
     // mint a candidate; the registry keeps the one that landed first, which is
     // what stops a raced detached start from splitting into two stacks.
-    const [first, second] = await Promise.all([
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-    ]);
+    const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
 
     expect(second.identity.contextId).toBe(first.identity.contextId);
     expect(second.stack.id).toBe(first.stack.id);
@@ -424,15 +481,12 @@ describe.each(adapters)("resolveStack over git workspaces with the %s adapter", 
   it("reports exactly one racing start as having published the checkout identity", async () => {
     const root = makeRoot();
     const repository = makeRepository(root);
-    const service = await openService(root);
+    const { firstAttempt, secondAttempt } = await startRacingServices(root, repository);
 
     // Neither caller can see the other's checkout marker before it lands, so
     // both race `ensureGitCheckoutIdentity` on the same unclaimed checkout; the
     // atomic claim settles which one actually published it.
-    const [first, second] = await Promise.all([
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-      service.resolveStack({ workspacePath: repository, operation: "start" }),
-    ]);
+    const [first, second] = await Promise.all([firstAttempt, secondAttempt]);
 
     expect(second.identity).toEqual(first.identity);
     expect(second.stack.id).toBe(first.stack.id);

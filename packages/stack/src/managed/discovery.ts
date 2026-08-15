@@ -547,9 +547,7 @@ export const discoverWorkspace = (
       const markerExists = yield* fs
         .exists(markerPath)
         .pipe(Effect.catchTag("PlatformError", () => Effect.succeed(false)));
-      const marker = yield* Effect.exit(
-        readOrdinaryWorkspaceIdentityWithFileSystem(inspection.workspaceRoot),
-      );
+      const marker = yield* readOrdinaryWorkspaceIdentityWithFileSystem(inspection.workspaceRoot);
       const markerTracked = markerExists
         ? yield* isOrdinaryIdentityMarkerTracked(inspection.workspaceRoot)
         : false;
@@ -557,7 +555,7 @@ export const discoverWorkspace = (
         path: markerPath,
         present: markerExists,
         tracked: markerTracked,
-        identity: marker._tag === "Success" ? marker.value : undefined,
+        identity: marker,
       };
       const stored = yield* readGitCheckoutIdentityWithFileSystem(inspection);
       const contextId =

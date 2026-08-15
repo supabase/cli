@@ -386,6 +386,8 @@ export interface RefreshManagedContextOwnerInput {
   readonly contextId: string;
   readonly ownerBranch: string;
   readonly locator?: string;
+  /** Require the current owner to still match before publishing a replacement. */
+  readonly expectedOwnerBranch?: string;
   readonly now: string;
 }
 
@@ -394,6 +396,12 @@ export const decideManagedContextOwnerRefresh = (input: {
   readonly requested: RefreshManagedContextOwnerInput;
 }): ManagedContextRecord => {
   if (input.existing === undefined || input.existing.kind !== "branch") {
+    throw new ManagedCopiedBranchConflictError({ branch: input.requested.ownerBranch });
+  }
+  if (
+    input.requested.expectedOwnerBranch !== undefined &&
+    input.existing.ownerBranch !== input.requested.expectedOwnerBranch
+  ) {
     throw new ManagedCopiedBranchConflictError({ branch: input.requested.ownerBranch });
   }
   return {

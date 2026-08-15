@@ -2153,6 +2153,29 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     );
   });
 
+  it("rejects a carried malformed ordinary marker before Git migration", async () => {
+    const root = makeRoot();
+    const previous = makeDirectory(root, "malformed-carried-marker");
+    const next = join(root, "malformed-carried-marker-next");
+    const service = await open(root);
+    openHandles.push(service);
+    await service.resolveStack({ workspacePath: previous, operation: "start" });
+    renameSync(previous, next);
+    writeFileSync(ordinaryWorkspaceIdentityPath(next), "{not-json\n");
+    git(next, "init", "-q", "-b", "main");
+    const configBefore = readFileSync(gitConfigPath(join(next, ".git")), "utf8");
+    const claimsBefore = await Effect.runPromise(service.repository.listIdentityClaims());
+    const stacksBefore = await service.listStacks();
+
+    await expect(
+      service.resolveStack({ workspacePath: next, operation: "start" }),
+    ).rejects.toMatchObject({ _tag: "InvalidManagedIdentityError" });
+
+    expect(readFileSync(gitConfigPath(join(next, ".git")), "utf8")).toBe(configBefore);
+    expect(await Effect.runPromise(service.repository.listIdentityClaims())).toEqual(claimsBefore);
+    expect(await service.listStacks()).toEqual(stacksBefore);
+  });
+
   it("keeps a stale ordinary claim as a conflict after an unrelated Git checkout replaces the path", async () => {
     const root = makeRoot();
     const workspace = makeDirectory(root, "recycled-folder-to-git");
@@ -3014,6 +3037,254 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     });
     expect((await inspect(service.repository, repository)).activeTransition).toBeUndefined();
   });
+
+  it.each(["renamed", "foreign"] as const)(
+    "rejects normal adoption when the owner changes during refresh (%s)",
+    async (raceOwner) => {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const service = await open(root);
+      openHandles.push(service);
+      const started = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      git(repository, "branch", "-m", "renamed");
+      const linkedContextId = started.identity.contextId;
+      let race = true;
+      const racedRepository: ManagedStackRepositoryShape = {
+        ...service.repository,
+        refreshContextOwner: (input) =>
+          race
+            ? ((race = false),
+              Effect.gen(function* () {
+                yield* service.repository.refreshContextOwner({
+                  contextId: linkedContextId,
+                  ownerBranch: raceOwner,
+                  locator: raceOwner,
+                  now: new Date().toISOString(),
+                });
+                return yield* service.repository.refreshContextOwner(input);
+              }))
+            : service.repository.refreshContextOwner(input),
+      };
+      const recovering = await makeManagedStackService({
+        repository: racedRepository,
+        stateRoot: join(root, `adopt-normal-race-${raceOwner}-managed`),
+        publicationPollMs: 1,
+      });
+      openHandles.push(recovering);
+      const report = await recovering.discoverWorkspace(repository);
+
+      await expect(
+        recovering.adoptContext({ workspacePath: repository, observation: report }),
+      ).rejects.toMatchObject({ _tag: "ManagedCopiedBranchConflictError" });
+      expect(
+        (await Effect.runPromise(service.repository.listIdentityClaims())).contexts.find(
+          (context) => context.id === linkedContextId,
+        )?.ownerBranch,
+      ).toBe(raceOwner);
+      expect((await inspect(service.repository, repository)).activeTransition).toMatchObject({
+        kind: "adopt-context",
+        phase: "reserved",
+        expectedOwnerBranch: "main",
+        branch: "renamed",
+      });
+    },
+  );
+
+  it.each(["main", "linked", "foreign"] as const)(
+    "takes over an interrupted adoption only while the original owner remains authoritative (%s)",
+    async (ownerBranch) => {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const linked = join(root, "adopt-linked-original");
+      const replacement = join(root, "adopt-linked-replacement");
+      const service = await open(root);
+      openHandles.push(service);
+      const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+      git(repository, "config", "branch.linked.supabaseContextId", main.identity.contextId);
+      const linkedCheckoutId = "00000000-0000-7000-8000-000000000301";
+      writeFileSync(
+        gitCheckoutIdentityPath(git(linked, "rev-parse", "--git-dir").trim()),
+        `${JSON.stringify({ version: 1, checkoutId: linkedCheckoutId })}\n`,
+      );
+      await Effect.runPromise(
+        service.repository.registerCheckoutIdentity({
+          identity: {
+            projectId: main.identity.projectId,
+            checkoutId: linkedCheckoutId,
+            contextId: main.identity.contextId,
+          },
+          checkoutKind: "git",
+          checkoutRootPath: linked,
+          locationId: "00000000-0000-7000-8000-000000000302",
+          context: { kind: "branch", locator: "main" },
+          now: new Date().toISOString(),
+        }),
+      );
+      git(repository, "checkout", "-q", "--detach", "HEAD");
+      git(repository, "branch", "-m", "main", "old-main");
+      git(repository, "config", "--unset", "branch.old-main.supabaseContextId");
+
+      let interruptRefresh = true;
+      const interruptedRepository: ManagedStackRepositoryShape = {
+        ...service.repository,
+        refreshContextOwner: (input) =>
+          interruptRefresh
+            ? ((interruptRefresh = false),
+              Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: "injected-refresh" }),
+              ))
+            : service.repository.refreshContextOwner(input),
+      };
+      const recovering = await makeManagedStackService({
+        repository: interruptedRepository,
+        stateRoot: join(root, "adopt-linked-replacement-managed"),
+        publicationPollMs: 1,
+      });
+      openHandles.push(recovering);
+
+      const linkedReport = await recovering.discoverWorkspace(linked);
+      expect(linkedReport.identity.checkoutId).toBe(linkedCheckoutId);
+      expect(linkedReport.state).toBe("adoptable");
+      await expect(
+        recovering.adoptContext({ workspacePath: linked, observation: linkedReport }),
+      ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+      const interrupted = await inspect(service.repository, linked);
+      expect(interrupted.activeTransition).toMatchObject({
+        kind: "adopt-context",
+        phase: "reserved",
+        path: linked,
+        expectedOwnerBranch: "main",
+        projectIdentityLocation: interrupted.workspace.projectIdentityLocation,
+      });
+
+      if (ownerBranch !== "main") {
+        await Effect.runPromise(
+          service.repository.refreshContextOwner({
+            contextId: main.identity.contextId,
+            ownerBranch,
+            locator: ownerBranch,
+            now: new Date().toISOString(),
+          }),
+        );
+      }
+      rmSync(linked, { recursive: true, force: true });
+      git(repository, "worktree", "prune");
+      git(repository, "worktree", "add", "-q", replacement, "linked");
+
+      if (ownerBranch === "main") {
+        const resolved = await recovering.resolveStack({
+          workspacePath: replacement,
+          operation: "start",
+        });
+        expect(resolved).toMatchObject({
+          outcome: "create",
+          identity: {
+            projectId: main.identity.projectId,
+            contextId: main.identity.contextId,
+          },
+        });
+        expect(resolved.identity.checkoutId).toEqual(expect.any(String));
+        expect(resolved.identity.checkoutId).not.toBe(linkedCheckoutId);
+        expect((await inspect(service.repository, replacement)).activeTransition).toBeUndefined();
+      } else {
+        await expect(
+          recovering.resolveStack({ workspacePath: replacement, operation: "start" }),
+        ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+        expect((await inspect(service.repository, replacement)).activeTransition).toMatchObject({
+          kind: "adopt-context",
+          phase: "reserved",
+          path: linked,
+        });
+      }
+    },
+  );
+
+  it.each(["linked", "foreign"] as const)(
+    "rejects an adoption takeover when the owner changes during refresh (%s)",
+    async (raceOwner) => {
+      const root = makeRoot();
+      const repository = makeRepository(root);
+      const linked = join(root, "adopt-race-original");
+      const replacement = join(root, "adopt-race-replacement");
+      const service = await open(root);
+      openHandles.push(service);
+      const main = await service.resolveStack({ workspacePath: repository, operation: "start" });
+      git(repository, "worktree", "add", "-q", linked, "-b", "linked");
+      git(repository, "config", "branch.linked.supabaseContextId", main.identity.contextId);
+      const linkedCheckoutId = "00000000-0000-7000-8000-000000000311";
+      writeFileSync(
+        gitCheckoutIdentityPath(git(linked, "rev-parse", "--git-dir").trim()),
+        `${JSON.stringify({ version: 1, checkoutId: linkedCheckoutId })}\n`,
+      );
+      await Effect.runPromise(
+        service.repository.registerCheckoutIdentity({
+          identity: {
+            projectId: main.identity.projectId,
+            checkoutId: linkedCheckoutId,
+            contextId: main.identity.contextId,
+          },
+          checkoutKind: "git",
+          checkoutRootPath: linked,
+          locationId: "00000000-0000-7000-8000-000000000312",
+          context: { kind: "branch", locator: "main" },
+          now: new Date().toISOString(),
+        }),
+      );
+      git(repository, "checkout", "-q", "--detach", "HEAD");
+      git(repository, "branch", "-m", "main", "old-main");
+      git(repository, "config", "--unset", "branch.old-main.supabaseContextId");
+
+      let firstRefresh = true;
+      const racedRepository: ManagedStackRepositoryShape = {
+        ...service.repository,
+        refreshContextOwner: (input) =>
+          firstRefresh
+            ? ((firstRefresh = false),
+              Effect.fail(
+                new ManagedIdentityTransitionOwnershipError({ transitionId: "injected-refresh" }),
+              ))
+            : Effect.gen(function* () {
+                yield* service.repository.refreshContextOwner({
+                  contextId: input.contextId,
+                  ownerBranch: raceOwner,
+                  locator: raceOwner,
+                  now: new Date().toISOString(),
+                });
+                return yield* service.repository.refreshContextOwner(input);
+              }),
+      };
+      const recovering = await makeManagedStackService({
+        repository: racedRepository,
+        stateRoot: join(root, "adopt-race-managed"),
+        publicationPollMs: 1,
+      });
+      openHandles.push(recovering);
+      const linkedReport = await recovering.discoverWorkspace(linked);
+      await expect(
+        recovering.adoptContext({ workspacePath: linked, observation: linkedReport }),
+      ).rejects.toMatchObject({ _tag: "ManagedIdentityTransitionOwnershipError" });
+
+      rmSync(linked, { recursive: true, force: true });
+      git(repository, "worktree", "prune");
+      git(repository, "worktree", "add", "-q", replacement, "linked");
+
+      await expect(
+        recovering.resolveStack({ workspacePath: replacement, operation: "start" }),
+      ).rejects.toMatchObject({ _tag: "ManagedCopiedBranchConflictError" });
+      const afterRace = await inspect(service.repository, replacement);
+      expect(afterRace.activeTransition).toMatchObject({
+        kind: "adopt-context",
+        phase: "reserved",
+        path: linked,
+      });
+      expect(
+        (await Effect.runPromise(service.repository.listIdentityClaims())).contexts.find(
+          (context) => context.id === main.identity.contextId,
+        )?.ownerBranch,
+      ).toBe(raceOwner);
+    },
+  );
 
   it.each(["renamed", "foreign"] as const)(
     "rejects renamed-branch adoption when the context owner changes to %s before reservation",
