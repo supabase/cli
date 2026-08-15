@@ -456,9 +456,15 @@ describe("legacy test db integration", () => {
   });
 
   it.live("detects the NOTESTS verdict opening the stream, with no line before it", () => {
-    // The seeded newline exists for exactly this case: stream start counts as a
-    // line start, so the anchored match still fires.
     const { layer } = setup({ exitCode: 0, stdout: ["Result: NOTESTS\n"] });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
+      expect(Exit.isFailure(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("detects the NOTESTS verdict when the stream ends without a trailing newline", () => {
+    const { layer } = setup({ exitCode: 0, stdout: ["Files=0\nResult: NOTESTS"] });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isFailure(exit)).toBe(true);
@@ -469,6 +475,25 @@ describe("legacy test db integration", () => {
     const { layer } = setup({
       exitCode: 0,
       stdout: ["# diag: Result: NOTESTS is what an empty run prints\n", "Result: PASS\n"],
+    });
+    return Effect.gen(function* () {
+      const exit = yield* Effect.exit(legacyTestDb(flags()));
+      expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("takes the harness's final verdict, not a passing test's own Result: line", () => {
+    // `--debug` replays each test's raw TAP, and a passing test may legally print a
+    // line of its own starting `Result: NOTESTS…`. Only the harness's last verdict
+    // decides the run (PR #6210 review).
+    const { layer } = setup({
+      exitCode: 0,
+      stdout: [
+        "ok 1 - passes\n",
+        "Result: NOTESTS is diagnostic text\n",
+        "ok 2 - passes\n",
+        "Files=1, Tests=2\nResult: PASS\n",
+      ],
     });
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));

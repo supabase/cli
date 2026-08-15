@@ -39,17 +39,20 @@ const DISABLE_PGTAP = "drop extension if exists pgtap";
 const LEGACY_PG_PROVE_IMAGE = "supabase/pg_prove:3.36";
 const MAX_PROJECT_ID_LENGTH = 40;
 /**
- * `TAP::Harness`'s verdict line when the run aggregated no test files. `pg_prove`
- * still exits 0 for it, so "found nothing to run" is otherwise indistinguishable
- * from "everything passed" — a typo'd path, an empty directory, or a bind the
- * daemon resolved against a different filesystem than the CLI's (a sibling-container
- * Docker socket) all report a green build that ran zero tests (CLI-2194).
+ * `TAP::Harness` closes every run with exactly one `Result: <verdict>` line.
+ * `pg_prove` still exits 0 for the empty-run verdict, so "found nothing to run" is
+ * otherwise indistinguishable from "everything passed" — a typo'd path, an empty
+ * directory, or a bind the daemon resolved against a different filesystem than the
+ * CLI's (a sibling-container Docker socket) all report a green build that ran zero
+ * tests (CLI-2194).
  *
- * Anchored to the start of a line so a `--verbose` run replaying a test's own
- * output cannot trip it mid-line. Matching the harness's human summary is a
- * heuristic, not a guarantee — it is pinned to the image tag above.
+ * Only the harness's FINAL verdict decides: under `--debug` (`--verbose`) the
+ * harness replays each test's raw TAP, and a passing test may legally print its own
+ * `Result: …` line, which must not be mistaken for the run's outcome. Matching the
+ * harness's human summary is a heuristic pinned to the image tag above.
  */
-const NO_TESTS_VERDICT = "\nResult: NOTESTS";
+const VERDICT_PREFIX = "Result: ";
+const NO_TESTS_VERDICT = "Result: NOTESTS";
 
 /** Port of Go's `sanitizeProjectId` (`pkg/config/config.go:1037`). */
 function sanitizeProjectId(src: string): string {
@@ -153,9 +156,9 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
           : { _tag: "host" as const };
 
     const decoder = new TextDecoder();
-    // Seeded with the anchor newline so a stream that opens on the verdict matches.
-    let verdictTail = "\n";
-    let ranNoTests = false;
+    // The trailing partial line, plus the last complete verdict line seen so far.
+    let pendingLine = "";
+    let lastVerdict = "";
 
     const { exitCode } = yield* Effect.scoped(
       Effect.gen(function* () {
@@ -224,11 +227,13 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
           {
             onStdout: (chunk) =>
               Effect.suspend(() => {
-                // Carry one verdict's worth of the previous chunk so a match split
-                // across a chunk boundary is still seen, at constant memory.
-                verdictTail += decoder.decode(chunk, { stream: true });
-                if (verdictTail.includes(NO_TESTS_VERDICT)) ranNoTests = true;
-                verdictTail = verdictTail.slice(-NO_TESTS_VERDICT.length);
+                // Split on newlines, carrying the incomplete trailing line into the
+                // next chunk so a verdict straddling a chunk boundary is still seen.
+                const lines = (pendingLine + decoder.decode(chunk, { stream: true })).split("\n");
+                pendingLine = lines.pop() ?? "";
+                for (const line of lines) {
+                  if (line.startsWith(VERDICT_PREFIX)) lastVerdict = line;
+                }
                 return output.rawBytes(chunk, "stdout");
               }),
             teeStderr: true,
@@ -250,7 +255,9 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
       );
     }
 
-    if (ranNoTests) {
+    // A stream that ends without a trailing newline leaves the verdict unterminated.
+    const finalVerdict = pendingLine.startsWith(VERDICT_PREFIX) ? pendingLine : lastVerdict;
+    if (finalVerdict.trimEnd() === NO_TESTS_VERDICT) {
       return yield* Effect.fail(
         new LegacyTestDbNoTestsError({
           message: `no pgTAP tests found in ${args.hostPaths.join(", ")}`,
