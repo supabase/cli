@@ -46,7 +46,7 @@ socket leasing primitives and typed port metadata.
 The managed coordinator owns intent resolution, sticky reuse, managed conflict detection,
 candidate selection, repository publication, and runtime handoff. It never asks `createStack()` or
 the ordinary stack configuration resolver to discover managed reservations. The coordinator gives
-the runtime one complete concrete allocation together with the already-held lease.
+the runtime one complete active-field allocation together with the already-held lease.
 
 Direct `createStack()` retains an ephemeral allocator. It does not read, reserve, update, or infer
 anything from managed state. From the managed system's perspective, a direct stack is an external
@@ -195,8 +195,9 @@ Two arbiters protect different boundaries:
 
 Leases are Effect-scoped resources acquired and released with interruption-safe masks. A partial
 candidate set is never published. If runtime initialization fails after an allocation was accepted,
-the stack retains that complete allocation for a later retry, but managed state must not claim that
-the runtime is active and must not publish a partial runtime result.
+the stack retains the complete durable assignment set for a later retry, releases and forgets its
+runtime-only keyless ports, and does not claim that the runtime is active or publish a partial
+runtime result.
 
 Errors remain typed and preserve the distinction between:
 
