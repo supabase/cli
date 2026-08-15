@@ -346,6 +346,7 @@ export const legacyPgDeltaNextEngineLayer = Layer.effect(
               shadowPool: declarativePool,
               files: input.files,
               allowDrops: true,
+              ...(shadow.allowSameDatabaseIdentity ? { allowSameDatabaseIdentity: true } : {}),
               debug: input.debug,
               schema: input.schema,
               formatOptions: input.formatOptions,

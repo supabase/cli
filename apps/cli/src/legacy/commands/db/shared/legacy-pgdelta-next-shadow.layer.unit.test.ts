@@ -1,8 +1,11 @@
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
-import { describe, expect } from "vitest";
+import { describe, expect, it as vitestIt } from "vitest";
 
-import { legacyPreparePgDeltaNextDeclarativeBaseline } from "./legacy-pgdelta-next-shadow.layer.ts";
+import {
+  legacyAllowSameDatabaseIdentityForRestoredShadows,
+  legacyPreparePgDeltaNextDeclarativeBaseline,
+} from "./legacy-pgdelta-next-shadow.layer.ts";
 
 function recordingSession() {
   const statements: string[] = [];
@@ -41,4 +44,23 @@ describe("legacyPreparePgDeltaNextDeclarativeBaseline", () => {
       ]);
     });
   });
+});
+
+describe("legacyAllowSameDatabaseIdentityForRestoredShadows", () => {
+  vitestIt.each([
+    { migrations: true, declarative: true, expected: true },
+    { migrations: true, declarative: false, expected: false },
+    { migrations: false, declarative: true, expected: false },
+    { migrations: false, declarative: false, expected: false },
+  ])(
+    "returns $expected for migrations=$migrations and declarative=$declarative",
+    ({ migrations, declarative, expected }) => {
+      expect(
+        legacyAllowSameDatabaseIdentityForRestoredShadows(
+          { restoredFromPgDataSnapshot: migrations },
+          { restoredFromPgDataSnapshot: declarative },
+        ),
+      ).toBe(expected);
+    },
+  );
 });

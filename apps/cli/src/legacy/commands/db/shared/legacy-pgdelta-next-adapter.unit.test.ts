@@ -551,6 +551,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
           shadowPool,
           files: exported.files,
           allowDrops: true,
+          allowSameDatabaseIdentity: true,
           debug: true,
           formatOptions: "null",
         });
@@ -558,6 +559,7 @@ describe("LegacyPgDeltaNextAdapter", () => {
         expect(state.declarativeInputs[0]).toMatchObject({
           reorder: true,
           isolatedShadow: true,
+          allowSameDatabaseIdentity: true,
           seedAssumedSchemas: false,
           strictDataStatements: true,
         });
