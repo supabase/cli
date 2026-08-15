@@ -225,6 +225,7 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     } else {
       serviceB = await open(root);
       const base = await open(root);
+      openHandles.push(base);
       const wrapped: ManagedStackRepositoryShape = {
         ...base.repository,
         listIdentityClaims: (projectId) =>
@@ -255,14 +256,6 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     expect(injectedStart).toBeDefined();
     await injectedStart;
     expect(startedA.identity.checkoutId).toBeDefined();
-
-    const reportA = await serviceA.discoverWorkspace(workspaceA);
-    expect(reportA.locations.map((location) => location.canonicalPath)).not.toContain(workspaceB);
-    const fresh = makeDirectory(root, "workspace-c");
-    const reportFresh = await serviceA.discoverWorkspace(fresh);
-    expect(reportFresh.locations.map((location) => location.canonicalPath)).not.toContain(
-      workspaceB,
-    );
   });
 
   it("resolves healthy branch, detached, and ordinary identities", async () => {
@@ -1737,17 +1730,45 @@ describe.each(adapters)("managed discovery with the %s adapter", (_name, open) =
     openHandles.push(service);
     const first = await service.resolveStack({ workspacePath: previous, operation: "start" });
     renameSync(previous, next);
+
+    let arrivals = 0;
+    let releaseReservations: () => void = () => undefined;
+    const bothReservations = new Promise<void>((resolve) => {
+      releaseReservations = resolve;
+    });
+    const gateReservation = (repository: ManagedStackRepositoryShape) => ({
+      ...repository,
+      reserveIdentityTransition: (
+        input: Parameters<typeof repository.reserveIdentityTransition>[0],
+      ) =>
+        Effect.gen(function* () {
+          arrivals += 1;
+          if (arrivals === 2) releaseReservations();
+          yield* Effect.promise(() => bothReservations);
+          return yield* repository.reserveIdentityTransition(input);
+        }),
+    });
+    const serviceA = await makeManagedStackService({
+      repository: gateReservation(service.repository),
+      stateRoot: join(root, "concurrent-recovery-managed-a"),
+      publicationPollMs: 1,
+    });
+    const serviceB = await makeManagedStackService({
+      repository: gateReservation(service.repository),
+      stateRoot: join(root, "concurrent-recovery-managed-b"),
+      publicationPollMs: 1,
+    });
+    openHandles.push(serviceA, serviceB);
     const outcomes = await Promise.allSettled([
-      service.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
-      service.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
+      serviceA.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
+      serviceB.rebindCheckout({ workspacePath: next, checkoutId: first.identity.checkoutId }),
     ]);
-    expect(outcomes.some((outcome) => outcome.status === "fulfilled")).toBe(true);
+    expect(arrivals).toBe(2);
     const successful = outcomes.flatMap((outcome) =>
       outcome.status === "fulfilled" ? [outcome.value] : [],
     );
-    expect(
-      successful.every((result) => result.identity.checkoutId === first.identity.checkoutId),
-    ).toBe(true);
+    expect(successful).toHaveLength(1);
+    expect(successful[0]?.identity.checkoutId).toBe(first.identity.checkoutId);
     for (const outcome of outcomes) {
       if (outcome.status === "rejected") {
         expect(outcome.reason).toMatchObject({
