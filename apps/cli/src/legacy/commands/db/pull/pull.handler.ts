@@ -795,55 +795,61 @@ export const legacyDbPull = Effect.fn("legacy.db.pull")(function* (flags: Legacy
             // pooler-retry attempt still acquires and releases its own shadow — on the warm path
             // each attempt restores its own fresh container from the same cached snapshot,
             // sequentially.
-            return yield* legacyWithShadowDatabase(spawner, shadowInput, (handle) =>
-              Effect.gen(function* () {
-                const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
-                const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
-                yield* output.raw(
-                  diffSchema.length > 0
-                    ? `Diffing schemas: ${diffSchema.join(",")}\n`
-                    : "Diffing schemas...\n",
-                  "stderr",
-                );
-                if (usePgDeltaDiff) {
-                  return yield* pgDeltaEngine.diffDatabase({
-                    context: ctx,
-                    source: {
-                      kind: "database",
-                      ref: shadow.sourceUrl,
-                      connectOptions: { isLocal: true, dnsResolver: "native" },
-                    },
-                    target: {
-                      kind: "database",
-                      ref: target,
-                      ...(shadow.targetUrlOverride === undefined
-                        ? {
-                            ...(targetEndpoint.connection !== undefined
-                              ? { connection: targetEndpoint.connection }
-                              : {}),
-                            connectOptions: targetEndpoint.connectOptions,
-                          }
-                        : {
-                            connectOptions: { isLocal: true, dnsResolver },
-                          }),
-                    },
+            // `webhooks: "enabled"` matches `legacyMigrateShadowDatabase`'s forced `pg_net`
+            // baseline — the cache key must not collide with next's config-following migrate.
+            return yield* legacyWithShadowDatabase(
+              spawner,
+              shadowInput,
+              (handle) =>
+                Effect.gen(function* () {
+                  const shadow = yield* legacyPrepareShadowSource(spawner, handle, shadowInput);
+                  const target = shadow.targetUrlOverride ?? targetEndpoint.ref;
+                  yield* output.raw(
+                    diffSchema.length > 0
+                      ? `Diffing schemas: ${diffSchema.join(",")}\n`
+                      : "Diffing schemas...\n",
+                    "stderr",
+                  );
+                  if (usePgDeltaDiff) {
+                    return yield* pgDeltaEngine.diffDatabase({
+                      context: ctx,
+                      source: {
+                        kind: "database",
+                        ref: shadow.sourceUrl,
+                        connectOptions: { isLocal: true, dnsResolver: "native" },
+                      },
+                      target: {
+                        kind: "database",
+                        ref: target,
+                        ...(shadow.targetUrlOverride === undefined
+                          ? {
+                              ...(targetEndpoint.connection !== undefined
+                                ? { connection: targetEndpoint.connection }
+                                : {}),
+                              connectOptions: targetEndpoint.connectOptions,
+                            }
+                          : {
+                              connectOptions: { isLocal: true, dnsResolver },
+                            }),
+                      },
+                      schema: diffSchema,
+                      formatOptions,
+                      debug: legacyIsPgDeltaDebugEnabled(),
+                      strictCoverage: flags.strictCoverage,
+                    });
+                  }
+                  const sql = yield* legacyDiffMigra(ctx, {
+                    source: shadow.sourceUrl,
+                    target,
                     schema: diffSchema,
-                    formatOptions,
-                    debug: legacyIsPgDeltaDebugEnabled(),
-                    strictCoverage: flags.strictCoverage,
+                    connectOptions:
+                      shadow.targetUrlOverride === undefined
+                        ? targetEndpoint.connectOptions
+                        : { isLocal: true, dnsResolver },
                   });
-                }
-                const sql = yield* legacyDiffMigra(ctx, {
-                  source: shadow.sourceUrl,
-                  target,
-                  schema: diffSchema,
-                  connectOptions:
-                    shadow.targetUrlOverride === undefined
-                      ? targetEndpoint.connectOptions
-                      : { isLocal: true, dnsResolver },
-                });
-                return { sql, files: undefined, debug: undefined };
-              }),
+                  return { sql, files: undefined, debug: undefined };
+                }),
+              { webhooks: "enabled" },
             );
           });
         const diffOutcome = yield* withPoolerFallback(targetEndpoint, runShadowDiff);

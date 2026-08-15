@@ -43,7 +43,10 @@ import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
 import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
-import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-setup.ts";
+import {
+  LEGACY_START_REVOKE_API_PRIVILEGES_SQL,
+  type LegacySetupDatabaseOptions,
+} from "./db-setup.ts";
 import { LEGACY_START_DB_SCHEMA_SQL } from "./templates/db-schema.sql.ts";
 import { LEGACY_START_DB_SUPABASE_SQL } from "./templates/db-supabase.sql.ts";
 import { LEGACY_START_DB_WEBHOOK_SQL } from "./templates/db-webhook.sql.ts";
@@ -172,6 +175,15 @@ export interface LegacyShadowCacheKeyInputs {
   readonly dbSettings: ProjectConfig["db"]["settings"];
   /** Effective `api.auto_expose_new_tables` tri-state (unset ≠ explicit `false`: only the former keeps the bundled grants). */
   readonly autoExposeNewTables: Option.Option<boolean>;
+  /**
+   * Effective Webhooks/`pg_net` policy baked into the cluster — the same boolean
+   * `legacySetupDatabase` applies (`options.webhooks` resolved against
+   * `setup.webhooksEnabled`). Distinct from the raw config flag: legacy migrate
+   * forces enabled, next declarative forces disabled, and next migrate follows
+   * config. Hashed so those callers cannot share a snapshot (review: Codex/
+   * depthfirst on #6184).
+   */
+  readonly webhooksEnabled: boolean;
   /** `supabase/roles.sql`'s contents, `""` when absent. */
   readonly rolesSql: string;
   /**
@@ -272,6 +284,7 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
     `db_password=${quoted(inputs.dbPassword)}`,
     `db_settings=${legacyCanonicalJson(inputs.dbSettings)}`,
     `auto_expose_new_tables=${legacyTriStateToken(inputs.autoExposeNewTables)}`,
+    `webhooks_enabled=${legacyBoolToken(inputs.webhooksEnabled)}`,
     // Not a per-run input — see the digest's own doc comment for what it covers and why.
     `baseline_sql_digest=${LEGACY_SHADOW_BASELINE_SQL_DIGEST}`,
   ];
@@ -317,6 +330,19 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
 }
 
 /**
+ * Same resolution `legacySetupDatabase` applies (`db-setup.ts`): `"enabled"` always
+ * installs `pg_net`, `"disabled"` always removes it, `"config"` (the default) follows
+ * `setup.webhooksEnabled`.
+ */
+export function legacyEffectiveShadowWebhooksEnabled(
+  policy: LegacySetupDatabaseOptions["webhooks"],
+  webhooksEnabled: boolean,
+): boolean {
+  const webhooks = policy ?? "config";
+  return webhooks === "enabled" || (webhooks === "config" && webhooksEnabled);
+}
+
+/**
  * Resolves {@link LegacyShadowCacheKeyInputs} from the same run input the shadow container
  * itself is built from, plus `supabase/roles.sql` off disk. The service enabled flags come from
  * `setup.config` (NOT the `*EnabledForSetup` fields, which only gate JWKS resolution) because
@@ -334,8 +360,10 @@ export function legacyShadowCacheKey(inputs: LegacyShadowCacheKeyInputs): string
  * degrade the former to an uncached shadow while letting the latter propagate, without an `as`
  * cast to tell them apart.
  */
+
 const legacyResolveShadowCacheKeyInputs = <E>(
   input: LegacyShadowSetupInput<E>,
+  opts: LegacyShadowCacheOpts = {},
 ): Effect.Effect<Option.Option<LegacyShadowCacheKeyInputs>, E> =>
   Effect.gen(function* () {
     // OrioleDB (`experimental.orioledb_version`) makes the WHOLE cache ineligible, not just a
@@ -395,6 +423,10 @@ const legacyResolveShadowCacheKeyInputs = <E>(
       dbSettings: input.db.settings,
       storageTargetMigration: input.setup.storageTargetMigration,
       autoExposeNewTables: input.setup.apiAutoExposeNewTables,
+      webhooksEnabled: legacyEffectiveShadowWebhooksEnabled(
+        opts.webhooks,
+        input.setup.webhooksEnabled,
+      ),
       rolesSql,
       vault: input.setup.vault,
       jwks,
@@ -749,9 +781,16 @@ const legacyExportShadowBaseline = <E>(
  * --no-cache`'s hook: that flag documents "force fresh shadow database setup", so a run carrying
  * it must neither restore an existing snapshot nor publish a new one — exactly the uncached
  * lifecycle, regardless of the env gate (review: Codex on #6184).
+ *
+ * `webhooks` is the same policy the caller will pass to `legacySetupDatabase` /
+ * `legacySetupShadowDatabase` / `legacyMigrate*ShadowDatabase`. Defaults to `"config"`
+ * (follow `setup.webhooksEnabled`), matching {@link LegacySetupDatabaseOptions}. Hashed as
+ * the effective boolean so a forced-on legacy migrate snapshot cannot warm-restore into a
+ * next path that follows config, or a declarative shadow that forces webhooks off.
  */
 export interface LegacyShadowCacheOpts {
   readonly bypassCache?: boolean;
+  readonly webhooks?: LegacySetupDatabaseOptions["webhooks"];
 }
 
 /**
@@ -905,7 +944,7 @@ export const legacyAcquireShadowDatabase = <E>(
     // discovery request, which must not pin a Ctrl-C for its whole duration (review: Codex on
     // #6184). Interruption here simply means no container was ever created, so there is nothing
     // for a finalizer to release.
-    const keyInputs = yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input));
+    const keyInputs = yield* Effect.interruptible(legacyResolveShadowCacheKeyInputs(input, opts));
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
     const key = legacyShadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(

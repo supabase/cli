@@ -261,8 +261,13 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         return legacyToPostgresURL(setup.connConfig);
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
-    const cacheOpts = (opts: LegacyPgDeltaNextShadowInput): LegacyShadowCacheOpts =>
-      opts.bypassCache === true ? { bypassCache: true } : {};
+    const cacheOpts = (
+      opts: LegacyPgDeltaNextShadowInput,
+      webhooks: NonNullable<LegacyShadowCacheOpts["webhooks"]>,
+    ): LegacyShadowCacheOpts => ({
+      webhooks,
+      ...(opts.bypassCache === true ? { bypassCache: true } : {}),
+    });
 
     return LegacyPgDeltaNextShadow.of({
       provisionMigrations: (opts) =>
@@ -270,7 +275,7 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const port = yield* nextPort();
           const built = yield* buildNativeBase(opts);
           const input = buildNativeInput(opts, built, port);
-          return yield* provisionMigrations(input, cacheOpts(opts));
+          return yield* provisionMigrations(input, cacheOpts(opts, "config"));
         }).pipe(Effect.mapError(nextShadowError)),
       provisionPlan: (opts) =>
         Effect.gen(function* () {
@@ -279,9 +284,11 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const built = yield* buildNativeBase(opts);
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
-          const cache = cacheOpts(opts);
-          const migrations = yield* provisionMigrations(migrationsInput, cache);
-          const declarativeUrl = yield* provisionDeclarative(declarativeInput, cache);
+          const migrations = yield* provisionMigrations(migrationsInput, cacheOpts(opts, "config"));
+          const declarativeUrl = yield* provisionDeclarative(
+            declarativeInput,
+            cacheOpts(opts, "disabled"),
+          );
           return {
             ...migrations,
             declarativeUrl,

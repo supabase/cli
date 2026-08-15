@@ -40,6 +40,7 @@ import {
   LEGACY_SHADOW_BASELINE_KEEP,
   LEGACY_SHADOW_CACHE_ENV,
   legacyAcquireShadowDatabase,
+  type LegacyShadowCacheOpts,
 } from "./shadow-cache.ts";
 import { LEGACY_SHADOW_DEBUG_ENV } from "./shadow-debug.ts";
 import { legacyRemoveShadowDatabase } from "./shadow-database.ts";
@@ -400,9 +401,10 @@ const soleTarName = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, path
 const coldRun = (
   docker: ReturnType<typeof fakeDockerDaemon>,
   input: LegacyShadowSetupInput<never>,
+  opts: LegacyShadowCacheOpts = {},
 ) =>
   Effect.gen(function* () {
-    const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input);
+    const handle = yield* legacyAcquireShadowDatabase(docker.spawner, input, opts);
     yield* handle.snapshotBaseline;
     yield* legacyRemoveShadowDatabase(docker.spawner, handle.containerId);
     return handle;
@@ -807,6 +809,41 @@ describe("legacyAcquireShadowDatabase", () => {
         expect(warm.baselinePresent).toBe(true);
         expect(yield* soleTarName(fs, path)).toHaveLength(1);
         yield* legacyRemoveShadowDatabase(docker.spawner, warm.containerId);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("legacy forced-on webhooks and next config-following webhooks do not share a tar", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const input = shadowInput(fs, path);
+        // `shadowSetup.webhooksEnabled` is false, so `"config"` (next migrate) and
+        // `"disabled"` (next declarative) bake the same cluster; `"enabled"` (legacy
+        // migrate) does not and must not restore that tar.
+        yield* coldRun(docker, input, { webhooks: "config" });
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+
+        const forcedOn = yield* coldRun(docker, input, { webhooks: "enabled" });
+        expect(forcedOn.baselinePresent).toBe(false);
+        expect(yield* soleTarName(fs, path)).toHaveLength(2);
+
+        const warmConfig = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
+          webhooks: "config",
+        });
+        expect(warmConfig.baselinePresent).toBe(true);
+        const warmDisabled = yield* legacyAcquireShadowDatabase(docker.spawner, input, {
+          webhooks: "disabled",
+        });
+        expect(warmDisabled.baselinePresent).toBe(true);
+        expect(yield* soleTarName(fs, path)).toHaveLength(2);
+        yield* legacyRemoveShadowDatabase(docker.spawner, warmConfig.containerId);
+        yield* legacyRemoveShadowDatabase(docker.spawner, warmDisabled.containerId);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });

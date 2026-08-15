@@ -84,7 +84,9 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
   the root; LRU keep-8 + 14-day mtime TTL, shared across worktrees with the same settings) and
   restored into a
-  fresh container on later runs, cutting shadow provisioning from ~15s to a few seconds. Covers
+  fresh container on later runs, cutting shadow provisioning from ~15s to a few seconds. The key
+  includes the effective Webhooks/`pg_net` policy (legacy migrate forces enabled; next migrate
+  follows config; next declarative forces disabled). Covers
   migra/`db pull` via `legacyWithShadowDatabase`, and the bundled pg-delta next sync/diff
   shadows via `legacyAcquireShadowDatabase` (ephemeral host ports are not part of the cache
   key — they are not baked into PGDATA). TS-only,
@@ -96,6 +98,12 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
   a user's `roles.sql` installs (`ALTER ROLE … SET …`) apply to migrations, whereas Go's
   single-connection flow ran migrations before those defaults took effect; opting out restores
   Go's exact single-session behavior.
+- Postgres container entrypoint (`postgres.service.ts`): the init script `exec`s
+  `docker-entrypoint.sh` so Postgres is PID 1. Go leaves `sh` as PID 1, so SIGTERM is never
+  forwarded and every `docker stop` burns the full 10s grace period. Applies to
+  `supabase start`, `db start`, `--from-backup`, and shadow containers (the last is why the
+  shadow baseline cache's cold export can stop/start in ~1s). Timing is not part of the
+  Go-parity surface (ADR 0016).
 - `functions serve` per-function env discovery (CLI-2184, #6179): without `--env-file`, each
   `supabase/functions/<function-name>/.env` overrides matching values from the shared
   `supabase/functions/.env` for that Function only; an explicit `--env-file` remains the

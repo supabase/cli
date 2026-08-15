@@ -22,7 +22,7 @@ import {
   legacyBuildLocalDbContainerInputs,
   type LegacyLocalDbContainerInputs,
 } from "./db-bootstrap/local-container-inputs.ts";
-import { legacyWaitForHealthyServices } from "./db-bootstrap/health-check.ts";
+import { legacyWaitForShadowReady } from "./db-bootstrap/health-check.ts";
 import {
   legacyWithShadowDatabase,
   type LegacyShadowAcquiredHandle,
@@ -787,8 +787,8 @@ const exportViaShadowCatalog = <E, R, EP = never, RP = never>(
     // `SUPABASE_SHADOW_CACHE` unset it IS that pair (identical Docker argv, identical labels), and
     // with it set a catalog cache miss restores a key-matching PGDATA snapshot into the fresh
     // shadow instead of paying the full cold provision — the same swap `db diff`/`db pull`'s own
-    // call sites make. `shadowCacheOpts` carries `sync --no-cache`'s bypass — see
-    // `LegacyShadowCacheOpts`.
+    // call sites make. `shadowCacheOpts` carries `sync --no-cache`'s bypass and the
+    // caller's effective Webhooks policy — see `LegacyShadowCacheOpts`.
     const written = yield* legacyWithShadowDatabase(
       spawner,
       shadowInput,
@@ -998,7 +998,7 @@ export const legacyGetMigrationsCatalogRef = Effect.fnUntraced(function* (
     // `--no-cache` promises "force fresh shadow database setup" (`declarative.shared.ts`), so it
     // must ALSO bypass the shadow baseline snapshot, not just the catalog cache — otherwise a
     // warm tar would skip the very setup the flag exists to force (review: Codex on #6184).
-    { bypassCache: params.noCache },
+    { bypassCache: params.noCache, webhooks: "enabled" },
   );
 });
 
@@ -1065,9 +1065,6 @@ const legacyProvisionBaselineShadow = (
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   Effect.gen(function* () {
-    yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
-      timeoutSeconds: shadowInput.healthTimeoutSeconds,
-    });
     const connConfig: LegacyPgConnInput = {
       host: shadowInput.hostname,
       port: shadowInput.shadowPort,
@@ -1075,6 +1072,10 @@ const legacyProvisionBaselineShadow = (
       password: shadowInput.password,
       database: "postgres",
     };
+    yield* legacyWaitForShadowReady(spawner, handle.containerId, connConfig, {
+      timeoutSeconds: shadowInput.healthTimeoutSeconds,
+      image: shadowInput.image,
+    });
     yield* legacySetupShadowDatabase(
       spawner,
       {
@@ -1112,9 +1113,6 @@ const legacyProvisionDeclarativeShadow = (
   shadowInput: LegacyShadowSetupInput<LegacyDbConfigLoadError>,
 ) =>
   Effect.gen(function* () {
-    yield* legacyWaitForHealthyServices(spawner, [handle.containerId], {
-      timeoutSeconds: shadowInput.healthTimeoutSeconds,
-    });
     const connConfig: LegacyPgConnInput = {
       host: shadowInput.hostname,
       port: shadowInput.shadowPort,
@@ -1122,6 +1120,10 @@ const legacyProvisionDeclarativeShadow = (
       password: shadowInput.password,
       database: "postgres",
     };
+    yield* legacyWaitForShadowReady(spawner, handle.containerId, connConfig, {
+      timeoutSeconds: shadowInput.healthTimeoutSeconds,
+      image: shadowInput.image,
+    });
     yield* legacySetupShadowDatabase(
       spawner,
       {
@@ -1223,6 +1225,7 @@ export const legacyExportBaselineCatalogRef = (
               snapshot,
             )
           : legacyWriteCatalogFile(fs, tempDir, cachePath, snapshot),
+      { bypassCache: params.noCache, webhooks: "config" },
     );
   });
 
@@ -1313,5 +1316,6 @@ export const legacyExportDeclarativeCatalogRef = (
                 timestamp,
               );
             }),
+      { bypassCache: params.noCache, webhooks: "config" },
     );
   });
