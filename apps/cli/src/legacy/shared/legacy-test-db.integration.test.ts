@@ -122,6 +122,9 @@ function mockDockerRun(opts: {
   stdout?: ReadonlyArray<string>;
 }) {
   let lastOpts: LegacyDockerRunOpts | undefined;
+  let lastStreamOpts:
+    | { readonly teeStderr?: boolean; readonly captureStderr?: boolean }
+    | undefined;
   const layer = Layer.succeed(LegacyDockerRun, {
     run: (runOpts) => {
       lastOpts = runOpts;
@@ -149,6 +152,7 @@ function mockDockerRun(opts: {
     },
     runStream: (runOpts, streamOpts) => {
       lastOpts = runOpts;
+      lastStreamOpts = streamOpts;
       return opts.runFails === true
         ? Effect.fail(
             new LegacyDockerRunError({
@@ -170,6 +174,9 @@ function mockDockerRun(opts: {
     layer,
     get lastOpts() {
       return lastOpts;
+    },
+    get lastStreamOpts() {
+      return lastStreamOpts;
     },
   };
 }
@@ -498,6 +505,17 @@ describe("legacy test db integration", () => {
     return Effect.gen(function* () {
       const exit = yield* Effect.exit(legacyTestDb(flags()));
       expect(Exit.isSuccess(exit)).toBe(true);
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.live("tees container stderr without retaining it, as inheriting stdio did", () => {
+    // A pgTAP suite's psql notices are unbounded; buffering them for a string nothing
+    // reads would grow with the whole run (PR #6210 review).
+    const { layer, docker } = setup();
+    return Effect.gen(function* () {
+      yield* legacyTestDb(flags());
+      expect(docker.lastStreamOpts?.teeStderr).toBe(true);
+      expect(docker.lastStreamOpts?.captureStderr).toBe(false);
     }).pipe(Effect.provide(layer));
   });
 

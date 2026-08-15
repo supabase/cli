@@ -236,7 +236,10 @@ export const legacyTestDb = Effect.fn("legacy.test.db")(function* (flags: Legacy
                 }
                 return output.rawBytes(chunk, "stdout");
               }),
+            // Teed straight to the terminal as inheriting it did; nothing here reads
+            // the buffered copy, and a pgTAP suite's psql notices are unbounded.
             teeStderr: true,
+            captureStderr: false,
           },
         );
       }),
