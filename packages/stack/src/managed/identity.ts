@@ -234,50 +234,52 @@ export const publishOrdinaryWorkspaceIdentity = (
   temporaryId: string = randomUUID(),
 ): Effect.Effect<EnsureOrdinaryWorkspaceIdentityResult, InvalidManagedIdentityError> =>
   failsWithIdentity(
-    Effect.tryPromise({
-      try: async () => {
-        const existing = await readIdentity(workspacePath);
-        const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
-        const target: OrdinaryWorkspaceIdentity = {
-          version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
-          projectId: assertManagedUuid(identity.projectId, "projectId"),
-          checkoutId: assertManagedUuid(identity.checkoutId, "checkoutId"),
-          contextId: assertManagedUuid(identity.contextId, "contextId"),
-        };
-        if (existing !== undefined) {
+    Effect.uninterruptible(
+      Effect.tryPromise({
+        try: async () => {
+          const existing = await readIdentity(workspacePath);
+          const markerPath = ordinaryWorkspaceIdentityPath(workspacePath);
+          const target: OrdinaryWorkspaceIdentity = {
+            version: ORDINARY_WORKSPACE_IDENTITY_VERSION,
+            projectId: assertManagedUuid(identity.projectId, "projectId"),
+            checkoutId: assertManagedUuid(identity.checkoutId, "checkoutId"),
+            contextId: assertManagedUuid(identity.contextId, "contextId"),
+          };
+          if (existing !== undefined) {
+            if (
+              existing.projectId !== target.projectId ||
+              existing.checkoutId !== target.checkoutId ||
+              existing.contextId !== target.contextId
+            ) {
+              throw new InvalidManagedIdentityError({
+                message: "Ordinary workspace identity changed before recovery publication",
+              });
+            }
+            return { identity: existing, created: false, markerPath };
+          }
+          await mkdir(dirname(markerPath), { recursive: true });
+          const outcome = await claimFileAtomically(
+            markerPath,
+            `${JSON.stringify(target, null, 2)}\n`,
+            { mode: 0o600, temporaryId: assertManagedUuid(temporaryId, "identity temporary id") },
+          );
+          if (outcome === "claimed") return { identity: target, created: true, markerPath };
+          const winner = await readIdentity(workspacePath);
           if (
-            existing.projectId !== target.projectId ||
-            existing.checkoutId !== target.checkoutId ||
-            existing.contextId !== target.contextId
+            winner === undefined ||
+            winner.projectId !== target.projectId ||
+            winner.checkoutId !== target.checkoutId ||
+            winner.contextId !== target.contextId
           ) {
             throw new InvalidManagedIdentityError({
-              message: "Ordinary workspace identity changed before recovery publication",
+              message: "Ordinary workspace identity publication raced without the requested winner",
             });
           }
-          return { identity: existing, created: false, markerPath };
-        }
-        await mkdir(dirname(markerPath), { recursive: true });
-        const outcome = await claimFileAtomically(
-          markerPath,
-          `${JSON.stringify(target, null, 2)}\n`,
-          { mode: 0o600, temporaryId: assertManagedUuid(temporaryId, "identity temporary id") },
-        );
-        if (outcome === "claimed") return { identity: target, created: true, markerPath };
-        const winner = await readIdentity(workspacePath);
-        if (
-          winner === undefined ||
-          winner.projectId !== target.projectId ||
-          winner.checkoutId !== target.checkoutId ||
-          winner.contextId !== target.contextId
-        ) {
-          throw new InvalidManagedIdentityError({
-            message: "Ordinary workspace identity publication raced without the requested winner",
-          });
-        }
-        return { identity: winner, created: false, markerPath };
-      },
-      catch: asRaised,
-    }),
+          return { identity: winner, created: false, markerPath };
+        },
+        catch: asRaised,
+      }),
+    ),
   );
 
 /**
