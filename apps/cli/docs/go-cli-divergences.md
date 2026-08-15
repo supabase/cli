@@ -81,7 +81,9 @@ These commands exist in the TS CLI today but have no direct top-level equivalent
 
 - `db diff`/`db pull`/`db schema declarative sync` shadow baseline cache (#6184): the shadow
   database's platform baseline is cached as a PGDATA snapshot under
-  `supabase/.temp/pgdelta/shadow-baseline-<key>.tar` (~90MB, current key only) and restored into a
+  `~/.supabase/cache/shadow-baseline/shadow-baseline-<key>.tar` (~90MB; `SUPABASE_HOME` overrides
+  the root; LRU keep-8 + 14-day mtime TTL, shared across worktrees with the same settings) and
+  restored into a
   fresh container on later runs, cutting shadow provisioning from ~15s to a few seconds. TS-only,
   default ON; `SUPABASE_SHADOW_CACHE=false`/`=0` opts out (ambient env or project dotenv), `sync
 --no-cache` bypasses it per-invocation, and `SUPABASE_SHADOW_DEBUG=1` prints stderr-only phase

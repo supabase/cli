@@ -2,9 +2,12 @@ import { describe, expect, it } from "@effect/vitest";
 import { Option } from "effect";
 
 import {
+  LEGACY_SHADOW_BASELINE_KEEP,
+  LEGACY_SHADOW_BASELINE_MAX_AGE_MS,
   legacyIsShadowBaselinePartial,
-  legacyIsStaleShadowBaselineTar,
+  legacyIsShadowBaselineTar,
   legacyShadowBaselineTarFileName,
+  legacyShadowBaselineTarsToEvict,
   legacyShadowCacheEnabled,
   legacyShadowCacheKey,
   type LegacyShadowCacheKeyInputs,
@@ -308,20 +311,30 @@ describe("legacyShadowCacheKey", () => {
 });
 describe("shadow baseline tar retention", () => {
   const key = "0123456789abcdef";
+  const now = 1_700_000_000_000;
 
-  it("keeps the current key's snapshot and sweeps every other key's", () => {
-    expect(legacyIsStaleShadowBaselineTar(legacyShadowBaselineTarFileName(key), key)).toBe(false);
-    expect(legacyIsStaleShadowBaselineTar("shadow-baseline-fedcba9876543210.tar", key)).toBe(true);
+  it("recognizes only this module's own published snapshots", () => {
+    expect(legacyIsShadowBaselineTar(legacyShadowBaselineTarFileName(key))).toBe(true);
+    for (const other of [
+      "catalog-local-migrations-abc-123.json",
+      "shadow-baseline.tar",
+      `shadow-baseline-${key}.tar.4242.partial`,
+      `shadow-cache-${key}.json`,
+      "pgdelta-debug.zip",
+      // Wrong key length / non-hex.
+      "shadow-baseline-0123456789abcde.tar",
+      "shadow-baseline-0123456789abcdefg.tar",
+      "shadow-baseline-0123456789ABCDEF.tar",
+    ]) {
+      expect(legacyIsShadowBaselineTar(other), other).toBe(false);
+    }
   });
 
   it("recognizes only this module's own partial temp files as abandoned-sweep candidates", () => {
     expect(legacyIsShadowBaselinePartial(`shadow-baseline-${key}.tar.4242.partial`)).toBe(true);
     for (const other of [
-      // The published artifact and other keys' artifacts are the tar sweep's business, not this
-      // predicate's.
       legacyShadowBaselineTarFileName(key),
       "shadow-baseline-fedcba9876543210.tar",
-      // Anything not exactly `<prefix><16-hex>.tar.<pid>.partial` is left alone.
       "shadow-baseline.tar.4242.partial",
       `shadow-baseline-${key}.tar.partial`,
       `shadow-baseline-${key}.tar.4242.partial.bak`,
@@ -331,18 +344,56 @@ describe("shadow baseline tar retention", () => {
     }
   });
 
-  it("never sweeps a file that is not one of this module's own snapshots", () => {
-    // `supabase/.temp/pgdelta/` is shared with the pg-delta catalog cache and its debug bundles —
-    // the retention rule must be blind to everything but its own prefix AND suffix, or a `db diff`
-    // would delete the catalog cache it depends on.
-    for (const other of [
-      "catalog-local-migrations-abc-123.json",
-      "shadow-baseline.tar",
-      `shadow-baseline-${key}.tar.4242.partial`,
-      `shadow-cache-${key}.json`,
-      "pgdelta-debug.zip",
-    ]) {
-      expect(legacyIsStaleShadowBaselineTar(other, key), other).toBe(false);
-    }
+  it("evicts aged tars and keeps the newest N among survivors", () => {
+    const aged = now - LEGACY_SHADOW_BASELINE_MAX_AGE_MS - 1;
+    const fresh = now - 1_000;
+    const entries = [
+      { fileName: legacyShadowBaselineTarFileName("aaaaaaaaaaaaaaaa"), mtimeMs: aged },
+      { fileName: legacyShadowBaselineTarFileName("bbbbbbbbbbbbbbbb"), mtimeMs: fresh },
+      { fileName: legacyShadowBaselineTarFileName("cccccccccccccccc"), mtimeMs: fresh - 10 },
+      { fileName: "catalog-abc.json", mtimeMs: aged },
+      { fileName: `shadow-baseline-${key}.tar.1.partial`, mtimeMs: aged },
+    ];
+    expect(
+      legacyShadowBaselineTarsToEvict(entries, now, {
+        keep: 1,
+        maxAgeMs: LEGACY_SHADOW_BASELINE_MAX_AGE_MS,
+      }),
+    ).toEqual([
+      legacyShadowBaselineTarFileName("aaaaaaaaaaaaaaaa"),
+      legacyShadowBaselineTarFileName("cccccccccccccccc"),
+    ]);
+  });
+
+  it("evicts the oldest beyond the keep cap when all are fresh", () => {
+    const entries = Array.from({ length: LEGACY_SHADOW_BASELINE_KEEP + 2 }, (_, index) => ({
+      fileName: legacyShadowBaselineTarFileName(index.toString(16).padStart(16, "0")),
+      mtimeMs: now - index * 1_000,
+    }));
+    const evicted = legacyShadowBaselineTarsToEvict(entries, now);
+    expect(evicted).toHaveLength(2);
+    expect(evicted).toContain(
+      legacyShadowBaselineTarFileName(LEGACY_SHADOW_BASELINE_KEEP.toString(16).padStart(16, "0")),
+    );
+    expect(evicted).toContain(
+      legacyShadowBaselineTarFileName(
+        (LEGACY_SHADOW_BASELINE_KEEP + 1).toString(16).padStart(16, "0"),
+      ),
+    );
+  });
+
+  it("never returns a file that is not one of this module's own snapshots", () => {
+    expect(
+      legacyShadowBaselineTarsToEvict(
+        [
+          { fileName: "catalog-local-migrations-abc-123.json", mtimeMs: 0 },
+          { fileName: "shadow-baseline.tar", mtimeMs: 0 },
+          { fileName: `shadow-baseline-${key}.tar.4242.partial`, mtimeMs: 0 },
+          { fileName: `shadow-cache-${key}.json`, mtimeMs: 0 },
+          { fileName: "pgdelta-debug.zip", mtimeMs: 0 },
+        ],
+        now,
+      ),
+    ).toEqual([]);
   });
 });

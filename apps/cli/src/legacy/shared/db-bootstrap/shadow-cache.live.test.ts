@@ -17,6 +17,8 @@
  * so a bare cluster is a faithful stand-in for it.
  */
 
+import { join } from "node:path";
+
 import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
@@ -29,6 +31,7 @@ import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { dockerfileServiceImage } from "../../../shared/services/dockerfile-images.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import { legacyDbConnectionLayer } from "../legacy-db-connection.layer.ts";
+import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
 import { legacyWaitForShadowReady } from "./health-check.ts";
 import {
   LEGACY_SHADOW_CACHE_ENV,
@@ -54,7 +57,11 @@ describeLive("shadow baseline cache (live Docker)", () => {
         const path = yield* Path.Path;
         const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
         const workdir = yield* fs.makeTempDirectoryScoped({ prefix: "legacy-shadow-cache-live-" });
+        const supabaseHome = yield* fs.makeTempDirectoryScoped({
+          prefix: "legacy-shadow-cache-home-",
+        });
         yield* fs.makeDirectory(path.join(workdir, "supabase"), { recursive: true });
+        process.env.SUPABASE_HOME = supabaseHome;
 
         const setup: LegacyShadowDbSetupInput<never> = {
           majorVersion: 17,
@@ -168,13 +175,15 @@ describeLive("shadow baseline cache (live Docker)", () => {
         );
         yield* legacyRemoveShadowDatabase(spawner, warm.containerId);
 
-        // The artifact is a plain file under the project's own temp dir — the property that lets a
-        // future native (non-Docker) Postgres service consume the same snapshot.
-        const tempDir = path.join(workdir, "supabase", ".temp", "pgdelta");
+        // The artifact is a plain file under the global per-settings cache — the property that
+        // lets worktrees with the same settings share a warm hit, and a future native (non-Docker)
+        // Postgres service consume the same snapshot.
+        const tempDir = legacyShadowBaselineCacheDir(path);
         const entries = yield* fs.readDirectory(tempDir);
         const tars = entries.filter((entry) => entry.endsWith(".tar"));
         expect(tars).toHaveLength(1);
         expect(tars[0]).toMatch(/^shadow-baseline-[0-9a-f]{16}\.tar$/u);
+        expect(tempDir).toBe(join(supabaseHome, "cache", "shadow-baseline"));
         expect(legacyShadowBaselineTarFileName("0".repeat(16))).toBe(
           `shadow-baseline-${"0".repeat(16)}.tar`,
         );

@@ -10,6 +10,8 @@
  * (the export must stop the container before copying and start it again afterwards).
  */
 
+import { join } from "node:path";
+
 import type { ProjectConfig } from "@supabase/config";
 import { ProjectConfigSchema } from "@supabase/config";
 import { BunServices } from "@effect/platform-bun";
@@ -32,8 +34,13 @@ import { useLegacyTempWorkdir } from "../../../../tests/helpers/legacy-mocks.ts"
 import { mockOutput } from "../../../../tests/helpers/mocks.ts";
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import { LegacyDbConnectError } from "../legacy-db-connection.errors.ts";
+import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
 import { LEGACY_PGDATA_PARENT_PATH, LEGACY_PGDATA_PATH } from "./pgdata-snapshot.ts";
-import { LEGACY_SHADOW_CACHE_ENV, legacyAcquireShadowDatabase } from "./shadow-cache.ts";
+import {
+  LEGACY_SHADOW_BASELINE_KEEP,
+  LEGACY_SHADOW_CACHE_ENV,
+  legacyAcquireShadowDatabase,
+} from "./shadow-cache.ts";
 import { LEGACY_SHADOW_DEBUG_ENV } from "./shadow-debug.ts";
 import { legacyRemoveShadowDatabase } from "./shadow-database.ts";
 import type { LegacyShadowDbSetupInput, LegacyShadowSetupInput } from "./shadow-database.ts";
@@ -66,6 +73,20 @@ const withEnv = <A, E, R>(
 
 const withShadowCacheEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
   withEnv(LEGACY_SHADOW_CACHE_ENV, value, body);
+
+/**
+ * Isolates the global shadow-baseline cache under a per-test `SUPABASE_HOME` so tests never
+ * write into the developer's real `~/.supabase`. Nested with the opt-in/opt-out gate.
+ */
+const withShadowCacheHome = <A, E, R>(
+  value: string | undefined,
+  body: Effect.Effect<A, E, R>,
+): Effect.Effect<A, E, R> =>
+  withEnv(
+    "SUPABASE_HOME",
+    join(tempRoot.current, "_supabase_home"),
+    withShadowCacheEnv(value, body),
+  );
 
 const withShadowDebugEnv = <A, E, R>(value: string | undefined, body: Effect.Effect<A, E, R>) =>
   withEnv(LEGACY_SHADOW_DEBUG_ENV, value, body);
@@ -365,13 +386,12 @@ const shadowInput = (
   setup: shadowSetup(),
 });
 
-const pgDeltaTempDir = (path: Path.Path) =>
-  path.join(tempRoot.current, "supabase", ".temp", "pgdelta");
+const shadowCacheDir = (path: Path.Path) => legacyShadowBaselineCacheDir(path);
 
-/** The one snapshot tar in the temp dir, whatever key it belongs to. */
+/** The snapshot tars in the global cache dir, whatever keys they belong to. */
 const soleTarName = Effect.fnUntraced(function* (fs: FileSystem.FileSystem, path: Path.Path) {
   const entries = yield* fs
-    .readDirectory(pgDeltaTempDir(path))
+    .readDirectory(shadowCacheDir(path))
     .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
   return entries.filter((entry) => entry.endsWith(".tar"));
 });
@@ -393,7 +413,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "0",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -420,7 +440,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -448,7 +468,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -476,7 +496,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -487,7 +507,7 @@ describe("legacyAcquireShadowDatabase", () => {
         // partial predates the hour threshold. Every later run is warm, so the warm branch
         // must be the one to sweep it.
         const abandoned = path.join(
-          pgDeltaTempDir(path),
+          shadowCacheDir(path),
           "shadow-baseline-0011223344556677.tar.4242.partial",
         );
         yield* fs.writeFileString(abandoned, "stale");
@@ -505,7 +525,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -530,7 +550,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       undefined,
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -546,7 +566,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -582,10 +602,10 @@ describe("legacyAcquireShadowDatabase", () => {
         const tars = yield* soleTarName(fs, path);
         expect(tars).toHaveLength(1);
         expect(tars[0]).toMatch(/^shadow-baseline-[0-9a-f]{16}\.tar$/u);
-        expect(yield* fs.readFileString(path.join(pgDeltaTempDir(path), tars[0] ?? ""))).toBe(
+        expect(yield* fs.readFileString(path.join(shadowCacheDir(path), tars[0] ?? ""))).toBe(
           FAKE_PGDATA_TAR,
         );
-        const leftovers = yield* fs.readDirectory(pgDeltaTempDir(path));
+        const leftovers = yield* fs.readDirectory(shadowCacheDir(path));
         expect(leftovers.filter((entry) => entry.includes("partial"))).toEqual([]);
 
         // Release is the uncached removal, same as ever — nothing is kept.
@@ -599,7 +619,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -638,13 +658,13 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         const input = shadowInput(fs, path);
-        const tempDir = pgDeltaTempDir(path);
+        const tempDir = shadowCacheDir(path);
         yield* fs.makeDirectory(tempDir, { recursive: true });
         // An adversarially (or crash-) pre-created temp file at THIS process's own temp path,
         // world-readable. The export must not inherit its mode: the pre-remove + `wx`
@@ -671,12 +691,12 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
-        const tempDir = pgDeltaTempDir(path);
+        const tempDir = shadowCacheDir(path);
         yield* fs.makeDirectory(tempDir, { recursive: true });
         // A SIGKILLed export's leftover (writer long gone — hour-plus-old mtime) and a
         // concurrent writer's live temp file (fresh mtime).
@@ -696,31 +716,71 @@ describe("legacyAcquireShadowDatabase", () => {
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
 
-  it.live("publishing a new key's tar sweeps every other key's", () => {
+  it.live("publishing distinct keys keeps both tars until LRU/TTL eviction", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const path = yield* Path.Path;
         yield* coldRun(docker, shadowInput(fs, path));
-        const stale = yield* soleTarName(fs, path);
-        expect(stale).toHaveLength(1);
+        const first = yield* soleTarName(fs, path);
+        expect(first).toHaveLength(1);
 
-        // A changed baseline input (the shadow's own published port) is a different cluster, so
-        // its snapshot is a different key — and ~90MB each means only the current one is kept.
+        // A changed baseline input (the shadow's own published port) is a different cluster /
+        // different key — both must coexist in the global cache (unlike the old project-local
+        // current-key-only sweep, which would have deleted the first).
         const rekeyed = yield* coldRun(docker, shadowInput(fs, path, { shadowPort: 54399 }));
-        const fresh = yield* soleTarName(fs, path);
-        expect(fresh).toHaveLength(1);
-        expect(fresh[0]).not.toBe(stale[0]);
+        const both = yield* soleTarName(fs, path);
+        expect(both).toHaveLength(2);
+        expect(both).toContain(first[0]);
         expect(rekeyed.baselinePresent).toBe(false);
 
-        // An unrelated file in the same shared temp directory is untouched.
-        yield* fs.writeFileString(path.join(pgDeltaTempDir(path), "catalog-abc.json"), "{}");
-        yield* coldRun(docker, shadowInput(fs, path, { shadowPort: 54398 }));
-        expect(yield* fs.exists(path.join(pgDeltaTempDir(path), "catalog-abc.json"))).toBe(true);
+        // An unrelated file in the cache directory is untouched by retention.
+        const stray = path.join(shadowCacheDir(path), "catalog-abc.json");
+        yield* fs.writeFileString(stray, "{}");
+
+        // Fill to the keep-cap + 1 with more distinct keys; the oldest (first) is evicted.
+        for (let i = 0; i < LEGACY_SHADOW_BASELINE_KEEP - 1; i++) {
+          yield* coldRun(docker, shadowInput(fs, path, { shadowPort: 54400 + i }));
+        }
+        const afterCap = yield* soleTarName(fs, path);
+        expect(afterCap).toHaveLength(LEGACY_SHADOW_BASELINE_KEEP);
+        expect(afterCap).not.toContain(first[0]);
+        expect(yield* fs.exists(stray)).toBe(true);
+      }),
+    ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
+  });
+
+  it.live("worktrees with identical settings share a warm hit from the global cache", () => {
+    const docker = fakeDockerDaemon();
+    const cluster = fakeCluster();
+    const out = mockOutput();
+    return withShadowCacheHome(
+      "1",
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const worktreeA = path.join(tempRoot.current, "worktree-a");
+        const worktreeB = path.join(tempRoot.current, "worktree-b");
+        yield* fs.makeDirectory(path.join(worktreeA, "supabase"), { recursive: true });
+        yield* fs.makeDirectory(path.join(worktreeB, "supabase"), { recursive: true });
+
+        const cold = yield* coldRun(docker, { ...shadowInput(fs, path), workdir: worktreeA });
+        expect(cold.baselinePresent).toBe(false);
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+
+        // Same settings, different project path — the second worktree must restore, not re-export.
+        const warm = yield* legacyAcquireShadowDatabase(docker.spawner, {
+          ...shadowInput(fs, path),
+          workdir: worktreeB,
+        });
+        expect(warm.baselinePresent).toBe(true);
+        expect(warm.containerId).not.toBe(cold.containerId);
+        expect(yield* soleTarName(fs, path)).toHaveLength(1);
+        yield* legacyRemoveShadowDatabase(docker.spawner, warm.containerId);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
@@ -729,7 +789,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -749,8 +809,10 @@ describe("legacyAcquireShadowDatabase", () => {
         );
         expect(mirrored.baselinePresent).toBe(false);
         const mirroredTar = yield* soleTarName(fs, path);
-        expect(mirroredTar).toHaveLength(1);
-        expect(mirroredTar[0]).not.toBe(defaultRegistryTar[0]);
+        // Distinct keys coexist in the global cache — the default-registry tar is not swept.
+        expect(mirroredTar).toHaveLength(2);
+        expect(mirroredTar).toContain(defaultRegistryTar[0]);
+        expect(mirroredTar.some((name) => name !== defaultRegistryTar[0])).toBe(true);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
   });
@@ -761,7 +823,7 @@ describe("legacyAcquireShadowDatabase", () => {
       const docker = fakeDockerDaemon({ failRestart: true });
       const cluster = fakeCluster();
       const out = mockOutput();
-      return withShadowCacheEnv(
+      return withShadowCacheHome(
         "1",
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -783,7 +845,7 @@ describe("legacyAcquireShadowDatabase", () => {
     const docker = fakeDockerDaemon({ failCopyOut: true });
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -796,7 +858,7 @@ describe("legacyAcquireShadowDatabase", () => {
         // The caller is about to reconnect, so the container is running again regardless.
         expect(docker.containers.get(handle.containerId)?.running).toBe(true);
         // Neither a published tar nor a half-written temp file survives.
-        const entries = yield* fs.readDirectory(pgDeltaTempDir(path));
+        const entries = yield* fs.readDirectory(shadowCacheDir(path));
         expect(entries).toEqual([]);
       }),
     ).pipe(Effect.provide(Layer.mergeAll(BunServices.layer, out.layer, cluster.layer)));
@@ -808,7 +870,7 @@ describe("legacyAcquireShadowDatabase", () => {
       const docker = fakeDockerDaemon({ failCopyIn: true });
       const cluster = fakeCluster();
       const out = mockOutput();
-      return withShadowCacheEnv(
+      return withShadowCacheHome(
         "1",
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
@@ -841,7 +903,7 @@ describe("legacyAcquireShadowDatabase", () => {
   it.live("a restored shadow that never becomes ready is removed before the cold retry", () => {
     const docker = fakeDockerDaemon();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -878,7 +940,7 @@ describe("SUPABASE_SHADOW_DEBUG phase-timing instrumentation", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -909,7 +971,7 @@ describe("SUPABASE_SHADOW_DEBUG phase-timing instrumentation", () => {
     const docker = fakeDockerDaemon();
     const cluster = fakeCluster();
     const out = mockOutput();
-    return withShadowCacheEnv(
+    return withShadowCacheHome(
       "1",
       withShadowDebugEnv(
         undefined,

@@ -20,9 +20,10 @@
  * a warm-path anomaly cold-provisions (deleting the tar only when its contents are implicated —
  * see `LegacyShadowCacheUnavailable.tarSuspect`), a cold export failure only warns and leaves the
  * run uncached (with ONE deliberate exception: a shadow that fails to come back up after the
- * snapshot fails the run — see `legacyExportShadowBaseline`); retention keeps the current key's
- * tar only, sweeping every other one on
- * publish. `SUPABASE_SHADOW_CACHE` is ON by default; `false`/`0` opts out.
+ * snapshot fails the run — see `legacyExportShadowBaseline`); tars live under the global
+ * `${SUPABASE_HOME}/cache/shadow-baseline/` (shared across worktrees with the same settings),
+ * with LRU (keep 8) + 14-day mtime TTL retention. `SUPABASE_SHADOW_CACHE` is ON by default;
+ * `false`/`0` opts out.
  */
 
 import { createHash } from "node:crypto";
@@ -39,7 +40,7 @@ import {
 import { LegacyDbConnection } from "../legacy-db-connection.service.ts";
 import type { LegacyPgConnInput } from "../legacy-db-connection.service.ts";
 import { legacyGetRegistryImageUrl } from "../legacy-docker-registry.ts";
-import { legacyPgDeltaTempPath } from "../legacy-pgdelta.paths.ts";
+import { legacyShadowBaselineCacheDir } from "../legacy-pgdelta.paths.ts";
 import { legacyParseBoolEnv } from "../legacy-diff-engine.ts";
 import { LEGACY_POSTGRES_DEFAULT_ROOT_KEY } from "../legacy-local-config-values.ts";
 import { LEGACY_START_REVOKE_API_PRIVILEGES_SQL } from "./db-setup.ts";
@@ -254,7 +255,7 @@ const legacyTriStateToken = (value: Option.Option<boolean>) =>
 
 /**
  * The cache key: a 16-hex-char (64-bit) sha256 prefix over a fixed field order. 64 bits is
- * ample for a per-project local cache whose only cost of a collision would be a wrong baseline
+ * ample for a per-settings global cache whose only cost of a collision would be a wrong baseline
  * — and every genuinely divergent input is in the payload, so a collision needs an actual hash
  * collision, not a missed field. Short enough to read in a filename.
  */
@@ -423,29 +424,72 @@ const legacyResolveShadowCacheKeyInputs = <E>(
 // The tar artifact
 // ---------------------------------------------------------------------------
 
-/** Filename prefix shared by every key's snapshot — the handle the stale-key sweep enumerates by. */
+/** Filename prefix shared by every key's snapshot — the handle the retention sweep enumerates by. */
 const LEGACY_SHADOW_BASELINE_TAR_PREFIX = "shadow-baseline-";
 
 const LEGACY_SHADOW_BASELINE_TAR_SUFFIX = ".tar";
 
-/** `shadow-baseline-<key>.tar` under `supabase/.temp/pgdelta/` — one ~90MB file per key. */
+/** Cap on published tars in the global cache (~90MB each → ~720MB). */
+export const LEGACY_SHADOW_BASELINE_KEEP = 8;
+
+/** Drop published tars whose mtime is older than this (warm hits refresh mtime). */
+export const LEGACY_SHADOW_BASELINE_MAX_AGE_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * `shadow-baseline-<key>.tar` under `${SUPABASE_HOME}/cache/shadow-baseline/` — one ~90MB file
+ * per settings key, shared across worktrees.
+ */
 export function legacyShadowBaselineTarFileName(key: string): string {
   return `${LEGACY_SHADOW_BASELINE_TAR_PREFIX}${key}${LEGACY_SHADOW_BASELINE_TAR_SUFFIX}`;
 }
 
 /**
- * Whether `fileName` is a baseline snapshot belonging to some OTHER key — i.e. one the "current
- * key only" retention rule removes when a new key's snapshot is published. Pure, so the retention
- * rule is unit-testable without a filesystem, and deliberately conservative: only files matching
- * this module's own prefix AND suffix are ever candidates, so nothing else in
- * `supabase/.temp/pgdelta/` (catalog snapshots, debug bundles) can be swept by accident.
+ * Whether `fileName` is a published baseline snapshot (`shadow-baseline-<key>.tar`). Pure and
+ * deliberately conservative: only this module's own prefix AND suffix, so partials
+ * (`…tar.<pid>.partial`) and any unrelated file in the cache dir are never eviction candidates.
  */
-export function legacyIsStaleShadowBaselineTar(fileName: string, key: string): boolean {
+export function legacyIsShadowBaselineTar(fileName: string): boolean {
   return (
     fileName.startsWith(LEGACY_SHADOW_BASELINE_TAR_PREFIX) &&
     fileName.endsWith(LEGACY_SHADOW_BASELINE_TAR_SUFFIX) &&
-    fileName !== legacyShadowBaselineTarFileName(key)
+    fileName.length ===
+      LEGACY_SHADOW_BASELINE_TAR_PREFIX.length + 16 + LEGACY_SHADOW_BASELINE_TAR_SUFFIX.length &&
+    /^shadow-baseline-[0-9a-f]{16}\.tar$/u.test(fileName)
   );
+}
+
+/** One published tar as the LRU/TTL rule sees it — name + mtime, no filesystem. */
+export interface LegacyShadowBaselineTarEntry {
+  readonly fileName: string;
+  readonly mtimeMs: number;
+}
+
+export interface LegacyShadowBaselineRetentionOpts {
+  readonly keep?: number;
+  readonly maxAgeMs?: number;
+}
+
+/**
+ * Pure LRU + age eviction: drop every published tar older than `maxAgeMs`, then among the
+ * survivors keep the newest `keep` by mtime. Never returns non-tar names (catalogs, partials).
+ * Unit-testable without a filesystem.
+ */
+export function legacyShadowBaselineTarsToEvict(
+  entries: ReadonlyArray<LegacyShadowBaselineTarEntry>,
+  now: number,
+  opts: LegacyShadowBaselineRetentionOpts = {},
+): ReadonlyArray<string> {
+  const keep = opts.keep ?? LEGACY_SHADOW_BASELINE_KEEP;
+  const maxAgeMs = opts.maxAgeMs ?? LEGACY_SHADOW_BASELINE_MAX_AGE_MS;
+  const candidates = entries.filter((entry) => legacyIsShadowBaselineTar(entry.fileName));
+  const aged = new Set(
+    candidates.filter((entry) => now - entry.mtimeMs > maxAgeMs).map((entry) => entry.fileName),
+  );
+  const newestFirst = candidates
+    .filter((entry) => !aged.has(entry.fileName))
+    .sort((left, right) => right.mtimeMs - left.mtimeMs);
+  const overCap = newestFirst.slice(keep).map((entry) => entry.fileName);
+  return [...aged, ...overCap];
 }
 
 /** Best-effort removal — a leftover tar only ever costs disk, never correctness. */
@@ -476,24 +520,23 @@ const LEGACY_SHADOW_PARTIAL_ABANDON_MS = 60 * 60 * 1000;
  * Removes abandoned `.partial` temp files (see {@link legacyIsShadowBaselinePartial}) — the one
  * artifact a SIGKILLed/crashed cold export leaves behind that nothing else ever cleans: later
  * runs use their own pid in the temp name, and the tar retention sweep deliberately ignores
- * `.partial` names (review: Codex on #6184). Runs before every cold export (so orphans cannot
- * accumulate across repeatedly killed provisions) — best-effort throughout, like every other
- * sweep here.
+ * `.partial` names (review: Codex on #6184). Runs before every cold export and on warm hits (so
+ * orphans cannot accumulate once every later run goes warm) — best-effort throughout.
  */
 const legacySweepAbandonedShadowBaselinePartials = <E>(
   input: LegacyShadowSetupInput<E>,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const tempDir = legacyPgDeltaTempPath(input.path, input.workdir);
+    const cacheDir = legacyShadowBaselineCacheDir(input.path);
     const entries = yield* input.fs
-      .readDirectory(tempDir)
+      .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
     const now = yield* Clock.currentTimeMillis;
     yield* Effect.forEach(
       entries.filter(legacyIsShadowBaselinePartial),
       (entry) =>
         Effect.gen(function* () {
-          const filePath = input.path.join(tempDir, entry);
+          const filePath = input.path.join(cacheDir, entry);
           const info = yield* input.fs.stat(filePath);
           const mtime = Option.getOrUndefined(info.mtime);
           if (mtime !== undefined && now - mtime.getTime() > LEGACY_SHADOW_PARTIAL_ABANDON_MS) {
@@ -505,25 +548,46 @@ const legacySweepAbandonedShadowBaselinePartials = <E>(
   });
 
 /**
- * Applies the "current key only" retention rule: every `shadow-baseline-*.tar` in the temp
- * directory whose key differs from `key` is removed. Best-effort throughout — a snapshot that
- * cannot be swept costs ~90MB of disk, so it must never fail the export that just succeeded.
+ * Applies the global-cache LRU + TTL retention rule (see {@link legacyShadowBaselineTarsToEvict}).
+ * Best-effort throughout — a snapshot that cannot be swept costs ~90MB of disk, so it must never
+ * fail the export or warm hit that just succeeded.
  */
-const legacySweepStaleShadowBaselineTars = <E>(
+const legacySweepShadowBaselineRetention = <E>(
   input: LegacyShadowSetupInput<E>,
-  key: string,
 ): Effect.Effect<void> =>
   Effect.gen(function* () {
-    const tempDir = legacyPgDeltaTempPath(input.path, input.workdir);
-    const entries = yield* input.fs
-      .readDirectory(tempDir)
+    const cacheDir = legacyShadowBaselineCacheDir(input.path);
+    const names = yield* input.fs
+      .readDirectory(cacheDir)
       .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    const now = yield* Clock.currentTimeMillis;
+    const entries: Array<LegacyShadowBaselineTarEntry> = [];
+    for (const fileName of names) {
+      if (!legacyIsShadowBaselineTar(fileName)) continue;
+      const info = yield* input.fs
+        .stat(input.path.join(cacheDir, fileName))
+        .pipe(Effect.orElseSucceed(() => undefined));
+      if (info === undefined) continue;
+      const mtime = Option.getOrUndefined(info.mtime);
+      if (mtime === undefined) continue;
+      entries.push({ fileName, mtimeMs: mtime.getTime() });
+    }
     yield* Effect.forEach(
-      entries.filter((entry) => legacyIsStaleShadowBaselineTar(entry, key)),
-      (entry) => legacyForgetShadowBaselineTar(input.fs, input.path.join(tempDir, entry)),
+      legacyShadowBaselineTarsToEvict(entries, now),
+      (fileName) => legacyForgetShadowBaselineTar(input.fs, input.path.join(cacheDir, fileName)),
       { discard: true },
     );
   });
+
+/** Refresh mtime on a warm hit so frequently used keys survive LRU/TTL. Best-effort. */
+const legacyTouchShadowBaselineTar = (
+  fs: FileSystem.FileSystem,
+  tarPath: string,
+): Effect.Effect<void> =>
+  Effect.gen(function* () {
+    const now = new Date(yield* Clock.currentTimeMillis);
+    yield* fs.utimes(tarPath, now, now);
+  }).pipe(Effect.orElseSucceed(() => undefined));
 
 // ---------------------------------------------------------------------------
 // Container primitives the cache adds on top of `shadow-database.ts`
@@ -589,24 +653,23 @@ const legacyAwaitShadowReady = <E>(
 // ---------------------------------------------------------------------------
 
 /**
- * Ensures the tar's temp directory exists, delegates the actual export to
+ * Ensures the tar's global cache directory exists, delegates the actual export to
  * {@link legacyExportPgDataTar} (`pgdata-snapshot.ts` — see that function's own doc comment for
- * the atomic-publish mechanics), then applies the "current key only" retention rule.
+ * the atomic-publish mechanics), then applies the LRU + TTL retention rule.
  */
 const legacyWriteShadowBaselineTar = <E>(
   spawner: Spawner,
   input: LegacyShadowSetupInput<E>,
-  key: string,
   tarPath: string,
   containerId: string,
 ): Effect.Effect<void, LegacyShadowCacheUnavailable> =>
   Effect.gen(function* () {
-    const tempDir = legacyPgDeltaTempPath(input.path, input.workdir);
+    const cacheDir = legacyShadowBaselineCacheDir(input.path);
     yield* input.fs
-      .makeDirectory(tempDir, { recursive: true })
+      .makeDirectory(cacheDir, { recursive: true, mode: 0o700 })
       .pipe(
         Effect.mapError((cause) =>
-          legacyShadowCacheUnavailable(`failed to create ${tempDir}: ${cause.message}`),
+          legacyShadowCacheUnavailable(`failed to create ${cacheDir}: ${cause.message}`),
         ),
       );
     yield* legacySweepAbandonedShadowBaselinePartials(input);
@@ -615,7 +678,7 @@ const legacyWriteShadowBaselineTar = <E>(
         legacyShadowCacheUnavailable(cause.reason),
       ),
     );
-    yield* legacySweepStaleShadowBaselineTars(input, key);
+    yield* legacySweepShadowBaselineRetention(input);
   });
 
 /**
@@ -653,7 +716,7 @@ const legacyExportShadowBaseline = <E>(
       const exported = yield* Effect.result(
         Effect.gen(function* () {
           yield* legacyShadowContainerVerb(spawner, "stop", containerId);
-          yield* legacyWriteShadowBaselineTar(spawner, input, key, tarPath, containerId);
+          yield* legacyWriteShadowBaselineTar(spawner, input, tarPath, containerId);
         }),
       );
       // Run-critical phase: the shadow must be back up and answering before this step reports
@@ -849,18 +912,20 @@ export const legacyAcquireShadowDatabase = <E>(
     if (Option.isNone(keyInputs)) return yield* legacyUncachedShadow(spawner, input);
     const key = legacyShadowCacheKey(keyInputs.value);
     const tarPath = input.path.join(
-      legacyPgDeltaTempPath(input.path, input.workdir),
+      legacyShadowBaselineCacheDir(input.path),
       legacyShadowBaselineTarFileName(key),
     );
 
     const cached = yield* input.fs.exists(tarPath).pipe(Effect.orElseSucceed(() => false));
     if (!cached) return yield* legacyColdCachedShadow(spawner, input, key, tarPath);
 
-    // Warm hits sweep abandoned partials too: a killed concurrent writer's leftover would
-    // otherwise persist indefinitely once every later run goes warm, since the cold export's own
-    // sweep never runs again (review: Codex on #6184). Best-effort and cheap (one readdir +
-    // per-candidate stat).
+    // Warm hits refresh mtime (so frequently used keys survive LRU/TTL) and sweep abandoned
+    // partials — a killed concurrent writer's leftover would otherwise persist indefinitely once
+    // every later run goes warm, since the cold export's own sweep never runs again (review:
+    // Codex on #6184). Best-effort and cheap.
+    yield* legacyTouchShadowBaselineTar(input.fs, tarPath);
     yield* legacySweepAbandonedShadowBaselinePartials(input);
+    yield* legacySweepShadowBaselineRetention(input);
 
     return yield* legacyWarmShadow(spawner, input, tarPath).pipe(
       Effect.catch((cause) =>
