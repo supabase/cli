@@ -14,6 +14,8 @@ export interface LegacyPgDeltaNextMigrationsShadow {
 export interface LegacyPgDeltaNextPlanShadows extends LegacyPgDeltaNextMigrationsShadow {
   /** Independent platform baseline owned by `planSchemaFiles` while loading desired SQL. */
   readonly declarativeUrl: string;
+  /** Both databases are separate servers restored from CLI-owned PGDATA snapshots. */
+  readonly allowSameDatabaseIdentity: boolean;
 }
 
 export interface LegacyPgDeltaNextShadowInput {

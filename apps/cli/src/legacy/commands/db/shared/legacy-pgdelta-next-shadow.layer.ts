@@ -82,6 +82,22 @@ interface NativeShadowBase {
   readonly image: string;
 }
 
+interface ProvisionedMigrationsShadow extends LegacyPgDeltaNextMigrationsShadow {
+  readonly restoredFromPgDataSnapshot: boolean;
+}
+
+interface ProvisionedDeclarativeShadow {
+  readonly declarativeUrl: string;
+  readonly restoredFromPgDataSnapshot: boolean;
+}
+
+export function legacyAllowSameDatabaseIdentityForRestoredShadows(
+  migrations: Pick<ProvisionedMigrationsShadow, "restoredFromPgDataSnapshot">,
+  declarative: Pick<ProvisionedDeclarativeShadow, "restoredFromPgDataSnapshot">,
+): boolean {
+  return migrations.restoredFromPgDataSnapshot && declarative.restoredFromPgDataSnapshot;
+}
+
 /**
  * Removes extensions that the legacy PG14 platform baseline installs implicitly
  * so the declarative shadow reflects only extension declarations in schema files.
@@ -240,7 +256,8 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
         yield* legacyMigrateNextShadowDatabase(input.spawner, setup, handle);
         return {
           migrationsUrl: legacyToPostgresURL(setup.connConfig),
-        } satisfies LegacyPgDeltaNextMigrationsShadow;
+          restoredFromPgDataSnapshot: handle.baselinePresent,
+        } satisfies ProvisionedMigrationsShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
     const provisionDeclarative = (input: NativeShadowInput, opts: LegacyShadowCacheOpts) =>
@@ -258,7 +275,10 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
             );
           }),
         );
-        return legacyToPostgresURL(setup.connConfig);
+        return {
+          declarativeUrl: legacyToPostgresURL(setup.connConfig),
+          restoredFromPgDataSnapshot: handle.baselinePresent,
+        } satisfies ProvisionedDeclarativeShadow;
       }).pipe(Effect.provide(runtime), Effect.mapError(nextShadowError));
 
     const cacheOpts = (
@@ -285,13 +305,17 @@ export const legacyPgDeltaNextShadowLayer = Layer.effect(
           const migrationsInput = buildNativeInput(opts, built, migrationsPort);
           const declarativeInput = buildNativeInput(opts, built, declarativePort);
           const migrations = yield* provisionMigrations(migrationsInput, cacheOpts(opts, "config"));
-          const declarativeUrl = yield* provisionDeclarative(
+          const declarative = yield* provisionDeclarative(
             declarativeInput,
             cacheOpts(opts, "disabled"),
           );
           return {
-            ...migrations,
-            declarativeUrl,
+            migrationsUrl: migrations.migrationsUrl,
+            declarativeUrl: declarative.declarativeUrl,
+            allowSameDatabaseIdentity: legacyAllowSameDatabaseIdentityForRestoredShadows(
+              migrations,
+              declarative,
+            ),
           } satisfies LegacyPgDeltaNextPlanShadows;
         }).pipe(Effect.mapError(nextShadowError)),
     });
